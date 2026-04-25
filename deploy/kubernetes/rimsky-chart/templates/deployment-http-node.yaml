@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-http-node
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: http-node
+spec:
+  replicas: {{ .Values.httpNode.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: http-node
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: http-node
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: http-node
+          image: "{{ .Values.image.repository }}/executor-http-node:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RIMSKY_GRPC_ADDR
+              value: ":{{ .Values.httpNode.service.port }}"
+            - name: RIMSKY_METRICS_ADDR
+              value: ":9092"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.httpNode.service.port }}
+            - name: metrics
+              containerPort: 9092
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

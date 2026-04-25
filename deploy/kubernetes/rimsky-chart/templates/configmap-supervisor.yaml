@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rimsky.fullname" . }}-supervisor-config
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+data:
+  supervisor-config.yml: |
+    supervisor:
+      heartbeat_interval_ms: {{ .Values.supervisor.heartbeatIntervalMs }}
+      callback_addr: ":9100"
+      concurrency:
+        total: {{ .Values.supervisor.concurrency }}
+        per_executor:
+          claude-agent: 4
+          http-node: 8
+    executors:
+      - name: claude-agent
+        transport: grpc
+        endpoint: "{{ include "rimsky.fullname" . }}-claude-agent:{{ .Values.claudeAgent.service.port }}"
+        concurrency: 4
+      - name: http-node
+        transport: grpc
+        endpoint: "{{ include "rimsky.fullname" . }}-http-node:{{ .Values.httpNode.service.port }}"
+        concurrency: 8

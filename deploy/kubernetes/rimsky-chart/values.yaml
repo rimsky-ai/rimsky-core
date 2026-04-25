@@ -1,0 +1,41 @@
+image:
+  repository: rimsky
+  tag: "0.1"
+  pullPolicy: IfNotPresent
+
+postgres:
+  dsn: ""                      # required; consumer supplies
+
+scheduler:
+  replicas: 1
+  tickIntervalMs: 1500
+  heartbeatTimeoutMs: 15000
+
+supervisor:
+  replicas: 2
+  concurrency: 8
+  heartbeatIntervalMs: 5000
+
+controlapi:
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+
+httpNode:
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 9091
+
+claudeAgent:
+  replicas: 1
+  stubMode: "1"                # "0" for real API
+  anthropicApiKey: ""          # from secret
+  service:
+    type: ClusterIP
+    port: 9090
+
+resources: {}

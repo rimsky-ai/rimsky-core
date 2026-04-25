@@ -1,0 +1,21 @@
+postgres_url: "${RIMSKY_DB_URL}"
+concurrency: 8
+heartbeat_interval_ms: 5000
+claim_poll_interval_ms: 1000
+callback:
+  host: 0.0.0.0
+  port: 9100
+  # advertise_host is the peer-reachable hostname executors dial back to.
+  # In docker-compose it should be the supervisor service name; in k8s it is
+  # the Service DNS. Falls back to the listener addr when empty — which is
+  # wrong for any non-loopback deployment because the listener binds 0.0.0.0.
+  advertise_host: ${CALLBACK_ADVERTISE_HOST:-}
+executors:
+  claude-agent:
+    transport: grpc
+    endpoint: "claude-agent:9090"
+    tls: off
+  http-node:
+    transport: grpc
+    endpoint: "http-node:9091"
+    tls: off

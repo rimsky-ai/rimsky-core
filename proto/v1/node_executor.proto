@@ -1,0 +1,106 @@
+syntax = "proto3";
+package rimsky.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
+
+// NodeExecutor is the protocol rimsky supervisors use to dispatch work to
+// external executors. See docs/specs/2026-04-23-rimsky-go-port-design.md §7
+// for the full contract (transports, async handoff, versioning, auth).
+service NodeExecutor {
+  // Execute is called by the rimsky supervisor when dispatching a node. The
+  // response stream carries zero or more Heartbeat events followed by EXACTLY
+  // ONE terminal event (Complete | Blocked | Errored | AsyncAccepted); the
+  // executor MUST close the stream immediately after the terminal event.
+  // Stream close without a terminal event is treated by the supervisor as an
+  // infrastructure error.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+}
+
+// ExecuteRequest carries the full context of a node dispatch. Only `userdata`
+// is opaque to rimsky — the rest is rimsky-populated.
+message ExecuteRequest {
+  string node_id = 1;
+  string instance_id = 2;
+  string node_type = 3;
+
+  // Opaque per-node config from the template. Rimsky never interprets this;
+  // only the executor does.
+  google.protobuf.Struct userdata = 4;
+
+  // Instance params as supplied at POST /instances, with params_redact applied.
+  google.protobuf.Struct instance_params = 5;
+
+  // Current versions of dependency resources, keyed by dependency node_type.
+  map<string, google.protobuf.Value> deps_data = 6;
+
+  // Current versions of resources this node declared in reads_resources,
+  // keyed by the declared name.
+  map<string, google.protobuf.Value> reads_data = 7;
+
+  // HTTP+JSON callback URL the executor may POST to for async handoff.
+  // Populated by the supervisor; empty string if the supervisor did not
+  // configure a callback endpoint.
+  string callback_url = 8;
+
+  // Token the supervisor watches for cancellation requests. v1 is advisory:
+  // the supervisor includes a cancel signal via grpc ctx / http disconnect
+  // rather than through this field, so this is reserved for future use.
+  string cancel_token = 9;
+}
+
+message ExecuteEvent {
+  oneof event {
+    Heartbeat heartbeat = 1;
+    Complete complete = 2;
+    Blocked blocked = 3;
+    Errored errored = 4;
+    AsyncAccepted async_accepted = 5;  // terminal; see spec §7.2 async handoff
+  }
+}
+
+// Heartbeat is a non-terminal progress indicator. Executors may emit any
+// number of these during a long-running execution; supervisors refresh the
+// node's last_heartbeat_at on receipt.
+message Heartbeat {
+  int64 timestamp_ms = 1;
+  string note = 2;
+}
+
+// Complete is a terminal event reporting successful execution with a
+// producer-declared `changed` verdict.
+message Complete {
+  google.protobuf.Value result = 1;
+  bool changed = 2;
+  string change_summary = 3;
+}
+
+// Blocked is a terminal event reporting that the executor cannot progress
+// without external intervention. Mapped by the supervisor to error class
+// "executor_blocked" unless the cell template declared a matching error type.
+message Blocked {
+  string reason = 1;
+  google.protobuf.Value context = 2;
+}
+
+// Errored is a terminal event reporting an application-level error. The
+// supervisor routes to on_error(error_class, payload) via the policy chain.
+message Errored {
+  string error_class = 1;
+  google.protobuf.Value payload = 2;
+}
+
+// AsyncAccepted is a terminal event signaling that the executor has accepted
+// the work but will report the final outcome later via HTTP+JSON POST to
+// ExecuteRequest.callback_url. The supervisor holds the dispatch row claim
+// and keeps the node in running state until the callback arrives (subject to
+// heartbeat-loss sweep). See spec §7.2 async handoff path.
+message AsyncAccepted {
+  // Echoed back by the executor on the callback so the supervisor can correlate.
+  string async_ack_id = 1;
+  // Optional hint; the supervisor still uses its own heartbeat-loss cutoff
+  // for timeout enforcement.
+  int64 expected_completion_ms = 2;
+}

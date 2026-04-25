@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-scheduler
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: scheduler
+          image: "{{ .Values.image.repository }}/scheduler:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RIMSKY_DB_URL
+              value: {{ .Values.postgres.dsn | quote }}
+            - name: RIMSKY_TICK_INTERVAL_MS
+              value: {{ .Values.scheduler.tickIntervalMs | quote }}
+            - name: RIMSKY_HEARTBEAT_TIMEOUT_MS
+              value: {{ .Values.scheduler.heartbeatTimeoutMs | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

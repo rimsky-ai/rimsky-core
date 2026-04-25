@@ -1,0 +1,24 @@
+/bin/
+/tmp/
+*.test
+*.out
+vendor/
+.idea/
+.vscode/
+
+# Compiled binaries (built ad-hoc at module root)
+/rimsky-supervisor
+/rimsky-scheduler
+/rimsky-control-api
+/rimsky-conformance-probe
+/http-node
+
+# Node executor deps / build output
+executors/*/node_modules/
+executors/*/dist/
+
+# Local env / coverage
+.env
+*.env.local
+coverage.out
+coverage.html

@@ -1,0 +1,15 @@
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - errcheck
+    - revive
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        disabled: true

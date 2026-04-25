@@ -1,0 +1,95 @@
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: rimsky
+      POSTGRES_PASSWORD: rimsky
+      POSTGRES_DB: rimsky
+    ports:
+      - "5544:5432"
+    volumes:
+      - rimsky-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rimsky -d rimsky"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  migrate:
+    image: rimsky/migrate:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    restart: "no"
+
+  scheduler:
+    image: rimsky/scheduler:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_SCHEDULER_TICK_MS: "1500"
+      RIMSKY_HEARTBEAT_TIMEOUT_MS: "15000"
+
+  supervisor:
+    image: rimsky/supervisor:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      claude-agent:
+        condition: service_started
+      http-node:
+        condition: service_started
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_SUPERVISOR_CONFIG: "/etc/rimsky/supervisor-config.yml"
+      # Executors need to reach the supervisor's callback endpoint by a
+      # peer-reachable name (not 0.0.0.0). The service name is the right
+      # default inside the compose network.
+      CALLBACK_ADVERTISE_HOST: "rimsky-supervisor"
+      RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky-supervisor"
+    volumes:
+      - ./supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro
+    ports:
+      - "9100:9100"
+
+  control-api:
+    image: rimsky/control-api:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_CONTROL_API_HOST: "0.0.0.0"
+      RIMSKY_CONTROL_API_PORT: "8080"
+    ports:
+      - "8080:8080"
+
+  http-node:
+    image: rimsky/executor-http-node:latest
+    environment:
+      RIMSKY_EXECUTOR_HTTP_NODE_HOST: "0.0.0.0"
+      RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
+      RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT: "9092"
+      RIMSKY_EXECUTOR_STUB_MODE: "1"
+    ports:
+      - "9091:9091"
+      - "9092:9092"
+
+  claude-agent:
+    image: rimsky/executor-claude-agent:latest
+    environment:
+      RIMSKY_EXECUTOR_HOST: "0.0.0.0"
+      RIMSKY_EXECUTOR_PORT_GRPC: "9090"
+      RIMSKY_EXECUTOR_PORT_HTTP: "9190"
+      RIMSKY_EXECUTOR_STUB_MODE: "1"
+    ports:
+      - "9090:9090"
+      - "9190:9190"
+
+volumes:
+  rimsky-pg: {}

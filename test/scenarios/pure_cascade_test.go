@@ -1,0 +1,62 @@
+// Scenario 2 — one pure-cascade node (no executor, no deps) is invalidated
+// via the control API and transitions fresh → stale → fresh inline.
+package scenarios
+
+import (
+	"bytes"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/scenario"
+	"github.com/fallguy/rimsky/core/shared"
+	"github.com/fallguy/rimsky/core/storage"
+)
+
+func TestPureCascadeNode(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "pure-cascade", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			{Type: "hub"}, // no executor = pure-cascade
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-pc", map[string]any{})
+
+	hub := h.FindNode(iid, "hub")
+	require.NotNil(t, hub)
+	// Starts stale; pure-cascade sweep should promote it to fresh on the
+	// first scheduler tick.
+	require.True(t, h.WaitForNodeState(hub.ID, shared.NodeStateFresh, 10*time.Second),
+		"hub did not reach fresh via initial pure-cascade sweep")
+
+	// Invalidate via control API.
+	resp, err := http.Post(h.ControlBase+"/nodes/"+hub.ID.String()+"/invalidate",
+		"application/json", bytes.NewReader([]byte(`{}`)))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Expect fresh again after next tick.
+	require.True(t, h.WaitForNodeState(hub.ID, shared.NodeStateFresh, 10*time.Second),
+		"hub did not return to fresh after invalidate")
+
+	// Verify pure_cascade_commit event was emitted at some point.
+	nid := hub.ID
+	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid},
+		storage.ListPagination{Limit: 500}, nil)
+	require.NoError(t, err)
+	var sawCommit bool
+	for _, e := range evs.Events {
+		if e.Kind == "pure_cascade_commit" {
+			sawCommit = true
+			break
+		}
+	}
+	require.True(t, sawCommit, "expected pure_cascade_commit event")
+}

@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-supervisor
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: supervisor
+spec:
+  replicas: {{ .Values.supervisor.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: supervisor
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: supervisor
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: supervisor
+          image: "{{ .Values.image.repository }}/supervisor:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RIMSKY_DB_URL
+              value: {{ .Values.postgres.dsn | quote }}
+            - name: RIMSKY_CONFIG_PATH
+              value: /etc/rimsky/supervisor-config.yml
+          volumeMounts:
+            - name: supervisor-config
+              mountPath: /etc/rimsky
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: supervisor-config
+          configMap:
+            name: {{ include "rimsky.fullname" . }}-supervisor-config

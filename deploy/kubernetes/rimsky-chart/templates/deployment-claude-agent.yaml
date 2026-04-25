@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-claude-agent
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: claude-agent
+spec:
+  replicas: {{ .Values.claudeAgent.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: claude-agent
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: claude-agent
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: claude-agent
+          image: "{{ .Values.image.repository }}/executor-claude-agent:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: GRPC_ADDR
+              value: "0.0.0.0:{{ .Values.claudeAgent.service.port }}"
+            - name: METRICS_ADDR
+              value: "0.0.0.0:9190"
+            - name: CLAUDE_STUB_MODE
+              value: {{ .Values.claudeAgent.stubMode | quote }}
+            {{- if .Values.claudeAgent.anthropicApiKey }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rimsky.fullname" . }}-anthropic
+                  key: api-key
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.claudeAgent.service.port }}
+            - name: metrics
+              containerPort: 9190
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

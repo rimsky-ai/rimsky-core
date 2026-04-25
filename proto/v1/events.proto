@@ -1,0 +1,152 @@
+syntax = "proto3";
+package rimsky.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
+
+// Event is one row of the rimsky_events log with a typed payload. Consumers
+// who want type-checked event streams may use this shape; rimsky's own
+// internals use map[string]any + JSONB and do not marshal through this proto.
+//
+// See spec §11.2 for the full event-kind catalogue. When new kinds are added
+// to the log, they should be declared here.
+message Event {
+  int64 id = 1;
+  string instance_id = 2;
+  string node_id = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  string kind = 5;
+  oneof payload {
+    MessageEmittedPayload message_emitted = 10;
+    MessageReceivedPayload message_received = 11;
+    StateTransitionPayload state_transition = 12;
+    ErrorPayload error = 13;
+    WorkStartedPayload work_started = 14;
+    WorkCompletedPayload work_completed = 15;
+    CommitPayload commit = 16;
+    NoOpCommitPayload no_op_commit = 17;
+    QualityRuleFailedPayload quality_rule_failed = 18;
+    HeartbeatLostPayload heartbeat_lost = 19;
+    OperatorOverridePayload operator_override = 20;
+    OrphanedClaimReleasedPayload orphaned_claim_released = 21;
+    OrphanedClaimLostRacePayload orphaned_claim_lost_race = 22;
+    WorkRejectedPayload work_rejected = 23;
+    ScheduleFiredPayload schedule_fired = 24;
+    UnresolvedExecutorPayload unresolved_executor = 25;
+    PureCascadeCommitPayload pure_cascade_commit = 26;
+    ScheduleDispatchFailedPayload schedule_dispatch_failed = 27;  // plan-added; see CHANGELOG
+    // Fallback: event kinds not yet declared here appear with raw JSON
+    // payload in the common payload_raw field below.
+  }
+  // For event kinds not in the oneof above, the raw JSON payload is surfaced
+  // here. Kept populated for all events as a convenience so consumers can
+  // fall back to untyped reading.
+  google.protobuf.Struct payload_raw = 30;
+}
+
+message MessageEmittedPayload {
+  string type = 1;            // "invalidate" | "recalculate"
+  string source_node_id = 2;
+  string target_node_id = 3;
+  google.protobuf.Struct params = 4;
+}
+
+message MessageReceivedPayload {
+  string type = 1;
+  string source_node_id = 2;
+  string target_node_id = 3;
+  google.protobuf.Struct params = 4;
+}
+
+message StateTransitionPayload {
+  string from = 1;
+  string to = 2;
+  string reason = 3;
+}
+
+message ErrorPayload {
+  string error_class = 1;
+  google.protobuf.Struct details = 2;
+  string action_taken = 3;     // "retry" | "invalidate" | "give_up"
+  int32 action_index = 4;
+  int64 delay_ms = 5;
+}
+
+message WorkStartedPayload {
+  string supervisor_id = 1;
+}
+
+message WorkCompletedPayload {
+  string outcome = 1;  // "committed" | "no_op" | "rejected" | "errored" | "infra_errored" | "quality_failed"
+}
+
+message CommitPayload {
+  string resource_id = 1;
+  string version_id = 2;
+  string change_summary = 3;
+}
+
+message NoOpCommitPayload {
+  string reason = 1;
+}
+
+message QualityRuleFailedPayload {
+  string rule_type = 1;
+  google.protobuf.Struct rule_config = 2;
+  string severity = 3;
+  string details = 4;
+}
+
+message HeartbeatLostPayload {
+  string supervisor_id = 1;
+  google.protobuf.Timestamp last_heartbeat_at = 2;
+}
+
+message OperatorOverridePayload {
+  string action = 1;
+  string actor = 2;
+  string reason = 3;
+  string restore_version = 4;
+}
+
+message OrphanedClaimReleasedPayload {
+  string dispatch_id = 1;
+  string prior_claimed_by = 2;
+  google.protobuf.Timestamp claimed_at = 3;
+}
+
+message OrphanedClaimLostRacePayload {
+  string supervisor_id = 1;
+  string dispatch_id = 2;
+  string ownership_kind = 3;
+  string current_claimed_by = 4;
+  string winning_supervisor_id = 5;
+}
+
+message WorkRejectedPayload {
+  string reason = 1;
+  google.protobuf.Struct errors = 2;
+}
+
+message ScheduleFiredPayload {
+  string node_id = 1;
+  string cron_expr = 2;
+  google.protobuf.Timestamp fired_at = 3;
+}
+
+message UnresolvedExecutorPayload {
+  string node_id = 1;
+  string executor_name = 2;
+  string supervisor_id = 3;
+}
+
+message PureCascadeCommitPayload {
+  // Empty — the pure_cascade_commit event is a marker, no additional fields.
+}
+
+message ScheduleDispatchFailedPayload {
+  string node_id = 1;
+  string error = 2;
+}
