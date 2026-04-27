@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/queue"
-	"github.com/fallguy/rimsky/core/resource"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
@@ -29,21 +27,18 @@ type SupervisorConfig struct {
 	HeartbeatInterval time.Duration
 	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
-	// GetResource builds a Resource for a given resource row. Typically
-	// wraps a FactoryRegistry.Get(impl).Create(...) lookup.
-	GetResource func(ctx context.Context, resourceID shared.UUID) (resource.Resource, error)
-	// ResourceFactories is the explicit factory registry used by the
-	// supervisor (template validation + GetResource callbacks). If nil,
-	// resource.DefaultRegistry() is used — this preserves backward-compat
-	// for callers still relying on resource.RegisterFactory. New code
-	// should construct a per-process *resource.FactoryRegistry.
-	ResourceFactories *resource.FactoryRegistry
-	ConcurrencyLimits map[string]int
-	// SQLConnections is a named-pool map for external-sql resources (Plan C).
-	// Plan A uses inline-jsonb only; this field can be left nil for v1.
-	SQLConnections map[string]*pgxpool.Pool
-	CallbackHost   string
-	CallbackPort   int
+	// StoreFactories enumerates the store-kind factories registered with
+	// this process. The deployer's main() builds this list from the set of
+	// store implementations it has linked in (filesystem, claim-store-pg,
+	// stub, custom). Required when Stores is non-empty.
+	StoreFactories []store.Factory
+	// Stores is the parsed YAML stores config (spec §14.1). Each entry is
+	// keyed by operator-chosen store name; the value's "kind" picks a
+	// factory from StoreFactories. The supervisor's `accepted_stores`
+	// (§14.2) is derived from the resulting registry's store-name set.
+	Stores       store.StoresConfig
+	CallbackHost string
+	CallbackPort int
 	// CallbackAdvertiseHost / CallbackAdvertisePort override the host:port
 	// embedded in the `callback_url` handed to executors. When empty/zero
 	// the supervisor advertises the listener addr — which is wrong in
@@ -69,12 +64,9 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if cfg.Resolver == nil {
 		return nil, fmt.Errorf("StartSupervisor: Resolver required")
 	}
-	if cfg.GetResource == nil {
-		return nil, fmt.Errorf("StartSupervisor: GetResource required")
-	}
-	factories := cfg.ResourceFactories
-	if factories == nil {
-		factories = resource.DefaultRegistry()
+	registry, err := buildStoreRegistry(cfg.StoreFactories, cfg.Stores)
+	if err != nil {
+		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
 	return supervisor.Start(supervisor.Config{
 		SupervisorID:          cfg.SupervisorID,
@@ -86,11 +78,28 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		HeartbeatInterval:     cfg.HeartbeatInterval,
 		ClaimPollInterval:     cfg.ClaimPollInterval,
 		Resolver:              cfg.Resolver,
-		GetResource:           cfg.GetResource,
-		ResourceFactories:     factories,
+		StoreRegistry:         registry,
 		CallbackHost:          cfg.CallbackHost,
 		CallbackPort:          cfg.CallbackPort,
 		CallbackAdvertiseHost: cfg.CallbackAdvertiseHost,
 		CallbackAdvertisePort: cfg.CallbackAdvertisePort,
 	})
+}
+
+// buildStoreRegistry constructs the supervisor's store registry from the
+// (factories, stores) config pair. Returns an empty registry — never nil —
+// when both inputs are empty (matches the supervisor.Start contract that a
+// non-nil StoreRegistry is required even when no stores are configured).
+func buildStoreRegistry(factories []store.Factory, cfg store.StoresConfig) (*store.Registry, error) {
+	reg := store.NewRegistry()
+	for _, f := range factories {
+		reg.Register(f)
+	}
+	if len(cfg.Stores) == 0 {
+		return reg, nil
+	}
+	if _, err := reg.BuildAll(cfg); err != nil {
+		return nil, err
+	}
+	return reg, nil
 }

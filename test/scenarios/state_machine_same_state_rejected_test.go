@@ -1,5 +1,10 @@
 // Scenario 15 — blessed-invariant: NextState rejects running→running under
-// ReasonDispatchClaimed. Verified directly against the storage layer.
+// `ReasonDispatchClaimed`. Verified directly against the storage layer.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the worker
+// node is built via scenario.MakeNode. Resources/version pointers are
+// unrelated to this invariant; the test drives the state machine directly
+// and asserts ErrIllegalTransition.
 package scenarios
 
 import (
@@ -20,7 +25,7 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "sm-same", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "worker", Executor: "stub"},
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-sm", map[string]any{})

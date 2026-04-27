@@ -1,5 +1,12 @@
 // templates.go — POST /templates, GET /templates, GET /templates/:id,
 // DELETE /templates/:id.
+//
+// The deploy handler converts the JSON request shape into node.TemplateSpec
+// (the in-memory representation) and runs node.ValidateTemplate against the
+// per-process store registry (AppDeps.Stores). Concurrency-tag /
+// owns-resources / reads-resources fields were retired in the stores
+// redesign (spec §11.3); the JSON shape mirrors the new template shape:
+// stores, locks, attributes, quality_rules, claim_resolutions.
 package controlapi
 
 import (
@@ -10,49 +17,72 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/qualityrule"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 // templateDeployRequest matches the JSON form of node.TemplateSpec. Fields use
 // JSON-lower-snake-case names by convention.
 type templateDeployRequest struct {
-	Name         string                 `json:"name"`
-	Version      string                 `json:"version"`
-	Description  string                 `json:"description,omitempty"`
-	Nodes        []templateNodeDefJSON  `json:"nodes"`
-	ParamsSchema map[string]any         `json:"params_schema,omitempty"`
-	ParamsRedact []string               `json:"params_redact,omitempty"`
+	Name            string                `json:"name"`
+	Version         string                `json:"version"`
+	Description     string                `json:"description,omitempty"`
+	FrameResolution string                `json:"frame_resolution"`
+	FrameTimeoutMs  int64                 `json:"frame_timeout_ms,omitempty"`
+	Nodes           []templateNodeDefJSON `json:"nodes"`
+	ParamsSchema    map[string]any        `json:"params_schema,omitempty"`
+	ParamsRedact    []string              `json:"params_redact,omitempty"`
 }
 
 type templateNodeDefJSON struct {
-	Type            string                           `json:"type"`
-	Description     string                           `json:"description,omitempty"`
-	Executor        string                           `json:"executor,omitempty"`
-	Userdata        map[string]any                   `json:"userdata,omitempty"`
-	Schedule        string                           `json:"schedule,omitempty"`
-	Dependencies    []string                         `json:"dependencies,omitempty"`
-	ConcurrencyTags []string                         `json:"concurrency_tags,omitempty"`
-	OwnsResources   []resourceDefJSON                `json:"owns_resources,omitempty"`
-	ReadsResources  []readResourceDefJSON            `json:"reads_resources,omitempty"`
-	ErrorTypes      map[string]errorTypePolicyJSON   `json:"error_types,omitempty"`
+	Type             string                         `json:"type"`
+	Description      string                         `json:"description,omitempty"`
+	Executor         string                         `json:"executor,omitempty"`
+	Userdata         map[string]any                 `json:"userdata,omitempty"`
+	Schedule         string                         `json:"schedule,omitempty"`
+	Dependencies     []string                       `json:"dependencies,omitempty"`
+	Stores           []nodeStoreRefJSON             `json:"stores,omitempty"`
+	Locks            []nodeLockRefJSON              `json:"locks,omitempty"`
+	Attributes       *nodeAttributesDefJSON         `json:"attributes,omitempty"`
+	QualityRules     []qualityRuleJSON              `json:"quality_rules,omitempty"`
+	ClaimResolutions []claimResolutionRefJSON       `json:"claim_resolutions,omitempty"`
+	ErrorTypes       map[string]errorTypePolicyJSON `json:"error_types,omitempty"`
 }
 
-type resourceDefJSON struct {
-	Path           []string       `json:"path"`
-	Implementation string         `json:"implementation"`
-	Config         map[string]any `json:"config,omitempty"`
-	Retention      *retentionJSON `json:"retention,omitempty"`
-	QualityRules   []any          `json:"quality_rules,omitempty"`
+type nodeStoreRefJSON struct {
+	Name      string   `json:"name"`
+	Claim     bool     `json:"claim,omitempty"`
+	Hold      bool     `json:"hold,omitempty"`
+	Write     []string `json:"write,omitempty"`
+	Read      []string `json:"read,omitempty"`
+	OnCommit  string   `json:"on_commit,omitempty"`
+	OnGiveUp  string   `json:"on_give_up,omitempty"`
+	Resumable bool     `json:"resumable,omitempty"`
 }
 
-type retentionJSON struct {
-	KeepVersions int `json:"keep_versions"`
+type nodeLockRefJSON struct {
+	Name  string `json:"name"`
+	Mode  string `json:"mode"`
+	Limit int    `json:"limit,omitempty"`
 }
 
-type readResourceDefJSON struct {
-	Path []string `json:"path"`
-	Via  string   `json:"via"`
+type nodeAttributesDefJSON struct {
+	Schema map[string]any `json:"schema,omitempty"`
+}
+
+type qualityRuleJSON struct {
+	Type     string         `json:"type"`
+	Config   map[string]any `json:"config,omitempty"`
+	Severity string         `json:"severity,omitempty"`
+}
+
+type claimResolutionRefJSON struct {
+	Source   string `json:"source"`
+	Store    string `json:"store"`
+	OnCommit string `json:"on_commit,omitempty"`
+	OnGiveUp string `json:"on_give_up,omitempty"`
 }
 
 type errorTypePolicyJSON struct {
@@ -67,50 +97,66 @@ type policyActionJSON struct {
 	BaseDelayMs    int      `json:"base_delay_ms,omitempty"`
 	MaxDelayMs     int      `json:"max_delay_ms,omitempty"`
 	Targets        []string `json:"targets,omitempty"`
-	RestoreVersion string   `json:"restore_version,omitempty"`
 	ReasonTemplate string   `json:"reason_template,omitempty"`
 }
 
 // toTemplateSpec converts the JSON form to the domain node.TemplateSpec.
-// Quality rules are passed through as raw JSON into the resource def's
-// QualityRules slice; the node.TemplateSpec uses qualityrule.Spec which the
-// JSON here matches structurally — we re-marshal and decode to convert.
-func (r *templateDeployRequest) toTemplateSpec() (node.TemplateSpec, error) {
+// Pure mapping; no validation here — the deploy handler runs
+// node.ValidateTemplate after this returns.
+func (r *templateDeployRequest) toTemplateSpec() node.TemplateSpec {
 	spec := node.TemplateSpec{
-		Name:         r.Name,
-		Version:      r.Version,
-		Description:  r.Description,
-		ParamsSchema: r.ParamsSchema,
-		ParamsRedact: r.ParamsRedact,
+		Name:            r.Name,
+		Version:         r.Version,
+		Description:     r.Description,
+		FrameResolution: r.FrameResolution,
+		FrameTimeoutMs:  r.FrameTimeoutMs,
+		ParamsSchema:    r.ParamsSchema,
+		ParamsRedact:    r.ParamsRedact,
 	}
 	for _, n := range r.Nodes {
 		def := node.TemplateNodeDef{
-			Type:            n.Type,
-			Description:     n.Description,
-			Executor:        n.Executor,
-			Userdata:        n.Userdata,
-			Schedule:        n.Schedule,
-			Dependencies:    n.Dependencies,
-			ConcurrencyTags: n.ConcurrencyTags,
+			Type:         n.Type,
+			Description:  n.Description,
+			Executor:     n.Executor,
+			Userdata:     n.Userdata,
+			Schedule:     n.Schedule,
+			Dependencies: n.Dependencies,
 		}
-		for _, rd := range n.OwnsResources {
-			rdef := node.ResourceDef{
-				Path:           rd.Path,
-				Implementation: rd.Implementation,
-				Config:         rd.Config,
-			}
-			if rd.Retention != nil {
-				rdef.Retention = &node.Retention{KeepVersions: rd.Retention.KeepVersions}
-			}
-			// quality_rules is accepted but not decoded into qualityrule.Spec
-			// here — v1 templates keep them opaque at the API layer.
-			_ = rd.QualityRules
-			def.OwnsResources = append(def.OwnsResources, rdef)
+		for _, s := range n.Stores {
+			def.Stores = append(def.Stores, node.NodeStoreRef{
+				Name:      s.Name,
+				Claim:     s.Claim,
+				Hold:      s.Hold,
+				Write:     s.Write,
+				Read:      s.Read,
+				OnCommit:  s.OnCommit,
+				OnGiveUp:  s.OnGiveUp,
+				Resumable: s.Resumable,
+			})
 		}
-		for _, rr := range n.ReadsResources {
-			def.ReadsResources = append(def.ReadsResources, node.ReadResourceDef{
-				Path: rr.Path,
-				Via:  shared.AccessKind(rr.Via),
+		for _, l := range n.Locks {
+			def.Locks = append(def.Locks, node.NodeLockRef{
+				Name:  l.Name,
+				Mode:  store.LockMode(l.Mode),
+				Limit: l.Limit,
+			})
+		}
+		if n.Attributes != nil {
+			def.Attributes = node.NodeAttributesDef{Schema: n.Attributes.Schema}
+		}
+		for _, qr := range n.QualityRules {
+			def.QualityRules = append(def.QualityRules, qualityrule.Spec{
+				Type:     qr.Type,
+				Config:   qr.Config,
+				Severity: shared.Severity(qr.Severity),
+			})
+		}
+		for _, cr := range n.ClaimResolutions {
+			def.ClaimResolutions = append(def.ClaimResolutions, node.ClaimResolutionRef{
+				Source:   cr.Source,
+				Store:    cr.Store,
+				OnCommit: cr.OnCommit,
+				OnGiveUp: cr.OnGiveUp,
 			})
 		}
 		if len(n.ErrorTypes) > 0 {
@@ -126,7 +172,6 @@ func (r *templateDeployRequest) toTemplateSpec() (node.TemplateSpec, error) {
 						BaseDelayMs:    a.BaseDelayMs,
 						MaxDelayMs:     a.MaxDelayMs,
 						Targets:        a.Targets,
-						RestoreVersion: a.RestoreVersion,
 						ReasonTemplate: a.ReasonTemplate,
 					})
 				}
@@ -135,7 +180,7 @@ func (r *templateDeployRequest) toTemplateSpec() (node.TemplateSpec, error) {
 		}
 		spec.Nodes = append(spec.Nodes, def)
 	}
-	return spec, nil
+	return spec
 }
 
 type templateDeployResponse struct {
@@ -167,6 +212,24 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Delete("/templates/{id}", handleDeleteTemplate(deps))
 }
 
+// storeKindOfFor builds the store-kind lookup function consumed by
+// node.ValidateTemplate. When deps.Stores is nil (no registry wired) the
+// returned closure is also nil — node.ValidateTemplate skips the
+// unknown-store check in that case, which is the correct behaviour for
+// tests that don't exercise the store layer.
+func storeKindOfFor(reg *store.Registry) func(name string) (string, bool) {
+	if reg == nil {
+		return nil
+	}
+	return func(name string) (string, bool) {
+		s, ok := reg.GetStore(name)
+		if !ok {
+			return "", false
+		}
+		return s.Kind(), true
+	}
+}
+
 func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var body templateDeployRequest
@@ -174,15 +237,8 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		spec, err := body.toTemplateSpec()
-		if err != nil {
-			badRequest(w, err.Error())
-			return
-		}
-		res := node.ValidateTemplate(&spec, func(name string) bool {
-			_, ok := deps.ResourceFactories.Get(name)
-			return ok
-		})
+		spec := body.toTemplateSpec()
+		res := node.ValidateTemplate(&spec, storeKindOfFor(deps.Stores))
 		if !res.Ok() {
 			errs := make([]map[string]string, 0, len(res.Errors))
 			for _, e := range res.Errors {
@@ -194,6 +250,11 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
+		// Default-fill frame-resolution fields (FrameTimeoutMs == 0 →
+		// FrameTimeoutDefaultMs). Validator is pure; the boundary handler
+		// applies defaults after validation passes so the persisted spec
+		// carries the resolved value.
+		node.ApplyFrameResolutionDefaults(&spec)
 		sum, err := deps.Storage.Templates().Deploy(req.Context(), spec, nil)
 		if err != nil {
 			writeError(w, err)

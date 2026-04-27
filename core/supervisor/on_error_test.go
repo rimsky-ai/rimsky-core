@@ -67,9 +67,9 @@ func TestOnError_Invalidate_EmitsInvalidateToTargets(t *testing.T) {
 	ctx := context.Background()
 
 	// upstream starts fresh so InvalidateNode can transition it to stale.
-	// restore_version is valid from any state → fresh.
+	// pure_cascade is the legal stale → fresh transition reason.
 	upstream := f.addStaleNode("upstream", "worker")
-	require.NoError(t, f.sb.Nodes().UpdateState(ctx, upstream.ID, shared.NodeStateFresh, nodepkg.ReasonRestoreVersion, nil))
+	require.NoError(t, f.sb.Nodes().UpdateState(ctx, upstream.ID, shared.NodeStateFresh, nodepkg.ReasonPureCascade, nil))
 
 	worker := f.addRunningNode("worker", "worker")
 
@@ -85,10 +85,22 @@ func TestOnError_Invalidate_EmitsInvalidateToTargets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateStale, got.State)
 
-	// Upstream was invalidated (fresh → stale).
+	// Under frame resolution, InvalidateNode enqueues a rimsky_frames row
+	// for the target rather than mutating its state directly. The state
+	// transition will happen later when the scheduler tick advances the
+	// queued frame (per docs/specs/2026-04-26-frame-resolution-design.md
+	// §3.1). Until then the upstream remains in its prior state.
 	upGot, err := f.sb.Nodes().Get(ctx, upstream.ID, nil)
 	require.NoError(t, err)
-	require.Equal(t, shared.NodeStateStale, upGot.State)
+	require.Equal(t, shared.NodeStateFresh, upGot.State)
+
+	// A rimsky_frames row was enqueued for the upstream invalidate.
+	var frameCount int
+	require.NoError(t, f.pool.QueryRow(ctx, `
+        SELECT COUNT(*) FROM rimsky_frames
+        WHERE instance_id = $1 AND state = 'queued' AND $2 = ANY(source_node_ids)
+    `, f.instance, upstream.ID).Scan(&frameCount))
+	require.GreaterOrEqual(t, frameCount, 1, "expected a queued frame for the invalidated upstream")
 
 	// Error event logged on worker.
 	require.True(t, containsString(f.eventKinds(worker.ID), "error"))

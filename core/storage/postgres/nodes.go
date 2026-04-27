@@ -30,29 +30,32 @@ type NodeStore struct {
 var _ storage.NodeStore = (*NodeStore)(nil)
 
 const nodeCols = `
-  id, instance_id, node_type, executor, schedule_cron, state, dependencies, concurrency_tags,
+  id, instance_id, node_type, executor, schedule_cron, state, dependencies,
   current_error_class, retry_counter, action_index, last_heartbeat_at,
-  assigned_supervisor_id, kill_requested, created_at, updated_at
+  assigned_supervisor_id, frame_id, created_at, updated_at
 `
 
+// Create inserts a new node row with state='fresh'. Under the frame
+// resolution model (docs/specs/2026-04-26-frame-resolution-design.md
+// §3.1), nodes transition fresh→stale only via frame-start (or via
+// cascade message-pass during a running frame). Pre-frame-resolution
+// the default was 'stale' because the scheduler's ready sweep was the
+// initial-run trigger; under frames the trigger is the
+// frame.EnqueueOrCoalesce + scheduler-tick frame engine pair.
 func (s *NodeStore) Create(ctx context.Context, in storage.NodeCreateInput, tx storage.Tx) (storage.NodeRow, error) {
 	ex := q(tx, s.pool)
 	deps := in.Dependencies
 	if deps == nil {
 		deps = []shared.UUID{}
 	}
-	tags := in.ConcurrencyTags
-	if tags == nil {
-		tags = []string{}
-	}
 	row := ex.QueryRow(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, schedule_cron, state, dependencies, concurrency_tags
-		 ) VALUES ($1, $2, $3, $4, $5, 'stale', $6, $7)
+		   id, instance_id, node_type, executor, schedule_cron, state, dependencies
+		 ) VALUES ($1, $2, $3, $4, $5, 'fresh', $6)
 		 RETURNING `+nodeCols,
 		in.ID, in.InstanceID, in.NodeType,
 		nullableString(in.Executor), nullableString(in.ScheduleCron),
-		deps, tags,
+		deps,
 	)
 	return scanNode(row)
 }
@@ -303,13 +306,18 @@ func (s *NodeStore) enforceAndUpdate(
 				"computed": expected, "reason": reason.Kind,
 			})
 	}
+	// Defensive frame_id clear on every transition to 'fresh' (spec §4.4 +
+	// §10.3): a fresh node carries no frame_id. Centralising the clear
+	// here means producers don't have to issue a separate SetFrameID call
+	// — and a producer that forgets cannot strand a stale frame_id on a
+	// fresh row (per review Issue 8 / Issue 24).
 	_, err = ex.Exec(ctx,
 		`UPDATE rimsky_nodes
 		   SET state = $2,
 		       updated_at = NOW(),
-		       kill_requested = CASE WHEN $2 = 'running' THEN kill_requested ELSE FALSE END,
 		       assigned_supervisor_id = CASE WHEN $2 = 'running' THEN assigned_supervisor_id ELSE NULL END,
-		       last_heartbeat_at = CASE WHEN $2 = 'running' THEN last_heartbeat_at ELSE NULL END
+		       last_heartbeat_at = CASE WHEN $2 = 'running' THEN last_heartbeat_at ELSE NULL END,
+		       frame_id = CASE WHEN $2 = 'fresh' THEN NULL ELSE frame_id END
 		 WHERE id = $1`,
 		id, string(state),
 	)
@@ -342,10 +350,13 @@ func (s *NodeStore) UpdateHeartbeat(ctx context.Context, id shared.UUID, at time
 	return err
 }
 
-func (s *NodeStore) SetKillRequested(ctx context.Context, id shared.UUID, value bool, tx storage.Tx) error {
+// SetFrameID writes (or clears) the frame_id column on a node. Used by the
+// scheduler's frame engine at frame-start (write) and the supervisor's
+// terminal-commit path on success (clear). Per spec §10.3.
+func (s *NodeStore) SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx storage.Tx) error {
 	ex := q(tx, s.pool)
 	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_nodes SET kill_requested = $2 WHERE id = $1`, id, value)
+		`UPDATE rimsky_nodes SET frame_id = $2, updated_at = NOW() WHERE id = $1`, id, frameID)
 	return err
 }
 
@@ -375,13 +386,14 @@ func scanNode(sc scannable) (storage.NodeRow, error) {
 		currentErrClass *string
 		lastHB          *time.Time
 		assignedSup     *string
+		frameID         *shared.UUID
 	)
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
 		&executor, &scheduleCron, &r.State,
-		&r.Dependencies, &r.ConcurrencyTags,
+		&r.Dependencies,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
-		&lastHB, &assignedSup, &r.KillRequested,
+		&lastHB, &assignedSup, &frameID,
 		&r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return storage.NodeRow{}, err
@@ -391,11 +403,9 @@ func scanNode(sc scannable) (storage.NodeRow, error) {
 	r.CurrentErrorClass = derefString(currentErrClass)
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB
+	r.FrameID = frameID
 	if r.Dependencies == nil {
 		r.Dependencies = []shared.UUID{}
-	}
-	if r.ConcurrencyTags == nil {
-		r.ConcurrencyTags = []string{}
 	}
 	return r, nil
 }

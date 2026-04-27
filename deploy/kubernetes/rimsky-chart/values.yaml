@@ -6,6 +6,15 @@ image:
 postgres:
   dsn: ""                      # required; consumer supplies
 
+# stores.config — optional literal YAML body for the stores ConfigMap. When
+# empty, the ConfigMap renders the reference stores from `deploy/stores.yml`
+# (filesystem `content` rooted at /workspace/content + postgres `topics-ring`
+# claim store over `topics_items`). The operator-owned `topics_items` table
+# is NOT created by the chart — provision it out-of-band per spec §9.10
+# before installing.
+stores:
+  config: ""
+
 scheduler:
   replicas: 1
   tickIntervalMs: 1500
@@ -15,6 +24,10 @@ supervisor:
   replicas: 2
   concurrency: 8
   heartbeatIntervalMs: 5000
+  # callbackAdvertiseHost is the peer-reachable hostname executors dial back
+  # to. Defaults to the supervisor Service DNS name; override if the chart
+  # is deployed under a non-default release name.
+  callbackAdvertiseHost: ""
 
 controlapi:
   replicas: 2
@@ -29,6 +42,7 @@ httpNode:
   service:
     type: ClusterIP
     port: 9091
+    httpPort: 9092
 
 claudeAgent:
   replicas: 1
@@ -37,5 +51,6 @@ claudeAgent:
   service:
     type: ClusterIP
     port: 9090
+    httpPort: 9190
 
 resources: {}

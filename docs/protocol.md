@@ -1,8 +1,8 @@
 # Node-Executor Protocol
 
-Reference for the protocol rimsky supervisors use to dispatch work to executors. This document covers transports, message shapes, terminal-event semantics, async handoff, userdata conventions, versioning, auth, conformance, and worked examples. It is the wire contract in human-readable form; the authoritative source is `proto/v1/node_executor.proto`.
+Reference for the protocol rimsky supervisors use to dispatch work to executors. This document covers transports, message shapes, terminal-event semantics, async handoff, the incremental attributes callback, the supervisor-side action mapping, userdata conventions, versioning, auth, conformance, and worked examples. It is the wire contract in human-readable form; the authoritative source is `proto/v1/node_executor.proto`.
 
-Conceptual context (nodes, messages, resources) lives in `node-graph-design.md`; implementation shape (package layout, processes, library entry points) lives in `architecture.md`.
+Conceptual context (nodes, messages, attributes, stores, locks) lives in `node-graph-design.md`; implementation shape (package layout, processes, library entry points) lives in `architecture.md`. The full design rationale for the v1 surface lives in `specs/2026-04-25-stores-redesign-design.md` §12.
 
 ---
 
@@ -12,7 +12,7 @@ The protocol supports two transports. Both are first-class; conformance-certifie
 
 ### 1.1 gRPC (canonical)
 
-The generated gRPC service is the authoritative contract. Code in `proto/v1/node_executor.proto` declares:
+The generated gRPC service is the authoritative contract. `proto/v1/node_executor.proto` declares:
 
 ```protobuf
 service NodeExecutor {
@@ -31,6 +31,8 @@ The bridge maps:
 - `POST /v1/Execute` with a JSON-encoded `ExecuteRequest` body.
 - Response is a chunked `application/x-ndjson` stream: one JSON-encoded `ExecuteEvent` per line.
 - Stream close without a terminal event is treated identically to gRPC's cancelled-without-terminal as an infrastructure error.
+
+The HTTP body shape mirrors the gRPC message shape. Terminal events on the wire are keyed by `type` (e.g. `{"type":"complete", ...}`) on the async-handoff and incremental-attributes callback paths (see §4 and §5). On the streaming `POST /v1/Execute` response path, events are emitted as the JSON encoding of the proto `ExecuteEvent` oneof (e.g. `{"complete": {...}}`).
 
 ### 1.3 Transport selection
 
@@ -63,25 +65,55 @@ message ExecuteRequest {
   string node_type = 3;
 
   // Opaque per-node config from the template. Rimsky never interprets this;
-  // only the executor does.
+  // only the executor does. NEVER substituted.
   google.protobuf.Struct userdata = 4;
 
-  // Instance params as supplied at POST /instances, with params_redact applied.
-  google.protobuf.Struct instance_params = 5;
+  // Per-run typed attributes. Source-directive fields are pre-populated by
+  // rimsky at dispatch; sourceless fields are populated by the executor
+  // (terminal-final via attributes_delta on Complete, or incremental via
+  // POST {callback_url}/v1/attributes/{node_id}).
+  google.protobuf.Struct attributes = 5;
 
-  // Current versions of dependency resources, keyed by dependency node_type.
-  map<string, google.protobuf.Value> deps_data = 6;
+  // The declared JSON Schema for the node's attributes. For executor reference;
+  // rimsky validates at dispatch (substitution) and at commit (writeback)
+  // regardless.
+  google.protobuf.Struct attributes_schema = 6;
 
-  // Current versions of resources this node declared in reads_resources,
-  // keyed by the declared name.
-  map<string, google.protobuf.Value> reads_data = 7;
+  // Handles for each store the node references. Keyed by store-config name.
+  map<string, StoreHandle> stores = 7;
 
-  // HTTP+JSON callback URL the executor may POST to for async handoff.
-  // Populated by the supervisor; empty string if not configured.
+  // HTTP+JSON callback URL the executor may POST to for async handoff and
+  // incremental attribute writes. Empty string if the supervisor did not
+  // configure a callback endpoint.
   string callback_url = 8;
 
-  // Reserved for future use. v1 uses grpc ctx / http disconnect for cancel.
+  // Bearer token the supervisor watches for cancellation requests, also used
+  // as the authorization token on the incremental attributes callback and the
+  // async terminal callback. Format is opaque to executors.
   string cancel_token = 9;
+
+  // True iff the dispatch is a resumed retry (resumable: true +
+  // resume_then_retry). The executor may use this to short-circuit re-running
+  // already-completed work.
+  bool resumed = 10;
+
+  // Increments on every retry. Exposed for executor visibility / idempotency.
+  int32 run_attempt = 11;
+}
+
+message StoreHandle {
+  // "filesystem" | "claim_store" (and future kinds).
+  string kind = 1;
+  // Kind-specific handle payload (e.g. paths for filesystem, claim id +
+  // payload for claim_store).
+  google.protobuf.Struct handle = 2;
+  // Region intents the supervisor pre-acquired write-locks for.
+  repeated string write_regions = 3;
+  // Region intents the supervisor pre-acquired read-locks for.
+  repeated string read_regions = 4;
+  // True iff store-side prior work exists for this dispatch (e.g. a sidecar
+  // tree from a previous resumable attempt).
+  bool resumed = 5;
 }
 ```
 
@@ -89,12 +121,14 @@ Field details:
 
 - `node_id` / `instance_id` — UUIDs. Echoed in async callbacks.
 - `node_type` — template-relative type name. Executors can route internally on this.
-- `userdata` — opaque JSON. See §5.
-- `instance_params` — instance-level params; values listed in `params_redact` are omitted.
-- `deps_data` — map of dependency-node-type → current-version data of that node's resource. For nodes with multiple owned resources, the entry is a JSON map of resource-name → data. Key: the dependency's `node_type` string.
-- `reads_data` — map of read-name → current-version data for resources declared in `reads_resources`.
-- `callback_url` — the supervisor's async-handoff endpoint. Empty string if the supervisor is not configured for async.
-- `cancel_token` — reserved. v1 supervisors signal cancel via gRPC context cancellation or HTTP disconnect.
+- `userdata` — opaque JSON. See §6.
+- `attributes` — the node's typed per-run attribute object. Source-directive fields (e.g. `source: "{{deps.upstream.field}}"` or `source: "{{params.x}}"` or `source: "{{claim.payload.field}}"`) are pre-populated by the supervisor at dispatch from upstream attributes, claim payloads, and instance params; the executor should treat that subtree as read-only input. Sourceless fields are slots the executor is expected to fill in (terminal-final via `Complete.attributes_delta`, or incremental via the §5 callback).
+- `attributes_schema` — the JSON Schema for `attributes`, copied verbatim from the node template. Provided for executor reference and for languages where carrying the schema simplifies validation. Rimsky validates `attributes` against this schema both at dispatch (after substitution) and at commit (after writeback) regardless of whether the executor validates.
+- `stores` — map of store-config-name → `StoreHandle` for every store the node references. The supervisor pre-acquires the declared region (or claim) locks before populating this map; `write_regions` and `read_regions` reflect what was acquired. `kind` selects the handle shape (e.g. `filesystem` payloads carry concrete paths; `claim_store` payloads carry the claim id and its payload). See `node-graph-design.md` for the store model.
+- `callback_url` — base URL for both the async-handoff terminal callback (§4) and the incremental attributes callback (§5). Empty string if the supervisor is not configured for callbacks; in that mode the executor must not emit `AsyncAccepted` and must not attempt incremental writeback.
+- `cancel_token` — supervisor-issued bearer token. Executors echo it as `Authorization: Bearer <cancel_token>` on incremental-attributes POSTs and on async terminal callbacks; the supervisor authenticates by comparing the token against the live dispatch row.
+- `resumed` — `true` iff this dispatch is a retry of a `resumable: true` node where the previous attempt's outcome routed through `resume_then_retry`. Lets the executor short-circuit work that already landed (the supervisor preserved the corresponding store-side state and `rimsky_node_attributes.data` across the retry boundary).
+- `run_attempt` — 1-indexed retry counter, useful for idempotency keys and progress reporting.
 
 ### 2.2 `ExecuteEvent`
 
@@ -123,19 +157,21 @@ message Heartbeat {
 }
 
 message Complete {
-  google.protobuf.Value result = 1;
-  bool changed = 2;
-  string change_summary = 3;
+  bool changed = 1;
+  string change_summary = 2;
+  // Optional terminal-final attribute writeback. Empty for the
+  // incremental-via-callback pattern.
+  google.protobuf.Struct attributes_delta = 3;
 }
 
 message Blocked {
   string reason = 1;
-  google.protobuf.Value context = 2;
+  google.protobuf.Struct context = 2;
 }
 
 message Errored {
   string error_class = 1;
-  google.protobuf.Value payload = 2;
+  google.protobuf.Struct payload = 2;
 }
 
 message AsyncAccepted {
@@ -152,7 +188,7 @@ The response stream carries zero or more `Heartbeat` events followed by EXACTLY 
 
 ### 3.1 `Heartbeat` (non-terminal)
 
-An in-progress progress indicator. The executor may emit any number during a long-running execution. Each refreshes the node's `last_heartbeat_at` on the supervisor side; no application-visible effect. `note` is free-form string (shown in logs if operators look); `timestamp_ms` is the executor's clock at emit time, purely advisory.
+An in-progress progress indicator. The executor may emit any number during a long-running execution. Each refreshes the node's `last_heartbeat_at` on the supervisor side; no application-visible effect. `note` is free-form (shown in logs if operators look); `timestamp_ms` is the executor's clock at emit time, purely advisory.
 
 Heartbeats are optional. An executor that completes quickly may emit none.
 
@@ -160,11 +196,14 @@ Heartbeats are optional. An executor that completes quickly may emit none.
 
 Successful execution. The executor reports:
 
-- `result` — the work product. Serialized as `google.protobuf.Value` (arbitrary JSON).
 - `changed` — producer-declared verdict on whether this output differs meaningfully from the previous version. Governs whether `recalculate` fans out to dependents (see `node-graph-design.md` §4.3).
-- `change_summary` — optional human-readable note when `changed: true`.
+- `change_summary` — optional human-readable note, useful when `changed: true`.
+- `attributes_delta` — optional terminal-final attribute writeback, a `Struct` whose top-level keys merge into the node's attribute object. Empty (or absent) when the executor used the §5 incremental callback path, in which case the accumulated incremental writes are the authoritative final state. If both paths are used, the final attribute state is `dispatch-resolved attributes ∪ incremental writes ∪ attributes_delta` (shallow merge in that order).
 
-The supervisor hands `result` to each of the node's owned resources (if any) via the resource interface for quality-rule evaluation and commit. If all resources accept, the node transitions to `fresh` and `recalculate` emits. If any resource rejects with a `severity: error` quality failure, the supervisor routes through `on_error(quality_rule_failed)`.
+The supervisor:
+
+1. Merges the delta into the per-node attribute row, validates against `attributes_schema`, and on success emits `attributes_committed`. Validation failure is treated as a commit-time `attributes_schema_failed` and routed through the policy chain.
+2. Resolves the node's stores per §2.6 of the spec (commit / discard / preserve / give-up actions per the ReleaseLock mode chosen by the policy chain — see §7 below).
 
 ### 3.3 `Blocked` (terminal)
 
@@ -194,7 +233,7 @@ The executor has accepted the work but will report the final outcome later via H
 ### 3.6 Invariants
 
 - **Exactly one terminal event per stream.** An executor that emits two terminal events, or zero, violates the contract. Supervisors treat the second as protocol-error and log `work_rejected`.
-- **Stream close after terminal.** The executor must close the stream immediately after emitting a terminal event. Supervisors treat a hanging-open stream after terminal as infrastructure error.
+- **Stream close after terminal.** The executor must close the stream immediately after emitting a terminal event. Supervisors treat a hanging-open stream after terminal as an infrastructure error.
 - **Stream close without terminal is infrastructure error.** If the stream closes without any terminal event (executor process died, connection dropped), the supervisor routes through `on_error(infra:transport_closed)`.
 - **Heartbeats do not count as terminal.** Zero, one, or many heartbeats before the terminal event are all valid.
 
@@ -209,12 +248,12 @@ Executors whose work cannot reasonably complete within a single held `Execute` c
 1. Supervisor calls `Execute(request)`.
 2. Executor optionally emits zero or more `Heartbeat` events.
 3. Executor emits `AsyncAccepted(async_ack_id, expected_completion_ms)` as its terminal event. Closes the stream.
-4. Supervisor holds the dispatch-row claim and keeps the node in `running` state. Schedules a heartbeat-loss watchdog per its configured cutoff.
-5. Executor does the work out-of-band (spawns a subprocess, posts to an LLM, whatever).
-6. When the work completes, the executor POSTs the terminal outcome to `request.callback_url`.
-7. The supervisor's callback endpoint validates `async_ack_id` against its registry of outstanding async-handoffs and proceeds as if the terminal event had arrived on the original `Execute` stream.
+4. Supervisor holds the dispatch-row claim and keeps the node in `running` state. The pre-acquired lock-holder rows and the `rimsky_node_attributes` row persist across the async period — the supervisor does not release them until the callback arrives or the orphan-reap fires. Schedules a heartbeat-loss watchdog per its configured cutoff.
+5. Executor does the work out-of-band (spawns a subprocess, posts to an LLM, etc.). It MAY issue zero or more incremental attribute writes during this window via the §5 callback.
+6. When the work completes, the executor POSTs the terminal outcome to `${callback_url}/v1/callback/{async_ack_id}`.
+7. The supervisor's callback endpoint validates the bearer token, validates `async_ack_id` against its registry of outstanding async-handoffs, and proceeds as if the terminal event had arrived on the original `Execute` stream.
 
-### 4.2 Callback HTTP contract
+### 4.2 Terminal-callback HTTP contract
 
 The supervisor exposes a callback endpoint at the host/port it advertises to executors. The advertised base URL is supplied to the executor in `ExecuteRequest.callback_url`; the executor **appends** `/v1/callback/{async_ack_id}` to that base to reach the supervisor's chi-routed handler. (The advertised host is either `callback.advertise_host` from supervisor config or the listener's bound host — the latter is only correct on loopback; see `operator-guide.md` for container/k8s setup.)
 
@@ -222,7 +261,10 @@ The supervisor exposes a callback endpoint at the host/port it advertises to exe
 
 **Method:** `POST`.
 
-**Content-Type:** `application/json`.
+**Headers:**
+
+- `Content-Type: application/json`
+- `Authorization: Bearer <cancel_token>` — the supervisor validates this against the live dispatch row's cancel token; mismatches return `401 Unauthorized`.
 
 **Body (flat; keyed by `type`):**
 
@@ -230,23 +272,24 @@ The supervisor exposes a callback endpoint at the host/port it advertises to exe
 {
   "type": "complete" | "blocked" | "errored",
 
-  "result": <json>,              // complete
-  "changed": <bool>,             // complete
-  "change_summary": "<str>",     // complete
+  "changed": <bool>,                  // complete
+  "change_summary": "<str>",          // complete
+  "attributes_delta": <obj | null>,   // complete; null/absent for incremental-only
 
-  "reason": "<str>",             // blocked
-  "context": <json>,             // blocked
+  "reason": "<str>",                  // blocked
+  "context": <json>,                  // blocked
 
-  "error_class": "<str>",        // errored
-  "payload": <json>              // errored
+  "error_class": "<str>",             // errored
+  "payload": <json>                   // errored
 }
 ```
 
-Only the fields relevant to the selected `type` are populated; unknown fields are ignored. The supervisor matches the path's `async_ack_id` against its in-memory registry of outstanding async-handoffs.
+Only the fields relevant to the selected `type` are populated; unknown fields are ignored. `attributes_delta: null` (or absent) is the explicit "incremental writeback was used; no terminal-final delta" signal — the supervisor commits whatever incremental writes accumulated during the running window.
 
 **Responses:**
 
 - `200 OK` — callback received and applied. Response body: `{"status":"accepted"}`.
+- `401 Unauthorized` — bearer token did not match the live dispatch claim.
 - `404 Not Found` — `async_ack_id` does not match an outstanding async-handoff registered by this supervisor. Cause: the original supervisor restarted, the heartbeat-loss sweep released the claim before the callback arrived, or the executor is confused.
 - `400 Bad Request` — body malformed (bad JSON or unknown `type`).
 - `500 Internal Server Error` — supervisor-internal problem. The ack is re-registered so the executor may retry with idempotent backoff.
@@ -268,11 +311,69 @@ Don't use async handoff when:
 
 ---
 
-## 5. Userdata conventions
+## 5. Incremental attributes callback
 
-`userdata` is opaque to rimsky. The orchestrator never parses, validates, or template-substitutes it. Its contents reach the executor byte-for-byte as supplied in the template.
+Executors that emit attribute writes progressively (canonically: `claude-agent`, which streams partial state into a long-lived agent loop and benefits from durable resumption) use the incremental writeback pattern. The terminal-final pattern via `Complete.attributes_delta` is the default; the incremental callback is for executors that need each write durable before the run terminates.
 
-### 5.1 Executor-defined schema
+### 5.1 HTTP contract
+
+**URL:** `${callback_url}/v1/attributes/{node_id}` — `node_id` is taken verbatim from `ExecuteRequest.node_id`.
+
+**Method:** `POST`.
+
+**Headers:**
+
+- `Content-Type: application/json`
+- `Authorization: Bearer <cancel_token>` — same token as the async terminal callback. The supervisor's handler resolves the token to a live dispatch row owned by this supervisor and verifies the row's `node_id` matches the URL path param. Mismatches return `401 Unauthorized`.
+
+**Body:**
+
+```json
+{
+  "delta": {
+    "<field_name>": <value>,
+    ...
+  }
+}
+```
+
+The keys of `delta` are top-level attribute property names. Values are arbitrary JSON. The supervisor merges (shallow, top-level keys replace) into `rimsky_node_attributes.data`, persists, and returns:
+
+**Responses:**
+
+- `204 No Content` — write applied. No body.
+- `401 Unauthorized` — bearer token did not match a live dispatch claim, or the URL `node_id` did not match the token's dispatch row.
+- `400 Bad Request` — body malformed (bad JSON, missing `delta`, or non-object `delta`).
+- `404 Not Found` — no dispatch row for `node_id` is currently `running` on this supervisor.
+- `500 Internal Server Error` — supervisor-internal problem; safe to retry.
+
+The supervisor does **not** validate against `attributes_schema` on each incremental write — schema validation runs once at terminal commit (§3.2). Executors are free to write a partial state that would not pass schema mid-run, as long as the cumulative state at terminal time is schema-valid.
+
+### 5.2 Combining incremental and terminal-final writeback
+
+Executors may use only the incremental path, only the terminal-final path (`Complete.attributes_delta`), or both. The final committed attribute state is the shallow merge of:
+
+```
+dispatch-resolved attributes
+  ∪ incremental writes (in arrival order; later wins on collision)
+  ∪ Complete.attributes_delta (last; wins on collision)
+```
+
+The TS `claude-agent` reference executor uses the incremental path exclusively and emits `Complete{ attributes_delta: null }` to signal "incremental writes are authoritative."
+
+### 5.3 Idempotency and ordering
+
+The supervisor processes each POST atomically and in arrival order; concurrent POSTs from the same executor instance are not expected and are not specified beyond "ordering may not be preserved across overlapping in-flight requests." Executors should serialize their incremental writes per node.
+
+A duplicate write of the same key (e.g. due to network retry) will overwrite with the same value — idempotent in the trivial sense. There is no compare-and-swap primitive at the protocol layer.
+
+---
+
+## 6. Userdata conventions
+
+`userdata` is opaque to rimsky. The orchestrator never parses, validates, or template-substitutes it. Its contents reach the executor byte-for-byte as supplied in the template. (The template-substitution surface is `attributes` source directives — see `node-graph-design.md`.)
+
+### 6.1 Executor-defined schema
 
 Each executor defines its own userdata schema. The executor is responsible for validating on receipt and rejecting with `Blocked` or `Errored` on malformed input.
 
@@ -284,8 +385,6 @@ userdata:
   method: POST
   headers:
     content-type: application/json
-  body:
-    source: "{{instance_params.source_id}}"
   timeout_ms: 30000
 ```
 
@@ -295,33 +394,45 @@ Example (`claude-agent` executor):
 userdata:
   model: claude-opus-4-7
   system_prompt: "You are a data extraction assistant..."
-  user_prompt_template: "Extract items from {{deps.source.url}}"
   tools: ["web_fetch", "code_interpreter"]
-  result_schema:
-    type: object
-    properties:
-      items: { type: array }
 ```
 
-### 5.2 Template substitution within userdata
+### 6.2 No template substitution within userdata
 
-Rimsky does NOT substitute placeholders inside `userdata`. Executors that want template-like substitution (using `instance_params`, `deps_data`, `reads_data`) implement it themselves. The executor receives `instance_params`, `deps_data`, and `reads_data` in the `ExecuteRequest` and can template over `userdata` at execute time however it wishes (e.g. `{{deps.X}}` in the `http-node` body).
+Rimsky does NOT substitute placeholders inside `userdata`. Executors that want template-like substitution (referring to `attributes`, store handles, etc.) implement it themselves on top of `ExecuteRequest.attributes` and `ExecuteRequest.stores`. Convention: executors that template on userdata document their template syntax in the executor author guide and reject malformed templates as `Errored("userdata_template_error")`.
 
-Convention: executors that template on userdata should document their template syntax in the executor author guide and reject malformed templates as `Errored("userdata_template_error")`.
+### 6.3 Why opaque
 
-### 5.3 Why opaque
-
-The opacity is load-bearing (see `node-graph-design.md` §3.4). It is what lets rimsky serve every domain — HTTP, SQL, LLM, whatever — without growing a per-domain vocabulary. The cost is that rimsky cannot catch a template author's typo in the userdata block; that's the executor's job.
+The opacity is load-bearing. It is what lets rimsky serve every domain — HTTP, SQL, LLM, whatever — without growing a per-domain vocabulary. The cost is that rimsky cannot catch a template author's typo in the userdata block; that's the executor's job. The structured surface (`attributes` + `stores`) covers the domains where rimsky needs interoperability (cross-node data flow, store concurrency).
 
 ---
 
-## 6. Auth
+## 7. Supervisor-side action mapping per terminal event
 
-### 6.1 v1 recommended: mTLS
+The supervisor's per-store action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative.
+
+| Terminal event                                 | Direct mode                                                                | Sidecar / Versioned (post-v1)              |
+|------------------------------------------------|----------------------------------------------------------------------------|--------------------------------------------|
+| `Complete{changed: true}`                      | `Commit` (no-op for direct), validate attributes, `ReleaseLock(commit)`    | sidecar applied + lock released            |
+| `Complete{changed: false}`                     | `ReleaseLock(commit)`; `attributes` validated only if executor wrote any   | sidecar discarded + lock released          |
+| `Blocked` / `Errored` + `discard_then_retry`   | `ReleaseLock(give_up)` (in-flight writes already on disk)                  | sidecar discarded + lock released          |
+| `Blocked` / `Errored` + `resume_then_retry`    | `ReleaseLock(preserve_for_resume)` (sidecar IS the live tree)              | sidecar preserved + lock released          |
+| `Blocked` / `Errored` + `give_up`              | `ReleaseLock(give_up)`                                                     | sidecar discarded + lock released          |
+| `Errored` + `invalidate(targets)`              | `ReleaseLock(give_up)` + invalidate targets                                | same                                       |
+
+For claim stores, `ReleaseLock(commit)` honours the claim's `on_commit` action; `ReleaseLock(give_up)` honours `on_give_up`. For held claims, the action is processed via the held-claim resolution algorithm (see spec §5.6.4).
+
+`AsyncAccepted` is not in the table because it is not a run-terminating outcome on its own — the row above is selected once the async terminal callback arrives carrying one of `complete | blocked | errored`.
+
+---
+
+## 8. Auth
+
+### 8.1 v1 recommended: mTLS
 
 At the executor boundary (orchestrator ↔ executor), v1 ships mTLS as the supported auth model for production deployments. The supervisor's config specifies per-executor client cert paths; executors verify orchestrator certs. Certificate rotation is deployment's concern — rimsky reads cert paths at startup.
 
-### 6.2 Plain (dev-only)
+### 8.2 Plain (dev-only)
 
 In single-trust-zone deployments (docker-compose reference, local development, single-cluster with network isolation), mTLS is optional and can be disabled per-executor in supervisor config:
 
@@ -335,22 +446,26 @@ executors:
 
 For production: mTLS or equivalent network-layer authentication (service mesh with identity-aware proxies) is recommended.
 
-### 6.3 Control-API auth (separate concern)
+### 8.3 Callback auth (executor → supervisor)
 
-The control API has a different auth concern (operator interface, not service-to-service). It uses a pluggable `Authenticator` interface. v1 reference binary defaults to no auth and binds to localhost. Enterprise deployments provide their own module. See `architecture.md` §4.3.
+Both callback paths (§4 async terminal and §5 incremental attributes) authenticate with the supervisor-issued `cancel_token` carried as `Authorization: Bearer <token>`. The supervisor resolves the token to a live dispatch row and rejects with `401` on mismatch. This is the same token surface in both directions and the same lifecycle as the dispatch — no separate credential store.
+
+### 8.4 Control-API auth (separate concern)
+
+The control API has a different auth concern (operator interface, not service-to-service). It uses a pluggable `Authenticator` interface. The v1 reference binary defaults to no auth and binds to localhost. Enterprise deployments provide their own module. See `architecture.md` §4.3.
 
 ---
 
-## 7. Versioning
+## 9. Versioning
 
-### 7.1 `v1` commitments
+### 9.1 `v1` commitments
 
 - Proto files live in `proto/v1/`. The `v1` directory name is part of the package path (`rimsky.v1`).
 - Changes within `v1` are backward-compatible only: new fields with default values, new methods, new `ExecuteEvent` oneof variants that existing clients can ignore.
 - Breaking changes go to `proto/v2/` (a new directory, a new package, a new generated-code tree).
 - The rimsky module ships both versions during transition periods. Executors speaking `v1` work with orchestrators speaking `v1`, several minor versions apart.
 
-### 7.2 Compatibility guarantees
+### 9.2 Compatibility guarantees
 
 **Forward compatibility:** executors MUST gracefully ignore unknown fields in `ExecuteRequest`. This lets the orchestrator add fields (e.g. a future `trace_id`) without breaking older executors.
 
@@ -358,15 +473,15 @@ The control API has a different auth concern (operator interface, not service-to
 
 **New terminal events:** a future v1 minor revision may add a new terminal event kind via a new oneof variant. Orchestrators that don't recognize the variant MUST treat the stream as `infra:unknown_terminal`. Older executors never emit the new variant, so existing behavior is preserved.
 
-### 7.3 Capabilities advertisement (deferred)
+### 9.3 Capabilities advertisement (deferred)
 
-A future `Capabilities` RPC on the protocol will let orchestrators query executors for supported features (transports, stub mode, optional event kinds). v1 uses probe-based or config-declared advertisement. See §9.
+A future `Capabilities` RPC on the protocol will let orchestrators query executors for supported features (transports, stub mode, optional event kinds). v1 uses probe-based or config-declared advertisement. See §10.
 
 ---
 
-## 8. Conformance
+## 10. Conformance
 
-### 8.1 The conformance suite
+### 10.1 The conformance suite
 
 `rimsky-conformance` is a Go binary that validates a given executor endpoint against the protocol contract. Shipped in this repo at `core/cmd/rimsky-conformance/` and as a Docker image.
 
@@ -379,22 +494,23 @@ rimsky-conformance --endpoint grpc://localhost:9090 --transport grpc
 
 Exit code 0 = conformant; nonzero with diagnostic output = non-conformant.
 
-### 8.2 Scenarios covered
+### 10.2 Scenarios covered
 
 The suite exercises:
 
-- Correct `Execute` for a valid request.
+- Correct `Execute` for a valid request with populated `attributes` and `stores`.
 - Correct rejection of malformed userdata (expects `Blocked` or `Errored`, never `Complete`).
 - Correct `Blocked` emission.
 - Correct `Errored` emission.
-- Async handoff via `callback_url` (if the executor advertises async support).
+- Async handoff via `callback_url` (if the executor advertises async support), including bearer-token auth.
+- Incremental attributes callback (if advertised), including bearer-token auth and 401/404 paths.
 - Heartbeat emission on long-running calls.
 - Cancel handling (gRPC context cancel, HTTP disconnect).
-- Result-serialization edge cases (large numbers, null handling, nested structures).
+- `attributes_delta` round-trips a structured JSON object unchanged across encoder boundaries.
 - Exactly-one-terminal invariant.
 - Stream-close-after-terminal invariant.
 
-### 8.3 Stub-mode requirement for nondeterministic executors
+### 10.3 Stub-mode requirement for nondeterministic executors
 
 LLM-calling executors (e.g. `claude-agent`) must support a stub mode that short-circuits the LLM call with a canned response. Convention: env var `RIMSKY_EXECUTOR_STUB_MODE=1`.
 
@@ -404,7 +520,7 @@ Why: conformance must be deterministic and CI-runnable without paying API costs 
 
 For deterministic executors (e.g. `http-node` pointed at an HTTP fixture server), stub mode is not required; run with `--no-require-stub-mode`.
 
-### 8.4 CI integration
+### 10.4 CI integration
 
 The conformance image is suitable for executor authors' CI pipelines:
 
@@ -421,9 +537,9 @@ The conformance image is suitable for executor authors' CI pipelines:
 
 ---
 
-## 9. Examples
+## 11. Examples
 
-### 9.1 gRPC with `grpcurl`
+### 11.1 gRPC with `grpcurl`
 
 Assuming an executor at `localhost:9090` and the `proto/v1/` files available:
 
@@ -440,7 +556,13 @@ grpcurl -plaintext \
     "node_id": "550e8400-e29b-41d4-a716-446655440000",
     "instance_id": "660e8400-e29b-41d4-a716-446655440001",
     "node_type": "example",
-    "userdata": {"url": "https://httpbin.org/get", "method": "GET"}
+    "userdata": {"url": "https://httpbin.org/get", "method": "GET"},
+    "attributes": {"source_id": "items-2026-04"},
+    "attributes_schema": {"type": "object", "properties": {"source_id": {"type": "string"}}},
+    "stores": {},
+    "callback_url": "",
+    "cancel_token": "",
+    "run_attempt": 1
   }' \
   localhost:9090 rimsky.v1.NodeExecutor/Execute
 ```
@@ -449,10 +571,10 @@ The response is a stream of JSON-rendered `ExecuteEvent`s:
 
 ```json
 {"heartbeat": {"timestamp_ms": 1713830400000, "note": "fetching"}}
-{"complete": {"result": {"body": "..."}, "changed": true, "change_summary": "fetched 200 response"}}
+{"complete": {"changed": true, "change_summary": "fetched 200 response", "attributes_delta": {"body": "..."}}}
 ```
 
-### 9.2 HTTP+JSON with `curl`
+### 11.2 HTTP+JSON with `curl`
 
 ```bash
 curl -sN -X POST http://localhost:9091/v1/Execute \
@@ -461,7 +583,12 @@ curl -sN -X POST http://localhost:9091/v1/Execute \
     "node_id": "550e8400-e29b-41d4-a716-446655440000",
     "instance_id": "660e8400-e29b-41d4-a716-446655440001",
     "node_type": "example",
-    "userdata": {"url": "https://httpbin.org/get", "method": "GET"}
+    "userdata": {"url": "https://httpbin.org/get", "method": "GET"},
+    "attributes": {"source_id": "items-2026-04"},
+    "stores": {},
+    "callback_url": "",
+    "cancel_token": "",
+    "run_attempt": 1
   }'
 ```
 
@@ -469,21 +596,22 @@ Response (newline-delimited JSON):
 
 ```
 {"heartbeat":{"timestamp_ms":1713830400000,"note":"fetching"}}
-{"complete":{"result":{"body":"..."},"changed":true,"change_summary":"fetched 200 response"}}
+{"complete":{"changed":true,"change_summary":"fetched 200 response","attributes_delta":{"body":"..."}}}
 ```
 
-### 9.3 Async-handoff callback
+### 11.3 Async-handoff terminal callback
 
 After receiving `AsyncAccepted` from the executor, the supervisor waits for the callback. The executor eventually issues:
 
 ```bash
 curl -sS -X POST http://supervisor-callback:9100/v1/callback/async-abc-123 \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <cancel_token>' \
   -d '{
     "type": "complete",
-    "result": {"items": [{"code": "A1", "name": "Item A"}]},
     "changed": true,
-    "change_summary": "2 items extracted"
+    "change_summary": "2 items extracted",
+    "attributes_delta": {"items": [{"code": "A1", "name": "Item A"}, {"code": "A2", "name": "Item B"}]}
   }'
 ```
 
@@ -496,7 +624,38 @@ Content-Type: application/json
 {"status":"accepted"}
 ```
 
-### 9.4 Errored terminal
+When the executor used the incremental writeback path, the body carries `attributes_delta: null` (or omits the key):
+
+```json
+{
+  "type": "complete",
+  "changed": true,
+  "change_summary": "agent run completed",
+  "attributes_delta": null
+}
+```
+
+### 11.4 Incremental attributes write
+
+```bash
+curl -sS -X POST http://supervisor-callback:9100/v1/attributes/660e8400-e29b-41d4-a716-446655440001 \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <cancel_token>' \
+  -d '{
+    "delta": {
+      "items_so_far": 12,
+      "current_phase": "extracting"
+    }
+  }'
+```
+
+Response:
+
+```
+HTTP/1.1 204 No Content
+```
+
+### 11.5 Errored terminal
 
 An executor reporting an application-level error:
 
@@ -506,7 +665,7 @@ An executor reporting an application-level error:
 
 The supervisor routes this through the node's `error_types.fetch_non_json` policy chain if declared, or falls through to unknown-class `give_up` if not.
 
-### 9.5 Blocked terminal
+### 11.6 Blocked terminal
 
 An executor reporting "I can't proceed":
 
@@ -518,32 +677,40 @@ Translates to supervisor-side error class `executor_blocked` (default) or a more
 
 ---
 
-## 10. Notes for executor authors
+## 12. Notes for executor authors
 
-### 10.1 Implementation checklist
+### 12.1 Implementation checklist
 
 A conformant executor:
 
 1. Implements `NodeExecutor.Execute` (gRPC) and/or the HTTP+JSON bridge (at least one transport).
 2. Validates `ExecuteRequest.userdata` on receipt; rejects malformed input with `Blocked` or `Errored` rather than `Complete`.
-3. Emits zero or more `Heartbeat` events during long work.
-4. Emits exactly one terminal event per stream.
-5. Closes the stream immediately after the terminal event.
-6. For async handoff (if used): POSTs the terminal outcome to `callback_url` with a valid `async_ack_id`.
-7. Supports a stub mode gated on `RIMSKY_EXECUTOR_STUB_MODE=1` if the executor is otherwise nondeterministic.
-8. Passes `rimsky-conformance --endpoint ... --transport ...` (with `--require-stub-mode` for LLM-calling executors).
-9. Publishes a Docker image; optionally a native-language package (npm, pypi, crates.io).
+3. Treats source-directive subtrees of `ExecuteRequest.attributes` as read-only input; writes only into sourceless slots, either via `Complete.attributes_delta` or via the §5 incremental callback.
+4. Uses the store handles in `ExecuteRequest.stores` only within the declared `write_regions` / `read_regions`. Writing outside the declared regions is undefined behavior; the supervisor does not police it but other executors may have conflicting reservations.
+5. Emits zero or more `Heartbeat` events during long work.
+6. Emits exactly one terminal event per stream.
+7. Closes the stream immediately after the terminal event.
+8. For async handoff (if used): POSTs the terminal outcome to `${callback_url}/v1/callback/{async_ack_id}` with `Authorization: Bearer <cancel_token>` and a valid `async_ack_id`.
+9. For incremental attribute writeback (if used): POSTs to `${callback_url}/v1/attributes/{node_id}` with `Authorization: Bearer <cancel_token>` and a `{"delta": {...}}` body.
+10. Supports a stub mode gated on `RIMSKY_EXECUTOR_STUB_MODE=1` if the executor is otherwise nondeterministic.
+11. Passes `rimsky-conformance --endpoint ... --transport ...` (with `--require-stub-mode` for LLM-calling executors).
+12. Publishes a Docker image; optionally a native-language package (npm, pypi, crates.io).
 
-### 10.2 Anti-patterns
+### 12.2 Anti-patterns
 
 - **Do not emit multiple terminal events.** Second terminal is a protocol error; the supervisor logs `work_rejected` and the node's state is indeterminate on the executor side.
 - **Do not hold the stream open after terminal.** Close it. Supervisors that wait indefinitely for stream close after terminal is a bug surface; closing promptly keeps the behavior clean.
 - **Do not return 200 OK on callback errors.** If the callback POST has invalid `async_ack_id`, respond 404. If malformed, respond 400. A 200 on a bogus callback loses the error.
 - **Do not treat `Blocked` as `Errored` or vice versa.** `Blocked` is intent; `Errored` is a specific failure class. Choose based on whether the issue is "can't make progress" or "specific failure mode."
-- **Do not interpret `instance_params.params_redact` yourself.** The supervisor has already applied redactions before populating `ExecuteRequest.instance_params`. What you see is what's safe.
+- **Do not write into source-directive attribute fields.** Those subtrees are read-only inputs populated by rimsky at dispatch. Writing into them is undefined; the supervisor's commit-time validation may either accept (overwriting upstream-derived data) or reject (if the schema forbids the resulting shape).
+- **Do not skip the bearer token on callbacks.** The supervisor's callback handlers reject unauthenticated requests with `401`. Reusing `cancel_token` is not optional.
 
-### 10.3 See also
+### 12.3 See also
 
 - `executor-author-guide.md` (operator-written) has minimal examples in Go, Python, and TypeScript.
 - `proto/v1/node_executor.proto` is the authoritative contract source.
-- `executors/http-node/` is the reference Go implementation; `executors/claude-agent/` is the reference TypeScript implementation (with async handoff).
+- `executors/http-node/` is the reference Go implementation; `executors/claude-agent/` is the reference TypeScript implementation (with async handoff and incremental attributes writeback).
+
+### 12.4 Supervisor-internal: `frame_id`
+
+The supervisor associates each dispatch with a `frame_id` per the frame-resolution design (`docs/specs/2026-04-26-frame-resolution-design.md`). This identifier is supervisor-internal — it is not transmitted in the executor protocol. Executors do not need to be aware of frames; the wire contract above is unchanged by the frame-resolution spec.

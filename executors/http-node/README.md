@@ -25,29 +25,46 @@ transport-independent `sendFunc`.
   "url": "https://api.example.com/v1/things",
   "method": "POST",                              // optional; default GET
   "headers": { "Authorization": "Bearer ..." },  // optional
-  "body": { "name": "alice" },                   // optional; string or JSON-serialisable
+  "body": { "fixed": "payload" },                // optional override; if set, takes precedence over `attributes`
   "expect_status": [200, 202],                   // optional; default 2xx
-  "stub_response": { "id": "abc" }               // optional; used only in stub mode
+  "stub_response": { "id": "abc" }               // optional; used only in stub mode (must be a JSON object)
 }
 ```
 
-`url` is required. All other fields are optional.
+`url` is required. All other fields are optional. Userdata is opaque to
+rimsky — only this executor inspects it.
+
+## Request body
+
+By default the per-run `attributes` map (populated by rimsky at dispatch and
+delivered in `ExecuteRequest.attributes`) is JSON-serialised and sent as the
+upstream request body with `Content-Type: application/json`. `userdata.body`
+is an explicit override useful for fixture tests; when set it wins and
+`attributes` is not appended. With neither set, no body is sent.
+
+## Response → attributes_delta
+
+The upstream response body is the executor's `Complete.attributes_delta`
+writeback (spec §12.2). It must be a JSON object — JSON arrays/scalars are
+rejected as `http_response_parse_failed`. Non-JSON Content-Types are wrapped
+as `{ "body_base64": "...", "content_type": "..." }` so the bytes are still
+visible to downstream nodes.
 
 ## Error classes
 
 | class | when |
 | --- | --- |
-| `invalid_userdata` | `url` missing, body not JSON-serialisable, request-construction failure |
+| `invalid_userdata` | `url` missing, body not JSON-serialisable, request-construction failure, non-object `stub_response` |
 | `http_request_failed` | network error or body read failure |
 | `http_unexpected_status` | response status not in `expect_status` |
-| `http_response_parse_failed` | Content-Type declared JSON but body is not valid JSON |
+| `http_response_parse_failed` | JSON Content-Type with invalid body, or non-object JSON response |
 
 ## Stub mode
 
 Set `RIMSKY_EXECUTOR_STUB_MODE=1` to short-circuit the network path. Execute
-always returns `{"stub": true}` as the Complete result, or
-`userdata.stub_response` if supplied. Required for offline scenario tests
-(spec §14.4, Plan B Phase 3).
+always returns `{"stub": true}` as the `Complete.attributes_delta`, or
+`userdata.stub_response` if supplied (must be a JSON object). Required for
+offline scenario tests (spec §14.4, Plan B Phase 3).
 
 ## Env vars
 

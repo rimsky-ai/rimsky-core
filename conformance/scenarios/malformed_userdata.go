@@ -25,8 +25,8 @@ func init() {
 // and asserts an Errored terminal with some error class.
 func runMalformedUserdata(ctx context.Context, c executor.Client) error {
 	ud, _ := structpb.NewStruct(map[string]any{
-		"_invalid":     map[string]any{"nested_null": nil},
-		"missing_url":  true,
+		"_invalid":    map[string]any{"nested_null": nil},
+		"missing_url": true,
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",

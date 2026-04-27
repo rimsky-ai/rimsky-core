@@ -6,20 +6,20 @@ metadata:
     {{- include "rimsky.labels" . | nindent 4 }}
 data:
   supervisor-config.yml: |
-    supervisor:
-      heartbeat_interval_ms: {{ .Values.supervisor.heartbeatIntervalMs }}
-      callback_addr: ":9100"
-      concurrency:
-        total: {{ .Values.supervisor.concurrency }}
-        per_executor:
-          claude-agent: 4
-          http-node: 8
+    postgres_url: "${RIMSKY_DB_URL}"
+    concurrency: {{ .Values.supervisor.concurrency }}
+    heartbeat_interval_ms: {{ .Values.supervisor.heartbeatIntervalMs }}
+    claim_poll_interval_ms: 1000
+    callback:
+      host: 0.0.0.0
+      port: 9100
+      advertise_host: ${RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST:-}
     executors:
-      - name: claude-agent
+      claude-agent:
         transport: grpc
         endpoint: "{{ include "rimsky.fullname" . }}-claude-agent:{{ .Values.claudeAgent.service.port }}"
-        concurrency: 4
-      - name: http-node
+        tls: off
+      http-node:
         transport: grpc
         endpoint: "{{ include "rimsky.fullname" . }}-http-node:{{ .Values.httpNode.service.port }}"
-        concurrency: 8
+        tls: off

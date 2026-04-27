@@ -103,10 +103,12 @@ func probeStubMode(ctx context.Context, c executor.Client, timeout time.Duration
 			break
 		}
 		if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-			if m, ok := ce.Complete.Result.AsInterface().(map[string]any); ok {
-				if v, ok := m["stub"].(bool); ok && v {
-					return true, nil
-				}
+			// Stub mode now signals via attributes_delta — Complete.Result
+			// was removed in the §12 protocol rewrite (terminal-final
+			// attribute writeback replaces the old result field).
+			m := ce.Complete.GetAttributesDelta().AsMap()
+			if v, ok := m["stub"].(bool); ok && v {
+				return true, nil
 			}
 			return false, nil
 		}

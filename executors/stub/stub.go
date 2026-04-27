@@ -42,12 +42,55 @@ type script struct {
 // Stub is a scripted NodeExecutor server for tests.
 type Stub struct {
 	genv1.UnimplementedNodeExecutorServer
-	mu      sync.Mutex
-	scripts map[string]*script
+	mu       sync.Mutex
+	scripts  map[string]*script
+	stubMode bool
+	observed []ObservedRequest
+}
+
+// ObservedRequest captures the dispatch-time fields a test may want to assert
+// against. Per spec §12.1 the executor receives `attributes` (rimsky-populated
+// per-run typed attributes) and opaque `userdata`; the stub records both
+// per call so tests can verify the supervisor wired them through correctly.
+//
+// CallbackURL and CancelToken are recorded so scenario tests exercising
+// the §12.5 incremental-writeback path can POST per-field deltas back to
+// the supervisor with the same auth shape a real executor would use.
+type ObservedRequest struct {
+	NodeID      string
+	InstanceID  string
+	NodeType    string
+	Attributes  map[string]any
+	Userdata    map[string]any
+	CallbackURL string
+	CancelToken string
 }
 
 // New constructs a Stub with no scripted node types registered.
 func New() *Stub { return &Stub{scripts: map[string]*script{}} }
+
+// EnableStubMode switches the Stub into immediate-Complete mode. In this mode
+// every Execute call short-circuits scripted behavior and returns a single
+// Complete event with `changed: true` and `attributes_delta` populated from
+// StubAttributesFor(node_type). Used by conformance probes and end-to-end
+// stack tests where the executor surface is exercised but not the application
+// logic.
+func (s *Stub) EnableStubMode() *Stub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stubMode = true
+	return s
+}
+
+// Observed returns a snapshot of every ExecuteRequest the stub has seen since
+// construction. Safe to call concurrently with in-flight Execute calls.
+func (s *Stub) Observed() []ObservedRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ObservedRequest, len(s.observed))
+	copy(out, s.observed)
+	return out
+}
 
 // TypeBuilder registers scripted behavior for nodes of a specific type.
 type TypeBuilder struct {
@@ -119,10 +162,36 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 }
 
 // Execute implements genv1.NodeExecutorServer by streaming scripted events.
+// Records the incoming request (id/type/attributes/userdata) for test
+// inspection. If stub mode is enabled, short-circuits to an immediate
+// Complete event keyed by node_type via StubAttributesFor.
 func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_ExecuteServer) error {
 	s.mu.Lock()
+	s.observed = append(s.observed, ObservedRequest{
+		NodeID:      req.GetNodeId(),
+		InstanceID:  req.GetInstanceId(),
+		NodeType:    req.GetNodeType(),
+		Attributes:  req.GetAttributes().AsMap(),
+		Userdata:    req.GetUserdata().AsMap(),
+		CallbackURL: req.GetCallbackUrl(),
+		CancelToken: req.GetCancelToken(),
+	})
+	stubMode := s.stubMode
 	sc, ok := s.scripts[req.NodeType]
 	s.mu.Unlock()
+
+	if stubMode {
+		delta, err := structpb.NewStruct(StubAttributesFor(req.GetNodeType()))
+		if err != nil {
+			return err
+		}
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
+			AttributesDelta: delta,
+			Changed:         true,
+			ChangeSummary:   "stub",
+		}}})
+	}
+
 	if !ok {
 		return fmt.Errorf("stub: no script for node_type %q", req.NodeType)
 	}
@@ -147,15 +216,22 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 	// terminal
 	switch sc.terminal {
 	case termComplete:
-		v, err := toValue(sc.result)
+		// Spec §12.2: Complete now carries `attributes_delta` (a Struct)
+		// instead of the legacy `result` field. The stub's `result` API
+		// is preserved for test convenience and mapped to an
+		// AttributesDelta map when the value is a map[string]any (the
+		// only realistic shape post-redesign — the supervisor merges it
+		// into the resolved attribute object). Non-map / nil values are
+		// dropped; the executor side has no other field to emit them on.
+		delta, err := toStruct(sc.result)
 		if err != nil {
 			return err
 		}
 		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-			Result: v, Changed: sc.changed, ChangeSummary: sc.changeSum,
+			AttributesDelta: delta, Changed: sc.changed, ChangeSummary: sc.changeSum,
 		}}})
 	case termError:
-		v, err := toValue(sc.payload)
+		v, err := toStruct(sc.payload)
 		if err != nil {
 			return err
 		}
@@ -163,7 +239,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 			ErrorClass: sc.errorClass, Payload: v,
 		}}})
 	case termBlocked:
-		v, err := toValue(sc.payload)
+		v, err := toStruct(sc.payload)
 		if err != nil {
 			return err
 		}
@@ -194,9 +270,52 @@ func (s *Stub) Listen(t testing.TB) (*grpc.Server, string) {
 	return srv, lis.Addr().String()
 }
 
-func toValue(v any) (*structpb.Value, error) {
-	if v == nil {
-		return structpb.NewNullValue(), nil
+// stubFixtures maps node_type to a default attributes_delta the stub
+// returns when stub mode is enabled. Kept small and illustrative on
+// purpose — real consumers register their own fixtures (or use the empty
+// default) rather than relying on this map. Any node_type absent from the
+// map gets `{}` from StubAttributesFor.
+var stubFixtures = map[string]map[string]any{
+	"items.fetch":    {"items": []any{}, "fetched_at": "1970-01-01T00:00:00Z"},
+	"items.classify": {"category": "unclassified"},
+}
+
+// StubAttributesFor returns the default attributes_delta for a node_type
+// when the stub is running in stub mode. Returns an empty (non-nil) map
+// for unknown node_types so the resulting structpb.Struct has zero fields
+// (the supervisor treats an empty Struct as a no-op writeback).
+//
+// Returns a fresh map on every call; callers may mutate the result without
+// affecting subsequent dispatches.
+func StubAttributesFor(nodeType string) map[string]any {
+	src, ok := stubFixtures[nodeType]
+	if !ok {
+		return map[string]any{}
 	}
-	return structpb.NewValue(v)
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// toStruct converts an arbitrary input into a structpb.Struct for use as
+// AttributesDelta / Errored.Payload / Blocked.Context. Nil inputs return
+// nil — the supervisor treats nil delta as "no writeback".
+// map[string]any inputs are converted directly via structpb.NewStruct.
+// Other non-nil inputs are wrapped as `{value: <fmt.Sprint(v)>}` so the
+// test fixture can still observe scalar values without adding fields to
+// the proto.
+func toStruct(v any) (*structpb.Struct, error) {
+	if v == nil {
+		return nil, nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		// Wrap non-map scalars under a single "value" field so the test
+		// fixture can still observe them when needed; preserves the
+		// pre-redesign convenience without adding a field to the proto.
+		return structpb.NewStruct(map[string]any{"value": fmt.Sprintf("%v", v)})
+	}
+	return structpb.NewStruct(m)
 }

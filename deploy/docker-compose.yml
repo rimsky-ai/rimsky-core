@@ -25,20 +25,59 @@ services:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
     restart: "no"
 
+  # One-shot service that creates the operator-owned `topics_items` items
+  # table referenced by the `topics-ring` claim store in stores.yml. The
+  # claim-store-postgres factory verifies this table's schema at startup
+  # (per spec §9.10); without it scheduler / supervisor / control-api
+  # fail-fast. Operators running outside compose are responsible for
+  # creating this table out-of-band.
+  init-items:
+    image: postgres:15
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: rimsky
+    entrypoint: ["bash", "-ec"]
+    command:
+      - |
+        psql -h postgres -U rimsky -d rimsky -v ON_ERROR_STOP=1 <<'SQL'
+        CREATE TABLE IF NOT EXISTS topics_items (
+            item_id     UUID PRIMARY KEY,
+            payload     JSONB NOT NULL,
+            enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            state       TEXT NOT NULL DEFAULT 'available',
+            claim_token UUID,
+            claimed_at  TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS topics_items_available_idx
+            ON topics_items (enqueued_at) WHERE state = 'available';
+        CREATE INDEX IF NOT EXISTS topics_items_in_progress_idx
+            ON topics_items (claim_token) WHERE state = 'in_progress';
+        SQL
+    restart: "no"
+
   scheduler:
     image: rimsky/scheduler:latest
     depends_on:
       migrate:
         condition: service_completed_successfully
+      init-items:
+        condition: service_completed_successfully
     environment:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SCHEDULER_TICK_MS: "1500"
       RIMSKY_HEARTBEAT_TIMEOUT_MS: "15000"
+      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
+    volumes:
+      - ./stores.yml:/etc/rimsky/stores.yml:ro
 
   supervisor:
     image: rimsky/supervisor:latest
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      init-items:
         condition: service_completed_successfully
       claude-agent:
         condition: service_started
@@ -47,6 +86,7 @@ services:
     environment:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SUPERVISOR_CONFIG: "/etc/rimsky/supervisor-config.yml"
+      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
       # Executors need to reach the supervisor's callback endpoint by a
       # peer-reachable name (not 0.0.0.0). The service name is the right
       # default inside the compose network.
@@ -54,6 +94,8 @@ services:
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky-supervisor"
     volumes:
       - ./supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro
+      - ./stores.yml:/etc/rimsky/stores.yml:ro
+      - rimsky-content:/workspace/content
     ports:
       - "9100:9100"
 
@@ -62,10 +104,15 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      init-items:
+        condition: service_completed_successfully
     environment:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_CONTROL_API_HOST: "0.0.0.0"
       RIMSKY_CONTROL_API_PORT: "8080"
+      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
+    volumes:
+      - ./stores.yml:/etc/rimsky/stores.yml:ro
     ports:
       - "8080:8080"
 
@@ -76,6 +123,8 @@ services:
       RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
       RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT: "9092"
       RIMSKY_EXECUTOR_STUB_MODE: "1"
+    volumes:
+      - rimsky-content:/workspace/content
     ports:
       - "9091:9091"
       - "9092:9092"
@@ -87,9 +136,16 @@ services:
       RIMSKY_EXECUTOR_PORT_GRPC: "9090"
       RIMSKY_EXECUTOR_PORT_HTTP: "9190"
       RIMSKY_EXECUTOR_STUB_MODE: "1"
+    volumes:
+      - rimsky-content:/workspace/content
     ports:
       - "9090:9090"
       - "9190:9190"
 
 volumes:
   rimsky-pg: {}
+  # Shared filesystem-store root for the `content` store declared in
+  # stores.yml. Mounted on the supervisor (which builds the store handle)
+  # and on both executors (which read/write region paths handed to them
+  # by the supervisor in direct mode).
+  rimsky-content: {}

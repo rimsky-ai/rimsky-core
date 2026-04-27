@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TokenRegistry } from "./token-registry.js";
+import { TokenRegistry, type TokenEntry } from "./token-registry.js";
 
 describe("TokenRegistry", () => {
   it("registers, looks up, and releases tokens", () => {
@@ -19,12 +19,16 @@ describe("TokenRegistry", () => {
   });
 });
 
-function makeEntry(runId: string) {
+function makeEntry(runId: string): TokenEntry {
   return {
     runId,
-    resultSchema: {},
+    attributesAtSpawn: {},
+    cancelToken: "ct",
+    nodeId: "n-1",
+    callbackUrl: "http://supervisor.invalid/cb",
     onComplete: async () => ({ status: "accepted" as const }),
     onBlocked: async () => {},
     onError: async () => {},
+    onAttributesSet: async () => ({ status: 204 }),
   };
 }

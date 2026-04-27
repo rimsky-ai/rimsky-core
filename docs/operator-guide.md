@@ -251,6 +251,104 @@ reference a pool by name via `connection_ref`. If a template references a
 `connection_ref` not defined here, instance creation fails at
 `external-sql: connection_ref "X" not configured`.
 
+### 3.4 Stores configuration (`stores.yml`)
+
+In addition to the supervisor config above, **all three runtime processes
+(`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`) load a shared
+stores config** at startup. Stores are pure runtime objects built from this
+YAML — there is no `rimsky_stores` database table. Templates reference stores
+by name; resolution mirrors executor name resolution.
+
+**Env var:** `RIMSKY_STORES_CONFIG` — path to the YAML file. Default
+`/etc/rimsky/stores.yml`. The file must be readable by every process that
+loads it; supervisor pool specialization is achieved by giving each pool a
+different file (the supervisor writes its `accepted_stores` into
+`rimsky_supervisors` at registration; dispatch eligibility filters out nodes
+whose `required_stores` are not in the local pool).
+
+#### 3.4.1 Schema
+
+```yaml
+stores:
+  <name>:
+    kind: filesystem | claim_store
+    # kind-specific fields follow:
+    ...
+```
+
+**Filesystem direct-mode** (used for content the executor reads/writes
+directly off disk):
+
+```yaml
+stores:
+  content:
+    kind: filesystem
+    mode: direct
+    root: /workspace/content
+```
+
+`root` must exist and be readable/writable by the supervisor and by every
+executor that mounts it. In docker-compose this is a shared named volume; in
+Kubernetes it is a `PersistentVolumeClaim` mounted into all participating
+pods.
+
+**Claim store (postgres backend)** (queues, ring buffers, work tables):
+
+```yaml
+stores:
+  inbound:
+    kind: claim_store
+    backend: postgres
+    items_table: inbound_items
+    on_commit_default:  delete             # or release_to_back / release_to_head
+    on_give_up_default: release_to_head    # or release_to_back / delete
+    visibility_timeout_seconds: 300
+```
+
+`on_commit_default` and `on_give_up_default` choose queue (`delete` /
+`release_to_head`) vs. ring-buffer (`release_to_back`) semantics; nodes can
+override per-claim via `claim_resolutions` in the template.
+`visibility_timeout_seconds` is a backstop only — rimsky's heartbeat
+release runs first (see §7.3 in the spec for the full ordering); set it to at
+least `2 × 5 × heartbeat_interval`.
+
+#### 3.4.2 Operator-owned items table for `claim-store-postgres`
+
+The `items_table` is **operator-owned**: rimsky never creates, migrates, or
+drops it. Create it out-of-band before any process loads `stores.yml` —
+otherwise factory `Build` fails fast at startup with a "table missing or
+malformed" error.
+
+Required schema (one table per claim store; substitute your `<items_table>`
+name):
+
+```sql
+CREATE TABLE <items_table> (
+    item_id     UUID PRIMARY KEY,
+    payload     JSONB NOT NULL,
+    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    state       TEXT NOT NULL DEFAULT 'available',  -- 'available' | 'in_progress' | 'dead_letter'
+    claim_token UUID,                               -- non-null when state='in_progress'
+    claimed_at  TIMESTAMPTZ                         -- non-null when state='in_progress'
+);
+CREATE INDEX <items_table>_available_idx
+    ON <items_table> (enqueued_at) WHERE state = 'available';
+CREATE INDEX <items_table>_in_progress_idx
+    ON <items_table> (claim_token) WHERE state = 'in_progress';
+```
+
+`dead_letter` rows are produced by the supervisor when a node hits `give_up`
+and the claim's `on_give_up = delete`; inspect with
+`SELECT … WHERE state='dead_letter'`. Manual SQL flips the row back to
+`available` when you're ready to retry. There is no automated re-enqueue.
+
+Populate items either via direct SQL or via the admin API endpoint
+`POST /admin/claim-stores/:name/items` (see §5.5).
+
+The compose stack ships a one-shot `init-items` service that creates the
+default `topics_items` table; the Helm chart does not yet run an equivalent
+pre-install Job (known gap; see CHANGELOG).
+
 ---
 
 ## 4. Template authoring
@@ -437,16 +535,15 @@ curl -s -X POST http://localhost:8080/nodes/$NODE/invalidate \
   -d '{"reason": "upstream data corrected"}'
 ```
 
-Optional: `restore_version: "previous"` swaps the node's owned resources to
-their previous version as part of the invalidate.
-
-If the node is currently `running` and the invalidate is operator-originated
-(`reason` begins with `operator`), the supervisor sets `kill_requested=true`
-on the node in addition to the normal no-op-on-running behavior. The
-supervisor's heartbeat tick cancels the subprocess on the next loop; the
-resulting stream_error terminates via the normal terminal-outcome path, and
-the ready-sweep re-enqueues a fresh dispatch. Non-operator invalidates on
-a running node are silently ignored (the in-flight run is left to complete).
+Under frame resolution (see `docs/specs/2026-04-26-frame-resolution-design.md`)
+operator invalidates do **not** preempt running work. Each invalidate goes
+through `frame.EnqueueOrCoalesce`: `serial_queue` templates queue a new frame
+that runs after the in-flight one completes; `coalesce` templates fold the
+invalidate into the pending coalesce row that runs as a single trailing frame
+at frame-end. There is no kill mechanism — the `kill_requested` column was
+removed and the `POST /nodes/{id}/kill` route was deleted. To force a re-run
+"now," wait for the in-flight frame to complete; the queued / coalesced frame
+runs next.
 
 **Reset a failed node** (only legal from `state=failed`):
 ```bash
@@ -456,14 +553,23 @@ curl -s -X POST http://localhost:8080/nodes/$NODE/reset
 Clears the error counters and moves the node to `stale` so it becomes eligible
 for dispatch again.
 
-**Kill a running node** (request cancellation):
-```bash
-curl -s -X POST http://localhost:8080/nodes/$NODE/kill
-```
+### 5.3.1 Frame resolution and templates
 
-Sets `kill_requested=true`; the supervisor cancels the in-flight dispatch
-context at the next heartbeat cycle. Non-running nodes retain the flag so the
-next dispatch sees it immediately.
+Templates declare a required `frame_resolution` field (`coalesce` or
+`serial_queue`) and an optional `frame_timeout_ms` (default 600000 = 10 min;
+floor 60000). Control-api rejects template uploads missing or with invalid
+values for these fields.
+
+Inspect frame state per instance:
+```bash
+psql -c "SELECT frame_id, mode, state, source_node_ids, queued_at, started_at, ended_at
+         FROM rimsky_frames WHERE instance_id = $INSTANCE
+         ORDER BY queued_at;"
+```
+At most one frame is in `running` state per instance at any time. Frames in
+`queued` state advance on the next scheduler tick once the running frame
+ends. Frames that exceed `frame_timeout_ms` with no live executor work are
+reaped to `failed` by the scheduler.
 
 ### 5.4 Event log
 
@@ -487,6 +593,60 @@ Common kinds:
 | `operator_override` | invalidate / reset / kill |
 | `orphaned_claim_released` | supervisor heartbeat sweep reclaimed a claim |
 | `heartbeat_timeout` | in-flight node exceeded heartbeat cutoff |
+
+### 5.5 Admin endpoints
+
+All routes under `/admin/...` are gated by the global authenticator wired
+into the control-api process. Operators that want admin-only access wire an
+`Authenticator` that checks the `X-Rimsky-Admin-Token` request header against
+their configured token; processes started without an authenticator leave
+these routes anonymous (consistent with the rest of the API in pre-v1).
+
+**Insert items into a postgres claim store:**
+
+```bash
+curl -s -X POST http://localhost:8080/admin/claim-stores/inbound/items \
+  -H 'Content-Type: application/json' \
+  -H 'X-Rimsky-Admin-Token: <token>' \
+  -d '{
+    "items": [
+      {"payload": {"area": "A_1", "subtopic": "S_1"}},
+      {"payload": {"area": "A_2", "subtopic": "S_2"}}
+    ]
+  }'
+```
+
+Response: `201 Created` with `{"inserted": <n>}`. Bulk-inserts each
+`items[*].payload` into the operator-owned items table backing the named
+claim store. Errors:
+
+- `400` — empty `items` array, missing/invalid JSON in any payload, or store
+  is not a postgres claim store (`kind != claim_store / backend != postgres`)
+- `404` — no store registered under that name in the loaded `stores.yml`
+- `503` — control-api was started without a store registry (mis-wired)
+
+Rimsky itself never enqueues into a claim store; this endpoint exists for
+operators and external producers who prefer HTTP over direct SQL.
+
+**Force-fire a scheduled node (set `next_fire_at = now()`):**
+
+```bash
+curl -s -X POST http://localhost:8080/admin/scheduled-nodes/$NODE/force-fire \
+  -H 'X-Rimsky-Admin-Token: <token>'
+```
+
+Response: `204 No Content` the moment the row is updated. The handler does
+**not** wait for the cascade — the next scheduler tick picks up the row and
+fires the schedule. Callers that need to observe the fire (e.g. acceptance
+tests) poll `rimsky_nodes.state` or the events table separately.
+
+This is the same primitive the §19.2 smoke fixture uses to drive the source
+node 100 times in a row: with `RIMSKY_SCHEDULER_TICK_MS` set low (50ms in the
+fixture), each force-fire round-trips sub-second under stub executors. In
+production, prefer `POST /nodes/:id/invalidate` for one-off re-runs (it
+participates in the operator-override audit log); use `force-fire` only when
+you specifically need the schedule to advance via the regular scheduler tick
+path (e.g. you want `last_fire_at` to update).
 
 ---
 
@@ -676,6 +836,40 @@ metrics endpoint for rate-limit errors.
    ```bash
    curl -s http://localhost:8080/health | jq .
    ```
+
+### 8.1 Adopting the stores redesign (pre-v1, dev-only)
+
+Rimsky is pre-v1: there is no production data preservation guarantee. The
+stores redesign rewrites `core/migrations/001-initial.sql` in place and drops
+the legacy `rimsky_resources` / `rimsky_resource_versions` tables. Because
+`rimsky_migrations` already records `001-initial.sql` as applied on existing
+dev databases, the migration runner will skip the rewritten file and the
+schema will be wrong.
+
+**Required step: nuke the dev database before running the new code.** This
+applies only to dev / staging environments adopting the redesign — there is
+no production-data migration path, by design.
+
+Compose:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v   # -v drops the postgres volume
+docker compose -f deploy/docker-compose.yml up -d     # fresh DB; migrate runs cleanly
+```
+
+Kubernetes / external Postgres: drop and recreate the rimsky database (or
+drop the `rimsky_*` tables plus `rimsky_migrations`) before bringing up the
+new images. The migration runner then re-applies `001-initial.sql` as the
+new end-state schema.
+
+After bringing the stack up:
+
+1. Create any operator-owned claim-store items tables per §3.4.2 (the
+   compose `init-items` service handles `topics_items` automatically).
+2. Verify `RIMSKY_STORES_CONFIG` resolves to a readable `stores.yml` on
+   scheduler / supervisor / control-api (default `/etc/rimsky/stores.yml`).
+3. `curl -s http://localhost:8080/health` to confirm at least one supervisor
+   has registered.
 
 ## 9. Appendix — useful one-liners
 

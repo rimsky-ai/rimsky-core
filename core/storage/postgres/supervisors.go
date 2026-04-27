@@ -21,7 +21,7 @@ type SupervisorStore struct {
 var _ storage.SupervisorStore = (*SupervisorStore)(nil)
 
 const supervisorCols = `
-  id, accepted_executors, concurrency, callback_host, callback_port,
+  id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
   last_heartbeat_at, active_node_count, registered_at
 `
 
@@ -31,18 +31,23 @@ func (s *SupervisorStore) Register(ctx context.Context, in storage.SupervisorReg
 	if accepts == nil {
 		accepts = []string{}
 	}
+	stores := in.AcceptedStores
+	if stores == nil {
+		stores = []string{}
+	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, concurrency, callback_host, callback_port, last_heartbeat_at)
-		 VALUES ($1, $2, $3, $4, $5, NOW())
+		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port, last_heartbeat_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		 ON CONFLICT (id) DO UPDATE
 		   SET accepted_executors = EXCLUDED.accepted_executors,
-		       concurrency = EXCLUDED.concurrency,
-		       callback_host = EXCLUDED.callback_host,
-		       callback_port = EXCLUDED.callback_port,
-		       last_heartbeat_at = NOW(),
-		       active_node_count = 0`,
-		in.ID, accepts, in.Concurrency,
+		       accepted_stores    = EXCLUDED.accepted_stores,
+		       concurrency        = EXCLUDED.concurrency,
+		       callback_host      = EXCLUDED.callback_host,
+		       callback_port      = EXCLUDED.callback_port,
+		       last_heartbeat_at  = NOW(),
+		       active_node_count  = 0`,
+		in.ID, accepts, stores, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort),
 	)
 	return err
@@ -113,7 +118,7 @@ func scanSupervisor(sc scannable) (storage.SupervisorRow, error) {
 		callbackPort *int
 	)
 	if err := sc.Scan(
-		&r.ID, &r.AcceptedExecutors, &r.Concurrency,
+		&r.ID, &r.AcceptedExecutors, &r.AcceptedStores, &r.Concurrency,
 		&callbackHost, &callbackPort,
 		&r.LastHeartbeatAt, &r.ActiveNodeCount, &r.RegisteredAt,
 	); err != nil {
@@ -125,6 +130,9 @@ func scanSupervisor(sc scannable) (storage.SupervisorRow, error) {
 	}
 	if r.AcceptedExecutors == nil {
 		r.AcceptedExecutors = []string{}
+	}
+	if r.AcceptedStores == nil {
+		r.AcceptedStores = []string{}
 	}
 	return r, nil
 }

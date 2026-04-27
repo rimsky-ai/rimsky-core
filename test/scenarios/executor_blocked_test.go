@@ -1,5 +1,11 @@
 // Scenario 10 — executor emits Blocked; supervisor classifies the outcome
 // as error_class="executor_blocked" and evaluates policy.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the gated
+// node is built via scenario.MakeNode. The node has no stores, locks, or
+// attributes wiring — Blocked terminates without writing back attributes,
+// so a schema-less node is the right shape; the redesign retains the
+// per-error-class policy chain (spec §11.6) the test exercises.
 package scenarios
 
 import (
@@ -23,7 +29,7 @@ func TestExecutorBlocked(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "blocked", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{
+			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "gated", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"executor_blocked": {
@@ -32,7 +38,7 @@ func TestExecutorBlocked(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-blocked", map[string]any{})

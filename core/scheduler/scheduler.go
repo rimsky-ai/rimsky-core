@@ -1,6 +1,6 @@
 // Package scheduler main loop. Port of rimsky/src/scheduler/scheduler.ts.
 //
-// Per tick (spec §6.1):
+// Per tick (spec §6.1 + §13.5):
 //  1. Advisory-lock guard (pg_try_advisory_lock) skips ticks when another
 //     replica holds the lock. Best-effort — if lock acquisition errors we
 //     fall through to an unlocked tick rather than dropping work.
@@ -11,10 +11,25 @@
 //     than the cutoff are forced running→stale, supervisor assignment is
 //     cleared, a heartbeat_lost event is appended, and the node is
 //     re-enqueued (no retry bump — infra event, not application error).
-//  5. Orphaned-claim sweep — dispatch rows claimed past the cutoff whose
-//     node is still stale (supervisor died between Claim() and state
-//     → running). Release the claim so a fresh supervisor can pick it up.
-//  6. Ready sweep — executor-backed stale nodes whose deps are all fresh
+//  5. Dispatch-claim sweep (§13.5 step 1) — dispatch rows whose
+//     `last_heartbeat_at` is older than the cutoff are released
+//     claimant-guarded so a fresh supervisor can pick them up. The redesign
+//     switched the predicate column from `claimed_at` to `last_heartbeat_at`
+//     so a long-running heartbeating supervisor is not reaped.
+//  6. Lock-holder sweep (§13.5 step 2) — `rimsky_lock_holders` rows whose
+//     `expires_at < now()` are released: for `lock_kind='claim'` the
+//     §5.6.4 resolution algorithm runs with `actual_action = on_give_up` if
+//     a `rimsky_claim_holders` row is still active; the lock-holder row is
+//     then deleted claimant-guarded.
+//  7. Claim-holder GC (§13.5 step 3) — `rimsky_claim_holders` rows whose
+//     `holder_node_id`'s state is `failed` or `fresh` AND whose `state` is
+//     still `'active'` are leaked-resolution survivors; run §5.6.4 with
+//     `actual_action = on_give_up` to drain them.
+//  8. Visibility-timeout sweep (§13.5 step 4 + §7.7) — for each
+//     `claim-store-postgres` store in the local registry, reset items-
+//     table rows whose `claimed_at + visibility_timeout < now()` and for
+//     which no `rimsky_lock_holders` row exists.
+//  9. Ready sweep — executor-backed stale nodes whose deps are all fresh
 //     get enqueued for the next claim cycle.
 package scheduler
 
@@ -24,10 +39,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/queue"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 // RimskySchedulerTickLockKey is a fixed 64-bit advisory-lock key used to
@@ -36,16 +53,25 @@ import (
 // and try again next interval.
 //
 // @blessed-invariant "advisory lock prevents double-emit of
-// heartbeat_lost / orphaned_claim_released across replicas"
+// heartbeat_lost / orphaned_claim_released / lock_orphan_reaped across
+// replicas"
 //
 // Without this guard, two live schedulers during a deployment overlap would
-// both execute the stale-heartbeat and orphaned-claim sweeps on the same
-// rows, producing duplicate events (and, pre-claimant-guard, a risk of
-// releasing a fresh supervisor's live claim). Any refactor that removes
-// the lock guard must preserve equivalent replica-exclusive sweep semantics.
+// both execute the stale-heartbeat / dispatch-claim / lock-holder sweeps on
+// the same rows, producing duplicate events (and, pre-claimant-guard, a
+// risk of releasing a fresh supervisor's live claim or lock holder). Any
+// refactor that removes the lock guard must preserve equivalent
+// replica-exclusive sweep semantics.
 const RimskySchedulerTickLockKey int64 = 4853127298010834892
 
 // Config bundles everything the scheduler loop needs.
+//
+// LockHolders, StoreRegistry and Pool are required for the §13.5 step-2
+// (lock-holder sweep), step-3 (claim-holder GC), and step-4
+// (visibility-timeout) sweeps. When any of them are nil the corresponding
+// sweep is skipped — this keeps existing tests that exercise only the
+// dispatch-claim / heartbeat / ready sweeps from being forced into store
+// wiring.
 type Config struct {
 	Storage              storage.StorageBackend
 	Queue                queue.DispatchQueue
@@ -54,7 +80,9 @@ type Config struct {
 	TickInterval         time.Duration
 	HeartbeatTimeout     time.Duration
 	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
-	Pool                 *pgxpool.Pool // optional; enables advisory-lock guard
+	Pool                 *pgxpool.Pool // required for advisory-lock guard + new sweeps
+	LockHolders          *store.LockHoldersClient
+	StoreRegistry        *store.Registry
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -205,14 +233,46 @@ func tick(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	// 5. Orphaned-claim sweep.
+	// 5. Dispatch-claim sweep (predicate: last_heartbeat_at < cutoff).
 	if err := sweepOrphanedClaims(ctx, cfg, log); err != nil {
 		return err
 	}
 
-	// 6. Ready sweep.
+	// 6. Lock-holder sweep (§13.5 step 2). Skipped when wiring is incomplete.
+	if cfg.LockHolders != nil && cfg.Pool != nil {
+		if err := sweepLockHolders(ctx, cfg, log); err != nil {
+			return err
+		}
+	}
+
+	// 7. Claim-holder GC (§13.5 step 3). Same wiring requirement.
+	if cfg.LockHolders != nil && cfg.Pool != nil {
+		if err := claimHolderGC(ctx, cfg, log); err != nil {
+			return err
+		}
+	}
+
+	// 8. Visibility-timeout sweep (§13.5 step 4 + §7.7). Requires the
+	// per-process store registry; skipped otherwise (e.g. tests without
+	// claim stores).
+	if cfg.StoreRegistry != nil && cfg.Pool != nil {
+		if err := visibilityTimeoutSweep(ctx, cfg, log); err != nil {
+			return err
+		}
+	}
+
+	// 9. Ready sweep.
 	if err := sweepReady(ctx, cfg, log); err != nil {
 		return err
+	}
+
+	// 10. Frame engine tick (frame-end detection, queue advancement,
+	// stuck-frame reaper, orphan-frame-dispatch reap).
+	// Skipped when the pool isn't wired (test harnesses without a pool).
+	if cfg.Pool != nil {
+		if err := frame.RunTick(ctx, cfg.Pool, log); err != nil {
+			log.Warn("tick: frame.RunTick failed", "error", err.Error())
+		}
 	}
 	return nil
 }
@@ -246,12 +306,26 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 				"node_id", n.ID.String(), "error", err.Error())
 			continue
 		}
-		// Re-enqueue without bumping retry_counter.
+		// Re-enqueue without bumping retry_counter. RequiredStores is left
+		// empty here for the same reason recalculate.go leaves it empty: the
+		// scheduler tick does not have the in-memory template registry
+		// threaded through, and an empty RequiredStores trivially satisfies
+		// the supervisor-pool predicate (RequiredStores ⊆ AcceptedStores).
+		// Threading the registry through is a separate task.
+		// FrameID is sourced from the node row — heartbeat-lost nodes were
+		// running in a frame and that frame_id remains the running frame
+		// (per blessed-invariant 19).
+		if n.FrameID == nil {
+			log.Warn("tick: skip re-enqueue: node frame_id is nil",
+				"node_id", n.ID.String())
+			continue
+		}
 		if err := cfg.Queue.Enqueue(ctx, queue.DispatchRequest{
-			NodeID:          n.ID,
-			ExecutorName:    n.Executor,
-			ConcurrencyTags: n.ConcurrencyTags,
-			EnqueuedAt:      cfg.Clock.Now(),
+			NodeID:         n.ID,
+			ExecutorName:   n.Executor,
+			RequiredStores: []string{},
+			EnqueuedAt:     cfg.Clock.Now(),
+			FrameID:        *n.FrameID,
 		}); err != nil {
 			log.Warn("tick: re-enqueue after heartbeat_lost failed",
 				"node_id", n.ID.String(), "error", err.Error())
@@ -261,6 +335,9 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 }
 
 func sweepOrphanedClaims(ctx context.Context, cfg Config, log shared.Logger) error {
+	// §13.5 step 1: predicate column is `last_heartbeat_at`. The Queue's
+	// ListOrphanedClaims already encodes that predicate; the cutoff we pass
+	// is `now() - 5 × heartbeat_timeout`.
 	cutoff := cfg.Clock.Now().Add(-cfg.OrphanedClaimTimeout)
 	orphans, err := cfg.Queue.ListOrphanedClaims(ctx, cutoff)
 	if err != nil {
@@ -280,13 +357,17 @@ func sweepOrphanedClaims(ctx context.Context, cfg Config, log shared.Logger) err
 				"dispatch_id", o.ID.String(), "error", err.Error())
 			continue
 		}
+		var hb time.Time
+		if o.LastHeartbeatAt != nil {
+			hb = *o.LastHeartbeatAt
+		}
 		if err := cfg.Storage.Events().Append(ctx, storage.EventAppendInput{
 			NodeID: &nodeID,
 			Kind:   "orphaned_claim_released",
 			Payload: map[string]any{
-				"dispatch_id":      o.ID.String(),
-				"prior_claimed_by": prior,
-				"claimed_at":       o.ClaimedAt,
+				"dispatch_id":       o.ID.String(),
+				"prior_claimed_by":  prior,
+				"last_heartbeat_at": hb,
 			},
 		}, nil); err != nil {
 			log.Warn("tick: append orphaned_claim_released failed",
@@ -302,11 +383,23 @@ func sweepReady(ctx context.Context, cfg Config, log shared.Logger) error {
 		return err
 	}
 	for _, n := range ready {
+		// RequiredStores is left empty; see sweepStaleHeartbeats for the
+		// rationale (mirrors recalculate.go's `[]string{}` placeholder).
+		// FrameID is sourced from the node row — every stale node is part
+		// of the in-flight frame (blessed-invariant 19). A nil frame_id
+		// here means the frame engine has not yet advanced this node's
+		// queued frame; we skip and re-evaluate next tick.
+		if n.FrameID == nil {
+			log.Debug("tick: ready-sweep skip: node frame_id is nil",
+				"node_id", n.ID.String())
+			continue
+		}
 		if err := cfg.Queue.Enqueue(ctx, queue.DispatchRequest{
-			NodeID:          n.ID,
-			ExecutorName:    n.Executor,
-			ConcurrencyTags: n.ConcurrencyTags,
-			EnqueuedAt:      cfg.Clock.Now(),
+			NodeID:         n.ID,
+			ExecutorName:   n.Executor,
+			RequiredStores: []string{},
+			EnqueuedAt:     cfg.Clock.Now(),
+			FrameID:        *n.FrameID,
 		}); err != nil {
 			log.Warn("tick: ready-sweep enqueue failed",
 				"node_id", n.ID.String(), "error", err.Error())
@@ -328,13 +421,12 @@ type scheduleDispatcherAdapter struct {
 
 func (a scheduleDispatcherAdapter) EmitInvalidate(ctx context.Context, req InvalidateRequest) error {
 	return InvalidateNode(ctx, InvalidateArgs{
-		Storage:        a.Storage,
-		Queue:          a.Queue,
-		Clock:          a.Clock,
-		Logger:         a.Logger,
-		SourceNodeID:   req.SourceNodeID,
-		TargetNodeID:   req.TargetNodeID,
-		Reason:         req.Reason,
-		RestoreVersion: req.RestoreVersion,
+		Storage:      a.Storage,
+		Queue:        a.Queue,
+		Clock:        a.Clock,
+		Logger:       a.Logger,
+		SourceNodeID: req.SourceNodeID,
+		TargetNodeID: req.TargetNodeID,
+		Reason:       req.Reason,
 	})
 }

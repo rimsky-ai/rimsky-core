@@ -1,9 +1,11 @@
 // nodes.go — GET /nodes/:id, POST /nodes/:id/invalidate,
-// POST /nodes/:id/reset, POST /nodes/:id/kill, GET /instances/:id_or_key/nodes.
+// POST /nodes/:id/reset, GET /instances/:id_or_key/nodes.
 //
-// Operator overrides (invalidate / reset / kill) emit an `operator_override`
-// event so audits can see who drove the state change. Handlers return 404 when
-// the node does not exist.
+// Operator overrides (invalidate / reset) emit an `operator_override`
+// event so audits can see who drove the state change. The kill route was
+// removed by the frame-resolution redesign (spec §5.4): operator
+// invalidates enqueue/coalesce a frame; in-flight work is never preempted.
+// Handlers return 404 when the node does not exist.
 package controlapi
 
 import (
@@ -15,10 +17,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 type nodeResponse struct {
@@ -29,13 +33,12 @@ type nodeResponse struct {
 	ScheduleCron         string     `json:"schedule_cron,omitempty"`
 	State                string     `json:"state"`
 	Dependencies         []string   `json:"dependencies"`
-	ConcurrencyTags      []string   `json:"concurrency_tags"`
 	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
 	RetryCounter         int        `json:"retry_counter"`
 	ActionIndex          int        `json:"action_index"`
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
 	AssignedSupervisorID string     `json:"assigned_supervisor_id,omitempty"`
-	KillRequested        bool       `json:"kill_requested"`
+	FrameID              string     `json:"frame_id,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
@@ -45,8 +48,9 @@ func toNodeResponse(n storage.NodeRow) nodeResponse {
 	for _, d := range n.Dependencies {
 		deps = append(deps, d.String())
 	}
-	if n.ConcurrencyTags == nil {
-		n.ConcurrencyTags = []string{}
+	frameID := ""
+	if n.FrameID != nil {
+		frameID = n.FrameID.String()
 	}
 	return nodeResponse{
 		ID:                   n.ID.String(),
@@ -56,21 +60,22 @@ func toNodeResponse(n storage.NodeRow) nodeResponse {
 		ScheduleCron:         n.ScheduleCron,
 		State:                string(n.State),
 		Dependencies:         deps,
-		ConcurrencyTags:      n.ConcurrencyTags,
 		CurrentErrorClass:    n.CurrentErrorClass,
 		RetryCounter:         n.RetryCounter,
 		ActionIndex:          n.ActionIndex,
 		LastHeartbeatAt:      n.LastHeartbeatAt,
 		AssignedSupervisorID: n.AssignedSupervisorID,
-		KillRequested:        n.KillRequested,
+		FrameID:              frameID,
 		CreatedAt:            n.CreatedAt,
 		UpdatedAt:            n.UpdatedAt,
 	}
 }
 
+// invalidateNodeRequest carries the optional human-readable reason an operator
+// supplies on POST /nodes/:id/invalidate. The pre-redesign `RestoreVersion`
+// field was removed alongside the resource versioning system (spec §11.3).
 type invalidateNodeRequest struct {
-	Reason         string `json:"reason,omitempty"`
-	RestoreVersion string `json:"restore_version,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // registerNodesRoutes wires the /nodes and /instances/:id_or_key/nodes groups.
@@ -78,7 +83,6 @@ func registerNodesRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/nodes/{id}", handleGetNode(deps))
 	r.Post("/nodes/{id}/invalidate", handleInvalidateNode(deps))
 	r.Post("/nodes/{id}/reset", handleResetNode(deps))
-	r.Post("/nodes/{id}/kill", handleKillNode(deps))
 	r.Get("/instances/{idOrKey}/nodes", handleListInstanceNodes(deps))
 }
 
@@ -127,19 +131,17 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			NodeID: &id,
 			Kind:   "operator_override",
 			Payload: map[string]any{
-				"action":          "invalidate",
-				"reason":          body.Reason,
-				"restore_version": body.RestoreVersion,
+				"action": "invalidate",
+				"reason": body.Reason,
 			},
 		}, nil)
 		if err := scheduler.InvalidateNode(req.Context(), scheduler.InvalidateArgs{
-			Storage:        deps.Storage,
-			Queue:          deps.Queue,
-			Clock:          deps.Clock,
-			Logger:         deps.Logger,
-			TargetNodeID:   id,
-			Reason:         "operator_override",
-			RestoreVersion: body.RestoreVersion,
+			Storage:      deps.Storage,
+			Queue:        deps.Queue,
+			Clock:        deps.Clock,
+			Logger:       deps.Logger,
+			TargetNodeID: id,
+			Reason:       "operator_override",
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -148,6 +150,17 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+// handleResetNode drives a failed node back into the engine via
+// frame.EnqueueOrCoalesce. Direct UpdateState(failed → stale) bypassing
+// the frame model would strand the node with no frame_id (blessed-
+// invariant 19) — the scheduler's ready sweeps and recalculate.go
+// explicitly skip nodes with nil frame_id, and the node would never run.
+//
+// The handler:
+//  1. Clears error bookkeeping (action_index/retry_counter/error_class).
+//  2. Defensively clears the stale frame_id pointing at the failed frame.
+//  3. Calls frame.EnqueueOrCoalesce so the next scheduler tick advances
+//     the queued frame and writes the source node stale + new frame_id.
 func handleResetNode(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -176,8 +189,26 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Transition failed → stale via operator_reset.
-		if err := deps.Storage.Nodes().UpdateState(req.Context(), id, shared.NodeStateStale, node.ReasonOperatorReset, nil); err != nil {
+		// Defensively clear the stale frame_id pointing at the previously-
+		// failed frame; the frame engine will write the new frame's id at
+		// frame-start.
+		if err := deps.Storage.Nodes().SetFrameID(req.Context(), id, nil, nil); err != nil {
+			writeError(w, err)
+			return
+		}
+		// Drive the reset through the frame engine. EnqueueOrCoalesce in
+		// 'serial_queue' mode creates a new queued frame; in 'coalesce'
+		// mode it appends this node to the pending coalesce row (or
+		// creates a new one). The source-eligibility predicate at
+		// frame-start (advanceOneFrame) accepts state=failed.
+		if err := deps.Storage.Transaction(req.Context(), func(ctx context.Context, stx storage.Tx) error {
+			pgT, err := pgstorage.PgxTxFromStorage(stx)
+			if err != nil {
+				return err
+			}
+			_, err = frame.EnqueueOrCoalesce(ctx, pgT, row.InstanceID, row.ID)
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -189,44 +220,6 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			},
 		}, nil)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	}
-}
-
-func handleKillNode(deps AppDeps) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, err := uuid.Parse(chi.URLParam(req, "id"))
-		if err != nil {
-			badRequest(w, "invalid id")
-			return
-		}
-		row, err := deps.Storage.Nodes().Get(req.Context(), id, nil)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if row == nil {
-			notFoundResp(w, shared.ErrNodeNotFound.Error())
-			return
-		}
-		// Flip the kill flag regardless of state — spec says no-op on
-		// non-running nodes, but we still record the flag + audit event so a
-		// subsequent dispatch sees it immediately.
-		if err := deps.Storage.Nodes().SetKillRequested(req.Context(), id, true, nil); err != nil {
-			writeError(w, err)
-			return
-		}
-		_ = deps.Storage.Events().Append(req.Context(), storage.EventAppendInput{
-			NodeID: &id,
-			Kind:   "operator_override",
-			Payload: map[string]any{
-				"action": "kill",
-				"state":  string(row.State),
-			},
-		}, nil)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":             true,
-			"kill_requested": true,
-		})
 	}
 }
 

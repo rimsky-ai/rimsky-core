@@ -48,6 +48,12 @@ func createInstance(ctx context.Context, t *testing.T, b *PostgresStorageBackend
 	return inst
 }
 
+// createNode creates a node and forces it to 'stale' so storage tests can
+// continue to exercise the pre-frame-model state-machine paths
+// (dispatch_claimed, work_completed, etc.). The new Create() default is
+// 'fresh' under the frame-resolution model
+// (docs/specs/2026-04-26-frame-resolution-design.md §3.1); tests of the
+// state machine still want a stale starting point.
 func createNode(ctx context.Context, t *testing.T, b *PostgresStorageBackend, instanceID shared.UUID, executor string, deps ...shared.UUID) storage.NodeRow {
 	t.Helper()
 	in := storage.NodeCreateInput{
@@ -56,6 +62,13 @@ func createNode(ctx context.Context, t *testing.T, b *PostgresStorageBackend, in
 	}
 	n, err := b.Nodes().Create(ctx, in, nil)
 	require.NoError(t, err)
+	// Force to 'stale' for state-machine tests.
+	if _, err := b.pool.Exec(ctx,
+		`UPDATE rimsky_nodes SET state = 'stale' WHERE id = $1`, n.ID,
+	); err != nil {
+		t.Fatalf("createNode: force stale: %v", err)
+	}
+	n.State = shared.NodeStateStale
 	return n
 }
 
@@ -182,7 +195,7 @@ func TestInstanceStore(t *testing.T) {
 func TestNodeStore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, _, teardown := newBackend(t)
+	b, pool, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
 	tpl := deployedTemplate(ctx, t, b, "alpha", "v1")
@@ -295,11 +308,24 @@ func TestNodeStore(t *testing.T) {
 	require.Equal(t, "", cleared.AssignedSupervisorID)
 	require.Nil(t, cleared.LastHeartbeatAt)
 
-	// SetKillRequested.
-	require.NoError(t, b.Nodes().SetKillRequested(ctx, detachedNode.ID, true, nil))
-	killSet, err := b.Nodes().Get(ctx, detachedNode.ID, nil)
+	// SetFrameID — write a frame row first, then attach.
+	var frameID shared.UUID
+	require.NoError(t, pool.QueryRow(ctx, `
+        INSERT INTO rimsky_frames
+            (instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
+        VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), 600000)
+        RETURNING frame_id`, inst.ID, detachedNode.ID).Scan(&frameID))
+	require.NoError(t, b.Nodes().SetFrameID(ctx, detachedNode.ID, &frameID, nil))
+	withFrame, err := b.Nodes().Get(ctx, detachedNode.ID, nil)
 	require.NoError(t, err)
-	require.True(t, killSet.KillRequested)
+	require.NotNil(t, withFrame.FrameID)
+	require.Equal(t, frameID, *withFrame.FrameID)
+
+	// Clear it back.
+	require.NoError(t, b.Nodes().SetFrameID(ctx, detachedNode.ID, nil, nil))
+	cleared2, err := b.Nodes().Get(ctx, detachedNode.ID, nil)
+	require.NoError(t, err)
+	require.Nil(t, cleared2.FrameID)
 
 	// DeleteByInstance.
 	require.NoError(t, b.Nodes().DeleteByInstance(ctx, inst.ID, nil))
@@ -331,109 +357,6 @@ func TestNodeStore_UpdateStateRejectsRunningToRunningUnderDispatchClaimed(t *tes
 	after, err := b.Nodes().Get(ctx, n.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateRunning, after.State)
-}
-
-// -------- Resources --------
-
-func TestResourceRegistry(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	b, _, teardown := newBackend(t)
-	t.Cleanup(teardown)
-
-	tpl := deployedTemplate(ctx, t, b, "r", "v1")
-	inst := createInstance(ctx, t, b, tpl.ID, "ck")
-	owner := createNode(ctx, t, b, inst.ID, "worker")
-
-	res, err := b.Resources().Create(ctx, storage.ResourceCreateInput{
-		ResourcePath: []string{"a", "b"}, OwnerNodeID: owner.ID, KeepVersions: 3,
-	}, nil)
-	require.NoError(t, err)
-	require.Equal(t, 3, res.KeepVersions)
-
-	// Commit v1.
-	v1, err := b.Resources().CommitVersion(ctx, res.ID, storage.ResourceCommitInput{
-		ProducedBy: owner.ID, Data: []byte(`{"n":1}`), ChangeSummary: "first",
-	}, nil)
-	require.NoError(t, err)
-	require.Equal(t, "first", v1.ChangeSummary)
-
-	// NoOp is silent.
-	require.NoError(t, b.Resources().NoOpCommit(ctx, res.ID, nil))
-
-	// Commit v2 + v3.
-	v2, err := b.Resources().CommitVersion(ctx, res.ID, storage.ResourceCommitInput{
-		ProducedBy: owner.ID, Data: []byte(`{"n":2}`),
-	}, nil)
-	require.NoError(t, err)
-	v3, err := b.Resources().CommitVersion(ctx, res.ID, storage.ResourceCommitInput{
-		ProducedBy: owner.ID, Data: []byte(`{"n":3}`),
-	}, nil)
-	require.NoError(t, err)
-
-	// After 3 commits with keep_versions=3, all 3 survive GC.
-	versions, err := b.Resources().ListVersions(ctx, res.ID, nil)
-	require.NoError(t, err)
-	require.Len(t, versions, 3)
-
-	// Current/previous correctness.
-	got, err := b.Resources().Get(ctx, res.ID, nil)
-	require.NoError(t, err)
-	require.NotNil(t, got.CurrentVersionID)
-	require.Equal(t, v3.ID, *got.CurrentVersionID)
-	require.NotNil(t, got.PreviousVersionID)
-	require.Equal(t, v2.ID, *got.PreviousVersionID)
-
-	// RestoreVersion "previous": swap current ← previous.
-	restored, err := b.Resources().RestoreVersion(ctx, res.ID, "previous", shared.UUID{}, nil)
-	require.NoError(t, err)
-	require.Equal(t, v2.ID, restored.ID)
-
-	gotAfter, err := b.Resources().Get(ctx, res.ID, nil)
-	require.NoError(t, err)
-	require.Equal(t, v2.ID, *gotAfter.CurrentVersionID)
-
-	// RestoreVersion by id.
-	restoredByID, err := b.Resources().RestoreVersion(ctx, res.ID, "id", v1.ID, nil)
-	require.NoError(t, err)
-	require.Equal(t, v1.ID, restoredByID.ID)
-
-	// GCOldVersions with keep=1 drops old but preserves current/previous.
-	dropped, err := b.Resources().GCOldVersions(ctx, res.ID, 1, nil)
-	require.NoError(t, err)
-	// v2 is referenced as current, v1 as previous (after last restore flipped
-	// previous↔current? actually restore-by-id only sets current, doesn't
-	// swap previous). The keep-set union also includes the top-1 by
-	// committed_at DESC (=v3). So we expect at most 1 drop.
-	require.LessOrEqual(t, dropped, 3)
-	remaining, err := b.Resources().ListVersions(ctx, res.ID, nil)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(remaining), 1)
-
-	// GetVersion.
-	again, err := b.Resources().GetVersion(ctx, v1.ID, nil)
-	require.NoError(t, err)
-	require.NotNil(t, again)
-
-	// Paginated listing.
-	paged, err := b.Resources().ListVersionsPaged(ctx, res.ID, storage.ListPagination{Limit: 1}, nil)
-	require.NoError(t, err)
-	require.Len(t, paged.Rows, 1)
-
-	// ListByOwner.
-	byOwner, err := b.Resources().ListByOwner(ctx, owner.ID, nil)
-	require.NoError(t, err)
-	require.Len(t, byOwner, 1)
-
-	// ResourceData.Read returns parsed JSON.
-	ver, err := b.Resources().GetVersion(ctx, v1.ID, nil)
-	require.NoError(t, err)
-	require.NotNil(t, ver)
-	val, err := b.ResourceData().Read(ctx, *ver, nil)
-	require.NoError(t, err)
-	m, ok := val.(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, float64(1), m["n"])
 }
 
 // -------- Events --------
@@ -562,14 +485,17 @@ func TestSupervisorStore(t *testing.T) {
 
 	// Register + re-register (upsert).
 	require.NoError(t, b.Supervisors().Register(ctx, storage.SupervisorRegisterInput{
-		ID: "sup-1", AcceptedExecutors: []string{"alpha", "beta"}, Concurrency: 4,
-		CallbackHost: "localhost", CallbackPort: 9000,
+		ID: "sup-1", AcceptedExecutors: []string{"alpha", "beta"},
+		AcceptedStores: []string{"content", "topics"},
+		Concurrency:    4,
+		CallbackHost:   "localhost", CallbackPort: 9000,
 	}, nil))
 
 	got, err := b.Supervisors().Get(ctx, "sup-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, []string{"alpha", "beta"}, got.AcceptedExecutors)
+	require.Equal(t, []string{"content", "topics"}, got.AcceptedStores)
 	require.Equal(t, "localhost", got.CallbackHost)
 	require.Equal(t, 9000, got.CallbackPort)
 
@@ -630,4 +556,292 @@ func TestTransaction_RollbackOnError(t *testing.T) {
 	got, err := b.Instances().GetByConsumerKey(ctx, tpl.ID, "rollback", nil)
 	require.NoError(t, err)
 	require.Nil(t, got)
+}
+
+// -------- Node attributes --------
+
+func TestNodeAttributesStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, _, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	tpl := deployedTemplate(ctx, t, b, "attrs", "v1")
+	inst := createInstance(ctx, t, b, tpl.ID, "ck")
+	n := createNode(ctx, t, b, inst.ID, "worker")
+
+	// Get on missing row → (nil, nil).
+	missing, err := b.NodeAttributes().Get(ctx, n.ID)
+	require.NoError(t, err)
+	require.Nil(t, missing)
+
+	// Upsert creates the row.
+	require.NoError(t, b.NodeAttributes().Upsert(ctx, n.ID, 0, map[string]any{
+		"a": float64(1), "b": "two",
+	}))
+	got, err := b.NodeAttributes().Get(ctx, n.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, 0, got.RunAttempt)
+	require.Equal(t, float64(1), got.Data["a"])
+	require.Equal(t, "two", got.Data["b"])
+
+	// MergeDelta does shallow merge.
+	require.NoError(t, b.NodeAttributes().MergeDelta(ctx, n.ID, map[string]any{
+		"b": "TWO", "c": float64(3),
+	}))
+	merged, err := b.NodeAttributes().Get(ctx, n.ID)
+	require.NoError(t, err)
+	require.Equal(t, float64(1), merged.Data["a"])
+	require.Equal(t, "TWO", merged.Data["b"])
+	require.Equal(t, float64(3), merged.Data["c"])
+
+	// IncrementRunAttempt bumps run_attempt.
+	naStore := b.NodeAttributes().(*NodeAttributesStore)
+	newAttempt, err := naStore.IncrementRunAttempt(ctx, n.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, newAttempt)
+
+	// ClearExecutorPopulated preserves source-driven fields, drops the rest.
+	schema := map[string]any{
+		"properties": map[string]any{
+			"a": map[string]any{"type": "number", "source": "{{params.a}}"},
+			"b": map[string]any{"type": "string"}, // executor-populated
+			// c is not in the schema → kept verbatim.
+		},
+	}
+	require.NoError(t, naStore.ClearExecutorPopulated(ctx, n.ID, schema))
+	cleared, err := b.NodeAttributes().Get(ctx, n.ID)
+	require.NoError(t, err)
+	require.Equal(t, float64(1), cleared.Data["a"], "source-driven 'a' preserved")
+	_, hasB := cleared.Data["b"]
+	require.False(t, hasB, "executor-populated 'b' cleared")
+	require.Equal(t, float64(3), cleared.Data["c"], "schema-absent 'c' kept verbatim")
+
+	// MergeDelta on a non-existent node returns ErrNoRows.
+	err = b.NodeAttributes().MergeDelta(ctx, uuid.New(), map[string]any{"x": "y"})
+	require.Error(t, err)
+}
+
+// -------- Lock holders --------
+
+func TestLockHoldersStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, _, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	require.NoError(t, b.Supervisors().Register(ctx, storage.SupervisorRegisterInput{
+		ID: "sup-A", AcceptedExecutors: []string{"exec"}, Concurrency: 1,
+	}, nil))
+	require.NoError(t, b.Supervisors().Register(ctx, storage.SupervisorRegisterInput{
+		ID: "sup-B", AcceptedExecutors: []string{"exec"}, Concurrency: 1,
+	}, nil))
+
+	tpl := deployedTemplate(ctx, t, b, "locks", "v1")
+	inst := createInstance(ctx, t, b, tpl.ID, "ck")
+	n1 := createNode(ctx, t, b, inst.ID, "worker")
+	n2 := createNode(ctx, t, b, inst.ID, "worker")
+
+	// Insert a named-lock row (must be inside a tx).
+	storeName := "content"
+	regionRowID := uuid.New()
+	namedRowID := uuid.New()
+	now := time.Now().UTC()
+	expiresFar := now.Add(10 * time.Minute)
+
+	err := b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		lockName := "global-mutex"
+		if err := b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: namedRowID, LockKind: storage.LockKindNamed,
+			LockName:           &lockName,
+			HolderSupervisorID: "sup-A", HolderNodeID: n1.ID,
+			ExpiresAt: expiresFar,
+		}, tx); err != nil {
+			return err
+		}
+		regionData := []byte(`{"glob":"a/*"}`)
+		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: regionRowID, LockKind: storage.LockKindRegion,
+			StoreName:          &storeName,
+			RegionData:         regionData,
+			HolderSupervisorID: "sup-A", HolderNodeID: n2.ID,
+			ExpiresAt: expiresFar,
+		}, tx)
+	})
+	require.NoError(t, err)
+
+	// Get + ListByHolderNode + ListBySupervisor work.
+	got, err := b.LockHolders().Get(ctx, namedRowID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, storage.LockKindNamed, got.LockKind)
+	require.NotNil(t, got.LockName)
+	require.Equal(t, "global-mutex", *got.LockName)
+
+	rowsByNode, err := b.LockHolders().ListByHolderNode(ctx, n2.ID, nil)
+	require.NoError(t, err)
+	require.Len(t, rowsByNode, 1)
+	require.Equal(t, regionRowID, rowsByNode[0].ID)
+
+	rowsBySup, err := b.LockHolders().ListBySupervisor(ctx, "sup-A", nil)
+	require.NoError(t, err)
+	require.Len(t, rowsBySup, 2)
+
+	// Set the region row to expired and verify ListExpired surfaces only it.
+	pool := b.pool
+	_, err = pool.Exec(ctx,
+		`UPDATE rimsky_lock_holders SET expires_at = $1 WHERE id = $2`,
+		now.Add(-time.Hour), regionRowID,
+	)
+	require.NoError(t, err)
+	expired, err := b.LockHolders().ListExpired(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	require.Equal(t, regionRowID, expired[0].ID)
+
+	// Delete is claimant-guarded: wrong supervisor → no-op. Delete
+	// requires a non-nil tx (per spec §13.5 step 2 it must commit
+	// atomically with the store-side ReleaseLock).
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Delete(ctx, regionRowID, "sup-B", tx)
+	}))
+	stillThere, err := b.LockHolders().Get(ctx, regionRowID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, stillThere, "wrong-supervisor delete must no-op")
+
+	// Right supervisor → row gone.
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Delete(ctx, regionRowID, "sup-A", tx)
+	}))
+	gone, err := b.LockHolders().Get(ctx, regionRowID, nil)
+	require.NoError(t, err)
+	require.Nil(t, gone)
+
+	// RefreshHeartbeat only touches rows whose holder_node_id is currently
+	// running and assigned to the supervisor (§13.4 invariant).
+	client := b.LockHoldersClient()
+
+	// Move n1 to running with assigned_supervisor_id = sup-A.
+	require.NoError(t, b.Nodes().UpdateState(ctx, n1.ID, shared.NodeStateRunning, nodepkg.ReasonDispatchClaimed, nil))
+	require.NoError(t, b.Nodes().UpdateHeartbeat(ctx, n1.ID, time.Now(), "sup-A", nil))
+
+	// Capture pre-refresh expires_at.
+	preRefresh, err := b.LockHolders().Get(ctx, namedRowID, nil)
+	require.NoError(t, err)
+	preExpires := preRefresh.ExpiresAt
+
+	// Refresh with a far-future bound (1 hour) so the row's expires_at
+	// observably advances past the original 10-minute mark.
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, client.RefreshHeartbeat(ctx, "sup-A", 3600))
+
+	postRefresh, err := b.LockHolders().Get(ctx, namedRowID, nil)
+	require.NoError(t, err)
+	require.True(t, postRefresh.ExpiresAt.After(preExpires),
+		"running-node lock-holder row's expires_at should advance")
+
+	// And a row whose holder_node_id is NOT in 'running' state must NOT
+	// be refreshed by RefreshHeartbeat (the §13.4 filter).
+	// Insert another lock-holder row anchored to n2 (state='stale') and
+	// verify its expires_at is unchanged after a refresh.
+	otherRowID := uuid.New()
+	otherStoreName := "topics"
+	otherClaimID := "i-77"
+	otherExpires := time.Now().UTC().Add(5 * time.Minute)
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: otherRowID, LockKind: storage.LockKindClaim,
+			StoreName: &otherStoreName, ClaimID: &otherClaimID,
+			HolderSupervisorID: "sup-A", HolderNodeID: n2.ID,
+			ExpiresAt: otherExpires,
+		}, tx)
+	}))
+	preOther, err := b.LockHolders().Get(ctx, otherRowID, nil)
+	require.NoError(t, err)
+	require.NoError(t, client.RefreshHeartbeat(ctx, "sup-A", 7200))
+	postOther, err := b.LockHolders().Get(ctx, otherRowID, nil)
+	require.NoError(t, err)
+	require.WithinDuration(t, preOther.ExpiresAt, postOther.ExpiresAt, 1*time.Millisecond,
+		"non-running-node lock-holder row must NOT be refreshed (§13.4 filter)")
+}
+
+// -------- Claim holders --------
+
+func TestClaimHoldersStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, _, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	tpl := deployedTemplate(ctx, t, b, "ch", "v1")
+	inst := createInstance(ctx, t, b, tpl.ID, "ck")
+	terminalA := createNode(ctx, t, b, inst.ID, "worker")
+	terminalB := createNode(ctx, t, b, inst.ID, "worker")
+
+	claimID := "item-42"
+	storeName := "topics"
+
+	// Insert one row per terminal using the production primitive
+	// (storage.ClaimHoldersStore.Insert), mirroring the supervisor's
+	// runner_held_claims.go loop.
+	rowAID := uuid.New()
+	rowBID := uuid.New()
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		if err := b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+			ID:           rowAID,
+			ClaimID:      claimID,
+			StoreName:    storeName,
+			HolderNodeID: terminalA.ID,
+			OnCommit:     storage.ClaimHolderActionDelete,
+			OnGiveUp:     storage.ClaimHolderActionReleaseToBack,
+		}, tx); err != nil {
+			return err
+		}
+		return b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+			ID:           rowBID,
+			ClaimID:      claimID,
+			StoreName:    storeName,
+			HolderNodeID: terminalB.ID,
+			OnCommit:     storage.ClaimHolderActionDelete,
+			OnGiveUp:     storage.ClaimHolderActionReleaseToBack,
+		}, tx)
+	}))
+
+	all, err := b.ClaimHolders().ListByClaimID(ctx, claimID, nil)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	active, err := b.ClaimHolders().ListActiveByClaimID(ctx, claimID, nil)
+	require.NoError(t, err)
+	require.Len(t, active, 2)
+
+	// ListByHolderNode returns terminalA's single row.
+	byNodeA, err := b.ClaimHolders().ListByHolderNode(ctx, terminalA.ID, nil)
+	require.NoError(t, err)
+	require.Len(t, byNodeA, 1)
+	require.Equal(t, rowAID, byNodeA[0].ID)
+
+	// Complete terminalA's row with actual_action='delete'; the active
+	// list shrinks to one and Get returns the completed row.
+	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderActionDelete, nil))
+
+	gotA, err := b.ClaimHolders().Get(ctx, rowAID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotA)
+	require.Equal(t, storage.ClaimHolderStateCompleted, gotA.State)
+	require.NotNil(t, gotA.ActualAction)
+	require.Equal(t, storage.ClaimHolderActionDelete, *gotA.ActualAction)
+
+	activeAfter, err := b.ClaimHolders().ListActiveByClaimID(ctx, claimID, nil)
+	require.NoError(t, err)
+	require.Len(t, activeAfter, 1)
+	require.Equal(t, terminalB.ID, activeAfter[0].HolderNodeID)
+
+	// Complete is idempotent: re-running on an already-completed row is a no-op.
+	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderActionReleaseToBack, nil))
+	gotA2, err := b.ClaimHolders().Get(ctx, rowAID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.ClaimHolderActionDelete, *gotA2.ActualAction,
+		"already-completed row's actual_action must not be overwritten")
 }

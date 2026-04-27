@@ -16,7 +16,11 @@ const logger = pino({ level: "silent" });
 interface ExecuteEvent {
   heartbeat?: { timestamp_ms: number; note: string };
   async_accepted?: { async_ack_id: string; expected_completion_ms: number };
-  complete?: { result: unknown; changed: boolean; change_summary: string };
+  complete?: {
+    attributes_delta: unknown;
+    changed: boolean;
+    change_summary: string;
+  };
   blocked?: { reason: string };
   errored?: { error_class: string };
 }
@@ -57,7 +61,7 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     await cb.close();
   });
 
-  it("emits Heartbeat + AsyncAccepted, then POSTs Complete outcome", async () => {
+  it("emits Heartbeat + AsyncAccepted, then POSTs Complete outcome with attributes_delta", async () => {
     const pkg = loadNodeExecutorProto();
     const Client = pkg.rimsky.v1.NodeExecutor as unknown as new (
       addr: string,
@@ -76,8 +80,11 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
           user_prompt_template: { string_value: "usr" },
         },
       },
-      instance_params: { fields: {} },
+      attributes: { fields: {} },
+      attributes_schema: { fields: {} },
+      stores: {},
       callback_url: fakeCallbackUrl,
+      cancel_token: "cancel-tok-1",
     });
 
     const events: ExecuteEvent[] = [];
@@ -103,7 +110,9 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
     expect(body.type).toBe("complete");
-    expect(body.result).toEqual({ stub: true });
+    // Spec §12.2/§12.3: Complete callbacks carry `attributes_delta`
+    // (the legacy `result` field has been retired).
+    expect(body.attributes_delta).toEqual({ stub: true });
     expect(body.changed).toBe(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -217,8 +226,11 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
           user_prompt_template: { string_value: "usr" },
         },
       },
-      instance_params: { fields: {} },
+      attributes: { fields: {} },
+      attributes_schema: { fields: {} },
+      stores: {},
       callback_url: supervisorBase,
+      cancel_token: "cancel-tok-e2e",
     });
 
     interface ExecuteEventLocal {
@@ -244,6 +256,8 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
     expect(received[0]!.body.type).toBe("complete");
     // Ensure we did NOT use the legacy `kind` key.
     expect(received[0]!.body.kind).toBeUndefined();
+    // Spec §12.2: stub round-trips its synthetic delta.
+    expect(received[0]!.body.attributes_delta).toEqual({ stub: true });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();

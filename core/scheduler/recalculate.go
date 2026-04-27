@@ -76,10 +76,27 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if target.Executor == "" {
 		return nil
 	}
+	// FrameID is sourced from the target node row — a stale node always
+	// belongs to the in-flight frame (blessed-invariant 19). A nil frame_id
+	// here means the frame engine hasn't yet advanced the source-node's
+	// queued frame; defer to the next scheduler tick.
+	if target.FrameID == nil {
+		log.Debug("RecalculateNode: skip enqueue: target frame_id is nil",
+			"node_id", target.ID.String())
+		return nil
+	}
+	// RequiredStores is intentionally empty here. Per spec §14.2 an empty
+	// slice trivially satisfies the supervisor-pool predicate
+	// (RequiredStores ⊆ AcceptedStores). The denormalisation from the
+	// in-memory template registry is threaded through the scheduler tick's
+	// enqueue call sites in a separate task; recalculate.go does not have
+	// access to the template registry today and threading one through is
+	// out of scope for this task.
 	return args.Queue.Enqueue(ctx, queue.DispatchRequest{
-		NodeID:          target.ID,
-		ExecutorName:    target.Executor,
-		ConcurrencyTags: target.ConcurrencyTags,
-		EnqueuedAt:      args.Clock.Now(),
+		NodeID:         target.ID,
+		ExecutorName:   target.Executor,
+		RequiredStores: []string{},
+		EnqueuedAt:     args.Clock.Now(),
+		FrameID:        *target.FrameID,
 	})
 }

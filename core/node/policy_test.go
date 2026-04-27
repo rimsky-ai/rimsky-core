@@ -67,14 +67,13 @@ func TestRetryExhaustsAdvancesActionIndex(t *testing.T) {
 func TestInvalidateReturnsTargetsAndAdvancesIndex(t *testing.T) {
 	policy := &ErrorTypePolicy{
 		Policy: []PolicyAction{
-			{Action: "invalidate", Targets: []string{"alpha", "beta"}, RestoreVersion: "previous"},
+			{Action: "invalidate", Targets: []string{"alpha", "beta"}},
 			{Action: "give_up", ReasonTemplate: "fatal"},
 		},
 	}
 	r1 := Evaluate(policy, initialState(), "boom", nil)
 	require.Equal(t, "invalidate", r1.Kind)
 	require.Equal(t, []string{"alpha", "beta"}, r1.Targets)
-	require.Equal(t, "previous", r1.RestoreVersion)
 	require.Equal(t, 1, r1.NewState.ActionIndex)
 	require.Equal(t, 0, r1.NewState.RetryCounter)
 
@@ -130,6 +129,59 @@ func TestPolicyExhaustedFallsThroughToGiveUp(t *testing.T) {
 	r2 := Evaluate(policy, state, "boom", nil) // retry exhausted, no next action
 	require.Equal(t, "give_up", r2.Kind)
 	require.Equal(t, "policy_exhausted", r2.Reason)
+}
+
+func TestDiscardThenRetryPropagatesKind(t *testing.T) {
+	policy := &ErrorTypePolicy{
+		Policy: []PolicyAction{{
+			Action:      "discard_then_retry",
+			Count:       2,
+			Backoff:     shared.BackoffLinear,
+			BaseDelayMs: 50,
+			Jitter:      shared.JitterNone,
+		}},
+	}
+	r := Evaluate(policy, initialState(), "boom", nil)
+	require.Equal(t, "discard_then_retry", r.Kind)
+	require.Equal(t, 50, r.DelayMs)
+	require.Equal(t, 1, r.NewState.RetryCounter)
+}
+
+func TestResumeThenRetryPropagatesKind(t *testing.T) {
+	policy := &ErrorTypePolicy{
+		Policy: []PolicyAction{{
+			Action:      "resume_then_retry",
+			Count:       2,
+			Backoff:     shared.BackoffLinear,
+			BaseDelayMs: 75,
+			Jitter:      shared.JitterNone,
+		}},
+	}
+	r := Evaluate(policy, initialState(), "boom", nil)
+	require.Equal(t, "resume_then_retry", r.Kind)
+	require.Equal(t, 75, r.DelayMs)
+	require.Equal(t, 1, r.NewState.RetryCounter)
+}
+
+func TestRetryFlavorsExhaustAdvanceActionIndex(t *testing.T) {
+	policy := &ErrorTypePolicy{
+		Policy: []PolicyAction{
+			{
+				Action:      "resume_then_retry",
+				Count:       1,
+				Backoff:     shared.BackoffLinear,
+				BaseDelayMs: 100,
+				Jitter:      shared.JitterNone,
+			},
+			{Action: "give_up", ReasonTemplate: "fatal"},
+		},
+	}
+	r1 := Evaluate(policy, initialState(), "boom", nil)
+	require.Equal(t, "resume_then_retry", r1.Kind)
+
+	r2 := Evaluate(policy, r1.NewState, "boom", nil)
+	require.Equal(t, "give_up", r2.Kind)
+	require.Equal(t, "fatal", r2.Reason)
 }
 
 func TestBackoffJitterConsumesRng(t *testing.T) {

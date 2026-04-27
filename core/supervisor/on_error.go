@@ -1,11 +1,26 @@
-// Port of rimsky/src/supervisor/on-error.ts (Plan A Task 10.1). Consults
-// the node's error_types policy chain, evaluates an occurrence, persists
-// the resolved EvaluatorState, logs an `error` event, and applies the
-// resolved action (retry / invalidate / give_up).
+// Spec §4.2 (on_error) + §7.3 (policy chain). Consults the node's
+// error_types policy chain, evaluates an occurrence, persists the resolved
+// EvaluatorState, logs an `error` event, and applies the resolved action
+// (retry / invalidate / give_up).
+//
+// Routes every error class through one path. The new
+// `template_resolution_failed` (spec §10.4) and `attributes_schema_failed`
+// (spec §9.4) classes have no special-case handlers here: when a template
+// declares a policy override for them it flows through `lookupPolicy` →
+// `node.Evaluate`; absent an override, `node.Evaluate` (policy == nil)
+// defaults to give_up("unknown_error_class"), which is exactly the
+// `[ {give_up} ]` default §10.4 calls for. Templates may override either
+// class via the standard `error_types` block.
+//
+// Concurrency-tag plumbing is gone — the redesign expresses concurrency
+// through `locks: [{name, mode: counting, limit: N}]` (spec §11.3); the
+// runner builds and acquires those during dispatch (§13.3) and the queue
+// row carries `required_stores` rather than tags.
 package supervisor
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/fallguy/rimsky/core/node"
@@ -46,7 +61,11 @@ type OnErrorArgs struct {
 //	each resolved target. Unresolved targets are logged via the
 //	unresolved_invalidate_target event.
 //
-// give_up   → transition → failed (reason policy_give_up).
+// give_up   → transition → failed (reason policy_give_up). This is also
+//
+//	the §10.4 / §9.4 default for `template_resolution_failed` and
+//	`attributes_schema_failed` when the template declares no override
+//	(via the policy == nil branch of node.Evaluate).
 func OnError(ctx context.Context, args OnErrorArgs) error {
 	sb, log := args.Storage, args.Logger
 	if log == nil {
@@ -94,18 +113,22 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	}, nil)
 
 	switch resolved.Kind {
-	case "retry":
+	case "retry", "discard_then_retry", "resume_then_retry":
 		if nd.State == shared.NodeStateRunning {
 			if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, node.ReasonPolicyRetry, nil); err != nil {
 				return err
 			}
 		}
 		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
+		if nd.FrameID == nil {
+			return fmt.Errorf("OnError retry: node %s has nil frame_id", args.NodeID)
+		}
 		return args.Queue.Enqueue(ctx, queue.DispatchRequest{
-			NodeID:          args.NodeID,
-			ExecutorName:    nd.Executor,
-			ConcurrencyTags: nd.ConcurrencyTags,
-			EnqueuedAt:      args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+			NodeID:         args.NodeID,
+			ExecutorName:   nd.Executor,
+			RequiredStores: requiredStoresForNode(ctx, sb, nd),
+			EnqueuedAt:     args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+			FrameID:        *nd.FrameID,
 		})
 
 	case "invalidate":
@@ -150,11 +173,10 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		for _, tid := range resolvedTargets {
 			_ = scheduler.InvalidateNode(ctx, scheduler.InvalidateArgs{
 				Storage: sb, Queue: args.Queue, Clock: args.Clock, Logger: log,
-				SourceNodeID:   &src,
-				TargetNodeID:   tid,
-				Reason:         "policy_invalidate",
-				RestoreVersion: resolved.RestoreVersion,
-				SupervisorID:   args.SupervisorID,
+				SourceNodeID: &src,
+				TargetNodeID: tid,
+				Reason:       "policy_invalidate",
+				SupervisorID: args.SupervisorID,
 			})
 		}
 		return nil
@@ -171,7 +193,9 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 // lookupPolicy resolves the error_types[ErrorClass] block from the node's
 // template spec. Returns nil (with nil error) when the template does not
 // declare a policy for this error class — node.Evaluate treats that as a
-// give_up("unknown_error_class").
+// give_up("unknown_error_class"). For the new redesign error classes
+// (`template_resolution_failed`, `attributes_schema_failed`) this is the
+// §10.4 / §9.4 default chain `[ {give_up} ]`.
 func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
 	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
 	if err != nil {
@@ -199,6 +223,31 @@ func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.No
 		return nil, nil
 	}
 	return nil, nil
+}
+
+// requiredStoresForNode resolves the node's required_stores list from
+// the template's per-node-type definition. Used when re-enqueueing on
+// retry so the rebooted dispatch row carries the same supervisor-pool
+// predicate (`required_stores ⊆ accepted_stores`, spec §14.2) as the
+// original. Returns nil when the template / node-def cannot be located —
+// the queue treats nil and []string{} as equivalent (no required stores
+// declared, accepted by every supervisor pool).
+func requiredStoresForNode(ctx context.Context, sb storage.StorageBackend, nd *storage.NodeRow) []string {
+	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
+	if err != nil || inst == nil {
+		return nil
+	}
+	tmpl, err := sb.Templates().Get(ctx, inst.TemplateID, nil)
+	if err != nil || tmpl == nil {
+		return nil
+	}
+	for _, td := range tmpl.Spec.Nodes {
+		if td.Type != nd.NodeType {
+			continue
+		}
+		return node.RequiredStores(td)
+	}
+	return nil
 }
 
 func uuidsToStrings(xs []shared.UUID) []string {

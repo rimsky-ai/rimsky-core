@@ -1,0 +1,103 @@
+# §11.5 worked example — the smoke fixture's reference template.
+#
+# This file is documentary: the smoke test in
+# `stores_redesign_smoke_test.go` builds the same structure
+# programmatically (because the four-node body is built into the JSON
+# POST body to `/templates`, and the deviations below are easier to
+# express in code than to thread through a YAML→JSON converter at test
+# time). The shapes here mirror the spec verbatim so a future contributor
+# can read the canonical template alongside the smoke fixture.
+#
+# Differences between this YAML and what the smoke test actually deploys:
+#   - The `quality_rules: must_match_regex` entry on `draft` is omitted
+#     from the deployed body. v1 only ships row_count_ratio / no_nulls /
+#     nullable_fields_present (see `core/qualityrule/rules.go`); spec
+#     §15 promises must_match_regex but it is not yet implemented.
+#   - The `model-budget` lock limit is 50 (§19.2 requirement; the spec
+#     example calls it "illustrative — set high in the smoke fixture").
+frame_resolution: serial_queue
+frame_timeout_ms: 600000
+nodes:
+  # Pure-infra node: no executor, just claims from a ring buffer and
+  # populates attributes from the claim payload.
+  - type: claim-topic
+    schedule: "* * * * *"
+    stores:
+      - { name: topics-ring, claim: true, hold: true }
+    attributes:
+      schema:
+        type: object
+        properties:
+          area:     { type: string, source: "{{claim.topics-ring.payload.area}}" }
+          subtopic: { type: string, source: "{{claim.topics-ring.payload.subtopic}}" }
+        required: [area, subtopic]
+    locks:
+      - { name: "topics-ring:concurrent-claims", mode: counting, limit: 5 }
+
+  - type: scope
+    dependencies: [claim-topic]
+    executor: claude-agent
+    attributes:
+      schema:
+        type: object
+        properties:
+          area:        { type: string, source: "{{deps.claim-topic.area}}" }
+          subtopic:    { type: string, source: "{{deps.claim-topic.subtopic}}" }
+          scope_notes: { type: string }
+        required: [scope_notes]
+    userdata:
+      model: claude-sonnet-4-6
+      system_prompt_ref: "scope-system.md"
+    locks:
+      - { name: model-budget, mode: counting, limit: 50 }
+    error_types:
+      review_rejected:
+        policy:
+          - { action: discard_then_retry, count: 2 }
+          - { action: invalidate, targets: [scope] }
+          - { action: give_up }
+
+  - type: draft
+    dependencies: [claim-topic, scope]
+    executor: claude-agent
+    attributes:
+      schema:
+        type: object
+        properties:
+          area:        { type: string, source: "{{deps.claim-topic.area}}" }
+          subtopic:    { type: string, source: "{{deps.claim-topic.subtopic}}" }
+          scope_notes: { type: string, source: "{{deps.scope.scope_notes}}" }
+        required: [area, subtopic, scope_notes]
+    stores:
+      - name: content
+        write: ["items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"]
+        read:  ["items/**", "shared/**"]
+    userdata:
+      model: claude-sonnet-4-6
+      system_prompt_ref: "draft-system.md"
+    quality_rules:
+      - { type: must_match_regex, target: write, pattern: "^---\\n", severity: error }
+    locks:
+      - { name: model-budget, mode: counting, limit: 50 }
+
+  - type: review
+    dependencies: [claim-topic, scope, draft]
+    executor: claude-agent
+    attributes:
+      schema:
+        properties:
+          accepted: { type: boolean }
+          notes:    { type: string }
+        required: [accepted]
+    stores:
+      - name: content
+        read: ["items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"]
+    claim_resolutions:
+      - source: claim-topic
+        store:  topics-ring
+        # uses store defaults: release_to_back / release_to_back
+    userdata:
+      model: claude-sonnet-4-6
+      system_prompt_ref: "review-system.md"
+    locks:
+      - { name: model-budget, mode: counting, limit: 50 }

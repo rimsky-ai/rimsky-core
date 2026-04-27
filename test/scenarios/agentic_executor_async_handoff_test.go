@@ -2,6 +2,12 @@
 // with an ack; node stays running. The test then POSTs a Complete body to
 // the supervisor's callback endpoint with the same ack; the node reaches
 // fresh.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the agent
+// node is built via scenario.MakeNode + scenario.WithAttributes. The
+// executor's terminal Complete carries an attributes_delta the supervisor
+// merges into the node's resolved attributes; the per-node attribute
+// schema declares the field that delta lands in.
 package scenarios
 
 import (
@@ -27,7 +33,15 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "agent", Executor: "stub"},
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "agent", Executor: "stub"},
+				scenario.WithAttributes(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"done": map[string]any{"type": "boolean"},
+					},
+				}),
+			),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-async", map[string]any{})
@@ -43,10 +57,10 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	// supervisor's registerAsync that runs after state→running.
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-1"
 	body, _ := json.Marshal(map[string]any{
-		"type":           "complete",
-		"result":         map[string]any{"done": true},
-		"changed":        true,
-		"change_summary": "async-ok",
+		"type":             "complete",
+		"attributes_delta": map[string]any{"done": true},
+		"changed":          true,
+		"change_summary":   "async-ok",
 	})
 	deadline := time.Now().Add(10 * time.Second)
 	var status int
@@ -65,4 +79,13 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	// Node reaches fresh via the callback path.
 	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
 		"agent did not reach fresh after async callback")
+
+	// Verify the callback's attributes_delta landed in
+	// rimsky_node_attributes.data — the redesign's replacement for
+	// "resource has version N" assertions.
+	row, err := h.Storage.NodeAttributes().Get(h.Ctx, n.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row, "expected node_attributes row to exist after async commit")
+	require.Equal(t, true, row.Data["done"],
+		"expected attributes.data.done = true from callback's delta")
 }

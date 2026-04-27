@@ -1,5 +1,11 @@
 // Scenario 2 — one pure-cascade node (no executor, no deps) is invalidated
 // via the control API and transitions fresh → stale → fresh inline.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the node is
+// built via scenario.MakeNode. A pure-cascade node carries no executor,
+// stores, locks, or attributes; the redesign treats this as a degenerate
+// node — the scheduler's pure-cascade sweep promotes it to fresh once its
+// (empty) dependency set is fresh.
 package scenarios
 
 import (
@@ -23,7 +29,10 @@ func TestPureCascadeNode(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pure-cascade", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "hub"}, // no executor = pure-cascade
+			// No executor → pure-cascade node. No stores, locks, or
+			// attributes wiring is required; the scheduler sweep promotes
+			// it to fresh on the first tick.
+			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pc", map[string]any{})

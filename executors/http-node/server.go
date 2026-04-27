@@ -51,7 +51,10 @@ func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Ex
 //	how:  called by the gRPC Execute method and by the HTTP+JSON bridge.
 //	handles: stub_mode (short-circuits before network), JSON and non-JSON
 //	         responses, custom expect_status lists, user-supplied headers,
-//	         string or structured request bodies.
+//	         per-run attributes posted as the request body. Userdata is
+//	         opaque executor configuration (url, method, headers,
+//	         expect_status, optional body override); rimsky never inspects
+//	         it.
 //	does not: retry, paginate, stream response bodies, or honor redirects
 //	          beyond Go stdlib defaults.
 //	thread-safety: reentrant; the http.Client is safe for concurrent use.
@@ -90,18 +93,14 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		}
 	}
 
-	var reqBody io.Reader
-	if b, ok := ud["body"]; ok && b != nil {
-		switch bb := b.(type) {
-		case string:
-			reqBody = strings.NewReader(bb)
-		default:
-			jb, err := json.Marshal(bb)
-			if err != nil {
-				return sendErrored(send, "invalid_userdata", "body not JSON-serialisable: "+err.Error())
-			}
-			reqBody = strings.NewReader(string(jb))
-		}
+	// Body composition: per spec §5.8, http-node puts the per-run
+	// `attributes` in the request body. `userdata.body` (if present) is an
+	// explicit override useful for fixtures and ad-hoc payloads — when set,
+	// it wins. Otherwise the JSON-serialised `attributes` map becomes the
+	// body. Empty attributes + no override → no body.
+	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
+	if err != nil {
+		return sendErrored(send, "invalid_userdata", err.Error())
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
@@ -117,6 +116,9 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 	if httpReq.Header.Get("Accept") == "" {
 		httpReq.Header.Set("Accept", "application/json")
+	}
+	if ctype != "" && httpReq.Header.Get("Content-Type") == "" {
+		httpReq.Header.Set("Content-Type", ctype)
 	}
 
 	resp, err := s.client.Do(httpReq)
@@ -138,52 +140,102 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		return sendErrored(send, "http_unexpected_status", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
 	}
 
-	var result any
-	if strings.Contains(resp.Header.Get("Content-Type"), "json") {
-		if len(body) == 0 {
-			result = map[string]any{}
-		} else if err := json.Unmarshal(body, &result); err != nil {
-			return sendErrored(send, "http_response_parse_failed", err.Error())
-		}
-	} else {
-		result = map[string]any{
-			"body_base64":  base64.StdEncoding.EncodeToString(body),
-			"content_type": resp.Header.Get("Content-Type"),
-		}
-	}
-
-	v, err := structpb.NewValue(result)
+	// Response → attributes_delta. The target's response body must be a
+	// JSON object so it can map directly to the spec §12.2 Complete
+	// `attributes_delta` Struct (which the supervisor merges into
+	// rimsky_node_attributes.data). Non-object JSON is rejected; non-JSON
+	// content types are wrapped in a base64 envelope under known keys.
+	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
 		return sendErrored(send, "http_response_parse_failed", err.Error())
 	}
+
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-		Result:        v,
-		Changed:       true,
-		ChangeSummary: fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
+		AttributesDelta: delta,
+		Changed:         true,
+		ChangeSummary:   fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
 	}}})
 }
 
+// buildRequestBody picks the upstream request body. `userdata.body` is an
+// explicit override (string passed verbatim, structured value JSON-marshalled
+// with implicit application/json). When absent, the per-run `attributes` map
+// is JSON-marshalled. When attributes is also empty, no body is sent.
+func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
+	if b, ok := ud["body"]; ok && b != nil {
+		switch bb := b.(type) {
+		case string:
+			return strings.NewReader(bb), "", nil
+		default:
+			jb, err := json.Marshal(bb)
+			if err != nil {
+				return nil, "", fmt.Errorf("body not JSON-serialisable: %w", err)
+			}
+			return strings.NewReader(string(jb)), "application/json", nil
+		}
+	}
+	if len(attrs) == 0 {
+		return nil, "", nil
+	}
+	jb, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, "", fmt.Errorf("attributes not JSON-serialisable: %w", err)
+	}
+	return strings.NewReader(string(jb)), "application/json", nil
+}
+
+// buildAttributesDelta turns the upstream response into a Struct suitable for
+// Complete.attributes_delta. JSON object responses are passed through as-is.
+// Non-JSON responses are wrapped as `{body_base64, content_type}` so the
+// caller still sees the bytes. JSON arrays / scalars are an error: the
+// attributes shape is by spec a JSON object.
+func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, error) {
+	if !strings.Contains(contentType, "json") {
+		return structpb.NewStruct(map[string]any{
+			"body_base64":  base64.StdEncoding.EncodeToString(body),
+			"content_type": contentType,
+		})
+	}
+	if len(body) == 0 {
+		return structpb.NewStruct(map[string]any{})
+	}
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, err
+	}
+	m, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("response JSON is not an object (got %T); attributes_delta requires an object", decoded)
+	}
+	return structpb.NewStruct(m)
+}
+
 // executeStub short-circuits the network path; used when RIMSKY_EXECUTOR_STUB_MODE=1.
-// Returns userdata.stub_response if provided, else {stub: true}.
+// Returns userdata.stub_response if provided, else {stub: true}. The response
+// becomes the Complete.attributes_delta — must be a JSON object per spec §12.2.
 func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 	ud := req.GetUserdata().AsMap()
-	var result any = map[string]any{"stub": true}
+	delta := map[string]any{"stub": true}
 	if sr, ok := ud["stub_response"]; ok {
-		result = sr
+		m, ok := sr.(map[string]any)
+		if !ok {
+			return sendErrored(send, "invalid_userdata", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
+		}
+		delta = m
 	}
-	v, err := structpb.NewValue(result)
+	v, err := structpb.NewStruct(delta)
 	if err != nil {
 		return sendErrored(send, "invalid_userdata", "stub_response not JSON-representable: "+err.Error())
 	}
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-		Result:        v,
-		Changed:       true,
-		ChangeSummary: "stub",
+		AttributesDelta: v,
+		Changed:         true,
+		ChangeSummary:   "stub",
 	}}})
 }
 
 func sendErrored(send sendFunc, class, msg string) error {
-	payload, _ := structpb.NewValue(map[string]any{"error": msg})
+	payload, _ := structpb.NewStruct(map[string]any{"error": msg})
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Errored{Errored: &genv1.Errored{
 		ErrorClass: class,
 		Payload:    payload,

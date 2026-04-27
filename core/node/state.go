@@ -30,7 +30,6 @@ var (
 	// re-enqueue from the scheduler's stale-heartbeat sweep, which uses
 	// ReasonHeartbeatLost. Event-log honesty.
 	ReasonInfraReenqueue = TransitionReason{Kind: "infra_reenqueue"}
-	ReasonRestoreVersion = TransitionReason{Kind: "restore_version"}
 	ReasonPureCascade    = TransitionReason{Kind: "pure_cascade"}
 	// ReasonDispatchImpossible transitions `stale → failed` directly when the
 	// supervisor determines a node cannot be dispatched at all (e.g. the
@@ -51,11 +50,6 @@ var (
 // idempotency optimization for "ergonomics" breaks the invariant.
 // TS reference: rimsky/src/cell/state-machine.ts:37-73 (no from===to branch).
 func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeState, error) {
-	// restore_version is valid from any state → fresh (data is rolled back
-	// atomically by the caller, so the node is treated as already produced).
-	if reason.Kind == "restore_version" {
-		return shared.NodeStateFresh, nil
-	}
 	switch current {
 	case shared.NodeStateFresh:
 		if reason.Kind == "invalidate_received" || reason.Kind == "operator_invalidate" {

@@ -9,11 +9,16 @@ import (
 
 	"github.com/fallguy/rimsky/core/controlapi"
 	"github.com/fallguy/rimsky/core/queue"
-	"github.com/fallguy/rimsky/core/resource"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
+// ControlAPIConfig wires the control-api HTTP server. The store wiring follows
+// the same shape as SupervisorConfig (spec §16.2): the deployer registers a
+// list of factories it has linked in and supplies the parsed `stores.yml`;
+// StartControlAPI builds the per-process *store.Registry from the pair and
+// hands it to the controlapi app.
 type ControlAPIConfig struct {
 	Storage storage.StorageBackend
 	Queue   queue.DispatchQueue
@@ -22,11 +27,15 @@ type ControlAPIConfig struct {
 	Host    string
 	Port    int
 	Auth    controlapi.Authenticator // nil = anonymous (default)
-	// ResourceFactories is the explicit factory registry consulted by
-	// template validation and instance provisioning. If nil,
-	// resource.DefaultRegistry() is used — this preserves backward-compat
-	// for callers still relying on resource.RegisterFactory.
-	ResourceFactories *resource.FactoryRegistry
+	// StoreFactories enumerates the store-kind factories registered with
+	// this process. The deployer's main() builds this list from the set of
+	// store implementations it has linked in (filesystem, claim-store-pg,
+	// stub, custom). Required when Stores is non-empty.
+	StoreFactories []store.Factory
+	// Stores is the parsed YAML stores config (spec §14.1). Each entry is
+	// keyed by operator-chosen store name; the value's "kind" picks a
+	// factory from StoreFactories.
+	Stores store.StoresConfig
 }
 
 type ControlAPIHandle interface {
@@ -53,14 +62,14 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
-	factories := cfg.ResourceFactories
-	if factories == nil {
-		factories = resource.DefaultRegistry()
+	registry, err := buildStoreRegistry(cfg.StoreFactories, cfg.Stores)
+	if err != nil {
+		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
 	app := controlapi.NewApp(controlapi.AppDeps{
 		Storage: cfg.Storage, Queue: cfg.Queue, Clock: cfg.Clock,
 		Logger: cfg.Logger, Auth: cfg.Auth,
-		ResourceFactories: factories,
+		Stores: registry,
 	})
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	if err != nil {

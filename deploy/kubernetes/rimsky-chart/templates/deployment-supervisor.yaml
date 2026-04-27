@@ -25,11 +25,20 @@ spec:
           env:
             - name: RIMSKY_DB_URL
               value: {{ .Values.postgres.dsn | quote }}
-            - name: RIMSKY_CONFIG_PATH
+            - name: RIMSKY_SUPERVISOR_CONFIG
               value: /etc/rimsky/supervisor-config.yml
+            - name: RIMSKY_STORES_CONFIG
+              value: /etc/rimsky/stores.yml
+            - name: RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST
+              value: {{ default (printf "%s-supervisor" (include "rimsky.fullname" .)) .Values.supervisor.callbackAdvertiseHost | quote }}
           volumeMounts:
             - name: supervisor-config
-              mountPath: /etc/rimsky
+              mountPath: /etc/rimsky/supervisor-config.yml
+              subPath: supervisor-config.yml
+              readOnly: true
+            - name: stores-config
+              mountPath: /etc/rimsky/stores.yml
+              subPath: stores.yml
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -37,3 +46,6 @@ spec:
         - name: supervisor-config
           configMap:
             name: {{ include "rimsky.fullname" . }}-supervisor-config
+        - name: stores-config
+          configMap:
+            name: {{ include "rimsky.fullname" . }}-stores-config

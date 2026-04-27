@@ -1,8 +1,8 @@
 // Package controlapi implements the HTTP+JSON control API for rimsky
 // orchestrators. Routes are registered in sibling files
-// (templates.go, instances.go, nodes.go, events.go, resources.go,
-// health.go). Errors thrown inside handlers are mapped to HTTP responses
-// via setErrorHandler.
+// (templates.go, instances.go, nodes.go, events.go, claims.go,
+// admin_claim_stores.go, admin_force_fire.go, health.go). Errors thrown
+// inside handlers are mapped to HTTP responses via setErrorHandler.
 package controlapi
 
 import (
@@ -14,9 +14,9 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/fallguy/rimsky/core/queue"
-	"github.com/fallguy/rimsky/core/resource"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 type AppDeps struct {
@@ -25,12 +25,11 @@ type AppDeps struct {
 	Clock   shared.Clock
 	Logger  shared.Logger
 	Auth    Authenticator // may be nil → anonymous access
-	// ResourceFactories is the explicit factory registry consulted by
-	// template validation and instance provisioning. NewApp falls back to
-	// resource.DefaultRegistry() if nil, but callers should pass an
-	// explicit registry — the default global is process-wide and not safe
-	// under parallel multi-orchestrator use.
-	ResourceFactories *resource.FactoryRegistry
+	// Stores is the per-process *store.Registry built from stores.yml. Used by
+	// admin endpoints that target a specific named store (e.g.
+	// POST /admin/claim-stores/:name/items). May be nil at construction time;
+	// admin handlers that need it return 503 when nil.
+	Stores *store.Registry
 }
 
 // NewApp builds the full chi router with all registered routes + middleware.
@@ -41,9 +40,6 @@ type AppDeps struct {
 //
 // so handlers never need global state.
 func NewApp(deps AppDeps) http.Handler {
-	if deps.ResourceFactories == nil {
-		deps.ResourceFactories = resource.DefaultRegistry()
-	}
 	r := chi.NewRouter()
 
 	// Request ID + structured access log via slog-backed Logger.
@@ -69,7 +65,9 @@ func NewApp(deps AppDeps) http.Handler {
 	registerInstancesRoutes(r, deps)
 	registerNodesRoutes(r, deps)
 	registerEventsRoutes(r, deps)
-	registerResourcesRoutes(r, deps)
+	registerClaimsRoutes(r, deps)
+	registerAdminClaimStoresRoutes(r, deps)
+	registerAdminScheduleRoutes(r, deps)
 	registerHealthRoutes(r, deps)
 
 	return r

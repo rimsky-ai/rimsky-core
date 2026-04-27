@@ -66,6 +66,20 @@ func (s *ScheduleStore) RecordFired(ctx context.Context, nodeID shared.UUID, nex
 	return err
 }
 
+// ForceFire bumps the schedule row's next_fire_at to now() so the scheduler's
+// next tick picks the node up. Returns nil even when no row matches node_id;
+// route handlers that care about presence load the node row first.
+func (s *ScheduleStore) ForceFire(ctx context.Context, nodeID shared.UUID, tx storage.Tx) error {
+	ex := q(tx, s.pool)
+	_, err := ex.Exec(ctx,
+		`UPDATE rimsky_schedules
+		   SET next_fire_at = now()
+		 WHERE node_id = $1`,
+		nodeID,
+	)
+	return err
+}
+
 func (s *ScheduleStore) ListAll(ctx context.Context, tx storage.Tx) ([]storage.ScheduleRow, error) {
 	ex := q(tx, s.pool)
 	rows, err := ex.Query(ctx,
@@ -85,7 +99,7 @@ func collectSchedules(rows interface {
 	var out []storage.ScheduleRow
 	for rows.Next() {
 		var (
-			r      storage.ScheduleRow
+			r         storage.ScheduleRow
 			lastFired *time.Time
 		)
 		if err := rows.Scan(&r.NodeID, &r.CronExpr, &r.NextFireAt, &lastFired); err != nil {

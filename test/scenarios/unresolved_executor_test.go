@@ -1,6 +1,19 @@
-// Scenario 11 — node declares an executor that is not registered; runner
-// emits unresolved_executor and policy (defaulting to give_up via unknown
-// class) transitions the node to failed.
+// Scenario 11 — node declares an executor that is not registered. The
+// supervisor's omnibus runner picks the candidate (its accept-list
+// contains the executor name), then `Resolver.Resolve` misses, an
+// `unresolved_executor` event is emitted, and the terminal classifier
+// routes the Errored event through the policy chain. With no template-
+// declared policy for `unresolved_executor`, the runner defaults to
+// give_up(unknown_error_class) and the node lands in failed.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the
+// node is built via scenario.MakeNode. The legacy
+// `action_taken=dispatch_impossible` shape is gone — the redesign routes
+// every error class (including unresolved_executor) through the same
+// policy-chain path (§7.3 / §11.6). The test runs the harness with
+// NoSupervisor and drives `supervisor.RunNode` directly so the dispatch
+// row's executor_name lives in the supervisor's accept-list while the
+// resolver has no entry for it (the §17.1 step 4a resolver-miss branch).
 package scenarios
 
 import (
@@ -9,20 +22,26 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
+	"github.com/fallguy/rimsky/core/supervisor"
 )
 
 func TestUnresolvedExecutor(t *testing.T) {
 	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
+	// NoSupervisor so we control exactly when the runner picks the
+	// candidate; the test re-points the node's executor to a name the
+	// resolver does not know about and then drives RunNode once.
+	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "ghost", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "ghost", Executor: "does_not_exist"},
+			scenario.MakeNode(node.TemplateNodeDef{Type: "ghost", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-ghost", map[string]any{})
@@ -30,83 +49,87 @@ func TestUnresolvedExecutor(t *testing.T) {
 	n := h.FindNode(iid, "ghost")
 	require.NotNil(t, n)
 
-	// Supervisor's accept list does not include "does_not_exist", so Claim
-	// will not pick up the dispatch row. Instead, an inspection of supervisor
-	// behavior: with no policy registered, unknown_error_class → give_up →
-	// failed — but only after the runner actually picks up the node.
-	//
-	// Supervisor's accepted list is derived from its Resolver, which here is
-	// only the stub. The dispatch row's executor_name = "does_not_exist"
-	// cannot be claimed. So the node will sit in stale indefinitely.
-	//
-	// To exercise unresolved_executor, we need a runner whose accept list
-	// contains the ghost executor name but whose resolver does not have it.
-	// The harness's resolver already registers "stub" and "testexec"; we
-	// instead add the executor name to the dispatch but ensure a matching
-	// accept. Simplest: directly invoke runner via a dispatch with matching
-	// executor name. Since that requires scaffolding, take the alternate
-	// route: simulate the outcome by manually inserting a dispatch row with
-	// executor_name="stub" (so supervisor claims it) but change the node's
-	// executor column to a missing name before the runner does its lookup.
-
-	// Update the node's executor to an unregistered name AND enqueue a
-	// matching dispatch so the supervisor (accepting stub/testexec) never
-	// picks it up — timeout expected.
-	//
-	// Because the harness's supervisor only accepts what its Resolver knows
-	// about, an unresolvable executor can't be routed through the harness's
-	// supervisor. We adapt: pre-seed a dispatch with executor_name="stub" so
-	// supervisor claims it, but the node's stored executor is still the
-	// unknown one — the runner's Resolve(nd.Executor) call will miss.
+	// Re-point the node's executor at an unregistered name. The dispatch
+	// row keeps executor_name='stub' (matches our AcceptedExecutors below)
+	// so the candidate is selected; nd.Executor is what `Resolver.Resolve`
+	// is called against, and that lookup misses.
 	_, err := h.Pool.Exec(h.Ctx,
 		`UPDATE rimsky_nodes SET executor = $1 WHERE id = $2`,
 		"does_not_exist_unknown", n.ID,
 	)
 	require.NoError(t, err)
-	// Insert a dispatch row with executor_name the supervisor accepts
-	// ("stub") so it gets claimed.
+
+	pool := executor.NewClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+
+	// Force the dispatch row to a known eligible shape: executor='stub'
+	// (in our AcceptedExecutors), claimed_by NULL, enqueued_at a few
+	// seconds in the past (so any clock skew between test host and the
+	// Postgres container can't push it past NOW()).
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, concurrency_tags, enqueued_at)
-		 VALUES (gen_random_uuid(), $1, 'stub', '{}', NOW())
-		 ON CONFLICT (node_id) DO UPDATE
-		   SET executor_name = 'stub', enqueued_at = NOW()`,
+		`UPDATE rimsky_dispatch
+		    SET executor_name = 'stub',
+		        required_stores = '{}',
+		        claimed_by = NULL,
+		        claimed_at = NULL,
+		        last_heartbeat_at = NULL,
+		        enqueued_at = NOW() - INTERVAL '5 seconds'
+		  WHERE node_id = $1`,
 		n.ID,
 	)
 	require.NoError(t, err)
 
-	// Direct stale → failed via ReasonDispatchImpossible. No policy chain —
-	// the node never enters running.
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFailed, 30*time.Second),
-		"ghost did not reach failed")
+	// Resolver has no entry for "does_not_exist_unknown" → §17.1 step 4a
+	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
+	// admits the candidate.
+	args := supervisor.RunArgs{
+		Storage:           h.Storage,
+		Queue:             h.Queue,
+		QueuePool:         h.Pool,
+		LockHolders:       store.NewLockHoldersClient(h.Pool),
+		StoreRegistry:     h.Stores,
+		Clock:             shared.SystemClock{},
+		Logger:            shared.SilentLogger{},
+		SupervisorID:      "scenario-runner",
+		AcceptedExecutors: []string{"stub"},
+		Pool:              pool,
+		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
+		HeartbeatInterval: 100 * time.Millisecond,
+	}
 
-	// Verify event trail: unresolved_executor followed by an error event
-	// with action_taken = "dispatch_impossible". The node must NOT have
-	// transitioned through running — the runner's stale→running transition
-	// for the unresolved case is gone.
+	out, err := supervisor.RunNode(h.Ctx, args, nil)
+	require.NoError(t, err)
+	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
+
+	// With no policy declared for unresolved_executor, node.Evaluate
+	// defaults to give_up(unknown_error_class) → state failed.
+	got, err := h.Storage.Nodes().Get(h.Ctx, n.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateFailed, got.State)
+
+	// Verify event trail: unresolved_executor followed by an `error`
+	// event with error_class=unresolved_executor and action_taken=give_up.
 	nid := n.ID
 	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid},
 		storage.ListPagination{Limit: 500}, nil)
 	require.NoError(t, err)
 	var (
-		sawUE             bool
-		sawDispatchImposs bool
-		sawWorkStarted    bool
+		sawUnresolved  bool
+		sawErrorGiveUp bool
 	)
 	for _, e := range evs.Events {
 		switch e.Kind {
 		case "unresolved_executor":
-			sawUE = true
+			sawUnresolved = true
 		case "error":
-			if action, _ := e.Payload["action_taken"].(string); action == "dispatch_impossible" {
-				if cls, _ := e.Payload["error_class"].(string); cls == "unresolved_executor" {
-					sawDispatchImposs = true
-				}
+			cls, _ := e.Payload["error_class"].(string)
+			act, _ := e.Payload["action_taken"].(string)
+			if cls == "unresolved_executor" && act == "give_up" {
+				sawErrorGiveUp = true
 			}
-		case "work_started":
-			sawWorkStarted = true
 		}
 	}
-	require.True(t, sawUE, "expected unresolved_executor event")
-	require.True(t, sawDispatchImposs, "expected error event with action_taken=dispatch_impossible")
-	require.False(t, sawWorkStarted, "node must not transition through running on unresolved_executor")
+	require.True(t, sawUnresolved, "expected unresolved_executor event")
+	require.True(t, sawErrorGiveUp,
+		"expected error event with error_class=unresolved_executor + action_taken=give_up")
 }

@@ -42,7 +42,9 @@ func newSchedFixture(t *testing.T) (*schedFixture, func()) {
 
 	tpl, err := sb.Templates().Deploy(ctx, nodepkg.TemplateSpec{
 		Name: "sched-loop-" + uuid.NewString(), Version: "v1",
-		Nodes: []nodepkg.TemplateNodeDef{},
+		FrameResolution: nodepkg.FrameResolutionSerialQueue,
+		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
+		Nodes:           []nodepkg.TemplateNodeDef{},
 	}, nil)
 	require.NoError(t, err)
 	inst, err := sb.Instances().Create(ctx, storage.InstanceCreateInput{
@@ -63,6 +65,9 @@ func newSchedFixture(t *testing.T) (*schedFixture, func()) {
 
 // createNode inserts a node and forces its state via UPDATE for paths that
 // need to skip the state-machine (e.g. directly creating a running node).
+// Non-fresh nodes (stale/running) get a frame_id pointing at a freshly-
+// seeded running rimsky_frames row so the dispatch enqueue path
+// (blessed-invariant 19) can read frame_id from the node row.
 func (f *schedFixture) createNode(t *testing.T, executor string, state shared.NodeState, deps ...shared.UUID) storage.NodeRow {
 	t.Helper()
 	ctx := context.Background()
@@ -71,11 +76,34 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state shared.No
 		Executor: executor, Dependencies: deps,
 	}, nil)
 	require.NoError(t, err)
-	if state != shared.NodeStateStale {
-		_, err := f.pool.Exec(ctx,
-			`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, string(state), n.ID)
+	// Always UPDATE: Create() now defaults to 'fresh' (frame-resolution
+	// model), so any test asking for a non-fresh state must override.
+	_, err = f.pool.Exec(ctx,
+		`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, string(state), n.ID)
+	require.NoError(t, err)
+	n.State = state
+	if state == shared.NodeStateStale || state == shared.NodeStateRunning {
+		// Reuse the existing running frame for this instance if any (the
+		// uq_rimsky_frames_running partial unique index limits one running
+		// frame per instance); otherwise insert a fresh one.
+		var frameID shared.UUID
+		err := f.pool.QueryRow(ctx, `
+            SELECT frame_id FROM rimsky_frames
+            WHERE instance_id = $1 AND state = 'running'
+            LIMIT 1
+        `, f.instance.ID).Scan(&frameID)
+		if err != nil {
+			require.NoError(t, f.pool.QueryRow(ctx, `
+                INSERT INTO rimsky_frames
+                    (instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+                VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+                RETURNING frame_id
+            `, f.instance.ID, n.ID).Scan(&frameID))
+		}
+		_, err = f.pool.Exec(ctx,
+			`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
 		require.NoError(t, err)
-		n.State = state
+		n.FrameID = &frameID
 	}
 	return n
 }
@@ -195,18 +223,35 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	// cutoff. ListOrphanedClaims + ReleaseClaim should fire.
 	n := f.createNode(t, "worker", shared.NodeStateStale)
 
-	// Enqueue + claim in one supervisor, then backdate claimed_at.
+	// Enqueue + claim in one supervisor, then backdate last_heartbeat_at.
+	// Post-redesign the queue exposes SelectCandidates + ClaimDispatchRow as
+	// building blocks; the runner composes them inside its acquisition tx.
+	// Test mimics that composition with a short tx. FrameID propagated from
+	// the node row (createNode seeded a running frame).
+	require.NotNil(t, n.FrameID)
 	require.NoError(t, f.queue.Enqueue(ctx, queuepkg.DispatchRequest{
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now(),
+		FrameID: *n.FrameID,
 	}))
-	claimed, err := f.queue.Claim(ctx, "sup-dead", []string{"worker"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
 
-	// Backdate claimed_at so it's past 75s (5 × 15s) cutoff.
+	tx, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	candidates, err := f.queue.SelectCandidates(ctx, tx, queuepkg.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"worker"},
+		AcceptedStores:    []string{},
+		Limit:             1,
+	})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	ok, err := f.queue.ClaimDispatchRow(ctx, tx, candidates[0].DispatchID, "sup-dead")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, tx.Commit(ctx))
+
+	// Backdate last_heartbeat_at so it's past 75s (5 × 15s) cutoff.
 	_, err = f.pool.Exec(ctx,
-		`UPDATE rimsky_dispatch SET claimed_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
-		claimed.ID,
+		`UPDATE rimsky_dispatch SET last_heartbeat_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
+		candidates[0].DispatchID,
 	)
 	require.NoError(t, err)
 
@@ -220,7 +265,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	require.NoError(t, err)
 
 	// Claim released: claimed_by IS NULL.
-	own, err := f.queue.GetClaimedBy(ctx, claimed.ID)
+	own, err := f.queue.GetClaimedBy(ctx, candidates[0].DispatchID)
 	require.NoError(t, err)
 	assert.Equal(t, "unclaimed", own.Kind,
 		"expected orphan claim to be released")

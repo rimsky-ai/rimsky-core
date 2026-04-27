@@ -23,14 +23,18 @@ spec:
           image: "{{ .Values.image.repository }}/executor-http-node:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: RIMSKY_GRPC_ADDR
-              value: ":{{ .Values.httpNode.service.port }}"
-            - name: RIMSKY_METRICS_ADDR
-              value: ":9092"
+            - name: RIMSKY_EXECUTOR_HTTP_NODE_HOST
+              value: "0.0.0.0"
+            - name: RIMSKY_EXECUTOR_HTTP_NODE_PORT
+              value: {{ .Values.httpNode.service.port | quote }}
+            - name: RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT
+              value: {{ .Values.httpNode.service.httpPort | quote }}
+            - name: RIMSKY_EXECUTOR_STUB_MODE
+              value: "1"
           ports:
             - name: grpc
               containerPort: {{ .Values.httpNode.service.port }}
-            - name: metrics
-              containerPort: 9092
+            - name: http
+              containerPort: {{ .Values.httpNode.service.httpPort }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

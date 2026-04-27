@@ -8,11 +8,15 @@ import { createClaudeCliRunner } from "./cli-runner.js";
 import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { PostCallbackFn } from "./server.js";
 import { defaultPostCallback } from "./server.js";
+import type { PostAttributesFn } from "./attributes-tools.js";
 
 /**
  * HTTP+JSON bridge. Callers that can't speak gRPC POST to `/execute` with an
  * ExecuteRequest-shaped body; the bridge returns `{ async_ack_id }`
  * immediately and posts the outcome to `callback_url` when the agent finishes.
+ *
+ * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12.3 — the bridge
+ * mirrors the gRPC shape, with bodies keyed by `type`.
  *
  * This is primarily a debug / integration surface — rimsky supervisors
  * normally use the gRPC transport.
@@ -25,6 +29,7 @@ export interface HttpBridgeConfig {
   silenceTimeoutMs: number;
   logger: Logger;
   postCallback?: PostCallbackFn;
+  postAttributes?: PostAttributesFn;
 }
 
 export interface RunningHttpBridge {
@@ -37,10 +42,13 @@ interface ExecuteBody {
   instance_id?: string;
   node_type?: string;
   userdata?: unknown;
-  instance_params?: unknown;
-  deps_data?: Record<string, unknown>;
-  reads_data?: Record<string, unknown>;
+  attributes?: unknown;
+  attributes_schema?: unknown;
+  stores?: Record<string, unknown>;
   callback_url?: string;
+  cancel_token?: string;
+  resumed?: boolean;
+  run_attempt?: number;
 }
 
 export async function startHttpBridge(
@@ -86,24 +94,27 @@ async function runAndCallback(
 ): Promise<void> {
   try {
     const userdata = toRecord(body.userdata);
-    const params = toRecord(body.instance_params);
+    const attributes = toRecord(body.attributes);
     const outcome = await runAgent({
       runId,
+      nodeId: body.node_id ?? runId,
       nodeType: body.node_type ?? "unknown",
       model: stringOr(userdata.model, "claude-sonnet-4-5"),
       systemPrompt: stringOr(userdata.system_prompt, ""),
       userPromptTemplate: stringOr(userdata.user_prompt_template, ""),
-      resultSchema: userdata.result_schema ?? {},
+      attributesSchema: body.attributes_schema ?? {},
+      attributes,
       templateVars: {
         userdata,
-        params,
-        deps: body.deps_data ?? {},
-        reads: body.reads_data ?? {},
+        attributes,
       },
+      callbackUrl: body.callback_url ?? "",
+      cancelToken: body.cancel_token ?? "",
       cliRunner,
       callback: config.callback,
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
+      postAttributes: config.postAttributes,
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
     if (body.callback_url) {
@@ -118,7 +129,7 @@ async function runAndCallback(
         body.callback_url,
         {
           async_ack_id: ackId,
-          kind: "errored",
+          type: "errored",
           error_class: "executor_internal_error",
           payload: { error: String(e) },
         },
@@ -133,10 +144,12 @@ function outcomeToCallbackBody(
   ackId: string,
 ): Record<string, unknown> {
   if (outcome.kind === "complete") {
+    // Spec §12.3: HTTP+JSON bridge body keyed by `type`. Spec §12.2:
+    // legacy `result` field retired in favour of `attributes_delta`.
     return {
       async_ack_id: ackId,
-      kind: "complete",
-      result: outcome.result,
+      type: "complete",
+      attributes_delta: outcome.attributesDelta,
       changed: outcome.changed,
       change_summary: outcome.changeSummary,
     };
@@ -144,14 +157,14 @@ function outcomeToCallbackBody(
   if (outcome.kind === "blocked") {
     return {
       async_ack_id: ackId,
-      kind: "blocked",
+      type: "blocked",
       reason: outcome.reason,
       context: outcome.context,
     };
   }
   return {
     async_ack_id: ackId,
-    kind: "errored",
+    type: "errored",
     error_class: outcome.errorClass,
     payload: outcome.payload,
   };

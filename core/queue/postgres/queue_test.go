@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -16,16 +17,60 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 )
 
+// nodeFrameMap is a per-test-process map from node id → frame id. Tests
+// build dispatch rows from node ids and call queue.Enqueue, which now
+// requires DispatchRequest.FrameID. To avoid threading a frame id through
+// every call site, insertNode seeds a running rimsky_frames row for each
+// node's instance and stores the frame id in this map; testFrameID(nodeID)
+// returns that frame id for plugging into DispatchRequest.
+var (
+	nodeFrameMu  sync.Mutex
+	nodeFrameMap = map[shared.UUID]shared.UUID{}
+)
+
+func testFrameID(t *testing.T, nodeID shared.UUID) shared.UUID {
+	t.Helper()
+	nodeFrameMu.Lock()
+	defer nodeFrameMu.Unlock()
+	id, ok := nodeFrameMap[nodeID]
+	require.True(t, ok, "no frame seeded for node %s — call insertNode first", nodeID)
+	return id
+}
+
+// withFrameID patches a DispatchRequest to set FrameID = testFrameID(NodeID).
+// Tests use this wrapper instead of literal req: enqueueWithFrame(t, q, ctx, req).
+func enqueueWithFrame(t *testing.T, q *Queue, ctx context.Context, req queue.DispatchRequest) error {
+	t.Helper()
+	if req.FrameID == (shared.UUID{}) {
+		req.FrameID = testFrameID(t, req.NodeID)
+	}
+	return q.Enqueue(ctx, req)
+}
+
 // insertNode inserts a minimal template → instance → node chain and returns
-// the node id. instance_id has a non-nullable FK with ON DELETE CASCADE, so
-// we cannot shortcut the chain. state is written verbatim.
-func insertNode(t *testing.T, pool *pgxpool.Pool, state string) shared.UUID {
+// the node id. instance_id has a non-nullable FK with ON DELETE CASCADE,
+// so we cannot shortcut the chain. state is written verbatim. nodeType is
+// rendered into rimsky_nodes.node_type so SelectCandidates' join can return
+// it. A running rimsky_frames row is also created for the new instance so
+// queue.Enqueue calls can plug `FrameID: testFrameID(t, nodeID)` (the new
+// rimsky_dispatch.frame_id NOT NULL constraint per spec §10.2).
+func insertNode(t *testing.T, pool *pgxpool.Pool, state, nodeType string) shared.UUID {
+	t.Helper()
+	nodeID, instID := insertNodeWithInstance(t, pool, state, nodeType)
+	frameID := seedFrame(t, pool, instID)
+	nodeFrameMu.Lock()
+	nodeFrameMap[nodeID] = frameID
+	nodeFrameMu.Unlock()
+	return nodeID
+}
+
+func insertNodeWithInstance(t *testing.T, pool *pgxpool.Pool, state, nodeType string) (nodeID, instanceID shared.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
 	templateID := uuid.New()
-	instanceID := uuid.New()
-	nodeID := uuid.New()
+	instanceID = uuid.New()
+	nodeID = uuid.New()
 
 	spec, err := json.Marshal(map[string]any{})
 	require.NoError(t, err)
@@ -45,13 +90,29 @@ func insertNode(t *testing.T, pool *pgxpool.Pool, state string) shared.UUID {
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, state, dependencies, concurrency_tags)
-		 VALUES ($1, $2, $3, $4, '{}'::uuid[], '{}'::text[])`,
-		nodeID, instanceID, "t", state,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type, state, dependencies)
+		 VALUES ($1, $2, $3, $4, '{}'::uuid[])`,
+		nodeID, instanceID, nodeType, state,
 	)
 	require.NoError(t, err)
 
-	return nodeID
+	return nodeID, instanceID
+}
+
+// seedFrame inserts a running rimsky_frames row for the given instance
+// and returns its frame_id. Used to satisfy the rimsky_dispatch.frame_id
+// NOT NULL constraint in queue tests.
+func seedFrame(t *testing.T, pool *pgxpool.Pool, instanceID shared.UUID) shared.UUID {
+	t.Helper()
+	ctx := context.Background()
+	var id shared.UUID
+	require.NoError(t, pool.QueryRow(ctx, `
+        INSERT INTO rimsky_frames
+            (instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+        VALUES ($1, 'serial_queue', 'running', ARRAY[gen_random_uuid()]::UUID[], now(), now(), 600000)
+        RETURNING frame_id
+    `, instanceID).Scan(&id))
+	return id
 }
 
 func newQueueWithPool(t *testing.T) (*Queue, *pgxpool.Pool, func()) {
@@ -61,15 +122,60 @@ func newQueueWithPool(t *testing.T) (*Queue, *pgxpool.Pool, func()) {
 	return New(pool), pool, teardown
 }
 
-func TestClaim_ReturnsNilWhenEmpty(t *testing.T) {
+// claimWithRunner emulates the runner orchestration the supervisor will
+// implement: open tx → SelectCandidates → ClaimDispatchRow → COMMIT, and
+// return the claimed candidate (or nil if none). It is a test-only
+// shorthand and intentionally skips the §13.2 lock-eligibility step
+// (named/region/claim) that the real runner does in Go between the two
+// helpers — these tests don't exercise lock specs.
+func claimWithRunner(
+	ctx context.Context, t *testing.T, q *Queue,
+	supervisorID string, accepts queue.SelectCandidatesRequest,
+) *queue.Candidate {
+	t.Helper()
+	tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	candidates, err := q.SelectCandidates(ctx, tx, accepts)
+	require.NoError(t, err)
+	if len(candidates) == 0 {
+		return nil
+	}
+	cand := candidates[0]
+	claimed, err := q.ClaimDispatchRow(ctx, tx, cand.DispatchID, supervisorID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, tx.Commit(ctx))
+	return &cand
+}
+
+func TestSelectCandidates_ReturnsNilWhenEmpty(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	q, _, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	row, err := q.Claim(ctx, "sup-1", []string{"exec"}, map[string]int{})
+	tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
 	require.NoError(t, err)
-	require.Nil(t, row)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	cands, err := q.SelectCandidates(ctx, tx, queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+		AcceptedStores:    []string{},
+	})
+	require.NoError(t, err)
+	require.Empty(t, cands)
+}
+
+func TestSelectCandidates_RequiresTx(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, _, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	_, err := q.SelectCandidates(ctx, nil, queue.SelectCandidatesRequest{})
+	require.Error(t, err)
 }
 
 func TestEnqueueAndClaim_Happy(t *testing.T) {
@@ -78,153 +184,325 @@ func TestEnqueueAndClaim_Happy(t *testing.T) {
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	nodeID := insertNode(t, pool, "stale")
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
 
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
-		NodeID:          nodeID,
-		ExecutorName:    "ingest",
-		ConcurrencyTags: []string{"a", "b"},
-		EnqueuedAt:      time.Now(),
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID:         nodeID,
+		ExecutorName:   "ingest",
+		RequiredStores: []string{"items_store"},
+		EnqueuedAt:     time.Now(),
 	}))
 
-	row, err := q.Claim(ctx, "sup-1", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, row)
-	require.Equal(t, nodeID, row.NodeID)
-	require.Equal(t, "ingest", row.ExecutorName)
-	require.ElementsMatch(t, []string{"a", "b"}, row.ConcurrencyTags)
-	require.NotNil(t, row.ClaimedBy)
-	require.Equal(t, "sup-1", *row.ClaimedBy)
+	cand := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+		AcceptedStores:    []string{"items_store"},
+	})
+	require.NotNil(t, cand)
+	require.Equal(t, nodeID, cand.NodeID)
+	require.Equal(t, "ingest", cand.ExecutorName)
+	require.Equal(t, "ingest_type", cand.NodeType)
+	require.ElementsMatch(t, []string{"items_store"}, cand.RequiredStores)
 
 	// GetClaimedBy reports "claimed_by" now.
-	own, err := q.GetClaimedBy(ctx, row.ID)
+	own, err := q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", own.Kind)
 	require.Equal(t, "sup-1", own.SupervisorID)
+
+	// last_heartbeat_at was set by ClaimDispatchRow.
+	var lastHB *time.Time
+	err = pool.QueryRow(ctx,
+		`SELECT last_heartbeat_at FROM rimsky_dispatch WHERE id = $1`, cand.DispatchID,
+	).Scan(&lastHB)
+	require.NoError(t, err)
+	require.NotNil(t, lastHB)
 }
 
-func TestClaim_FiltersByAccepts(t *testing.T) {
+func TestEnqueue_NativeNodeHasNullExecutor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	nodeID := insertNode(t, pool, "stale", "native_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID:     nodeID,
+		EnqueuedAt: time.Now(),
+	}))
+
+	var execName *string
+	err := pool.QueryRow(ctx,
+		`SELECT executor_name FROM rimsky_dispatch WHERE node_id = $1`, nodeID,
+	).Scan(&execName)
+	require.NoError(t, err)
+	require.Nil(t, execName, "native nodes enqueue with executor_name IS NULL")
+}
+
+func TestSelectCandidates_NativeNodesAreReturnedRegardlessOfExecutorAcceptList(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	nodeID := insertNode(t, pool, "stale", "native_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID:     nodeID,
+		EnqueuedAt: time.Now(),
+	}))
+
+	cand := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"unrelated"},
+		AcceptedStores:    []string{},
+	})
+	require.NotNil(t, cand, "native (executor IS NULL) candidate must surface even when acceptedExecutors does not list it")
+	require.Equal(t, nodeID, cand.NodeID)
+	require.Equal(t, "", cand.ExecutorName)
+}
+
+func TestSelectCandidates_FiltersByAcceptedExecutors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID:       nodeID,
 		ExecutorName: "ingest",
 		EnqueuedAt:   time.Now(),
 	}))
 
-	row, err := q.Claim(ctx, "sup-1", []string{"other"}, map[string]int{})
-	require.NoError(t, err)
-	require.Nil(t, row, "should not claim row whose executor is not in accepts")
+	got := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"other"},
+		AcceptedStores:    []string{},
+	})
+	require.Nil(t, got, "executor not in accepts must not surface")
 
-	row, err = q.Claim(ctx, "sup-1", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, row)
+	got = claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+		AcceptedStores:    []string{},
+	})
+	require.NotNil(t, got)
 }
 
-func TestClaim_RespectsEnqueuedAt_InFuture(t *testing.T) {
+func TestSelectCandidates_FiltersByRequiredStores(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	// Two enqueued nodes: one needs store A, the other needs store B.
+	nA := insertNode(t, pool, "stale", "type_a")
+	nB := insertNode(t, pool, "stale", "type_b")
+
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID:         nA,
+		ExecutorName:   "ingest",
+		RequiredStores: []string{"store_a"},
+		EnqueuedAt:     time.Now(),
+	}))
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID:         nB,
+		ExecutorName:   "ingest",
+		RequiredStores: []string{"store_b"},
+		EnqueuedAt:     time.Now().Add(1 * time.Millisecond),
+	}))
+
+	// A supervisor with only store_a may only pick up nA.
+	tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	cands, err := q.SelectCandidates(ctx, tx, queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+		AcceptedStores:    []string{"store_a"},
+	})
+	require.NoError(t, err)
+	require.Len(t, cands, 1)
+	require.Equal(t, nA, cands[0].NodeID)
+}
+
+func TestSelectCandidates_RespectsEnqueuedAt_InFuture(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID:       nodeID,
 		ExecutorName: "ingest",
 		EnqueuedAt:   time.Now().Add(1 * time.Hour),
 	}))
 
-	row, err := q.Claim(ctx, "sup-1", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.Nil(t, row, "future-dated enqueue must not be claimable yet")
+	got := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+	})
+	require.Nil(t, got, "future-dated enqueue must not be claimable yet")
 }
 
-func TestClaim_RespectsTagLimits(t *testing.T) {
+func TestSelectCandidates_SkipLocked_TwoConcurrentTransactions(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	n1 := insertNode(t, pool, "stale")
-	n2 := insertNode(t, pool, "stale")
-
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
-		NodeID: n1, ExecutorName: "ingest",
-		ConcurrencyTags: []string{"per-instance:X"},
-		EnqueuedAt:      time.Now(),
-	}))
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
-		NodeID: n2, ExecutorName: "ingest",
-		ConcurrencyTags: []string{"per-instance:X"},
-		EnqueuedAt:      time.Now().Add(10 * time.Millisecond),
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
 	}))
 
-	limits := map[string]int{"per-instance:X": 1}
-
-	row1, err := q.Claim(ctx, "sup-1", []string{"ingest"}, limits)
-	require.NoError(t, err)
-	require.NotNil(t, row1)
-
-	// second claim blocked by tag limit (n1 is still claimed).
-	row2, err := q.Claim(ctx, "sup-1", []string{"ingest"}, limits)
-	require.NoError(t, err)
-	require.Nil(t, row2, "tag limit=1 should block second claim while first is live")
-
-	// After completing the first, the second becomes claimable.
-	require.NoError(t, q.Complete(ctx, row1.ID, ""))
-	row3, err := q.Claim(ctx, "sup-1", []string{"ingest"}, limits)
-	require.NoError(t, err)
-	require.NotNil(t, row3)
-}
-
-func TestClaim_TwoConcurrentClaimsSerializedByAdvisoryLock(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	q, pool, teardown := newQueueWithPool(t)
-	t.Cleanup(teardown)
-
-	// Single eligible row whose tag limit is 1.
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest",
-		ConcurrencyTags: []string{"per-instance:Y"},
-		EnqueuedAt:      time.Now(),
-	}))
-
-	limits := map[string]int{"per-instance:Y": 1}
-
-	// Launch two claims in parallel; only one may succeed due to the
-	// advisory lock + tag-count serialization.
+	// Open two transactions in parallel; SKIP LOCKED must give the row
+	// to exactly one. The runner pattern: tx → SelectCandidates →
+	// ClaimDispatchRow → COMMIT.
 	var wg sync.WaitGroup
-	results := make([]*shared.DispatchRow, 2)
+	results := make([]bool, 2)
 	errs := make([]error, 2)
 	wg.Add(2)
 	for i := 0; i < 2; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			r, err := q.Claim(ctx, "sup-"+string(rune('A'+idx)), []string{"ingest"}, limits)
-			results[idx] = r
-			errs[idx] = err
+			tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+
+			cands, err := q.SelectCandidates(ctx, tx, queue.SelectCandidatesRequest{
+				AcceptedExecutors: []string{"ingest"},
+			})
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			if len(cands) == 0 {
+				return
+			}
+			ok, err := q.ClaimDispatchRow(ctx, tx, cands[0].DispatchID, "sup-x")
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			if ok {
+				if err := tx.Commit(ctx); err != nil {
+					errs[idx] = err
+					return
+				}
+				results[idx] = true
+			}
 		}(i)
 	}
 	wg.Wait()
 
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
-
 	winners := 0
-	for _, r := range results {
-		if r != nil {
+	for _, w := range results {
+		if w {
 			winners++
 		}
 	}
-	require.Equal(t, 1, winners, "exactly one claimer should win under tag limit=1")
+	require.Equal(t, 1, winners, "exactly one tx may win the dispatch row under SKIP LOCKED")
 
-	_ = pool // keep pool reachable
+	// Verify state at rest.
+	var claimedBy *string
+	err := pool.QueryRow(ctx,
+		`SELECT claimed_by FROM rimsky_dispatch WHERE node_id = $1`, nodeID,
+	).Scan(&claimedBy)
+	require.NoError(t, err)
+	require.NotNil(t, claimedBy)
+}
+
+func TestClaimDispatchRow_GuardedReturnsFalseWhenAlreadyClaimed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+	}))
+
+	// First claim through the runner pattern.
+	cand := claimWithRunner(ctx, t, q, "sup-A", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+	})
+	require.NotNil(t, cand)
+
+	// Second attempt to claim the same dispatch id from a different supervisor:
+	// the row is no longer claimed_by IS NULL, so the guarded UPDATE returns
+	// claimed=false (defensive guard per spec §13.3 step 3c).
+	tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+	claimed, err := q.ClaimDispatchRow(ctx, tx, cand.DispatchID, "sup-B")
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NoError(t, tx.Commit(ctx))
+
+	// Ownership unchanged.
+	own, err := q.GetClaimedBy(ctx, cand.DispatchID)
+	require.NoError(t, err)
+	require.Equal(t, "sup-A", own.SupervisorID)
+	_ = pool
+}
+
+func TestTakeNamedLockAdvisory_SerializesConcurrentHolders(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, _, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	// Two transactions racing for the same advisory lock; the second must
+	// block until the first commits/rolls back. We assert serialization by
+	// observing that the second tx cannot acquire while the first sleeps.
+	tx1, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx1.Rollback(ctx) }()
+
+	require.NoError(t, TakeNamedLockAdvisory(ctx, tx1, "lock_one"))
+
+	// In a goroutine, take the same advisory in tx2 — should block.
+	acquired := make(chan struct{})
+	tx2started := make(chan struct{})
+	go func() {
+		tx2, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return
+		}
+		defer func() { _ = tx2.Rollback(ctx) }()
+		close(tx2started)
+		if err := TakeNamedLockAdvisory(ctx, tx2, "lock_one"); err != nil {
+			return
+		}
+		close(acquired)
+	}()
+
+	<-tx2started
+	select {
+	case <-acquired:
+		t.Fatal("tx2 acquired advisory while tx1 still holds it — should be blocked")
+	case <-time.After(200 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	// Release tx1; tx2 should acquire shortly after.
+	require.NoError(t, tx1.Rollback(ctx))
+	select {
+	case <-acquired:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("tx2 never acquired advisory after tx1 released")
+	}
+}
+
+func TestTakeNamedLockAdvisory_RequiresTx(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	require.Error(t, TakeNamedLockAdvisory(ctx, nil, "x"))
 }
 
 func TestReleaseClaim_Guarded_NoOpOnMismatch(t *testing.T) {
@@ -233,62 +511,67 @@ func TestReleaseClaim_Guarded_NoOpOnMismatch(t *testing.T) {
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
 	}))
-	row, err := q.Claim(ctx, "sup-winner", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, row)
+	cand := claimWithRunner(ctx, t, q, "sup-winner", queue.SelectCandidatesRequest{
+		AcceptedExecutors: []string{"ingest"},
+	})
+	require.NotNil(t, cand)
 
 	// Guarded release by a DIFFERENT supervisor must be a no-op.
-	require.NoError(t, q.ReleaseClaim(ctx, row.ID, "sup-ghost"))
+	require.NoError(t, q.ReleaseClaim(ctx, cand.DispatchID, "sup-ghost"))
 
-	own, err := q.GetClaimedBy(ctx, row.ID)
+	own, err := q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", own.Kind)
 	require.Equal(t, "sup-winner", own.SupervisorID)
 
-	// Guarded release by the correct supervisor clears the claim.
-	require.NoError(t, q.ReleaseClaim(ctx, row.ID, "sup-winner"))
-	own, err = q.GetClaimedBy(ctx, row.ID)
+	// Guarded release by the correct supervisor clears claim and
+	// last_heartbeat_at.
+	require.NoError(t, q.ReleaseClaim(ctx, cand.DispatchID, "sup-winner"))
+	own, err = q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "unclaimed", own.Kind)
+
+	var lastHB *time.Time
+	err = pool.QueryRow(ctx,
+		`SELECT last_heartbeat_at FROM rimsky_dispatch WHERE id = $1`, cand.DispatchID,
+	).Scan(&lastHB)
+	require.NoError(t, err)
+	require.Nil(t, lastHB, "ReleaseClaim must null last_heartbeat_at alongside the claim columns")
 }
 
-func TestListOrphanedClaims_FiltersOnNodeStaleState(t *testing.T) {
+func TestListOrphanedClaims_FiltersOnLastHeartbeatAt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	// One node stays stale (orphan-eligible), one flips to running (excluded).
-	nStale := insertNode(t, pool, "stale")
-	nRunning := insertNode(t, pool, "stale")
+	// Two claimed rows; one's last_heartbeat_at gets backdated past the
+	// cutoff, the other stays fresh.
+	nStale := insertNode(t, pool, "stale", "type_x")
+	nFresh := insertNode(t, pool, "stale", "type_x")
 
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: nStale, ExecutorName: "ingest", EnqueuedAt: time.Now(),
 	}))
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
-		NodeID: nRunning, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(1 * time.Millisecond),
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: nFresh, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(1 * time.Millisecond),
 	}))
 
-	r1, err := q.Claim(ctx, "sup-1", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, r1)
-	r2, err := q.Claim(ctx, "sup-1", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, r2)
+	c1 := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, c1)
+	c2 := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, c2)
 
-	// Flip the second node to running.
-	_, err = pool.Exec(ctx,
-		`UPDATE rimsky_nodes SET state='running' WHERE id = $1`, nRunning,
-	)
-	require.NoError(t, err)
-
-	// Backdate claimed_at so both are past the cutoff.
-	_, err = pool.Exec(ctx,
-		`UPDATE rimsky_dispatch SET claimed_at = NOW() - INTERVAL '10 minutes'`,
+	// Backdate just the first row's last_heartbeat_at.
+	_, err := pool.Exec(ctx,
+		`UPDATE rimsky_dispatch
+		    SET last_heartbeat_at = NOW() - INTERVAL '10 minutes'
+		  WHERE node_id = $1`,
+		nStale,
 	)
 	require.NoError(t, err)
 
@@ -296,6 +579,56 @@ func TestListOrphanedClaims_FiltersOnNodeStaleState(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, orphans, 1)
 	require.Equal(t, nStale, orphans[0].NodeID)
+	require.NotNil(t, orphans[0].LastHeartbeatAt)
+}
+
+func TestRefreshHeartbeat_BumpsClaimedRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	// One claimed row whose last_heartbeat_at is backdated; RefreshHeartbeat
+	// should bring it forward. A row claimed by a different supervisor must
+	// not be touched.
+	n1 := insertNode(t, pool, "stale", "type_x")
+	n2 := insertNode(t, pool, "stale", "type_x")
+
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: n1, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+	}))
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: n2, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(1 * time.Millisecond),
+	}))
+
+	c1 := claimWithRunner(ctx, t, q, "sup-mine", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, c1)
+	c2 := claimWithRunner(ctx, t, q, "sup-other", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, c2)
+
+	// Backdate both heartbeats.
+	_, err := pool.Exec(ctx,
+		`UPDATE rimsky_dispatch SET last_heartbeat_at = NOW() - INTERVAL '10 minutes'`,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, q.RefreshHeartbeat(ctx, "sup-mine"))
+
+	// Mine bumped to ~now; other unchanged.
+	var hbMine, hbOther *time.Time
+	err = pool.QueryRow(ctx,
+		`SELECT last_heartbeat_at FROM rimsky_dispatch WHERE id = $1`, c1.DispatchID,
+	).Scan(&hbMine)
+	require.NoError(t, err)
+	err = pool.QueryRow(ctx,
+		`SELECT last_heartbeat_at FROM rimsky_dispatch WHERE id = $1`, c2.DispatchID,
+	).Scan(&hbOther)
+	require.NoError(t, err)
+
+	require.NotNil(t, hbMine)
+	require.NotNil(t, hbOther)
+	require.WithinDuration(t, time.Now(), *hbMine, 5*time.Second, "mine should be bumped")
+	require.True(t, time.Since(*hbOther) > 1*time.Minute, "other must not have moved")
 }
 
 func TestGetClaimedBy_ThreeKinds(t *testing.T) {
@@ -310,8 +643,8 @@ func TestGetClaimedBy_ThreeKinds(t *testing.T) {
 	require.Equal(t, "not_found", own.Kind)
 
 	// unclaimed
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
 	}))
 	var dispatchID shared.UUID
@@ -323,11 +656,10 @@ func TestGetClaimedBy_ThreeKinds(t *testing.T) {
 	require.Equal(t, "unclaimed", own.Kind)
 
 	// claimed_by
-	row, err := q.Claim(ctx, "sup-xyz", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, row)
+	cand := claimWithRunner(ctx, t, q, "sup-xyz", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, cand)
 
-	own, err = q.GetClaimedBy(ctx, row.ID)
+	own, err = q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", own.Kind)
 	require.Equal(t, "sup-xyz", own.SupervisorID)
@@ -339,25 +671,53 @@ func TestComplete_GuardedDoesNotDeleteFreshClaim(t *testing.T) {
 	q, pool, teardown := newQueueWithPool(t)
 	t.Cleanup(teardown)
 
-	nodeID := insertNode(t, pool, "stale")
-	require.NoError(t, q.Enqueue(ctx, queue.DispatchRequest{
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
 	}))
-	row, err := q.Claim(ctx, "sup-fresh", []string{"ingest"}, map[string]int{})
-	require.NoError(t, err)
-	require.NotNil(t, row)
+	cand := claimWithRunner(ctx, t, q, "sup-fresh", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, cand)
 
 	// A stale supervisor's guarded Complete must NOT delete the row.
-	require.NoError(t, q.Complete(ctx, row.ID, "sup-stale"))
+	require.NoError(t, q.Complete(ctx, cand.DispatchID, "sup-stale"))
 
-	own, err := q.GetClaimedBy(ctx, row.ID)
+	own, err := q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "claimed_by", own.Kind)
 	require.Equal(t, "sup-fresh", own.SupervisorID)
 
 	// The rightful owner's guarded Complete deletes it.
-	require.NoError(t, q.Complete(ctx, row.ID, "sup-fresh"))
-	own, err = q.GetClaimedBy(ctx, row.ID)
+	require.NoError(t, q.Complete(ctx, cand.DispatchID, "sup-fresh"))
+	own, err = q.GetClaimedBy(ctx, cand.DispatchID)
 	require.NoError(t, err)
 	require.Equal(t, "not_found", own.Kind)
+
+	_ = pool
+}
+
+func TestRemoveForNode_GuardedDoesNotRemoveLiveClaim(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, pool, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+	}))
+	cand := claimWithRunner(ctx, t, q, "sup-live", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
+	require.NotNil(t, cand)
+
+	// Wrong-supervisor guarded RemoveForNode is a no-op.
+	require.NoError(t, q.RemoveForNode(ctx, nodeID, "sup-other"))
+	var stillThere int
+	err := pool.QueryRow(ctx, `SELECT count(*) FROM rimsky_dispatch WHERE node_id = $1`, nodeID).Scan(&stillThere)
+	require.NoError(t, err)
+	require.Equal(t, 1, stillThere)
+
+	// Right-supervisor removes the row.
+	require.NoError(t, q.RemoveForNode(ctx, nodeID, "sup-live"))
+	err = pool.QueryRow(ctx, `SELECT count(*) FROM rimsky_dispatch WHERE node_id = $1`, nodeID).Scan(&stillThere)
+	require.NoError(t, err)
+	require.Equal(t, 0, stillThere)
 }

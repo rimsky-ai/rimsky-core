@@ -1,0 +1,27 @@
+# Default stores configuration for the docker-compose reference stack.
+# Loaded by scheduler / supervisor / control-api at startup via
+# RIMSKY_STORES_CONFIG. See spec §14.1 for the schema and
+# docs/operator-guide.md for operator-facing notes.
+#
+# Two stores ship in the reference stack:
+#   - content      : filesystem direct-mode, rooted at /workspace/content
+#                    (mounted into each process via the compose volume).
+#   - topics-ring  : claim-store-postgres over the operator-owned
+#                    `topics_items` table; ring-buffer defaults so commit and
+#                    give-up both release the item to the back of the queue.
+#
+# The `topics_items` table is created by the `init-items` one-shot service
+# in docker-compose.yml. Operators running outside compose are responsible
+# for creating the table out-of-band per spec §9.10.
+stores:
+  content:
+    kind: filesystem
+    mode: direct
+    root: /workspace/content
+  topics-ring:
+    kind: claim_store
+    backend: postgres
+    items_table: topics_items
+    on_commit_default: release_to_back
+    on_give_up_default: release_to_back
+    visibility_timeout_seconds: 300

@@ -60,12 +60,10 @@ func main() {
 			os.Exit(1)
 		}
 		if c, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-			result := c.Complete.Result.AsInterface()
-			m, ok := result.(map[string]any)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "conformance: Complete.result not an object: %T\n", result)
-				os.Exit(1)
-			}
+			// Stub mode signals via attributes_delta after the §12 protocol
+			// rewrite (Complete.Result was removed; terminal-final attribute
+			// writeback replaces it).
+			m := c.Complete.GetAttributesDelta().AsMap()
 			if v, ok := m["stub"].(bool); !ok || !v {
 				fmt.Fprintf(os.Stderr, "conformance: stub-mode probe did not return {stub:true}, got %+v\n", m)
 				os.Exit(1)
@@ -74,7 +72,7 @@ func main() {
 			return
 		}
 		if e, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-			fmt.Fprintf(os.Stderr, "conformance: got Errored %s (%v)\n", e.Errored.ErrorClass, e.Errored.Payload.AsInterface())
+			fmt.Fprintf(os.Stderr, "conformance: got Errored %s (%v)\n", e.Errored.ErrorClass, e.Errored.GetPayload().AsMap())
 			os.Exit(1)
 		}
 		if _, ok := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted); ok {

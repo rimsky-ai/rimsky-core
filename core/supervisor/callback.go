@@ -1,26 +1,44 @@
-// Port of rimsky/src/supervisor/callback.ts (Plan A Task 10.5). HTTP
-// callback endpoint that async-handoff executors POST to with their final
-// outcome. See spec §7.2 "async-handoff" path.
+// Spec §12.4 — async-handoff terminal callback. Executors that returned
+// AsyncAccepted POST a TerminalEvent JSON body to
+// `POST {callback_url}/v1/callback/{async_ack_id}`. The CallbackRegistry
+// maps the ack id back to the per-run AsyncContext the runner registered
+// at handoff time; this file's HTTP handler classifies the body, builds
+// a `terminalEvent`, and drives the same `applyTerminal*` flow that the
+// synchronous executor-RPC path runs in `runner_terminal.go`.
 //
-// Runners register an AsyncContext when an executor returns AsyncAccepted;
-// the endpoint resolves ackID → context, classifies the body as a
-// TerminalOutcome, applies it via ApplyTerminalOutcome, and then clears the
-// dispatch row.
+// Body shape mirrors the gRPC `TerminalEvent` (spec §12.3 — HTTP+JSON
+// bridge): top-level `type` keys the discriminator (Complete / Blocked /
+// Errored), body carries the per-kind fields. The chi route param is
+// `{async_ack_id}` (spec §12.4); the internal handler variable is named
+// `ackID` for brevity.
+//
+// The dispatch row's frame_id is preserved across async handoff; the
+// callback resolution path commits cascade message-passes that inherit
+// the parent's frame_id (see core/supervisor/runner_terminal.go and
+// docs/specs/2026-04-26-frame-resolution-design.md §9).
 package supervisor
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	rimskyattrs "github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/queue"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 // CallbackRegistry tracks pending async executions. Runners register an
@@ -56,14 +74,32 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 }
 
 // CallbackServer is the supervisor's HTTP endpoint for async executor callbacks.
+//
+// QueuePool, LockHolders, and ResumeGrace are required for driving the
+// terminal-handling tx in `runner_terminal.go::applyTerminal*` (per
+// spec §13.6 / §17.1 step 6c). They are populated by the supervisor at
+// startup and threaded through here so the callback handler can run
+// the exact same flow the synchronous executor-RPC path runs.
+//
+// SupervisorID is the running supervisor's ID. Used by the §12.5
+// attributes-callback auth path to verify that an inbound `cancel_token`
+// matches the dispatch row's `claimed_by` (i.e. this supervisor still owns
+// the running window).
 type CallbackServer struct {
-	Registry *CallbackRegistry
-	Storage  storage.StorageBackend
-	Queue    queue.DispatchQueue
-	Clock    shared.Clock
-	Logger   shared.Logger
-	addr     string
-	srv      *http.Server
+	Registry     *CallbackRegistry
+	Storage      storage.StorageBackend
+	Queue        queue.DispatchQueue
+	QueuePool    *pgxpool.Pool
+	LockHolders  *store.LockHoldersClient
+	Clock        shared.Clock
+	Logger       shared.Logger
+	SupervisorID string
+	// ResumeGrace is forwarded as `RunArgs.ResumeGrace` when driving the
+	// terminal flow. Zero falls back to the runner's 30-minute default
+	// (see `releaseLocksInTx`).
+	ResumeGrace time.Duration
+	addr        string
+	srv         *http.Server
 }
 
 // Start listens on host:port (port=0 for OS-assigned). Safe to call before
@@ -73,12 +109,24 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 		c.Logger = shared.SilentLogger{}
 	}
 	r := chi.NewRouter()
-	r.Post("/v1/callback/{ackID}", c.handleCallback)
+	// Spec §12.4: the chi-route param is `{async_ack_id}`. The internal
+	// handler reads it as `ackID` for brevity.
+	r.Post("/v1/callback/{async_ack_id}", c.handleCallback)
+	// Spec §12.5: incremental attributes writeback. Mounted on the same
+	// listener as the async terminal callback so executors can reach both
+	// at the supervisor's advertised callback URL.
+	if c.Storage != nil && c.QueuePool != nil {
+		r.Method(http.MethodPost, "/v1/attributes/{node_id}", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
+			Store:  attributesStoreAdapter{inner: c.Storage.NodeAttributes()},
+			Auth:   c.attributesAuth,
+			Logger: c.Logger,
+		}))
+	}
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, portToStr(port)))
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return "", err
 	}
@@ -99,12 +147,16 @@ func (c *CallbackServer) Close(ctx context.Context) error {
 	return c.srv.Shutdown(ctx)
 }
 
+// callbackBody mirrors the §12.3 HTTP+JSON shape for `TerminalEvent`.
+// The discriminator key is `type` (preserved from the existing chi
+// convention). The Complete branch carries `attributes_delta` per spec
+// §12.2 (the legacy `result` field is retired).
 type callbackBody struct {
 	Type string `json:"type"` // "complete" | "blocked" | "errored"
 	// Complete fields:
-	Result        any    `json:"result,omitempty"`
-	Changed       bool   `json:"changed,omitempty"`
-	ChangeSummary string `json:"change_summary,omitempty"`
+	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	Changed         bool           `json:"changed,omitempty"`
+	ChangeSummary   string         `json:"change_summary,omitempty"`
 	// Blocked fields:
 	Reason  string `json:"reason,omitempty"`
 	Context any    `json:"context,omitempty"`
@@ -114,9 +166,9 @@ type callbackBody struct {
 }
 
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
-	ackID := chi.URLParam(r, "ackID")
+	ackID := chi.URLParam(r, "async_ack_id")
 	if ackID == "" {
-		http.Error(w, `{"error":"missing ackID"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"missing async_ack_id"}`, http.StatusBadRequest)
 		return
 	}
 	asyncCtx, ok := c.Registry.Pop(ackID)
@@ -132,52 +184,184 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
-	var outcome TerminalOutcome
-	switch strings.ToLower(body.Type) {
-	case "complete":
-		outcome = TerminalOutcome{
-			Kind:          TerminalRunSucceeded,
-			Result:        body.Result,
-			Changed:       body.Changed,
-			ChangeSummary: body.ChangeSummary,
-		}
-	case "blocked":
-		outcome = TerminalOutcome{
-			Kind:       TerminalAppError,
-			ErrorClass: "executor_blocked",
-			Payload:    map[string]any{"reason": body.Reason, "context": body.Context},
-		}
-	case "errored":
-		outcome = TerminalOutcome{
-			Kind:       TerminalAppError,
-			ErrorClass: body.ErrorClass,
-			Payload:    map[string]any{"payload": body.Payload},
-		}
-	default:
-		// Re-register the async context since we didn't actually apply the callback.
+	t, ok := classifyCallbackBody(body)
+	if !ok {
 		c.Registry.Register(ackID, asyncCtx)
 		http.Error(w, `{"error":"unknown callback type"}`, http.StatusBadRequest)
 		return
 	}
-	// Apply outcome.
-	if err := ApplyTerminalOutcome(r.Context(), ApplyTerminalArgs{
-		Storage: c.Storage, Queue: c.Queue, Clock: c.Clock, Logger: c.Logger,
-		NodeID: asyncCtx.NodeID, InstanceID: asyncCtx.InstanceID,
-		SupervisorID: asyncCtx.SupervisorID,
-		GetResource:  asyncCtx.GetResource,
-		Outcome:      outcome,
-	}); err != nil {
+
+	if err := c.driveTerminal(r.Context(), asyncCtx, t); err != nil {
 		// Re-register so the executor can retry. If we didn't, a transient
 		// failure would leave the node stuck in `running` forever — the
 		// callback would never correlate on retry.
 		c.Registry.Register(ackID, asyncCtx)
-		c.Logger.Warn("callback: ApplyTerminalOutcome failed",
+		c.Logger.Warn("callback: driveTerminal failed",
 			"node_id", asyncCtx.NodeID.String(), "error", err.Error())
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	// After outcome applies, clean up the dispatch row via complete.
+	// After outcome applies, clean up the dispatch row. Mirror the
+	// synchronous-runner path in supervisor.go that calls Queue.Complete
+	// after a non-async run.
 	_ = c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"accepted"}`))
+}
+
+// classifyCallbackBody folds the §12.3 callback body into the
+// runner-internal `terminalEvent`. Returns ok=false on an unknown
+// `type` discriminator. Blocked is mapped to error class
+// `executor_blocked` per spec §12.2 (the supervisor routes the policy
+// chain on that class, defaulting to give_up).
+func classifyCallbackBody(body callbackBody) (terminalEvent, bool) {
+	switch strings.ToLower(body.Type) {
+	case "complete":
+		return terminalEvent{
+			Kind:          terminalKindComplete,
+			Changed:       body.Changed,
+			ChangeSummary: body.ChangeSummary,
+			AttributesDel: body.AttributesDelta,
+		}, true
+	case "blocked":
+		return terminalEvent{
+			Kind:       terminalKindBlocked,
+			ErrorClass: "executor_blocked",
+			Payload:    map[string]any{"reason": body.Reason, "context": body.Context},
+		}, true
+	case "errored":
+		return terminalEvent{
+			Kind:       terminalKindErrored,
+			ErrorClass: body.ErrorClass,
+			Payload:    map[string]any{"payload": body.Payload},
+		}, true
+	}
+	return terminalEvent{}, false
+}
+
+// driveTerminal reconstructs the runner's `RunArgs` + `acquisition` shape
+// from the AsyncContext and the CallbackServer's startup-time deps, then
+// dispatches to the same applyTerminal* family the synchronous path runs
+// in `runner_terminal.go`. Keeps the per-lock release tx, §5.6.4
+// resolution, state→fresh / stale / failed transitions, dispatch
+// re-enqueue, and event audit trail in one place.
+func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
+	args := RunArgs{
+		Storage:       c.Storage,
+		Queue:         c.Queue,
+		QueuePool:     c.QueuePool,
+		LockHolders:   c.LockHolders,
+		StoreRegistry: ac.StoreRegistry,
+		Clock:         c.Clock,
+		Logger:        c.Logger,
+		SupervisorID:  ac.SupervisorID,
+		ResumeGrace:   c.ResumeGrace,
+	}
+	acq := &acquisition{
+		DispatchID:     ac.DispatchID,
+		NodeID:         ac.NodeID,
+		InstanceID:     ac.InstanceID,
+		NodeType:       ac.NodeType,
+		Executor:       ac.Executor,
+		FrameID:        ac.FrameID,
+		Locks:          ac.AcquiredLocks,
+		NodeDef:        ac.NodeDef,
+		InstanceParams: nil,
+	}
+	return applyTerminal(ctx, args, acq, ac.ResolvedAttributes, ac.AttributesSchema, t)
+}
+
+// attributesAuth validates the §12.5 incremental-writeback callback's
+// `Authorization` header. The token is the supervisor-issued
+// `cancel_token` of the form `<supervisorID>:<dispatchID>`. Auth passes
+// when:
+//
+//  1. the token's supervisor segment matches this CallbackServer's
+//     SupervisorID (the only supervisor entitled to mint tokens);
+//  2. the dispatch row is still claimed by this supervisor (i.e. the
+//     running window is open);
+//  3. the dispatch row's node_id matches the URL-supplied node_id.
+//
+// Token shape mirrors `runner_dispatch.go`'s `cancelToken` builder. Any
+// shape, supervisor-mismatch, ownership-mismatch, or node-mismatch
+// returns ErrUnauthorizedCallback so the handler maps to HTTP 401 (per
+// `core/attributes/callback.go` semantics).
+func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error {
+	parts := strings.SplitN(token, ":", 2)
+	if len(parts) != 2 {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	tokSupervisor, tokDispatch := parts[0], parts[1]
+	if tokSupervisor == "" || tokDispatch == "" {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	if c.SupervisorID != "" && tokSupervisor != c.SupervisorID {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	dispatchID, err := uuid.Parse(tokDispatch)
+	if err != nil {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	// Single SQL read: dispatch must exist, be claimed by us, and target
+	// the URL's node_id. Cheaper than two round-trips and atomic against
+	// concurrent re-claims.
+	var (
+		gotNodeID    shared.UUID
+		gotClaimedBy *string
+	)
+	err = c.QueuePool.QueryRow(context.Background(),
+		`SELECT node_id, claimed_by FROM rimsky_dispatch WHERE id = $1`,
+		dispatchID,
+	).Scan(&gotNodeID, &gotClaimedBy)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return rimskyattrs.ErrUnauthorizedCallback
+		}
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	if gotClaimedBy == nil || *gotClaimedBy != tokSupervisor {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	if gotNodeID != nodeID {
+		return rimskyattrs.ErrUnauthorizedCallback
+	}
+	return nil
+}
+
+// attributesStoreAdapter bridges the storage-package
+// `NodeAttributesStore` (canonical interface, returns
+// `*storage.NodeAttributesRow`) to the local `attributes.NodeAttributesStore`
+// (returns `*attributes.Row`) the callback handler depends on. The two
+// row shapes carry the same fields; the adapter copies between them.
+//
+// The split exists because `core/attributes` cannot import
+// `core/storage` without a cycle (storage imports core/node which imports
+// core/store etc.). Plan Task 10's note acknowledges this; the adapter is
+// the bridge until the duplicate interface is removed.
+type attributesStoreAdapter struct {
+	inner storage.NodeAttributesStore
+}
+
+func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*rimskyattrs.Row, error) {
+	row, err := a.inner.Get(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+	return &rimskyattrs.Row{
+		NodeID:     row.NodeID,
+		RunAttempt: row.RunAttempt,
+		Data:       row.Data,
+		UpdatedAt:  row.UpdatedAt,
+	}, nil
+}
+
+func (a attributesStoreAdapter) Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error {
+	return a.inner.Upsert(ctx, nodeID, runAttempt, data)
+}
+
+func (a attributesStoreAdapter) MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error {
+	return a.inner.MergeDelta(ctx, nodeID, delta)
 }

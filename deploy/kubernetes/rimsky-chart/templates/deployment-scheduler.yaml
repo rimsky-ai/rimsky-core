@@ -25,9 +25,19 @@ spec:
           env:
             - name: RIMSKY_DB_URL
               value: {{ .Values.postgres.dsn | quote }}
-            - name: RIMSKY_TICK_INTERVAL_MS
+            - name: RIMSKY_SCHEDULER_TICK_MS
               value: {{ .Values.scheduler.tickIntervalMs | quote }}
             - name: RIMSKY_HEARTBEAT_TIMEOUT_MS
               value: {{ .Values.scheduler.heartbeatTimeoutMs | quote }}
+            - name: RIMSKY_STORES_CONFIG
+              value: /etc/rimsky/stores.yml
+          volumeMounts:
+            - name: stores-config
+              mountPath: /etc/rimsky
+              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: stores-config
+          configMap:
+            name: {{ include "rimsky.fullname" . }}-stores-config

@@ -4,8 +4,9 @@ This guide is for developers who want to implement a new rimsky executor —
 in any language — and wire it into a rimsky deployment.
 
 If you are operating an existing deployment, see `operator-guide.md`. For
-the wire-format reference, see `protocol.md`. For the concept model, see
-`node-graph-design.md`.
+the wire-format reference, see `protocol.md` (authoritative wire contract;
+the proto source is `proto/v1/node_executor.proto`). For the conceptual
+model — nodes, attributes, stores, locks — see `node-graph-design.md`.
 
 ---
 
@@ -16,8 +17,9 @@ you emit zero or more `Heartbeat` events followed by **exactly one** terminal
 event (`Complete`, `Blocked`, `Errored`, or `AsyncAccepted`); then you close
 the stream.
 
-That's the whole contract. Everything else — retries, state machines,
-resource versioning, error-class policy chains — is rimsky's problem.
+That's the whole streaming contract. Rimsky owns retries, the state
+machine, store commit/discard, attribute schema validation, and policy
+chains. You own producing the work and reporting its outcome.
 
 ### 1.1 The RPC
 
@@ -33,33 +35,127 @@ service NodeExecutor {
 
 | field | purpose |
 | --- | --- |
-| `node_id`, `instance_id`, `node_type` | identifiers; echo them in logs |
-| `userdata` | opaque per-node config from the template; **this is your API surface** |
-| `instance_params` | the instance's params, post-redaction |
-| `deps_data` | current version of each dep resource, keyed by dep's `node_type` |
-| `reads_data` | current version of each `reads_resources` entry, keyed by declared name |
-| `callback_url` | where to POST async-handoff callbacks (empty if none) |
+| `node_id`, `instance_id`, `node_type` | identifiers; echo them in logs and on callbacks |
+| `userdata` | opaque per-node config from the template; **never substituted by rimsky** |
+| `attributes` | per-run typed attribute object; source-directive fields are pre-populated by the supervisor at dispatch (read-only input); sourceless fields are slots for you to fill |
+| `attributes_schema` | the JSON Schema for `attributes`, copied from the template, for executor-side reference |
+| `stores` | map of `<store_name> → StoreHandle` for every store the node references; the supervisor pre-acquires the declared regions / claims before dispatch |
+| `callback_url` | base URL for both async-handoff terminal callbacks and incremental attribute writes (empty if the supervisor has no callback endpoint configured) |
+| `cancel_token` | bearer token to echo on callbacks; the supervisor authenticates by matching it against the live dispatch row |
+| `resumed` | `true` if this dispatch is a retry of a `resumable: true` node where the prior attempt routed through `resume_then_retry`; both store-side state and `attributes` survive the boundary |
+| `run_attempt` | 1-indexed retry counter, useful for idempotency keys |
+
+#### 1.2.1 `attributes` and `attributes_schema`
+
+Attributes are the structured per-run data table — this is how rimsky
+moves typed inputs into your executor and accepts typed outputs back.
+The shape is declared by the template's `attributes.schema` and travels
+verbatim as `ExecuteRequest.attributes_schema`.
+
+At dispatch time the supervisor pre-populates fields whose schema declares
+a `source:` directive:
+
+- `source: "{{deps.<node>.<field>}}"` — pulled from an upstream node's
+  committed attributes.
+- `source: "{{claim.<store>.<field>}}"` — pulled from the payload of a
+  claim acquired against a claim store.
+- `source: "{{params.<key>}}"` — pulled from the instance's params.
+
+Source-directive fields are **read-only input**. Treat them as the
+parameters of your run. Sourceless fields are slots for you to populate;
+write them either via `Complete.attributes_delta` (terminal-final) or via
+the incremental callback (§5). Rimsky never substitutes anything inside
+`userdata`; substitution is exclusively an attributes-layer concern.
+
+#### 1.2.2 `stores` map
+
+Each entry in `stores` is a `StoreHandle`:
+
+```
+{
+  kind:           "filesystem" | "claim_store" | ...,
+  handle:         <kind-specific Struct>,
+  write_regions:  [<resolved region strings>],
+  read_regions:   [<resolved region strings>],
+  resumed:        bool                       // store-side prior work exists
+}
+```
+
+The handle's shape is per-kind. v1 ships:
+
+| Kind | `handle` shape |
+| --- | --- |
+| `filesystem` | `{ "path": "/abs/path/to/locked/region" }` — open a directory the executor reads/writes with normal POSIX ops. In `direct` mode this points at the live region; in `sidecar`/`versioned` modes (post-v1) it points at the working copy. |
+| `claim_store` | `{ "claim_id": "...", "payload": <json> }` — `claim_id` is rimsky-internal bookkeeping (don't interpret); `payload` is the user data of the claimed item, also surfaced via `{{claim.<store>.payload.…}}` source directives if the template declared them. |
+
+Future kinds (`database`, `s3`, `git`) follow the same shape pattern; see
+`store-author-guide.md` once they ship.
+
+The supervisor has already acquired the declared `write_regions` /
+`read_regions` for the duration of your run. Stay within them — writing
+outside undercuts other in-flight nodes' lock reservations and is
+undefined behavior. Reading outside is similarly undefined; the supervisor
+does not police it.
+
+`resumed: true` on a `StoreHandle` means the store has prior work for
+this dispatch (e.g. a sidecar tree from an earlier `resume_then_retry`
+attempt). Sidecar / versioned modes are post-v1; in v1 (filesystem
+direct + claim_store), `resumed` will reflect the underlying mode's
+capability — direct-mode filesystem stores naturally resume because
+prior writes already live in the region.
+
+#### 1.2.3 `callback_url` and `cancel_token`
+
+`callback_url` is the base URL of the supervisor's callback endpoint.
+Append the right path for each callback shape:
+
+- Incremental attribute write: `POST {callback_url}/v1/attributes/{node_id}`.
+- Async-handoff terminal: `POST {callback_url}/v1/callback/{async_ack_id}`.
+
+Both require `Authorization: Bearer <cancel_token>`. The supervisor
+authenticates by comparing the token to the live dispatch row; mismatch
+returns `401`. The token's lifetime is the dispatch — there is no
+separate credential to store.
+
+If `callback_url` is empty, the supervisor is not configured for
+callbacks: do not emit `AsyncAccepted` and do not attempt incremental
+writeback. Fall through to a synchronous `Complete` (with optional
+`attributes_delta`) or report `Errored { error_class: "no_callback_configured" }`.
 
 ### 1.3 What you emit
 
 | event | terminal? | meaning |
 | --- | --- | --- |
 | `Heartbeat` | no | "still working"; supervisor refreshes `last_heartbeat_at` |
-| `Complete` | yes | success, with `result`, `changed`, `change_summary` |
-| `Blocked` | yes | can't progress without human help; maps to `executor_blocked` error class |
+| `Complete` | yes | success, with `changed`, `change_summary`, optional `attributes_delta` |
+| `Blocked` | yes | can't progress without external help; maps to `executor_blocked` error class by default |
 | `Errored` | yes | application-level failure, with `error_class` + `payload` |
-| `AsyncAccepted` | yes | work accepted but outcome will come via `callback_url` |
+| `AsyncAccepted` | yes | work accepted; outcome will arrive via `${callback_url}/v1/callback/{async_ack_id}` |
+
+`Complete.attributes_delta` is your terminal-final attribute writeback —
+a JSON object whose top-level keys merge into the node's attribute row.
+Empty (or absent) when you used the incremental callback path. See §5.
+
+There is **no `result` field** on terminal events. Your structured output
+flows out via `attributes` (and any writes you make through store
+handles). This is the load-bearing change from earlier rimsky: executors
+no longer ship a free-form result blob; they populate typed slots in the
+attribute schema.
 
 ### 1.4 Rules
 
 1. **Exactly one terminal event per stream.** Emit it and then close.
-2. **Close the stream after the terminal event.** Clients that keep the
-   stream open indefinitely are treated as infrastructure errors.
+2. **Close the stream after the terminal event.** Holding it open is a
+   bug; supervisors that wait for stream-close for accounting need you to
+   close promptly.
 3. **Stream close without a terminal event is a protocol violation.** The
-   supervisor maps it to `executor_stream_closed_without_terminal` and the
-   conformance suite will fail you on it.
-4. **Userdata is opaque to rimsky.** Define whatever schema you want. Document
-   it in your executor's README.
+   supervisor maps it to `infra:transport_closed` and the conformance
+   suite will fail you on it.
+4. **Userdata is opaque.** Define whatever schema you want. Document it
+   in your executor's README. Rimsky never parses or substitutes it.
+5. **Source-directive attribute fields are read-only input.** Don't write
+   into them — at best you'll overwrite upstream-derived state; at worst
+   the supervisor's commit-time validation rejects the resulting shape.
 
 ---
 
@@ -77,11 +173,30 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
         TimestampMs: time.Now().UnixMilli(),
         Note:        "http-node starting",
     }}})
-    // ... do the work ...
+
+    // Read inputs from attributes (already substituted by rimsky).
+    attrs := req.GetAttributes().AsMap()
+    sourceID, _ := attrs["source_id"].(string)
+
+    // Optionally read the locked region of a filesystem store.
+    if h, ok := req.GetStores()["content"]; ok {
+        path, _ := h.GetHandle().AsMap()["path"].(string)
+        _ = path  // open files under path; respect write_regions / read_regions
+    }
+
+    // Do the work (HTTP fetch in this case, then build a structured delta).
+    delta, err := structpb.NewStruct(map[string]any{
+        "fetched_for": sourceID,
+        "status":      200,
+    })
+    if err != nil {
+        return err
+    }
+
     return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-        Result:        resultValue,
-        Changed:       true,
-        ChangeSummary: "HTTP 200 OK",
+        Changed:         true,
+        ChangeSummary:   "HTTP 200 OK",
+        AttributesDelta: delta,
     }}})
 }
 
@@ -125,7 +240,7 @@ STUB_MODE = os.environ.get("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
 
 
 class BadInputError(ValueError):
-    """Raised when userdata is missing required fields."""
+    """Raised when userdata or attributes are missing required fields."""
 
 
 def _event(ev: dict) -> bytes:
@@ -135,8 +250,11 @@ def _event(ev: dict) -> bytes:
 def _heartbeat(note: str) -> bytes:
     return _event({"heartbeat": {"timestampMs": int(time.time() * 1000), "note": note}})
 
-def _complete(result, changed=True, summary="") -> bytes:
-    return _event({"complete": {"result": result, "changed": changed, "changeSummary": summary}})
+def _complete(attributes_delta=None, changed=True, summary="") -> bytes:
+    payload = {"changed": changed, "changeSummary": summary}
+    if attributes_delta is not None:
+        payload["attributesDelta"] = attributes_delta
+    return _event({"complete": payload})
 
 def _errored(error_class: str, message: str) -> bytes:
     return _event({"errored": {"errorClass": error_class, "payload": {"error": message}}})
@@ -151,38 +269,51 @@ async def execute(req: Request):
         body = await req.json()
     except Exception as exc:
         return JSONResponse({"error": f"bad json: {exc}"}, status_code=400)
-    userdata = body.get("userdata", {}) or {}
+
+    userdata   = body.get("userdata", {}) or {}
+    attributes = body.get("attributes", {}) or {}
+    stores     = body.get("stores", {}) or {}
 
     def stream():
         yield _heartbeat("python-executor starting")
         if STUB_MODE:
-            yield _complete(userdata.get("stub_response", {"stub": True}),
-                            changed=True, summary="stub")
+            yield _complete(
+                attributes_delta=userdata.get("stub_response", {"stub": True}),
+                changed=True,
+                summary="stub",
+            )
             return
         # --- real work goes here ---
         try:
-            result = do_the_work(userdata)
+            delta = do_the_work(userdata, attributes, stores)
         except BadInputError as exc:
-            yield _errored("invalid_userdata", str(exc))
+            yield _errored("invalid_input", str(exc))
             return
         except RuntimeError as exc:
             yield _errored("execution_failed", str(exc))
             return
-        yield _complete(result, changed=True, summary="ok")
+        yield _complete(attributes_delta=delta, changed=True, summary="ok")
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 # --- your application logic below ---
 
-def do_the_work(userdata: dict) -> dict:
-    """Replace with your real executor logic. Must return a JSON-serializable
-    dict. Raise BadInputError for invalid userdata; RuntimeError for runtime
-    failures you want mapped to error_class='execution_failed'."""
+def do_the_work(userdata: dict, attributes: dict, stores: dict) -> dict:
+    """Replace with your real executor logic. Return a JSON-serializable dict
+    keyed by attribute names — these merge into the node's attribute row.
+    Source-directive attribute fields are read-only input; write only into
+    sourceless slots."""
     target = userdata.get("target")
     if not target:
         raise BadInputError("userdata.target required")
-    return {"echoed_target": target}
+    source_id = attributes.get("source_id")
+    if not source_id:
+        raise BadInputError("attributes.source_id required (declared as source-directive in template)")
+    # Optionally use a filesystem store handle:
+    #   path = stores["content"]["handle"]["path"]
+    #   ... open files under path ...
+    return {"echoed_target": target, "echoed_source": source_id}
 ```
 
 **`requirements.txt`:**
@@ -248,6 +379,9 @@ points:
 
 - Uses gRPC (`@grpc/grpc-js` + generated stubs) because the agent streams
   long-running token output and benefits from gRPC's built-in flow control.
+- Uses the **incremental attributes callback** (§5) and the **async
+  handoff** (§6) — the agent is long-lived and benefits from durable
+  partial state plus survival across executor restarts.
 - Same contract as every other executor: emit heartbeats as tokens arrive,
   then exactly one terminal event.
 - Stub mode via `CLAUDE_STUB_MODE=1` short-circuits to a deterministic
@@ -260,51 +394,186 @@ response stream.
 
 ---
 
-## 5. Async handoff
+## 5. Incremental attribute writeback
 
-Use `AsyncAccepted` when the real work runs outside your executor process
-(queue worker, batch job, third-party webhook). The flow:
+Most executors are fine with the terminal-final pattern: accumulate the
+result in memory, emit `Complete { attributes_delta: {...} }`, close. The
+incremental pattern is for executors that benefit from each write being
+durable before the run terminates — agentic loops where the run might be
+interrupted and resumed; long-running pipelines that want progress
+visibility; any executor whose work stream produces structured outputs
+incrementally.
 
-1. Your `Execute` handler accepts the request, kicks off the work, and
-   returns `AsyncAccepted { async_ack_id }` — this is a **terminal** event
-   from the supervisor's perspective; close the stream.
-2. The work runs elsewhere; when complete, your system POSTs a JSON body
-   to `callback_url` (from `ExecuteRequest.callback_url`). Body shape:
+### 5.1 The endpoint
 
-   ```json
-   {
-     "async_ack_id": "same-id-you-returned",
-     "event": {
-       "complete": {
-         "result": {...},
-         "changed": true,
-         "changeSummary": "done"
-       }
-     }
-   }
-   ```
+```
+POST  ${callback_url}/v1/attributes/{node_id}
+Content-Type: application/json
+Authorization: Bearer <cancel_token>
 
-3. The supervisor correlates by `async_ack_id`, commits the result, and
-   transitions the node.
+{
+  "delta": {
+    "<field_name>": <value>,
+    "<other_field>": <value>,
+    ...
+  }
+}
+```
 
-Rules:
+`{node_id}` is `ExecuteRequest.node_id` verbatim. The body's `delta` is a
+shallow object whose top-level keys merge into `rimsky_node_attributes.data`
+(later writes overwrite earlier writes on key collision). Values are
+arbitrary JSON.
 
-- If `callback_url` is empty in the request, **do not** return
-  `AsyncAccepted` — there is nowhere for the callback to go. Fall back to
-  synchronous execution or return `Errored { error_class: "no_callback_configured" }`.
-- The callback POST should be idempotent: the supervisor ignores
-  duplicate callbacks for the same `async_ack_id`.
-- The supervisor still applies heartbeat-loss cutoff while waiting. If the
-  callback takes longer than 2× supervisor heartbeat interval, the node
-  will be marked `heartbeat_timeout` and the claim released. Use
-  `expected_completion_ms` in `AsyncAccepted` to hint at wait duration, but
-  the supervisor's cutoff is authoritative.
+### 5.2 Responses
+
+- `204 No Content` — write applied.
+- `401 Unauthorized` — bearer token missing/wrong, or the URL `node_id`
+  does not match the live dispatch row that the token resolves to.
+- `400 Bad Request` — body malformed: bad JSON, missing `delta`, or
+  non-object `delta`.
+- `404 Not Found` — no dispatch for `node_id` is currently `running` on
+  this supervisor (the original supervisor restarted, the heartbeat
+  sweep released the claim, etc.).
+- `500 Internal Server Error` — supervisor-internal problem; safe to retry.
+
+### 5.3 Validation timing
+
+The supervisor does **not** validate against `attributes_schema` on each
+incremental write. Schema validation runs once at terminal commit. You're
+free to write a partial state mid-run that wouldn't pass schema, as long
+as the cumulative state at terminal time is valid.
+
+### 5.4 Combining with terminal-final
+
+You can use only the incremental path, only `Complete.attributes_delta`,
+or both. Final committed state is the shallow merge of:
+
+```
+dispatch-resolved attributes
+  ∪ incremental writes (in arrival order; later wins on collision)
+  ∪ Complete.attributes_delta (last; wins on collision)
+```
+
+The `claude-agent` executor uses the incremental path exclusively and
+emits `Complete { attributes_delta: null }` to signal "incremental writes
+are authoritative."
+
+### 5.5 Ordering and idempotency
+
+Each POST is processed atomically and in arrival order. Concurrent POSTs
+from the same executor instance are not specified beyond "ordering may
+not be preserved across overlapping in-flight requests." Serialize your
+incremental writes per node.
+
+A duplicate write of the same key (network retry, etc.) overwrites with
+the same value — idempotent in the trivial sense. There is no
+compare-and-swap primitive.
 
 ---
 
-## 6. Error reporting
+## 6. Async handoff
 
-### 6.1 Application-level errors: `Errored`
+Use `AsyncAccepted` when the real work runs outside your executor process
+(queue worker, batch job, third-party webhook, agentic subprocess that
+might outlive the executor). The flow:
+
+1. Your `Execute` handler accepts the request, kicks off the work, and
+   returns `AsyncAccepted { async_ack_id, expected_completion_ms }` —
+   this is a **terminal** event from the supervisor's perspective; close
+   the stream.
+2. The supervisor holds the dispatch claim, keeps the node in `running`,
+   and persists the lock-holder rows and `rimsky_node_attributes` across
+   the async window. It schedules a heartbeat-loss watchdog per its
+   configured cutoff.
+3. The work runs elsewhere. During this time you MAY issue zero or more
+   incremental attribute writes via §5.
+4. When the work completes, your system POSTs the terminal outcome to
+   `${callback_url}/v1/callback/{async_ack_id}` with the `cancel_token`
+   bearer.
+
+### 6.1 The terminal-callback endpoint
+
+```
+POST  ${callback_url}/v1/callback/{async_ack_id}
+Content-Type: application/json
+Authorization: Bearer <cancel_token>
+
+{
+  "type": "complete" | "blocked" | "errored",
+
+  "changed":           <bool>,         // complete
+  "change_summary":    "<str>",        // complete
+  "attributes_delta":  <obj | null>,   // complete; null/absent = incremental-only
+
+  "reason":            "<str>",        // blocked
+  "context":           <json>,         // blocked
+
+  "error_class":       "<str>",        // errored
+  "payload":           <json>          // errored
+}
+```
+
+The body is **flat and keyed by `type`** — distinct from the streaming
+`ExecuteEvent` oneof shape. Only the fields relevant to the selected
+`type` need be populated; unknown fields are ignored.
+`attributes_delta: null` (or omitted) is the explicit "incremental
+writeback was used; no terminal-final delta" signal — the supervisor
+commits whatever incremental writes accumulated during the running
+window.
+
+### 6.2 Responses
+
+- `200 OK` with `{"status":"accepted"}` — callback applied.
+- `401 Unauthorized` — bearer token did not match the live dispatch
+  claim.
+- `404 Not Found` — `async_ack_id` does not match an outstanding async
+  handoff registered by this supervisor (original supervisor restarted,
+  heartbeat sweep released the claim before the callback arrived, or
+  the executor is confused).
+- `400 Bad Request` — body malformed.
+- `500 Internal Server Error` — supervisor-internal problem. The ack is
+  re-registered so you may retry with idempotent backoff.
+
+### 6.3 Rules
+
+- If `callback_url` is empty in the request, **do not** return
+  `AsyncAccepted` — there is nowhere for the callback to go. Fall back to
+  synchronous execution or return
+  `Errored { error_class: "no_callback_configured" }`.
+- The callback POST is not retried automatically by the supervisor;
+  duplicate callbacks for a successfully-applied `async_ack_id` will
+  return 404 (the registry removed it on success). On `500` the ack is
+  re-registered and you should retry.
+- The supervisor still applies its heartbeat-loss cutoff while waiting.
+  If the callback takes longer than the configured cutoff, the node will
+  be marked timed-out and the claim released. Use `expected_completion_ms`
+  in `AsyncAccepted` to hint at wait duration, but the supervisor's
+  cutoff is authoritative.
+
+### 6.4 When to use async handoff
+
+Use it when:
+
+- The work's runtime is heavy-tailed (LLM calls, external API waits,
+  human-in-the-loop approvals).
+- The executor wants to survive its own restart while work continues
+  (e.g. by kicking off a Kubernetes job and polling status).
+- Holding a transport-level connection would be expensive or unreliable.
+
+Don't use it when:
+
+- The work is deterministic and bounded (< 30s). Synchronous `Complete`
+  is simpler.
+- You can't guarantee the callback will fire. The supervisor's
+  heartbeat-loss sweep will eventually release the claim, but
+  "eventually" depends on cutoff config.
+
+---
+
+## 7. Error reporting
+
+### 7.1 Application-level errors: `Errored`
 
 Use `Errored { error_class, payload }` for application-level failures —
 things the template author can anticipate and configure a policy chain for.
@@ -323,30 +592,71 @@ operators start configuring policies against them, you cannot rename them
 without breaking templates. Treat `error_class` like HTTP status codes: a
 small, stable set documented in your README.
 
-### 6.2 External blockage: `Blocked`
+If the class is not declared in the node's `error_types`, the supervisor
+treats it as `give_up` with an unknown-class reason.
+
+### 7.2 External blockage: `Blocked`
 
 `Blocked { reason, context }` is for when the executor can detect that no
 amount of retry will help — a missing secret, a closed upstream account, a
-permission error. Rimsky maps it to the `executor_blocked` class; templates
-can bind policy to it explicitly.
+permission error. Rimsky maps it to the `executor_blocked` class by
+default; templates can bind policy to it explicitly, and an executor may
+also choose a more specific declared class instead of `Blocked` if the
+template-author distinguishes those cases.
 
-### 6.3 Infrastructure errors
+### 7.3 Infrastructure errors
 
 Do NOT use `Errored` for your own bugs. If your executor crashes
-mid-stream, the supervisor classifies that separately (stream close without
-terminal = infrastructure error; panic-caught = executor-side infra error).
-The operator's policy for infrastructure errors is orthogonal to the
-application-level policy chain.
+mid-stream, the supervisor classifies that separately (stream close
+without terminal → `infra:transport_closed`; panic-caught → executor-side
+infra error). The operator's policy for infrastructure errors is
+orthogonal to the application-level policy chain.
 
-### 6.4 Payload shape
+### 7.4 Payload shape
 
 Both `Errored.payload` and `Blocked.context` accept any JSON value. Use
 them to attach debug context — request IDs, upstream response codes, retry
 headers. The supervisor stores the payload on the event log verbatim.
 
+### 7.5 Schema-validation failures
+
+If you write attributes that don't match the declared schema (either via
+`Complete.attributes_delta` or via incremental callback), the
+supervisor's commit-time validation raises `attributes_schema_failed`,
+which routes through the policy chain like any other error. You can
+catch this earlier by validating against `ExecuteRequest.attributes_schema`
+client-side before emitting; rimsky validates regardless.
+
 ---
 
-## 7. Stub mode
+## 8. Userdata
+
+Userdata is your executor's API surface. Rimsky never parses, validates,
+or template-substitutes it. Whatever shape you define is delivered to
+`Execute` byte-for-byte as supplied in the template.
+
+### 8.1 No template substitution inside userdata
+
+Substitution is exclusively an attributes-layer concern. Operators who
+want a value to flow into a node from upstream / claim / params declare it
+in `attributes.schema` with a `source:` directive. **Never** inside
+`userdata`.
+
+If your executor wants a template-like substitution mechanism (e.g.
+referring to attribute values inside a prompt template), implement it
+yourself on top of `ExecuteRequest.attributes` — and document the syntax
+clearly in your README. Reject malformed templates with
+`Errored { error_class: "userdata_template_error" }`.
+
+### 8.2 Validate on receipt
+
+Validate `ExecuteRequest.userdata` against your schema as the first thing
+you do. Reject malformed input with `Blocked` or `Errored` rather than
+`Complete` — the conformance suite tests this explicitly.
+
+---
+
+## 9. Stub mode
 
 Every executor **must** support a stub mode that short-circuits all real
 network / filesystem / subprocess calls and returns a deterministic
@@ -357,18 +667,18 @@ terminal event. Stub mode is required for:
   mode so tests are deterministic).
 - Offline dev environments (no API keys, no outbound calls).
 
-### 7.1 How to wire it
+### 9.1 How to wire it
 
 - Read `RIMSKY_EXECUTOR_STUB_MODE` at process start. `"1"` = stub mode;
   anything else = real mode.
 - In stub mode, `Execute` should emit an opening heartbeat, then a
-  `Complete` with `result = userdata.stub_response` (if set) or a
-  sensible default (e.g. `{"stub": true}`), and close.
+  `Complete` with `attributes_delta = userdata.stub_response` (if set) or
+  a sensible default (e.g. `{"stub": true}`), and close.
 - Optional: a flag `--require-stub-mode` to the conformance runner will
   verify your executor probe reports stub mode; you can expose this via a
   `/health` endpoint returning `{"stub_mode": true}`.
 
-### 7.2 Why an env var and not userdata?
+### 9.2 Why an env var and not userdata?
 
 Stub mode is a **process-level** property, controlled by the operator
 running the executor. Letting callers switch it per-request via userdata
@@ -377,7 +687,7 @@ is made once, at deploy time.
 
 ---
 
-## 8. Running the conformance suite
+## 10. Running the conformance suite
 
 ```bash
 rimsky-conformance --endpoint <url> --transport <grpc|http> [--require-stub-mode]
@@ -390,17 +700,21 @@ Scenarios include:
 - `terminal_is_last` — no events after the terminal
 - `stream_close_without_terminal` — detected and reported as violation
 - `malformed_userdata` — executor handles bad userdata gracefully
-- `result_serialization` — `Complete.result` is a valid `google.protobuf.Value`
-- `async_handoff` — `AsyncAccepted` + callback loop (if callback configured)
+- `attributes_serialization` — `Complete.attributes_delta` round-trips a
+  structured JSON object unchanged across encoder boundaries
+- `attributes_callback` — incremental writes apply, including 401/404
+  paths for bad bearer tokens and unknown node IDs
+- `async_handoff` — `AsyncAccepted` + callback loop (if callback configured),
+  including bearer-token auth
 - `cancel` — executor responds to ctx cancellation
-- `unknown_ack_id` — callbacks with unknown IDs are rejected
+- `unknown_ack_id` — terminal callbacks with unknown IDs are rejected
 
 A passing `--require-stub-mode` run is the acceptance gate for merging a
 new executor into a rimsky deployment.
 
 ---
 
-## 9. Docker image conventions
+## 11. Docker image conventions
 
 Convention, not enforcement:
 
@@ -419,7 +733,7 @@ Publish images as `rimsky/executor-<name>:<version>`. The compose file at
 
 ---
 
-## 10. Supervisor integration
+## 12. Supervisor integration
 
 Once your executor image runs, the operator adds it to their
 `supervisor-config.yml`:
@@ -432,32 +746,53 @@ executors:
     concurrency: 8                # max concurrent dispatches the supervisor will send
 ```
 
-Templates reference it by `name`:
+Templates reference it by `name` and pass opaque `userdata` plus a typed
+attribute schema:
 
 ```yaml
 nodes:
   - type: my-task
     executor: my-python-executor
+    attributes:
+      schema:
+        type: object
+        properties:
+          source_id: { type: string, source: "{{params.source_id}}" }
+          result:    { type: string }
+        required: [source_id, result]
     userdata:
-      # whatever schema you defined
+      target: "https://example.com/api"
+      # whatever schema your executor defines
 ```
 
 When the supervisor picks up a dispatch row whose node's `executor` field
-matches a configured name, it opens an `Execute` stream to the registered
-endpoint. No further wiring is needed.
+matches a configured name, it pre-populates source-directive attribute
+fields, acquires any declared store regions / claims, and opens an
+`Execute` stream to the registered endpoint. No further wiring is needed.
 
 ---
 
-## 11. Checklist
+## 13. Checklist
 
 Before shipping your executor, verify:
 
 - [ ] Exactly one terminal event per Execute stream.
-- [ ] Stream closes after terminal event.
+- [ ] Stream closes after the terminal event.
+- [ ] `userdata` validated on receipt; malformed input → `Blocked` /
+      `Errored`, never `Complete`.
+- [ ] Source-directive `attributes` fields treated as read-only; only
+      sourceless slots written.
+- [ ] Store handles used only within declared `write_regions` /
+      `read_regions`.
 - [ ] `RIMSKY_EXECUTOR_STUB_MODE=1` short-circuits without real side effects.
 - [ ] `error_class` names are documented and stable.
-- [ ] `callback_url` handling is correct (use AsyncAccepted only when it's
-      non-empty; POST includes `async_ack_id`).
+- [ ] Async handoff (if used): `AsyncAccepted` only when `callback_url`
+      is non-empty; terminal POST to
+      `${callback_url}/v1/callback/{async_ack_id}` with
+      `Authorization: Bearer <cancel_token>`.
+- [ ] Incremental attribute writeback (if used): POST to
+      `${callback_url}/v1/attributes/{node_id}` with
+      `Authorization: Bearer <cancel_token>` and `{"delta": {...}}` body.
 - [ ] `rimsky-conformance --require-stub-mode` passes all scenarios.
 - [ ] Metrics/health endpoint exposed.
 - [ ] Docker image published at `rimsky/executor-<name>:<version>`.

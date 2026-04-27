@@ -30,10 +30,9 @@ type MessageDispatcher interface {
 // a schedule fires. SourceNodeID is nil for scheduler-originated invalidates
 // because the schedule is a property of the target node itself.
 type InvalidateRequest struct {
-	SourceNodeID   *shared.UUID
-	TargetNodeID   shared.UUID
-	Reason         string
-	RestoreVersion string
+	SourceNodeID *shared.UUID
+	TargetNodeID shared.UUID
+	Reason       string
 }
 
 // NextFireAt returns the next cron fire time strictly after `after`. Uses

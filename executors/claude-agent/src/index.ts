@@ -19,3 +19,14 @@ export type {
   CliSpawnRequest,
   CliToolConfig,
 } from "./cli-runner.js";
+export {
+  ATTRIBUTES_TOOL_DEFINITIONS,
+  AttributesReadInput,
+  AttributesSetInput,
+  buildAttributesWritebackUrl,
+  defaultPostAttributes,
+} from "./attributes-tools.js";
+export type {
+  AttributesToolDefinition,
+  PostAttributesFn,
+} from "./attributes-tools.js";

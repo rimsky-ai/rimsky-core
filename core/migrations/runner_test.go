@@ -11,6 +11,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/migrations"
 	"github.com/fallguy/rimsky/core/shared"
 )
@@ -20,12 +21,14 @@ var expectedTables = []string{
 	"rimsky_templates",
 	"rimsky_instances",
 	"rimsky_nodes",
-	"rimsky_resources",
-	"rimsky_resource_versions",
 	"rimsky_supervisors",
 	"rimsky_dispatch",
 	"rimsky_events",
 	"rimsky_schedules",
+	"rimsky_node_attributes",
+	"rimsky_lock_holders",
+	"rimsky_claim_holders",
+	"rimsky_frames",
 }
 
 func TestRun_AppliesAllMigrationsAndIsIdempotent(t *testing.T) {
@@ -81,4 +84,76 @@ func TestRun_AppliesAllMigrationsAndIsIdempotent(t *testing.T) {
 	var secondCount int
 	require.NoError(t, pool.QueryRow(ctx, "SELECT COUNT(*) FROM rimsky_migrations").Scan(&secondCount))
 	require.Equal(t, firstCount, secondCount, "re-running Run should not record additional migrations")
+}
+
+// TestMigration002FrameResolutionSchema verifies that 002-frame-resolution.sql,
+// when applied through the migration runner, produces the schema shape required
+// by the frame-resolution design (rimsky_frames table, frame_id columns on
+// dispatch/nodes/lock_holders/claim_holders, kill_requested removed, supporting
+// indexes present).
+func TestMigration002FrameResolutionSchema(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, teardown := pgtest.StartPostgres(ctx, t)
+	t.Cleanup(teardown)
+
+	// rimsky_frames table must exist.
+	var framesTableExists bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'rimsky_frames'
+		)`).Scan(&framesTableExists))
+	require.True(t, framesTableExists, "rimsky_frames table should exist")
+
+	// All four frame_id columns must exist.
+	frameIDColumns := []struct {
+		table  string
+		column string
+	}{
+		{"rimsky_dispatch", "frame_id"},
+		{"rimsky_nodes", "frame_id"},
+		{"rimsky_lock_holders", "frame_id"},
+		{"rimsky_claim_holders", "frame_id"},
+	}
+	for _, c := range frameIDColumns {
+		var exists bool
+		err := pool.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+			)`, c.table, c.column).Scan(&exists)
+		require.NoError(t, err, "check %s.%s", c.table, c.column)
+		require.True(t, exists, "column %s.%s should exist", c.table, c.column)
+	}
+
+	// rimsky_nodes.kill_requested must NOT exist (removed from 001-initial.sql per pre-v1 break-freely; 002 does not drop it).
+	var killRequestedExists bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'rimsky_nodes' AND column_name = 'kill_requested'
+		)`).Scan(&killRequestedExists))
+	require.False(t, killRequestedExists, "rimsky_nodes.kill_requested should not exist (never declared in 001-initial.sql)")
+
+	// All six supporting indexes must be present.
+	expectedIndexes := []string{
+		"uq_rimsky_frames_running",
+		"uq_rimsky_frames_coalesce_queued",
+		"idx_rimsky_frames_queued",
+		"idx_rimsky_dispatch_frame",
+		"idx_rimsky_dispatch_frame_claimed",
+		"idx_rimsky_nodes_frame_state",
+	}
+	for _, idx := range expectedIndexes {
+		var exists bool
+		err := pool.QueryRow(ctx,
+			`SELECT EXISTS(
+				SELECT 1 FROM pg_indexes
+				WHERE schemaname = 'public' AND indexname = $1
+			)`, idx).Scan(&exists)
+		require.NoError(t, err, "check index %s", idx)
+		require.True(t, exists, "index %s should exist", idx)
+	}
 }

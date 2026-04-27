@@ -42,7 +42,7 @@ describe("HTTP bridge stub-mode /execute", () => {
     await cb.close();
   });
 
-  it("returns 202 + ackId and POSTs complete outcome", async () => {
+  it("returns 202 + ackId and POSTs Complete with attributes_delta keyed by `type`", async () => {
     const res = await fetch(`${bridge.address}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -50,6 +50,8 @@ describe("HTTP bridge stub-mode /execute", () => {
         node_id: "n-1",
         node_type: "stub-agent",
         userdata: { model: "sonnet" },
+        attributes: {},
+        attributes_schema: {},
         callback_url: "http://supervisor.invalid/cb",
       }),
     });
@@ -60,8 +62,13 @@ describe("HTTP bridge stub-mode /execute", () => {
     await waitFor(() => posts.length > 0, 2000);
     expect(posts[0]!.url).toBe("http://supervisor.invalid/cb");
     const cb0 = posts[0]!.body as Record<string, unknown>;
-    expect(cb0.kind).toBe("complete");
+    // Spec §12.3: HTTP bridge body keyed by `type`. Ensure no legacy `kind`.
+    expect(cb0.type).toBe("complete");
+    expect(cb0.kind).toBeUndefined();
     expect(cb0.async_ack_id).toBe(body.async_ack_id);
+    // Spec §12.2: legacy `result` retired in favour of `attributes_delta`.
+    expect(cb0.attributes_delta).toEqual({ stub: true });
+    expect(cb0.changed).toBe(true);
   });
 });
 

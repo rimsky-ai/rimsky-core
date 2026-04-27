@@ -1,391 +1,492 @@
-// Plan A Task 10.3 — single-node runner.
+// Omnibus runner — spec §17.1.
 //
-// RunNode is the supervisor's per-dispatch execution path. Given a
-// claim-guarded dispatch row, it verifies ownership, resolves the executor
-// endpoint, streams ExecuteEvents from the executor, and maps the terminal
-// event onto ApplyTerminalOutcome (Commit / OnError / infra-reenqueue).
+// This file is the supervisor's per-claim-cycle execution path under the
+// stores redesign. One call to RunNode picks an eligible candidate, runs
+// the §13.3 atomic acquisition transaction (candidate selection, in-Go
+// eligibility, advisory locks, claim+lock-holder inserts, store
+// AcquireLock), runs the verify-before-run guard (§13.3 step 4),
+// transitions the node to running (§13.3 step 4.5), opens native handles
+// (§17.1 step 2), resolves attribute source-directives (§17.1 step 3),
+// determines the dispatch path (§17.1 step 4), runs the heartbeat loop
+// (§17.1 step 5), and applies the terminal event (§17.1 step 6).
 //
-// See spec §6.2 (per-dispatch flow), §7.2 (terminal classification), §17
-// (ownership @blessed-invariant).
+// Helpers split across files for readability:
+//   - runner_acquire.go  — §13.3 atomic acquisition + verify-before-run
+//   - runner_dispatch.go — §17.1 step 4 dispatch path (executor / native)
+//   - runner_terminal.go — §17.1 step 6 terminal-event handling
+//
+// @blessed-invariant 3: Multi-lock acquisition uses deterministic sorted
+// order. (Spec §18 invariant 3; §13.7.) For each candidate dispatch all
+// per-spec lock acquisitions (named, region, claim) are performed in
+// `(lock_kind, sort_key)` order to prevent deadlock under concurrent
+// contention on overlapping lock sets. The sort happens in
+// runner_acquire.go's `sortLockSpecs`; the per-named-lock advisory locks
+// (§13.3 step 3b), the region re-evaluation (§13.3 step 3d), and the
+// store.AcquireLock + lock-holder INSERT loop (§13.3 step 3e) all walk
+// the same sorted slice. Removing the sort or walking it in a different
+// order in any of those steps reintroduces the deadlock the invariant
+// guards against.
+//
+// @blessed-invariant 5: Verify-before-run. (Spec §18 invariant 5.) After
+// the acquisition tx commits, the runner does a separate read of
+// `rimsky_dispatch.claimed_by` and bails to the orphan-claim-lost-race
+// handler if ownership has moved. The read happens in
+// runner_acquire.go's `verifyBeforeRun` and is intentionally outside the
+// acquisition tx — running the check inside the tx would race with
+// other supervisors that also see the row as theirs because of MVCC
+// snapshot isolation; the bail here is what catches the rare cross-
+// transaction handoff and keeps the §17 ownership invariant intact.
+//
+// @blessed-invariant 10: Lock acquisition is atomic with dispatch claim.
+// (Spec §18 invariant 10.) The acquisition tx in runner_acquire.go
+// either claims the dispatch row AND inserts every required
+// `rimsky_lock_holders` row AND completes every store `AcquireLock`
+// mutation, or none of these. The whole sequence runs inside a single
+// `pgx.Tx`; advisory locks released on commit, lock-holder rows visible
+// on commit, store-side mutations (e.g. claim_store-postgres items-
+// table flip) committed via `store.WithTx(ctx, tx)` so they share the
+// same atomicity boundary. Adding a non-tx mutation between candidate
+// selection and commit (or sneaking a separate connection into
+// AcquireLock) breaks the invariant.
 package supervisor
 
 import (
 	"context"
 	"errors"
-	"io"
+	"time"
 
-	"google.golang.org/protobuf/types/known/structpb"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/queue"
-	"github.com/fallguy/rimsky/core/resource"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 // RunnerResult is the outcome of a single RunNode invocation.
 type RunnerResult struct {
-	Ran        bool   // true if we actually dispatched (false on lost-race / node-missing)
-	Async      bool   // true if executor returned AsyncAccepted; terminal arrives later via callback
-	AsyncAckID string // populated when Async is true
+	// Ran is true iff the runner committed the acquisition tx and started
+	// (or at least attempted) the dispatch path. False when no candidate
+	// was eligible, or when the verify-before-run guard fired.
+	Ran bool
+	// Async is true when the executor emitted AsyncAccepted; the runner
+	// returns immediately and the callback registry takes over.
+	Async bool
+	// AsyncAckID is populated when Async is true.
+	AsyncAckID string
+	// NodeID, DispatchID identify the candidate the runner committed to.
+	// Zero on Ran=false.
+	NodeID     shared.UUID
+	DispatchID shared.UUID
 }
 
 // RunArgs is the caller-supplied dependency bundle for RunNode.
+//
+// The runner needs a richer surface than the pre-redesign per-dispatch
+// runner: it picks its own candidate (no DispatchID/NodeID input), needs
+// pool access to drive the §13.3 transaction directly, needs the store
+// registry for AcquireLock / OpenHandle / Commit / ReleaseLock dispatch,
+// and needs the lock-holders client for INSERT / rebind / DELETE.
 type RunArgs struct {
-	Storage      storage.StorageBackend
-	Queue        queue.DispatchQueue
+	// Storage is the rimsky_* table accessor surface.
+	Storage storage.StorageBackend
+	// Queue exposes the queue-side helpers (SelectCandidates,
+	// ClaimDispatchRow, RefreshHeartbeat, …) that participate in the
+	// §13.3 acquisition tx.
+	Queue queue.DispatchQueue
+	// QueuePool is the *pgxpool.Pool the queue is bound to. The runner
+	// opens the §13.3 acquisition tx on this pool so the queue helpers,
+	// the lock-holders inserts, and the per-store AcquireLock mutations
+	// all share one tx. core/queue/postgres.Queue exposes Pool() to make
+	// this trivial; non-postgres queue impls would need to wire their own
+	// pool.
+	QueuePool *pgxpool.Pool
+	// LockHolders is the database-facing helper for rimsky_lock_holders.
+	// Source: storage.LockHoldersClient(); we take it directly so the
+	// helpers (RebindForResume, ListByNodeAndStore, CountByNamedLock,
+	// ListByStoreRegion, Insert, DeleteByID, PreserveForResume) that the
+	// acquisition + release paths need are reachable without going
+	// through the storage adapter.
+	LockHolders *store.LockHoldersClient
+	// StoreRegistry is the per-process store registry built at supervisor
+	// startup from stores.yml (spec §14.1). The runner type-asserts on
+	// concrete capabilities (ClaimableStore, ResumableStore) per §17.2.
+	StoreRegistry *store.Registry
+
 	Clock        shared.Clock
 	Logger       shared.Logger
-	NodeID       shared.UUID
-	DispatchID   shared.UUID
 	SupervisorID string
-	Pool         *executor.ClientPool
-	Resolver     executor.Resolver
-	GetResource  func(ctx context.Context, resourceID shared.UUID) (resource.Resource, error)
-	CallbackURL  string // supervisor's own callback endpoint (for async handoff)
+	// AcceptedExecutors / AcceptedStores are the supervisor pool's
+	// accept-lists. Threaded into SelectCandidates' dispatch SELECT so
+	// the runner only considers rows the pool can satisfy (spec §14.2).
+	AcceptedExecutors []string
+	AcceptedStores    []string
+
+	Pool        *executor.ClientPool
+	Resolver    executor.Resolver
+	CallbackURL string
+
+	// HeartbeatInterval drives the §13.3 step 3 lock-holder ExpiresAt
+	// budget (5 × heartbeatInterval) and the in-loop heartbeat tick.
+	// Zero falls back to 5s.
+	HeartbeatInterval time.Duration
+	// ResumeGrace is the §13.6 preserve-for-resume cutoff. Zero falls
+	// back to 30 minutes.
+	ResumeGrace time.Duration
+	// SelectCandidatesLimit caps the dispatch SELECT batch size in the
+	// §13.3 step 1 candidate read. Zero falls back to 8 — small enough
+	// that one supervisor doesn't monopolise a candidate page, large
+	// enough that a single ineligible candidate doesn't stall the tick.
+	SelectCandidatesLimit int
 }
 
 // AsyncContext is the per-async-handoff context the runner hands to the
 // supervisor's callback registry (see callback.go). The registry resolves
 // an incoming callback's ackID back to this AsyncContext, which carries
-// everything ApplyTerminalOutcome needs to finalize the node.
+// everything the terminal-event handler needs to finalize the node.
+//
+// The shape mirrors `acquisition` plus the per-dispatch attribute
+// state — the §12.4 callback path reconstructs both before invoking
+// `applyTerminal*` so the same per-lock release tx, §5.6.4 resolution,
+// state-transition, and event-emission flow runs whether the terminal
+// arrived synchronously over the executor RPC or asynchronously via
+// HTTP callback.
 type AsyncContext struct {
-	NodeID       shared.UUID
-	InstanceID   shared.UUID
-	DispatchID   shared.UUID
-	SupervisorID string
-	GetResource  func(ctx context.Context, resourceID shared.UUID) (resource.Resource, error)
+	NodeID        shared.UUID
+	InstanceID    shared.UUID
+	DispatchID    shared.UUID
+	SupervisorID  string
+	StoreRegistry *store.Registry
+	// FrameID is the dispatch row's frame_id — propagated through async
+	// handoff so the terminal handler can re-enqueue retries with the
+	// correct frame_id (per spec §10.2 / blessed-invariant 19).
+	FrameID shared.UUID
+	// AcquiredLocks is the set of lock-holder rows the runner inserted
+	// during acquisition. The terminal handler walks these in §13.7
+	// sort order to drive Commit + ReleaseLock + §5.6.4 resolution.
+	AcquiredLocks []AcquiredLock
+	// NodeType is the candidate's template node type. Used by the
+	// terminal handler when classifying §12.6 actions and when
+	// re-enqueueing on retry / infra_reenqueue.
+	NodeType string
+	// Executor mirrors `acquisition.Executor` — the runner needs it to
+	// re-enqueue the dispatch row on retry / infra_reenqueue branches.
+	Executor string
+	// NodeDef is the candidate's per-node-type template definition. The
+	// terminal handler reads it for the policy chain (`error_types`)
+	// and the quality rules (`runQualityRules`). May be nil when the
+	// runner could not locate a matching def at acquisition.
+	NodeDef *node.TemplateNodeDef
+	// ResolvedAttributes is the post-substitution attribute map the
+	// runner produced at dispatch time (§17.1 step 3). The Complete
+	// branch of the terminal handler merges the executor's
+	// `attributes_delta` into this map and validates the result.
+	ResolvedAttributes map[string]any
+	// AttributesSchema is the per-node-type JSON schema fragment the
+	// terminal handler validates against on a Complete with non-empty
+	// delta. Source: `NodeDef.Attributes.Schema`.
+	AttributesSchema map[string]any
 }
 
-// RunNode executes a claimed dispatch row end-to-end. Steps track spec §6.2:
+// AcquiredLock bundles a lock-holder row with its originating spec and
+// the store-returned ClaimResult. The runner builds one of these per
+// successful (or rebound) AcquireLock call; all subsequent operations
+// (OpenHandle, Commit, ReleaseLock, §5.6.4 resolution) work off this
+// shape.
+type AcquiredLock struct {
+	Spec        store.LockSpec
+	Handle      store.LockHandle
+	ClaimResult store.ClaimResult
+	// Resumed is true when the rebind path (§13.3 step 3a) found a prior
+	// lock-holder row owned by this supervisor and reused it.
+	Resumed bool
+	// Store is the resolved Store. Cached so the terminal handler does
+	// not need to re-look-up the registry.
+	Store store.Store
+	// Native is populated by §17.1 step 2's OpenHandle call.
+	Native store.NativeHandle
+}
+
+// RunNode runs one full claim-and-execute cycle. The eight-stage outline
+// of §17.1 is laid out here as a tall function with named helpers; each
+// stage either succeeds and continues or bails to a recoverable handler.
 //
-//  1. Verify claim ownership. On mismatch emit orphaned_claim_lost_race and
-//     return {Ran: false}.
-//  2. Resolve executor endpoint. On miss emit unresolved_executor and route
-//     to OnError("unresolved_executor").
-//  3. Transition stale→running; stamp heartbeat; emit work_started.
-//  4. Build ExecuteRequest (node/instance IDs, type, userdata,
-//     instance_params, deps_data, reads_data, callback_url).
-//  5. Stream events via executor.Client.Execute.
-//  6. On terminal, route to ApplyTerminalOutcome.
-//  7. On AsyncAccepted, register the pending async context (via
-//     caller-supplied callback) and return.
-//  8. On stream close without terminal, apply infra_error.
+// Returns:
+//   - {Ran:false}, nil          — no candidate eligible / verify-before-run
+//     lost / state machine rejected fresh→running
+//   - {Ran:true, Async:true}    — dispatched; terminal arrives via callback
+//   - {Ran:true}                — terminal handled inline (sync path)
 //
-// registerAsync may be nil when the caller does not yet have a callback
-// registry wired in (tests often pass a local closure that captures the ack).
+// On a non-recoverable internal error the function returns {Ran:false}
+// and the error; callers log and move on. Recoverable conditions
+// (executor stream failure, terminal classification) are handled inline
+// via the terminal handler.
 func RunNode(
 	ctx context.Context,
 	args RunArgs,
 	registerAsync func(ackID string, actx AsyncContext),
 ) (RunnerResult, error) {
-	sb := args.Storage
+	if err := validateRunArgs(args); err != nil {
+		return RunnerResult{}, err
+	}
 	log := args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
+	heartbeatInterval := args.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 5 * time.Second
+	}
 
-	// Step 1 — verify claim ownership (§17 @blessed-invariant, §6.2 step 4).
-	ownership, err := args.Queue.GetClaimedBy(ctx, args.DispatchID)
+	// Step 1 — §13.3 atomic acquisition + verify-before-run + state
+	// transition.
+	acq, ok, err := acquireCandidate(ctx, args, heartbeatInterval)
 	if err != nil {
 		return RunnerResult{}, err
 	}
-	if ownership.Kind != "claimed_by" || ownership.SupervisorID != args.SupervisorID {
-		current := ""
-		if ownership.Kind == "claimed_by" {
-			current = ownership.SupervisorID
-		}
-		_ = sb.Events().Append(ctx, storage.EventAppendInput{
-			NodeID: &args.NodeID,
-			Kind:   "orphaned_claim_lost_race",
-			Payload: map[string]any{
-				"supervisor_id":      args.SupervisorID,
-				"dispatch_id":        args.DispatchID.String(),
-				"ownership_kind":     ownership.Kind,
-				"current_claimed_by": current,
-			},
-		}, nil)
-		log.Info("runner: claim lost before dispatch",
-			"node_id", args.NodeID.String(),
-			"dispatch_id", args.DispatchID.String(),
-			"supervisor_id", args.SupervisorID,
-			"current", current)
+	if !ok {
+		// No eligible candidate, or the candidate was lost via verify-
+		// before-run / illegal transition; the helper has already
+		// released store-side state (best-effort) and emitted
+		// orphaned_claim_lost_race when warranted.
 		return RunnerResult{Ran: false}, nil
 	}
 
-	// Load node row (needed for instance ID + executor name + type + deps).
-	nd, err := sb.Nodes().Get(ctx, args.NodeID, nil)
+	// Step 2 — open native handles.
+	if err := openNativeHandles(ctx, &acq); err != nil {
+		// OpenHandle failed mid-flight. Treat as infra error and route
+		// through the give-up branch of the terminal handler so the
+		// store side is reset cleanly.
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, applyTerminalGiveUp(ctx, args, &acq, "open_handle_failed", map[string]any{"error": err.Error()})
+	}
+
+	// Step 3 — resolve attribute source-directives. Failure here raises
+	// template_resolution_failed and routes through the policy chain.
+	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
 	if err != nil {
-		return RunnerResult{}, err
-	}
-	if nd == nil {
-		return RunnerResult{Ran: false}, errors.New("runner: node not found")
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
+			applyTemplateResolutionFailure(ctx, args, &acq, err)
 	}
 
-	// Step 2 — resolve executor endpoint. On miss, go directly stale→failed via
-	// ReasonDispatchImpossible. No on_error, no policy chain — this is an
-	// infrastructural failure, not an application error, and the node never
-	// entered running.
-	ep, ok := args.Resolver.Resolve(nd.Executor)
-	if !ok {
-		_ = sb.Events().Append(ctx, storage.EventAppendInput{
-			NodeID:     &args.NodeID,
-			InstanceID: &nd.InstanceID,
-			Kind:       "unresolved_executor",
-			Payload: map[string]any{
-				"node_id":       args.NodeID.String(),
-				"executor_name": nd.Executor,
-				"supervisor_id": args.SupervisorID,
-			},
-		}, nil)
-		if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateFailed, node.ReasonDispatchImpossible, nil); err != nil {
-			return RunnerResult{Ran: true}, err
-		}
-		_ = sb.Events().Append(ctx, storage.EventAppendInput{
-			NodeID: &args.NodeID, InstanceID: &nd.InstanceID,
-			Kind: "error",
-			Payload: map[string]any{
-				"error_class":  "unresolved_executor",
-				"details":      map[string]any{"executor_name": nd.Executor},
-				"action_taken": "dispatch_impossible",
-			},
-		}, nil)
-		return RunnerResult{Ran: true}, nil
-	}
-
-	client, err := args.Pool.GetOrCreate(ep)
-	if err != nil {
-		return RunnerResult{Ran: false}, err
-	}
-
-	// Step 3 — stale→running, stamp heartbeat, emit work_started.
-	if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateRunning, node.ReasonDispatchClaimed, nil); err != nil {
-		return RunnerResult{Ran: false}, err
-	}
-	_ = sb.Nodes().UpdateHeartbeat(ctx, args.NodeID, args.Clock.Now(), args.SupervisorID, nil)
-	_ = sb.Events().Append(ctx, storage.EventAppendInput{
-		NodeID:     &args.NodeID,
-		InstanceID: &nd.InstanceID,
-		Kind:       "work_started",
-		Payload:    map[string]any{"supervisor_id": args.SupervisorID},
-	}, nil)
-
-	// Step 4 — build ExecuteRequest.
-	req := buildExecuteRequest(ctx, sb, args, nd)
-
-	// Step 5 — stream events.
-	stream, err := client.Execute(ctx, req)
-	if err != nil {
-		// Dial / RPC-start failure — infra error (no retry-counter bump).
-		return RunnerResult{Ran: true}, ApplyTerminalOutcome(ctx, ApplyTerminalArgs{
-			Storage: sb, Queue: args.Queue, Clock: args.Clock, Logger: log,
-			NodeID: args.NodeID, InstanceID: nd.InstanceID,
-			SupervisorID: args.SupervisorID,
-			GetResource:  args.GetResource,
-			Outcome: TerminalOutcome{
-				Kind:       TerminalInfraError,
-				ErrorClass: "executor_dial_failed",
-				Payload:    map[string]any{"error": err.Error()},
-			},
-		})
-	}
-
-	var (
-		sawTerminal bool
-		outcome     TerminalOutcome
-		async       RunnerResult
-	)
-
-	for {
-		ev, rerr := stream.Recv()
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			outcome = TerminalOutcome{
-				Kind:       TerminalInfraError,
-				ErrorClass: "stream_error",
-				Payload:    map[string]any{"error": rerr.Error()},
-			}
-			sawTerminal = true
-			break
-		}
-		switch e := ev.Event.(type) {
-		case *genv1.ExecuteEvent_Heartbeat:
-			_ = sb.Nodes().UpdateHeartbeat(ctx, args.NodeID, args.Clock.Now(), args.SupervisorID, nil)
-			_ = e
-		case *genv1.ExecuteEvent_Complete:
-			var resultGo any
-			if e.Complete.Result != nil {
-				resultGo = e.Complete.Result.AsInterface()
-			}
-			outcome = TerminalOutcome{
-				Kind:          TerminalRunSucceeded,
-				Result:        resultGo,
-				Changed:       e.Complete.Changed,
-				ChangeSummary: e.Complete.ChangeSummary,
-			}
-			sawTerminal = true
-		case *genv1.ExecuteEvent_Blocked:
-			var ctxGo any
-			if e.Blocked.Context != nil {
-				ctxGo = e.Blocked.Context.AsInterface()
-			}
-			outcome = TerminalOutcome{
-				Kind:       TerminalAppError,
-				ErrorClass: "executor_blocked",
-				Payload:    map[string]any{"reason": e.Blocked.Reason, "context": ctxGo},
-			}
-			sawTerminal = true
-		case *genv1.ExecuteEvent_Errored:
-			var payloadGo any
-			if e.Errored.Payload != nil {
-				payloadGo = e.Errored.Payload.AsInterface()
-			}
-			outcome = TerminalOutcome{
-				Kind:       TerminalAppError,
-				ErrorClass: e.Errored.ErrorClass,
-				Payload:    map[string]any{"payload": payloadGo},
-			}
-			sawTerminal = true
-		case *genv1.ExecuteEvent_AsyncAccepted:
-			if registerAsync != nil {
-				registerAsync(e.AsyncAccepted.AsyncAckId, AsyncContext{
-					NodeID:       args.NodeID,
-					InstanceID:   nd.InstanceID,
-					DispatchID:   args.DispatchID,
-					SupervisorID: args.SupervisorID,
-					GetResource:  args.GetResource,
-				})
-			}
-			async = RunnerResult{Ran: true, Async: true, AsyncAckID: e.AsyncAccepted.AsyncAckId}
-			sawTerminal = true
-		}
-		if sawTerminal {
+	// Persist the substituted attributes ahead of dispatch so the
+	// callback path (§12.5 incremental writeback) has a row to merge
+	// into. RunAttempt is bumped from any prior row's attempt.
+	//
+	// Per spec §5.7.3, on resume_then_retry (any lock rebound, Resumed=true)
+	// the executor-populated fields are preserved verbatim and only
+	// source-driven fields are repopulated. On retry without resume the
+	// row is replaced outright (executor-populated fields cleared).
+	resumed := false
+	for _, lk := range acq.Locks {
+		if lk.Resumed {
+			resumed = true
 			break
 		}
 	}
+	if err := upsertAttributesPreDispatch(ctx, args, acq.NodeID, resolvedAttrs, attrSchema, resumed); err != nil {
+		log.Warn("runner: upsert attributes pre-dispatch failed",
+			"node_id", acq.NodeID.String(), "error", err.Error())
+	}
 
-	// Drain to EOF so the server's send goroutine can exit cleanly. Safe —
-	// the server should have closed the stream by now.
-	if sawTerminal {
-		for {
-			if _, rerr := stream.Recv(); rerr != nil {
-				break
-			}
+	// Per spec §5.7.3, the executor receives the full attributes row
+	// (source-driven repopulated + preserved executor-populated). When
+	// not resuming, the row is just `resolvedAttrs`. When resuming, the
+	// freshly persisted row carries the merged shape — re-read it so
+	// downstream paths (dispatch + terminal handling) see the same view.
+	dispatchAttrs := resolvedAttrs
+	if resumed {
+		if persisted, _ := args.Storage.NodeAttributes().Get(ctx, acq.NodeID); persisted != nil && len(persisted.Data) > 0 {
+			dispatchAttrs = persisted.Data
 		}
 	}
-	// stream.Close() MUST run before any return below — including the
-	// AsyncAccepted path. Leaking the gRPC stream when we return early from
-	// the async branch would strand the server-side send goroutine and
-	// ultimately exhaust the connection pool. Keep this call at top-level,
-	// not inside any branch.
-	_ = stream.Close()
 
-	if async.Async {
-		return async, nil
+	// Step 4 — dispatch path.
+	dctx := dispatchContext{
+		Args:              args,
+		Acquired:          &acq,
+		Attributes:        dispatchAttrs,
+		AttributesSchema:  attrSchema,
+		HeartbeatInterval: heartbeatInterval,
+		Log:               log,
+		RegisterAsync:     registerAsync,
 	}
-	if !sawTerminal {
-		outcome = TerminalOutcome{
-			Kind:       TerminalInfraError,
-			ErrorClass: "stream_closed_without_terminal",
-		}
+	terminal, asyncResult, err := dispatch(ctx, dctx)
+	if err != nil {
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 	}
-	return RunnerResult{Ran: true}, ApplyTerminalOutcome(ctx, ApplyTerminalArgs{
-		Storage: sb, Queue: args.Queue, Clock: args.Clock, Logger: log,
-		NodeID: args.NodeID, InstanceID: nd.InstanceID,
-		SupervisorID: args.SupervisorID,
-		GetResource:  args.GetResource,
-		Outcome:      outcome,
-	})
+	if asyncResult != nil {
+		return *asyncResult, nil
+	}
+
+	// Step 6 — terminal event handling. Pass the dispatch-time attribute
+	// view so the commit path's mergeAttributesDelta starts from the
+	// same map the executor saw (resumed runs include preserved
+	// executor-populated fields).
+	if err := applyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal); err != nil {
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+	}
+	return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 }
 
-// buildExecuteRequest assembles the gRPC ExecuteRequest payload from the
-// node row + instance params + template userdata + dep resource versions.
-func buildExecuteRequest(
-	ctx context.Context,
-	sb storage.StorageBackend,
-	args RunArgs,
-	nd *storage.NodeRow,
-) *genv1.ExecuteRequest {
-	// instance_params: pull instance row (best-effort; missing params ok).
-	instanceParams := &structpb.Struct{Fields: map[string]*structpb.Value{}}
-	inst, _ := sb.Instances().Get(ctx, nd.InstanceID, nil)
-	if inst != nil && len(inst.Params) > 0 {
-		if s, err := structpb.NewStruct(inst.Params); err == nil {
-			instanceParams = s
-		}
+// validateRunArgs checks the construction-time invariants. Returns an
+// error rather than panicking so the caller (supervisor.runLoop) can
+// shut down cleanly.
+func validateRunArgs(args RunArgs) error {
+	if args.Storage == nil {
+		return errors.New("supervisor.RunNode: Storage is required")
 	}
-
-	// userdata: pull from template's TemplateNodeDef for this node's type.
-	userdata := findNodeUserdata(ctx, sb, nd)
-	userdataStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
-	if len(userdata) > 0 {
-		if s, err := structpb.NewStruct(userdata); err == nil {
-			userdataStruct = s
-		}
+	if args.Queue == nil {
+		return errors.New("supervisor.RunNode: Queue is required")
 	}
-
-	// deps_data: map each dep's node_type → its current resource version's
-	// inline JSON. Dependencies with no owned resource or no committed
-	// version are simply absent from the map.
-	depsData := make(map[string]*structpb.Value)
-	for _, depID := range nd.Dependencies {
-		depNode, _ := sb.Nodes().Get(ctx, depID, nil)
-		if depNode == nil {
-			continue
-		}
-		depResources, _ := sb.Resources().ListByOwner(ctx, depNode.ID, nil)
-		if len(depResources) == 0 {
-			continue
-		}
-		r := depResources[0]
-		if r.CurrentVersionID == nil {
-			continue
-		}
-		v, _ := sb.Resources().GetVersion(ctx, *r.CurrentVersionID, nil)
-		if v == nil || len(v.Data) == 0 {
-			continue
-		}
-		var parsed any
-		if err := jsonUnmarshalImpl(v.Data, &parsed); err != nil {
-			continue
-		}
-		if val, err := structpb.NewValue(parsed); err == nil {
-			depsData[depNode.NodeType] = val
-		}
+	if args.QueuePool == nil {
+		return errors.New("supervisor.RunNode: QueuePool is required")
 	}
-
-	return &genv1.ExecuteRequest{
-		NodeId:         args.NodeID.String(),
-		InstanceId:     nd.InstanceID.String(),
-		NodeType:       nd.NodeType,
-		Userdata:       userdataStruct,
-		InstanceParams: instanceParams,
-		DepsData:       depsData,
-		ReadsData:      map[string]*structpb.Value{}, // reads_resources wiring is post-v1
-		CallbackUrl:    args.CallbackURL,
+	if args.LockHolders == nil {
+		return errors.New("supervisor.RunNode: LockHolders is required")
 	}
-}
-
-// findNodeUserdata looks up the userdata block for this node's node_type
-// from the parent template's spec. Returns nil when the template or type
-// is missing (both are degraded-but-valid states for a running node).
-func findNodeUserdata(ctx context.Context, sb storage.StorageBackend, nd *storage.NodeRow) map[string]any {
-	inst, _ := sb.Instances().Get(ctx, nd.InstanceID, nil)
-	if inst == nil {
-		return nil
+	if args.StoreRegistry == nil {
+		return errors.New("supervisor.RunNode: StoreRegistry is required")
 	}
-	tmpl, _ := sb.Templates().Get(ctx, inst.TemplateID, nil)
-	if tmpl == nil {
-		return nil
+	if args.SupervisorID == "" {
+		return errors.New("supervisor.RunNode: SupervisorID is required")
 	}
-	for _, td := range tmpl.Spec.Nodes {
-		if td.Type == nd.NodeType {
-			return td.Userdata
-		}
+	if args.Resolver == nil {
+		return errors.New("supervisor.RunNode: Resolver is required")
+	}
+	if args.Pool == nil {
+		return errors.New("supervisor.RunNode: Pool (executor.ClientPool) is required")
 	}
 	return nil
 }
+
+// upsertAttributesPreDispatch writes the substituted attributes object
+// to rimsky_node_attributes so the callback handler has a row to merge
+// into. Bumps `run_attempt` from any prior row's value.
+//
+// Source-driven vs. executor-populated provenance is determined from the
+// schema: a property declaration with a `source:` directive is
+// source-driven; a property declaration without `source:` is
+// executor-populated. (Spec §5.7.)
+//
+// When `resumed` is true (resume_then_retry path), executor-populated
+// fields from the prior row are preserved verbatim and merged with the
+// freshly substituted source-driven fields. When `resumed` is false
+// (initial dispatch or discard_then_retry path), the row is replaced
+// outright so executor-populated fields are cleared.
+func upsertAttributesPreDispatch(
+	ctx context.Context,
+	args RunArgs,
+	nodeID shared.UUID,
+	resolvedAttrs map[string]any,
+	schema map[string]any,
+	resumed bool,
+) error {
+	prior, _ := args.Storage.NodeAttributes().Get(ctx, nodeID)
+	attempt := 1
+	if prior != nil {
+		attempt = prior.RunAttempt + 1
+	}
+	data := resolvedAttrs
+	if resumed && prior != nil && len(prior.Data) > 0 {
+		data = mergePreserveExecutorPopulated(prior.Data, resolvedAttrs, schema)
+	}
+	return args.Storage.NodeAttributes().Upsert(ctx, nodeID, attempt, data)
+}
+
+// mergePreserveExecutorPopulated merges the prior row's executor-populated
+// fields (schema properties without a `source:` directive) into the
+// freshly substituted source-driven map. Source-driven fields always come
+// from `resolved`; executor-populated fields fall through from `prior`
+// unchanged.
+func mergePreserveExecutorPopulated(prior, resolved, schema map[string]any) map[string]any {
+	out := make(map[string]any, len(prior)+len(resolved))
+	executorPopulated := executorPopulatedFields(schema)
+	for k, v := range prior {
+		if _, ok := executorPopulated[k]; ok {
+			out[k] = v
+		}
+	}
+	for k, v := range resolved {
+		out[k] = v
+	}
+	return out
+}
+
+// executorPopulatedFields returns the set of attribute property names
+// that are executor-populated (i.e. declared in the schema without a
+// `source:` directive). Per spec §5.7.
+func executorPopulatedFields(schema map[string]any) map[string]struct{} {
+	out := map[string]struct{}{}
+	if schema == nil {
+		return out
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		return out
+	}
+	for name, propAny := range props {
+		prop, _ := propAny.(map[string]any)
+		if prop == nil {
+			continue
+		}
+		if _, hasSource := prop["source"]; hasSource {
+			continue
+		}
+		out[name] = struct{}{}
+	}
+	return out
+}
+
+// emitTemplateResolutionFailedEvent appends the typed event for a
+// dispatch-time substitution miss. Used by both the attribute-resolve
+// path and the lock/region pre-substitution path.
+func emitTemplateResolutionFailedEvent(
+	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
+) {
+	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+		NodeID: &nodeID, InstanceID: &instanceID,
+		Kind: "template_resolution_failed",
+		Payload: map[string]any{
+			"directive": directive,
+			"site":      site,
+			"field":     field,
+			"reason":    reason,
+		},
+	}, nil)
+}
+
+// applyTemplateResolutionFailure routes a substitution miss through the
+// template_resolution_failed policy chain. State of the node is moved
+// `running → stale` (or failed) per the resolved action; lock-holder
+// rows are released via the give-up branch.
+func applyTemplateResolutionFailure(
+	ctx context.Context, args RunArgs, acq *acquisition, err error,
+) error {
+	emitTemplateResolutionFailedEvent(ctx, args, acq.NodeID, acq.InstanceID,
+		extractDirective(err), "attribute", "", err.Error())
+	return applyTerminalAppError(ctx, args, acq, "template_resolution_failed",
+		map[string]any{"error": err.Error()})
+}
+
+// extractDirective digs the directive name out of an *attributes.ErrMissingSource
+// when present; returns empty otherwise.
+func extractDirective(err error) string {
+	var miss *attributes.ErrMissingSource
+	if errors.As(err, &miss) {
+		return miss.Directive
+	}
+	return ""
+}
+
+// applyTerminalGiveUp is the convenience wrapper used when an error
+// surfaces between the acquisition commit and the executor RPC; mirrors
+// the §17.1 step 6 give-up policy chain branch.
+func applyTerminalGiveUp(ctx context.Context, args RunArgs, acq *acquisition, errClass string, payload map[string]any) error {
+	return applyTerminalAppError(ctx, args, acq, errClass, payload)
+}
+
+// applyTerminalAppError funnels an application-level terminal through
+// the OnError policy chain. Defined in runner_terminal.go.

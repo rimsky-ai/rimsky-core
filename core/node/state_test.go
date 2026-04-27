@@ -21,7 +21,6 @@ var allReasons = []TransitionReason{
 	ReasonOperatorInvalidate,
 	ReasonHeartbeatLost,
 	ReasonInfraReenqueue,
-	ReasonRestoreVersion,
 	ReasonPureCascade,
 	ReasonDispatchImpossible,
 }
@@ -41,13 +40,11 @@ func TestTransitionTable(t *testing.T) {
 		shared.NodeStateFresh: {
 			"invalidate_received": shared.NodeStateStale,
 			"operator_invalidate": shared.NodeStateStale,
-			"restore_version":     shared.NodeStateFresh,
 		},
 		shared.NodeStateStale: {
 			"dispatch_claimed":    shared.NodeStateRunning,
 			"pure_cascade":        shared.NodeStateFresh,
 			"dispatch_impossible": shared.NodeStateFailed,
-			"restore_version":     shared.NodeStateFresh,
 		},
 		shared.NodeStateRunning: {
 			"work_completed":    shared.NodeStateFresh,
@@ -56,12 +53,10 @@ func TestTransitionTable(t *testing.T) {
 			"heartbeat_lost":    shared.NodeStateStale,
 			"infra_reenqueue":   shared.NodeStateStale,
 			"policy_give_up":    shared.NodeStateFailed,
-			"restore_version":   shared.NodeStateFresh,
 		},
 		shared.NodeStateFailed: {
 			"operator_reset":      shared.NodeStateStale,
 			"operator_invalidate": shared.NodeStateStale,
-			"restore_version":     shared.NodeStateFresh,
 		},
 	}
 
@@ -91,19 +86,6 @@ func TestRunningToRunningUnderDispatchClaimedIsRejected(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, shared.ErrIllegalTransition))
 	require.Equal(t, shared.NodeState(""), got)
-}
-
-// TestRestoreVersionFromEverywhereReturnsFresh confirms `restore_version` is
-// the one universal reason — valid from every state, lands at fresh.
-func TestRestoreVersionFromEverywhereReturnsFresh(t *testing.T) {
-	for _, from := range allStates {
-		from := from
-		t.Run(string(from), func(t *testing.T) {
-			got, err := NextState(from, ReasonRestoreVersion)
-			require.NoError(t, err)
-			require.Equal(t, shared.NodeStateFresh, got)
-		})
-	}
 }
 
 func TestDispatchImpossibleTransitionsStaleToFailed(t *testing.T) {

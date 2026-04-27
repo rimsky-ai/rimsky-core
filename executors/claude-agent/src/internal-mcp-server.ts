@@ -7,6 +7,8 @@ import {
   ReportCompleteInput,
   ReportBlockedInput,
   ReportErrorInput,
+  AttributesReadInput,
+  AttributesSetInput,
 } from "./internal-mcp-tools.js";
 
 /**
@@ -17,6 +19,14 @@ import {
  * v1 implementation chooses a bare HTTP/JSON-RPC endpoint over the MCP SDK's
  * Streamable-HTTP transport. The executor spawns Claude CLI which speaks
  * MCP-HTTP; only a simple tools/list + tools/call surface is needed.
+ *
+ * Tools surfaced (per spec §12 and §16.1):
+ *   - `report_complete` (optional `attributes_delta`)
+ *   - `report_blocked`
+ *   - `report_error`
+ *   - `attributes_read`  — returns dispatch-time attributes snapshot.
+ *   - `attributes_set`   — POSTs `{delta}` to the supervisor's incremental
+ *     writeback URL.
  */
 export interface CallbackServerHandle {
   readonly host: string;
@@ -227,7 +237,7 @@ async function dispatchToolCall(
       };
     }
     const outcome = await entry.onComplete(
-      parsed.result,
+      parsed.attributes_delta ?? null,
       parsed.changed,
       parsed.change_summary ?? null,
       scheduleTeardown,
@@ -277,6 +287,43 @@ async function dispatchToolCall(
     return {
       content: [{ type: "text", text: JSON.stringify(ack) }],
       structuredContent: ack,
+    };
+  }
+
+  if (name === "attributes_read") {
+    const parsed = AttributesReadInput.parse(args);
+    const entry = registry.lookup(parsed.token);
+    if (!entry) {
+      return {
+        content: [{ type: "text", text: "unknown_token" }],
+        isError: true,
+      };
+    }
+    const snapshot = entry.attributesAtSpawn;
+    return {
+      content: [{ type: "text", text: JSON.stringify(snapshot) }],
+      structuredContent: { attributes: snapshot },
+    };
+  }
+
+  if (name === "attributes_set") {
+    const parsed = AttributesSetInput.parse(args);
+    const entry = registry.lookup(parsed.token);
+    if (!entry) {
+      return {
+        content: [{ type: "text", text: "unknown_token" }],
+        isError: true,
+      };
+    }
+    const result = await entry.onAttributesSet(parsed.delta);
+    const ok = result.status >= 200 && result.status < 300;
+    const body = ok
+      ? { status: "accepted" as const, http_status: result.status }
+      : { status: "rejected" as const, http_status: result.status };
+    return {
+      content: [{ type: "text", text: JSON.stringify(body) }],
+      structuredContent: body,
+      isError: !ok,
     };
   }
 

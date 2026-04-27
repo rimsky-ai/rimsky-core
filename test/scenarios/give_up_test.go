@@ -1,5 +1,11 @@
 // Scenario 6 — retry-then-give_up policy routes a persistently failing
 // node to state=failed after exhausting retries.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the flaky
+// node is built via scenario.MakeNode. The node has no stores, locks, or
+// attributes wiring — the test exercises the policy chain (spec §11.6)
+// only; an erroring executor never produces an attributes_delta, so a
+// schema-less node is the right shape.
 package scenarios
 
 import (
@@ -23,7 +29,7 @@ func TestGiveUp(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "retry-give-up", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{
+			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "flaky", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"my_err": {
@@ -33,7 +39,7 @@ func TestGiveUp(t *testing.T) {
 						},
 					},
 				},
-			},
+			}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-giveup", map[string]any{})

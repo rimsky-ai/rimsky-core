@@ -6,11 +6,14 @@ import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
+import type { PostAttributesFn } from "./attributes-tools.js";
 
 /**
  * gRPC NodeExecutor implementation. Always responds with the async-handoff
  * pattern: one Heartbeat + AsyncAccepted, close stream, run agent in
  * background, POST final outcome to callback_url.
+ *
+ * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12.
  */
 export interface GrpcServerConfig {
   host: string;
@@ -24,6 +27,11 @@ export interface GrpcServerConfig {
    * callback. Tests swap this out to avoid real network calls.
    */
   postCallback?: PostCallbackFn;
+  /**
+   * Optional override for the writeback POST used by the `attributes_set`
+   * MCP tool. Threaded through to `runAgent`.
+   */
+  postAttributes?: PostAttributesFn;
 }
 
 export type PostCallbackFn = (
@@ -41,12 +49,22 @@ interface ExecuteRequest {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
+  // Opaque per-node config from the template (spec §5.8). Rimsky never
+  // interprets this; the executor reads `model`, `system_prompt`,
+  // `user_prompt_template`, `attributes_schema` from here.
   userdata?: unknown;
-  instance_params?: unknown;
-  deps_data?: Record<string, unknown>;
-  reads_data?: Record<string, unknown>;
+  // Per-run typed attributes object (spec §5.7). Source-driven fields are
+  // pre-populated by rimsky at dispatch.
+  attributes?: unknown;
+  // Declared JSON Schema for `attributes` (spec §5.7.1).
+  attributes_schema?: unknown;
+  // Per-store handles keyed by store-config name (spec §12.1). Surfaced to
+  // the agent via the userdata bag — no in-process interpretation.
+  stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
+  resumed?: boolean;
+  run_attempt?: number;
 }
 
 type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
@@ -57,8 +75,10 @@ type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
  *   `host:port`, and wires the async-handoff agent run path.
  * how: `await startGrpcServer(config)`; `shutdown()` stops the server
  *   gracefully.
- * handles: stub-mode short-circuit; JSON-Schema validation of agent output;
- *   silence / subprocess-exit fault mapping → Errored outcome.
+ * handles: stub-mode short-circuit; JSON-Schema validation of
+ *   `attributes_delta` writes; silence / subprocess-exit fault mapping →
+ *   Errored outcome; bridging the supervisor's incremental writeback URL
+ *   into the internal-MCP `attributes_set` tool.
  * does-not-handle: supervisor-side state transitions, commit, or on_error
  *   routing; those remain in the supervisor process.
  */
@@ -151,24 +171,27 @@ async function runAndCallback(
 ): Promise<void> {
   try {
     const userdata = toRecord(req.userdata);
-    const params = toRecord(req.instance_params);
+    const attributes = toRecord(req.attributes);
     const outcome = await runAgent({
       runId,
+      nodeId: req.node_id ?? runId,
       nodeType: req.node_type ?? "unknown",
       model: stringOr(userdata.model, "claude-sonnet-4-5"),
       systemPrompt: stringOr(userdata.system_prompt, ""),
       userPromptTemplate: stringOr(userdata.user_prompt_template, ""),
-      resultSchema: userdata.result_schema ?? {},
+      attributesSchema: req.attributes_schema ?? {},
+      attributes,
       templateVars: {
         userdata,
-        params,
-        deps: req.deps_data ?? {},
-        reads: req.reads_data ?? {},
+        attributes,
       },
+      callbackUrl: req.callback_url ?? "",
+      cancelToken: req.cancel_token ?? "",
       cliRunner,
       callback: config.callback,
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
+      postAttributes: config.postAttributes,
     });
     const body = outcomeToCallbackBody(outcome);
     if (req.callback_url) {
@@ -207,9 +230,12 @@ function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
   if (outcome.kind === "complete") {
+    // Spec §12.2/§12.3: the Complete callback carries `attributes_delta`
+    // (a map merged into rimsky_node_attributes.data on commit). The
+    // legacy `result` field is retired.
     return {
       type: "complete",
-      result: outcome.result,
+      attributes_delta: outcome.attributesDelta,
       changed: outcome.changed,
       change_summary: outcome.changeSummary,
     };

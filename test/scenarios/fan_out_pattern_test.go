@@ -1,5 +1,11 @@
 // Scenario 4 — root pure-cascade node fans out to N executor downstreams;
 // when the root fires on a schedule, every downstream runs.
+//
+// Migrated to the stores-redesign template grammar (spec §11): nodes are
+// constructed via scenario.MakeNode + the fluent helpers. The root is a
+// pure-cascade scheduled node (no executor, no stores); each child is an
+// executor-backed leaf with a per-node attributes schema documenting the
+// shape its executor's attributes_delta is expected to take.
 package scenarios
 
 import (
@@ -24,10 +30,29 @@ func TestFanOutPattern(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fan-out", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "root", Schedule: "* * * * *"}, // pure-cascade root
-			{Type: "child_a", Executor: "stub", Dependencies: []string{"root"}},
-			{Type: "child_b", Executor: "stub", Dependencies: []string{"root"}},
-			{Type: "child_c", Executor: "stub", Dependencies: []string{"root"}},
+			// Pure-cascade scheduled root; no executor / no stores.
+			scenario.MakeNode(node.TemplateNodeDef{Type: "root", Schedule: "* * * * *"}),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "child_a", Executor: "stub", Dependencies: []string{"root"}},
+				scenario.WithAttributes(map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"a": map[string]any{"type": "integer"}},
+				}),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "child_b", Executor: "stub", Dependencies: []string{"root"}},
+				scenario.WithAttributes(map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"b": map[string]any{"type": "integer"}},
+				}),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "child_c", Executor: "stub", Dependencies: []string{"root"}},
+				scenario.WithAttributes(map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"c": map[string]any{"type": "integer"}},
+				}),
+			),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fanout", map[string]any{})

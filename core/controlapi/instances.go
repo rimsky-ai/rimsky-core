@@ -1,18 +1,25 @@
 // instances.go — POST /instances, GET /instances, GET /instances/:id_or_key,
 // DELETE /instances/:id_or_key. Includes the instance-factory logic that
-// provisions instance + nodes + resources + schedules from a template.
+// provisions instance + nodes + schedules from a template.
 //
-// Provisioning flow (spec §5.8):
-//  1. Validate consumer_key uniqueness via InstanceStore.Create.
+// Provisioning flow (post-stores-redesign):
+//  1. Validate consumer_key uniqueness via InstanceStore.Create. The params
+//     map is stored verbatim on rimsky_instances.params; both single-brace
+//     `{params.x}` (instantiation) and double-brace `{{params.x}}` (dispatch)
+//     consumers re-read this row, so there is no per-instance baked node
+//     config to apply substitutions to (spec §10.1).
 //  2. Allocate node UUIDs up-front so dependencies[] can be rewritten from
 //     node-type names to node IDs.
-//  3. For each node, resolve {instance_id} / {consumer_key} / {params.<key>}
-//     placeholders against the UNREDACTED params (redaction only applies at
-//     egress). Create owned resources and instantiate them via their
-//     registered resource.Factory.
+//  3. Create one node row per template node.
 //  4. For schedule nodes, compute the next cron fire time and register.
 //  5. For root executor nodes (no deps, has executor), enqueue the first
-//     dispatch row so the supervisor pool can pick them up.
+//     dispatch row with required_stores denormalised from the template
+//     so the supervisor-pool predicate (spec §14.2) can filter.
+//
+// Resources / concurrency-tags from the previous shape were retired in
+// the redesign (spec §11.3); their replacements (stores, locks) live
+// entirely on the template and are read by the supervisor at dispatch
+// time, not baked here.
 package controlapi
 
 import (
@@ -26,10 +33,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 type createInstanceRequest struct {
@@ -193,11 +201,18 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// provisionInstance is the instance-factory routine (spec §5.8). Runs the
-// full create sequence in a single transaction where possible; resource
-// creation inside factories may use its own transactional boundary, so we
-// create the instance row first and let downstream failures bubble up — the
-// caller can DELETE the instance to roll back.
+// provisionInstance is the instance-factory routine. Runs the create
+// sequence in single-shot calls (no transaction wrapper) — the instance
+// row is created first, then nodes/schedules/dispatch rows are appended;
+// callers can DELETE the instance to roll back on partial failure.
+//
+// Per the stores redesign:
+//   - rimsky_instances.params is stored verbatim. Both `{params.x}`
+//     (instantiation, single-brace) and `{{params.x}}` (dispatch,
+//     double-brace) consumers re-read this row, so there is no
+//     instantiation-time substitution to apply here (spec §10.1).
+//   - Concurrency tags and owned/read resources are gone (spec §11.3);
+//     stores/locks live on the template and are resolved at dispatch.
 func provisionInstance(
 	ctx context.Context,
 	deps AppDeps,
@@ -221,74 +236,32 @@ func provisionInstance(
 		nodeIDs[def.Type] = uuid.New()
 	}
 
+	// Phase 1: create nodes (Create defaults to 'fresh' per migration 002 +
+	// spec §3.1) + register schedules. Phase 2 enqueues an initial frame
+	// for each root.
 	for _, def := range tpl.Spec.Nodes {
 		nodeID := nodeIDs[def.Type]
 
-		// Resolve placeholders.
-		resolvedTags := make([]string, 0, len(def.ConcurrencyTags))
-		for _, tag := range def.ConcurrencyTags {
-			resolvedTags = append(resolvedTags, resolvePlaceholders(tag, inst.ID, consumerKey, params))
-		}
-
 		// Map dependency node-types to UUIDs.
-		deps_uuids := make([]shared.UUID, 0, len(def.Dependencies))
+		depUUIDs := make([]shared.UUID, 0, len(def.Dependencies))
 		for _, depType := range def.Dependencies {
 			depID, ok := nodeIDs[depType]
 			if !ok {
 				return createInstanceResponse{}, fmt.Errorf("instance-factory: unknown dependency %q referenced by node %q", depType, def.Type)
 			}
-			deps_uuids = append(deps_uuids, depID)
+			depUUIDs = append(depUUIDs, depID)
 		}
 
 		// Create node row.
 		if _, err := deps.Storage.Nodes().Create(ctx, storage.NodeCreateInput{
-			ID:              nodeID,
-			InstanceID:      inst.ID,
-			NodeType:        def.Type,
-			Executor:        def.Executor,
-			ScheduleCron:    def.Schedule,
-			Dependencies:    deps_uuids,
-			ConcurrencyTags: resolvedTags,
+			ID:           nodeID,
+			InstanceID:   inst.ID,
+			NodeType:     def.Type,
+			Executor:     def.Executor,
+			ScheduleCron: def.Schedule,
+			Dependencies: depUUIDs,
 		}, nil); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
-		}
-
-		// Create owned resources.
-		for _, rdef := range def.OwnsResources {
-			resolvedPath := make([]string, 0, len(rdef.Path))
-			for _, seg := range rdef.Path {
-				resolvedPath = append(resolvedPath, resolvePlaceholders(seg, inst.ID, consumerKey, params))
-			}
-			keep := 2
-			if rdef.Retention != nil && rdef.Retention.KeepVersions > 0 {
-				keep = rdef.Retention.KeepVersions
-			}
-			rrow, err := deps.Storage.Resources().Create(ctx, storage.ResourceCreateInput{
-				ResourcePath: resolvedPath,
-				OwnerNodeID:  nodeID,
-				KeepVersions: keep,
-			}, nil)
-			if err != nil {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: create resource %v: %w", resolvedPath, err)
-			}
-			// Instantiate via factory (consistency check that the registered
-			// impl can honour the config). We do not retain the returned
-			// resource.Resource — the supervisor re-creates it at execution
-			// time from the stored config.
-			factory, ok := deps.ResourceFactories.Get(rdef.Implementation)
-			if !ok {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: unknown resource implementation %q", rdef.Implementation)
-			}
-			cfg := resolveConfigPlaceholders(rdef.Config, inst.ID, consumerKey, params)
-			if cfg == nil {
-				cfg = map[string]any{}
-			}
-			cfg["_resource_id"] = rrow.ID.String()
-			cfg["_path"] = resolvedPath
-			cfg["_owner_node_id"] = nodeID.String()
-			if _, err := factory.Create(cfg, nil, nil); err != nil {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: resource factory %q: %w", rdef.Implementation, err)
-			}
 		}
 
 		// Register schedule if declared.
@@ -305,17 +278,24 @@ func provisionInstance(
 				return createInstanceResponse{}, fmt.Errorf("instance-factory: register schedule on node %q: %w", def.Type, err)
 			}
 		}
+	}
 
-		// Root executor nodes (no deps, has executor) are ready immediately.
-		if def.Executor != "" && len(def.Dependencies) == 0 {
-			if err := deps.Queue.Enqueue(ctx, queue.DispatchRequest{
-				NodeID:          nodeID,
-				ExecutorName:    def.Executor,
-				ConcurrencyTags: resolvedTags,
-				EnqueuedAt:      deps.Clock.Now(),
-			}); err != nil {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: enqueue root node %q: %w", def.Type, err)
+	// Phase 2: enqueue an initial frame for each root node (no deps).
+	// Both executor-backed and pure-cascade roots are covered.
+	for _, def := range tpl.Spec.Nodes {
+		if len(def.Dependencies) != 0 {
+			continue
+		}
+		nodeID := nodeIDs[def.Type]
+		if err := deps.Storage.Transaction(ctx, func(ctx context.Context, stx storage.Tx) error {
+			pgT, err := pgstorage.PgxTxFromStorage(stx)
+			if err != nil {
+				return err
 			}
+			_, err = frame.EnqueueOrCoalesce(ctx, pgT, inst.ID, nodeID)
+			return err
+		}); err != nil {
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: enqueue root node %q: %w", def.Type, err)
 		}
 	}
 
@@ -324,52 +304,4 @@ func provisionInstance(
 		ConsumerKey: inst.ConsumerKey,
 		NodeCount:   len(tpl.Spec.Nodes),
 	}, nil
-}
-
-// resolvePlaceholders substitutes {instance_id}, {consumer_key}, and
-// {params.<key>} per spec §5.8. Unknown placeholders are left untouched (the
-// template validator rejects bad placeholders before deploy, so this path is
-// best-effort at runtime).
-func resolvePlaceholders(s string, instanceID shared.UUID, consumerKey string, params map[string]any) string {
-	s = strings.ReplaceAll(s, "{instance_id}", instanceID.String())
-	s = strings.ReplaceAll(s, "{consumer_key}", consumerKey)
-	for k, v := range params {
-		token := "{params." + k + "}"
-		if !strings.Contains(s, token) {
-			continue
-		}
-		s = strings.ReplaceAll(s, token, fmt.Sprintf("%v", v))
-	}
-	return s
-}
-
-// resolveConfigPlaceholders deep-walks a config map, replacing placeholders in
-// string leaves. Non-string leaves pass through unchanged.
-func resolveConfigPlaceholders(v any, instanceID shared.UUID, consumerKey string, params map[string]any) map[string]any {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return nil
-	}
-	return walkConfig(m, instanceID, consumerKey, params).(map[string]any)
-}
-
-func walkConfig(v any, instanceID shared.UUID, consumerKey string, params map[string]any) any {
-	switch t := v.(type) {
-	case string:
-		return resolvePlaceholders(t, instanceID, consumerKey, params)
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, vv := range t {
-			out[k] = walkConfig(vv, instanceID, consumerKey, params)
-		}
-		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, vv := range t {
-			out[i] = walkConfig(vv, instanceID, consumerKey, params)
-		}
-		return out
-	default:
-		return v
-	}
 }

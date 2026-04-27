@@ -10,24 +10,31 @@ import type { CliRunner } from "./cli-runner.js";
 const logger = pino({ level: "silent" });
 
 describe("renderTemplate", () => {
-  it("substitutes userdata / params / deps / reads vars", () => {
-    const out = renderTemplate("sys={{userdata.model}} p={{params.x}} d={{deps.a}} r={{reads.b}}", {
-      userdata: { model: "sonnet" },
-      params: { x: 7 },
-      deps: { a: "alpha" },
-      reads: { b: { nested: true } },
-    });
-    expect(out).toBe('sys=sonnet p=7 d=alpha r={"nested":true}');
+  it("substitutes userdata and attributes vars", () => {
+    const out = renderTemplate(
+      "sys={{userdata.model}} a={{attributes.area}} obj={{attributes.nested}}",
+      {
+        userdata: { model: "sonnet" },
+        attributes: { area: "alpha", nested: { ok: true } },
+      },
+    );
+    expect(out).toBe('sys=sonnet a=alpha obj={"ok":true}');
   });
 
   it("preserves {{...}} for missing keys", () => {
-    const out = renderTemplate("{{userdata.missing}}", {
+    const out = renderTemplate("{{userdata.missing}} {{attributes.gone}}", {
       userdata: {},
-      params: {},
-      deps: {},
-      reads: {},
+      attributes: {},
     });
-    expect(out).toBe("{{userdata.missing}}");
+    expect(out).toBe("{{userdata.missing}} {{attributes.gone}}");
+  });
+
+  it("ignores unknown namespaces (preserves verbatim)", () => {
+    const out = renderTemplate("{{deps.foo}}", {
+      userdata: {},
+      attributes: {},
+    });
+    expect(out).toBe("{{deps.foo}}");
   });
 });
 
@@ -49,15 +56,19 @@ describe("runAgent in stub mode", () => {
     await cb.close();
   });
 
-  it("returns stub complete outcome without spawning", async () => {
+  it("returns stub complete outcome with attributesDelta without spawning", async () => {
     const outcome = await runAgent({
       runId: "run-1",
+      nodeId: "n-1",
       nodeType: "stub-type",
       model: "sonnet",
       systemPrompt: "you are helpful",
       userPromptTemplate: "do it",
-      resultSchema: {},
-      templateVars: { userdata: {}, params: {}, deps: {}, reads: {} },
+      attributesSchema: {},
+      attributes: {},
+      templateVars: { userdata: {}, attributes: {} },
+      callbackUrl: "",
+      cancelToken: "",
       cliRunner: fakeCli,
       callback: cb,
       silenceTimeoutMs: 1000,
@@ -65,7 +76,7 @@ describe("runAgent in stub mode", () => {
     });
     expect(outcome.kind).toBe("complete");
     if (outcome.kind === "complete") {
-      expect(outcome.result).toEqual({ stub: true });
+      expect(outcome.attributesDelta).toEqual({ stub: true });
       expect(outcome.changed).toBe(true);
       expect(outcome.changeSummary).toBe("stub");
     }

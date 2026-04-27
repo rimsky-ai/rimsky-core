@@ -1,9 +1,19 @@
-// Scenario 13 — orphaned claim: a dispatch row is held by a dead supervisor
-// past the orphan cutoff while its node is still stale. Scheduler's orphan
-// sweep releases the claim and emits orphaned_claim_released.
+// Scenario 13 — orphaned claim: a `rimsky_lock_holders` row outlives its
+// supervisor's heartbeat. The scheduler's §13.5 step-2 lock-holder sweep
+// reaps the expired row, deletes it claimant-guarded on
+// `holder_supervisor_id`, and emits a `lock_orphan_reaped` event.
+//
+// Migrated to the stores-redesign template grammar (spec §11). The legacy
+// dispatch-row claim-orphan path (`rimsky_dispatch.claimed_by` >
+// 5 × heartbeat_timeout) is still wired in `core/scheduler/scheduler.go` and
+// emits `orphaned_claim_released`, but the redesign relocates the
+// supervisor-side orphan signal onto `rimsky_lock_holders` (§9.9.2 +
+// §13.5). This scenario exercises the lock-holder path; `verify_before_run_
+// race_test.go` covers the dispatch-row complement.
 package scenarios
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -17,49 +27,64 @@ import (
 
 func TestOrphanedClaim(t *testing.T) {
 	t.Parallel()
-	// NoSupervisor so our manufactured claim isn't fought over.
+	// NoSupervisor so the harness's running supervisor doesn't claim the
+	// node we're about to attach a manufactured lock-holder row to.
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "orphan", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "worker", Executor: "stub"},
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-orphan", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Replace the auto-enqueued dispatch row with one claimed far in the
-	// past by a dead supervisor. OrphanedClaimTimeout defaults to 25s in
-	// the harness; push claimed_at well past that.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE node_id = $1`, n.ID)
-	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, concurrency_tags, enqueued_at, claimed_by, claimed_at)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '2 minutes', 'dead-supervisor', NOW() - INTERVAL '2 minutes')`,
-		uuid.New(), n.ID,
-	)
-	require.NoError(t, err)
+	// Seed an expired `rimsky_lock_holders` row tied to a dead supervisor.
+	// We pick `kind='named'` so the per-row reap path runs without needing a
+	// real claim_store factory in the harness — the §13.5 step-2 reap is
+	// identical for all three kinds modulo the store-side ReleaseLock call
+	// (claim-only). Same pattern as `heartbeat_loss_reenqueue_test.go`.
+	lockHolderID := uuid.New()
+	lockName := "orphan-zombie-lock"
+	require.NoError(t, h.Storage.Transaction(h.Ctx, func(ctx context.Context, tx storage.Tx) error {
+		return h.Storage.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID:                 lockHolderID,
+			LockKind:           storage.LockKindNamed,
+			LockName:           &lockName,
+			HolderSupervisorID: "dead-supervisor",
+			HolderNodeID:       n.ID,
+			ExpiresAt:          time.Now().Add(-2 * time.Minute),
+		}, tx)
+	}))
 
-	// Wait for scheduler's orphan-claim sweep to release the claim.
-	deadline := time.Now().Add(30 * time.Second)
-	var released bool
+	// Wait for the §13.5 step-2 sweep to reap the row. Scheduler tick
+	// interval in the harness is 250ms; orphan-reap cutoff is purely
+	// `expires_at < now()` for the lock-holder path.
+	deadline := time.Now().Add(20 * time.Second)
+	var reaped bool
 	for time.Now().Before(deadline) {
-		var claimedBy *string
-		err := h.Pool.QueryRow(h.Ctx, `SELECT claimed_by FROM rimsky_dispatch WHERE node_id = $1`, n.ID).Scan(&claimedBy)
-		if err == nil && claimedBy == nil {
-			released = true
+		got, _ := h.Storage.LockHolders().Get(h.Ctx, lockHolderID, nil)
+		if got == nil {
+			reaped = true
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, released, "orphaned claim was not released")
+	require.True(t, reaped, "expired lock-holder row was not reaped by §13.5 step-2 sweep")
 
+	// `lock_orphan_reaped` event was emitted with the reaped row's metadata.
 	nid := n.ID
 	evs, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &nid, Kind: "orphaned_claim_released"},
+		storage.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
 		storage.ListPagination{Limit: 10}, nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, evs.Events, "expected orphaned_claim_released event")
+	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
+
+	// Spot-check the payload carries the kind + supervisor for operator
+	// triage (sweep_locks.go:lockReapPayload populates these unconditionally).
+	payload := evs.Events[0].Payload
+	require.Equal(t, "named", payload["lock_kind"])
+	require.Equal(t, "dead-supervisor", payload["supervisor_id"])
 }

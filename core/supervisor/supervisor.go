@@ -4,18 +4,51 @@
 // §17 (ownership @blessed-invariant). Supervisor:
 //
 //   - Registers self in rimsky_supervisors (callback host/port, accepted
-//     executors, concurrency).
+//     executors, accepted stores, concurrency).
 //   - Starts an HTTP callback server so async-handoff executors can POST
 //     terminal outcomes (see callback.go).
 //   - Loops:
 //   - Heartbeat tick (HeartbeatInterval): update own supervisor row, update
-//     per-active-node heartbeats, poll kill_requested and cancel matching
-//     active runs.
+//     per-active-node heartbeats, refresh `rimsky_lock_holders` rows owned
+//     by this supervisor whose holder_node_id is currently `running` (per
+//     spec §13.4). Operator invalidates do not preempt running work — they
+//     enqueue/coalesce a frame (per
+//     docs/specs/2026-04-26-frame-resolution-design.md §3.3 / §5.4).
 //   - Claim tick (ClaimPollInterval): while active < concurrency, try to
 //     claim one dispatch row via queue.Claim; on success, dispatch RunNode
 //     in a goroutine.
 //   - On shutdown: stop claiming, wait up to 30s for active runs, close the
 //     callback server, unregister, close the executor client pool.
+//
+// @blessed-invariant 4: Claimant-guarded release. (Spec §18 invariant 4.)
+//
+//	Every DELETE FROM rimsky_lock_holders and every UPDATE
+//	rimsky_dispatch SET claimed_by = NULL is gated on
+//	`AND … = supervisor_id`. The §13.4 heartbeat refresh below is a
+//	WRITE (not a release), but it inherits the same claimant guard:
+//	the WHERE clause is `holder_supervisor_id = $1`, so a stale
+//	heartbeat from a different supervisor can never extend a row it
+//	doesn't own. Concrete enforcement of the release path lives
+//	across `core/queue/postgres/queue.go`, `core/supervisor/runner.go`,
+//	and `core/scheduler/scheduler.go`; this file's contribution is the
+//	heartbeat-write claimant guard. Do not relax the
+//	`holder_supervisor_id = $1` predicate on the heartbeat UPDATE.
+//
+// @blessed-invariant 10: Lock acquisition is atomic with dispatch claim.
+// (Spec §18 invariant 10.)
+//
+//	The §13.3 acquisition transaction either claims the dispatch row
+//	AND inserts every required `rimsky_lock_holders` row AND completes
+//	every store `AcquireLock` mutation, or none of these. The
+//	acquisition tx itself lives in `core/supervisor/runner.go`
+//	(omnibus runner per §17.1) and `core/queue/postgres/queue.go`
+//	(building-block helpers); this file's contribution is structural
+//	— the heartbeat refresh below MUST NOT extend rows for nodes
+//	that have transitioned out of `running`. The
+//	`holder_node_id IN (running-nodes)` filter is the §13.4
+//	correctness predicate that keeps preserve-for-resume rows on the
+//	resume-grace cutoff. Removing it would make the resume-grace
+//	cutoff unreachable.
 package supervisor
 
 import (
@@ -26,11 +59,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/queue"
-	"github.com/fallguy/rimsky/core/resource"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/store"
 )
 
 // Config is the supervisor's construction-time dependency bundle.
@@ -44,14 +79,15 @@ type Config struct {
 	HeartbeatInterval time.Duration // default 5s
 	ClaimPollInterval time.Duration // default 1s
 	Resolver          executor.Resolver
-	GetResource       func(ctx context.Context, resourceID shared.UUID) (resource.Resource, error)
-	// ResourceFactories is the explicit factory registry consulted by the
-	// supervisor during dispatch. Set by config.StartSupervisor; defaults
-	// to resource.DefaultRegistry() when unset, so tests that construct
-	// supervisor.Config directly still work.
-	ResourceFactories *resource.FactoryRegistry
-	CallbackHost      string
-	CallbackPort      int
+	// StoreRegistry is the per-process store registry built by
+	// config.StartSupervisor from the YAML stores config (spec §14.1).
+	// The supervisor uses it for: deriving `accepted_stores` at
+	// registration (§14.2), and looking up concrete *store.Store values
+	// during dispatch (§13.3) and commit (§13.6). Required (Start
+	// returns an error when nil).
+	StoreRegistry *store.Registry
+	CallbackHost  string
+	CallbackPort  int
 	// CallbackAdvertiseHost / CallbackAdvertisePort override the host:port the
 	// supervisor *advertises* to executors for async-handoff callbacks. Use
 	// these when the listener bind address (e.g. `0.0.0.0:9100` in a
@@ -117,14 +153,29 @@ func Start(cfg Config) (*Handle, error) {
 	if cfg.Storage == nil || cfg.Queue == nil || cfg.Resolver == nil {
 		return nil, errors.New("supervisor.Start: Storage, Queue, and Resolver are required")
 	}
+	if cfg.StoreRegistry == nil {
+		return nil, errors.New("supervisor.Start: StoreRegistry is required")
+	}
+
+	// The omnibus runner (§17.1) and the §17.1 step 6c release tx both
+	// run on a *pgxpool.Pool. Type-assert on the queue impl for Pool();
+	// every production queue is core/queue/postgres which exposes it.
+	qpool, err := queuePool(cfg.Queue)
+	if err != nil {
+		return nil, err
+	}
+	lockHolders := store.NewLockHoldersClient(qpool)
 
 	callbackReg := NewCallbackRegistry()
 	callbackSrv := &CallbackServer{
-		Registry: callbackReg,
-		Storage:  cfg.Storage,
-		Queue:    cfg.Queue,
-		Clock:    cfg.Clock,
-		Logger:   cfg.Logger,
+		Registry:     callbackReg,
+		Storage:      cfg.Storage,
+		Queue:        cfg.Queue,
+		QueuePool:    qpool,
+		LockHolders:  lockHolders,
+		Clock:        cfg.Clock,
+		Logger:       cfg.Logger,
+		SupervisorID: cfg.SupervisorID,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -134,9 +185,11 @@ func Start(cfg Config) (*Handle, error) {
 	// Parse host:port from addr for registration in rimsky_supervisors.
 	host, port := splitHostPort(addr)
 	accepted := cfg.Resolver.AcceptedNames()
+	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
 	if err := cfg.Storage.Supervisors().Register(context.Background(), storage.SupervisorRegisterInput{
 		ID:                cfg.SupervisorID,
 		AcceptedExecutors: accepted,
+		AcceptedStores:    acceptedStores,
 		Concurrency:       cfg.Concurrency,
 		CallbackHost:      host,
 		CallbackPort:      port,
@@ -148,8 +201,36 @@ func Start(cfg Config) (*Handle, error) {
 	clientPool := executor.NewClientPool()
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised}
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, qpool, lockHolders)
 	return h, nil
+}
+
+// queuePool extracts the underlying *pgxpool.Pool from a DispatchQueue
+// implementation. The omnibus runner needs a concrete pool to run §13.3
+// transactions; abstracting through a pool-less interface would force
+// every queue impl to expose the same — for v1 only the postgres impl
+// exists, so we type-assert here.
+func queuePool(q queue.DispatchQueue) (*pgxpool.Pool, error) {
+	pp, ok := q.(interface{ Pool() *pgxpool.Pool })
+	if !ok {
+		return nil, errors.New("supervisor.Start: Queue must expose Pool() *pgxpool.Pool")
+	}
+	return pp.Pool(), nil
+}
+
+// storeRegistryNames returns a sorted-stable copy of the registry's store
+// names. Used at registration time to populate `accepted_stores` per spec
+// §14.2 (operator-declared store set the supervisor pool can satisfy).
+func storeRegistryNames(reg *store.Registry) []string {
+	stores := reg.Stores()
+	if len(stores) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(stores))
+	for name := range stores {
+		out = append(out, name)
+	}
+	return out
 }
 
 // advertisedCallbackURL computes the base URL the supervisor hands to
@@ -175,6 +256,9 @@ func runLoop(
 	reg *CallbackRegistry,
 	pool *executor.ClientPool,
 	accepted []string,
+	acceptedStores []string,
+	qpool *pgxpool.Pool,
+	lockHolders *store.LockHoldersClient,
 ) {
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
@@ -183,7 +267,7 @@ func runLoop(
 		"concurrency", cfg.Concurrency)
 
 	var activeMu sync.Mutex
-	activeRuns := map[shared.UUID]context.CancelFunc{}
+	activeNodes := map[shared.UUID]struct{}{}
 	activeCount := 0
 
 	heartbeatTick := time.NewTicker(cfg.HeartbeatInterval)
@@ -194,8 +278,8 @@ func runLoop(
 	doHeartbeat := func() {
 		activeMu.Lock()
 		cnt := activeCount
-		ids := make([]shared.UUID, 0, len(activeRuns))
-		for id := range activeRuns {
+		ids := make([]shared.UUID, 0, len(activeNodes))
+		for id := range activeNodes {
 			ids = append(ids, id)
 		}
 		activeMu.Unlock()
@@ -203,19 +287,19 @@ func runLoop(
 		if err := cfg.Storage.Supervisors().Heartbeat(context.Background(), cfg.SupervisorID, cnt, nil); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
+		// §13.4 lock-holder heartbeat refresh. ExtendHeartbeat issues the
+		// SQL with the running-nodes subquery filter so preserve-for-resume
+		// rows (anchored to nodes that have transitioned out of `running`
+		// to `stale`) are NOT refreshed — the resume-grace cutoff (§13.6)
+		// would never fire otherwise. The expiresAt budget is `5 ×
+		// HeartbeatInterval` per the spec; the storage adapter converts
+		// the duration back to integer seconds for the §13.4 SQL literal.
+		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
+		if err := cfg.Storage.LockHolders().ExtendHeartbeat(context.Background(), cfg.SupervisorID, expiresAt, nil); err != nil {
+			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
+		}
 		for _, id := range ids {
 			_ = cfg.Storage.Nodes().UpdateHeartbeat(context.Background(), id, cfg.Clock.Now(), cfg.SupervisorID, nil)
-			// Poll kill_requested; cancel the run context if set. The runner's
-			// stream will unwind and ApplyTerminalOutcome will classify the
-			// cancellation as infra error or stream_error.
-			n, _ := cfg.Storage.Nodes().Get(context.Background(), id, nil)
-			if n != nil && n.KillRequested {
-				activeMu.Lock()
-				if cancel, ok := activeRuns[id]; ok {
-					cancel()
-				}
-				activeMu.Unlock()
-			}
 		}
 	}
 
@@ -225,72 +309,74 @@ func runLoop(
 			activeMu.Unlock()
 			return
 		}
-		activeMu.Unlock()
-
-		// Empty limits = no per-tag caps. Per-tag cap wiring is a post-v1
-		// concern (Plan B); supervisor currently does not consume
-		// concurrency_limits config.
-		row, err := cfg.Queue.Claim(context.Background(), cfg.SupervisorID, accepted, map[string]int{})
-		if err != nil {
-			cfg.Logger.Warn("supervisor: queue.Claim failed", "error", err.Error())
-			return
-		}
-		if row == nil {
-			return
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		activeMu.Lock()
-		activeRuns[row.NodeID] = cancel
+		// Reserve a slot before launching. RunNode does its own §13.3
+		// candidate selection; if there's no eligible candidate it bails
+		// quickly and we release the slot in the defer below.
 		activeCount++
 		activeMu.Unlock()
 
+		ctx, cancel := context.WithCancel(context.Background())
 		h.wg.Add(1)
-		go func(r *shared.DispatchRow) {
+		go func() {
 			defer h.wg.Done()
-			defer func() {
-				activeMu.Lock()
-				delete(activeRuns, r.NodeID)
-				activeCount--
-				activeMu.Unlock()
-				// cancel() frees the context associated with this run; the
-				// inner runner already unwound. One cancel is sufficient —
-				// the goroutine previously had a nested `defer cancel()` that
-				// was redundant with this one.
-				cancel()
-			}()
+			defer cancel()
 			result, runErr := RunNode(ctx, RunArgs{
-				Storage: cfg.Storage, Queue: cfg.Queue, Clock: cfg.Clock, Logger: cfg.Logger,
-				NodeID: r.NodeID, DispatchID: r.ID,
-				SupervisorID: cfg.SupervisorID,
-				Pool:         pool, Resolver: cfg.Resolver,
-				GetResource: cfg.GetResource,
-				CallbackURL: h.advertisedURL,
+				Storage:           cfg.Storage,
+				Queue:             cfg.Queue,
+				QueuePool:         qpool,
+				LockHolders:       lockHolders,
+				Clock:             cfg.Clock,
+				Logger:            cfg.Logger,
+				SupervisorID:      cfg.SupervisorID,
+				AcceptedExecutors: accepted,
+				AcceptedStores:    acceptedStores,
+				Pool:              pool,
+				Resolver:          cfg.Resolver,
+				StoreRegistry:     cfg.StoreRegistry,
+				CallbackURL:       h.advertisedURL,
+				HeartbeatInterval: cfg.HeartbeatInterval,
 			}, reg.Register)
 			if runErr != nil {
-				cfg.Logger.Warn("supervisor: RunNode failed",
-					"node_id", r.NodeID.String(),
-					"dispatch_id", r.ID.String(),
-					"error", runErr.Error())
+				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
 			}
+
+			// Track active node id so the heartbeat tick can refresh
+			// `rimsky_nodes.last_heartbeat_at` for it. Operator
+			// invalidates do not preempt — they enqueue/coalesce a
+			// frame; nothing here owns a per-run cancel registration.
+			// result.NodeID is zero when Ran=false.
+			if result.Ran && result.NodeID != (shared.UUID{}) {
+				activeMu.Lock()
+				activeNodes[result.NodeID] = struct{}{}
+				activeMu.Unlock()
+				defer func() {
+					activeMu.Lock()
+					delete(activeNodes, result.NodeID)
+					activeMu.Unlock()
+				}()
+			}
+
+			// Release the reserved slot.
+			defer func() {
+				activeMu.Lock()
+				activeCount--
+				activeMu.Unlock()
+			}()
+
 			// Async path: the callback endpoint owns dispatch cleanup.
 			if result.Async {
 				return
 			}
-			// result.Ran covers both success and infra-error. For the infra
-			// case ApplyTerminalOutcome has *already* enqueued a fresh
-			// dispatch row (see terminal_outcome.go); the Commit below just
-			// deletes the original row we claimed. For resolver-miss the node
-			// transitioned directly to failed without enqueueing a retry, so
-			// deleting the original row is also correct. Either way the
-			// original claim row must be removed — runErr != nil does NOT
-			// change that.
-			if result.Ran {
-				_ = cfg.Queue.Complete(context.Background(), r.ID, cfg.SupervisorID)
+			// result.Ran covers both success and app/infra-error paths.
+			// For the infra case applyTerminalInfraError has already
+			// enqueued a fresh dispatch row; the Complete below deletes
+			// the original row we claimed. For resolver-miss the node
+			// transitioned directly to failed without enqueueing a retry,
+			// so deleting the original row is also correct.
+			if result.Ran && result.DispatchID != (shared.UUID{}) {
+				_ = cfg.Queue.Complete(context.Background(), result.DispatchID, cfg.SupervisorID)
 			}
-			// result.Ran == false: claim was lost to another supervisor; we
-			// must not touch the row.
-		}(row)
+		}()
 	}
 
 	for {

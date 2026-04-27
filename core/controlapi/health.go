@@ -22,9 +22,9 @@ type supervisorSummary struct {
 }
 
 type healthResponse struct {
-	Status      string                 `json:"status"`
-	Supervisors []supervisorSummary    `json:"supervisors"`
-	NodeCounts  map[string]int         `json:"node_counts"`
+	Status      string              `json:"status"`
+	Supervisors []supervisorSummary `json:"supervisors"`
+	NodeCounts  map[string]int      `json:"node_counts"`
 }
 
 // registerHealthRoutes wires GET /health.

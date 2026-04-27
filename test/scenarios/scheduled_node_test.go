@@ -1,4 +1,9 @@
-// Scenario 3 — scheduled node fires when its schedule row becomes due.
+// Scenario 3 — scheduled node fires when its `rimsky_schedules` row
+// becomes due.
+//
+// Migrated to the stores-redesign template grammar (spec §11): the cron
+// node is built via scenario.MakeNode. Schedule semantics are unchanged
+// (see `core/scheduler/schedule_ticker.go`).
 package scenarios
 
 import (
@@ -21,7 +26,19 @@ func TestScheduledNode(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cron", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			{Type: "cron_job", Executor: "stub", Schedule: "* * * * *"},
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "cron_job",
+					Executor: "stub",
+					Schedule: "* * * * *",
+				},
+				scenario.WithAttributes(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"ran": map[string]any{"type": "boolean"},
+					},
+				}),
+			),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-cron", map[string]any{})

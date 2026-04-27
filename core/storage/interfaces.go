@@ -92,28 +92,31 @@ type NodeRow struct {
 	ID                   shared.UUID
 	InstanceID           shared.UUID
 	NodeType             string
-	Executor             string // empty = pure-cascade
+	Executor             string // empty = native (claim-only or pure-cascade)
 	ScheduleCron         string // empty = no schedule
 	State                shared.NodeState
 	Dependencies         []shared.UUID
-	ConcurrencyTags      []string
 	CurrentErrorClass    string
 	RetryCounter         int
 	ActionIndex          int
 	LastHeartbeatAt      *time.Time
 	AssignedSupervisorID string
-	KillRequested        bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	// FrameID is non-nil when the node is part of an in-flight frame
+	// (state IN ('stale','running')) or carries the frame_id that
+	// transitioned it to the current state. Cleared on terminal-success
+	// transition to fresh; preserved on failed.
+	// Per docs/specs/2026-04-26-frame-resolution-design.md §10.3.
+	FrameID   *shared.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 type NodeCreateInput struct {
-	ID              shared.UUID
-	InstanceID      shared.UUID
-	NodeType        string
-	Executor        string
-	ScheduleCron    string
-	Dependencies    []shared.UUID
-	ConcurrencyTags []string
+	ID           shared.UUID
+	InstanceID   shared.UUID
+	NodeType     string
+	Executor     string
+	ScheduleCron string
+	Dependencies []shared.UUID
 }
 type NodeStore interface {
 	Create(ctx context.Context, in NodeCreateInput, tx Tx) (NodeRow, error)
@@ -130,58 +133,170 @@ type NodeStore interface {
 	UpdateState(ctx context.Context, id shared.UUID, state shared.NodeState, reason node.TransitionReason, tx Tx) error
 	UpdateError(ctx context.Context, id shared.UUID, es node.EvaluatorState, tx Tx) error
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, at time.Time, supervisorID string, tx Tx) error
-	SetKillRequested(ctx context.Context, id shared.UUID, value bool, tx Tx) error
+	// SetFrameID writes (or clears) the frame_id column on a node. The
+	// scheduler's frame engine sets it at frame-start; the supervisor's
+	// terminal-commit path clears it on success and preserves it on
+	// failure. Per spec §10.3.
+	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
 	ClearSupervisorAssignment(ctx context.Context, id shared.UUID, tx Tx) error
 	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
 }
 
-// -------- Resources (registry + data) --------
+// -------- Lock holders (rimsky_lock_holders) --------
 
-type ResourceRow struct {
-	ID                shared.UUID
-	ResourcePath      []string
-	OwnerNodeID       shared.UUID
-	CurrentVersionID  *shared.UUID
-	PreviousVersionID *shared.UUID
-	KeepVersions      int
-	CreatedAt         time.Time
-}
-type ResourceVersionRow struct {
-	ID            shared.UUID
-	ResourceID    shared.UUID
-	ProducedBy    *shared.UUID
-	Data          []byte // inline JSON bytes; nil for external
-	DataRef       []byte // JSON-encoded ref for external; nil for inline
-	ChangeSummary string
-	CommittedAt   time.Time
-}
-type ResourceCreateInput struct {
-	ResourcePath []string
-	OwnerNodeID  shared.UUID
-	KeepVersions int
-}
-type ResourceCommitInput struct {
-	ProducedBy    shared.UUID
-	Data          []byte // inline JSON bytes
-	DataRef       []byte // external ref
-	ChangeSummary string
-}
-type ResourceRegistry interface {
-	Create(ctx context.Context, in ResourceCreateInput, tx Tx) (ResourceRow, error)
-	Get(ctx context.Context, id shared.UUID, tx Tx) (*ResourceRow, error)
-	ListByOwner(ctx context.Context, ownerNodeID shared.UUID, tx Tx) ([]ResourceRow, error)
-	CommitVersion(ctx context.Context, resourceID shared.UUID, in ResourceCommitInput, tx Tx) (ResourceVersionRow, error)
-	NoOpCommit(ctx context.Context, resourceID shared.UUID, tx Tx) error
-	GCOldVersions(ctx context.Context, resourceID shared.UUID, keep int, tx Tx) (int, error)
-	RestoreVersion(ctx context.Context, resourceID shared.UUID, target string, versionID shared.UUID, tx Tx) (ResourceVersionRow, error) // target: "previous" | "id"
-	GetVersion(ctx context.Context, versionID shared.UUID, tx Tx) (*ResourceVersionRow, error)
-	ListVersions(ctx context.Context, resourceID shared.UUID, tx Tx) ([]ResourceVersionRow, error)
-	ListVersionsPaged(ctx context.Context, resourceID shared.UUID, pag ListPagination, tx Tx) (PaginatedListResult[ResourceVersionRow], error)
+// LockKind discriminates a lock-holder row's payload columns. See spec §9.9.2.
+type LockKind string
+
+const (
+	LockKindNamed  LockKind = "named"
+	LockKindRegion LockKind = "region"
+	LockKindClaim  LockKind = "claim"
+)
+
+// LockHolderRow mirrors a row of rimsky_lock_holders (spec §9.9.2). Exactly
+// one of (LockName) / (StoreName, RegionData) / (StoreName, ClaimID) is
+// populated, keyed by LockKind. The CHECK constraint in §9.9.2 enforces this.
+type LockHolderRow struct {
+	ID                 shared.UUID
+	LockKind           LockKind
+	LockName           *string // non-nil when LockKind = "named"
+	StoreName          *string // non-nil when LockKind in ("region","claim")
+	RegionData         []byte  // raw JSONB; non-nil when LockKind = "region"
+	ClaimID            *string // non-nil when LockKind = "claim"
+	HolderSupervisorID string
+	HolderNodeID       shared.UUID
+	ClaimedAt          time.Time
+	LastHeartbeatAt    time.Time
+	ExpiresAt          time.Time
 }
 
-type ResourceDataStore interface {
-	Read(ctx context.Context, version ResourceVersionRow, tx Tx) (any, error)
-	Delete(ctx context.Context, version ResourceVersionRow, tx Tx) error
+// LockHolderInsertInput is the input shape for InsertLockHolder. Callers
+// populate the discriminator-specific fields per LockKind; the postgres
+// implementation maps to the §9.9.2 CHECK constraint.
+type LockHolderInsertInput struct {
+	ID                 shared.UUID
+	LockKind           LockKind
+	LockName           *string
+	StoreName          *string
+	RegionData         []byte
+	ClaimID            *string
+	HolderSupervisorID string
+	HolderNodeID       shared.UUID
+	ExpiresAt          time.Time
+}
+
+// LockHoldersStore is the rimsky_lock_holders accessor exposed on
+// StorageBackend. The concrete implementation lives in
+// core/store/lockholders.go (per spec §16.1) — this interface is the
+// supervisor / scheduler / control-api facing surface.
+//
+// Sweep predicate (spec §13.5 step 2): ListExpired returns rows where
+// expires_at < now(). The scheduler's lock-holder sweep iterates these,
+// runs store-side ReleaseLock (for claim-kind), then deletes the row
+// claimant-guarded on holder_supervisor_id.
+type LockHoldersStore interface {
+	Insert(ctx context.Context, in LockHolderInsertInput, tx Tx) error
+	Get(ctx context.Context, id shared.UUID, tx Tx) (*LockHolderRow, error)
+	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]LockHolderRow, error)
+	ListBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]LockHolderRow, error)
+	ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx Tx) error
+	ListExpired(ctx context.Context, tx Tx) ([]LockHolderRow, error)
+	Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx Tx) error
+}
+
+// -------- Node attributes (rimsky_node_attributes) --------
+
+// NodeAttributesRow mirrors a row of rimsky_node_attributes (spec §9.9.1).
+type NodeAttributesRow struct {
+	NodeID     shared.UUID
+	RunAttempt int
+	Data       map[string]any
+	UpdatedAt  time.Time
+}
+
+// NodeAttributesStore is the rimsky_node_attributes accessor exposed on
+// StorageBackend. Concrete implementation lives in core/attributes/store.go.
+//
+// Get returns (nil, nil) when the row is absent — absence is a normal
+// lifecycle state (the row is created lazily on first dispatch, spec §9.9.1).
+//
+// Upsert replaces `data` outright; MergeDelta performs a SHALLOW JSONB merge
+// (`data || $1::jsonb`) and requires the row to exist (spec §5.7.2).
+type NodeAttributesStore interface {
+	Get(ctx context.Context, nodeID shared.UUID) (*NodeAttributesRow, error)
+	Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error
+	MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error
+}
+
+// -------- Claim holders (rimsky_claim_holders) --------
+
+// ClaimHolderState is the lifecycle state of a rimsky_claim_holders row.
+type ClaimHolderState string
+
+const (
+	ClaimHolderStateActive    ClaimHolderState = "active"
+	ClaimHolderStateCompleted ClaimHolderState = "completed"
+)
+
+// ClaimHolderAction is the declared / actual action vocabulary for held
+// claims (spec §9.9.3). 'delete_won' is recorded on a sibling row that was
+// collapsed by another sibling's winning delete (§5.6.4).
+type ClaimHolderAction string
+
+const (
+	ClaimHolderActionDelete        ClaimHolderAction = "delete"
+	ClaimHolderActionReleaseToBack ClaimHolderAction = "release_to_back"
+	ClaimHolderActionReleaseToHead ClaimHolderAction = "release_to_head"
+	ClaimHolderActionDeleteWon     ClaimHolderAction = "delete_won"
+)
+
+// ClaimHolderRow mirrors a row of rimsky_claim_holders (spec §9.9.3).
+//
+// ActualAction is nil while State is 'active'; populated when the row
+// transitions to 'completed' per the §5.6.4 resolution algorithm.
+type ClaimHolderRow struct {
+	ID           shared.UUID
+	ClaimID      string
+	StoreName    string
+	HolderNodeID shared.UUID
+	OnCommit     ClaimHolderAction
+	OnGiveUp     ClaimHolderAction
+	ActualAction *ClaimHolderAction
+	State        ClaimHolderState
+	CreatedAt    time.Time
+	CompletedAt  *time.Time
+}
+
+// ClaimHolderInsertInput is the input shape for InsertClaimHolder.
+type ClaimHolderInsertInput struct {
+	ID           shared.UUID
+	ClaimID      string
+	StoreName    string
+	HolderNodeID shared.UUID
+	OnCommit     ClaimHolderAction
+	OnGiveUp     ClaimHolderAction
+	// FrameID is observability-only (spec §10.5): it records which
+	// frame the holding node was in when this row was inserted. Reads
+	// and the §5.6.4 resolution algorithm do NOT consult this field.
+	FrameID *shared.UUID
+}
+
+// ClaimHoldersStore is the rimsky_claim_holders accessor exposed on
+// StorageBackend.
+//
+// Sweep predicate (spec §13.5 step 3): the scheduler's claim-holder GC
+// queries rimsky_claim_holders directly via raw SQL (see
+// core/scheduler/sweep_locks.go::listLeakedClaimHolders) — rows whose
+// holder node's current state is 'failed' or 'fresh' AND whose state is
+// still 'active'. It then runs the §5.6.4 algorithm with
+// actual_action = on_give_up.
+type ClaimHoldersStore interface {
+	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
+	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
+	ListByClaimID(ctx context.Context, claimID string, tx Tx) ([]ClaimHolderRow, error)
+	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
+	ListActiveByClaimID(ctx context.Context, claimID string, tx Tx) ([]ClaimHolderRow, error)
+	Complete(ctx context.Context, id shared.UUID, actualAction ClaimHolderAction, tx Tx) error
 }
 
 // -------- Events --------
@@ -236,6 +351,12 @@ type ScheduleStore interface {
 	DueBefore(ctx context.Context, cutoff time.Time, tx Tx) ([]ScheduleRow, error)
 	RecordFired(ctx context.Context, nodeID shared.UUID, nextFireAt, firedAt time.Time, tx Tx) error
 	ListAll(ctx context.Context, tx Tx) ([]ScheduleRow, error)
+	// ForceFire bumps next_fire_at to now() so the next scheduler tick will
+	// pick the node up. Used by the admin force-fire endpoint and by the
+	// §19.2 smoke fixture to drive a deterministic source-node fire. No-ops
+	// silently when no row matches node_id (the route layer treats that as
+	// 404 if needed by reading the node first).
+	ForceFire(ctx context.Context, nodeID shared.UUID, tx Tx) error
 }
 
 // -------- Supervisors --------
@@ -243,6 +364,7 @@ type ScheduleStore interface {
 type SupervisorRow struct {
 	ID                string
 	AcceptedExecutors []string
+	AcceptedStores    []string
 	Concurrency       int
 	CallbackHost      string
 	CallbackPort      int
@@ -253,6 +375,7 @@ type SupervisorRow struct {
 type SupervisorRegisterInput struct {
 	ID                string
 	AcceptedExecutors []string
+	AcceptedStores    []string
 	Concurrency       int
 	CallbackHost      string
 	CallbackPort      int
@@ -272,8 +395,9 @@ type StorageBackend interface {
 	Templates() TemplateStore
 	Instances() InstanceStore
 	Nodes() NodeStore
-	Resources() ResourceRegistry
-	ResourceData() ResourceDataStore
+	LockHolders() LockHoldersStore
+	NodeAttributes() NodeAttributesStore
+	ClaimHolders() ClaimHoldersStore
 	Events() EventStore
 	Schedules() ScheduleStore
 	Supervisors() SupervisorStore

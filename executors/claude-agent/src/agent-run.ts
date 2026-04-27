@@ -9,20 +9,29 @@ const Ajv: AjvCtor = (((AjvNs as unknown) as { default?: AjvCtor }).default ??
   ((AjvNs as unknown) as AjvCtor));
 import type { CliRunner, CliHandle } from "./cli-runner.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
+import {
+  buildAttributesWritebackUrl,
+  defaultPostAttributes,
+  type PostAttributesFn,
+} from "./attributes-tools.js";
 
 /**
  * Outcome the executor relays back to the rimsky supervisor via the async
- * callback URL. Derived from the semantics of
- * {@link https://github.com/fallguy/rimsky "rimsky agentic-runner"} but stripped
- * of storage / queue / state-machine side-effects (those are the supervisor's
- * concern, not the executor's).
+ * callback URL. Per spec §12.2 the legacy `result` field has been retired in
+ * favour of `attributes_delta`.
+ *
+ * - `complete`: terminal success. `attributesDelta` is the terminal-final
+ *   writeback (may be `null` when the executor used the incremental
+ *   `attributes_set` callback path; the supervisor already has that data).
+ * - `blocked`: terminal `Blocked`.
+ * - `errored`: terminal `Errored`.
  *
  * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
  */
 export type AgentOutcome =
   | {
       kind: "complete";
-      result: unknown;
+      attributesDelta: Record<string, unknown> | null;
       changed: boolean;
       changeSummary: string | null;
     }
@@ -31,21 +40,55 @@ export type AgentOutcome =
 
 export interface AgentRunOptions {
   runId: string;
+  /**
+   * Supervisor-side `node_id` — used as the path segment on the incremental
+   * writeback URL (`{callback_url}/v1/attributes/{node_id}`).
+   */
+  nodeId: string;
   nodeType: string;
   model: string;
   systemPrompt: string;
   userPromptTemplate: string;
-  resultSchema: unknown;
+  /**
+   * Declared JSON Schema for the node's attributes. The executor uses this
+   * to validate any `attributes_delta` it produces locally; rimsky validates
+   * authoritatively at commit (per spec §5.7.1).
+   */
+  attributesSchema: unknown;
+  /**
+   * Per-run typed attributes object as captured at dispatch (per spec
+   * §5.7). Includes both source-driven fields (pre-populated by the
+   * supervisor) and any executor-populated fields preserved from a prior
+   * resumable run. Surfaced verbatim to the agent via the `attributes_read`
+   * MCP tool.
+   */
+  attributes: Record<string, unknown>;
+  /**
+   * Userdata bag from the template (per spec §5.8). Rimsky never parses
+   * this; the executor reads `model`, `system_prompt`, etc. from here. The
+   * `templateVars.userdata` namespace below is what `{{userdata.x}}`
+   * resolves against in renderTemplate.
+   */
   templateVars: {
     userdata: Record<string, unknown>;
-    params: Record<string, unknown>;
-    deps: Record<string, unknown>;
-    reads: Record<string, unknown>;
+    attributes: Record<string, unknown>;
   };
+  /**
+   * Supervisor-issued URLs / tokens that flow through to the incremental
+   * writeback path and the async-handoff callback.
+   */
+  callbackUrl: string;
+  cancelToken: string;
   cliRunner: CliRunner;
   callback: CallbackServerHandle;
   silenceTimeoutMs: number;
   logger: Logger;
+  /**
+   * Optional override for the writeback POST function used by the
+   * `attributes_set` MCP tool. Tests swap this out to avoid real network
+   * calls.
+   */
+  postAttributes?: PostAttributesFn;
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
@@ -64,7 +107,7 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   await new Promise((r) => setTimeout(r, 50));
   return {
     kind: "complete",
-    result: { stub: true },
+    attributesDelta: { stub: true },
     changed: true,
     changeSummary: "stub",
   };
@@ -73,15 +116,20 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
 async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   const {
     runId,
+    nodeId,
     model,
     systemPrompt,
     userPromptTemplate,
-    resultSchema,
+    attributesSchema,
+    attributes,
     templateVars,
+    callbackUrl,
+    cancelToken,
     cliRunner,
     callback,
     silenceTimeoutMs,
     logger,
+    postAttributes,
   } = opts;
 
   const renderedSystem = renderTemplate(systemPrompt, templateVars);
@@ -89,27 +137,29 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   const callbackToken = randomUUID();
 
-  // Lazily compile the result schema if one is provided; ajv throws on invalid
-  // schema shape which we surface as an errored outcome before we spawn.
+  // Lazily compile the attributes schema if one is provided; ajv throws on
+  // an invalid schema shape which we surface as an errored outcome before
+  // we spawn. Per spec §5.7.1 rimsky also re-validates at commit, but
+  // catching obviously broken schemas pre-spawn fails fast.
   const ajv = new Ajv({ allErrors: true, strict: false });
-  let validateResult: ((v: unknown) => boolean) | null = null;
-  let schemaErrors: string[] = [];
+  let validateAttributes: ((v: unknown) => boolean) | null = null;
+  const schemaErrors: string[] = [];
   if (
-    resultSchema &&
-    typeof resultSchema === "object" &&
-    Object.keys(resultSchema as object).length > 0
+    attributesSchema &&
+    typeof attributesSchema === "object" &&
+    Object.keys(attributesSchema as object).length > 0
   ) {
     try {
-      validateResult = ajv.compile(resultSchema as object);
+      validateAttributes = ajv.compile(attributesSchema as object);
     } catch (e) {
-      schemaErrors.push(`invalid result_schema: ${String(e)}`);
+      schemaErrors.push(`invalid attributes_schema: ${String(e)}`);
     }
   }
 
   if (schemaErrors.length > 0) {
     return {
       kind: "errored",
-      errorClass: "invalid_result_schema",
+      errorClass: "invalid_attributes_schema",
       payload: { errors: schemaErrors },
     };
   }
@@ -163,39 +213,83 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     teardownResolveRef.fn();
   };
 
+  // Wire the writeback function the `attributes_set` MCP tool calls.
+  const post = postAttributes ?? defaultPostAttributes;
+  const writebackUrl = callbackUrl
+    ? buildAttributesWritebackUrl(callbackUrl, nodeId)
+    : "";
+  const onAttributesSet = async (
+    delta: Record<string, unknown>,
+  ): Promise<{ status: number }> => {
+    if (!writebackUrl) {
+      logger.warn({ runId }, "attributes_set called but no callback_url; dropping");
+      return { status: 503 };
+    }
+    try {
+      return await post(writebackUrl, { delta }, cancelToken);
+    } catch (e) {
+      logger.error(
+        { runId, error: String(e) },
+        "attributes writeback POST failed",
+      );
+      return { status: 502 };
+    }
+  };
+
   callback.registry.register(callbackToken, {
     runId,
-    resultSchema: resultSchema ?? {},
-    onComplete: async (result, changed, changeSummary, scheduleTeardown) => {
-      // Basic validation: must be an object.
-      if (result === undefined || result === null || typeof result !== "object") {
-        return {
-          status: "rejected",
-          errors: { result: ["must be an object"] },
-        };
-      }
-      // Serializability gate.
-      try {
-        JSON.stringify(result);
-      } catch (e) {
-        return {
-          status: "rejected",
-          errors: { result: [`unserializable_result: ${String(e)}`] },
-        };
-      }
-      // JSON-schema validation when a schema was supplied.
-      if (validateResult && !validateResult(result)) {
-        const errs = (validateResult as unknown as { errors?: unknown[] }).errors ?? [];
-        return {
-          status: "rejected",
-          errors: { result: errs.map((e) => JSON.stringify(e)) },
-        };
+    attributesAtSpawn: attributes,
+    cancelToken,
+    nodeId,
+    callbackUrl,
+    onComplete: async (
+      attributesDelta,
+      changed,
+      changeSummary,
+      scheduleTeardown,
+    ) => {
+      // Validate any executor-supplied terminal-final delta before
+      // accepting. Per spec §12.2, the delta is optional (executors using
+      // incremental writeback omit it).
+      if (attributesDelta !== null) {
+        if (typeof attributesDelta !== "object" || Array.isArray(attributesDelta)) {
+          return {
+            status: "rejected",
+            errors: { attributes_delta: ["must be an object"] },
+          };
+        }
+        try {
+          JSON.stringify(attributesDelta);
+        } catch (e) {
+          return {
+            status: "rejected",
+            errors: {
+              attributes_delta: [`unserializable_attributes_delta: ${String(e)}`],
+            },
+          };
+        }
+        if (validateAttributes) {
+          // The delta merged on top of the dispatch-time attributes is
+          // what the supervisor will validate authoritatively; we do a
+          // best-effort local check on the same merged shape.
+          const merged = { ...attributes, ...attributesDelta };
+          if (!validateAttributes(merged)) {
+            const errs =
+              (validateAttributes as unknown as { errors?: unknown[] }).errors ?? [];
+            return {
+              status: "rejected",
+              errors: {
+                attributes_delta: errs.map((e) => JSON.stringify(e)),
+              },
+            };
+          }
+        }
       }
       scheduleTeardown(async () => {
         await teardownCli();
         safeResolve({
           kind: "complete",
-          result,
+          attributesDelta,
           changed,
           changeSummary,
         });
@@ -214,6 +308,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         safeResolve({ kind: "errored", errorClass, payload });
       });
     },
+    onAttributesSet,
   });
 
   let handle: CliHandle;
@@ -322,8 +417,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 }
 
 /**
- * Minimal `{{ns.key}}` substitution for system / user prompts. If `ns.key` is
- * not present in `vars`, the literal `{{...}}` is preserved.
+ * Minimal `{{ns.key}}` substitution for system / user prompts. After the
+ * stores-redesign (spec §5.7) the only supported namespaces are
+ * `userdata` and `attributes`. Substitution against unknown namespaces is
+ * preserved verbatim.
  *
  * @source rimsky/src/supervisor/agentic-runner.ts:renderTemplate
  */
@@ -331,14 +428,12 @@ export function renderTemplate(
   tpl: string,
   vars: {
     userdata: Record<string, unknown>;
-    params: Record<string, unknown>;
-    deps: Record<string, unknown>;
-    reads: Record<string, unknown>;
+    attributes: Record<string, unknown>;
   },
 ): string {
   return tpl.replace(
-    /\{\{(userdata|params|deps|reads)\.([^}]+)\}\}/g,
-    (_, ns: "userdata" | "params" | "deps" | "reads", key: string) => {
+    /\{\{(userdata|attributes)\.([^}]+)\}\}/g,
+    (_, ns: "userdata" | "attributes", key: string) => {
       const bag = vars[ns];
       const v = bag[key];
       if (v === undefined) return `{{${ns}.${key}}}`;

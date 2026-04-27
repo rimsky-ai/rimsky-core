@@ -23,11 +23,13 @@ spec:
           image: "{{ .Values.image.repository }}/executor-claude-agent:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: GRPC_ADDR
-              value: "0.0.0.0:{{ .Values.claudeAgent.service.port }}"
-            - name: METRICS_ADDR
-              value: "0.0.0.0:9190"
-            - name: CLAUDE_STUB_MODE
+            - name: RIMSKY_EXECUTOR_HOST
+              value: "0.0.0.0"
+            - name: RIMSKY_EXECUTOR_PORT_GRPC
+              value: {{ .Values.claudeAgent.service.port | quote }}
+            - name: RIMSKY_EXECUTOR_PORT_HTTP
+              value: {{ .Values.claudeAgent.service.httpPort | quote }}
+            - name: RIMSKY_EXECUTOR_STUB_MODE
               value: {{ .Values.claudeAgent.stubMode | quote }}
             {{- if .Values.claudeAgent.anthropicApiKey }}
             - name: ANTHROPIC_API_KEY
@@ -39,7 +41,7 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.claudeAgent.service.port }}
-            - name: metrics
-              containerPort: 9190
+            - name: http
+              containerPort: {{ .Values.claudeAgent.service.httpPort }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

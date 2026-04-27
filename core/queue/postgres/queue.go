@@ -1,14 +1,25 @@
 // Package postgres is the Postgres implementation of queue.DispatchQueue.
 //
-// Port of rimsky/src/queue/postgres-queue.ts. The @blessed-invariant comment
-// on Claim is load-bearing — preserve it verbatim on any refactor.
+// Under the stores redesign (spec §13), this package owns rimsky_dispatch
+// only. The §13.3 atomic-acquisition transaction is orchestrated by
+// core/supervisor/runner.go; the helpers below (SelectCandidates,
+// ClaimDispatchRow, TakeNamedLockAdvisory) are the building blocks the
+// runner calls inside the single pgx.Tx that brackets candidate selection,
+// per-named-lock advisory locking, the claimant-guarded dispatch UPDATE,
+// region re-evaluation, and lock-holder inserts.
+//
+// The previous "do everything in Claim()" entry point is gone: per-row
+// gating data (concurrency_tags) was removed from the schema; per-spec
+// gating data (named/region/claim locks) lives in the in-memory template
+// registry which this package does not import. Splitting the work into
+// helpers lets the supervisor's runner do the in-Go eligibility checks
+// (§13.2) between candidate selection and the claim UPDATE.
 package postgres
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +28,13 @@ import (
 	"github.com/fallguy/rimsky/core/queue"
 	"github.com/fallguy/rimsky/core/shared"
 )
+
+// defaultCandidateLimit caps the candidate batch returned by
+// SelectCandidates when the caller passes Limit==0. The spec's nominal
+// step-1 SQL uses LIMIT 1; a small batch is exposed as the default so
+// the runner can iterate to the next eligible candidate (skipping ones
+// that fail in-Go lock eligibility) without re-running the SELECT.
+const defaultCandidateLimit = 100
 
 // Queue is the Postgres-backed DispatchQueue.
 type Queue struct {
@@ -29,224 +47,178 @@ func New(pool *pgxpool.Pool) *Queue {
 	return &Queue{pool: pool}
 }
 
+// Pool returns the underlying connection pool. Callers that need to start
+// the §13.3 acquisition transaction (the supervisor's runner) use this so
+// the rest of the helper surface can take an open pgx.Tx.
+func (q *Queue) Pool() *pgxpool.Pool { return q.pool }
+
 // ensure Queue implements the interface.
 var _ queue.DispatchQueue = (*Queue)(nil)
 
 // Enqueue inserts or refreshes a dispatch row for the given node. On conflict
 // (UNIQUE node_id) the row is updated ONLY if still unclaimed and already
-// eligible — a claimed or future-dated row is left alone.
+// eligible — a claimed or future-dated row is left alone. RequiredStores is
+// denormalised from the template at enqueue time and drives the §14.2
+// supervisor-pool specialisation predicate.
 func (q *Queue) Enqueue(ctx context.Context, req queue.DispatchRequest) error {
-	tags := req.ConcurrencyTags
-	if tags == nil {
-		tags = []string{}
+	stores := req.RequiredStores
+	if stores == nil {
+		stores = []string{}
+	}
+	executor := nullableText(req.ExecutorName)
+	if req.FrameID == (shared.UUID{}) {
+		return fmt.Errorf("postgres.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
 	}
 	_, err := q.pool.Exec(ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, concurrency_tags, enqueued_at)
-		 VALUES (gen_random_uuid(), $1, $2, $3, $4)
+		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, enqueued_at, frame_id)
+		 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
 		 ON CONFLICT (node_id) DO UPDATE
 		   SET enqueued_at = EXCLUDED.enqueued_at,
 		       executor_name = EXCLUDED.executor_name,
-		       concurrency_tags = EXCLUDED.concurrency_tags
+		       required_stores = EXCLUDED.required_stores,
+		       frame_id = EXCLUDED.frame_id
 		   WHERE rimsky_dispatch.claimed_by IS NULL
 		     AND rimsky_dispatch.enqueued_at <= NOW()`,
-		req.NodeID, req.ExecutorName, tags, req.EnqueuedAt,
+		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID,
 	)
 	return err
 }
 
-// Claim atomically selects one ready dispatch row respecting tag limits.
+// SelectCandidates is the §13.3 step 1 candidate-selection helper.
 //
-// @blessed-invariant "running window extends exactly as long as the
-// dispatch row is claimed"
+// SQL: SELECT FROM rimsky_dispatch WHERE claimed_by IS NULL AND
+// required_stores <@ accepted_stores AND
+// (executor_name = ANY(accepted_executors) OR executor_name IS NULL)
+// ORDER BY enqueued_at FOR UPDATE SKIP LOCKED LIMIT $limit.
 //
-// Tag-limit counts are computed from `rimsky_dispatch.claimed_by IS NOT
-// NULL` — i.e. dispatch rows are the concurrency accounting primitive,
-// not `rimsky_nodes.state='running'`. This invariant requires that:
+// The caller MUST hold an open transaction; rows returned have their
+// per-row locks held until the tx commits or rolls back. The runner
+// iterates these candidates, evaluates the in-Go lock eligibility hints
+// (§13.2) for each, and on the first eligible one proceeds to step 3
+// (advisory locks + ClaimDispatchRow).
 //
-//	(1) `nodes.state = running` is entered BEFORE `queue.Complete` is
-//	    called, and
-//	(2) `queue.Complete` is called AFTER the terminal outcome persisted
-//	    the node's new state (fresh / stale / failed).
-//
-// In supervisor's tryClaim flow: `queue.Claim()` →
-// (runner) `nodes.updateState("running", ...)` → handler → terminal
-// outcome persists new state → `defer queue.Complete(...)`. Any refactor
-// that widens the window between "runner flips node to running" and
-// "queue.Claim returned" — or between "terminal outcome persisted" and
-// "dispatch row deleted" — must preserve the property that a concurrent
-// claimer sees the dispatch row as `claimed_by != null` for the entire
-// time the node is actually running. Otherwise the tag limit
-// under-counts and two nodes with `per-instance:X` can race in.
-func (q *Queue) Claim(
-	ctx context.Context,
-	supervisorID string,
-	accepts []string,
-	limits map[string]int,
-) (*shared.DispatchRow, error) {
-	conn, err := q.pool.Acquire(ctx)
-	if err != nil {
-		return nil, err
+// The IS NULL branch of the executor predicate is load-bearing: native
+// (claim-only) nodes per §17.1 enqueue with executor_name IS NULL and are
+// run by the supervisor's omnibus runner without a separate executor
+// process.
+func (q *Queue) SelectCandidates(
+	ctx context.Context, tx pgx.Tx, req queue.SelectCandidatesRequest,
+) ([]queue.Candidate, error) {
+	if tx == nil {
+		return nil, errors.New("postgres.SelectCandidates: tx required")
 	}
-	defer conn.Release()
-
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, err
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultCandidateLimit
 	}
-	// Rollback is a no-op if Commit ran first.
-	defer func() { _ = tx.Rollback(ctx) }()
+	acceptedStores := req.AcceptedStores
+	if acceptedStores == nil {
+		acceptedStores = []string{}
+	}
+	acceptedExecutors := req.AcceptedExecutors
+	if acceptedExecutors == nil {
+		acceptedExecutors = []string{}
+	}
 
-	// Find eligible dispatch rows (claimed_by NULL, executor_name in accepts,
-	// enqueued_at <= NOW), oldest first, locking rows for update and skipping
-	// any already locked by concurrent claimers.
-	//
-	// `LIMIT 100` bounds the working set so a backlog of 10k queued nodes
-	// doesn't force us to FOR UPDATE every eligible row and buffer them into
-	// memory. The inner tag-count + advisory-lock loop breaks out of this
-	// batch on the first claimable row; if every candidate in the first 100
-	// is tag-blocked we'll pick up the next batch on the next Claim() call,
-	// which is what we want (backpressure).
 	rows, err := tx.Query(ctx,
-		`SELECT id, node_id, executor_name, concurrency_tags, enqueued_at, claimed_by, claimed_at
-		   FROM rimsky_dispatch
-		  WHERE claimed_by IS NULL
-		    AND executor_name = ANY($1::text[])
-		    AND enqueued_at <= NOW()
-		  ORDER BY enqueued_at
-		  LIMIT 100
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
+		   FROM rimsky_dispatch d
+		   JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE d.claimed_by IS NULL
+		    AND d.required_stores <@ $1::text[]
+		    AND (d.executor_name = ANY($2::text[]) OR d.executor_name IS NULL)
+		    AND d.enqueued_at <= NOW()
+		  ORDER BY d.enqueued_at
+		  LIMIT $3
 		  FOR UPDATE SKIP LOCKED`,
-		accepts,
+		acceptedStores, acceptedExecutors, limit,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)
 	}
+	defer rows.Close()
 
-	type candidate struct {
-		id              shared.UUID
-		nodeID          shared.UUID
-		executorName    string
-		concurrencyTags []string
-		enqueuedAt      time.Time
-		claimedBy       *string
-		claimedAt       *time.Time
-	}
-	var candidates []candidate
+	var out []queue.Candidate
 	for rows.Next() {
-		var c candidate
+		var (
+			c            queue.Candidate
+			executorName *string
+		)
 		if err := rows.Scan(
-			&c.id, &c.nodeID, &c.executorName, &c.concurrencyTags,
-			&c.enqueuedAt, &c.claimedBy, &c.claimedAt,
+			&c.DispatchID, &c.NodeID, &c.NodeType,
+			&executorName, &c.RequiredStores, &c.EnqueuedAt, &c.FrameID,
 		); err != nil {
-			rows.Close()
-			return nil, err
+			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
-		candidates = append(candidates, c)
+		if executorName != nil {
+			c.ExecutorName = *executorName
+		}
+		if c.RequiredStores == nil {
+			c.RequiredStores = []string{}
+		}
+		out = append(out, c)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres.SelectCandidates: rows: %w", err)
 	}
+	return out, nil
+}
 
-	// Track tag usage locally for this claim pass so we don't over-subscribe
-	// a tag across multiple eligible rows in the same Claim() call.
-	localTagCounts := map[string]int{}
-
-	for _, row := range candidates {
-		tags := row.concurrencyTags
-		if tags == nil {
-			tags = []string{}
-		}
-
-		// Under READ COMMITTED, a plain SELECT count(*) FROM rimsky_dispatch
-		// WHERE claimed_by IS NOT NULL cannot block on another transaction's
-		// pending claim UPDATE — so two concurrent Claim() calls against a
-		// tag with limit=1 could each read active=0 and both proceed. To
-		// serialize tag counting, take a per-tag transactional advisory lock
-		// keyed on each tag the row carries BEFORE reading the count. The
-		// lock is held for the rest of this transaction and released on
-		// COMMIT / ROLLBACK. pg_advisory_xact_lock waits if another txn
-		// holds the same key; once acquired the count query observes any
-		// committed prior claim UPDATE.
-		//
-		// DEADLOCK SAFETY: sort tags before acquiring locks so any two
-		// concurrent claims that share a tag subset acquire the shared locks
-		// in the same global order (lexicographic). Without this, tags
-		// ["x","y"] vs ["y","x"] acquired in row-order could deadlock —
-		// pg detects it and ERRORs one side, forcing an unnecessary retry.
-		sortedTags := append([]string(nil), tags...)
-		sort.Strings(sortedTags)
-		for _, tag := range sortedTags {
-			if _, err := tx.Exec(ctx,
-				`SELECT pg_advisory_xact_lock(hashtext($1))`,
-				fmt.Sprintf("rimsky_tag:%s", tag),
-			); err != nil {
-				return nil, err
-			}
-		}
-
-		blocked := false
-		for _, tag := range sortedTags {
-			limit, ok := limits[tag]
-			if !ok {
-				continue
-			}
-			// Re-read the active count for this tag now that we hold the
-			// advisory lock. Only committed claims are visible, and no other
-			// claimer holding this tag's lock can race us until we COMMIT.
-			var committed int
-			if err := tx.QueryRow(ctx,
-				`SELECT count(*)::int AS active
-				   FROM rimsky_dispatch d
-				  WHERE d.claimed_by IS NOT NULL
-				    AND $1 = ANY(d.concurrency_tags)`,
-				tag,
-			).Scan(&committed); err != nil {
-				return nil, err
-			}
-			local := localTagCounts[tag]
-			active := committed + local
-			if active >= limit {
-				blocked = true
-				break
-			}
-		}
-		if blocked {
-			continue
-		}
-
-		var claimed shared.DispatchRow
-		var tagsOut []string
-		if err := tx.QueryRow(ctx,
-			`UPDATE rimsky_dispatch
-			    SET claimed_by = $1, claimed_at = NOW()
-			  WHERE id = $2
-			  RETURNING id, node_id, executor_name, concurrency_tags, enqueued_at, claimed_by, claimed_at`,
-			supervisorID, row.id,
-		).Scan(
-			&claimed.ID, &claimed.NodeID, &claimed.ExecutorName, &tagsOut,
-			&claimed.EnqueuedAt, &claimed.ClaimedBy, &claimed.ClaimedAt,
-		); err != nil {
-			return nil, err
-		}
-		if tagsOut == nil {
-			tagsOut = []string{}
-		}
-		claimed.ConcurrencyTags = tagsOut
-
-		// Update local counts for subsequent rows in this same pass.
-		for _, tag := range tags {
-			localTagCounts[tag]++
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return &claimed, nil
+// ClaimDispatchRow is the §13.3 step 3c claimant-guarded UPDATE.
+//
+// Sets claimed_by=supervisorID, claimed_at=now(), last_heartbeat_at=now()
+// for the given dispatch row, but only when claimed_by IS NULL.
+//
+// Returns claimed=true on a single-row update; claimed=false when the row
+// was already claimed by someone else. Under FOR UPDATE SKIP LOCKED inside
+// the same tx the false branch should not occur; the guard is the
+// invariant per spec §13.3 step 3c.
+//
+// The dispatch row is the running-window primitive (the prior
+// @blessed-invariant on Claim): tag-limit / named-lock counts read
+// rimsky_dispatch.claimed_by IS NOT NULL (now: rimsky_lock_holders.expires_at
+// > now() under the redesign), so the running window must extend exactly
+// as long as the claim holds. The caller (runner) commits this UPDATE
+// alongside the lock-holder inserts in the same tx so claim and
+// lock-holder rows go visible atomically.
+func (q *Queue) ClaimDispatchRow(
+	ctx context.Context, tx pgx.Tx, dispatchID shared.UUID, supervisorID string,
+) (bool, error) {
+	if tx == nil {
+		return false, errors.New("postgres.ClaimDispatchRow: tx required")
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	cmd, err := tx.Exec(ctx,
+		`UPDATE rimsky_dispatch
+		    SET claimed_by = $1, claimed_at = NOW(), last_heartbeat_at = NOW()
+		  WHERE id = $2 AND claimed_by IS NULL`,
+		supervisorID, dispatchID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("postgres.ClaimDispatchRow: %w", err)
 	}
-	return nil, nil
+	return cmd.RowsAffected() == 1, nil
+}
+
+// TakeNamedLockAdvisory takes a transactional advisory lock keyed on
+// "rimsky_lock:" + lockName. Spec §13.3 step 3b: under
+// pg_advisory_xact_lock, two supervisors trying to acquire the same named
+// lock serialize on this call before re-counting holders.
+//
+// The lock is released automatically on COMMIT / ROLLBACK of tx. The
+// caller is responsible for sorting lock names per the §13.7 invariant
+// before taking multiple locks in one tx — without sorting, two callers
+// holding different orderings of the same set deadlock.
+func TakeNamedLockAdvisory(ctx context.Context, tx pgx.Tx, lockName string) error {
+	if tx == nil {
+		return errors.New("postgres.TakeNamedLockAdvisory: tx required")
+	}
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`,
+		fmt.Sprintf("rimsky_lock:%s", lockName),
+	); err != nil {
+		return fmt.Errorf("postgres.TakeNamedLockAdvisory(%q): %w", lockName, err)
+	}
+	return nil
 }
 
 // Complete deletes the dispatch row. If expectedClaimedBy is non-empty, the
@@ -267,7 +239,7 @@ func (q *Queue) Complete(ctx context.Context, dispatchID shared.UUID, expectedCl
 }
 
 // Fail deletes the dispatch row. reason is currently logged/unused at the SQL
-// layer (kept for symmetry with the TS contract). Guarded on non-empty
+// layer (kept for symmetry with the contract). Guarded on non-empty
 // expectedClaimedBy.
 func (q *Queue) Fail(
 	ctx context.Context,
@@ -304,18 +276,23 @@ func (q *Queue) RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedC
 	return err
 }
 
-// ListOrphanedClaims returns dispatch rows whose claimed_at is older than
-// cutoff AND whose node is still in state='stale' (supervisor died between
-// Claim and the state→running transition).
+// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is older
+// than cutoff and claimed_by IS NOT NULL. Spec §13.5 step 1: the redesign
+// switched the predicate column from claimed_at to last_heartbeat_at so a
+// long-running but heartbeating supervisor is not reaped.
+//
+// The previous implementation also filtered on `rimsky_nodes.state = 'stale'`
+// to avoid releasing a claim under a still-running node. Under the redesign
+// the heartbeat tick (§13.4) refreshes last_heartbeat_at while the node is
+// running, so a running node's claim cannot satisfy the predicate;
+// dropping the join keeps the sweep aligned with the spec text.
 func (q *Queue) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]shared.DispatchRow, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT d.id, d.node_id, d.executor_name, d.concurrency_tags, d.enqueued_at,
-		        d.claimed_by, d.claimed_at
-		   FROM rimsky_dispatch d
-		   JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE d.claimed_by IS NOT NULL
-		    AND d.claimed_at < $1
-		    AND n.state = 'stale'`,
+		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		        claimed_by, claimed_at, last_heartbeat_at, frame_id
+		   FROM rimsky_dispatch
+		  WHERE claimed_by IS NOT NULL
+		    AND last_heartbeat_at < $1`,
 		cutoff,
 	)
 	if err != nil {
@@ -327,13 +304,13 @@ func (q *Queue) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]sha
 	for rows.Next() {
 		var r shared.DispatchRow
 		if err := rows.Scan(
-			&r.ID, &r.NodeID, &r.ExecutorName, &r.ConcurrencyTags,
-			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt,
+			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
 		); err != nil {
 			return nil, err
 		}
-		if r.ConcurrencyTags == nil {
-			r.ConcurrencyTags = []string{}
+		if r.RequiredStores == nil {
+			r.RequiredStores = []string{}
 		}
 		out = append(out, r)
 	}
@@ -350,7 +327,7 @@ func (q *Queue) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expect
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_dispatch
-			    SET claimed_by = NULL, claimed_at = NULL
+			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
 			  WHERE id = $1 AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
 		)
@@ -358,7 +335,7 @@ func (q *Queue) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expect
 	}
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_dispatch
-		    SET claimed_by = NULL, claimed_at = NULL
+		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
 		  WHERE id = $1`,
 		dispatchID,
 	)
@@ -383,4 +360,30 @@ func (q *Queue) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (queue
 		return queue.ClaimOwnership{Kind: "unclaimed"}, nil
 	}
 	return queue.ClaimOwnership{Kind: "claimed_by", SupervisorID: *claimedBy}, nil
+}
+
+// RefreshHeartbeat extends rimsky_dispatch.last_heartbeat_at to NOW() for
+// every row claimed by supervisorID. Spec §13.4 — paired with the
+// lock-holder heartbeat extend (in core/store/lockholders.go); the
+// dispatch sweep predicate filters on this column so a heartbeating
+// supervisor is not reaped.
+func (q *Queue) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
+	_, err := q.pool.Exec(ctx,
+		`UPDATE rimsky_dispatch SET last_heartbeat_at = NOW() WHERE claimed_by = $1`,
+		supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres.RefreshHeartbeat: %w", err)
+	}
+	return nil
+}
+
+// nullableText converts an empty string to a SQL NULL marker so a
+// native (claim-only) node enqueues with executor_name IS NULL per
+// spec §17.1.
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,11 +43,24 @@ func (c *collector) terminal() *genv1.ExecuteEvent {
 
 func newRequest(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
-	s, err := structpb.NewStruct(ud)
+	return newRequestWithAttrs(t, ud, nil)
+}
+
+func newRequestWithAttrs(t *testing.T, ud, attrs map[string]any) *genv1.ExecuteRequest {
+	t.Helper()
+	udStruct, err := structpb.NewStruct(ud)
 	if err != nil {
-		t.Fatalf("structpb: %v", err)
+		t.Fatalf("structpb userdata: %v", err)
 	}
-	return &genv1.ExecuteRequest{NodeType: "http.request@1", Userdata: s}
+	req := &genv1.ExecuteRequest{NodeType: "http.request@1", Userdata: udStruct}
+	if attrs != nil {
+		attrStruct, err := structpb.NewStruct(attrs)
+		if err != nil {
+			t.Fatalf("structpb attributes: %v", err)
+		}
+		req.Attributes = attrStruct
+	}
+	return req
 }
 
 func testServer(t *testing.T, stub bool) *Server {
@@ -86,9 +100,9 @@ func TestExecute_HappyPath_200JSON(t *testing.T) {
 	if !cmp.GetChanged() {
 		t.Error("expected changed=true")
 	}
-	got := cmp.GetResult().AsInterface().(map[string]any)
+	got := cmp.GetAttributesDelta().AsMap()
 	if got["ok"] != true || got["name"] != "alice" {
-		t.Errorf("unexpected result: %+v", got)
+		t.Errorf("unexpected attributes_delta: %+v", got)
 	}
 	// First event should be a heartbeat.
 	if c.events[0].GetHeartbeat() == nil {
@@ -161,7 +175,7 @@ func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 	if cmp == nil {
 		t.Fatalf("expected Complete, got %+v", c.terminal().GetEvent())
 	}
-	got := cmp.GetResult().AsInterface().(map[string]any)
+	got := cmp.GetAttributesDelta().AsMap()
 	if got["stub"] != true {
 		t.Errorf("expected stub:true, got %+v", got)
 	}
@@ -205,7 +219,7 @@ func TestStubMode_WithCustomStubResponse(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	got := c.terminal().GetComplete().GetResult().AsInterface().(map[string]any)
+	got := c.terminal().GetComplete().GetAttributesDelta().AsMap()
 	if got["id"] != "abc" || got["done"] != true {
 		t.Errorf("custom stub_response not returned: %+v", got)
 	}
@@ -232,9 +246,9 @@ func TestExecute_WithCustomExpectStatus(t *testing.T) {
 	if cmp == nil {
 		t.Fatalf("expected Complete, got %+v", c.terminal().GetEvent())
 	}
-	got := cmp.GetResult().AsInterface().(map[string]any)
+	got := cmp.GetAttributesDelta().AsMap()
 	if got["brew"] != "done" {
-		t.Errorf("result: %+v", got)
+		t.Errorf("attributes_delta: %+v", got)
 	}
 }
 
@@ -292,9 +306,9 @@ func TestHTTPBridge_PostExecute_ReturnsNdjsonStream(t *testing.T) {
 	if last.GetComplete() == nil {
 		t.Fatalf("expected Complete terminal, got %+v", last.GetEvent())
 	}
-	got := last.GetComplete().GetResult().AsInterface().(map[string]any)
+	got := last.GetComplete().GetAttributesDelta().AsMap()
 	if got["hello"] != "world" {
-		t.Errorf("unexpected result: %+v", got)
+		t.Errorf("unexpected attributes_delta: %+v", got)
 	}
 }
 
@@ -313,7 +327,7 @@ func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	got := c.terminal().GetComplete().GetResult().AsInterface().(map[string]any)
+	got := c.terminal().GetComplete().GetAttributesDelta().AsMap()
 	if _, ok := got["body_base64"]; !ok {
 		t.Errorf("expected body_base64, got %+v", got)
 	}
@@ -344,8 +358,9 @@ func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	}
 }
 
-// TestExecute_PostWithStructBody verifies that a map body is JSON-serialised
-// and sent to the upstream.
+// TestExecute_PostWithStructBody verifies that a userdata.body override is
+// JSON-serialised and sent to the upstream verbatim, taking precedence over
+// any `attributes` payload.
 func TestExecute_PostWithStructBody(t *testing.T) {
 	var got map[string]any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -357,15 +372,126 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 
 	s := testServer(t, false)
 	c := &collector{}
-	req := newRequest(t, map[string]any{
-		"url":    ts.URL,
-		"method": "POST",
-		"body":   map[string]any{"name": "bob"},
-	})
+	req := newRequestWithAttrs(t,
+		map[string]any{
+			"url":    ts.URL,
+			"method": "POST",
+			"body":   map[string]any{"name": "bob"},
+		},
+		// Attributes are present but should be ignored when userdata.body
+		// overrides.
+		map[string]any{"name": "ignored", "extra": "ignored"},
+	)
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
 	if got["name"] != "bob" {
 		t.Errorf("upstream got: %+v", got)
+	}
+	if _, ok := got["extra"]; ok {
+		t.Errorf("attributes leaked when userdata.body overrides: %+v", got)
+	}
+}
+
+// TestExecute_AttributesAsRequestBody verifies the spec §5.8 contract that
+// http-node POSTs the per-run `attributes` map as the JSON request body when
+// no explicit userdata.body override is set.
+func TestExecute_AttributesAsRequestBody(t *testing.T) {
+	var got map[string]any
+	var gotCT string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"upstream_ack":true}`))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	c := &collector{}
+	req := newRequestWithAttrs(t,
+		map[string]any{"url": ts.URL, "method": "POST"},
+		map[string]any{"customer_id": "cust_42", "topic": "alpha"},
+	)
+	if err := s.executeCore(context.Background(), req, c.send); err != nil {
+		t.Fatalf("executeCore: %v", err)
+	}
+	if got["customer_id"] != "cust_42" || got["topic"] != "alpha" {
+		t.Errorf("attributes were not posted as request body: %+v", got)
+	}
+	if !strings.Contains(gotCT, "json") {
+		t.Errorf("expected json Content-Type, got %q", gotCT)
+	}
+	delta := c.terminal().GetComplete().GetAttributesDelta().AsMap()
+	if delta["upstream_ack"] != true {
+		t.Errorf("expected attributes_delta to mirror upstream JSON body, got %+v", delta)
+	}
+}
+
+// TestExecute_NoAttributesNoBody verifies that with neither userdata.body nor
+// attributes set, the upstream receives an empty body (no surprise payload).
+func TestExecute_NoAttributesNoBody(t *testing.T) {
+	var bodyLen int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		bodyLen = len(buf)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	c := &collector{}
+	req := newRequest(t, map[string]any{"url": ts.URL, "method": "POST"})
+	if err := s.executeCore(context.Background(), req, c.send); err != nil {
+		t.Fatalf("executeCore: %v", err)
+	}
+	if bodyLen != 0 {
+		t.Errorf("expected empty upstream body, got %d bytes", bodyLen)
+	}
+}
+
+// TestExecute_NonObjectJSONResponse_ReturnsParseFailed verifies that JSON
+// arrays / scalars from the upstream cannot become attributes_delta — that
+// shape must be a JSON object per spec §12.2.
+func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[1,2,3]`))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+	c := &collector{}
+	req := newRequest(t, map[string]any{"url": ts.URL})
+	_ = s.executeCore(context.Background(), req, c.send)
+	errd := c.terminal().GetErrored()
+	if errd == nil {
+		t.Fatalf("expected Errored, got %+v", c.terminal().GetEvent())
+	}
+	if errd.GetErrorClass() != "http_response_parse_failed" {
+		t.Errorf("error_class=%q, want http_response_parse_failed", errd.GetErrorClass())
+	}
+}
+
+// TestStubMode_RejectsNonObjectStubResponse covers the new spec §12.2
+// constraint that attributes_delta is a JSON object — non-object
+// stub_response values must be rejected as invalid_userdata.
+func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
+	s := testServer(t, true)
+	c := &collector{}
+	req := newRequest(t, map[string]any{
+		"url":           "http://unreachable.invalid/",
+		"stub_response": "not-an-object",
+	})
+	if err := s.executeCore(context.Background(), req, c.send); err != nil {
+		t.Fatalf("executeCore: %v", err)
+	}
+	errd := c.terminal().GetErrored()
+	if errd == nil {
+		t.Fatalf("expected Errored, got %+v", c.terminal().GetEvent())
+	}
+	if errd.GetErrorClass() != "invalid_userdata" {
+		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
 	}
 }
