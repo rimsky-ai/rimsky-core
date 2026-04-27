@@ -1,27 +1,24 @@
-// LockHolders postgres helpers for `rimsky_lock_holders` (spec §9.9.2).
+// LockHolders postgres helpers for `rimsky_lock_holders` (spec §12.10).
 //
 // Lives in core/store/ rather than core/storage/postgres/ because the
 // lock-holder table is the unified mechanism that ties stores to the
-// supervisor and scheduler subsystems (per spec §16.1). Concrete database
-// access lives here; the storage-layer interface (storage.LockHoldersStore)
-// is satisfied by a thin adapter in core/storage/postgres/lock_holders.go.
+// supervisor and scheduler subsystems. Concrete database access lives
+// here; the storage-layer interface (storage.LockHoldersStore) is
+// satisfied by a thin adapter in core/storage/postgres/lock_holders.go.
 //
-// @blessed-invariant 9: lock state lives only in postgres.
+// @blessed-invariant 9a: lock state lives only in postgres.
 //
 //	No store implementation persists lock state. The question
 //	"is anyone holding lock X" is answered exclusively by the rows
-//	managed in this file. (Spec §18 invariant 9; spec §5.3.) A
-//	scenario test exercises this invariant; do not add store-side
-//	lock-state caches that would violate it.
+//	managed in this file. (Spec §21 invariant 9a.)
 //
-// Imports are pgx/v5 + core/shared only. Importing core/storage from this
-// file is forbidden by the package layout rule (the layout rule preserves
-// the layering: core/storage may depend on core/store, never the other
-// way).
+// Imports are pgx/v5 + core/shared only.
+
 package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -32,37 +29,43 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 )
 
-// LockHolderKind discriminates a lock-holder row's payload columns. See
-// spec §9.9.2.
+// LockHolderKind discriminates a lock-holder row's payload columns.
+// Two kinds: 'named' (named-lock primitive) and 'region' (claim primitive).
+// The prior 'claim' kind dissolved — pick-policy claims are 'region' rows
+// with substrate-chosen region_data.
 type LockHolderKind string
 
 // Lock-holder kinds.
 const (
 	LockHolderKindNamed  LockHolderKind = "named"
 	LockHolderKindRegion LockHolderKind = "region"
-	LockHolderKindClaim  LockHolderKind = "claim"
 )
 
-// LockHolderRow mirrors a row of `rimsky_lock_holders` (spec §9.9.2).
+// LockHolderRow mirrors a row of `rimsky_lock_holders` (spec §12.10).
 //
-// Exactly one of (LockName) / (StoreName, RegionData) / (StoreName,
-// ClaimID) is populated, keyed by Kind. The §9.9.2 CHECK constraint
-// enforces this on the database side.
+// Exactly one of (LockName) / (StoreName + RegionData + Intent) is
+// populated, keyed by Kind. The §12.10 CHECK constraint enforces this
+// on the database side.
+//
+// Address is substrate-supplied bytes from Open(); written into the row
+// after Open returns successfully (within the same acquisition tx).
+// May be nil for region rows mid-acquisition; populated by terminal time.
 type LockHolderRow struct {
 	ID                 shared.UUID
 	Kind               LockHolderKind
 	LockName           *string
 	StoreName          *string
-	RegionData         []byte
-	ClaimID            *string
+	RegionData         json.RawMessage // opaque bytes; substrate's region identifier
+	Address            json.RawMessage // opaque bytes; substrate-supplied from Open
+	Intent             *string         // 'r' | 'rw' for region rows; nil for named
 	HolderSupervisorID string
 	HolderNodeID       shared.UUID
 	ClaimedAt          time.Time
 	LastHeartbeatAt    time.Time
 	ExpiresAt          time.Time
-	// FrameID is observability-only (spec §10.4): it records which
-	// frame the dispatch row carried at acquire time. Reads/sweeps and
-	// the §5.6.4 resolution algorithm do NOT consult this field.
+	// FrameID is observability-only (spec §12.10): records which frame
+	// the dispatch row carried at acquire time. Reads/sweeps and the
+	// auto-terminal algorithm do NOT consult this field.
 	FrameID *shared.UUID
 }
 
@@ -90,7 +93,7 @@ func NewLockHoldersClient(pool *pgxpool.Pool) *LockHoldersClient {
 func (c *LockHoldersClient) Pool() *pgxpool.Pool { return c.pool }
 
 const lockHolderCols = `
-  id, lock_kind, lock_name, store_name, region_data, claim_id,
+  id, lock_kind, lock_name, store_name, region_data, address, intent,
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id
 `
@@ -99,23 +102,51 @@ const lockHolderCols = `
 // transaction. The dispatch-acquisition transaction (§13.3) holds the tx;
 // every per-spec lock-holder row is inserted via this method so the row
 // commits atomically with the dispatch claim.
+//
+// For region rows the supervisor inserts with Address = nil; the §13.3
+// step-4e UpdateAddress call writes the address after Open returns.
 func (c *LockHoldersClient) Insert(ctx context.Context, tx pgx.Tx, row LockHolderRow) error {
 	if tx == nil {
 		return errors.New("lockholders.Insert: tx required")
 	}
 	_, err := tx.Exec(ctx,
 		`INSERT INTO rimsky_lock_holders (
-		   id, lock_kind, lock_name, store_name, region_data, claim_id,
+		   id, lock_kind, lock_name, store_name, region_data, address, intent,
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, last_heartbeat_at, expires_at, frame_id
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		row.ID, string(row.Kind),
-		row.LockName, row.StoreName, row.RegionData, row.ClaimID,
+		row.LockName, row.StoreName,
+		nullableJSONB(row.RegionData), nullableJSONB(row.Address),
+		row.Intent,
 		row.HolderSupervisorID, row.HolderNodeID,
 		row.ClaimedAt, row.LastHeartbeatAt, row.ExpiresAt, row.FrameID,
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.Insert: %w", err)
+	}
+	return nil
+}
+
+// UpdateAddress sets the address column on an existing region-kind row.
+// Used by the supervisor's §13.3 step-4e flow: after Store.Open returns
+// successfully, the supervisor writes the returned address to the row
+// inside the same acquisition tx. Claimant-guarded on supervisorID;
+// mismatches are a no-op (returns nil, no error).
+func (c *LockHoldersClient) UpdateAddress(
+	ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string, address json.RawMessage,
+) error {
+	if tx == nil {
+		return errors.New("lockholders.UpdateAddress: tx required")
+	}
+	_, err := tx.Exec(ctx,
+		`UPDATE rimsky_lock_holders
+		    SET address = $1
+		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		nullableJSONB(address), id, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.UpdateAddress: %w", err)
 	}
 	return nil
 }
@@ -138,6 +169,9 @@ func (c *LockHoldersClient) Get(ctx context.Context, id shared.UUID) (*LockHolde
 // DeleteByID removes the row keyed by id, claimant-guarded on
 // supervisor_id. A mismatch is a no-op (returns nil) — the orphan-reap
 // sweep cannot null out a live claim owned by a different supervisor.
+//
+// Cascade FK on rimsky_claim_holders.lock_holder_id cleans up any
+// claim-holder rows for held claims when the lock-holder row is deleted.
 func (c *LockHoldersClient) DeleteByID(ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string) error {
 	if tx == nil {
 		return errors.New("lockholders.DeleteByID: tx required")
@@ -154,26 +188,33 @@ func (c *LockHoldersClient) DeleteByID(ctx context.Context, tx pgx.Tx, id shared
 }
 
 // RefreshHeartbeat updates `last_heartbeat_at` and `expires_at` for every
-// row owned by `supervisorID` whose `holder_node_id` is currently
-// `running` and assigned to the same supervisor. The `holder_node_id IN
-// running-nodes` predicate is the §13.4 invariant that prevents
-// preserve-for-resume rows from being refreshed (those rows are tied to
-// nodes that have transitioned out of `running` to `stale`); without the
-// filter the resume-grace cutoff (§13.6) would never fire.
+// row owned by `supervisorID` whose lifetime should currently be active.
+// Two cases (spec §13.4):
 //
-// `heartbeatSeconds` is the value of `5 × heartbeat_interval_seconds` per
-// spec §13.4.
+//   - Standard: holder_node_id is currently 'running' on this supervisor.
+//   - Held-claim: an active rimsky_claim_holders row referencing this
+//     lock-holder has its node currently 'running' on any supervisor.
+//
+// `heartbeatSeconds` is the value of `5 × heartbeat_interval_seconds`.
 func (c *LockHoldersClient) RefreshHeartbeat(ctx context.Context, supervisorID string, heartbeatSeconds int) error {
 	_, err := c.pool.Exec(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_lock_holders lh
 		   SET last_heartbeat_at = now(),
 		       expires_at = now() + ($2 * interval '1 second')
-		 WHERE holder_supervisor_id = $1
-		   AND holder_node_id IN (
-		         SELECT id FROM rimsky_nodes
-		          WHERE assigned_supervisor_id = $1
-		            AND state = 'running'
-		       )`,
+		 WHERE lh.holder_supervisor_id = $1
+		   AND (
+		        lh.holder_node_id IN (
+		            SELECT id FROM rimsky_nodes
+		             WHERE assigned_supervisor_id = $1 AND state = 'running'
+		        )
+		        OR EXISTS (
+		            SELECT 1 FROM rimsky_claim_holders ch
+		              JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		             WHERE ch.lock_holder_id = lh.id
+		               AND ch.state = 'active'
+		               AND n.state = 'running'
+		        )
+		   )`,
 		supervisorID, heartbeatSeconds,
 	)
 	if err != nil {
@@ -183,9 +224,8 @@ func (c *LockHoldersClient) RefreshHeartbeat(ctx context.Context, supervisorID s
 }
 
 // ListExpired returns rows whose `expires_at < now()`. The scheduler's
-// lock-holder sweep iterates these (§13.5 step 2), runs store-side
-// `ReleaseLock(give_up)` for `claim`-kind rows, then deletes the row
-// claimant-guarded on supervisor_id.
+// orphan-reap sweep (§13.5) iterates these, fires the appropriate
+// substrate verb, then deletes the row claimant-guarded on supervisor_id.
 func (c *LockHoldersClient) ListExpired(ctx context.Context) ([]LockHolderRow, error) {
 	rows, err := c.pool.Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
@@ -199,70 +239,8 @@ func (c *LockHoldersClient) ListExpired(ctx context.Context) ([]LockHolderRow, e
 	return collectLockHolders(rows)
 }
 
-// ListByNodeAndStore is the §13.3 step 3a rebind probe. For region/claim
-// specs the supervisor checks whether a prior unexpired lock-holder row
-// exists for the same (holder_node_id, store_name, holder_supervisor_id);
-// if so, the acquisition path skips `Store.AcquireLock` and reuses the
-// existing row.
-//
-// Only rows with `expires_at > now()` are returned — expired rows are the
-// orphan-reap's responsibility.
-func (c *LockHoldersClient) ListByNodeAndStore(
-	ctx context.Context, nodeID shared.UUID, storeName, supervisorID string,
-) ([]LockHolderRow, error) {
-	rows, err := c.pool.Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
-		 WHERE holder_node_id = $1
-		   AND store_name = $2
-		   AND holder_supervisor_id = $3
-		   AND expires_at > now()
-		 ORDER BY claimed_at ASC`,
-		nodeID, storeName, supervisorID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByNodeAndStore: %w", err)
-	}
-	defer rows.Close()
-	return collectLockHolders(rows)
-}
-
-// RebindForResume is the §13.3 step 3a UPDATE. The supervisor has already
-// found a prior lock-holder row owned by it for the same (node, store);
-// this method extends that row's heartbeat + expiry to the running-node
-// values, bypassing the §13.4 `holder_node_id IN running-nodes` filter
-// (which would not match — at rebind time the node is still `stale`,
-// having transitioned out of `running` at the prior commit).
-//
-// Returns the updated row. When the row vanished between the probe
-// (ListByNodeAndStore) and the rebind UPDATE — or the supervisor_id
-// no longer matches — the returned error wraps `pgx.ErrNoRows` via
-// `fmt.Errorf("...: %w", err)`. Detect with `errors.Is(err, pgx.ErrNoRows)`,
-// not `==`. The caller bails to the standard fresh-acquisition path on
-// that match.
-func (c *LockHoldersClient) RebindForResume(
-	ctx context.Context, tx pgx.Tx, existingRowID shared.UUID, supervisorID string, heartbeatSeconds int,
-) (LockHolderRow, error) {
-	if tx == nil {
-		return LockHolderRow{}, errors.New("lockholders.RebindForResume: tx required")
-	}
-	row := tx.QueryRow(ctx,
-		`UPDATE rimsky_lock_holders
-		    SET last_heartbeat_at = now(),
-		        expires_at = now() + ($3 * interval '1 second')
-		  WHERE id = $1 AND holder_supervisor_id = $2
-		  RETURNING `+lockHolderCols,
-		existingRowID, supervisorID, heartbeatSeconds,
-	)
-	out, err := scanLockHolder(row)
-	if err != nil {
-		return LockHolderRow{}, fmt.Errorf("lockholders.RebindForResume: %w", err)
-	}
-	return out, nil
-}
-
 // ListByHolderNode returns every row anchored to `holderNodeID`. Used by
-// the supervisor at terminal-release time to walk the per-node lock set
-// and by the scheduler's claim-holder GC for the §13.5 step 3 lookup.
+// the supervisor at terminal-release time to walk the per-node lock set.
 func (c *LockHoldersClient) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID) ([]LockHolderRow, error) {
 	rows, err := c.pool.Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
@@ -295,9 +273,8 @@ func (c *LockHoldersClient) ListBySupervisor(ctx context.Context, supervisorID s
 }
 
 // CountByNamedLock returns the number of unexpired rows held against
-// `lockName`. Used by the §13.3 step 3b advisory-locked recount: under
-// `pg_advisory_xact_lock(hashtext('rimsky_lock:' || lockName))`, the
-// supervisor counts current holders to enforce the named-lock limit.
+// `lockName`. Used under `pg_advisory_xact_lock(hashtext('rimsky_lock:'
+// || lockName))` to enforce the named-lock limit.
 func (c *LockHoldersClient) CountByNamedLock(ctx context.Context, tx pgx.Tx, lockName string) (int, error) {
 	if tx == nil {
 		return 0, errors.New("lockholders.CountByNamedLock: tx required (advisory lock must be held)")
@@ -316,10 +293,8 @@ func (c *LockHoldersClient) CountByNamedLock(ctx context.Context, tx pgx.Tx, loc
 }
 
 // ListByStoreRegion returns every unexpired region-kind row for
-// `storeName`. Used by the §13.3 step 3d region-conflict re-check: under
-// the dispatch row's FOR UPDATE and the per-named-lock advisory locks,
-// the supervisor re-loads existing region holders and re-evaluates
-// `RegionsConflict`.
+// `storeName`. Used by the supervisor's region-conflict re-check
+// (§13.3 step 4a/4b) and by the queue's eligibility predicate.
 func (c *LockHoldersClient) ListByStoreRegion(ctx context.Context, tx pgx.Tx, storeName string) ([]LockHolderRow, error) {
 	if tx == nil {
 		return nil, errors.New("lockholders.ListByStoreRegion: tx required")
@@ -340,8 +315,7 @@ func (c *LockHoldersClient) ListByStoreRegion(ctx context.Context, tx pgx.Tx, st
 
 // ExtendHeartbeatForRunningNodes is an alias path used by code that
 // already has its own pgx.Tx (e.g. the heartbeat tick driving multiple
-// updates inside one transaction). Callers that don't already have a tx
-// should use RefreshHeartbeat which manages its own pool query.
+// updates inside one transaction). Same predicate as RefreshHeartbeat.
 func (c *LockHoldersClient) ExtendHeartbeatForRunningNodes(
 	ctx context.Context, tx pgx.Tx, supervisorID string, heartbeatSeconds int,
 ) error {
@@ -349,42 +323,27 @@ func (c *LockHoldersClient) ExtendHeartbeatForRunningNodes(
 		return errors.New("lockholders.ExtendHeartbeatForRunningNodes: tx required")
 	}
 	_, err := tx.Exec(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_lock_holders lh
 		   SET last_heartbeat_at = now(),
 		       expires_at = now() + ($2 * interval '1 second')
-		 WHERE holder_supervisor_id = $1
-		   AND holder_node_id IN (
-		         SELECT id FROM rimsky_nodes
-		          WHERE assigned_supervisor_id = $1
-		            AND state = 'running'
-		       )`,
+		 WHERE lh.holder_supervisor_id = $1
+		   AND (
+		        lh.holder_node_id IN (
+		            SELECT id FROM rimsky_nodes
+		             WHERE assigned_supervisor_id = $1 AND state = 'running'
+		        )
+		        OR EXISTS (
+		            SELECT 1 FROM rimsky_claim_holders ch
+		              JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		             WHERE ch.lock_holder_id = lh.id
+		               AND ch.state = 'active'
+		               AND n.state = 'running'
+		        )
+		   )`,
 		supervisorID, heartbeatSeconds,
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.ExtendHeartbeatForRunningNodes: %w", err)
-	}
-	return nil
-}
-
-// PreserveForResume sets a row's `expires_at` to the resume-grace cutoff
-// at terminal-release time (§13.6). `last_heartbeat_at` is not touched
-// (the heartbeat tick stops refreshing once the node leaves `running`,
-// per §13.4). On no row matched (already-deleted, wrong supervisor) the
-// caller's outer release transaction proceeds without error.
-func (c *LockHoldersClient) PreserveForResume(
-	ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string, resumeGraceSeconds int,
-) error {
-	if tx == nil {
-		return errors.New("lockholders.PreserveForResume: tx required")
-	}
-	_, err := tx.Exec(ctx,
-		`UPDATE rimsky_lock_holders
-		   SET expires_at = now() + ($3 * interval '1 second')
-		 WHERE id = $1 AND holder_supervisor_id = $2`,
-		id, supervisorID, resumeGraceSeconds,
-	)
-	if err != nil {
-		return fmt.Errorf("lockholders.PreserveForResume: %w", err)
 	}
 	return nil
 }
@@ -405,12 +364,13 @@ func scanLockHolder(sc scannableLockHolder) (LockHolderRow, error) {
 		lockName   *string
 		storeName  *string
 		regionData []byte
-		claimID    *string
+		address    []byte
+		intent     *string
 		frameID    *shared.UUID
 	)
 	if err := sc.Scan(
 		&r.ID, &kind,
-		&lockName, &storeName, &regionData, &claimID,
+		&lockName, &storeName, &regionData, &address, &intent,
 		&r.HolderSupervisorID, &r.HolderNodeID,
 		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
 	); err != nil {
@@ -420,7 +380,8 @@ func scanLockHolder(sc scannableLockHolder) (LockHolderRow, error) {
 	r.LockName = lockName
 	r.StoreName = storeName
 	r.RegionData = regionData
-	r.ClaimID = claimID
+	r.Address = address
+	r.Intent = intent
 	r.FrameID = frameID
 	return r, nil
 }
@@ -438,4 +399,13 @@ func collectLockHolders(rows pgx.Rows) ([]LockHolderRow, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// nullableJSONB returns nil for an empty/nil RawMessage so the JSONB
+// column gets a SQL NULL rather than the literal string "null".
+func nullableJSONB(b json.RawMessage) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return []byte(b)
 }

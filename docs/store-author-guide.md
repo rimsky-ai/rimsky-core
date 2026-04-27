@@ -4,51 +4,69 @@ This guide is for Go developers writing a new rimsky store implementation.
 
 In v1, store implementations are Go-only. Stores are tightly coupled to
 rimsky's lock acquisition path — they share a transaction context with the
-supervisor's atomic-acquisition transaction (spec §13.3) and need typed
-access to `pgxpool.Pool` for postgres-backed kinds. Other languages are out
-of scope for v1.
+supervisor's atomic-acquisition transaction (spec §13.3 / blessed invariant
+15) and need typed access to `pgxpool.Pool` for postgres-backed kinds.
+Other languages are out of scope for v1; out-of-process implementations are
+deferred to a follow-up cycle.
 
 If you want to add a non-Go data-store adapter, the preferred path is a
 small Go store wrapper that talks to your external system over its native
 protocol. Ask in the rimsky discussion forum before starting.
 
 For operator context, see `operator-guide.md`. For the concept model, see
-`node-graph-design.md`. The authoritative spec for the redesign is
-`docs/specs/2026-04-25-stores-redesign-design.md` (sections referenced
-inline below).
+`node-graph-design.md`. The authoritative spec is
+`docs/specs/2026-04-27-stores-redesign-v2-design.md` (sections referenced
+inline below). The vocabulary lives in `docs/glossary.md` — read it first.
 
 ---
 
 ## 1. Vocabulary
 
 A **store** is an operator-configured, named data backend (filesystem
-directory, postgres queue table, etc.). Stores expose **regions** —
-substrings of their namespace — and the supervisor takes **locks** on
-regions before dispatching a node that claims to mutate them.
+directory, postgres database, future S3 / git / etc.). The store's two
+primitives:
 
-Two flavours of acquisition (spec §5.6):
+- **Claim** — a row in `rimsky_lock_holders` keyed by `(store_name,
+  region_data, intent)`. The substrate-bound primitive. Held for the
+  duration of one node execution (or longer, for held claims under
+  inheritance). Halts node dispatch when conflicting claims are held on
+  overlapping regions.
+- **Named lock** — a row in `rimsky_lock_holders` keyed by `(lock_name,
+  limit)`. Non-substrate. The supervisor handles named locks directly via
+  `rimsky_lock_holders` without calling into any store; your `Store`
+  implementation never sees them.
 
-- **Region lock** — caller specifies the region; store locks or fails.
-- **Claim** — caller asks the store to pick from its eligible pool.
+A claim is acquired via `Open(ClaimSpec)`; the spec carries `(StoreName,
+Selector, Intent, Alias)`. Selector is opaque text the substrate parses;
+the substrate decides what selectors mean. Recommended convention:
+substrate-recognized special-form selectors (`@policy-name`) trigger
+configured **pick policies** that pick an item per the policy's logic.
 
-Both produce the same downstream artifact: a `LockHandle` referencing a row
-in `rimsky_lock_holders`. Lock state lives **only** in postgres. Stores may
-persist *data* state (e.g. `claim-store-postgres` flips an items-table row
-to `'in_progress'` on claim acquisition), but the question "is anyone
-holding lock X" is answered exclusively by `rimsky_lock_holders`. This is
-a blessed invariant — see `core/store/interface.go`.
+Lock state lives **only** in postgres. Stores may persist *data* state
+(e.g. `core/store/postgres/` flips an items-table row to `'in_progress'`
+at `Open` for pick-policy claims), but the question "is anyone holding
+lock X" is answered exclusively by `rimsky_lock_holders` (blessed
+invariant 9a — see `core/store/interface.go`). Stores **must not**
+internally serialize on lock-shaped predicates either (blessed invariant
+9b — the §9-strategy-2 reader-lease pattern is forbidden); see §6 below.
 
-A store also declares a **mode** (spec §6):
+A store also declares a **`write_semantics`** (spec §8):
 
-- **Direct (v1)** — handle points at the live region; reads and writes
-  happen in-place. No sidecar, no atomic-swap.
-- **Sidecar (post-v1)** — handle points at a private workspace; commit
-  applies it to live atomically.
-- **Versioned (post-v1)** — sidecar mode + retained committed history +
-  rollback.
+- **`direct`** — Writes hit live data. No staging area. r×rw on
+  overlapping regions blocks (sync semantics). Default for v1 reference
+  implementations.
+- **`staged_blocking`** — Writes go to a substrate-private staging area;
+  `Commit` does an atomic swap into live. r×rw on overlapping regions
+  blocks. Sidecar mode for post-v1.
+- **`staged_async`** — Writes go to a staging area; reads see a stable
+  view of live state during writes. r×rw on overlapping regions does NOT
+  block (async semantics). Honest support requires snapshot delegation or
+  native MVCC pass-through.
 
-v1 ships only direct mode. The interface is shaped to extend cleanly to
-sidecar/versioned without breaking changes.
+The substrate's max capability is exposed via `Factory.MaxWriteSemantics()`.
+Operator config can downgrade (force `direct` on a `staged_blocking`-
+capable store) but not upgrade — `BuildAll` rejects upgrades with a
+clear error.
 
 ---
 
@@ -56,56 +74,47 @@ sidecar/versioned without breaking changes.
 
 The whole surface lives in `core/store/`:
 
-- `interface.go` — `Store`, `ClaimableStore`, `ResumableStore`,
-  `Capabilities`, `LockSpec` and its three variants.
-- `types.go` — `LockHandle`, `ClaimResult`, `ReleaseAction`, `CommitResult`,
-  `NativeHandle` (sealed) and the v1 concrete handles.
+- `interface.go` — universal 5-verb `Store` interface; `Capabilities`
+  (one field).
+- `types.go` — `ClaimSpec`, `NamedLockSpec`, `Intent`, `WriteSemantics`,
+  `ClaimResult` (with `Address` / `Payload` / `Region` as
+  `json.RawMessage`).
+- `conflict.go` — `ModeCoexists` helper (the spec §8.5 matrix).
 - `tx.go` — `WithTx` / `TxFromContext` for tx plumbing.
 - `registry.go` — `Factory`, `Registry`, `BuildAll`, `GetStore`.
+- `lockholders.go` — `LockHoldersClient` postgres helpers shared by
+  supervisor and scheduler.
 
 ### 2.1 `store.Capabilities`
 
 ```go
 type Capabilities struct {
-    SupportsRegionLock bool
-    SupportsClaim      bool
-    SupportsDiscard    bool
-    SupportsResume     bool
-    SupportsRestore    bool
+    WriteSemantics WriteSemantics
 }
 ```
 
-Capabilities are read by the supervisor at dispatch time to decide whether
-a node's required operations are serviceable. **A store implementation that
-advertises a capability MUST also satisfy the corresponding sub-interface;
-the supervisor type-asserts at dispatch time** (spec §8.5.1):
+One field. Future capabilities can be added as struct fields without
+breaking the interface. The dropped capability fields from the prior
+spec — `SupportsRegionLock`, `SupportsClaim`, `SupportsResume`,
+`SupportsRestore`, `SupportsDiscard`, `SupportsAtomicMulti`,
+`KeepVersionsMax` — are all dissolved (spec §9.1).
 
-| capability        | required sub-interface |
-| ----------------- | ---------------------- |
-| `SupportsClaim`   | `ClaimableStore`       |
-| `SupportsResume`  | `ResumableStore`       |
-| `SupportsRestore` | (post-v1: `RestorableStore`) |
-
-`SupportsAtomicMulti` and `KeepVersionsMax` are deliberately absent in v1;
-both belong to deferred features and are not declared until those land
-(see §6 Known limitations below).
-
-### 2.2 `store.Store`
+### 2.2 `store.Store` (the 5-verb interface)
 
 ```go
 type Store interface {
-    Kind() string                          // "filesystem" | "claim_store"
-    Name() string                          // operator-configured
+    Kind() string
+    Name() string
     Capabilities() Capabilities
 
-    LockEligible(ctx, spec) (bool, error)
-    RegionsConflict(a, b any) bool         // PURE
-    UnmarshalRegion(raw []byte) (any, error) // PURE
+    RegionsConflict(a, b []byte) bool          // PURE (invariant 14)
+    UnmarshalRegion(raw []byte) ([]byte, error) // PURE (invariant 14)
 
-    AcquireLock(ctx, spec) (LockHandle, ClaimResult, error)
-    OpenHandle(ctx, lh, resumed) (NativeHandle, error)
-    Commit(ctx, lh) (CommitResult, error)
-    ReleaseLock(ctx, lh, action) error
+    Open(ctx context.Context, spec ClaimSpec) (ClaimResult, error)
+    Commit(ctx context.Context, region []byte, address []byte, policyOverride string) error
+    Abandon(ctx context.Context, region []byte, address []byte, policyOverride string) error
+    Delete(ctx context.Context, region []byte) error
+    Release(ctx context.Context, region []byte, address []byte) error
 }
 ```
 
@@ -117,128 +126,161 @@ reference it via `kind:` in `stores.yml`.
 **`Name()`** — operator-configured store name; matches the YAML key under
 `stores.<name>`. Set at construction time.
 
-**`Capabilities()`** — see §2.1.
+**`Capabilities()`** — see §2.1; returns the store's `WriteSemantics`.
 
-**`LockEligible(ctx, spec)`** — eligibility check used by the dispatch
-eligibility evaluator (spec §13.2). For region locks, the supervisor
-pre-screens against existing holders via `RegionsConflict` before this is
-called; the implementation can rely on that. Return `false` if the store
-cannot service this kind of spec at all (e.g. a `ClaimLockSpec` against a
-filesystem store).
-
-**`RegionsConflict(a, b any) bool`** — region-overlap predicate. Inputs
-are the store's in-Go region type (whatever `UnmarshalRegion` produces).
+**`RegionsConflict(a, b []byte) bool`** — region-overlap predicate. Inputs
+are the substrate-canonical bytes (whatever `UnmarshalRegion` produces).
 Returns true if the two regions cannot both be held at once.
 
 > **`@blessed-invariant: RegionsConflict and UnmarshalRegion are pure.`**
 > No side effects, no external state read; deterministic on inputs (spec
-> §18 invariant 14). The supervisor calls these inside the atomic
+> §21 invariant 14). The supervisor calls these inside the atomic
 > acquisition transaction (§13.3) and inside hot eligibility loops;
 > impurity here would corrupt acquisition correctness. The annotation
 > lives in `core/store/interface.go`. Do not call out to a database, the
 > filesystem, or any external system from these two methods.
 
-**`UnmarshalRegion(raw []byte) (any, error)`** — deserialises
-`rimsky_lock_holders.region_data` JSONB into your store's in-Go region
-type. The supervisor calls this on each existing-holder row before
-passing the value to `RegionsConflict`. Same purity contract as above.
+**`UnmarshalRegion(raw []byte) ([]byte, error)`** — deserialises
+`rimsky_lock_holders.region_data` JSONB into your store's canonical-bytes
+form. The supervisor calls this on each existing-holder row before passing
+the value to `RegionsConflict`. Same purity contract as above.
 
-**`AcquireLock(ctx, spec)`** — called inside the supervisor's atomic
-acquisition transaction. For direct-mode filesystem this is a no-op
-returning zero values; the supervisor inserts the lock-holder row
-independently and fills in `LockHandle` from it. For claim stores this
-performs the atomic items-table flip (`state='in_progress'`) and returns
-the picked item's payload + ID via `ClaimResult`. Use
+**`Open(ctx, spec) (ClaimResult, error)`** — produce a substrate-native
+address for the executor and register whatever substrate-side state the
+`(intent × write_semantics)` combination requires (staging area,
+snapshot, MVCC transaction, or nothing). Called inside the supervisor's
+atomic acquisition transaction (blessed invariant 15); use
 `store.TxFromContext(ctx)` to obtain the open `*pgx.Tx` and route every
-DB mutation through it (see §3 below).
+substrate-side DB mutation through it (see §3 below).
 
-**`OpenHandle(ctx, lh, resumed)`** — constructs the executor-facing
-`NativeHandle`. For resumable acquisitions the supervisor passes
-`resumed=true`; the store may surface prior in-progress state. Direct-mode
-stores ignore `resumed` (the live path is the same either way).
+The substrate detects whether this is a fresh acquisition or a resumed
+one **internally by lookup against its own state, keyed by the lock-holder
+identity**. There is no `resumed` flag on `Open`; resume is a universal
+behaviour pattern, not a capability. The supervisor preserves the lock-
+holder row across retries and calls `Open` again; the substrate handles
+the resumed-vs-fresh branch.
 
-**`Commit(ctx, lh)`** — called after the executor signals
-`Complete{changed: true}`. Direct-mode: no-op (writes already on disk).
-Sidecar/versioned (post-v1): apply sidecar to live atomically. Returns
-`CommitResult{Changed, ChangeSummary}`.
+For pick-policy claims (selectors the substrate recognizes as policy-
+form), `Open` invokes the configured pick policy and returns the picked
+item's address. The picked identifier becomes the `region_data` on the
+lock-holder row. The address shape is **substrate-native bytes**, opaque
+to Rimsky; the executor decodes per its substrate-specific knowledge.
 
-**`ReleaseLock(ctx, lh, action)`** — finalises the acquisition. Direct-
-mode filesystem: no-op for all actions. Claim stores: invoke `on_commit`
-or `on_give_up` policy depending on `action`. Sidecar/versioned (post-v1):
-discard or preserve the sidecar.
+**`Commit(ctx, region, address, policyOverride)`** — for regional `rw`
+claims on `staged_*` substrates: atomically publish the staging area's
+contents into the live region. For pick-policy claims: apply the
+configured `on_commit` action (overridable via `policyOverride`). For
+`direct`-mode regional `rw` claims: substrate no-op (writes already live;
+`Commit` is a confirmation hook). `policyOverride` is meaningful only
+for pick-policy claims; ignore it otherwise.
 
-`ReleaseAction` enum (`core/store/types.go`):
+**`Abandon(ctx, region, address, policyOverride)`** — for regional `rw`
+on `staged_*`: discard the staging area without publishing. For pick-
+policy claims: apply the configured `on_give_up` action (overridable via
+`policyOverride`). For `direct`-mode `rw`: degenerate — direct writes
+cannot be undone; document this as an honest substrate limitation in
+your store's README. Not called for read-only claims.
 
-| value                  | meaning                                           |
-| ---------------------- | ------------------------------------------------- |
-| `ReleaseCommit`        | normal terminal-commit path                       |
-| `ReleaseGiveUp`        | give-up policy fires (`on_give_up`)               |
-| `ReleaseDiscard`       | sidecar discard / claim release-on-give_up        |
-| `ReleasePreserveResume`| preserve in-progress state for resume on retry    |
+**`Delete(ctx, region)`** — remove the live region's data. A third
+terminal action alongside `Commit` and `Abandon` for nodes whose intent
+is deletion. Regional claims only (pick-policy claims express deletion
+via `Commit` + `policyOverride = "delete"`).
 
-### 2.3 Optional sub-interfaces
+**`Release(ctx, region, address)`** — tear down substrate-side read state
+(snapshot, MVCC transaction) for a read claim. Fires only when the
+substrate registered such state (relevant for `staged_async` substrates;
+not exercised by any v1 store implementation). Lock-holder row deletion
+suffices for read claims under `direct` / `staged_blocking`.
+
+### 2.3 Verb-firing matrix per claim shape
+
+| Claim shape | `write_semantics` | Verbs invoked at terminal |
+|---|---|---|
+| Regional `r` | `direct` / `staged_blocking` | None — lock-holder row deletion is sufficient |
+| Regional `r` | `staged_async` | `Release(region, address)` |
+| Regional `rw` | `direct` | `Commit` (no-op) or `Delete` or `Abandon` (degenerate) |
+| Regional `rw` | `staged_*` | `Commit` (atomic swap) or `Abandon` or `Delete` |
+| Pick-policy claim | (any) | `Commit(..., policyOverride)` or `Abandon(..., policyOverride)` |
+
+For **held claims**, the supervisor's auto-terminal mechanism (spec §14.4)
+fires exactly one resolution at holding-subgraph completion. Aggregate
+outcome — all-completed → `on_commit`; any-failed → `on_give_up` — drives
+the verb. From the store implementation's perspective, the verb call is
+indistinguishable from a non-held terminal; the supervisor handles the
+subgraph-level coordination.
+
+### 2.4 Specs
 
 ```go
-type ClaimableStore interface {
-    Store
-    HasClaimableItem(ctx, criteria map[string]any) (bool, error)
-    ReleaseClaimItem(ctx, claimID string, action string) error
+type ClaimSpec struct {
+    StoreName string  // name of the configured store
+    Selector  string  // opaque text (post-substitution)
+    Intent    Intent  // "r" | "rw"
+    Alias     string  // per-claim name within node; defaults to StoreName
 }
 
-type ResumableStore interface {
-    Store
-    HasPriorWork(ctx, spec LockSpec) (bool, error)
+type Intent string
+const (
+    IntentRead      Intent = "r"
+    IntentReadWrite Intent = "rw"
+)
+
+type NamedLockSpec struct {
+    Name string  // operator-configured name
 }
 ```
 
-`HasClaimableItem` is the eligibility short-circuit; called by the
-dispatch evaluator. Return `false` quickly when the pool is empty.
+`ClaimSpec` and `NamedLockSpec` are **distinct types with no common
+interface**. Two primitives, two types. The prior spec's `LockSpec`
+discriminated-union, `RegionLockSpec` / `ClaimLockSpec`, `LockHandle`,
+`NativeHandle` (sealed interface), `ClaimableStore` / `ResumableStore`
+sub-interfaces, `HasPriorWork`, `OpenHandle`, `AcquireLock`, `ReleaseLock`,
+`ReleaseAction` — all dissolve.
 
-`ReleaseClaimItem` is called by the §5.6.4 last-released-wins branch when
-a held claim resolves. The lock-holder row may already be deleted at this
-point, so the call takes `claimID` directly. **Run inside the caller-
-provided tx via `store.TxFromContext(ctx)`** — never the underlying pool.
-
-`HasPriorWork` reports whether the store retains in-progress state for a
-given lock spec from a prior dispatch attempt. The supervisor uses the
-result to decide whether to pass `resumed=true` to `OpenHandle`.
-
-### 2.4 `LockSpec` variants
+### 2.5 `ClaimResult` and address shape
 
 ```go
-type NamedLockSpec struct { Name string; Mode LockMode; Limit int }
-type RegionLockSpec struct { StoreName string; Region, ReadRegion any; Resumable bool }
-type ClaimLockSpec  struct { StoreName string; Criteria map[string]any; Hold bool; OnCommit, OnGiveUp string; Resumable bool }
-```
-
-Named locks are not store-scoped (they are process-wide
-mutex/counting semaphores) — the supervisor handles them directly via
-`rimsky_lock_holders` without calling into any store. Your `Store`
-implementation only sees `RegionLockSpec` and `ClaimLockSpec`.
-
-### 2.5 Native handles
-
-`NativeHandle` is a sealed interface (`core/store/types.go`); only types
-declared in the `store` package can satisfy it. v1 ships:
-
-```go
-type FilesystemDirectHandle struct {
-    Path         string
-    WriteRegions []string
-    ReadRegions  []string
-}
-
-type ClaimStoreHandle struct {
-    Payload   any
-    ClaimID   string
-    StoreName string
+type ClaimResult struct {
+    Address json.RawMessage  // substrate-native pointer
+    Payload json.RawMessage  // substrate-supplied data captured at acquisition
+    Region  json.RawMessage  // substrate's identifier (resolved selector OR pick)
 }
 ```
 
-A new store kind that wants its own handle shape adds the type to
-`core/store/types.go` and a corresponding marker. Executors deserialise
-the `handle` field of `ExecuteRequest.stores[<name>]` (spec §12.1) into
-the kind-specific shape per their own concerns.
+All three fields are `json.RawMessage` — opaque bytes from Rimsky's
+perspective per **blessed invariant 20** (claim content is inert).
+Rimsky reads claim content by named-field path **only** at substitution-
+leaf extraction; never logs, validates, transforms, or otherwise
+introspects.
+
+**Address shape recommendation:** substrate-native bytes appropriate to
+your kind. The executor decodes per its substrate-specific knowledge of
+the store's `kind`. For `filesystem`, an address is naturally a path; for
+`postgres`, a row locator; for S3, a bucket / key reference. There is no
+"rimsky-canonical" address shape — pick what your substrate's executors
+need and document it in your store's README.
+
+### 2.6 Pick policies (substrate-side)
+
+Pick policies are **substrate-side configuration**, not a Rimsky-protocol-
+level capability. The substrate recognizes special-form selectors
+(recommended convention: `@policy-name`) and dispatches internally to the
+configured policy's pick logic. Multiple pick policies per store are
+supported.
+
+The store's `pick_policies` config block (read by `Factory.Build`) lists
+the named policies the store implements. Each entry is keyed by the
+recognized selector form (e.g., `@review-queue`) and carries substrate-
+specific configuration (item path, ordering, `on_commit_default`,
+`on_give_up_default`, visibility timeout, etc.). The schema is substrate-
+defined; Rimsky does not standardize it. Document your store's
+`pick_policies` schema in its README; the operator-guide cross-references
+that documentation.
+
+A pick policy is implemented entirely inside the store. There is no
+Rimsky-side interface for "give me an item"; `Open(ClaimSpec)` is the
+only entry point, and the substrate dispatches based on the resolved
+selector text.
 
 ---
 
@@ -253,20 +295,20 @@ ctx = store.WithTx(ctx, tx)         // supervisor side
 tx, ok := store.TxFromContext(ctx)  // store side
 ```
 
-A store with **no DB writes** (like `filesystem-direct`) is free to call
-`TxFromContext` and ignore the returned tx. The supervisor still attaches
-one so `AcquireLock`/`ReleaseLock` can be called uniformly.
+A store with **no DB writes** (like the direct-mode filesystem store) is
+free to call `TxFromContext` and ignore the returned tx. The supervisor
+still attaches one so `Open` can be called uniformly.
 
-A store with **DB writes** (like `claim-store-postgres`) **MUST** use the
-tx for all its mutations — never the underlying pool — so atomicity with
-the supervisor's lock-holder inserts is preserved. This is non-negotiable:
-falling out of the outer tx breaks the §13.3 acquisition guarantee that
-either both the lock-holder row and the items-table flip happen, or
-neither does.
+A store with **DB writes** (like the postgres store at
+`core/store/postgres/`) **MUST** use the tx for all its mutations —
+never the underlying pool — so atomicity with the supervisor's
+lock-holder inserts is preserved (blessed invariant 15). This is
+non-negotiable: falling out of the outer tx breaks the §13.3 acquisition
+guarantee that either both the lock-holder row and the substrate-side
+state flip happen, or neither does.
 
-Read-only paths that run **outside** the atomic acquisition tx
-(eligibility hints called from `HasClaimableItem`, the visibility-timeout
-sweep) are free to use the pool directly.
+Read-only paths that run **outside** the atomic acquisition tx (the
+visibility-timeout sweep) are free to use the pool directly.
 
 ---
 
@@ -327,125 +369,125 @@ crash the binary on startup — never at first dispatch.
 ```go
 func (s *Store) Capabilities() store.Capabilities {
     return store.Capabilities{
-        SupportsRegionLock: true,
-        SupportsClaim:      false,
-        SupportsDiscard:    false,
-        SupportsResume:     true,
-        SupportsRestore:    false,
+        WriteSemantics: store.WriteSemanticsDirect,
     }
+}
+
+func (Factory) MaxWriteSemantics() store.WriteSemantics {
+    return store.WriteSemanticsDirect  // direct-mode filesystem is the v1 shape
 }
 ```
 
-`SupportsResume: true` means the live region carries any in-progress
-writes from a prior dispatch — the executor sees the partial state on
-retry and is responsible for noticing/redoing as appropriate. We do
-**not** also implement `ResumableStore` with state, because the live
-region is always usable; `HasPriorWork` simply returns `false` so the
-supervisor never passes `resumed=true` to `OpenHandle`.
+The single capability field is the operator-effective `write_semantics`
+(after registry-build downgrade application). The factory exposes the
+substrate's max via `MaxWriteSemantics`; the registry rejects upgrade
+attempts at `BuildAll`.
 
-(That choice is a v1 simplification. A more sophisticated direct-mode
-filesystem could expose markers under the live region and report them via
-`HasPriorWork`. The interface is the same shape either way.)
+For a direct-mode filesystem store there is no resume-vs-fresh
+distinction at the protocol layer — `Open` returns the live path either
+way; the executor sees whatever partial state earlier attempts left in
+the live region. There is no `resumed` flag and no `HasPriorWork`
+sub-interface; both dissolved.
 
 ### 4.4 The `RegionsConflict` purity contract
 
 ```go
-func (s *Store) RegionsConflict(a, b any) bool {
-    ga, okA := a.([]string)
-    gb, okB := b.([]string)
-    if !okA || !okB {
-        return true // fail closed: never silently admit an unknown shape
-    }
-    return RegionsConflict(ga, gb) // package-level pure helper
+func (s *Store) RegionsConflict(a, b []byte) bool {
+    return regionsConflictGlobs(a, b)  // package-level pure helper
 }
 ```
 
-Inputs of an unexpected type are treated as conflicting — the supervisor
-must never silently admit an acquisition whose region we cannot
-interpret. Same posture in `UnmarshalRegion`: malformed JSONB is an error,
-not a silent default.
+The supervisor passes the canonical bytes from `UnmarshalRegion`; the
+package-level helper unpacks them into `[]string` glob lists internally
+and returns true if any pair overlaps under the extended
+`path/filepath.Match` semantics (`**` = "any path under the prefix"). The
+function takes no `ctx`, reads no filesystem, calls no external system;
+it can be unit-tested with table-driven cases at microsecond speed.
 
-The package-level `RegionsConflict([]string, []string)` lives in
-`region.go` and is the heart of the store. It iterates pairs of globs and
-returns true if any pair overlaps under our extended `path/filepath.Match`
-semantics (`**` is treated as "any path under the prefix"). The function
-takes no `ctx`, reads no filesystem, calls no external system; it can be
-unit-tested with table-driven cases at microsecond speed.
-
-The blessed-invariant annotation lives at the function's doc comment.
+The blessed-invariant annotation lives at the function's doc comment in
+`core/store/interface.go`.
 
 ### 4.5 `UnmarshalRegion`
 
 ```go
-func (s *Store) UnmarshalRegion(raw []byte) (any, error) {
+func (s *Store) UnmarshalRegion(raw []byte) ([]byte, error) {
     var globs []string
     if err := json.Unmarshal(raw, &globs); err != nil {
         return nil, fmt.Errorf("filesystem store %q: unmarshal region: %w", s.name, err)
     }
-    return globs, nil
+    // Re-marshal in canonical form so RegionsConflict gets stable bytes.
+    return json.Marshal(globs)
 }
 ```
 
-The returned `any` is the same `[]string` re-typed. The supervisor passes
-it straight to `RegionsConflict`. Symmetry between the runtime type and
-the on-disk JSONB shape is the simplest path; resist serialising into a
-struct that needs translation.
+The returned bytes are the canonical form `RegionsConflict` operates on.
+Symmetry between the on-disk JSONB shape and the canonical bytes is the
+simplest path; resist serialising into a struct that needs translation.
 
-### 4.6 `AcquireLock` and `OpenHandle`
+### 4.6 `Open`
 
-`AcquireLock` is a no-op:
-
-```go
-func (s *Store) AcquireLock(_ context.Context, _ store.LockSpec) (store.LockHandle, store.ClaimResult, error) {
-    return store.LockHandle{}, store.ClaimResult{}, nil
-}
-```
-
-The supervisor inserts the `rimsky_lock_holders` row independently and
-populates the LockHandle's ID + timestamps before calling `OpenHandle`.
-
-`OpenHandle` constructs the native handle. Direct-mode filesystem needs
-the resolved write/read regions for the `FilesystemDirectHandle` payload,
-but `LockHandle` does not carry them. The pattern: the supervisor's runner
-threads them through context via a package-private helper:
+`Open` produces the executor-visible address. Direct-mode filesystem
+constructs an absolute path under the configured root, joining the
+resolved selector glob's literal prefix:
 
 ```go
-func WithRegions(ctx context.Context, write, read []string) context.Context { ... }
-
-func (s *Store) OpenHandle(ctx context.Context, _ store.LockHandle, _ bool) (store.NativeHandle, error) {
-    write, read := regionsFromContext(ctx)
-    return store.FilesystemDirectHandle{
-        Path:         s.root,
-        WriteRegions: write,
-        ReadRegions:  read,
+func (s *Store) Open(ctx context.Context, spec store.ClaimSpec) (store.ClaimResult, error) {
+    // selector text is opaque to Rimsky; substrate parses
+    path, err := s.resolvePath(spec.Selector)
+    if err != nil {
+        return store.ClaimResult{}, err
+    }
+    addrJSON, _ := json.Marshal(map[string]string{"path": path})
+    regJSON, _  := json.Marshal([]string{spec.Selector})
+    return store.ClaimResult{
+        Address: addrJSON,
+        Payload: nil,        // direct-mode filesystem has no per-claim payload
+        Region:  regJSON,
     }, nil
 }
 ```
 
-A new store kind that needs handle-time data the LockHandle doesn't carry
-should follow the same pattern: package-private `WithFoo`/`fooFromContext`
-helpers, threaded by the supervisor's runner. **Do not** add fields to
-`LockHandle` for kind-specific data — it is the cross-store-kind shape
-recorded by the row.
+Inside a substrate that maintains DB state (e.g. the postgres store's
+items-table flip), `Open` would also call `store.TxFromContext(ctx)` and
+route the `UPDATE … SET state='in_progress'` through the supervisor's
+open `*pgx.Tx` — see §3.
 
-### 4.7 `Commit` and `ReleaseLock`
+### 4.7 `Commit`, `Abandon`, `Delete`, `Release`
 
-Both are no-ops in direct mode:
+For a direct-mode filesystem store:
 
 ```go
-func (s *Store) Commit(_ context.Context, _ store.LockHandle) (store.CommitResult, error) {
-    return store.CommitResult{Changed: true}, nil
+func (s *Store) Commit(_ context.Context, _, _ []byte, _ string) error {
+    return nil  // no-op; writes already on disk
 }
 
-func (s *Store) ReleaseLock(_ context.Context, _ store.LockHandle, _ store.ReleaseAction) error {
+func (s *Store) Abandon(_ context.Context, _, _ []byte, _ string) error {
+    // Degenerate for direct-mode rw — direct writes cannot be undone.
+    // README documents this honest substrate limitation.
     return nil
+}
+
+func (s *Store) Delete(_ context.Context, region []byte) error {
+    // Remove the live region's data per the kind's rules.
+    return s.removePath(region)
+}
+
+func (s *Store) Release(_ context.Context, _, _ []byte) error {
+    return nil  // no read-side state to tear down for direct mode
 }
 ```
 
-The `Changed: true` return is a placeholder — the executor signals
-`Complete{changed: ...}` via a separate path before the supervisor calls
-`Commit`; a sidecar/versioned mode (post-v1) computes the value here.
-For direct mode it is unused.
+For `staged_*` modes (post-v1), `Commit` would atomically swap the
+substrate's staging area into the live region (filesystem rename, SQL
+`ALTER TABLE` swap, S3 manifest pointer flip, etc.); `Abandon` would
+discard the staging area. **Substrate-side fences are brief and applied
+at commit** — the dominant pattern is staging + atomic swap.
+
+Run-spanning substrate locks (open transactions held across an executor's
+whole run) are an **anti-pattern**: they duplicate the orchestrator's
+claim machinery and burn substrate resources. The orchestrator already
+holds the claim across the executor's run via `rimsky_lock_holders`; the
+substrate doesn't need to layer its own.
 
 ### 4.8 Registration
 
@@ -453,13 +495,13 @@ For direct mode it is unused.
 // in core/cmd/rimsky-supervisor/main.go (and -scheduler, -control-api)
 storeFactories := []store.Factory{
     filesystem.Factory{},
-    claimstorepg.Factory{Pool: pool},
-    // myimpl.Factory{},   // ← add yours here
+    pgstore.Factory{Pool: pool},          // core/store/postgres
+    // myimpl.Factory{},                  // ← add yours here
 }
 
 reg := store.NewRegistry()
 for _, f := range storeFactories { reg.Register(f) }
-stores, err := reg.BuildAll(storesCfg)
+stores, err := reg.BuildAll(storesCfg)    // enforces MaxWriteSemantics ceiling
 ```
 
 **Do not** register from `init()`. Registration needs the dependencies
@@ -472,11 +514,12 @@ Once registered, operators reference your store in `stores.yml`:
 stores:
   scratch:
     kind: filesystem
-    mode: direct
+    write_semantics: direct
     root: /var/lib/rimsky/scratch
 ```
 
-And nodes reference it in templates via `stores: [{name: scratch, ...}]`.
+And nodes reference it in templates via
+`stores: [{name: scratch, selector: "<glob>", intent: rw, alias: <alias>}]`.
 
 ---
 
@@ -496,13 +539,13 @@ subtrees.
 ### 5.2 Roundtrip tests with no DB
 
 For direct-mode filesystem the store is a thin shell — most roundtrip
-tests construct a `*Store` directly, call `AcquireLock` / `OpenHandle` /
-`Commit` / `ReleaseLock`, and assert the returned native-handle shape.
-No postgres needed.
+tests construct a `*Store` directly, call `Open` / `Commit` / `Abandon` /
+`Delete` / `Release`, and assert the returned `ClaimResult` shape. No
+postgres needed.
 
 ### 5.3 Integration tests with real Postgres
 
-For DB-coupled kinds (like `claim-store-postgres`), use the `pgtest`
+For DB-coupled kinds (like the postgres store), use the `pgtest`
 harness:
 
 ```go
@@ -513,8 +556,8 @@ func TestMyStore_Integration(t *testing.T) {
     pool, teardown := pgtest.StartPostgres(ctx, t)
     t.Cleanup(teardown)
 
-    // Create the operator-owned items table the store expects (spec §9.10)
-    // ... construct your Factory, Build, AcquireLock inside a tx, assert ...
+    // Create the operator-owned items table the store expects (spec §12.12)
+    // ... construct your Factory, Build, Open inside a tx, assert ...
 }
 ```
 
@@ -532,77 +575,105 @@ registered as a factory, it plugs into scenario tests automatically via
 its YAML `kind`.
 
 The harness's default test fixture uses the in-process `core/store/stub/`
-store, which implements `Store`, `ClaimableStore`, and `ResumableStore`
-with configurable in-memory state. A new store kind does not need to
-modify the stub — it brings its own fixtures.
+store, which implements the 5-verb `Store` interface with configurable
+in-memory state. A new store kind does not need to modify the stub — it
+brings its own fixtures.
 
 ---
 
-## 6. Known limitations
+## 6. Known limitations and store-author guidance
 
-These are accepted in v1 (spec §20) and may bite you in subtle ways.
+These are accepted in v1 (spec §23) and may bite you in subtle ways.
 Document them in your store's README so operators understand the
 guarantees.
 
-### 6.1 Multi-store atomic commit is not provided
+### 6.1 Store-side serialization on lock-shaped predicates is forbidden
+
+Blessed invariant 9b: a store implementation **does not internally
+serialize on lock-shaped predicates**. The §9-strategy-2 reader-lease
+serialization pattern (substrate tracks active read leases; writers
+block at the substrate boundary to wait them out) is **not a valid
+implementation choice for `staged_async`**. Honest support requires:
+
+- **Snapshot delegation** — substrate creates a stable view materialized
+  at `Open(read)`; writers operate on the live region; the read view
+  remains consistent until `Release`. (Filesystem with COW snapshots, S3
+  with manifest pinning, etc.)
+- **Native MVCC pass-through** — substrate opens a snapshot transaction
+  at `Open(read)` (e.g. postgres `BEGIN ISOLATION LEVEL REPEATABLE READ`
+  + `SET TRANSACTION SNAPSHOT`), holds it for the executor's run, ends
+  it at `Release`. Writers go through their own `rw` claims; the orchestrator
+  enforces no `w×w` overlap, and the substrate handles `r×w` non-blocking
+  via MVCC.
+
+A substrate that cannot honestly provide stable reads during writes
+declares `staged_blocking` (or `direct`) and lets the scheduler do the
+serialization. **Honest `write_semantics` reporting** is a load-bearing
+contract — operators rely on it to reason about read-during-write
+behavior, and incorrect reporting silently corrupts that reasoning.
+
+### 6.2 Substrate-side fences are brief; run-spanning locks are anti-patterns
+
+The dominant commit pattern is staging + atomic swap (filesystem rename,
+SQL `ALTER TABLE` swap, S3 manifest pointer flip, Redis `RENAME`, git
+merge). Hold substrate-side state only as long as needed for atomicity
+at the swap moment.
+
+**Run-spanning substrate locks** (open transactions held across an
+executor's whole run; long-lived advisory locks; reader-leases that span
+multiple `Open` / `Release` cycles) duplicate the orchestrator's claim
+machinery (`rimsky_lock_holders` + heartbeat + orphan reap) and burn
+substrate resources. Don't.
+
+### 6.3 Resumed-vs-fresh detection lives entirely inside the substrate
+
+There is no `resumed` flag at the protocol layer. The supervisor preserves
+the lock-holder row across retries and calls `Open` again with the same
+`ClaimSpec`; the substrate detects resumed-vs-fresh by lookup against its
+own state, keyed by the lock-holder identity (e.g., `claim_token` on the
+items-table row). Resume is universal — a behaviour pattern, not a
+capability flag.
+
+### 6.4 Multi-store atomic commit is not provided
 
 A node writing to two stores commits independently per store. There is no
 two-phase-commit machinery in v1. If the first `Store.Commit` succeeds
 and the second fails, the supervisor records a failure but the first
 store has already accepted the write.
 
-In direct mode this is usually fine — the writes already landed before
-`Commit` is called, and `Commit` is a no-op. The hazard is for sidecar/
-versioned modes (post-v1), where `Commit` actually mutates live state.
-
 If your store needs cross-store atomicity, the answer in v1 is "use a
 single store" — for example, one postgres store transactionally writing
-to multiple tables, behind one `Store` interface. The `SupportsAtomicMulti`
-capability flag is reserved for the post-v1 design that solves this
-properly.
+to multiple tables, behind one `Store` interface.
 
-### 6.2 Direct-mode store-level quality rules are warned-and-ignored
+### 6.5 Region-overlap detection is per-store-kind
 
-Templates can declare `quality_rules:` at both the node level and the
-store level (spec §15). For direct-mode stores, store-level rules are
-**accepted in YAML but warned-and-ignored** at runtime: rejection is
-awkward when the bytes have already landed on disk. v1 supports
-node-level `must_match_regex` for filesystem stores (the node-level rule
-runs at supervisor commit time, before the supervisor records success);
-store-level rules wait on sidecar mode to land.
+There is no cross-kind overlap reasoning. A new store kind brings its
+own region grammar and its own pure overlap predicate; Rimsky does not
+try to relate `["**/foo"]` to `{"sql_table": "bar"}`.
 
-If your store is direct mode, document this limitation. Operators who
-need rejecting validation should use node-level rules in the meantime.
+### 6.6 Postgres pick-policy items tables are operator-owned
 
-### 6.3 Region-overlap detection is per-store-kind
+Rimsky verifies each pick policy's items-table shape at registry-build
+time but does not create it. A new postgres-backed pick-policy
+implementation should follow the same rule: verify, don't create.
+Operators populate items via direct SQL or via the admin endpoint
+(`POST /admin/stores/:name/pick-policies/:selector/items`).
 
-There is no cross-kind overlap reasoning. v1 ships only filesystem
-path-glob overlap. A new store kind brings its own region grammar and
-its own pure overlap predicate; rimsky does not try to relate
-`["**/foo"]` to `{"sql_table": "bar"}`.
-
-### 6.4 `HasClaimableItem` is TOCTOU
-
-For claim stores, the eligibility hint may go stale between the
-evaluator's check and the actual `AcquireLock`. `AcquireLock` re-validates
-atomically (FOR UPDATE SKIP LOCKED), so there is no correctness issue —
-just an occasional wasted candidate slot. Do not try to "fix" the race
-with caching; the items-table is the authoritative source.
-
-### 6.5 `claim-store-postgres` items table is operator-owned
-
-Rimsky verifies the table's column shape at registry-build time but does
-not create it. A new claim-store backend should follow the same rule:
-verify, don't create. Operators populate items via direct SQL or via the
-admin endpoint (`POST /admin/claim-stores/:name/items`).
-
-### 6.6 `stores.yml` divergence between processes is silently corrected
+### 6.7 `stores.yml` divergence between processes is silently corrected
 
 control-api and supervisors each build their own `Registry` from process
 YAML at startup. If a supervisor is missing a store its peers know about,
 that supervisor simply doesn't claim relevant work; dispatch eligibility
 fails the supervisor's match. No alarm fires. A new store kind inherits
 this property automatically.
+
+### 6.8 `Abandon` is degenerate for `direct`-mode regional `rw` claims
+
+Direct writes can't be undone. Document this as an honest substrate
+limitation in your README — templates that require effective `discard`
+semantics on `direct` stores are misconfigured. The operator's options:
+declare the store `staged_blocking` (and absorb the staging cost) or
+restructure the workflow.
 
 ---
 
@@ -612,19 +683,29 @@ Before shipping your store implementation:
 
 - [ ] `Factory.Build()` rejects missing or wrong-typed config keys with
       clear errors at registry-build time.
-- [ ] `Capabilities()` is honest: every `true` flag has the corresponding
-      sub-interface implemented (`ClaimableStore`, `ResumableStore`).
+- [ ] `Factory.MaxWriteSemantics()` accurately reports the substrate's
+      ceiling — operators can downgrade but never upgrade past it.
+- [ ] `Capabilities()` reports the operator-effective `WriteSemantics`
+      (post-downgrade) honestly. **No store-side serialization on lock-
+      shaped predicates** — see §6.1 / blessed invariant 9b.
 - [ ] `RegionsConflict` and `UnmarshalRegion` are pure — no side effects,
       no external state. Annotate the doc comment with `@blessed-invariant`.
-- [ ] Unknown region shapes in `RegionsConflict` fail closed (return
+- [ ] Unknown region bytes in `RegionsConflict` fail closed (return
       `true` rather than silently admitting an acquisition).
-- [ ] `AcquireLock` uses `store.TxFromContext(ctx)` for any DB writes;
-      never the pool directly.
-- [ ] `ReleaseClaimItem` (if `ClaimableStore`) does the same.
-- [ ] Read-only eligibility hints (`HasClaimableItem`) may use the pool;
-      they run outside the atomic acquisition tx.
-- [ ] Pure region tests cover literal-literal, literal-glob, glob-glob,
-      and disjoint-subtree cases.
+- [ ] `Open` uses `store.TxFromContext(ctx)` for any DB writes; never
+      the pool directly. Substrate-side state mutations participate in the
+      supervisor's atomic acquisition transaction (blessed invariant 15).
+- [ ] `Open` detects resumed-vs-fresh internally by lookup against its
+      own state, keyed by lock-holder identity. There is no `resumed`
+      flag at the protocol layer.
+- [ ] Substrate-side fences are brief and applied at commit (atomic-swap
+      pattern). No run-spanning substrate locks (§6.2).
+- [ ] Pick policies (if any) are wired entirely substrate-side: the
+      `pick_policies` config block is parsed by the factory; selectors
+      matching configured policy forms dispatch internally from `Open`.
+- [ ] `Address` shape in `ClaimResult` is substrate-native bytes,
+      documented in your README so executors can decode.
+- [ ] Pure region tests cover the kind's grammar comprehensively.
 - [ ] Integration tests with `pgtest.StartPostgres` cover the real DB
       path (if applicable).
 - [ ] Scenario tests exercise the impl end-to-end via `stores.yml` +
@@ -632,5 +713,7 @@ Before shipping your store implementation:
 - [ ] `Factory{}` is registered explicitly from the three reference
       binaries' `main()` (scheduler, supervisor, control-api), not from
       `init()`.
-- [ ] README documents the store's YAML config keys, region grammar, and
-      any v1 limitations from §6 that apply to your kind.
+- [ ] README documents the store's YAML config keys, region grammar, the
+      address shape, the `pick_policies` schema (if any), the substrate's
+      max `write_semantics`, and any v1 limitations from §6 that apply to
+      your kind.

@@ -6,7 +6,7 @@ import "google/protobuf/struct.proto";
 option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
 
 // NodeExecutor is the protocol rimsky supervisors use to dispatch work to
-// external executors. See docs/specs/2026-04-25-stores-redesign-design.md §12
+// external executors. See docs/specs/2026-04-27-stores-redesign-v2-design.md §12
 // for the full contract (transports, async handoff, attributes, stores,
 // versioning, auth).
 service NodeExecutor {
@@ -53,30 +53,41 @@ message ExecuteRequest {
   // bearer token on incremental attribute and async terminal callbacks.
   string cancel_token = 9;
 
-  // True iff the dispatch is a resumed retry (resumable: true +
-  // resume_then_retry). The executor may use this to short-circuit re-running
-  // already-completed work.
-  bool resumed = 10;
+  // Reserved (was: bool resumed = 10). Under stores-redesign-v2 resume
+  // is universal — the substrate detects resumed-vs-fresh internally
+  // by lookup against its own state, keyed by the lock-holder identity
+  // (per spec §11.5). The supervisor no longer threads a resumed flag
+  // through the wire. Field number 10 is reserved to keep the wire
+  // shape stable for clients that still parse it as part of an older
+  // executor's struct.
+  reserved 10;
+  reserved "resumed";
 
   // Increments on every retry. Exposed for executor visibility / idempotency.
   int32 run_attempt = 11;
 }
 
-// StoreHandle is the per-store reference handed to the executor at dispatch.
-// `kind` selects the handle shape; `handle` is the kind-specific payload.
+// StoreHandle is the per-store reference handed to the executor at
+// dispatch (spec §19.1). `handle` carries the substrate-native Address
+// bytes returned by Store.Open — opaque to Rimsky, decoded by the
+// executor per its substrate-specific knowledge.
 message StoreHandle {
-  // "filesystem" | "claim_store" (and future kinds).
+  // Operator-configured store kind (e.g. "filesystem", "postgres", or
+  // a substrate's own canonical kind name). Conventionally informational
+  // — the executor knows its substrate's kind from the deployment's
+  // operator config.
   string kind = 1;
-  // Kind-specific handle payload (e.g. paths for filesystem, claim id +
-  // payload for claim_store).
+  // Substrate-native Address bytes returned by Store.Open, wrapped as
+  // a google.protobuf.Struct so JSON-shaped addresses round-trip cleanly.
+  // Opaque to Rimsky per @blessed-invariant 20.
   google.protobuf.Struct handle = 2;
-  // Region intents the supervisor pre-acquired write-locks for.
-  repeated string write_regions = 3;
-  // Region intents the supervisor pre-acquired read-locks for.
-  repeated string read_regions = 4;
-  // True iff store-side prior work exists for this dispatch (e.g. a sidecar
-  // tree from a previous resumable attempt).
-  bool resumed = 5;
+  // Reserved field numbers (legacy `write_regions`, `read_regions`,
+  // `resumed`). The new model uses ClaimSpec.Selector + .Intent on the
+  // template side; the substrate-side address handles whatever
+  // sub-region semantics the substrate chooses. Resume is universal
+  // (spec §11.5).
+  reserved 3, 4, 5;
+  reserved "write_regions", "read_regions", "resumed";
 }
 
 message ExecuteEvent {

@@ -9,27 +9,23 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/santhosh-tekuri/jsonschema/v5"
-
-	"github.com/fallguy/rimsky/core/store"
 )
 
-// ValidationError is a blocking problem with a template. Path locates the
-// offending element in the template using JSONPath-ish notation (e.g.
-// "nodes[2].dependencies[0]").
+// ValidationError is a blocking problem with a template. Path locates
+// the offending element using JSONPath-ish notation.
 type ValidationError struct {
 	Path string
 	Msg  string
 }
 
-// ValidationWarning is a non-blocking problem. Callers can surface warnings
-// in operator UIs without rejecting the template.
+// ValidationWarning is a non-blocking problem.
 type ValidationWarning struct {
 	Path string
 	Msg  string
 }
 
-// ValidationResult is returned by ValidateTemplate. Ok() is true when no
-// errors were found (warnings are allowed).
+// ValidationResult is returned by ValidateTemplate. Ok() is true when
+// no errors were found (warnings are allowed).
 type ValidationResult struct {
 	Errors   []ValidationError
 	Warnings []ValidationWarning
@@ -38,67 +34,41 @@ type ValidationResult struct {
 // Ok reports whether the template passed validation (no errors).
 func (r ValidationResult) Ok() bool { return len(r.Errors) == 0 }
 
-// Store kinds the validator recognises. Match the canonical Kind() return
-// values from the Store implementations (see core/store/filesystem,
-// core/store/claimstorepg). The `stub_*` siblings cover scenario tests
-// that wire `core/store/stub/` factories — the stub stores model the
-// same capability surface as the production stores and must validate
-// under the same rules (claim:true requires a claim-shaped store; write
-// regions require a filesystem-shaped store).
-const (
-	storeKindFilesystem     = "filesystem"
-	storeKindClaimStore     = "claim_store"
-	storeKindStubFilesystem = "stub_filesystem"
-	storeKindStubClaimStore = "stub_claim_store"
-)
-
-// isFilesystemKind reports whether kind names a filesystem-shaped store
-// (canonical or stub). Used by the validator to gate `write` / `read`
-// region declarations.
-func isFilesystemKind(kind string) bool {
-	return kind == storeKindFilesystem || kind == storeKindStubFilesystem
-}
-
-// isClaimStoreKind reports whether kind names a claim-shaped store
-// (canonical or stub). Used by the validator to gate `claim:true`.
-func isClaimStoreKind(kind string) bool {
-	return kind == storeKindClaimStore || kind == storeKindStubClaimStore
-}
-
-// instantiationPlaceholderRe matches single-brace, instantiation-time
-// placeholders: only `{params.<key>}` per spec §10. (`{instance_id}` and
-// `{consumer_key}` were retired alongside the resources/concurrency-tags
-// fields they were used in; spec §11.3 / §10.) Used inside region patterns
-// and lock names to allow inline instantiation-time substitution.
+// instantiationPlaceholderRe matches `{params.<key>}` placeholders.
 var instantiationPlaceholderRe = regexp.MustCompile(`\{params\.[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
 // anyBraceRe matches any single-`{...}` segment that isn't part of a
-// double-`{{...}}` directive. Used to spot-check stray placeholders.
+// double-`{{...}}` directive.
 var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 
-// dispatchDirectiveRe matches `{{<inside>}}` directives. Mirrors the
-// substitution grammar in core/attributes (kept inline here to honour the
-// node-package's "import shared/ only-ish" policy: the validator depends
-// on syntax recognition, not runtime resolution).
+// dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// directiveBodyRe further parses the inside of a `{{...}}` against the
-// three known source kinds (deps, claim, params). Anchored so a non-match
-// is a syntactic error.
+// directiveBodyRe further parses the inside of `{{...}}` against the
+// three known source kinds.
 var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params)\.(.+)$`)
 
-// ValidateTemplate walks a parsed template and reports errors/warnings per
-// spec §11 (template-deploy validation).
-//
-// storeKindOf is a lookup for registered stores. Returns the Store.Kind()
-// and ok=true for known stores; ok=false for unknown names. Callers wire
-// this in at the integration boundary (control-api populates it from its
-// store registry); the node package cannot import the store registry
-// directly without creating a dependency cycle.
-//
-// storeKindOf may be nil during tests that don't exercise Stores; in that
-// case unknown-store errors are skipped.
-func ValidateTemplate(spec *TemplateSpec, storeKindOf func(name string) (string, bool)) ValidationResult {
+// RegistryHooks bundles the registry-dependent lookups the validator
+// uses for spec §18 / §14.5 / §15.2 checks. All fields may be nil; a
+// nil hook short-circuits to "skip the corresponding check," which is
+// useful for unit tests that don't wire a registry.
+type RegistryHooks struct {
+	// StoreKindOf returns (Store.Kind(), true) for a known store name.
+	StoreKindOf func(name string) (string, bool)
+	// IsPickPolicySelector returns true when the (storeName, selector)
+	// pair matches a configured pick-policy on that store. Drives the
+	// §14.5 "pick-policy claims must be intent: rw" enforcement.
+	IsPickPolicySelector func(storeName, selector string) bool
+	// NamedLockDeclared returns true when `name` is declared in the
+	// operator's named_locks: block. Drives the §15.2 "templates
+	// reference named locks by name only" check.
+	NamedLockDeclared func(name string) bool
+}
+
+// ValidateTemplate walks a parsed template and reports errors per spec
+// §18. hooks supplies registry-dependent lookups; pass an empty
+// RegistryHooks to skip them.
+func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult {
 	var res ValidationResult
 	if spec == nil {
 		res.Errors = append(res.Errors, ValidationError{Path: "", Msg: "spec is nil"})
@@ -142,32 +112,22 @@ func ValidateTemplate(spec *TemplateSpec, storeKindOf func(name string) (string,
 		validateErrorTypes(n, base, declared, &res)
 		validateSchedule(n, base, cronParser, &res)
 		validateExecutorCoherence(n, base, &res)
-		validateStores(n, base, storeKindOf, &res)
-		validateLocks(n, base, &res)
+		validateStores(n, base, hooks, &res)
+		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, &res)
 	}
 
 	detectCycles(spec.Nodes, &res)
-	validateClaimResolutions(spec, declared, &res)
-
+	ValidateInheritance(spec, &res)
 	return res
 }
 
-// validateFrameResolution enforces the §3-§4 frame-resolution template
-// requirements (per docs/specs/2026-04-26-frame-resolution-design.md):
-//   - frame_resolution is required and must be one of "coalesce" or
-//     "serial_queue".
-//   - frame_timeout_ms must be >= FrameTimeoutMinMs (60000) when set; a
-//     zero value is accepted (the deploy handler default-fills to
-//     FrameTimeoutDefaultMs after validation passes).
-//
-// Pure: does not mutate spec. Default-fill happens at the deploy boundary
-// (see ApplyFrameResolutionDefaults) so re-validating the same struct is
-// idempotent.
+// validateFrameResolution enforces the frame-resolution template
+// requirements: frame_resolution required, one of coalesce|serial_queue;
+// frame_timeout_ms ≥ 60000 when set.
 func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 	switch spec.FrameResolution {
 	case FrameResolutionCoalesce, FrameResolutionSerialQueue:
-		// ok
 	case "":
 		res.Errors = append(res.Errors, ValidationError{
 			Path: "frame_resolution",
@@ -192,9 +152,7 @@ func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 }
 
 // ApplyFrameResolutionDefaults fills FrameTimeoutMs with the spec's
-// default (FrameTimeoutDefaultMs) when zero. Callers should run
-// ValidateTemplate first; this helper applies after validation passes
-// so the validator stays pure (no behaviour-modifying mutation).
+// default (FrameTimeoutDefaultMs) when zero.
 func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	if spec == nil {
 		return
@@ -257,17 +215,14 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 	}
 }
 
-// validateStores enforces the per-node store-usage rules from spec §11.
-//
-//   - Each named store must resolve to a known store kind via storeKindOf.
-//   - A node cannot reference the same store name twice (duplicate detection).
-//   - `claim: true` requires the named store to be of kind claim_store.
-//   - `write` and `read` patterns are only valid against filesystem-kind
-//     stores (claim stores have no region concept).
-//   - Region patterns may contain dispatch-time `{{...}}` directives; this
-//     pass only checks directive syntax (full resolution happens at dispatch).
-func validateStores(n TemplateNodeDef, base string, storeKindOf func(name string) (string, bool), res *ValidationResult) {
-	seen := make(map[string]int, len(n.Stores))
+// validateStores enforces the per-node store-usage rules from spec §18:
+//   - Each store name must resolve via storeKindOf (when supplied).
+//   - Aliases are unique within a node.
+//   - Intent must be "r" or "rw".
+//   - Selectors may carry {{...}} directives; this pass is grammar-only.
+//   - {{params.x}} placeholders inside selectors are accepted.
+func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+	seenAlias := make(map[string]int, len(n.Stores))
 	for j, s := range n.Stores {
 		sbase := fmt.Sprintf("%s.stores[%d]", base, j)
 		name := strings.TrimSpace(s.Name)
@@ -277,20 +232,8 @@ func validateStores(n TemplateNodeDef, base string, storeKindOf func(name string
 			})
 			continue
 		}
-		if prev, dup := seen[name]; dup {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".name",
-				Msg:  fmt.Sprintf("duplicate store name %q (already at stores[%d])", name, prev),
-			})
-			continue
-		}
-		seen[name] = j
-
-		var kind string
-		var known bool
-		if storeKindOf != nil {
-			kind, known = storeKindOf(name)
-			if !known {
+		if hooks.StoreKindOf != nil {
+			if _, known := hooks.StoreKindOf(name); !known {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".name",
 					Msg:  fmt.Sprintf("unknown store %q", name),
@@ -298,50 +241,56 @@ func validateStores(n TemplateNodeDef, base string, storeKindOf func(name string
 				continue
 			}
 		}
-
-		if s.Claim && known && !isClaimStoreKind(kind) {
+		switch s.Intent {
+		case "r", "rw":
+		case "":
 			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".claim",
-				Msg:  fmt.Sprintf("claim:true requires a %q-kind store; %q is %q", storeKindClaimStore, name, kind),
+				Path: sbase + ".intent",
+				Msg:  "intent is required (\"r\" or \"rw\")",
+			})
+		default:
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".intent",
+				Msg:  fmt.Sprintf("intent = %q is not valid (one of: \"r\", \"rw\")", s.Intent),
 			})
 		}
-		if s.Hold && !s.Claim {
+		if strings.TrimSpace(s.Selector) == "" {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".hold",
-				Msg:  "hold:true requires claim:true",
+				Path: sbase + ".selector",
+				Msg:  "selector is required",
 			})
+		} else {
+			checkRegionDirectives(s.Selector, sbase+".selector", res)
 		}
-
-		if known && !isFilesystemKind(kind) {
-			if len(s.Write) > 0 {
+		// §14.5 — pick-policy claims must be intent: rw. Substrate
+		// recognises the selector by exact match; substituted selectors
+		// are checked at dispatch (no compile-time visibility).
+		if hooks.IsPickPolicySelector != nil && s.Intent == "r" {
+			if hooks.IsPickPolicySelector(name, s.Selector) {
 				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".write",
-					Msg:  fmt.Sprintf("write regions are only valid on %q-kind stores; %q is %q", storeKindFilesystem, name, kind),
+					Path: sbase + ".intent",
+					Msg:  fmt.Sprintf("pick-policy selector %q on store %q requires intent: \"rw\" (per spec §14.5)", s.Selector, name),
 				})
 			}
-			if len(s.Read) > 0 {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".read",
-					Msg:  fmt.Sprintf("read regions are only valid on %q-kind stores; %q is %q", storeKindFilesystem, name, kind),
-				})
-			}
 		}
-
-		for wi, pat := range s.Write {
-			checkRegionDirectives(pat, fmt.Sprintf("%s.write[%d]", sbase, wi), res)
+		alias := s.AliasOf()
+		if prev, dup := seenAlias[alias]; dup {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".alias",
+				Msg:  fmt.Sprintf("duplicate claim alias %q (already at stores[%d])", alias, prev),
+			})
+			continue
 		}
-		for ri, pat := range s.Read {
-			checkRegionDirectives(pat, fmt.Sprintf("%s.read[%d]", sbase, ri), res)
-		}
+		seenAlias[alias] = j
 	}
 }
 
-// validateLocks enforces the named-lock spec from §8.3. Mode must be one of
-// the two recognised LockMode values; counting locks require a positive
-// limit; mutex locks ignore limit (a non-zero limit is accepted but not
-// load-bearing — accepted silently to avoid noisy errors when authors
-// migrate from counting → mutex without trimming the field).
-func validateLocks(n TemplateNodeDef, base string, res *ValidationResult) {
+// validateLocks enforces the named-lock declarations. Limit lives in
+// operator config (named_locks: block); the template only references
+// the lock by name. Validator checks for non-empty name and uniqueness
+// within a node, plus (when the registry hook is supplied) that every
+// referenced name is declared in the operator's named_locks: block.
+func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	seen := make(map[string]int, len(n.Locks))
 	for j, l := range n.Locks {
 		lbase := fmt.Sprintf("%s.locks[%d]", base, j)
@@ -350,59 +299,44 @@ func validateLocks(n TemplateNodeDef, base string, res *ValidationResult) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: lbase + ".name", Msg: "lock name is required",
 			})
-		} else {
-			// Lock names may carry instantiation-time `{params.x}` or
-			// dispatch-time `{{...}}` directives; spot-check syntax.
-			checkLockNameDirectives(name, lbase+".name", res)
-			if prev, dup := seen[name]; dup {
+			continue
+		}
+		checkLockNameDirectives(name, lbase+".name", res)
+		if prev, dup := seen[name]; dup {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: lbase + ".name",
+				Msg:  fmt.Sprintf("duplicate lock name %q (already at locks[%d])", name, prev),
+			})
+			continue
+		}
+		seen[name] = j
+		if hooks.NamedLockDeclared != nil {
+			// Skip the check when the name carries an unresolved
+			// substitution placeholder (e.g. "model-{params.tier}");
+			// the resolved name is unknown until dispatch.
+			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: lbase + ".name",
-					Msg:  fmt.Sprintf("duplicate lock name %q (already at locks[%d])", name, prev),
-				})
-			} else {
-				seen[name] = j
-			}
-		}
-		switch l.Mode {
-		case store.LockModeMutex:
-			// limit is ignored for mutex; accept silently.
-		case store.LockModeCounting:
-			if l.Limit < 1 {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: lbase + ".limit",
-					Msg:  fmt.Sprintf("counting lock requires limit >= 1; got %d", l.Limit),
+					Msg:  fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
 				})
 			}
-		case "":
-			res.Errors = append(res.Errors, ValidationError{
-				Path: lbase + ".mode",
-				Msg:  "lock mode is required (mutex | counting)",
-			})
-		default:
-			res.Errors = append(res.Errors, ValidationError{
-				Path: lbase + ".mode",
-				Msg:  fmt.Sprintf("unknown lock mode %q (expected mutex | counting)", l.Mode),
-			})
 		}
 	}
 }
 
-// validateAttributesSchema parses the JSON Schema (best-effort: a malformed
-// schema is reported but does not block other validations) and checks that
+// validateAttributesSchema parses the JSON Schema and checks that
 // every `source:` directive in `properties[*].source` is syntactically
-// valid: a single `{{...}}` body matching `deps.<n>.<f>`,
-// `claim.<store>.<f...>`, or `params.<k>`. Referenced upstream node names
-// must exist in the template; referenced store names must appear in this
-// node's Stores list.
+// valid: a single `{{...}}` body matching deps/claim/params shapes.
+// Referenced upstream node names must exist in the template;
+// referenced claim aliases must be acquired by this node OR present
+// via inherits: declarations (the latter is checked alongside the
+// holding-subgraph computation in ValidateInheritance).
 func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
 	if len(n.Attributes.Schema) == 0 {
 		return
 	}
 	sbase := fmt.Sprintf("%s.attributes.schema", base)
 
-	// Parse: round-trip through JSON to normalise (yaml.v3 may produce
-	// map[any]any subtrees) and then compile via santhosh-tekuri to confirm
-	// the schema itself parses.
 	schemaBytes, err := json.Marshal(n.Attributes.Schema)
 	if err != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -421,16 +355,18 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		res.Errors = append(res.Errors, ValidationError{
 			Path: sbase, Msg: fmt.Sprintf("schema does not compile: %v", err),
 		})
-		// Continue: source-directive checks below operate on the raw map
-		// shape, not the compiled schema.
 	}
 
-	// Build the set of store names this node references — used to
-	// authorise `{{claim.<store>.payload.<...>}}` references.
-	declaredStoreNames := make(map[string]struct{}, len(n.Stores))
+	// Aliases this node directly acquires.
+	directAliases := make(map[string]struct{}, len(n.Stores))
 	for _, s := range n.Stores {
-		if s.Name != "" {
-			declaredStoreNames[s.Name] = struct{}{}
+		directAliases[s.AliasOf()] = struct{}{}
+	}
+	// Aliases this node inherits.
+	inheritedAliases := make(map[string]struct{}, len(n.Inherits))
+	for _, ie := range n.Inherits {
+		if ie.Claim != "" {
+			inheritedAliases[ie.Claim] = struct{}{}
 		}
 	}
 
@@ -455,14 +391,15 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 			})
 			continue
 		}
-		checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, declaredStoreNames, res)
+		checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, res)
 	}
 }
 
-// checkAttributeSource enforces directive syntax + reference validity for
-// a single `source:` value. Per spec §10 the value must be exactly one
-// `{{...}}` directive (no surrounding text and no multiple directives).
-func checkAttributeSource(src, path string, declared map[string]int, storeNames map[string]struct{}, res *ValidationResult) {
+// checkAttributeSource enforces directive syntax + reference validity
+// for a single `source:` value. Per spec §16 the value must be exactly
+// one `{{...}}` directive (no surrounding text and no multiple
+// directives).
+func checkAttributeSource(src, path string, declared map[string]int, directAliases, inheritedAliases map[string]struct{}, res *ValidationResult) {
 	trimmed := strings.TrimSpace(src)
 	if trimmed == "" {
 		res.Errors = append(res.Errors, ValidationError{
@@ -478,7 +415,6 @@ func checkAttributeSource(src, path string, declared map[string]int, storeNames 
 		})
 		return
 	}
-	// Confirm the directive consumes the whole value.
 	m := matches[0]
 	if m[0] != 0 || m[1] != len(trimmed) {
 		res.Errors = append(res.Errors, ValidationError{
@@ -515,21 +451,45 @@ func checkAttributeSource(src, path string, declared map[string]int, storeNames 
 			})
 		}
 	case "claim":
-		// Per attributes/substitution.go, valid form is
-		// claim.<store>.payload.<...>. The validator demands the literal
-		// `payload` segment to keep dispatch-time resolution well-formed.
-		if len(parts) < 3 || parts[0] == "" || parts[1] != "payload" || parts[2] == "" {
+		// Valid forms: claim.<alias>.address, claim.<alias>.region,
+		// claim.<alias>.payload.<field-path>.
+		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q must be claim.<store>.payload.<field>", body),
+				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|region|payload.<field>}", body),
 			})
 			return
 		}
-		if _, ok := storeNames[parts[0]]; !ok {
+		alias := parts[0]
+		switch parts[1] {
+		case "address", "region":
+			if len(parts) != 2 {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("claim.<alias>.%s takes no further field path", parts[1]),
+				})
+			}
+		case "payload":
+			if len(parts) < 3 || parts[2] == "" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.payload.<field>", body),
+				})
+			}
+		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive references store %q not in this node's stores list", parts[0]),
+				Msg:  fmt.Sprintf("claim directive %q second segment must be address|region|payload", body),
 			})
+		}
+		// Alias must be acquired here OR inherited.
+		if _, isOwn := directAliases[alias]; !isOwn {
+			if _, isInherited := inheritedAliases[alias]; !isInherited {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("claim directive references alias %q which is neither acquired here nor declared in inherits:", alias),
+				})
+			}
 		}
 	case "params":
 		if len(parts) < 1 || parts[0] == "" {
@@ -539,7 +499,6 @@ func checkAttributeSource(src, path string, declared map[string]int, storeNames 
 			})
 		}
 	default:
-		// Should be unreachable given directiveBodyRe.
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
 			Msg:  fmt.Sprintf("unknown directive kind %q", kind),
@@ -547,15 +506,12 @@ func checkAttributeSource(src, path string, declared map[string]int, storeNames 
 	}
 }
 
-// checkRegionDirectives spot-checks a region pattern. Region patterns may
-// contain dispatch-time `{{...}}` directives and instantiation-time
+// checkRegionDirectives spot-checks a region pattern. Region patterns
+// may contain dispatch-time `{{...}}` directives and instantiation-time
 // `{params.x}` placeholders. Stray single-brace tokens that aren't
 // `{params.x}` are flagged as malformed.
 func checkRegionDirectives(s, path string, res *ValidationResult) {
 	checkDispatchDirectives(s, path, res)
-	// Strip `{{...}}` directives before scanning for stray `{...}` tokens
-	// (otherwise the inner body of a `{{deps.foo.bar}}` would match
-	// anyBraceRe).
 	stripped := dispatchDirectiveRe.ReplaceAllString(s, "")
 	for _, m := range anyBraceRe.FindAllString(stripped, -1) {
 		if !instantiationPlaceholderRe.MatchString(m) {
@@ -567,15 +523,13 @@ func checkRegionDirectives(s, path string, res *ValidationResult) {
 	}
 }
 
-// checkLockNameDirectives spot-checks a lock name. Same grammar as a
-// region pattern: `{params.x}` or `{{...}}`.
 func checkLockNameDirectives(s, path string, res *ValidationResult) {
 	checkRegionDirectives(s, path, res)
 }
 
-// checkDispatchDirectives validates every `{{...}}` body in s against the
-// substitution grammar. Resolution is dispatch-time; this pass is grammar-
-// only.
+// checkDispatchDirectives validates every `{{...}}` body in s against
+// the substitution grammar. Resolution is dispatch-time; this pass is
+// grammar-only.
 func checkDispatchDirectives(s, path string, res *ValidationResult) {
 	for _, m := range dispatchDirectiveRe.FindAllStringSubmatch(s, -1) {
 		body := strings.TrimSpace(m[1])
@@ -589,153 +543,23 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<store>.payload.<f>, or params.<k>)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|region|payload.<f>}, or params.<k>)", body),
 			})
 		}
 	}
 }
 
-// validateClaimResolutions implements the §11.4 algorithm: for every node
-// that takes a held claim, walk the dependency DAG, find the terminal
-// leaves of the holding subgraph, and verify each terminal carries a
-// matching `claim_resolutions` entry.
-func validateClaimResolutions(spec *TemplateSpec, declared map[string]int, res *ValidationResult) {
-	for _, source := range spec.Nodes {
-		if _, ok := declared[source.Type]; !ok {
-			continue
-		}
-		for _, s := range source.Stores {
-			if !s.Claim || !s.Hold {
-				continue
-			}
-			leaves := findHoldingTerminals(spec, source.Type, s.Name)
-			missing := make([]string, 0)
-			for _, leaf := range leaves {
-				if !leafResolves(spec, leaf, source.Type, s.Name) {
-					missing = append(missing, leaf)
-				}
-			}
-			if len(missing) == 0 {
-				continue
-			}
-			path := fmt.Sprintf("nodes[%d].stores", declared[source.Type])
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg: fmt.Sprintf(
-					"held claim %q on store %q is not resolved at terminal node(s) %s",
-					source.Type, s.Name, strings.Join(missing, ", "),
-				),
-			})
-		}
-	}
-}
-
-// findHoldingTerminals returns the terminal leaves of the holding subgraph
-// of sourceNode w.r.t. storeName. Per §11.4 the holding subgraph is
-// `{ D | D depends transitively on sourceNode } ∪ { sourceNode }`, and a
-// leaf is a node in that subgraph with no descendants also in the subgraph.
-//
-// storeName is included in the signature for forward-compat: today the
-// holding subgraph is independent of the store name, but the §11.4 worked
-// example treats the leaf set as per-(source, store) — keeping the
-// parameter avoids a rewrite if a future refinement makes the subgraph
-// store-aware (e.g. resolution-aware path pruning).
-func findHoldingTerminals(spec *TemplateSpec, sourceNode string, _ string) []string {
-	// Build a reverse adjacency: dep -> [nodes that depend on dep].
-	dependents := make(map[string][]string, len(spec.Nodes))
-	for _, n := range spec.Nodes {
-		for _, dep := range n.Dependencies {
-			dependents[dep] = append(dependents[dep], n.Type)
-		}
-	}
-	// BFS from sourceNode through the reverse adjacency to collect the
-	// holding subgraph.
-	subgraph := map[string]struct{}{sourceNode: {}}
-	queue := []string{sourceNode}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, child := range dependents[cur] {
-			if _, seen := subgraph[child]; seen {
-				continue
-			}
-			subgraph[child] = struct{}{}
-			queue = append(queue, child)
-		}
-	}
-	// A leaf is a node in the subgraph with no descendant also in the
-	// subgraph.
-	leaves := make([]string, 0)
-	for member := range subgraph {
-		hasDescendantInSubgraph := false
-		for _, child := range dependents[member] {
-			if _, ok := subgraph[child]; ok {
-				hasDescendantInSubgraph = true
-				break
-			}
-		}
-		if !hasDescendantInSubgraph {
-			leaves = append(leaves, member)
-		}
-	}
-	// Stable order so error messages and tests aren't map-iteration-flaky.
-	sortStrings(leaves)
-	return leaves
-}
-
-// FindHoldingTerminals returns the §11.4 terminal-leaf node types of the
-// holding subgraph rooted at sourceNode. Exported so the supervisor's
-// commit path can resolve the leaves at hold-source commit time and
-// insert one rimsky_claim_holders row per leaf (per spec §5.6.3).
-//
-// storeName is reserved for future per-(source, store) leaf-set
-// refinement; today the holding subgraph is store-independent. Returns
-// an empty slice when sourceNode is unknown.
-func FindHoldingTerminals(spec *TemplateSpec, sourceNode, storeName string) []string {
-	return findHoldingTerminals(spec, sourceNode, storeName)
-}
-
-// leafResolves reports whether the leaf node carries a claim_resolutions
-// entry for (source=sourceNode, store=storeName). The lookup is a simple
-// linear scan — claim_resolutions lists are tiny in practice.
-func leafResolves(spec *TemplateSpec, leafType, sourceNode, storeName string) bool {
-	for _, n := range spec.Nodes {
-		if n.Type != leafType {
-			continue
-		}
-		for _, r := range n.ClaimResolutions {
-			if r.Source == sourceNode && r.Store == storeName {
-				return true
-			}
-		}
-		return false
-	}
-	return false
-}
-
-// sortStrings is a tiny insertion sort so we don't pull in sort just for
-// short slices. Stable, deterministic.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
-}
-
-// detectCycles runs a depth-first search over Dependencies and records an
-// error for each cycle found. Dependencies are node-type identifiers; unknown
-// dependencies are already flagged by validateDependencies and are skipped
-// here (treated as leaves).
+// detectCycles runs a depth-first search over Dependencies and records
+// an error for each cycle found.
 func detectCycles(nodes []TemplateNodeDef, res *ValidationResult) {
 	idx := make(map[string]TemplateNodeDef, len(nodes))
 	for _, n := range nodes {
 		idx[n.Type] = n
 	}
 	const (
-		white = 0 // unvisited
-		gray  = 1 // on current DFS stack
-		black = 2 // fully explored
+		white = 0
+		gray  = 1
+		black = 2
 	)
 	color := make(map[string]int, len(nodes))
 	reported := make(map[string]bool)

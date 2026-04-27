@@ -94,12 +94,12 @@ func (s *EventStore) List(ctx context.Context, filter storage.EventListFilter, p
 	var out []storage.EventRow
 	for rows.Next() {
 		var (
-			r           storage.EventRow
-			instanceID  *shared.UUID
-			nodeID      *shared.UUID
-			payload     []byte
-			occurredAt  time.Time
-			eventID     int64
+			r          storage.EventRow
+			instanceID *shared.UUID
+			nodeID     *shared.UUID
+			payload    []byte
+			occurredAt time.Time
+			eventID    int64
 		)
 		if err := rows.Scan(&eventID, &instanceID, &nodeID, &r.Kind, &payload, &occurredAt); err != nil {
 			return storage.EventListResult{}, err

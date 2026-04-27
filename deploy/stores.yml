@@ -1,27 +1,51 @@
-# Default stores configuration for the docker-compose reference stack.
+# Default operator config bundle for the docker-compose reference stack.
 # Loaded by scheduler / supervisor / control-api at startup via
-# RIMSKY_STORES_CONFIG. See spec §14.1 for the schema and
+# RIMSKY_STORES_CONFIG. See spec §15 for the schema and
 # docs/operator-guide.md for operator-facing notes.
 #
-# Two stores ship in the reference stack:
-#   - content      : filesystem direct-mode, rooted at /workspace/content
-#                    (mounted into each process via the compose volume).
-#   - topics-ring  : claim-store-postgres over the operator-owned
-#                    `topics_items` table; ring-buffer defaults so commit and
-#                    give-up both release the item to the back of the queue.
+# Two top-level keys (spec §15.3 — one operator config bundle, two
+# top-level blocks):
+#   - stores:      one entry per configured store; each carries kind,
+#                  optional write_semantics override, and (for postgres)
+#                  optional pick_policies block.
+#   - named_locks: one entry per declared named lock; carries limit only.
+#
+# Reference stack ships:
+#   - content       : filesystem direct-mode, rooted at /workspace/content
+#                     (mounted into each process via the compose volume).
+#   - topics        : postgres store with one configured pick policy
+#                     ("@review-queue") backed by the operator-owned
+#                     `topics_items` table.
+#   - model-calls   : counting-semaphore named lock (limit 5) suitable for
+#                     rate-limiting LLM API calls across concurrent runs.
+#   - pipeline-singleton: mutex (limit 1) for orchestration patterns that
+#                         need single-flight ordering.
 #
 # The `topics_items` table is created by the `init-items` one-shot service
 # in docker-compose.yml. Operators running outside compose are responsible
-# for creating the table out-of-band per spec §9.10.
+# for creating the table out-of-band per spec §12.12.
 stores:
   content:
     kind: filesystem
-    mode: direct
+    write_semantics: direct
     root: /workspace/content
-  topics-ring:
-    kind: claim_store
-    backend: postgres
-    items_table: topics_items
-    on_commit_default: release_to_back
-    on_give_up_default: release_to_back
-    visibility_timeout_seconds: 300
+  topics:
+    # `kind: postgres` stores require an explicit `connection:` DSN.
+    # Rimsky does not fall back to the control-plane pool — operators
+    # who want a workload store collocated with the control DB declare
+    # the same DSN as RIMSKY_DB_URL here. To point at a separate
+    # workload database, supply that DSN instead.
+    kind: postgres
+    connection: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    write_semantics: direct
+    pick_policies:
+      "@review-queue":
+        type: queue
+        items_table: topics_items
+        on_commit_default: delete
+        on_give_up_default: release_to_head
+        visibility_timeout_seconds: 300
+
+named_locks:
+  model-calls: { limit: 5 }
+  pipeline-singleton: { limit: 1 }

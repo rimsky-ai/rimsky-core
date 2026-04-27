@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+- **Stores: `connection:` is now required on every `kind: postgres`
+  store.** Removed the implicit "platform pool" fallback. Each
+  postgres store opens its own dedicated `*pgxpool.Pool` against an
+  operator-supplied DSN; rimsky's control-plane DB (the one behind
+  `RIMSKY_DB_URL`) is no longer reused as a default for unconfigured
+  stores. Operators who want a workload store collocated with the
+  control plane declare the same DSN as `connection:` — explicit, no
+  magic. Also dropped `Factory.Pool` (unused after the change) and
+  the `Store.ownsPool` flag (every store owns its pool now). Updated
+  the cmd binaries, smoke fixture, control-api tests, and store
+  tests to construct `pgstore.Factory{}` and supply explicit
+  `connection:` strings. `deploy/stores.yml` and operator-guide §3.4
+  rewritten to reflect the new contract; new examples for the
+  collocated-with-control-DB and separate-workload-DB cases.
+
+- **Stores Redesign v2 — code-review correctness pass.** Closed the
+  `findInheritedAliasesForNode` cartesian-product bug (per-row
+  resolution joining the lock-holder back to the acquirer NodeType +
+  alias; aliases disambiguated via the substituted selector when an
+  acquirer declares multiple stores against the same store_name). The
+  per-node claim_holders flip is now a single targeted UPDATE on
+  `(lock_holder_id, holder_node_id)` (`CompleteByLockHolderAndNode`)
+  rather than the prior list-then-loop. The terminal release path
+  reads `region_data` and `address` from the lock-holder row inside
+  the release tx (per spec §13.6), removing the dependency on
+  `lk.ClaimResult` for async-callback resumed flows. `buildLockSpecs`
+  now resolves `{{claim.<alias>...}}` substitutions against the
+  inheritor's live claim-holder rows so downstream selectors that
+  reference inherited claims resolve at dispatch time. Inheritance
+  validator now rejects ambiguous-acquirer inheritance (multiple
+  reachable acquirers per inheritor) at deploy time, and
+  `HoldingSubgraphsForTemplate` reproduces the same deps-walk so
+  deploy-time and runtime subgraph computations agree. `FrameID` is
+  now plumbed through `storage.LockHolderInsertInput` and
+  `storage.ClaimHolderInsertInput` so the storage adapter populates
+  `frame_id` on writes (observability-only per spec §12.10/§12.11).
+  Postgres factory honors `connection: postgres://...` per-store
+  config — opens its own pool for the store rather than silently
+  reusing the platform pool. Strict equality `err == pgx.ErrNoRows`
+  in `auto_terminal.go` switched to `errors.Is`. Cleaned dead
+  `RebindForResume` / `ListByNodeAndStore` / `ClaimEligibilityInput`
+  / `ClaimHolderAction*` symbols and the stale doc comments
+  referencing the dissolved `AcquireLock` / `OpenHandle` /
+  `ReleaseLock` / `claim_store-postgres` vocabulary. CLAUDE.md now
+  references the v2 spec; proto and TS executor stale spec
+  references repointed; TS bindings dropped the wire-reserved
+  `resumed?` field; `make proto-gen` regenerated `node_executor.pb.go`
+  with the reserved fields removed. Reconciled blessed-invariant 20
+  doc-blocks: `walkPath` is the sanctioned payload-walk site,
+  `stringifyRaw` is the sanctioned address/region shape-flattener,
+  and `runner_dispatch.go::makeStoreHandle` is the sanctioned
+  wire-encoding site. Added substantive tests: postgres store
+  Open/Commit/Abandon/regional/factory-rejects-bad-items-table/
+  factory-honors-connection (`core/store/postgres/store_test.go`),
+  CompleteByLockHolderAndNode + LockHolders FrameID round-trip
+  (`core/storage/postgres/postgres_test.go`), CheckAndFireResolution
+  aggregate-completed and aggregate-failed paths (`core/supervisor/
+  auto_terminal_test.go`), end-to-end claim release at terminal
+  (`test/scenarios/locks/atomic_acquisition_test.go`), regional
+  claim run-to-completion (`test/scenarios/stores/
+  regional_claim_test.go`), params substitution at dispatch and
+  required-source-failure routing (`test/scenarios/attributes/
+  substitution_dispatch_test.go`), and auto-terminal aggregate-
+  outcome with active-row-blocking guard (`test/scenarios/claim_stores/
+  auto_terminal_aggregate_outcome_test.go`).
+
+- Stores Redesign v2 (third major rewrite of core/store/):
+  - 5 protocol verbs (Open, Commit, Abandon, Delete, Release) replace the prior AcquireLock/OpenHandle/Commit/ReleaseLock shape.
+  - Two-noun primitives split: claim (substrate-bound) vs named lock (non-substrate).
+  - Pick policies are substrate-side via substrate-recognized selector forms (`@policy-name` convention).
+  - Held claims via explicit `inherits:` declarations; auto-terminal at holding-subgraph completion.
+  - Capability struct collapsed to one field (write_semantics).
+  - Schema: rimsky_lock_holders gains address column, drops claim_id; rimsky_claim_holders gains lock_holder_id FK, drops actual_action/delete_won.
+  - Inertness invariant 20 added; pre-sweep type-hardening of claim-content fields to json.RawMessage.
+  - Operator config gains named_locks: top-level block.
+  - Versions permanently eliminated; versioned mode does not exist.
+  - claim-store-postgres renamed to postgres; pick_policies block configures multiple named pick policies per store.
+
 - **Held-claim resolution: per-active-cycle uniqueness + frame-scoped sibling counts.** The smoke test was reproducibly stranding 2–3 items in `topics_items.state='in_progress'` after Phase 2 cascade-steady-state. Root cause: ring-buffer claim stores reuse `claim_id` (= items-table `item_id`) across cycles, but the `rimsky_claim_holders` unique index on `(claim_id, holder_node_id)` was unconditional. The second cycle's `insertHeldClaimHolders` failed the unique constraint against the prior cycle's now-completed row; the supervisor's commit tx rolled back, but the acquisition tx had already flipped the items-table row to `in_progress`, leaving it stranded. Fixes: (1) the unique index is now partial on `state='active'` (`core/migrations/001-initial.sql`), enforcing "one ACTIVE holder per (claim, leaf) at a time" while permitting historical rows to coexist; (2) `claimstorepg.Store.ResolveOnTerminal` filters its FOR UPDATE SELECT on `state='active'` and scopes the §5.6.4 sibling-count predicates by `frame_id IS NOT DISTINCT FROM R.frame_id` so prior cycles' completed delete/delete_won rows don't leak into the "did anyone delete?" check for a fresh cycle on a reused claim_id. Spec §5.6.4 + §9.9.3 updated to match. Smoke test gains an on-failure diagnostic dump in `assertFinalState` so a future regression prints stuck items + their claim_holders + dispatch rows without manual `psql` instrumentation. Smoke now passes 3-of-3 consecutive runs (~47s each).
 - **`docs/architecture.md`** gains a new §4.1.1 "Frame engine" section describing `core/frame/` (producer + engine), how `frame.RunTick` runs under the existing scheduler advisory lock, and how `frame_id` propagates through the schema. Cross-references the frame-resolution design doc and the conceptual section in `docs/node-graph-design.md`.
 - **`runner_terminal.go` cascade-message comment** updated to describe what the SQL guard `(state = 'fresh' OR (state = 'stale' AND frame_id IS NULL))` actually defends against under the frame model — `Create()` defaults to `'fresh'`, so the `stale + no-frame_id` branch is a defensive backstop for orphan-reap recovery / future paths, not the initial-create case the prior comment named.

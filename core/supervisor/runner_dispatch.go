@@ -1,11 +1,11 @@
-// Spec §17.1 step 3 + step 4: attribute substitution + executor / native
-// dispatch path + heartbeat loop. The §17.1 step 6 terminal handling
-// lives in runner_terminal.go.
+// Spec §17.1 step 3 + step 4: attribute substitution + executor /
+// native dispatch path. Terminal handling lives in runner_terminal.go.
 
 package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -16,13 +16,11 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/claimstorepg"
-	"github.com/fallguy/rimsky/core/store/filesystem"
 	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
 )
 
-// dispatchContext carries the per-dispatch state through the executor
-// stream loop. Built once at the dispatch entry point in runner.go.
+// dispatchContext carries the per-dispatch state through the
+// executor stream loop.
 type dispatchContext struct {
 	Args              RunArgs
 	Acquired          *acquisition
@@ -34,10 +32,7 @@ type dispatchContext struct {
 }
 
 // terminalEvent is the runner-internal classification of an executor
-// stream's terminal event. The terminal handler in runner_terminal.go
-// branches on Kind. Mirrors the post-redesign vocabulary without going
-// through the legacy TerminalOutcome type (which still references
-// fields that have moved out of the codebase).
+// stream's terminal event.
 type terminalEvent struct {
 	Kind          terminalKind
 	Changed       bool
@@ -55,45 +50,29 @@ const (
 	terminalKindBlocked
 	terminalKindErrored
 	terminalKindAsyncAccepted
-	terminalKindInfra // stream-level error
+	terminalKindInfra
 )
 
-// dispatch routes the candidate to the appropriate execution path:
-//
-//   - executor != ""        → executor RPC + stream loop (§17.1 step 4a)
-//   - executor == "" + claim → synthetic Complete{changed: true} (§17.1 step 4b)
-//   - executor == "" + no claim → synthetic Complete (pure cascade — §17.1 step 4c)
-//
-// Returns either a terminal classification or, if the executor returned
-// AsyncAccepted, a non-nil RunnerResult (the runner returns this directly
-// without applying a terminal).
+// dispatch routes the candidate to the appropriate execution path.
 func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *RunnerResult, error) {
 	acq := dctx.Acquired
 	args := dctx.Args
 
-	// Native dispatch paths (executor empty).
 	if acq.Executor == "" {
-		// Claim-only native: success when at least one claim was acquired.
-		hasClaim := false
+		// Native dispatch: claim-only or pure-cascade. Synthesize a
+		// Complete{changed: true} so dependents recalc.
+		summary := "pure_cascade"
 		for _, lk := range acq.Locks {
-			if lk.Handle.Kind == string(store.LockHolderKindClaim) {
-				hasClaim = true
+			if _, ok := lk.Spec.(store.ClaimSpec); ok {
+				summary = "claim_acquired"
 				break
 			}
 		}
-		if hasClaim {
-			return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: "claim_acquired"}, nil, nil
-		}
-		// Pure cascade — synthetic success with changed=true so dependents
-		// recalc. Preserves the existing pure-cascade semantics.
-		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: "pure_cascade"}, nil, nil
+		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: summary}, nil, nil
 	}
 
-	// Executor-backed dispatch.
 	ep, ok := args.Resolver.Resolve(acq.Executor)
 	if !ok {
-		// Resolver miss is a structural failure, not a policy retry. Map
-		// to dispatch_impossible via the give-up branch.
 		_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "unresolved_executor",
@@ -114,46 +93,21 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-
 	req, err := buildExecuteRequest(ctx, dctx)
 	if err != nil {
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-
 	stream, err := client.Execute(ctx, req)
 	if err != nil {
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-
 	terminal, asyncAck := readExecutorStream(ctx, dctx, stream)
 	_ = stream.Close()
 
 	if asyncAck != "" {
-		// Hand off to the callback registry; the terminal will arrive
-		// via /v1/callback/{async_ack_id} later. The AsyncContext
-		// carries every piece the terminal handler reads — locks,
-		// node-def for policy chain + quality rules, resolved
-		// attributes + schema for Complete-branch validation. See
-		// callback.go's driveTerminal which reconstructs RunArgs +
-		// acquisition from this struct.
-		if dctx.RegisterAsync != nil {
-			dctx.RegisterAsync(asyncAck, AsyncContext{
-				NodeID:             acq.NodeID,
-				InstanceID:         acq.InstanceID,
-				DispatchID:         acq.DispatchID,
-				SupervisorID:       args.SupervisorID,
-				StoreRegistry:      args.StoreRegistry,
-				FrameID:            acq.FrameID,
-				AcquiredLocks:      acq.Locks,
-				NodeType:           acq.NodeType,
-				Executor:           acq.Executor,
-				NodeDef:            acq.NodeDef,
-				ResolvedAttributes: dctx.Attributes,
-				AttributesSchema:   dctx.AttributesSchema,
-			})
-		}
+		registerAsyncIfSet(dctx, asyncAck)
 		return terminalEvent{}, &RunnerResult{
 			Ran:        true,
 			Async:      true,
@@ -165,22 +119,32 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	return terminal, nil, nil
 }
 
+// registerAsyncIfSet hands the per-run AsyncContext to the callback
+// registry so the deferred terminal-handler can reconstruct
+// RunArgs+acquisition.
+func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
+	if dctx.RegisterAsync == nil {
+		return
+	}
+	acq := dctx.Acquired
+	dctx.RegisterAsync(asyncAck, AsyncContext{
+		NodeID:             acq.NodeID,
+		InstanceID:         acq.InstanceID,
+		DispatchID:         acq.DispatchID,
+		SupervisorID:       dctx.Args.SupervisorID,
+		StoreRegistry:      dctx.Args.StoreRegistry,
+		FrameID:            acq.FrameID,
+		AcquiredLocks:      acq.Locks,
+		NodeType:           acq.NodeType,
+		Executor:           acq.Executor,
+		NodeDef:            acq.NodeDef,
+		ResolvedAttributes: dctx.Attributes,
+		AttributesSchema:   dctx.AttributesSchema,
+	})
+}
+
 // readExecutorStream consumes the executor's gRPC stream up to the
-// terminal event. Returns (terminal, "") on Complete/Blocked/Errored,
-// (zeroTerminal, ackID) on AsyncAccepted, or
-// (TerminalInfra{stream_closed_without_terminal}, "") on EOF without
-// terminal. Heartbeat events update the supervisor's per-node
-// heartbeat row.
-//
-// The read loop is synchronous; the supervisor's runLoop heartbeat
-// tick (spec §13.4) is the authoritative refresher of
-// `rimsky_dispatch.last_heartbeat_at` and `rimsky_lock_holders.expires_at`
-// for active runs. Adding a per-run heartbeat goroutine here would
-// duplicate that work and create a second writer to the same row.
-//
-// Operator invalidates do not preempt running work — they enqueue or
-// coalesce a frame (per docs/specs/2026-04-26-frame-resolution-design.md
-// §3.3 / §5.4). The kill-poll branch and `isKillRequested` helper are gone.
+// terminal event.
 func readExecutorStream(
 	ctx context.Context, dctx dispatchContext, stream interface {
 		Recv() (*genv1.ExecuteEvent, error)
@@ -243,61 +207,9 @@ func readExecutorStream(
 	}
 }
 
-// openNativeHandles is the §17.1 step 2 OpenHandle loop. Threads the
-// per-store context (filesystem regions, claim-store handle data)
-// before each call so the store's NativeHandle is fully populated.
-//
-// Per spec §17.2, when a lock was rebound (Resumed=true) the runner
-// asserts that the underlying store actually supports resume — both
-// the capability flag and the ResumableStore sub-interface. Failing
-// here surfaces template / store-registry mismatches as
-// open-handle-time errors instead of letting OpenHandle silently
-// run a non-resumable code path.
-func openNativeHandles(ctx context.Context, acq *acquisition) error {
-	for i := range acq.Locks {
-		lk := &acq.Locks[i]
-		if lk.Store == nil {
-			continue // named lock — no native handle.
-		}
-		if lk.Resumed {
-			if !lk.Store.Capabilities().SupportsResume {
-				return fmt.Errorf("resume requested for non-resumable store %q", lk.Handle.StoreName)
-			}
-			if _, ok := lk.Store.(store.ResumableStore); !ok {
-				return fmt.Errorf("store %q lacks ResumableStore capability", lk.Handle.StoreName)
-			}
-		}
-		hctx := ctx
-		switch v := lk.Spec.(type) {
-		case store.RegionLockSpec:
-			var write, read []string
-			if ws, ok := v.Region.([]string); ok {
-				write = ws
-			}
-			if rs, ok := v.ReadRegion.([]string); ok {
-				read = rs
-			}
-			hctx = filesystem.WithRegions(hctx, write, read)
-		case store.ClaimLockSpec:
-			hctx = claimstorepg.WithHandleData(hctx, lk.ClaimResult.Payload, lk.ClaimResult.ClaimID)
-		}
-		nh, err := lk.Store.OpenHandle(hctx, lk.Handle, lk.Resumed)
-		if err != nil {
-			return fmt.Errorf("OpenHandle(%s): %w", lk.Handle.StoreName, err)
-		}
-		lk.Native = nh
-	}
-	return nil
-}
-
-// resolveAttributes is the §17.1 step 3 substitution + validation pass.
-// Returns the populated attribute object and the schema (so the
-// terminal handler can re-validate at commit time per
-// @blessed-invariant 12).
-//
-// On a missing required source the function returns an
-// *attributes.ErrMissingSource the caller maps to
-// template_resolution_failed.
+// resolveAttributes is the §17.1 step 3 substitution + validation
+// pass. Returns the populated attribute object and the schema (so
+// the terminal handler can re-validate at commit time).
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
 	if acq.NodeDef == nil {
 		return map[string]any{}, nil, nil
@@ -306,38 +218,18 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if schema == nil {
 		return map[string]any{}, nil, nil
 	}
-	deps := loadDepsAttributesByID(ctx, args, acq)
-
-	// Build claim-result map keyed by store name for substitution.
-	claims := map[string]store.ClaimResult{}
-	for _, lk := range acq.Locks {
-		if lk.Handle.Kind != string(store.LockHolderKindClaim) {
-			continue
-		}
-		claims[lk.Handle.StoreName] = lk.ClaimResult
+	rctx, err := buildResolveContextForDispatch(ctx, args, acq)
+	if err != nil {
+		return nil, schema, err
 	}
-	rctx := attributes.ResolveContext{
-		Deps:   deps,
-		Claims: claims,
-		Params: acq.InstanceParams,
-	}
-
 	resolved, err := substituteAttributesSchema(schema, rctx)
 	if err != nil {
 		return nil, schema, err
 	}
-	// Validate at the dispatch gate. The dispatch-time schema is a
-	// per-call derivative of the full schema with `required` restricted
-	// to source-driven fields (executor-populated fields by definition
-	// have no value yet at dispatch and would always trip
-	// `missing properties` here). The unmodified schema is re-validated
-	// at commit so executor-populated requireds still gate
-	// attributes_committed (@blessed-invariant 12).
 	dispatchSchema := relaxRequiredToSourceDriven(schema)
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, err
 	}
-	// Emit attributes_substituted for observability.
 	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "attributes_substituted",
@@ -348,27 +240,48 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	return resolved, schema, nil
 }
 
+// buildResolveContextForDispatch assembles the substitution context
+// from the candidate's deps, this acquisition's claims (keyed by
+// alias), and instance params (marshalled to RawMessage so the
+// substitution engine can lazy-walk into nested params).
+func buildResolveContextForDispatch(
+	ctx context.Context, args RunArgs, acq *acquisition,
+) (attributes.ResolveContext, error) {
+	deps := loadDepsAttributesByID(ctx, args, acq)
+	claims := map[string]store.ClaimResult{}
+	for _, lk := range acq.Locks {
+		if lk.Alias == "" {
+			continue
+		}
+		claims[lk.Alias] = lk.ClaimResult
+	}
+	var paramsRaw json.RawMessage
+	if len(acq.InstanceParams) > 0 {
+		b, err := json.Marshal(acq.InstanceParams)
+		if err != nil {
+			return attributes.ResolveContext{}, err
+		}
+		paramsRaw = b
+	}
+	return attributes.ResolveContext{
+		Deps:   deps,
+		Claim:  claims,
+		Params: paramsRaw,
+	}, nil
+}
+
 // substituteAttributesSchema walks the schema's `properties` map and
-// substitutes any property with a `source:` string into the output. A
-// substitution miss on a required field returns an
-// *attributes.ErrMissingSource; misses on optional fields are silently
-// dropped.
-//
-// The schema is the JSON Schema fragment from
-// `TemplateNodeDef.Attributes.Schema`. Required-vs-optional comes from
-// the schema's own `required` array; absence-from-required means
-// optional.
-func substituteAttributesSchema(schema, rctx any) (map[string]any, error) {
+// substitutes any property with a `source:` string into the output.
+func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveContext) (map[string]any, error) {
 	out := map[string]any{}
-	sch, ok := schema.(map[string]any)
-	if !ok {
+	if schema == nil {
 		return out, nil
 	}
-	props, _ := sch["properties"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
 		return out, nil
 	}
-	required := stringSetFrom(sch["required"])
+	required := stringSetFrom(schema["required"])
 	for name, propAny := range props {
 		prop, _ := propAny.(map[string]any)
 		if prop == nil {
@@ -382,7 +295,7 @@ func substituteAttributesSchema(schema, rctx any) (map[string]any, error) {
 		if source == "" {
 			continue
 		}
-		val, err := attributes.Substitute(source, rctx.(attributes.ResolveContext))
+		val, err := attributes.Substitute(source, rctx)
 		if err != nil {
 			if attributes.IsMissingSource(err) {
 				if _, isReq := required[name]; isReq {
@@ -400,15 +313,7 @@ func substituteAttributesSchema(schema, rctx any) (map[string]any, error) {
 // relaxRequiredToSourceDriven returns a shallow copy of the supplied
 // JSON Schema whose `required` array is filtered to retain only
 // properties carrying a non-empty `source:` directive. Executor-
-// populated fields (no source) by definition cannot be present at
-// dispatch — keeping them in `required` would trip the dispatch-time
-// validator on every node that declares them. The unmodified schema is
-// re-validated at commit time, so executor-populated requireds still
-// gate the commit (@blessed-invariant 12).
-//
-// The returned map is a fresh top-level object; nested maps are
-// shared with the original (Validate only reads them). Returns the
-// input unchanged when there are no executor-populated requireds.
+// populated requireds get re-validated at commit (@blessed-invariant 12).
 func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -445,9 +350,6 @@ func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	return out
 }
 
-// stringSetFrom converts an interface containing a []any of strings
-// (the JSON-schema `required` shape) into a string-set. Tolerates nil
-// and unexpected shapes by returning an empty set.
 func stringSetFrom(v any) map[string]struct{} {
 	out := map[string]struct{}{}
 	arr, ok := v.([]any)
@@ -470,10 +372,8 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-// loadDepsAttributesByID is the per-dispatch dep map. Walks the
-// candidate's storage.NodeRow.Dependencies, fetches each upstream's
-// rimsky_node_attributes.data, keys by upstream node_type.
-func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]map[string]any {
+// loadDepsAttributesByID is the per-dispatch dep map.
+func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
 	nd, err := args.Storage.Nodes().Get(ctx, acq.NodeID, nil)
 	if err != nil || nd == nil {
 		return nil
@@ -481,9 +381,7 @@ func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition)
 	return loadDepsAttributes(ctx, args, nd)
 }
 
-// buildExecuteRequest assembles the gRPC ExecuteRequest payload per
-// spec §12.1. Exposed as a function rather than a method so tests can
-// reuse it later.
+// buildExecuteRequest assembles the gRPC ExecuteRequest payload.
 func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.ExecuteRequest, error) {
 	acq := dctx.Acquired
 	def := acq.NodeDef
@@ -494,7 +392,6 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 			userdataStruct = s
 		}
 	}
-
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.Attributes) > 0 {
 		if s, err := structpb.NewStruct(dctx.Attributes); err == nil {
@@ -508,29 +405,16 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		}
 	}
 
-	stores := make(map[string]*genv1.StoreHandle, len(acq.Locks))
-	for _, lk := range acq.Locks {
-		if lk.Handle.Kind == string(store.LockHolderKindNamed) {
-			continue
-		}
-		sh, err := makeStoreHandle(lk)
-		if err != nil {
-			return nil, err
-		}
-		stores[lk.Handle.StoreName] = sh
+	stores, err := buildStoreHandles(acq)
+	if err != nil {
+		return nil, err
 	}
+
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
 	prior, _ := dctx.Args.Storage.NodeAttributes().Get(ctx, acq.NodeID)
 	runAttempt := 1
 	if prior != nil {
 		runAttempt = prior.RunAttempt
-	}
-	resumed := false
-	for _, lk := range acq.Locks {
-		if lk.Resumed {
-			resumed = true
-			break
-		}
 	}
 	return &genv1.ExecuteRequest{
 		NodeId:           acq.NodeID.String(),
@@ -542,49 +426,72 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		Stores:           stores,
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
-		Resumed:          resumed,
 		RunAttempt:       int32(runAttempt),
 	}, nil
 }
 
-// makeStoreHandle converts an AcquiredLock + NativeHandle into the
-// per-store `StoreHandle` proto entry. Direct-mode filesystem maps to
-// {Path, WriteRegions, ReadRegions}; claim_store maps to
-// {Payload, ClaimID, StoreName}.
-func makeStoreHandle(lk AcquiredLock) (*genv1.StoreHandle, error) {
-	out := &genv1.StoreHandle{
-		Resumed: lk.Resumed,
-	}
-	if lk.Store != nil {
-		out.Kind = lk.Store.Kind()
-	}
-	switch nh := lk.Native.(type) {
-	case store.FilesystemDirectHandle:
-		s, err := structpb.NewStruct(map[string]any{"path": nh.Path})
+// buildStoreHandles converts each ClaimSpec acquisition into a per-
+// store StoreHandle proto entry. The handle's `handle` struct carries
+// the substrate-supplied address bytes verbatim under the "address"
+// key — opaque to Rimsky per @blessed-invariant 20.
+func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
+	out := make(map[string]*genv1.StoreHandle, len(acq.Locks))
+	for _, lk := range acq.Locks {
+		spec, ok := lk.Spec.(store.ClaimSpec)
+		if !ok {
+			continue
+		}
+		h, err := makeStoreHandle(lk, spec)
 		if err != nil {
 			return nil, err
 		}
-		out.Handle = s
-		out.WriteRegions = nh.WriteRegions
-		out.ReadRegions = nh.ReadRegions
-	case store.ClaimStoreHandle:
-		fields := map[string]any{
-			"claim_id":   nh.ClaimID,
-			"store_name": nh.StoreName,
-		}
-		if nh.Payload != nil {
-			fields["payload"] = nh.Payload
-		}
-		s, err := structpb.NewStruct(fields)
-		if err != nil {
-			return nil, err
-		}
-		out.Handle = s
-	default:
-		// Unknown / nil native handle: empty Handle.
-		empty, _ := structpb.NewStruct(map[string]any{})
-		out.Handle = empty
+		out[spec.StoreName] = h
 	}
 	return out, nil
 }
 
+// makeStoreHandle builds the per-store proto entry. The handle
+// payload is `{"address": <opaque shape>, "payload": <opaque shape>,
+// "alias": ..., "intent": ...}`; the executor unwraps it per its
+// substrate.
+//
+// @blessed-invariant 20 (wire-encoding site exception): this function
+// decodes the substrate-supplied Address and Payload bytes via
+// json.Unmarshal solely to project them into a `google.protobuf.Struct`
+// for the wire. This is the SOLE sanctioned wire-encoding site outside
+// `core/attributes/substitution.go::walkPath` (which is the sole
+// sanctioned substitution-leaf extraction site). No transformation,
+// logging, normalization, validation, or pattern-matching happens
+// here — the bytes round-trip through structpb and are reconstituted
+// verbatim on the executor side. If the spec moves the
+// `StoreHandle.handle` field to `bytes`, this function shrinks to a
+// straight byte-copy and the wire-encoding site disappears entirely.
+func makeStoreHandle(lk AcquiredLock, spec store.ClaimSpec) (*genv1.StoreHandle, error) {
+	out := &genv1.StoreHandle{}
+	if lk.Store != nil {
+		out.Kind = lk.Store.Kind()
+	}
+	fields := map[string]any{}
+	if len(lk.ClaimResult.Address) > 0 {
+		var addrAny any
+		if err := json.Unmarshal(lk.ClaimResult.Address, &addrAny); err == nil {
+			fields["address"] = addrAny
+		} else {
+			fields["address"] = string(lk.ClaimResult.Address)
+		}
+	}
+	if len(lk.ClaimResult.Payload) > 0 {
+		var payloadAny any
+		if err := json.Unmarshal(lk.ClaimResult.Payload, &payloadAny); err == nil {
+			fields["payload"] = payloadAny
+		}
+	}
+	fields["alias"] = spec.Alias
+	fields["intent"] = string(spec.Intent)
+	s, err := structpb.NewStruct(fields)
+	if err != nil {
+		return nil, fmt.Errorf("makeStoreHandle: structpb: %w", err)
+	}
+	out.Handle = s
+	return out, nil
+}

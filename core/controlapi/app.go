@@ -25,11 +25,17 @@ type AppDeps struct {
 	Clock   shared.Clock
 	Logger  shared.Logger
 	Auth    Authenticator // may be nil → anonymous access
-	// Stores is the per-process *store.Registry built from stores.yml. Used by
-	// admin endpoints that target a specific named store (e.g.
-	// POST /admin/claim-stores/:name/items). May be nil at construction time;
+	// Stores is the per-process *store.Registry built from stores.yml.
+	// Used by admin endpoints that target a specific named store and by
+	// the template-deploy validator. May be nil at construction time;
 	// admin handlers that need it return 503 when nil.
 	Stores *store.Registry
+	// NamedLocks is the operator-side named-lock config (spec §15.2).
+	// Consulted at template-deploy time to validate that every
+	// template-referenced lock name is declared. Empty / missing → no
+	// named locks declared (templates referencing any will fail
+	// validation).
+	NamedLocks store.NamedLocksConfig
 }
 
 // NewApp builds the full chi router with all registered routes + middleware.

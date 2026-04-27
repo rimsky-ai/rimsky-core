@@ -15,7 +15,7 @@ import type { PostAttributesFn } from "./attributes-tools.js";
  * ExecuteRequest-shaped body; the bridge returns `{ async_ack_id }`
  * immediately and posts the outcome to `callback_url` when the agent finishes.
  *
- * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12.3 — the bridge
+ * Spec: docs/specs/2026-04-27-stores-redesign-v2-design.md §12.3 — the bridge
  * mirrors the gRPC shape, with bodies keyed by `type`.
  *
  * This is primarily a debug / integration surface — rimsky supervisors
@@ -47,7 +47,8 @@ interface ExecuteBody {
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
-  resumed?: boolean;
+  // Field number 10 (`resumed`) is reserved on the wire under
+  // stores-redesign-v2. Resume is universal — substrate-detected.
   run_attempt?: number;
 }
 

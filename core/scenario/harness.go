@@ -6,9 +6,9 @@
 // store-based subsystem rather than the retired resource layer:
 //
 //   - control-api + supervisor are constructed with a *store.Registry
-//     containing the two stub stores ("stub_filesystem" + "stub_claim_store");
-//     scenario tests that need real claim-store-postgres / filesystem
-//     behaviour can pass extra factories via HarnessOpts.
+//     containing the two stub stores ("stub_filesystem" + "stub_postgres");
+//     scenario tests that need real filesystem and postgres factories can
+//     pass them via HarnessOpts.ExtraStoreFactories.
 //   - the scheduler is wired with both the store registry and a
 //     *store.LockHoldersClient so the §13.5 step-2 (lock-holder),
 //     step-3 (claim-holder), and step-4 (visibility-timeout) sweeps run.
@@ -47,7 +47,6 @@ import (
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/stub"
-	"github.com/fallguy/rimsky/core/supervisor"
 	stubexec "github.com/fallguy/rimsky/executors/stub"
 )
 
@@ -64,7 +63,7 @@ type Harness struct {
 	Stub       *stubexec.Stub
 	StubAddr   string
 	Scheduler  config.SchedulerHandle
-	Supervisor *supervisor.Handle
+	Supervisor config.SupervisorHandle
 	ControlAPI config.ControlAPIHandle
 	// ControlBase is the base URL of the in-process control-api
 	// (http://host:port). DeployTemplate / CreateInstance POST against this.
@@ -122,7 +121,7 @@ type HarnessOpts struct {
 
 	// ExtraStoreFactories registers store factories in addition to the two
 	// stub factories the harness registers by default. Use this to attach
-	// real claim-store-postgres / filesystem factories for scenarios that
+	// real filesystem and postgres factories for scenarios that
 	// need them.
 	ExtraStoreFactories []store.Factory
 
@@ -187,7 +186,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	// callers add more via opts.ExtraStoreFactories.
 	storeFactories := []store.Factory{
 		stub.FilesystemFactory(),
-		stub.ClaimStoreFactory(),
+		stub.PostgresFactory(),
 	}
 	storeFactories = append(storeFactories, opts.ExtraStoreFactories...)
 
@@ -259,11 +258,10 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			_ = sv.Shutdown(sctx)
 		})
 		// The config wrapper returns a SupervisorHandle interface; the
-		// scenario harness exposes the concrete *supervisor.Handle for
-		// scenarios that need callback-addr inspection. Type-assert.
-		if hh, ok := sv.(*supervisor.Handle); ok {
-			h.Supervisor = hh
-		}
+		// scenario harness exposes it directly so callers reach
+		// CallbackAddr via the interface (the wrapper around
+		// *supervisor.Handle owns the store registry for shutdown).
+		h.Supervisor = sv
 	}
 
 	// Control API. The store registry is built once inside StartControlAPI
@@ -623,14 +621,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if len(n.Locks) > 0 {
 		locks := make([]map[string]any, 0, len(n.Locks))
 		for _, l := range n.Locks {
-			lock := map[string]any{
-				"name": l.Name,
-				"mode": string(l.Mode),
-			}
-			if l.Limit != 0 {
-				lock["limit"] = l.Limit
-			}
-			locks = append(locks, lock)
+			locks = append(locks, map[string]any{"name": l.Name})
 		}
 		nd["locks"] = locks
 	}
@@ -652,21 +643,21 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		nd["quality_rules"] = qrs
 	}
 	if len(n.ClaimResolutions) > 0 {
-		crs := make([]map[string]any, 0, len(n.ClaimResolutions))
-		for _, cr := range n.ClaimResolutions {
-			item := map[string]any{
-				"source": cr.Source,
-				"store":  cr.Store,
+		crs := map[string]any{}
+		for alias, cr := range n.ClaimResolutions {
+			crs[alias] = map[string]any{
+				"on_commit":  cr.OnCommit,
+				"on_give_up": cr.OnGiveUp,
 			}
-			if cr.OnCommit != "" {
-				item["on_commit"] = cr.OnCommit
-			}
-			if cr.OnGiveUp != "" {
-				item["on_give_up"] = cr.OnGiveUp
-			}
-			crs = append(crs, item)
 		}
 		nd["claim_resolutions"] = crs
+	}
+	if len(n.Inherits) > 0 {
+		ihs := make([]map[string]any, 0, len(n.Inherits))
+		for _, ie := range n.Inherits {
+			ihs = append(ihs, map[string]any{"claim": ie.Claim})
+		}
+		nd["inherits"] = ihs
 	}
 	if len(n.ErrorTypes) > 0 {
 		ets := map[string]any{}
@@ -707,28 +698,12 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 // storeRefToJSON encodes one node.NodeStoreRef per the JSON wire shape.
 func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	item := map[string]any{
-		"name": s.Name,
+		"name":     s.Name,
+		"selector": s.Selector,
+		"intent":   s.Intent,
 	}
-	if s.Claim {
-		item["claim"] = true
-	}
-	if s.Hold {
-		item["hold"] = true
-	}
-	if len(s.Write) > 0 {
-		item["write"] = s.Write
-	}
-	if len(s.Read) > 0 {
-		item["read"] = s.Read
-	}
-	if s.OnCommit != "" {
-		item["on_commit"] = s.OnCommit
-	}
-	if s.OnGiveUp != "" {
-		item["on_give_up"] = s.OnGiveUp
-	}
-	if s.Resumable {
-		item["resumable"] = true
+	if s.Alias != "" {
+		item["alias"] = s.Alias
 	}
 	return item
 }
@@ -765,11 +740,25 @@ func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	}
 }
 
-// withClaimResolutions returns a TemplateNodeDef option that appends one or
-// more held-claim resolution refs.
-func withClaimResolutions(refs ...node.ClaimResolutionRef) func(*node.TemplateNodeDef) {
+// withClaimResolutions returns a TemplateNodeDef option that sets per-
+// alias claim_resolutions on the node. Each entry maps an alias to its
+// (on_commit, on_give_up) action vocabulary.
+func withClaimResolutions(entries map[string]node.ClaimResolution) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
-		n.ClaimResolutions = append(n.ClaimResolutions, refs...)
+		if n.ClaimResolutions == nil {
+			n.ClaimResolutions = map[string]node.ClaimResolution{}
+		}
+		for k, v := range entries {
+			n.ClaimResolutions[k] = v
+		}
+	}
+}
+
+// withInherits returns a TemplateNodeDef option that appends inherit
+// edges (alias references to upstream-acquirer claims).
+func withInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
+	return func(n *node.TemplateNodeDef) {
+		n.Inherits = append(n.Inherits, refs...)
 	}
 }
 
@@ -805,6 +794,11 @@ func WithAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 }
 
 // WithClaimResolutions is the exported alias for withClaimResolutions.
-func WithClaimResolutions(refs ...node.ClaimResolutionRef) func(*node.TemplateNodeDef) {
-	return withClaimResolutions(refs...)
+func WithClaimResolutions(entries map[string]node.ClaimResolution) func(*node.TemplateNodeDef) {
+	return withClaimResolutions(entries)
+}
+
+// WithInherits is the exported alias for withInherits.
+func WithInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
+	return withInherits(refs...)
 }

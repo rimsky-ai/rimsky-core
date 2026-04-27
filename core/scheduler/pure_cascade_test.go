@@ -263,8 +263,8 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 			Type:     "t",
 			Executor: "",
 			Stores: []nodepkg.NodeStoreRef{
-				{Name: "alpha", Claim: true},
-				{Name: "beta"}, // non-claim store; should be carried in RequiredStores.
+				{Name: "alpha", Selector: "x", Intent: "rw"},
+				{Name: "beta", Selector: "y", Intent: "r"},
 			},
 		}},
 	}, nil)

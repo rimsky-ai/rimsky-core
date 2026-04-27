@@ -20,7 +20,7 @@ import (
 	"github.com/fallguy/rimsky/core/qualityrule"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
-	"github.com/fallguy/rimsky/core/store"
+	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
 // templateDeployRequest matches the JSON form of node.TemplateSpec. Fields use
@@ -45,27 +45,31 @@ type templateNodeDefJSON struct {
 	Dependencies     []string                       `json:"dependencies,omitempty"`
 	Stores           []nodeStoreRefJSON             `json:"stores,omitempty"`
 	Locks            []nodeLockRefJSON              `json:"locks,omitempty"`
+	Inherits         []inheritEntryJSON             `json:"inherits,omitempty"`
+	ClaimResolutions map[string]claimResolutionJSON `json:"claim_resolutions,omitempty"`
 	Attributes       *nodeAttributesDefJSON         `json:"attributes,omitempty"`
 	QualityRules     []qualityRuleJSON              `json:"quality_rules,omitempty"`
-	ClaimResolutions []claimResolutionRefJSON       `json:"claim_resolutions,omitempty"`
 	ErrorTypes       map[string]errorTypePolicyJSON `json:"error_types,omitempty"`
 }
 
 type nodeStoreRefJSON struct {
-	Name      string   `json:"name"`
-	Claim     bool     `json:"claim,omitempty"`
-	Hold      bool     `json:"hold,omitempty"`
-	Write     []string `json:"write,omitempty"`
-	Read      []string `json:"read,omitempty"`
-	OnCommit  string   `json:"on_commit,omitempty"`
-	OnGiveUp  string   `json:"on_give_up,omitempty"`
-	Resumable bool     `json:"resumable,omitempty"`
+	Name     string `json:"name"`
+	Selector string `json:"selector"`
+	Intent   string `json:"intent"`
+	Alias    string `json:"alias,omitempty"`
 }
 
 type nodeLockRefJSON struct {
-	Name  string `json:"name"`
-	Mode  string `json:"mode"`
-	Limit int    `json:"limit,omitempty"`
+	Name string `json:"name"`
+}
+
+type inheritEntryJSON struct {
+	Claim string `json:"claim"`
+}
+
+type claimResolutionJSON struct {
+	OnCommit string `json:"on_commit"`
+	OnGiveUp string `json:"on_give_up"`
 }
 
 type nodeAttributesDefJSON struct {
@@ -76,13 +80,6 @@ type qualityRuleJSON struct {
 	Type     string         `json:"type"`
 	Config   map[string]any `json:"config,omitempty"`
 	Severity string         `json:"severity,omitempty"`
-}
-
-type claimResolutionRefJSON struct {
-	Source   string `json:"source"`
-	Store    string `json:"store"`
-	OnCommit string `json:"on_commit,omitempty"`
-	OnGiveUp string `json:"on_give_up,omitempty"`
 }
 
 type errorTypePolicyJSON struct {
@@ -124,22 +121,26 @@ func (r *templateDeployRequest) toTemplateSpec() node.TemplateSpec {
 		}
 		for _, s := range n.Stores {
 			def.Stores = append(def.Stores, node.NodeStoreRef{
-				Name:      s.Name,
-				Claim:     s.Claim,
-				Hold:      s.Hold,
-				Write:     s.Write,
-				Read:      s.Read,
-				OnCommit:  s.OnCommit,
-				OnGiveUp:  s.OnGiveUp,
-				Resumable: s.Resumable,
+				Name:     s.Name,
+				Selector: s.Selector,
+				Intent:   s.Intent,
+				Alias:    s.Alias,
 			})
 		}
 		for _, l := range n.Locks {
-			def.Locks = append(def.Locks, node.NodeLockRef{
-				Name:  l.Name,
-				Mode:  store.LockMode(l.Mode),
-				Limit: l.Limit,
-			})
+			def.Locks = append(def.Locks, node.NodeLockRef{Name: l.Name})
+		}
+		for _, ie := range n.Inherits {
+			def.Inherits = append(def.Inherits, node.InheritEntry{Claim: ie.Claim})
+		}
+		if len(n.ClaimResolutions) > 0 {
+			def.ClaimResolutions = make(map[string]node.ClaimResolution, len(n.ClaimResolutions))
+			for alias, cr := range n.ClaimResolutions {
+				def.ClaimResolutions[alias] = node.ClaimResolution{
+					OnCommit: cr.OnCommit,
+					OnGiveUp: cr.OnGiveUp,
+				}
+			}
 		}
 		if n.Attributes != nil {
 			def.Attributes = node.NodeAttributesDef{Schema: n.Attributes.Schema}
@@ -149,14 +150,6 @@ func (r *templateDeployRequest) toTemplateSpec() node.TemplateSpec {
 				Type:     qr.Type,
 				Config:   qr.Config,
 				Severity: shared.Severity(qr.Severity),
-			})
-		}
-		for _, cr := range n.ClaimResolutions {
-			def.ClaimResolutions = append(def.ClaimResolutions, node.ClaimResolutionRef{
-				Source:   cr.Source,
-				Store:    cr.Store,
-				OnCommit: cr.OnCommit,
-				OnGiveUp: cr.OnGiveUp,
 			})
 		}
 		if len(n.ErrorTypes) > 0 {
@@ -212,22 +205,38 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Delete("/templates/{id}", handleDeleteTemplate(deps))
 }
 
-// storeKindOfFor builds the store-kind lookup function consumed by
-// node.ValidateTemplate. When deps.Stores is nil (no registry wired) the
-// returned closure is also nil — node.ValidateTemplate skips the
-// unknown-store check in that case, which is the correct behaviour for
-// tests that don't exercise the store layer.
-func storeKindOfFor(reg *store.Registry) func(name string) (string, bool) {
-	if reg == nil {
-		return nil
-	}
-	return func(name string) (string, bool) {
-		s, ok := reg.GetStore(name)
-		if !ok {
-			return "", false
+// validatorHooksFor builds the registry-dependent lookups consumed by
+// node.ValidateTemplate. Nil-safe on deps.Stores or empty NamedLocks.
+func validatorHooksFor(deps AppDeps) node.RegistryHooks {
+	hooks := node.RegistryHooks{}
+	if deps.Stores != nil {
+		hooks.StoreKindOf = func(name string) (string, bool) {
+			s, ok := deps.Stores.GetStore(name)
+			if !ok {
+				return "", false
+			}
+			return s.Kind(), true
 		}
-		return s.Kind(), true
+		hooks.IsPickPolicySelector = func(storeName, selector string) bool {
+			s, ok := deps.Stores.GetStore(storeName)
+			if !ok {
+				return false
+			}
+			ps, ok := s.(*pgstore.Store)
+			if !ok {
+				return false
+			}
+			_, has := ps.PickPolicyConfig(selector)
+			return has
+		}
 	}
+	if len(deps.NamedLocks.Locks) > 0 {
+		hooks.NamedLockDeclared = func(name string) bool {
+			_, ok := deps.NamedLocks.Get(name)
+			return ok
+		}
+	}
+	return hooks
 }
 
 func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
@@ -238,7 +247,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		spec := body.toTemplateSpec()
-		res := node.ValidateTemplate(&spec, storeKindOfFor(deps.Stores))
+		res := node.ValidateTemplate(&spec, validatorHooksFor(deps))
 		if !res.Ok() {
 			errs := make([]map[string]string, 0, len(res.Errors))
 			for _, e := range res.Errors {

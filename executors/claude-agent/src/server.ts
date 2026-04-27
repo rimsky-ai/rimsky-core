@@ -13,7 +13,7 @@ import type { PostAttributesFn } from "./attributes-tools.js";
  * pattern: one Heartbeat + AsyncAccepted, close stream, run agent in
  * background, POST final outcome to callback_url.
  *
- * Spec: docs/specs/2026-04-25-stores-redesign-design.md §12.
+ * Spec: docs/specs/2026-04-27-stores-redesign-v2-design.md §12.
  */
 export interface GrpcServerConfig {
   host: string;
@@ -63,7 +63,9 @@ interface ExecuteRequest {
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
-  resumed?: boolean;
+  // Field number 10 (`resumed`) is reserved on the wire under
+  // stores-redesign-v2 (proto reserves both number and name). Resume is
+  // universal; the substrate detects resumed-vs-fresh internally.
   run_attempt?: number;
 }
 

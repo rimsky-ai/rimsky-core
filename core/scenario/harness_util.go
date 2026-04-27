@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/store"
 )
 
 // bytesReader wraps a byte slice as an io.Reader for http.Post bodies.
@@ -17,45 +16,47 @@ func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 // for readability in DeployTemplate / CreateInstance.
 func parseUUIDStr(s string) (uuid.UUID, error) { return uuid.Parse(s) }
 
-// ClaimRef returns a NodeStoreRef declaring claim-and-forget against the
-// named store. Hold defaults to false; use ClaimAndHoldRef for held claims.
-//
-// Convenience wrapper so scenario tests don't have to spell out the struct
-// literal for the common case.
-func ClaimRef(storeName string) node.NodeStoreRef {
-	return node.NodeStoreRef{Name: storeName, Claim: true}
+// ClaimRef returns a NodeStoreRef declaring a read-only claim against
+// the named store with the given selector. Convenience wrapper for the
+// common case in scenario tests.
+func ClaimRef(storeName, selector string) node.NodeStoreRef {
+	return node.NodeStoreRef{Name: storeName, Selector: selector, Intent: "r"}
 }
 
-// ClaimAndHoldRef returns a NodeStoreRef declaring claim-and-hold. The
-// terminal node responsible for resolving the held claim must list a
-// matching ClaimResolutionRef in its ClaimResolutions.
-func ClaimAndHoldRef(storeName string) node.NodeStoreRef {
-	return node.NodeStoreRef{Name: storeName, Claim: true, Hold: true}
+// WriteClaimRef returns a NodeStoreRef declaring a read-write claim
+// against the named store with the given selector.
+func WriteClaimRef(storeName, selector string) node.NodeStoreRef {
+	return node.NodeStoreRef{Name: storeName, Selector: selector, Intent: "rw"}
 }
 
-// RegionRef returns a NodeStoreRef declaring a write-region acquisition
-// against the named store. Pass distinct region tokens for distinct regions
-// and equal tokens for overlapping ones (the stub-filesystem store treats
-// region tokens as opaque set-equality checks).
-func RegionRef(storeName string, write ...string) node.NodeStoreRef {
-	return node.NodeStoreRef{Name: storeName, Write: write}
+// AliasedClaimRef returns a NodeStoreRef with an explicit alias. Used
+// when a node holds multiple claims against the same store (the alias
+// disambiguates substitution paths).
+func AliasedClaimRef(storeName, selector, intent, alias string) node.NodeStoreRef {
+	return node.NodeStoreRef{Name: storeName, Selector: selector, Intent: intent, Alias: alias}
 }
 
-// MutexLock returns a NodeLockRef for a process-wide mutex (limit=1).
+// MutexLock returns a NodeLockRef for a process-wide mutex (limit
+// configured operator-side per spec §15.2).
 func MutexLock(name string) node.NodeLockRef {
-	return node.NodeLockRef{Name: name, Mode: store.LockModeMutex}
+	return node.NodeLockRef{Name: name}
 }
 
-// CountingLock returns a NodeLockRef for a counting semaphore with the given
-// limit. Limit must be >= 1; the validator rejects 0.
-func CountingLock(name string, limit int) node.NodeLockRef {
-	return node.NodeLockRef{Name: name, Mode: store.LockModeCounting, Limit: limit}
+// CountingLock returns a NodeLockRef. Limit is operator-configured per
+// spec §15.2; templates reference by name only.
+func CountingLock(name string) node.NodeLockRef {
+	return node.NodeLockRef{Name: name}
 }
 
-// ResolveClaim returns a ClaimResolutionRef declaring this node resolves a
-// held claim originally taken by `sourceNode` against `storeName`. OnCommit
-// and OnGiveUp default to empty (use store defaults); pass non-empty
-// strings to override the per-resolution disposition.
-func ResolveClaim(sourceNode, storeName string) node.ClaimResolutionRef {
-	return node.ClaimResolutionRef{Source: sourceNode, Store: storeName}
+// ResolveClaim returns a (alias, ClaimResolution) pair declaring the
+// substrate-side actions auto-terminal fires for a held claim. Use
+// alongside scenario.WithClaimResolutions.
+func ResolveClaim(alias, onCommit, onGiveUp string) (string, node.ClaimResolution) {
+	return alias, node.ClaimResolution{OnCommit: onCommit, OnGiveUp: onGiveUp}
+}
+
+// Inherit returns an InheritEntry referencing an upstream-acquirer
+// claim alias. Used alongside scenario.WithInherits.
+func Inherit(alias string) node.InheritEntry {
+	return node.InheritEntry{Claim: alias}
 }

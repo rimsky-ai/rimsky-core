@@ -6,6 +6,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/fallguy/rimsky/core/node"
@@ -144,58 +145,75 @@ type NodeStore interface {
 
 // -------- Lock holders (rimsky_lock_holders) --------
 
-// LockKind discriminates a lock-holder row's payload columns. See spec §9.9.2.
+// LockKind discriminates a lock-holder row's payload columns. Two kinds:
+// 'named' (named-lock primitive) and 'region' (claim primitive). The prior
+// 'claim' kind dissolved under stores-redesign v2 — pick-policy claims are
+// 'region' rows with substrate-chosen region_data.
 type LockKind string
 
 const (
 	LockKindNamed  LockKind = "named"
 	LockKindRegion LockKind = "region"
-	LockKindClaim  LockKind = "claim"
 )
 
-// LockHolderRow mirrors a row of rimsky_lock_holders (spec §9.9.2). Exactly
-// one of (LockName) / (StoreName, RegionData) / (StoreName, ClaimID) is
-// populated, keyed by LockKind. The CHECK constraint in §9.9.2 enforces this.
+// LockHolderRow mirrors a row of rimsky_lock_holders. Exactly one of
+// (LockName) / (StoreName + RegionData + Intent) is populated, keyed by
+// LockKind; the CHECK constraint enforces this on the database side.
+//
+// Address is substrate-supplied bytes from Open(); written into the row
+// after Open returns successfully (within the same acquisition tx). May be
+// nil for region rows mid-acquisition; populated by terminal time.
 type LockHolderRow struct {
 	ID                 shared.UUID
 	LockKind           LockKind
-	LockName           *string // non-nil when LockKind = "named"
-	StoreName          *string // non-nil when LockKind in ("region","claim")
-	RegionData         []byte  // raw JSONB; non-nil when LockKind = "region"
-	ClaimID            *string // non-nil when LockKind = "claim"
+	LockName           *string         // non-nil when LockKind = "named"
+	StoreName          *string         // non-nil when LockKind = "region"
+	RegionData         json.RawMessage // opaque JSONB; non-nil when LockKind = "region"
+	Address            json.RawMessage // opaque JSONB; substrate-supplied from Open
+	Intent             *string         // 'r' | 'rw' for region rows; nil for named
 	HolderSupervisorID string
 	HolderNodeID       shared.UUID
 	ClaimedAt          time.Time
 	LastHeartbeatAt    time.Time
 	ExpiresAt          time.Time
+	// FrameID is observability-only (spec §12.10): records which frame
+	// the dispatch row carried at acquire time. Reads/sweeps and the
+	// auto-terminal algorithm do NOT consult this field.
+	FrameID *shared.UUID
 }
 
 // LockHolderInsertInput is the input shape for InsertLockHolder. Callers
 // populate the discriminator-specific fields per LockKind; the postgres
-// implementation maps to the §9.9.2 CHECK constraint.
+// implementation maps to the table's CHECK constraint.
 type LockHolderInsertInput struct {
 	ID                 shared.UUID
 	LockKind           LockKind
 	LockName           *string
 	StoreName          *string
-	RegionData         []byte
-	ClaimID            *string
+	RegionData         json.RawMessage
+	Address            json.RawMessage
+	Intent             *string
 	HolderSupervisorID string
 	HolderNodeID       shared.UUID
 	ExpiresAt          time.Time
+	// FrameID is observability-only (spec §12.10). Set by the supervisor
+	// to the dispatch row's frame_id at acquire time so operators can
+	// trace lock-holder rows back to the frame that motivated them.
+	FrameID *shared.UUID
 }
 
 // LockHoldersStore is the rimsky_lock_holders accessor exposed on
 // StorageBackend. The concrete implementation lives in
-// core/store/lockholders.go (per spec §16.1) — this interface is the
-// supervisor / scheduler / control-api facing surface.
+// core/store/lockholders.go — this interface is the supervisor /
+// scheduler / control-api facing surface.
 //
-// Sweep predicate (spec §13.5 step 2): ListExpired returns rows where
-// expires_at < now(). The scheduler's lock-holder sweep iterates these,
-// runs store-side ReleaseLock (for claim-kind), then deletes the row
-// claimant-guarded on holder_supervisor_id.
+// Sweep predicate: ListExpired returns rows where expires_at < now(). The
+// scheduler's lock-holder sweep iterates these, runs the store-side
+// substrate verb, then deletes the row claimant-guarded on
+// holder_supervisor_id.
 type LockHoldersStore interface {
 	Insert(ctx context.Context, in LockHolderInsertInput, tx Tx) error
+	UpdateAddress(ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*LockHolderRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]LockHolderRow, error)
 	ListBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]LockHolderRow, error)
@@ -231,72 +249,62 @@ type NodeAttributesStore interface {
 // -------- Claim holders (rimsky_claim_holders) --------
 
 // ClaimHolderState is the lifecycle state of a rimsky_claim_holders row.
+// Under stores-redesign v2 the state set is {active, completed, failed};
+// per-row actions live in template metadata, not on the row.
 type ClaimHolderState string
 
 const (
 	ClaimHolderStateActive    ClaimHolderState = "active"
 	ClaimHolderStateCompleted ClaimHolderState = "completed"
+	ClaimHolderStateFailed    ClaimHolderState = "failed"
 )
 
-// ClaimHolderAction is the declared / actual action vocabulary for held
-// claims (spec §9.9.3). 'delete_won' is recorded on a sibling row that was
-// collapsed by another sibling's winning delete (§5.6.4).
-type ClaimHolderAction string
-
-const (
-	ClaimHolderActionDelete        ClaimHolderAction = "delete"
-	ClaimHolderActionReleaseToBack ClaimHolderAction = "release_to_back"
-	ClaimHolderActionReleaseToHead ClaimHolderAction = "release_to_head"
-	ClaimHolderActionDeleteWon     ClaimHolderAction = "delete_won"
-)
-
-// ClaimHolderRow mirrors a row of rimsky_claim_holders (spec §9.9.3).
+// ClaimHolderRow mirrors a row of rimsky_claim_holders.
 //
-// ActualAction is nil while State is 'active'; populated when the row
-// transitions to 'completed' per the §5.6.4 resolution algorithm.
+// One row per (lock_holder, holder_node) pair from the §18.4 holding
+// subgraph. State flips 'active' -> 'completed' (success) or 'failed'
+// (give-up/failure) per §14.4. When all rows for a lock_holder reach a
+// non-active state, auto-terminal fires the aggregate-outcome resolution
+// and the lock_holder row is deleted; ON DELETE CASCADE cleans up these
+// rows.
 type ClaimHolderRow struct {
 	ID           shared.UUID
-	ClaimID      string
-	StoreName    string
+	LockHolderID shared.UUID
 	HolderNodeID shared.UUID
-	OnCommit     ClaimHolderAction
-	OnGiveUp     ClaimHolderAction
-	ActualAction *ClaimHolderAction
 	State        ClaimHolderState
-	CreatedAt    time.Time
 	CompletedAt  *time.Time
 }
 
-// ClaimHolderInsertInput is the input shape for InsertClaimHolder.
+// ClaimHolderInsertInput is the input shape for InsertClaimHolder. Rows
+// are inserted in 'active' state; State is not exposed as input.
 type ClaimHolderInsertInput struct {
 	ID           shared.UUID
-	ClaimID      string
-	StoreName    string
+	LockHolderID shared.UUID
 	HolderNodeID shared.UUID
-	OnCommit     ClaimHolderAction
-	OnGiveUp     ClaimHolderAction
-	// FrameID is observability-only (spec §10.5): it records which
-	// frame the holding node was in when this row was inserted. Reads
-	// and the §5.6.4 resolution algorithm do NOT consult this field.
+	// FrameID is observability-only (spec §12.11): records which frame
+	// motivated the held-claim insertion. Auto-terminal does NOT consult
+	// this field.
 	FrameID *shared.UUID
 }
 
 // ClaimHoldersStore is the rimsky_claim_holders accessor exposed on
 // StorageBackend.
 //
-// Sweep predicate (spec §13.5 step 3): the scheduler's claim-holder GC
-// queries rimsky_claim_holders directly via raw SQL (see
-// core/scheduler/sweep_locks.go::listLeakedClaimHolders) — rows whose
-// holder node's current state is 'failed' or 'fresh' AND whose state is
-// still 'active'. It then runs the §5.6.4 algorithm with
-// actual_action = on_give_up.
+// Auto-terminal predicate: rows for a given lock_holder are inspected
+// when any row transitions out of 'active'. When zero rows remain in
+// 'active', the §14.4 aggregate-outcome resolution fires and the
+// lock_holder row is deleted (cascading these rows away).
 type ClaimHoldersStore interface {
 	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
-	ListByClaimID(ctx context.Context, claimID string, tx Tx) ([]ClaimHolderRow, error)
+	ListByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
-	ListActiveByClaimID(ctx context.Context, claimID string, tx Tx) ([]ClaimHolderRow, error)
-	Complete(ctx context.Context, id shared.UUID, actualAction ClaimHolderAction, tx Tx) error
+	ListActiveByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
+	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
+	// CompleteByLockHolderAndNode flips the (lock_holder_id, holder_node_id)
+	// row to the supplied terminal state in a single targeted UPDATE.
+	// Idempotent: only updates rows still in 'active' state.
+	CompleteByLockHolderAndNode(ctx context.Context, lockHolderID, holderNodeID shared.UUID, state ClaimHolderState, tx Tx) error
 }
 
 // -------- Events --------

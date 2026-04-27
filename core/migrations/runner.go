@@ -35,7 +35,9 @@ func Run(ctx context.Context, pool *pgxpool.Pool, log shared.Logger) error {
 	// Use context.Background() for the unlock: if the caller's ctx was
 	// canceled mid-migration, we still want the unlock to run so a stuck
 	// lock doesn't block a subsequent runner.
-	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+	defer func() {
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+	}()
 
 	// Ensure tracker table exists (001-initial.sql also creates it with IF NOT
 	// EXISTS, but we might need it before applying 001 to record that 001 ran).
@@ -80,11 +82,11 @@ func Run(ctx context.Context, pool *pgxpool.Pool, log shared.Logger) error {
 			return fmt.Errorf("migrations.Run: begin tx for %s: %w", filename, err)
 		}
 		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migrations.Run: exec %s: %w", filename, err)
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO rimsky_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING", filename); err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("migrations.Run: record %s: %w", filename, err)
 		}
 		if err := tx.Commit(ctx); err != nil {

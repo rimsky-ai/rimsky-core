@@ -2,11 +2,11 @@
 // most one running frame per instance. Enforced by uq_rimsky_frames_running."
 //
 // Two checks:
-//   1. Direct SQL: insert two running rows for the same instance; second insert
-//      must fail with a unique-violation.
-//   2. Concurrent fires through frame.EnqueueOrCoalesce + RunTick advancement
-//      do not produce more than one running frame at a time over the test's
-//      observation window.
+//  1. Direct SQL: insert two running rows for the same instance; second insert
+//     must fail with a unique-violation.
+//  2. Concurrent fires through frame.EnqueueOrCoalesce + RunTick advancement
+//     do not produce more than one running frame at a time over the test's
+//     observation window.
 package frame_resolution
 
 import (

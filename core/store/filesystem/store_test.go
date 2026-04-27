@@ -2,22 +2,20 @@ package filesystem
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// TestFactoryBuild_HappyPath validates the canonical config shape from
-// spec §14.1.
+// TestFactoryBuild_HappyPath validates the canonical config shape.
 func TestFactoryBuild_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	cfg := map[string]any{"mode": "direct", "root": root}
-	s, err := Factory{}.Build("content", cfg)
+	s, err := Factory{}.Build("content", map[string]any{"root": root})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -27,21 +25,17 @@ func TestFactoryBuild_HappyPath(t *testing.T) {
 	if s.Kind() != "filesystem" {
 		t.Fatalf("Kind() = %q, want %q", s.Kind(), "filesystem")
 	}
-	caps := s.Capabilities()
-	if !caps.SupportsRegionLock {
-		t.Fatalf("SupportsRegionLock = false, want true")
+	if got := s.Capabilities().WriteSemantics; got != store.WriteSemanticsDirect {
+		t.Fatalf("WriteSemantics = %q, want direct", got)
 	}
-	if !caps.SupportsResume {
-		t.Fatalf("SupportsResume = false, want true")
-	}
-	if caps.SupportsClaim {
-		t.Fatalf("SupportsClaim = true, want false")
-	}
-	if caps.SupportsDiscard {
-		t.Fatalf("SupportsDiscard = true, want false")
-	}
-	if caps.SupportsRestore {
-		t.Fatalf("SupportsRestore = true, want false")
+}
+
+// TestFactory_MaxWriteSemantics confirms the substrate ceiling is direct.
+func TestFactory_MaxWriteSemantics(t *testing.T) {
+	t.Parallel()
+
+	if got := (Factory{}).MaxWriteSemantics(); got != store.WriteSemanticsDirect {
+		t.Fatalf("MaxWriteSemantics = %q, want direct", got)
 	}
 }
 
@@ -53,12 +47,9 @@ func TestFactoryBuild_RejectsBadConfig(t *testing.T) {
 		name string
 		cfg  map[string]any
 	}{
-		{name: "missing mode", cfg: map[string]any{"root": "/tmp/foo"}},
-		{name: "non-string mode", cfg: map[string]any{"mode": 1, "root": "/tmp/foo"}},
-		{name: "wrong mode", cfg: map[string]any{"mode": "sidecar", "root": "/tmp/foo"}},
-		{name: "missing root", cfg: map[string]any{"mode": "direct"}},
-		{name: "non-string root", cfg: map[string]any{"mode": "direct", "root": 1}},
-		{name: "empty root", cfg: map[string]any{"mode": "direct", "root": ""}},
+		{name: "missing root", cfg: map[string]any{}},
+		{name: "non-string root", cfg: map[string]any{"root": 1}},
+		{name: "empty root", cfg: map[string]any{"root": ""}},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -71,162 +62,111 @@ func TestFactoryBuild_RejectsBadConfig(t *testing.T) {
 	}
 }
 
-// TestStore_HappyPath exercises the full direct-mode lifecycle:
-// AcquireLock → OpenHandle → write to path → Commit → ReleaseLock.
-// Real filesystem; no mocks.
-func TestStore_HappyPath(t *testing.T) {
+// TestStore_Open_ReturnsAddressAndRegion exercises the canonical Open
+// flow: a glob selector resolves to an address rooted under the store
+// root and a region serialised as a JSON glob list.
+func TestStore_Open_ReturnsAddressAndRegion(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	s := mustBuild(t, root)
 
+	cr, err := s.Open(context.Background(), store.ClaimSpec{
+		StoreName: "content",
+		Selector:  "reports/*",
+		Intent:    store.IntentReadWrite,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var addr string
+	if err := json.Unmarshal(cr.Address, &addr); err != nil {
+		t.Fatalf("Address not a JSON string: %v (%q)", err, cr.Address)
+	}
+	want := filepath.Join(root, "reports")
+	if addr != want {
+		t.Fatalf("Address path = %q, want %q", addr, want)
+	}
+	if string(cr.Region) != `["reports/*"]` {
+		t.Fatalf("Region = %q, want %q", cr.Region, `["reports/*"]`)
+	}
+	if cr.Payload != nil {
+		t.Fatalf("Payload = %v, want nil for direct mode", cr.Payload)
+	}
+}
+
+// TestStore_Open_EmptySelector rejects with an error.
+func TestStore_Open_EmptySelector(t *testing.T) {
+	t.Parallel()
+
+	s := mustBuild(t, t.TempDir())
+	if _, err := s.Open(context.Background(), store.ClaimSpec{StoreName: "content"}); err == nil {
+		t.Fatalf("Open(empty selector): expected error, got nil")
+	}
+}
+
+// TestStore_Commit_Abandon_Release_NoOp exercises the no-op verbs.
+func TestStore_Commit_Abandon_Release_NoOp(t *testing.T) {
+	t.Parallel()
+
+	s := mustBuild(t, t.TempDir())
 	ctx := context.Background()
-	spec := store.RegionLockSpec{
-		StoreName:  "content",
-		Region:     []string{"reports/*"},
-		ReadRegion: []string{"shared/**"},
-	}
-
-	// AcquireLock — no-op for direct mode; both results zero-valued.
-	lh, cr, err := s.AcquireLock(ctx, spec)
-	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
-	}
-	if (lh != store.LockHandle{}) {
-		t.Fatalf("AcquireLock LockHandle = %+v, want zero", lh)
-	}
-	if (cr != store.ClaimResult{}) {
-		t.Fatalf("AcquireLock ClaimResult = %+v, want zero", cr)
-	}
-
-	// OpenHandle — supervisor would have stashed regions in ctx.
-	openCtx := WithRegions(ctx, []string{"reports/*"}, []string{"shared/**"})
-	nh, err := s.OpenHandle(openCtx, lh, false)
-	if err != nil {
-		t.Fatalf("OpenHandle: %v", err)
-	}
-	fh, ok := nh.(store.FilesystemDirectHandle)
-	if !ok {
-		t.Fatalf("OpenHandle returned %T, want FilesystemDirectHandle", nh)
-	}
-	if fh.Path != root {
-		t.Fatalf("handle.Path = %q, want %q", fh.Path, root)
-	}
-	if !reflect.DeepEqual(fh.WriteRegions, []string{"reports/*"}) {
-		t.Fatalf("handle.WriteRegions = %v, want %v", fh.WriteRegions, []string{"reports/*"})
-	}
-	if !reflect.DeepEqual(fh.ReadRegions, []string{"shared/**"}) {
-		t.Fatalf("handle.ReadRegions = %v, want %v", fh.ReadRegions, []string{"shared/**"})
-	}
-
-	// Executor-equivalent write: drop a real file under the handle's path.
-	dir := filepath.Join(fh.Path, "reports")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	target := filepath.Join(dir, "summary.txt")
-	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	// Commit — no-op, returns Changed:true.
-	commit, err := s.Commit(ctx, lh)
-	if err != nil {
+	region := []byte(`["reports/*"]`)
+	addr := []byte(`"/data/reports"`)
+	if err := s.Commit(ctx, region, addr, ""); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if !commit.Changed {
-		t.Fatalf("CommitResult.Changed = false, want true")
+	if err := s.Abandon(ctx, region, addr, ""); err != nil {
+		t.Fatalf("Abandon: %v", err)
 	}
-
-	// ReleaseLock under each ReleaseAction must be a no-op.
-	actions := []store.ReleaseAction{
-		store.ReleaseCommit,
-		store.ReleaseDiscard,
-		store.ReleaseGiveUp,
-		store.ReleasePreserveResume,
-	}
-	for _, a := range actions {
-		if err := s.ReleaseLock(ctx, lh, a); err != nil {
-			t.Fatalf("ReleaseLock(%q): %v", a, err)
-		}
-	}
-
-	// Live region survives Commit + ReleaseLock — direct mode does not
-	// scrub the live filesystem.
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile after release: %v", err)
-	}
-	if string(got) != "hello" {
-		t.Fatalf("file contents after release = %q, want %q", got, "hello")
+	if err := s.Release(ctx, region, addr); err != nil {
+		t.Fatalf("Release: %v", err)
 	}
 }
 
-// TestStore_OpenHandle_NoRegions covers the case where the runner forgot
-// to attach regions to the context — the handle still constructs but
-// with empty region slices.
-func TestStore_OpenHandle_NoRegions(t *testing.T) {
+// TestStore_Delete removes the resolved region from disk.
+func TestStore_Delete(t *testing.T) {
 	t.Parallel()
 
-	s := mustBuild(t, t.TempDir())
-	nh, err := s.OpenHandle(context.Background(), store.LockHandle{}, false)
-	if err != nil {
-		t.Fatalf("OpenHandle: %v", err)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "reports", "q1"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
 	}
-	fh := nh.(store.FilesystemDirectHandle)
-	if len(fh.WriteRegions) != 0 || len(fh.ReadRegions) != 0 {
-		t.Fatalf("handle = %+v, want empty WriteRegions and ReadRegions", fh)
+	target := filepath.Join(root, "reports", "q1", "summary.txt")
+	if err := os.WriteFile(target, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
-}
-
-// TestStore_LockEligible_AlwaysTrue confirms the unconditional return —
-// the supervisor has already screened via RegionsConflict by this point.
-func TestStore_LockEligible_AlwaysTrue(t *testing.T) {
-	t.Parallel()
-
-	s := mustBuild(t, t.TempDir())
-	cases := []store.LockSpec{
-		store.RegionLockSpec{StoreName: "x", Region: []string{"a/*"}},
-		store.NamedLockSpec{Name: "n", Mode: store.LockModeMutex},
-		store.ClaimLockSpec{StoreName: "x"},
+	s := mustBuild(t, root)
+	region, _ := json.Marshal([]string{"reports/q1"})
+	if err := s.Delete(context.Background(), region); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
-	for _, sp := range cases {
-		ok, err := s.LockEligible(context.Background(), sp)
-		if err != nil {
-			t.Fatalf("LockEligible(%T): %v", sp, err)
-		}
-		if !ok {
-			t.Fatalf("LockEligible(%T) = false, want true", sp)
-		}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("file still exists after Delete: err=%v", err)
 	}
 }
 
 // TestStore_RegionsConflict_DelegatesToHelper sanity-checks the
-// any-typed wrapper: matched region types delegate to the pure helper;
-// mismatched types fail-closed (return true).
+// bytes-typed wrapper: same-shape input delegates to the pure helper;
+// malformed bytes fail-closed (return true).
 func TestStore_RegionsConflict_DelegatesToHelper(t *testing.T) {
 	t.Parallel()
 
 	s := mustBuild(t, t.TempDir())
 
-	// Same-typed: delegates to RegionsConflict.
-	if !s.RegionsConflict([]string{"a/*"}, []string{"a/foo"}) {
+	if !s.RegionsConflict([]byte(`["a/*"]`), []byte(`["a/foo"]`)) {
 		t.Fatalf("expected conflict for overlapping globs")
 	}
-	if s.RegionsConflict([]string{"a/*"}, []string{"b/*"}) {
+	if s.RegionsConflict([]byte(`["a/*"]`), []byte(`["b/*"]`)) {
 		t.Fatalf("expected disjoint")
 	}
-
-	// Wrong type on either side fails closed (true).
-	if !s.RegionsConflict("not-a-slice", []string{"a/*"}) {
-		t.Fatalf("expected fail-closed conflict on bad type")
-	}
-	if !s.RegionsConflict([]string{"a/*"}, 42) {
-		t.Fatalf("expected fail-closed conflict on bad type")
+	// Malformed bytes fail closed.
+	if !s.RegionsConflict([]byte(`not-json`), []byte(`["a/*"]`)) {
+		t.Fatalf("expected fail-closed conflict on malformed bytes")
 	}
 }
 
-// TestStore_UnmarshalRegion verifies JSONB → []string round-trip and
+// TestStore_UnmarshalRegion verifies the canonical-bytes round-trip and
 // rejects malformed input.
 func TestStore_UnmarshalRegion(t *testing.T) {
 	t.Parallel()
@@ -236,14 +176,9 @@ func TestStore_UnmarshalRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalRegion: %v", err)
 	}
-	globs, ok := got.([]string)
-	if !ok {
-		t.Fatalf("UnmarshalRegion returned %T, want []string", got)
+	if string(got) != `["a/*", "b/foo"]` {
+		t.Fatalf("got %q, want unchanged input", got)
 	}
-	if !reflect.DeepEqual(globs, []string{"a/*", "b/foo"}) {
-		t.Fatalf("globs = %v, want %v", globs, []string{"a/*", "b/foo"})
-	}
-
 	if _, err := s.UnmarshalRegion([]byte(`{"not": "an array"}`)); err == nil {
 		t.Fatalf("expected error on object input")
 	}
@@ -252,26 +187,9 @@ func TestStore_UnmarshalRegion(t *testing.T) {
 	}
 }
 
-// TestStore_HasPriorWork_AlwaysFalse documents the v1 behaviour: direct
-// mode never reports prior work; the executor itself is responsible for
-// noticing partial state on disk.
-func TestStore_HasPriorWork_AlwaysFalse(t *testing.T) {
-	t.Parallel()
-
-	s := mustBuild(t, t.TempDir())
-	got, err := s.HasPriorWork(context.Background(),
-		store.RegionLockSpec{StoreName: "x", Region: []string{"a/*"}})
-	if err != nil {
-		t.Fatalf("HasPriorWork: %v", err)
-	}
-	if got {
-		t.Fatalf("HasPriorWork = true, want false")
-	}
-}
-
 func mustBuild(t *testing.T, root string) *Store {
 	t.Helper()
-	s, err := Factory{}.Build("content", map[string]any{"mode": "direct", "root": root})
+	s, err := Factory{}.Build("content", map[string]any{"root": root})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

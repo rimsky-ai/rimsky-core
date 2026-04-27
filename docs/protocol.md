@@ -2,7 +2,11 @@
 
 Reference for the protocol rimsky supervisors use to dispatch work to executors. This document covers transports, message shapes, terminal-event semantics, async handoff, the incremental attributes callback, the supervisor-side action mapping, userdata conventions, versioning, auth, conformance, and worked examples. It is the wire contract in human-readable form; the authoritative source is `proto/v1/node_executor.proto`.
 
-Conceptual context (nodes, messages, attributes, stores, locks) lives in `node-graph-design.md`; implementation shape (package layout, processes, library entry points) lives in `architecture.md`. The full design rationale for the v1 surface lives in `specs/2026-04-25-stores-redesign-design.md` §12.
+Conceptual context (nodes, messages, attributes, stores, locks) lives in `node-graph-design.md`; implementation shape (package layout, processes, library entry points) lives in `architecture.md`. The store-side surface (the 5-verb interface and how the executor envelope's per-store handle is produced) is specified in `specs/2026-04-27-stores-redesign-v2-design.md` §6 and §11; vocabulary lives in `glossary.md`.
+
+## Vocabulary
+
+The terms used in this document (claim, named lock, region, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, value-pass, claim-pass, write_semantics, pick policy) are defined in `docs/glossary.md`. When this doc and the glossary disagree, the glossary wins.
 
 ---
 
@@ -79,7 +83,8 @@ message ExecuteRequest {
   // regardless.
   google.protobuf.Struct attributes_schema = 6;
 
-  // Handles for each store the node references. Keyed by store-config name.
+  // Handles for each store the node references. Keyed by alias (the per-claim
+  // name within the node; defaults to the store name).
   map<string, StoreHandle> stores = 7;
 
   // HTTP+JSON callback URL the executor may POST to for async handoff and
@@ -92,28 +97,21 @@ message ExecuteRequest {
   // async terminal callback. Format is opaque to executors.
   string cancel_token = 9;
 
-  // True iff the dispatch is a resumed retry (resumable: true +
-  // resume_then_retry). The executor may use this to short-circuit re-running
-  // already-completed work.
-  bool resumed = 10;
+  // Reserved (formerly `resumed`). Resume is universal — the substrate
+  // detects resumed-vs-fresh internally by lookup against its own state,
+  // keyed by the lock-holder identity. There is no protocol-level resume
+  // flag; see §11.5 of the v2 design.
+  reserved 10;
 
   // Increments on every retry. Exposed for executor visibility / idempotency.
   int32 run_attempt = 11;
 }
 
 message StoreHandle {
-  // "filesystem" | "claim_store" (and future kinds).
-  string kind = 1;
-  // Kind-specific handle payload (e.g. paths for filesystem, claim id +
-  // payload for claim_store).
+  // Substrate-native address bytes returned by Store.Open. Opaque to Rimsky
+  // (transported as JSON); the executor decodes per its substrate-specific
+  // knowledge of the store's `kind`.
   google.protobuf.Struct handle = 2;
-  // Region intents the supervisor pre-acquired write-locks for.
-  repeated string write_regions = 3;
-  // Region intents the supervisor pre-acquired read-locks for.
-  repeated string read_regions = 4;
-  // True iff store-side prior work exists for this dispatch (e.g. a sidecar
-  // tree from a previous resumable attempt).
-  bool resumed = 5;
 }
 ```
 
@@ -122,13 +120,16 @@ Field details:
 - `node_id` / `instance_id` — UUIDs. Echoed in async callbacks.
 - `node_type` — template-relative type name. Executors can route internally on this.
 - `userdata` — opaque JSON. See §6.
-- `attributes` — the node's typed per-run attribute object. Source-directive fields (e.g. `source: "{{deps.upstream.field}}"` or `source: "{{params.x}}"` or `source: "{{claim.payload.field}}"`) are pre-populated by the supervisor at dispatch from upstream attributes, claim payloads, and instance params; the executor should treat that subtree as read-only input. Sourceless fields are slots the executor is expected to fill in (terminal-final via `Complete.attributes_delta`, or incremental via the §5 callback).
-- `attributes_schema` — the JSON Schema for `attributes`, copied verbatim from the node template. Provided for executor reference and for languages where carrying the schema simplifies validation. Rimsky validates `attributes` against this schema both at dispatch (after substitution) and at commit (after writeback) regardless of whether the executor validates.
-- `stores` — map of store-config-name → `StoreHandle` for every store the node references. The supervisor pre-acquires the declared region (or claim) locks before populating this map; `write_regions` and `read_regions` reflect what was acquired. `kind` selects the handle shape (e.g. `filesystem` payloads carry concrete paths; `claim_store` payloads carry the claim id and its payload). See `node-graph-design.md` for the store model.
+- `attributes` — the node's typed per-run attribute object. Source-directive fields (`source: "{{deps.<n>.<f>}}"`, `source: "{{claim.<alias>.address}}"`, `source: "{{claim.<alias>.payload.<f>}}"`, `source: "{{claim.<alias>.region}}"`, or `source: "{{params.<k>}}"`) are pre-populated by the supervisor at dispatch from upstream attributes, claim content, and instance params; the executor should treat that subtree as read-only input. Sourceless fields are slots the executor is expected to fill in (terminal-final via `Complete.attributes_delta`, or incremental via the §5 callback).
+- `attributes_schema` — the JSON Schema for `attributes`, copied verbatim from the node template. Provided for executor reference. Rimsky validates `attributes` against this schema both at dispatch (after substitution) and at commit (after writeback) regardless of whether the executor validates.
+- `stores` — map of alias → `StoreHandle` for every claim the node acquired or inherited. The supervisor calls `Store.Open` per claim inside the atomic acquisition transaction (spec §13.3 / blessed invariant 15) and packages the returned `Address` bytes opaquely into each `StoreHandle.handle` field. The executor decodes the bytes per its substrate-specific knowledge of the store's `kind` (declared in operator config; e.g. `filesystem` returns a path-shaped address, `postgres` returns a row-locator-shaped address).
 - `callback_url` — base URL for both the async-handoff terminal callback (§4) and the incremental attributes callback (§5). Empty string if the supervisor is not configured for callbacks; in that mode the executor must not emit `AsyncAccepted` and must not attempt incremental writeback.
 - `cancel_token` — supervisor-issued bearer token. Executors echo it as `Authorization: Bearer <cancel_token>` on incremental-attributes POSTs and on async terminal callbacks; the supervisor authenticates by comparing the token against the live dispatch row.
-- `resumed` — `true` iff this dispatch is a retry of a `resumable: true` node where the previous attempt's outcome routed through `resume_then_retry`. Lets the executor short-circuit work that already landed (the supervisor preserved the corresponding store-side state and `rimsky_node_attributes.data` across the retry boundary).
 - `run_attempt` — 1-indexed retry counter, useful for idempotency keys and progress reporting.
+
+#### 2.1.1 Intent vs. write_semantics
+
+Each claim in a node template carries an `intent` field — `"r"` (read-only) or `"rw"` (read-write) — which is the **graph author's** declaration of how the executor will use the claim. Each store carries a `write_semantics` field — `"direct"`, `"staged_blocking"`, or `"staged_async"` — which is the **substrate's** declaration of how writes coordinate with readers (operator-configured, bounded above by the store kind's max capability). Together they form the claim's effective mode used for the conflict predicate (sync vs. async × r vs. w; see spec §8.5). Both are invisible at the wire level — the executor sees only the resolved `Address` — but matter for understanding which dispatches are eligible to run concurrently.
 
 ### 2.2 `ExecuteEvent`
 
@@ -203,7 +204,7 @@ Successful execution. The executor reports:
 The supervisor:
 
 1. Merges the delta into the per-node attribute row, validates against `attributes_schema`, and on success emits `attributes_committed`. Validation failure is treated as a commit-time `attributes_schema_failed` and routed through the policy chain.
-2. Resolves the node's stores per §2.6 of the spec (commit / discard / preserve / give-up actions per the ReleaseLock mode chosen by the policy chain — see §7 below).
+2. Resolves each of the node's claims per the 5-verb store interface — non-held claims fire `Store.Commit` / `Abandon` / `Delete` immediately at the acquirer's terminal; held claims update their `rimsky_claim_holders` row and let the auto-terminal mechanism (spec §14.4) fire exactly one resolution at holding-subgraph completion. See §7 below.
 
 ### 3.3 `Blocked` (terminal)
 
@@ -409,18 +410,19 @@ The opacity is load-bearing. It is what lets rimsky serve every domain — HTTP,
 
 ## 7. Supervisor-side action mapping per terminal event
 
-The supervisor's per-store action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative.
+The supervisor's per-store-claim action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative; the verbs are the 5-verb store interface (`Open` / `Commit` / `Abandon` / `Delete` / `Release`) defined in spec §6.
 
-| Terminal event                                 | Direct mode                                                                | Sidecar / Versioned (post-v1)              |
-|------------------------------------------------|----------------------------------------------------------------------------|--------------------------------------------|
-| `Complete{changed: true}`                      | `Commit` (no-op for direct), validate attributes, `ReleaseLock(commit)`    | sidecar applied + lock released            |
-| `Complete{changed: false}`                     | `ReleaseLock(commit)`; `attributes` validated only if executor wrote any   | sidecar discarded + lock released          |
-| `Blocked` / `Errored` + `discard_then_retry`   | `ReleaseLock(give_up)` (in-flight writes already on disk)                  | sidecar discarded + lock released          |
-| `Blocked` / `Errored` + `resume_then_retry`    | `ReleaseLock(preserve_for_resume)` (sidecar IS the live tree)              | sidecar preserved + lock released          |
-| `Blocked` / `Errored` + `give_up`              | `ReleaseLock(give_up)`                                                     | sidecar discarded + lock released          |
-| `Errored` + `invalidate(targets)`              | `ReleaseLock(give_up)` + invalidate targets                                | same                                       |
+| Terminal event                                 | Per-claim action (non-held; acquirer's terminal)                                                  |
+|------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `Complete{changed: true}`                      | Validate attributes; `Commit(region, address, policyOverride)`; delete lock-holder row            |
+| `Complete{changed: false}`                     | `Commit(region, address, policyOverride)`; delete lock-holder row                                 |
+| `Blocked` / `Errored` + `give_up`              | `Abandon(region, address, policyOverride)`; delete lock-holder row                                |
+| `Blocked` / `Errored` + `retry`                | `Abandon(region, address, policyOverride)`; delete lock-holder row; re-enqueue dispatch           |
+| `Errored` + `invalidate(targets)`              | `Abandon(region, address, policyOverride)`; delete lock-holder row; emit invalidate to targets    |
 
-For claim stores, `ReleaseLock(commit)` honours the claim's `on_commit` action; `ReleaseLock(give_up)` honours `on_give_up`. For held claims, the action is processed via the held-claim resolution algorithm (see spec §5.6.4).
+`policyOverride` is the value declared on the acquirer's `claim_resolutions[<alias>]` block — `"commit"` / `"abandon"` (defaults), `"delete"`, `"release_to_back"`, or `"release_to_head"`. The supervisor's auto-terminal routing per spec §14.4.1 maps these to verb calls: `"delete"` → `Store.Delete(region)` (regardless of success / failure path); pick-policy values pass through as the third argument to `Commit` / `Abandon`. For `direct`-mode regional `rw` claims, `Commit` is a substrate no-op and `Abandon` is degenerate (direct writes cannot be undone — the store-author guide documents this honest limitation).
+
+For **held claims** (any claim referenced by an `inherits:` block in a downstream node), per-node terminals only update the corresponding `rimsky_claim_holders` row to `'completed'` or `'failed'` — no substrate verb fires. The auto-terminal mechanism (spec §14.4) fires exactly one resolution at holding-subgraph completion: aggregate outcome = all-completed → `on_commit`; any-failed → `on_give_up`. See §13 in `architecture.md` (blessed invariant 13) and `core/supervisor/auto_terminal.go`.
 
 `AsyncAccepted` is not in the table because it is not a run-terminating outcome on its own — the row above is selected once the async terminal callback arrives carrying one of `complete | blocked | errored`.
 

@@ -12,8 +12,8 @@
 // adapter (LockHoldersStore) that satisfies storage.LockHoldersStore by
 // delegating to *store.LockHoldersClient. Callers that need the helpers not
 // represented in the storage interface (RefreshHeartbeat,
-// ListByNodeAndStore, RebindForResume, …) reach into the adapter via its
-// Client() method.
+// ExtendHeartbeatForRunningNodes, ListByStoreRegion, CountByNamedLock)
+// reach into the adapter via its Client() method.
 package postgres
 
 import (
@@ -79,7 +79,7 @@ func (b *PostgresStorageBackend) LockHolders() storage.LockHoldersStore {
 
 // LockHoldersClient returns the core/store layer client. Provided so the
 // supervisor's runner and the scheduler's sweepers can use the helpers
-// (RefreshHeartbeat, ListByNodeAndStore, RebindForResume, …) that don't
+// (RefreshHeartbeat, ListByStoreRegion, CountByNamedLock, …) that don't
 // fit the storage.LockHoldersStore interface.
 func (b *PostgresStorageBackend) LockHoldersClient() *store.LockHoldersClient {
 	return b.lockHolders.Client()
@@ -151,7 +151,7 @@ func WrapPgxTx(tx pgx.Tx) storage.Tx {
 // PgxTxFromStorage is the inverse of WrapPgxTx: it unwraps a storage.Tx
 // to its underlying pgx.Tx. Returns (nil, nil) when stx is nil. Useful
 // for callers that hold a storage.Tx but need to run pgx-level helpers
-// (e.g. the supervisor runner's claim-store SQL) inside the same
+// (e.g. the supervisor runner's per-store SQL) inside the same
 // transaction.
 func PgxTxFromStorage(stx storage.Tx) (pgx.Tx, error) {
 	return pgxTxFromStorage(stx)

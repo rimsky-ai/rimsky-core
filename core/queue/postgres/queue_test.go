@@ -190,7 +190,7 @@ func TestEnqueueAndClaim_Happy(t *testing.T) {
 		NodeID:         nodeID,
 		ExecutorName:   "ingest",
 		RequiredStores: []string{"items_store"},
-		EnqueuedAt:     time.Now(),
+		EnqueuedAt:     time.Now().Add(-time.Second),
 	}))
 
 	cand := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
@@ -227,7 +227,7 @@ func TestEnqueue_NativeNodeHasNullExecutor(t *testing.T) {
 	nodeID := insertNode(t, pool, "stale", "native_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID:     nodeID,
-		EnqueuedAt: time.Now(),
+		EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 
 	var execName *string
@@ -247,7 +247,7 @@ func TestSelectCandidates_NativeNodesAreReturnedRegardlessOfExecutorAcceptList(t
 	nodeID := insertNode(t, pool, "stale", "native_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID:     nodeID,
-		EnqueuedAt: time.Now(),
+		EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 
 	cand := claimWithRunner(ctx, t, q, "sup-1", queue.SelectCandidatesRequest{
@@ -299,7 +299,7 @@ func TestSelectCandidates_FiltersByRequiredStores(t *testing.T) {
 		NodeID:         nA,
 		ExecutorName:   "ingest",
 		RequiredStores: []string{"store_a"},
-		EnqueuedAt:     time.Now(),
+		EnqueuedAt:     time.Now().Add(-time.Second),
 	}))
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID:         nB,
@@ -349,7 +349,7 @@ func TestSelectCandidates_SkipLocked_TwoConcurrentTransactions(t *testing.T) {
 
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 
 	// Open two transactions in parallel; SKIP LOCKED must give the row
@@ -422,7 +422,7 @@ func TestClaimDispatchRow_GuardedReturnsFalseWhenAlreadyClaimed(t *testing.T) {
 
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 
 	// First claim through the runner pattern.
@@ -513,7 +513,7 @@ func TestReleaseClaim_Guarded_NoOpOnMismatch(t *testing.T) {
 
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	cand := claimWithRunner(ctx, t, q, "sup-winner", queue.SelectCandidatesRequest{
 		AcceptedExecutors: []string{"ingest"},
@@ -555,7 +555,7 @@ func TestListOrphanedClaims_FiltersOnLastHeartbeatAt(t *testing.T) {
 	nFresh := insertNode(t, pool, "stale", "type_x")
 
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nStale, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nStale, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: nFresh, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(1 * time.Millisecond),
@@ -595,7 +595,7 @@ func TestRefreshHeartbeat_BumpsClaimedRows(t *testing.T) {
 	n2 := insertNode(t, pool, "stale", "type_x")
 
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: n1, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: n1, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
 		NodeID: n2, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(1 * time.Millisecond),
@@ -645,7 +645,7 @@ func TestGetClaimedBy_ThreeKinds(t *testing.T) {
 	// unclaimed
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	var dispatchID shared.UUID
 	err = pool.QueryRow(ctx, `SELECT id FROM rimsky_dispatch WHERE node_id = $1`, nodeID).Scan(&dispatchID)
@@ -673,7 +673,7 @@ func TestComplete_GuardedDoesNotDeleteFreshClaim(t *testing.T) {
 
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	cand := claimWithRunner(ctx, t, q, "sup-fresh", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
 	require.NotNil(t, cand)
@@ -702,8 +702,11 @@ func TestRemoveForNode_GuardedDoesNotRemoveLiveClaim(t *testing.T) {
 	t.Cleanup(teardown)
 
 	nodeID := insertNode(t, pool, "stale", "ingest_type")
+	// EnqueuedAt deliberately in the past so the
+	// `enqueued_at <= NOW()` predicate isn't flaky against the
+	// postgres container's clock.
 	require.NoError(t, enqueueWithFrame(t, q, ctx, queue.DispatchRequest{
-		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now(),
+		NodeID: nodeID, ExecutorName: "ingest", EnqueuedAt: time.Now().Add(-time.Second),
 	}))
 	cand := claimWithRunner(ctx, t, q, "sup-live", queue.SelectCandidatesRequest{AcceptedExecutors: []string{"ingest"}})
 	require.NotNil(t, cand)

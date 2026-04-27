@@ -1,50 +1,32 @@
-// Lock-spec construction + template lookup helpers extracted from
-// runner_acquire.go for the cold-read 500-line file guideline.
+// Lock-spec construction + template lookup helpers.
 //
-// Functions here are pure (or near-pure) translations between the
-// template's per-node-type lock declarations and the concrete
-// store.LockSpec / store.LockHolderRow shapes the acquisition tx
-// needs:
+// Two primitives, two types: store.NamedLockSpec and store.ClaimSpec.
+// There is no LockSpec interface; this file's helpers operate on `any`
+// values and dispatch by type-switch.
 //
-//   - sortLockSpecs / sortKeyForSpec / storeNameForSpec — the §13.7
-//     deterministic ordering used by every step that walks the spec
-//     slice (advisory locks 3b, region re-eval 3d, AcquireLock loop
-//     3e, the terminal handler's release loop).
-//   - buildLockSpecs / substituteSlice — translate
-//     TemplateNodeDef.Stores+Locks into LockSpec values, running
-//     `{{params.x}}` / `{{deps.x.field}}` substitution per §10.2.
-//   - loadDepsAttributes — the dep-attributes lookup used by
-//     substitution; mirrored at dispatch time by
-//     loadDepsAttributesByID in runner_dispatch.go.
-//   - lookupTemplate / lookupNodeDef — convenience wrappers around the
-//     storage backend for the per-instance template + node-def.
-//   - mustParseUUID — panic-on-corrupt-state helper for UUIDs we
-//     previously stringified ourselves.
-//
-// No new behaviour; these are exact moves to keep runner_acquire.go
-// focused on the §13.3 transaction.
+// Spec §13.7 deterministic ordering: (kind, sort_key) with
+// "named" < "region" and:
+//   - NamedLockSpec sort key: Name
+//   - ClaimSpec sort key:     StoreName + ":" + Selector (post-substitution)
 
 package supervisor
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
-
-	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// sortLockSpecs orders specs by (kind, sort_key) per §13.7.
-func sortLockSpecs(specs []store.LockSpec) {
+// sortLockSpecs orders specs by (kind, sort_key) per §13.7. Inputs may
+// be NamedLockSpec or ClaimSpec values; unknown types sort last.
+func sortLockSpecs(specs []any) {
 	sort.SliceStable(specs, func(i, j int) bool {
-		ki, kj := specs[i].Kind(), specs[j].Kind()
+		ki, kj := kindForSpec(specs[i]), kindForSpec(specs[j])
 		if ki != kj {
 			return ki < kj
 		}
@@ -52,118 +34,176 @@ func sortLockSpecs(specs []store.LockSpec) {
 	})
 }
 
+// kindForSpec returns the §13.7 kind tag for a spec value.
+// "named" < "region"; the lexical ordering matches the spec table.
+func kindForSpec(sp any) string {
+	switch sp.(type) {
+	case store.NamedLockSpec:
+		return "named"
+	case store.ClaimSpec:
+		return "region"
+	}
+	return "zzz"
+}
+
 // sortKeyForSpec computes the §13.7 sort key for a spec.
-func sortKeyForSpec(sp store.LockSpec) string {
+func sortKeyForSpec(sp any) string {
 	switch v := sp.(type) {
 	case store.NamedLockSpec:
 		return v.Name
-	case store.RegionLockSpec:
-		b, _ := json.Marshal(v.Region)
-		return v.StoreName + ":" + string(b)
-	case store.ClaimLockSpec:
-		return v.StoreName
+	case store.ClaimSpec:
+		return v.StoreName + ":" + v.Selector
 	}
 	return ""
 }
 
-// storeNameForSpec returns the store name for region/claim specs, or
-// "" for named locks.
-func storeNameForSpec(sp store.LockSpec) string {
-	switch v := sp.(type) {
-	case store.RegionLockSpec:
-		return v.StoreName
-	case store.ClaimLockSpec:
+// storeNameForSpec returns the store name for ClaimSpec, or "" for
+// NamedLockSpec.
+func storeNameForSpec(sp any) string {
+	if v, ok := sp.(store.ClaimSpec); ok {
 		return v.StoreName
 	}
 	return ""
 }
 
 // buildLockSpecs translates the template's per-node-type Stores+Locks
-// declarations into concrete LockSpec values. Substitutes
-// `{{params.x}}` etc. into region patterns and named-lock names per
-// §10.2.
+// declarations into concrete spec values. Substitutes `{{params.x}}`,
+// `{{deps.<n>.<f>}}`, and `{{claim.<alias>.{address|region|payload.<f>}}}`
+// (when the alias has a live inherited claim) into the selector and
+// named-lock name per spec §16.5.
 func buildLockSpecs(
 	ctx context.Context, args RunArgs,
 	nd *storage.NodeRow, def *node.TemplateNodeDef, inst *storage.InstanceRow,
-) ([]store.LockSpec, error) {
+) ([]any, error) {
 	if def == nil {
 		return nil, nil
 	}
-	var params map[string]any
-	if inst != nil {
-		params = inst.Params
+	var paramsRaw json.RawMessage
+	if inst != nil && len(inst.Params) > 0 {
+		b, err := json.Marshal(inst.Params)
+		if err != nil {
+			return nil, err
+		}
+		paramsRaw = b
 	}
 	resolveCtx := attributes.ResolveContext{
-		Params: params,
+		Params: paramsRaw,
 		Deps:   loadDepsAttributes(ctx, args, nd),
+		Claim:  loadInheritedClaimsForNode(ctx, args, nd),
 	}
 
-	out := make([]store.LockSpec, 0, len(def.Locks)+len(def.Stores))
+	out := make([]any, 0, len(def.Locks)+len(def.Stores))
 	for _, l := range def.Locks {
 		nameSub, err := attributes.Substitute(l.Name, resolveCtx)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, store.NamedLockSpec{
-			Name:  nameSub,
-			Mode:  l.Mode,
-			Limit: l.Limit,
-		})
+		out = append(out, store.NamedLockSpec{Name: nameSub})
 	}
 	for _, sref := range def.Stores {
-		write, err := substituteSlice(sref.Write, resolveCtx)
+		selectorSub, err := attributes.Substitute(sref.Selector, resolveCtx)
 		if err != nil {
 			return nil, err
 		}
-		read, err := substituteSlice(sref.Read, resolveCtx)
-		if err != nil {
-			return nil, err
-		}
-		if sref.Claim {
-			out = append(out, store.ClaimLockSpec{
-				StoreName: sref.Name,
-				Hold:      sref.Hold,
-				OnCommit:  sref.OnCommit,
-				OnGiveUp:  sref.OnGiveUp,
-				Resumable: sref.Resumable,
-			})
-		}
-		if len(write) > 0 || len(read) > 0 {
-			out = append(out, store.RegionLockSpec{
-				StoreName:  sref.Name,
-				Region:     write,
-				ReadRegion: read,
-				Resumable:  sref.Resumable,
-			})
-		}
+		out = append(out, store.ClaimSpec{
+			StoreName: sref.Name,
+			Selector:  selectorSub,
+			Intent:    store.Intent(sref.Intent),
+			Alias:     sref.AliasOf(),
+		})
 	}
 	return out, nil
 }
 
-func substituteSlice(in []string, ctx attributes.ResolveContext) ([]string, error) {
-	if len(in) == 0 {
-		return nil, nil
+// loadInheritedClaimsForNode reads this node's active rimsky_claim_holders
+// rows, joins each to its lock-holder, and returns a per-alias
+// store.ClaimResult map suitable for `{{claim.<alias>.…}}` substitution.
+// Aliases for which this node is itself the acquirer are resolved from
+// the lock-holder rows the supervisor wrote at acquire time. Returns nil
+// when the node holds no claim-holder rows.
+func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *storage.NodeRow) map[string]store.ClaimResult {
+	if nd == nil {
+		return nil
 	}
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		v, err := attributes.Substitute(s, ctx)
-		if err != nil {
-			return nil, err
+	rows, err := args.Storage.ClaimHolders().ListByHolderNode(ctx, nd.ID, nil)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	inst, err := args.Storage.Instances().Get(ctx, nd.InstanceID, nil)
+	if err != nil || inst == nil {
+		return nil
+	}
+	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
+	if err != nil || tmpl == nil {
+		return nil
+	}
+	out := map[string]store.ClaimResult{}
+	for _, r := range rows {
+		lh, err := args.Storage.LockHolders().Get(ctx, r.LockHolderID, nil)
+		if err != nil || lh == nil {
+			continue
 		}
-		out = append(out, v)
+		acquirer, err := args.Storage.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		if err != nil || acquirer == nil {
+			continue
+		}
+		acqDef := lookupNodeDef(&tmpl.Spec, acquirer.NodeType)
+		if acqDef == nil {
+			continue
+		}
+		alias := aliasFromAcquirerStores(acqDef, lh)
+		if alias == "" {
+			continue
+		}
+		out[alias] = store.ClaimResult{
+			Address: lh.Address,
+			Region:  lh.RegionData,
+		}
 	}
-	return out, nil
+	return out
+}
+
+// aliasFromAcquirerStores resolves the alias-name on the acquirer
+// NodeDef whose store_name matches the lock-holder row, preferring an
+// alias whose substituted selector matches the row's region_data.
+func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *storage.LockHolderRow) string {
+	if def == nil || lh == nil || lh.StoreName == nil {
+		return ""
+	}
+	storeName := *lh.StoreName
+	candidates := make([]node.NodeStoreRef, 0, len(def.Stores))
+	for _, sref := range def.Stores {
+		if sref.Name == storeName {
+			candidates = append(candidates, sref)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0].AliasOf()
+	}
+	for _, sref := range candidates {
+		encoded, err := json.Marshal(sref.Selector)
+		if err != nil {
+			continue
+		}
+		if string(lh.RegionData) == string(encoded) {
+			return sref.AliasOf()
+		}
+	}
+	return candidates[0].AliasOf()
 }
 
 // loadDepsAttributes pulls each upstream node's
 // rimsky_node_attributes.data into a map keyed by the upstream's
-// node_type. Used by region/lock-name substitution; the dispatch path
-// uses the same shape.
-func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) map[string]map[string]any {
+// node_type, marshalled to json.RawMessage so the substitution engine
+// can lazy-walk into it.
+func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) map[string]json.RawMessage {
 	if nd == nil || len(nd.Dependencies) == 0 {
 		return nil
 	}
-	out := make(map[string]map[string]any, len(nd.Dependencies))
+	out := make(map[string]json.RawMessage, len(nd.Dependencies))
 	for _, depID := range nd.Dependencies {
 		depNode, _ := args.Storage.Nodes().Get(ctx, depID, nil)
 		if depNode == nil {
@@ -173,7 +213,11 @@ func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) 
 		if err != nil || row == nil {
 			continue
 		}
-		out[depNode.NodeType] = row.Data
+		raw, err := json.Marshal(row.Data)
+		if err != nil {
+			continue
+		}
+		out[depNode.NodeType] = raw
 	}
 	return out
 }
@@ -201,15 +245,4 @@ func lookupNodeDef(tmpl *node.TemplateSpec, nodeType string) *node.TemplateNodeD
 		}
 	}
 	return nil
-}
-
-// mustParseUUID is a panic-on-failure helper. Used only when parsing a
-// UUID we previously stringified ourselves; if parsing fails the caller
-// has corrupted state.
-func mustParseUUID(s string) shared.UUID {
-	u, err := uuid.Parse(s)
-	if err != nil {
-		panic(fmt.Sprintf("mustParseUUID: %v", err))
-	}
-	return u
 }

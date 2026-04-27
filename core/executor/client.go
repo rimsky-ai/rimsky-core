@@ -38,7 +38,7 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.Dial(endpoint.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}
@@ -54,7 +54,9 @@ func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (Ev
 }
 func (c *grpcClient) Close() error { return c.conn.Close() }
 
-type grpcEventStream struct{ s genv1.NodeExecutor_ExecuteClient }
+type grpcEventStream struct {
+	s genv1.NodeExecutor_ExecuteClient
+}
 
 func (e *grpcEventStream) Recv() (*genv1.ExecuteEvent, error) {
 	ev, err := e.s.Recv()

@@ -2,7 +2,7 @@
 // supervisor process. Reads a YAML config path from RIMSKY_SUPERVISOR_CONFIG,
 // parses it into a typed struct, wires dependencies (pgxpool, storage, queue,
 // resolver), loads the stores config from RIMSKY_STORES_CONFIG and registers
-// the linked-in store factories (filesystem, claim-store-postgres), then
+// the linked-in store factories (filesystem, postgres), then
 // calls config.StartSupervisor. SIGTERM/SIGINT triggers a 30s graceful
 // shutdown.
 //
@@ -54,8 +54,8 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/claimstorepg"
 	"github.com/fallguy/rimsky/core/store/filesystem"
+	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
 // defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is unset.
@@ -104,7 +104,7 @@ func main() {
 	if storesPath == "" {
 		storesPath = defaultStoresConfigPath
 	}
-	storesCfg, err := loadStoresConfig(storesPath)
+	storesCfg, namedLocksCfg, err := loadStoresConfig(storesPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
 		os.Exit(1)
@@ -183,11 +183,12 @@ func main() {
 
 	// Linked-in store factories. The reference binary registers the two
 	// production-ready store kinds (`filesystem` direct-mode and
-	// `claim_store` postgres-backed). Embedding deployers can extend this
-	// list with custom factories before calling config.StartSupervisor.
+	// `postgres` substrate-side pick-policy). Embedding deployers can
+	// extend this list with custom factories before calling
+	// config.StartSupervisor.
 	storeFactories := []store.Factory{
 		filesystem.Factory{},
-		claimstorepg.Factory{Pool: pool},
+		pgstore.Factory{},
 	}
 
 	resolver := executor.NewStaticResolver(endpoints)
@@ -204,6 +205,7 @@ func main() {
 		Resolver:              resolver,
 		StoreFactories:        storeFactories,
 		Stores:                storesCfg,
+		NamedLocks:            namedLocksCfg,
 		CallbackHost:          callbackHost,
 		CallbackPort:          callbackPort,
 		CallbackAdvertiseHost: advertiseHost,
@@ -241,27 +243,30 @@ func loadYAML(path string) (yamlConfig, error) {
 	return cfg, nil
 }
 
-// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR} references
-// before YAML parsing. A missing file is not an error: an empty
-// store.StoresConfig is returned, which produces an empty registry and lets
-// supervisors run without any stores configured (useful for stub-only test
-// stacks). Any other read or parse error is propagated.
-func loadStoresConfig(path string) (store.StoresConfig, error) {
+// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR}
+// references before YAML parsing. Returns the parsed stores +
+// named_locks blocks (spec §15.3 — one operator config bundle, two
+// top-level keys). A missing file is not an error: empty configs
+// returned.
+func loadStoresConfig(path string) (store.StoresConfig, store.NamedLocksConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return store.StoresConfig{}, nil
+			return store.StoresConfig{}, store.NamedLocksConfig{}, nil
 		}
-		return store.StoresConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
+		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
 	}
 	expanded := os.ExpandEnv(string(raw))
 	var wrapper struct {
-		Stores map[string]map[string]any `yaml:"stores"`
+		Stores     map[string]map[string]any        `yaml:"stores"`
+		NamedLocks map[string]store.NamedLockConfig `yaml:"named_locks"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return store.StoresConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
+		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
 	}
-	return store.StoresConfig{Stores: wrapper.Stores}, nil
+	return store.StoresConfig{Stores: wrapper.Stores},
+		store.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		nil
 }
 
 func parseLogLevel(s string) slog.Level {

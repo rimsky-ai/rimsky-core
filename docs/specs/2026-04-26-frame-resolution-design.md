@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-26
 **Status:** design proposal — ready for plan + implementation
-**Genesis:** the design proposal at `docs/2026-04-25-frame-resolution.md` (read first; that doc captures the problem statement, the failed smoke test that surfaced the gap, the four-rule design space, and the rationale for the choices made in this spec). The design proposal answered "what is the problem and what's the design space"; this document answers "what shall we build."
+**Genesis:** the design proposal at `docs/history/2026-04-25-frame-resolution.md` (moved to history after this spec's implementation shipped; read first if context is needed — that doc captures the problem statement, the failed smoke test that surfaced the gap, the four-rule design space, and the rationale for the choices made in this spec). The design proposal answered "what is the problem and what's the design space"; this document answers "what shall we build."
 **Foundation:** assumes the stores-redesign spec at `docs/specs/2026-04-25-stores-redesign-design.md` as the underlying contract. References to §X.Y in this spec are to that spec unless otherwise noted.
 
 ---

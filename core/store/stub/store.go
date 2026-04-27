@@ -1,8 +1,15 @@
+// In-process stub store. Holds state in memory; no postgres, no
+// filesystem. Suitable for scenario tests that exercise runner /
+// state-machine semantics without standing up real store
+// infrastructure. Implements the five-verb store.Store interface
+// (spec §11.5).
+
 package stub
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -11,34 +18,25 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// Store is the in-memory stub store. State is held entirely in the
-// Store itself; no postgres, no filesystem. Suitable for scenario tests
-// that exercise runner / state-machine semantics without needing real
-// store infrastructure.
+// Store is the in-memory stub store. State held entirely in Store
+// itself; no external resources. Two operating modes:
 //
-// State by mode:
+//   - Region-direct mode (default): selectors map directly to opaque
+//     region tokens. Tokens conflict iff equal (or contain a common
+//     element when serialized as JSON arrays). Open returns the
+//     selector verbatim as Address/Region; Commit/Abandon/Delete are
+//     recorder no-ops.
 //
-//   - Region-lock mode (KindFilesystem): `regionHolders` carries the set
-//     of regions currently locked. RegionsConflict and LockEligible
-//     consult it. The grammar is []string of opaque tokens: two regions
-//     conflict iff they share any token. This is a deliberately simple
-//     stand-in for filesystem path-glob semantics — scenario tests pass
-//     distinct tokens for distinct regions and equal tokens for
-//     overlapping ones.
+//   - Pick-policy mode: when a selector matches a configured pick-
+//     policy key (e.g. "@queue"), Open pops the policy's FIFO queue,
+//     returns the picked item's address + payload + region (the chosen
+//     item id). Commit/Abandon honor the policyOverride to release-to-
+//     back / release-to-head / delete.
 //
-//   - Claim mode (KindClaimStore): `claimQueue` is the FIFO queue of
-//     available items; `inFlight` maps claim_id → payload for items
-//     currently checked out. AcquireLock pops from the head; release
-//     actions push to head/tail/delete per the action.
+// Capabilities are operator-configured at construction. Defaults are
+// {WriteSemantics: direct}.
 //
-//   - `lockHeld` records named-lock counts so the stub can model the
-//     counting-semaphore Limit cap inside LockEligible. (Region/claim
-//     locks are tracked above; this map is only consulted for named
-//     locks.)
-//
-// Thread-safety: a single sync.Mutex protects all mutable state. All
-// public methods acquire the mutex; method bodies are short, so there
-// is no contention concern.
+// Thread-safety: a single sync.Mutex protects all mutable state.
 type Store struct {
 	name         string
 	kind         string
@@ -46,122 +44,74 @@ type Store struct {
 
 	mu sync.Mutex
 
-	// region-lock state
-	regionHolders map[string]struct{} // set of region tokens currently held
+	// per-pick-policy in-memory state. Keyed by recognized selector
+	// prefix (e.g. "@queue", "@ring"). When a selector matches a key,
+	// Open invokes that policy.
+	pickPolicies map[string]*pickPolicy
 
-	// claim state
-	claimQueue   []claimItem    // FIFO of available items; head at index 0
-	inFlight     map[string]any // claim_id → payload (currently held)
-	nextClaimSeq int            // monotonic seq for synthetic claim IDs
-
-	// named-lock state
-	lockHeld map[string]int // name → current holder count
+	// Recorder for test assertions. Each entry records one verb call.
+	calls []Call
 }
 
-// claimItem is one row in the in-memory FIFO queue.
-type claimItem struct {
-	claimID string
-	payload any
+// pickPolicy is an in-memory FIFO queue + in-flight set, used to model
+// substrate-side pick-policy semantics in tests.
+type pickPolicy struct {
+	queue           []item          // available items, head at index 0
+	inFlight        map[string]item // address-as-string → item
+	defaultOnCommit string          // "delete" | "release_to_back" | "release_to_head"
+	defaultOnGiveUp string
+	nextSeq         int
 }
 
-// Compile-time interface checks. The stub satisfies all three interfaces
-// regardless of the configured capability flags; LockEligible /
-// AcquireLock are the runtime gates that consult capabilities.
-var (
-	_ store.Store          = (*Store)(nil)
-	_ store.ClaimableStore = (*Store)(nil)
-	_ store.ResumableStore = (*Store)(nil)
-)
+type item struct {
+	id      string
+	payload json.RawMessage
+}
+
+// Call records one invocation of a verb. Tests use Calls() to assert
+// what fired.
+type Call struct {
+	Verb           string // "open" | "commit" | "abandon" | "delete" | "release"
+	Selector       string // empty unless verb is "open"
+	Intent         store.Intent
+	Region         json.RawMessage
+	Address        json.RawMessage
+	PolicyOverride string
+}
+
+// Compile-time interface check.
+var _ store.Store = (*Store)(nil)
 
 // newStore constructs a fresh *Store with the given identity and
-// capability flags. All state maps/slices are initialised so callers
-// can use the store immediately without further setup.
+// capability flags. State maps initialised so callers can use the
+// store immediately without further setup.
 func newStore(name, kind string, caps store.Capabilities) *Store {
 	return &Store{
-		name:          name,
-		kind:          kind,
-		capabilities:  caps,
-		regionHolders: make(map[string]struct{}),
-		claimQueue:    nil,
-		inFlight:      make(map[string]any),
-		lockHeld:      make(map[string]int),
+		name:         name,
+		kind:         kind,
+		capabilities: caps,
+		pickPolicies: make(map[string]*pickPolicy),
 	}
 }
 
 // Name returns the operator-configured store name.
 func (s *Store) Name() string { return s.name }
 
-// Kind returns the stub kind ("stub_filesystem" | "stub_claim_store").
-// The supervisor's per-store-kind dispatch sees this string; tests that
-// want to swap a stub for a real store can register the stub under the
-// production kind by editing the registry rather than this method.
+// Kind returns the configured kind string. Tests can register the stub
+// under a production kind by editing the registry.
 func (s *Store) Kind() string { return s.kind }
 
-// Capabilities returns the configured flags. The supervisor reads this
-// at dispatch time (spec §8.4.1) to decide whether a node's required
-// operations are serviceable.
+// Capabilities returns the configured capability struct.
 func (s *Store) Capabilities() store.Capabilities { return s.capabilities }
 
-// LockEligible is the eligibility check used by the dispatch evaluator.
-// Behaviour by spec kind:
-//
-//   - NamedLockSpec: returns false if the current holder count is at
-//     limit. Mutex limit is implicit 1; counting takes Limit from the
-//     spec.
-//
-//   - RegionLockSpec: returns false if the supplied region overlaps any
-//     currently-held region; true otherwise. The supervisor pre-screens
-//     via RegionsConflict before reaching here, but we re-check so the
-//     stub remains correct in isolation.
-//
-//   - ClaimLockSpec: returns true iff the queue has at least one
-//     available item. (Mirrors HasClaimableItem.)
-//
-// Returns false if the spec kind is incompatible with the configured
-// capability flags (e.g. region spec against a claim-only stub).
-func (s *Store) LockEligible(_ context.Context, spec store.LockSpec) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	switch sp := spec.(type) {
-	case store.NamedLockSpec:
-		limit := 1
-		if sp.Mode == store.LockModeCounting {
-			limit = sp.Limit
-		}
-		return s.lockHeld[sp.Name] < limit, nil
-	case store.RegionLockSpec:
-		if !s.capabilities.SupportsRegionLock {
-			return false, nil
-		}
-		region, ok := sp.Region.([]string)
-		if !ok {
-			return false, nil
-		}
-		for _, tok := range region {
-			if _, held := s.regionHolders[tok]; held {
-				return false, nil
-			}
-		}
-		return true, nil
-	case store.ClaimLockSpec:
-		if !s.capabilities.SupportsClaim {
-			return false, nil
-		}
-		return len(s.claimQueue) > 0, nil
-	}
-	return false, nil
-}
-
 // RegionsConflict reports whether two stub regions overlap. The grammar
-// is []string; two regions conflict iff they share any token. Wrong-
-// typed inputs are treated as conflicting (fail-closed) — the stub
-// matches the filesystem store's defensive posture so scenario tests
-// catch upstream bugs that pass the wrong region shape.
-func (s *Store) RegionsConflict(a, b any) bool {
-	ga, okA := a.([]string)
-	gb, okB := b.([]string)
-	if !okA || !okB {
+// is a JSON []string of opaque tokens; two regions conflict iff they
+// share any token. Wrong-shape inputs are treated as conflicting
+// (fail-closed).
+func (s *Store) RegionsConflict(a, b []byte) bool {
+	ga, errA := decodeRegion(a)
+	gb, errB := decodeRegion(b)
+	if errA != nil || errB != nil {
 		return true
 	}
 	set := make(map[string]struct{}, len(ga))
@@ -176,367 +126,262 @@ func (s *Store) RegionsConflict(a, b any) bool {
 	return false
 }
 
-// UnmarshalRegion deserializes region_data JSONB into []string. Mirrors
-// the filesystem store's contract so scenarios that exercise the
-// supervisor's region-decoding path work uniformly.
-func (s *Store) UnmarshalRegion(raw []byte) (any, error) {
-	var tokens []string
-	if err := json.Unmarshal(raw, &tokens); err != nil {
-		return nil, fmt.Errorf("stub store %q: unmarshal region: %w", s.name, err)
+// UnmarshalRegion is a no-op for the stub: callers pass raw bytes
+// straight to RegionsConflict, so the canonical form here is the input
+// bytes themselves (after a copy to avoid aliasing).
+func (s *Store) UnmarshalRegion(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	return tokens, nil
+	out := make([]byte, len(raw))
+	copy(out, raw)
+	return out, nil
 }
 
-// AcquireLock honours the spec kind:
-//
-//   - NamedLockSpec: increments the holder count for the name. The
-//     supervisor's outer tx still inserts the rimsky_lock_holders row;
-//     the stub's count tracks "what would the holders table say".
-//
-//   - RegionLockSpec: inserts the supplied region tokens into the
-//     held set. Conflicts must be screened upstream via LockEligible /
-//     RegionsConflict.
-//
-//   - ClaimLockSpec: pops the head of the FIFO queue, returns its
-//     payload + auto-generated claim_id, records it in inFlight. If
-//     the queue is empty, returns a zero ClaimResult and no error
-//     (mirrors claim-store-postgres semantics).
-//
-// Returns an error if the spec kind is incompatible with the configured
-// capabilities (e.g. claim spec against a region-only stub).
-func (s *Store) AcquireLock(_ context.Context, spec store.LockSpec) (store.LockHandle, store.ClaimResult, error) {
+// Open produces a substrate-native address. For pick-policy selectors,
+// pops the configured policy's queue. For other selectors, echoes the
+// selector verbatim as Address and Region (region-direct mode).
+func (s *Store) Open(_ context.Context, spec store.ClaimSpec) (store.ClaimResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.calls = append(s.calls, Call{Verb: "open", Selector: spec.Selector, Intent: spec.Intent})
 
-	switch sp := spec.(type) {
-	case store.NamedLockSpec:
-		s.lockHeld[sp.Name]++
-		return store.LockHandle{}, store.ClaimResult{}, nil
-	case store.RegionLockSpec:
-		if !s.capabilities.SupportsRegionLock {
-			return store.LockHandle{}, store.ClaimResult{},
-				fmt.Errorf("stub store %q: AcquireLock: region locks not supported", s.name)
+	if pp, ok := s.pickPolicies[spec.Selector]; ok {
+		if len(pp.queue) == 0 {
+			return store.ClaimResult{}, nil
 		}
-		region, ok := sp.Region.([]string)
-		if !ok {
-			return store.LockHandle{}, store.ClaimResult{},
-				fmt.Errorf("stub store %q: AcquireLock: region must be []string, got %T", s.name, sp.Region)
-		}
-		for _, tok := range region {
-			s.regionHolders[tok] = struct{}{}
-		}
-		return store.LockHandle{}, store.ClaimResult{}, nil
-	case store.ClaimLockSpec:
-		if !s.capabilities.SupportsClaim {
-			return store.LockHandle{}, store.ClaimResult{},
-				fmt.Errorf("stub store %q: AcquireLock: claim locks not supported", s.name)
-		}
-		if len(s.claimQueue) == 0 {
-			return store.LockHandle{}, store.ClaimResult{}, nil
-		}
-		head := s.claimQueue[0]
-		s.claimQueue = s.claimQueue[1:]
-		s.inFlight[head.claimID] = head.payload
-		return store.LockHandle{}, store.ClaimResult{
+		head := pp.queue[0]
+		pp.queue = pp.queue[1:]
+		addrBytes, _ := json.Marshal(head.id)
+		regionBytes, _ := json.Marshal(head.id)
+		pp.inFlight[head.id] = head
+		return store.ClaimResult{
+			Address: json.RawMessage(addrBytes),
 			Payload: head.payload,
-			ClaimID: head.claimID,
+			Region:  json.RawMessage(regionBytes),
 		}, nil
 	}
-	return store.LockHandle{}, store.ClaimResult{},
-		fmt.Errorf("stub store %q: AcquireLock: unknown spec kind %T", s.name, spec)
+	// Region-direct mode: selector is the region.
+	addr, _ := json.Marshal(spec.Selector)
+	region, _ := json.Marshal(spec.Selector)
+	return store.ClaimResult{
+		Address: json.RawMessage(addr),
+		Region:  json.RawMessage(region),
+	}, nil
 }
 
-// OpenHandle returns a NativeHandle shaped to the configured kind:
-//
-//   - KindFilesystem returns FilesystemDirectHandle{Path: "<store-name>"}
-//     with the regions stashed by the runner via WithRegions; tests
-//     that don't attach regions get zero-valued slices.
-//
-//   - KindClaimStore returns ClaimStoreHandle with payload + claim_id
-//     stashed by the runner via WithHandleData. Tests that don't attach
-//     these get zero values.
-//
-// resumed is reflected on the handle as-is for tests that want to
-// assert the runner's resume-vs-fresh dispatch logic; the stub does
-// not change handle shape based on it.
-func (s *Store) OpenHandle(ctx context.Context, _ store.LockHandle, _ bool) (store.NativeHandle, error) {
-	switch s.kind {
-	case KindFilesystem:
-		write, read := regionsFromContext(ctx)
-		return store.FilesystemDirectHandle{
-			Path:         s.name,
-			WriteRegions: write,
-			ReadRegions:  read,
-		}, nil
-	case KindClaimStore:
-		payload, claimID := handleDataFromContext(ctx)
-		return store.ClaimStoreHandle{
-			Payload:   payload,
-			ClaimID:   claimID,
-			StoreName: s.name,
-		}, nil
+// Commit records the call and applies the pick-policy on_commit action
+// (delete / release_to_back / release_to_head) when the region matches
+// an in-flight pick-policy item.
+func (s *Store) Commit(_ context.Context, region []byte, address []byte, policyOverride string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, Call{
+		Verb: "commit", Region: copyBytes(region), Address: copyBytes(address),
+		PolicyOverride: policyOverride,
+	})
+	return s.applyPickAction(region, policyOverride, true)
+}
+
+// Abandon records the call and applies the on_give_up action.
+func (s *Store) Abandon(_ context.Context, region []byte, address []byte, policyOverride string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, Call{
+		Verb: "abandon", Region: copyBytes(region), Address: copyBytes(address),
+		PolicyOverride: policyOverride,
+	})
+	return s.applyPickAction(region, policyOverride, false)
+}
+
+// Delete records the call. For pick-policy items it removes the
+// in-flight entry without re-queueing. For region-direct it is a no-op.
+func (s *Store) Delete(_ context.Context, region []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, Call{Verb: "delete", Region: copyBytes(region)})
+	itemID, ok := decodeItemID(region)
+	if !ok {
+		return nil
 	}
-	return nil, fmt.Errorf("stub store %q: OpenHandle: unknown kind %q", s.name, s.kind)
-}
-
-// Commit is a no-op apart from returning Changed:true. The stub does
-// not track per-acquisition metadata, so every commit reports change.
-func (s *Store) Commit(_ context.Context, _ store.LockHandle) (store.CommitResult, error) {
-	return store.CommitResult{Changed: true}, nil
-}
-
-// ReleaseLock cleans up in-memory state per the spec kind. The stub
-// holds the original LockSpec on no LockHandle field (the LockHandle
-// shape is not store-kind-specific), so we accept the action verbatim
-// without spec-kind dispatch and rely on the caller having paired
-// AcquireLock + ReleaseLock correctly.
-//
-// In practice ReleaseLock is invoked in scenario tests via
-// ReleaseRegion / ReleaseNamedLock helpers, which know which slot to
-// clear; the action is a no-op for region and named locks because the
-// holder set/count is updated via those helpers. For claim locks, this
-// method is a no-op too: the items-table mutation is owned by
-// ReleaseClaimItem (mirrors claim-store-postgres §8.5.1 split).
-func (s *Store) ReleaseLock(_ context.Context, _ store.LockHandle, _ store.ReleaseAction) error {
+	for _, pp := range s.pickPolicies {
+		delete(pp.inFlight, itemID)
+	}
 	return nil
 }
 
-// HasClaimableItem reports whether at least one item is currently
-// available. v1 ignores criteria (mirrors claim-store-postgres §13.3
-// behaviour where criteria-derived predicates are deferred).
-func (s *Store) HasClaimableItem(_ context.Context, _ map[string]any) (bool, error) {
+// Release records the call. For pick-policy claims at v1 there is no
+// substrate-side state to tear down (Open is the only state-registering
+// step); for staged_async substrates this would dispose of read-side
+// state. No v1 store implementation registers such state.
+func (s *Store) Release(_ context.Context, region []byte, address []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.claimQueue) > 0, nil
+	s.calls = append(s.calls, Call{
+		Verb: "release", Region: copyBytes(region), Address: copyBytes(address),
+	})
+	return nil
 }
 
-// ReleaseClaimItem performs the in-memory items-table reposition for a
-// previously claimed (in-flight or already-released) item. Action
-// vocabulary mirrors claim-store-postgres release.go (spec §8.5.1):
-//
-//   - "release_to_back": move the item to the queue's tail and clear
-//     its in-flight entry.
-//   - "release_to_head": move the item to the queue's head and clear
-//     its in-flight entry.
-//
-// "delete" and "delete_won" are NOT valid actions here: per spec §5.6.4
-// the items-table DELETE is owned by the supervisor's resolution
-// algorithm (ResolveOnTerminal), not by ReleaseClaimItem. The stub
-// rejects them with the same wording as claim-store-postgres so
-// scenario tests can't pass against the stub and then break against
-// production. Tests that need to model the supervisor-driven §5.6.4
-// DELETE without going through this API should call DeleteInFlight
-// directly.
-//
-// Errors on unknown actions, the delete actions, or unknown claim IDs.
-// On any error path the in-flight entry is preserved so the caller can
-// retry with a valid action.
-func (s *Store) ReleaseClaimItem(_ context.Context, claimID string, action string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	payload, ok := s.takeInFlight(claimID)
+// applyPickAction looks up the in-flight item matching region and
+// applies the requested action. successPath=true uses on_commit defaults
+// when policyOverride is empty; successPath=false uses on_give_up.
+func (s *Store) applyPickAction(region []byte, policyOverride string, successPath bool) error {
+	itemID, ok := decodeItemID(region)
 	if !ok {
-		return fmt.Errorf("stub store %q: ReleaseClaimItem: no item with claim_id %q", s.name, claimID)
-	}
-
-	switch action {
-	case "release_to_back":
-		s.claimQueue = append(s.claimQueue, claimItem{claimID: claimID, payload: payload})
 		return nil
-	case "release_to_head":
-		s.claimQueue = append([]claimItem{{claimID: claimID, payload: payload}}, s.claimQueue...)
+	}
+	for _, pp := range s.pickPolicies {
+		it, ok := pp.inFlight[itemID]
+		if !ok {
+			continue
+		}
+		action := policyOverride
+		if action == "" {
+			if successPath {
+				action = pp.defaultOnCommit
+			} else {
+				action = pp.defaultOnGiveUp
+			}
+		}
+		switch action {
+		case "delete":
+			delete(pp.inFlight, itemID)
+		case "release_to_back":
+			delete(pp.inFlight, itemID)
+			pp.queue = append(pp.queue, it)
+		case "release_to_head":
+			delete(pp.inFlight, itemID)
+			pp.queue = append([]item{it}, pp.queue...)
+		default:
+			return fmt.Errorf("stub store %q: applyPickAction: unknown action %q", s.name, action)
+		}
 		return nil
-	case "delete", "delete_won":
-		// Restore inFlight so the caller's bookkeeping isn't silently
-		// corrupted by an action that production rejects.
-		s.inFlight[claimID] = payload
-		return fmt.Errorf("stub store %q: ReleaseClaimItem called with action %q — delete is owned by the §5.6.4 resolution algorithm, not this method", s.name, action)
-	default:
-		// Restore inFlight so we don't strand the row on an error path.
-		s.inFlight[claimID] = payload
-		return fmt.Errorf("stub store %q: ReleaseClaimItem: unknown action %q", s.name, action)
+	}
+	return nil
+}
+
+// SeedPickPolicyItem appends a payload to a configured pick-policy's
+// FIFO queue and returns the assigned item id. Test helper.
+func (s *Store) SeedPickPolicyItem(selector string, payload json.RawMessage) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pp, ok := s.pickPolicies[selector]
+	if !ok {
+		return "", fmt.Errorf("stub store %q: SeedPickPolicyItem: no policy for selector %q", s.name, selector)
+	}
+	pp.nextSeq++
+	id := fmt.Sprintf("stub-%s-%d", selector, pp.nextSeq)
+	pp.queue = append(pp.queue, item{id: id, payload: payload})
+	return id, nil
+}
+
+// ConfigurePickPolicy registers a pick-policy under the given selector
+// key. Tests call this to enable pick-policy behaviour. Calling twice
+// for the same key replaces the prior config.
+func (s *Store) ConfigurePickPolicy(selector, defaultOnCommit, defaultOnGiveUp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pickPolicies[selector] = &pickPolicy{
+		inFlight:        make(map[string]item),
+		defaultOnCommit: defaultOnCommit,
+		defaultOnGiveUp: defaultOnGiveUp,
 	}
 }
 
-// HasPriorWork reports whether prior in-progress state exists for the
-// given lock spec. The stub returns false unconditionally — mirrors the
-// v1 simplification in both filesystem and claim-store-postgres
-// implementations. Scenario tests that need to exercise the resumed=true
-// path of OpenHandle should rebuild the harness with prior in-flight
-// state injected directly via SeedInFlight.
-func (s *Store) HasPriorWork(_ context.Context, _ store.LockSpec) (bool, error) {
-	return false, nil
-}
-
-// ReleaseRegion clears region tokens from the held set. Scenario test
-// helper: tests call this to model the supervisor's outer tx removing
-// a rimsky_lock_holders row for a region acquisition.
-func (s *Store) ReleaseRegion(region []string) {
+// Calls returns a copy of the recorder slice. Test helper.
+func (s *Store) Calls() []Call {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, tok := range region {
-		delete(s.regionHolders, tok)
+	out := make([]Call, len(s.calls))
+	copy(out, s.calls)
+	return out
+}
+
+// QueueLen returns the current FIFO queue length for the named
+// pick-policy. Test helper. Returns -1 if no policy is configured for
+// the selector.
+func (s *Store) QueueLen(selector string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pp, ok := s.pickPolicies[selector]
+	if !ok {
+		return -1
 	}
+	return len(pp.queue)
 }
 
-// ReleaseNamedLock decrements the holder count for a named lock.
-// Scenario test helper: mirrors ReleaseRegion's role for named locks.
-// Bottoms out at zero — does not go negative on extra releases.
-func (s *Store) ReleaseNamedLock(name string) {
+// InFlight returns the set of currently-in-flight item IDs for the
+// named pick-policy, sorted for deterministic test assertions. Returns
+// nil if no policy is configured.
+func (s *Store) InFlight(selector string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lockHeld[name] > 0 {
-		s.lockHeld[name]--
+	pp, ok := s.pickPolicies[selector]
+	if !ok {
+		return nil
 	}
-}
-
-// SeedItem appends a payload to the FIFO queue and returns the synthetic
-// claim ID assigned. Scenario test helper used by claim-mode tests to
-// stage items before exercising AcquireLock.
-func (s *Store) SeedItem(payload any) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := s.mintClaimID()
-	s.claimQueue = append(s.claimQueue, claimItem{claimID: id, payload: payload})
-	return id
-}
-
-// SeedInFlight injects an item directly into the in-flight set with the
-// supplied claim ID. Scenario test helper for exercising release /
-// resume paths without first running AcquireLock.
-func (s *Store) SeedInFlight(claimID string, payload any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.inFlight[claimID] = payload
-}
-
-// DeleteInFlight removes an in-flight entry without repositioning the
-// items-table row. Scenario test helper that models the supervisor-
-// driven §5.6.4 resolution-algorithm DELETE: production claim-store-
-// postgres has the supervisor execute `DELETE FROM <items_table>` via
-// ResolveOnTerminal, completely separate from ReleaseClaimItem. Tests
-// that need to model "this in-flight row is gone" call this directly
-// rather than passing "delete" / "delete_won" to ReleaseClaimItem
-// (which is rejected, matching production's §8.5.1 contract).
-//
-// Returns true if the claim ID was present, false otherwise.
-func (s *Store) DeleteInFlight(claimID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.inFlight[claimID]; !ok {
-		return false
-	}
-	delete(s.inFlight, claimID)
-	return true
-}
-
-// QueueLen returns the current FIFO queue length. Scenario test helper
-// for asserting queue state after release / claim sequences.
-func (s *Store) QueueLen() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.claimQueue)
-}
-
-// InFlight returns the set of claim IDs currently in-flight, sorted for
-// deterministic test assertions.
-func (s *Store) InFlight() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.inFlight))
-	for id := range s.inFlight {
+	out := make([]string, 0, len(pp.inFlight))
+	for id := range pp.inFlight {
 		out = append(out, id)
 	}
 	sort.Strings(out)
 	return out
 }
 
-// HeldRegions returns the currently-held region token set, sorted.
-// Scenario test helper.
-func (s *Store) HeldRegions() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.regionHolders))
-	for tok := range s.regionHolders {
-		out = append(out, tok)
+// decodeRegion attempts to decode region bytes as a JSON []string. On
+// failure (empty / wrong shape) returns ([], err). Used by
+// RegionsConflict.
+func decodeRegion(b []byte) ([]string, error) {
+	if len(b) == 0 {
+		return nil, nil
 	}
-	sort.Strings(out)
+	var s []string
+	if err := json.Unmarshal(b, &s); err == nil {
+		return s, nil
+	}
+	// Try as a single string (selector-as-region from Open).
+	var one string
+	if err := json.Unmarshal(b, &one); err != nil {
+		return nil, err
+	}
+	return []string{one}, nil
+}
+
+// decodeItemID extracts a string item ID from region bytes if they
+// encode a single JSON string (as Open writes for pick-policy claims).
+func decodeItemID(b []byte) (string, bool) {
+	if len(b) == 0 {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// copyBytes returns a fresh copy of the input slice. Used in the
+// recorder so callers can mutate input slices without corrupting
+// recorded calls.
+func copyBytes(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
 	return out
 }
 
-// NamedLockCount returns the holder count for a named lock. Scenario
-// test helper for asserting Acquire / ReleaseNamedLock pairs.
-func (s *Store) NamedLockCount(name string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lockHeld[name]
-}
+// stringifySeq is a tiny helper for older test paths that may still
+// expect synthetic IDs in "stub-N" form. Retained for parity though
+// the new SeedPickPolicyItem mints "stub-<selector>-N".
+func stringifySeq(n int) string { return strconv.Itoa(n) }
 
-// takeInFlight removes and returns the payload for the given claim_id
-// from the in-flight set. Returns ok=false if not present. Caller must
-// hold s.mu.
-func (s *Store) takeInFlight(claimID string) (any, bool) {
-	payload, ok := s.inFlight[claimID]
-	if !ok {
-		return nil, false
-	}
-	delete(s.inFlight, claimID)
-	return payload, true
-}
+// errInvariant is a sentinel for stub-side invariant checks. Currently
+// unused; placeholder in case the recorder grows internal-consistency
+// asserts.
+var errInvariant = errors.New("stub store: invariant violation")
 
-// mintClaimID returns a fresh synthetic claim ID. Caller must hold s.mu.
-// Format is "stub-claim-N" where N is a monotonic counter local to this
-// store; deterministic across runs given the same seeding sequence.
-func (s *Store) mintClaimID() string {
-	s.nextClaimSeq++
-	return "stub-claim-" + strconv.Itoa(s.nextClaimSeq)
-}
-
-// regionsCtxKey is the unexported context key under which scenario test
-// runners stash resolved write/read regions for OpenHandle. Mirrors the
-// filesystem store's pattern.
-type regionsCtxKey struct{}
-
-type regionsCtxValue struct {
-	write []string
-	read  []string
-}
-
-// WithRegions attaches resolved write and read regions to the context.
-// Scenario test helper that mirrors filesystem.WithRegions.
-func WithRegions(ctx context.Context, write, read []string) context.Context {
-	return context.WithValue(ctx, regionsCtxKey{}, regionsCtxValue{write: write, read: read})
-}
-
-func regionsFromContext(ctx context.Context) (write, read []string) {
-	v, ok := ctx.Value(regionsCtxKey{}).(regionsCtxValue)
-	if !ok {
-		return nil, nil
-	}
-	return v.write, v.read
-}
-
-// handleDataCtxKey is the unexported context key under which scenario
-// test runners stash payload/claim_id for claim-mode OpenHandle.
-// Mirrors claimstorepg.WithHandleData.
-type handleDataCtxKey struct{}
-
-type handleDataCtxValue struct {
-	payload any
-	claimID string
-}
-
-// WithHandleData attaches a claim payload + claim ID to the context.
-// Scenario test helper that mirrors claimstorepg.WithHandleData.
-func WithHandleData(ctx context.Context, payload any, claimID string) context.Context {
-	return context.WithValue(ctx, handleDataCtxKey{}, handleDataCtxValue{payload: payload, claimID: claimID})
-}
-
-func handleDataFromContext(ctx context.Context) (any, string) {
-	v, ok := ctx.Value(handleDataCtxKey{}).(handleDataCtxValue)
-	if !ok {
-		return nil, ""
-	}
-	return v.payload, v.claimID
-}
+var _ = stringifySeq
+var _ = errInvariant

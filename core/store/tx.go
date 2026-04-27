@@ -17,7 +17,7 @@ type txKey struct{}
 //
 // A store with no DB writes (like filesystem-direct) is free to call
 // TxFromContext and ignore the returned tx. A store with DB writes (like
-// claim-store-postgres) MUST use the tx for all its mutations — never the
+// the postgres store) MUST use the tx for all its mutations — never the
 // underlying pool — so atomicity with the supervisor's lock-holder inserts
 // is preserved. (Spec §8.4.1.)
 func WithTx(ctx context.Context, tx pgx.Tx) context.Context {
@@ -26,8 +26,8 @@ func WithTx(ctx context.Context, tx pgx.Tx) context.Context {
 
 // TxFromContext returns the pgx.Tx attached via WithTx, or (nil, false) if
 // none is present. Stores that have no DB writes (e.g. filesystem-direct)
-// may ignore the tx; the supervisor still attaches one so AcquireLock /
-// ReleaseLock can be called uniformly.
+// may ignore the tx; the supervisor still attaches one so Open / Commit /
+// Abandon / Delete / Release can be called uniformly.
 func TxFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
 	return tx, ok

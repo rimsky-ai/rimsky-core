@@ -1,16 +1,27 @@
+// Template DSL types (spec §18). The graph-author's view of a node:
+// stores it interacts with, named locks it holds, attributes it
+// declares, claim-resolution actions for held claims it acquires, and
+// inheritance edges for held claims it consumes downstream.
+//
+// Stores-redesign-v2 changes (spec §18.3):
+//   - dropped: held: true flag on claim entries (held is implicit from
+//     downstream inherits:)
+//   - dropped: per-claim on_commit/on_give_up overrides (moved to
+//     claim_resolutions on the acquiring node, per spec §14.3)
+//   - dropped: per-claim Write/Read/Claim/Hold/Resumable (replaced by
+//     selector + intent + alias)
+//   - added: Selector (opaque text), Intent (r|rw), Alias (per-claim
+//     name within node) on NodeStoreRef
+//   - added: Inherits []InheritEntry on TemplateNodeDef
+//   - added: ClaimResolutions on acquiring node (was: per-resolver
+//     declaration on terminal-leaf nodes)
+
 package node
 
-import (
-	"github.com/fallguy/rimsky/core/qualityrule"
-	"github.com/fallguy/rimsky/core/store"
-)
+import "github.com/fallguy/rimsky/core/qualityrule"
 
-// TemplateSpec is the top-level template structure, parsed from YAML or JSON.
-//
-// Per the stores redesign (docs/specs/2026-04-25-stores-redesign-design.md
-// §11), templates declare per-node store usage, named locks, typed
-// attributes, and held-claim resolutions. Resources/concurrency-tags from
-// the previous shape have been removed (§11.3).
+// TemplateSpec is the top-level template structure, parsed from YAML
+// or JSON.
 type TemplateSpec struct {
 	Name            string
 	Version         string
@@ -30,19 +41,14 @@ const (
 	FrameTimeoutMinMs          = int64(60000)  // 60 seconds (hard floor)
 )
 
-// TemplateNodeDef is one node in a template. An empty Executor means the node
-// is a pure-cascade or pure-infra node — it runs no executor handler and is
-// only used to express dependency fan-out and/or claim/lock orchestration.
-//
-// Field names map to YAML keys via lowercase-snake-case reflection (the
-// default decoder convention for this struct); sub-types below carry explicit
-// `yaml:` tags only where the wire name diverges from the field name. Keep
-// the two conventions consistent: if a field's YAML key needs to differ from
-// its lowercased Go name, add an explicit tag here too.
+// TemplateNodeDef is one node in a template. An empty Executor means
+// the node is a pure-cascade or pure-infra node — it runs no executor
+// handler and is only used to express dependency fan-out and/or
+// claim/lock orchestration.
 type TemplateNodeDef struct {
 	Type             string
 	Description      string
-	Executor         string // optional; empty = no executor (pure-cascade or pure-infra)
+	Executor         string // optional; empty = no executor
 	Userdata         map[string]any
 	Schedule         string // cron expr; optional
 	Dependencies     []string
@@ -50,59 +56,83 @@ type TemplateNodeDef struct {
 	Locks            []NodeLockRef
 	Attributes       NodeAttributesDef
 	QualityRules     []qualityrule.Spec
-	ClaimResolutions []ClaimResolutionRef
+	Inherits         []InheritEntry             `yaml:"inherits,omitempty"`
+	ClaimResolutions map[string]ClaimResolution `yaml:"claim_resolutions,omitempty"`
 	ErrorTypes       map[string]ErrorTypePolicy
 }
 
-// NodeStoreRef declares this node's interaction with a registered store.
-//
-// `Claim` requests claim-and-forget (default) or claim-and-hold (when `Hold`
-// is also true). `Write` and `Read` are region-pattern lists (substituted at
-// dispatch). `OnCommit` and `OnGiveUp` set the per-node disposition policy
-// for held claims, overriding store defaults; resumable controls whether the
-// claim-hold survives node restarts.
+// NodeStoreRef declares this node's claim against a registered store.
+// Selector is opaque text post-substitution; substrate parses and
+// decides what it means (regional access vs. configured pick policy).
+// Intent is "r" (read) or "rw" (read-write). Alias is the per-claim
+// name within the node, used in {{claim.<alias>.<...>}} substitution
+// paths and in inheritance references; defaults to StoreName when not
+// set.
 type NodeStoreRef struct {
-	Name      string   `yaml:"name"`
-	Claim     bool     `yaml:"claim,omitempty"`
-	Hold      bool     `yaml:"hold,omitempty"`
-	Write     []string `yaml:"write,omitempty"`
-	Read      []string `yaml:"read,omitempty"`
-	OnCommit  string   `yaml:"on_commit,omitempty"`
-	OnGiveUp  string   `yaml:"on_give_up,omitempty"`
-	Resumable bool     `yaml:"resumable,omitempty"`
+	Name     string `yaml:"name"`
+	Selector string `yaml:"selector"`
+	Intent   string `yaml:"intent"` // "r" | "rw"
+	Alias    string `yaml:"alias,omitempty"`
 }
 
-// NodeLockRef declares a named lock the node must hold for the duration of
-// its run. Mode discriminates mutex vs. counting; Limit is required for
-// counting locks and ignored for mutex.
+// NodeLockRef declares a named lock the node must hold for the
+// duration of its run. Limit lives in operator config (`named_locks:`
+// block per spec §15.2), so the template only references the lock by
+// name.
 type NodeLockRef struct {
-	Name  string         `yaml:"name"`
-	Mode  store.LockMode `yaml:"mode"`
-	Limit int            `yaml:"limit,omitempty"`
+	Name string `yaml:"name"`
 }
 
-// NodeAttributesDef declares the per-run typed attributes contract for the
-// node. Schema is a JSON Schema fragment whose `properties[*].source`
-// directives are substituted at dispatch (claim payload, deps, etc.).
+// NodeAttributesDef declares the per-run typed attributes contract
+// for the node. Schema is a JSON Schema fragment whose
+// `properties[*].source` directives are substituted at dispatch
+// (claim payload, deps, params).
 type NodeAttributesDef struct {
 	Schema map[string]any `yaml:"schema,omitempty"`
 }
 
-// ClaimResolutionRef declares how this node resolves a held claim originally
-// taken by an upstream node. Source names the holding node; Store names the
-// store on which the claim was taken; OnCommit / OnGiveUp override the
-// store-default disposition policies for this resolution.
-type ClaimResolutionRef struct {
-	Source   string `yaml:"source"`
-	Store    string `yaml:"store"`
-	OnCommit string `yaml:"on_commit,omitempty"`
-	OnGiveUp string `yaml:"on_give_up,omitempty"`
+// InheritEntry declares that this node inherits a held claim from an
+// upstream acquirer. Per spec §14: inheritance is direct only (does
+// not propagate transitively through dep chains); each downstream
+// node that needs the live claim declares it explicitly. Each
+// inheritance edge extends the claim's lifetime over the inheriting
+// node's run.
+//
+// Claim is the per-claim alias declared on the upstream acquirer's
+// stores: entry. Validation at template deploy resolves the alias to
+// a specific acquirer reachable via deps.
+type InheritEntry struct {
+	Claim string `yaml:"claim"`
 }
 
-// RequiredStores returns the distinct store names referenced by node.Stores,
-// preserving first-seen order. Used by enqueue logic to populate
-// rimsky_dispatch.required_stores (spec §9.6, §14.2 pool-specialization
-// predicate).
+// ClaimResolution declares the substrate-side actions auto-terminal
+// fires at holding-subgraph completion (spec §14.3 / §14.4). Declared
+// on the acquiring node, keyed by the per-claim alias. Required when
+// the claim is held (subgraph size > 1); optional otherwise (the
+// supervisor falls back to "commit" / "abandon" defaults at the
+// acquirer's own terminal).
+//
+// Action vocabulary: "commit" | "abandon" | "delete" |
+// "release_to_back" | "release_to_head". The supervisor's auto-terminal
+// routing (spec §14.4.1) maps these to the appropriate Store verb.
+type ClaimResolution struct {
+	OnCommit string `yaml:"on_commit"`
+	OnGiveUp string `yaml:"on_give_up"`
+}
+
+// AliasOf returns the claim alias for this store ref — defaults to
+// the store name when not explicitly set. Used by the supervisor
+// when constructing the substitution context's Claim map.
+func (s NodeStoreRef) AliasOf() string {
+	if s.Alias != "" {
+		return s.Alias
+	}
+	return s.Name
+}
+
+// RequiredStores returns the distinct store names referenced by
+// node.Stores, preserving first-seen order. Used by enqueue logic to
+// populate rimsky_dispatch.required_stores.
 func RequiredStores(node TemplateNodeDef) []string {
 	if len(node.Stores) == 0 {
 		return nil

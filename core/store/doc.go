@@ -1,53 +1,47 @@
-// Package store defines the rimsky store abstraction: a deployment-level
-// data backend whose lock state is tracked centrally in postgres while its
-// data semantics remain native to the underlying primitive (filesystem path,
-// claim-store row, etc.).
+// Package store defines the rimsky store abstraction (spec §11; see also
+// docs/glossary.md). A store is a deployment-level data backend whose
+// lock state is tracked centrally in postgres while its data semantics
+// remain native to the underlying primitive (filesystem path, postgres
+// table, S3 bucket, etc.).
 //
-// This package owns interfaces, value types, the factory/registry, and the
-// transaction-context helpers used to thread the supervisor's outer pgx.Tx
-// through store mutations. Concrete implementations live in subpackages
-// (`core/store/filesystem/`, `core/store/claimstorepg/`).
+// This package owns interfaces, value types, the factory/registry, the
+// transaction-context helpers used to thread the supervisor's outer
+// pgx.Tx through store mutations, the rimsky_lock_holders postgres
+// helpers, and the pure ModeCoexists predicate (spec §8.5). Concrete
+// implementations live in subpackages (`core/store/filesystem/`,
+// `core/store/postgres/`, `core/store/stub/`).
 //
-// # Vocabulary (spec §5.1–§5.6)
+// # Two primitives (spec §5.1)
 //
-//   - Store (§5.1)   — a deployment-level data backend, configured once in
-//     YAML and built into a per-process Registry. There is no
-//     `rimsky_stores` database table; templates reference stores by name.
+//   - Claim — substrate-bound. ClaimSpec carries (StoreName, Selector,
+//     Intent, Alias). Substrate parses Selector and decides what it
+//     means (regional access vs. configured pick policy).
 //
-//   - Region (§5.2) — a portion of a store's namespace. v1 region grammars
-//     are filesystem path-globs and per-claim implicit regions for
-//     claim-stores.
+//   - Named lock — non-substrate. NamedLockSpec carries (Name) only.
+//     Limit lives in operator config (§15.2).
 //
-//   - Lock (§5.3) — a node's exclusivity claim on a named scope or a region
-//     within a store, held for the duration of one execution. All lock state
-//     lives in postgres (`rimsky_lock_holders`); stores never persist lock
-//     state. Stores may persist *data* state (e.g. `claim-store-postgres`
-//     flips an items-table row to `in_progress`), but the question "is anyone
-//     holding lock X" is answered exclusively by `rimsky_lock_holders`.
+// Both are persisted as rows in `rimsky_lock_holders` (spec §12.10) but
+// the two specs are distinct types with no common interface.
 //
-//   - Handle (§5.4) — a native-shape reference to the locked region(s) or
-//     claim payload, passed to the executor. The executor sees the underlying
-//     system in its native form — there is no rimsky-store API at the
-//     executor boundary.
+// # Five protocol verbs (spec §6 / §11.5)
 //
-//   - Sidecar (§5.5) — a per-lock private workspace used by sidecar/versioned
-//     modes. Direct-mode stores have no sidecar; the handle points at the
-//     live region.
+//   - Open(ctx, ClaimSpec) → ClaimResult
+//   - Commit(ctx, region, address, policyOverride)
+//   - Abandon(ctx, region, address, policyOverride)
+//   - Delete(ctx, region)
+//   - Release(ctx, region, address)
 //
-//   - Claim (§5.6) — the store-picks-region variant of lock acquisition. The
-//     caller asks the store to pick a region from its eligible pool; the
-//     store locks it and reports the choice. Multi-claim is supported.
-//     Claim-and-forget is the default; opt-in `hold: true` anchors a claim
-//     across a downstream pipeline (resolution algorithm in spec §5.6.4).
+// # write_semantics (spec §8)
 //
-// # Modes (spec §6)
+// Per-store config: direct | staged_blocking | staged_async. Determines
+// (a) whether reads can dispatch concurrently with writes on the same
+// region, and (b) whether the supervisor calls staging-related verbs.
+// Operator-configured; bounded above by the store kind's
+// MaxWriteSemantics().
 //
-// A store declares one of three modes at deployment time. v1 ships only
-// `direct`. `sidecar` and `versioned` are post-v1.
+// # Package layout (spec §11.1)
 //
-// # Package layout (spec §8.1)
-//
-// `core/store/` imports `core/shared/` and `pgx/v5` (the latter only for the
-// transaction-context helpers; `pgx.Tx` is the only pgx symbol leaked through
-// this package's public surface).
+// `core/store/` imports `core/shared/` and `pgx/v5` (the latter only
+// for the transaction-context helpers and lock-holder helpers; pgx.Tx
+// is the only pgx symbol leaked through this package's public surface).
 package store

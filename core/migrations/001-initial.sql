@@ -1,34 +1,32 @@
--- Rimsky initial schema (stores-redesign end state)
+-- Rimsky initial schema (stores-redesign v2 end state).
 --
 -- This file defines the full v1 schema in a single migration. The
--- stores-redesign restructured the resource abstraction into "stores" with a
--- unified claim/lock/commit/resolve vocabulary; rimsky is pre-v1 with no
--- production data, so the previous `001-initial.sql` and `002-data-ref-jsonb.sql`
--- are replaced wholesale rather than evolved through ALTER migrations. The
--- spec's §9 is authoritative for the schema; this file mirrors it in full.
+-- stores-redesign v2 (docs/specs/2026-04-27-stores-redesign-v2-design.md)
+-- collapsed claim/region into a single store-bound primitive and split
+-- named locks out as a non-store primitive. Pre-v1: rewrite in place;
+-- dev DB is nuked on adoption (see .claude/rules/rules.md).
 --
--- Key shape vs. the pre-redesign schema:
---   * `rimsky_resources` and `rimsky_resource_versions` are gone. Versioned
---     data lives in store-owned backends; rimsky tracks claims and locks, not
---     resource bytes.
---   * New tables: `rimsky_node_attributes` (per-node attribute snapshot used
---     for substitution + executor I/O), `rimsky_lock_holders` (named/region/
---     claim lock ledger), and `rimsky_claim_holders` (held-claim ledger).
---   * `rimsky_nodes.concurrency_tags` is dropped — concurrency control is
---     expressed as named locks declared in templates and recorded in
---     `rimsky_lock_holders`.
---   * `rimsky_supervisors.accepted_stores TEXT[]` is added so the
---     pool-specialization predicate (§14.2) can route dispatches to a
---     supervisor that has the right local stores wired up.
---   * `rimsky_dispatch.concurrency_tags` is dropped, `required_stores TEXT[]`
---     is added (denormalized at enqueue), `last_heartbeat_at TIMESTAMPTZ` is
---     added (the orphan sweep predicate moves from `claimed_at` to
---     `last_heartbeat_at`), and `executor_name` becomes nullable for native
---     (claim-only) nodes.
+-- Key shape vs. the v1-prior-rewrite schema:
+--   * lock_kind enum reduced from ('named','region','claim') to
+--     ('named','region'). The 'claim' kind dissolved — pick-policy claims
+--     are just region claims with substrate-chosen region_data.
+--   * rimsky_lock_holders.claim_id column dropped. Substrate's identifier
+--     lives in region_data.
+--   * rimsky_lock_holders.address column added — substrate-supplied
+--     address from Open, needed by terminal verbs and the orphan reaper.
+--   * rimsky_lock_holders.intent column added ('r' | 'rw' | NULL for
+--     named locks).
+--   * rimsky_claim_holders.lock_holder_id FK added (ON DELETE CASCADE)
+--     so claim-holder rows clean up when the lock-holder row is deleted
+--     at auto-terminal.
+--   * rimsky_claim_holders: claim_id, store_name, on_commit, on_give_up,
+--     actual_action columns dropped. Resolution declarations live in
+--     template metadata (rimsky_templates.spec). state enum gains
+--     'failed'.
 --
--- Idempotent: `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`
--- throughout. Belt-and-suspenders with the migration runner's advisory lock
--- and per-file tracking in `rimsky_migrations`.
+-- Idempotent: CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+-- throughout. Belt-and-suspenders with the migration runner's advisory
+-- lock and per-file tracking in rimsky_migrations.
 
 CREATE TABLE IF NOT EXISTS rimsky_migrations (
     filename    TEXT PRIMARY KEY,
@@ -40,7 +38,7 @@ CREATE TABLE IF NOT EXISTS rimsky_templates (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
     version     TEXT NOT NULL,
-    spec        JSONB NOT NULL,                       -- parsed template YAML (stores/locks/attributes/claim_resolutions)
+    spec        JSONB NOT NULL,                       -- parsed template (stores/locks/inherits/claim_resolutions/attributes)
     deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (name, version)
 );
@@ -56,11 +54,6 @@ CREATE TABLE IF NOT EXISTS rimsky_instances (
 );
 
 -- Node instances (one per node declared in a template, per graph instance).
--- `executor` is the supervisor executor name (null for native, claim-only
--- nodes). `schedule_cron` is the optional cron expression; when non-null a
--- matching row exists in `rimsky_schedules`. `concurrency_tags` is gone —
--- per-node concurrency control now lives in `locks: [...]` template
--- declarations enforced via `rimsky_lock_holders`.
 CREATE TABLE IF NOT EXISTS rimsky_nodes (
     id                    UUID PRIMARY KEY,
     instance_id           UUID NOT NULL REFERENCES rimsky_instances(id) ON DELETE CASCADE,
@@ -81,9 +74,6 @@ CREATE INDEX IF NOT EXISTS rimsky_nodes_state_updated_at_idx ON rimsky_nodes (st
 CREATE INDEX IF NOT EXISTS rimsky_nodes_instance_id_node_type_idx ON rimsky_nodes (instance_id, node_type);
 
 -- Supervisor registry (heartbeat + callback endpoints + local capability advertisement).
--- `accepted_executors` lists executor names this supervisor handles;
--- `accepted_stores` lists store names this supervisor has wired up locally
--- and is therefore eligible to dispatch into (§14.2 pool specialization).
 CREATE TABLE IF NOT EXISTS rimsky_supervisors (
     id                  TEXT PRIMARY KEY,            -- supervisor_id from config
     accepted_executors  TEXT[] NOT NULL,             -- executor names this supervisor handles
@@ -98,13 +88,6 @@ CREATE TABLE IF NOT EXISTS rimsky_supervisors (
 CREATE INDEX IF NOT EXISTS rimsky_supervisors_last_heartbeat_at_idx ON rimsky_supervisors (last_heartbeat_at);
 
 -- Dispatch queue (nodes ready to run).
--- `executor_name` is nullable for native (claim-only) nodes that need no
--- executor process. `required_stores` is denormalized at enqueue time from
--- the template's per-node-type required-store set; the pool-specialization
--- predicate (§14.2) uses it to route claims to a supervisor whose
--- `accepted_stores` is a superset. The orphan-claim sweep predicate uses
--- `last_heartbeat_at` (not `claimed_at`) so claim age tracks heartbeat
--- liveness.
 CREATE TABLE IF NOT EXISTS rimsky_dispatch (
     id                UUID PRIMARY KEY,
     node_id           UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
@@ -113,29 +96,23 @@ CREATE TABLE IF NOT EXISTS rimsky_dispatch (
     enqueued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- may be future-dated for backoff
     claimed_by        TEXT,                              -- supervisor id; null until claimed
     claimed_at        TIMESTAMPTZ,
-    last_heartbeat_at TIMESTAMPTZ,                       -- updated by supervisor heartbeat tick; orphan-sweep predicate
+    last_heartbeat_at TIMESTAMPTZ,                       -- updated by supervisor heartbeat tick
     UNIQUE (node_id)                                     -- at most one pending dispatch per node
 );
 CREATE INDEX IF NOT EXISTS rimsky_dispatch_pending_idx   ON rimsky_dispatch (enqueued_at) WHERE claimed_by IS NULL;
 CREATE INDEX IF NOT EXISTS rimsky_dispatch_claimed_idx   ON rimsky_dispatch (claimed_by, claimed_at) WHERE claimed_by IS NOT NULL;
 CREATE INDEX IF NOT EXISTS rimsky_dispatch_heartbeat_idx ON rimsky_dispatch (last_heartbeat_at) WHERE claimed_by IS NOT NULL;
 
--- Schedule registry (one row per scheduled node). Keyed by node_id: when the
--- schedule fires, the node itself is invalidated. No separate target pointer,
--- so no DEFERRABLE FK is required.
+-- Schedule registry (one row per scheduled node).
 CREATE TABLE IF NOT EXISTS rimsky_schedules (
     node_id        UUID PRIMARY KEY REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
-    cron_expr      TEXT NOT NULL,                    -- standard cron expression, UTC
+    cron_expr      TEXT NOT NULL,
     next_fire_at   TIMESTAMPTZ NOT NULL,
     last_fired_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS rimsky_schedules_next_fire_at_idx ON rimsky_schedules (next_fire_at);
 
--- Event log (single append-only; JSONB payload). Payload kinds extended by
--- the redesign: lock_acquired/lock_released/lock_orphan_reaped,
--- attributes_substituted/attributes_committed/attributes_validation_failed,
--- claim_acquired/claim_held/claim_resolved, template_resolution_failed.
--- Removed: commit, pure_cascade_commit (folded into attributes_committed).
+-- Event log (single append-only; JSONB payload).
 CREATE TABLE IF NOT EXISTS rimsky_events (
     id          BIGSERIAL PRIMARY KEY,
     instance_id UUID REFERENCES rimsky_instances(id) ON DELETE CASCADE,
@@ -148,13 +125,7 @@ CREATE INDEX IF NOT EXISTS rimsky_events_node_id_occurred_at_idx ON rimsky_event
 CREATE INDEX IF NOT EXISTS rimsky_events_instance_id_occurred_at_idx ON rimsky_events (instance_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS rimsky_events_kind_occurred_at_idx ON rimsky_events (kind, occurred_at DESC);
 
--- Per-node attribute snapshot. Created lazily on first dispatch; populated
--- from source-directive substitutions, updated by executor writeback
--- (incremental or terminal-final), validated against the template's schema
--- on commit. On retry, `run_attempt` increments and `data` is cleared per
--- §5.7.3 (source-driven fields repopulated; executor-populated fields
--- cleared unless the node opts into resume_then_retry). On invalidate, the
--- row is preserved as audit trail; on instance delete, it CASCADE-deletes.
+-- Per-node attribute snapshot.
 CREATE TABLE IF NOT EXISTS rimsky_node_attributes (
     node_id     UUID PRIMARY KEY REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
     run_attempt INT NOT NULL DEFAULT 0,
@@ -162,67 +133,61 @@ CREATE TABLE IF NOT EXISTS rimsky_node_attributes (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Lock ledger. One row per held lock across all three lock kinds:
+-- Lock ledger. One row per held lock across two kinds:
 --   * 'named'  — named-lock predicate (lock_name set)
---   * 'region' — store region lock (store_name + region_data set)
---   * 'claim'  — claim-id lock against a store (store_name + claim_id set)
--- Inserted atomically with the dispatch claim (§13.3). `last_heartbeat_at`
--- and `expires_at` extended on each supervisor heartbeat tick. Removed on
--- ReleaseLock (claimant-guarded). Orphan-reaped at 5x heartbeat_interval.
+--   * 'region' — store region claim (store_name + region_data + intent set;
+--                address populated by Open within the same acquisition tx)
+-- Inserted atomically with the dispatch claim (§13.3). last_heartbeat_at
+-- and expires_at extended on each supervisor heartbeat tick. Removed at
+-- node terminal (claimant-guarded) or auto-terminal for held claims.
+-- Orphan-reaped at 5x heartbeat_interval.
 CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
     id                   UUID PRIMARY KEY,
-    lock_kind            TEXT NOT NULL,           -- 'named' | 'region' | 'claim'
+    lock_kind            TEXT NOT NULL CHECK (lock_kind IN ('named', 'region')),
     lock_name            TEXT,                    -- non-null for kind='named'
-    store_name           TEXT,                    -- non-null for kind in ('region','claim')
+    store_name           TEXT,                    -- non-null for kind='region'
     region_data          JSONB,                   -- non-null for kind='region'
-    claim_id             TEXT,                    -- non-null for kind='claim'
+    address              JSONB,                   -- substrate-supplied address from Open;
+                                                  -- needed by Commit/Abandon/Release/Delete at
+                                                  -- terminal AND by orphan reaper. Opaque bytes;
+                                                  -- inert in Rimsky per invariant 20.
+    intent               TEXT,                    -- 'r' | 'rw' for kind='region'; null for kind='named'
     holder_supervisor_id TEXT NOT NULL,           -- TEXT, matches rimsky_supervisors.id
     holder_node_id       UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
     claimed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at           TIMESTAMPTZ NOT NULL,
+    -- Note: address may be NULL even for region rows, because Open writes
+    -- the address only after a successful return (within the same
+    -- acquisition tx). The supervisor inserts the row with NULL address
+    -- and updates it after Open returns (per §13.3).
     CONSTRAINT lock_kind_fields CHECK (
-        (lock_kind = 'named'  AND lock_name IS NOT NULL AND store_name IS NULL     AND region_data IS NULL     AND claim_id IS NULL) OR
-        (lock_kind = 'region' AND lock_name IS NULL     AND store_name IS NOT NULL AND region_data IS NOT NULL AND claim_id IS NULL) OR
-        (lock_kind = 'claim'  AND lock_name IS NULL     AND store_name IS NOT NULL AND region_data IS NULL     AND claim_id IS NOT NULL)
+        (lock_kind = 'named'  AND lock_name IS NOT NULL AND store_name IS NULL     AND region_data IS NULL     AND intent IS NULL) OR
+        (lock_kind = 'region' AND lock_name IS NULL     AND store_name IS NOT NULL AND region_data IS NOT NULL AND intent IN ('r', 'rw'))
     )
 );
-CREATE INDEX IF NOT EXISTS rimsky_lock_holders_named_idx      ON rimsky_lock_holders (lock_name) WHERE lock_kind = 'named';
-CREATE INDEX IF NOT EXISTS rimsky_lock_holders_store_idx      ON rimsky_lock_holders (store_name) WHERE lock_kind IN ('region','claim');
-CREATE INDEX IF NOT EXISTS rimsky_lock_holders_supervisor_idx ON rimsky_lock_holders (holder_supervisor_id);
-CREATE INDEX IF NOT EXISTS rimsky_lock_holders_expires_idx    ON rimsky_lock_holders (expires_at);
-CREATE INDEX IF NOT EXISTS rimsky_lock_holders_node_idx       ON rimsky_lock_holders (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_supervisor ON rimsky_lock_holders (holder_supervisor_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_node       ON rimsky_lock_holders (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_named      ON rimsky_lock_holders (lock_name)  WHERE lock_kind = 'named';
+CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_region     ON rimsky_lock_holders (store_name) WHERE lock_kind = 'region';
+CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_expires    ON rimsky_lock_holders (expires_at) WHERE expires_at IS NOT NULL;
 
--- Held-claim ledger. One row per (claim_id, terminal-leaf-node) pair from
--- the §11.4 DAG walk, inserted at commit of the claiming-source node when
--- `hold: true`. `state` flips 'active' -> 'completed' per the §5.6.4
--- algorithm; `actual_action` is null while active and populated at
--- completion ('delete' | 'release_to_back' | 'release_to_head' |
--- 'delete_won', where 'delete_won' marks a sibling row collapsed by another
--- sibling's winning delete). On instance delete, rows CASCADE-delete via
--- holder_node_id FK.
+-- Held-claim ledger. One row per (lock_holder, holder_node) pair from the
+-- §18.4 holding subgraph, inserted at the acquirer's Open call when the
+-- claim is held (subgraph size > 1). state flips 'active' -> 'completed'
+-- (success) or 'failed' (give-up/failure) per §14.4. When all rows for a
+-- lock_holder reach a non-active state, auto-terminal fires the
+-- aggregate-outcome resolution (§14.4) and the lock_holder row is deleted;
+-- ON DELETE CASCADE cleans up these rows.
 CREATE TABLE IF NOT EXISTS rimsky_claim_holders (
     id              UUID PRIMARY KEY,
-    claim_id        TEXT NOT NULL,
-    store_name      TEXT NOT NULL,
+    lock_holder_id  UUID NOT NULL REFERENCES rimsky_lock_holders(id) ON DELETE CASCADE,
     holder_node_id  UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
-    on_commit       TEXT NOT NULL,                    -- declared: 'delete' | 'release_to_back' | 'release_to_head'
-    on_give_up      TEXT NOT NULL,                    -- declared: same vocabulary
-    actual_action   TEXT,                             -- recorded at completion: 'delete' | 'release_to_back' | 'release_to_head' | 'delete_won'
-    state           TEXT NOT NULL DEFAULT 'active',   -- 'active' | 'completed'
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at    TIMESTAMPTZ
+    state           TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed')),
+    completed_at    TIMESTAMPTZ,
+    UNIQUE (lock_holder_id, holder_node_id)
 );
--- The (claim_id, holder_node_id) uniqueness is per-active-cycle: ring-buffer
--- claim stores reuse `claim_id` (= `item_id`) across cycles, so once a
--- holder row transitions to 'completed' a fresh 'active' row must be
--- insertable for the next cycle. Restricting the unique index to
--- state='active' enforces "one ACTIVE holder per (claim, leaf) at a time"
--- without forbidding reuse after completion. Without the partial WHERE,
--- the second cycle's insertHeldClaimHolders would conflict against the
--- prior cycle's now-completed row and roll back the entire commit tx,
--- leaving the items-table row stuck in 'in_progress' (the acquisition tx
--- already committed the state=in_progress flip).
-CREATE UNIQUE INDEX IF NOT EXISTS rimsky_claim_holders_claim_node_idx
-    ON rimsky_claim_holders (claim_id, holder_node_id) WHERE state = 'active';
-CREATE INDEX IF NOT EXISTS rimsky_claim_holders_active_idx ON rimsky_claim_holders (claim_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_lock_holder    ON rimsky_claim_holders (lock_holder_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_node           ON rimsky_claim_holders (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_active_subgraph
+    ON rimsky_claim_holders (lock_holder_id) WHERE state = 'active';

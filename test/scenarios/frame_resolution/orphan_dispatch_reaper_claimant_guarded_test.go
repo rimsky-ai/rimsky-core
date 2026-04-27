@@ -9,12 +9,12 @@
 // terminal, racing with a still-live supervisor's slow finish.
 //
 // Two cases:
-//   1. Plain orphan reap — frame terminal, dispatch claim from the same
-//      supervisor that owned it when the frame ran. The reaper releases
-//      the claim.
-//   2. Claimant-guard — the per-row release issued with a stale prior-
-//      claimed-by must NOT touch a row whose claim has rotated to a
-//      fresh supervisor.
+//  1. Plain orphan reap — frame terminal, dispatch claim from the same
+//     supervisor that owned it when the frame ran. The reaper releases
+//     the claim.
+//  2. Claimant-guard — the per-row release issued with a stale prior-
+//     claimed-by must NOT touch a row whose claim has rotated to a
+//     fresh supervisor.
 package frame_resolution
 
 import (

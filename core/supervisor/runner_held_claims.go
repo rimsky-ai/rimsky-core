@@ -1,276 +1,255 @@
-// Held-claim runtime: spec §5.6.3 / §5.6.4 wiring.
+// Held-claim runtime helpers (spec §13.6 / §14.4).
 //
-// At commit of a node holding a `claim: true, hold: true` lock, the
-// supervisor inserts one `rimsky_claim_holders` row per terminal-leaf
-// of the §11.4 holding subgraph, recording the picked claim id and the
-// per-leaf on_commit / on_give_up disposition.
-//
-// At commit of a node declaring `claim_resolutions`, the supervisor
-// looks up the matching holder rows (keyed by the resolving node id)
-// and runs the §5.6.4 reference-counted resolution algorithm via
-// `claimstorepg.Store.ResolveOnTerminal`.
-//
-// All three operations run inside the outer release transaction so the
-// claim ledger commits or rolls back atomically with the lock-holder
-// release. Failures roll back the whole tx.
+// Held-claim rimsky_claim_holders rows are inserted at acquisition
+// (in runner_acquire.go::insertHeldClaimHoldersAtAcquire), not at
+// terminal. This file owns the per-acquired-claim release-path
+// helpers used by runner_terminal.go's release loop.
+
 package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/claimstorepg"
 )
 
-// insertHeldClaimHolders walks acq.Locks for every Hold:true claim
-// acquisition and inserts one rimsky_claim_holders row per terminal-leaf
-// of the §11.4 holding subgraph. The leaf node-type set is resolved
-// from the source's NodeDef in the template spec (acq.NodeDef is the
-// CURRENT node — the source — not a downstream); the per-instance node
-// IDs are looked up via storage.Nodes().ListByInstance.
-//
-// Runs inside the supplied tx so the holder rows commit or roll back
-// together with lock release. A non-Hold claim is a no-op for this
-// helper; non-claim locks are ignored entirely.
-//
-// Per-row on_commit / on_give_up come from the source's NodeStoreRef
-// (template-level override) when set, falling back to the resolution
-// node's per-store-ref override (NodeDef.Stores), then to the store's
-// own defaults (handled by claimstorepg.Store; no caller-side fallback
-// needed).
-func insertHeldClaimHolders(
-	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition,
+// isAliasHeld reports whether the alias acquired by acquirerType
+// has IsHeld() == true (subgraph size > 1) in the precomputed
+// holding-subgraph metadata.
+func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) bool {
+	for _, sg := range subgraphs {
+		if sg.AcquirerType == acquirerType && sg.Alias == alias {
+			return sg.IsHeld()
+		}
+	}
+	return false
+}
+
+// markClaimHolderForNode flips this node's rimsky_claim_holders row
+// (for the given lock_holder_id) to 'completed' or 'failed' via a single
+// targeted UPDATE keyed on the unique (lock_holder_id, holder_node_id)
+// pair. Used by the terminal release path for both acquirer-of-held and
+// inheritor-of-held branches.
+func markClaimHolderForNode(
+	ctx context.Context, args RunArgs, tx pgx.Tx,
+	lockHolderID, nodeID shared.UUID, success bool,
 ) error {
-	if acq.NodeDef == nil {
-		return nil
-	}
-	tmpl, instanceNodes, err := loadTemplateAndInstanceNodes(ctx, args, acq.InstanceID)
-	if err != nil {
-		return fmt.Errorf("insertHeldClaimHolders: %w", err)
-	}
-	if tmpl == nil {
-		return nil
-	}
 	stx := pgstorage.WrapPgxTx(tx)
-	for _, lk := range acq.Locks {
-		spec, ok := lk.Spec.(store.ClaimLockSpec)
-		if !ok || !spec.Hold {
-			continue
-		}
-		storeName := lk.Handle.StoreName
-		if storeName == "" {
-			storeName = spec.StoreName
-		}
-		// §11.4 walk over the template (node-type-keyed).
-		leafTypes := node.FindHoldingTerminals(&tmpl.Spec, acq.NodeType, storeName)
-		if len(leafTypes) == 0 {
-			continue
-		}
-		// Filter to leaves that actually carry a matching claim_resolutions
-		// entry: validation should have rejected the template on deploy if
-		// some did not, but the runner double-checks defensively so a stale
-		// template revision can't drop us into a dangling-holder state.
-		leafIDs := resolveLeafIDs(tmpl, instanceNodes, leafTypes, acq.NodeType, storeName)
-		if len(leafIDs) == 0 {
-			continue
-		}
-		onCommit, onGiveUp := holderActionsFor(acq.NodeDef, storeName)
-		// Defaults bake into the row when the source NodeStoreRef left
-		// the override empty. The spec §7.4 / §5.6.3 says a missing
-		// per-resolution override should fall back to the store's
-		// configured default; we resolve that here from the store
-		// registry so the persisted row carries the action verbatim
-		// (the §5.6.4 algorithm reads `on_commit` / `on_give_up`
-		// directly without re-consulting the store).
-		if onCommit == "" || onGiveUp == "" {
-			d1, d2 := storeDefaultActions(args, storeName)
-			if onCommit == "" {
-				onCommit = d1
-			}
-			if onGiveUp == "" {
-				onGiveUp = d2
-			}
-		}
-		for _, leafID := range leafIDs {
-			frameIDPtr := acq.FrameID
-			input := storage.ClaimHolderInsertInput{
-				ID:           uuid.New(),
-				ClaimID:      lk.ClaimResult.ClaimID,
-				StoreName:    storeName,
-				HolderNodeID: leafID,
-				OnCommit:     onCommit,
-				OnGiveUp:     onGiveUp,
-				FrameID:      &frameIDPtr,
-			}
-			if err := args.Storage.ClaimHolders().Insert(ctx, input, stx); err != nil {
-				return fmt.Errorf("insertHeldClaimHolders: %w", err)
-			}
-		}
+	state := storage.ClaimHolderStateCompleted
+	if !success {
+		state = storage.ClaimHolderStateFailed
+	}
+	if err := args.Storage.ClaimHolders().CompleteByLockHolderAndNode(
+		ctx, lockHolderID, nodeID, state, stx,
+	); err != nil {
+		return fmt.Errorf("markClaimHolderForNode: CompleteByLockHolderAndNode: %w", err)
 	}
 	return nil
 }
 
-// resolveDeclaredClaimHolders walks acq.NodeDef.ClaimResolutions and for
-// each entry runs the §5.6.4 resolution algorithm against every
-// rimsky_claim_holders row keyed by (this terminal node, store_name).
-// The terminal outcome is supplied by the caller (commit / give_up).
+// findInheritedAliasesForNode resolves one (acquirerType, alias,
+// lockHolderID) entry per held subgraph this node is a non-acquirer
+// member of. Used by the inheritor branch of the §13.6 release path.
 //
-// Runs inside the supplied tx (wrapped via store.WithTx for
-// claimstorepg's TxFromContext lookup). Multiple holder rows can match
-// when a single store yielded multiple claims to the same upstream
-// chain (rare; supported for completeness).
-func resolveDeclaredClaimHolders(
-	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition,
-	terminal claimstorepg.TerminalOutcome,
-) error {
-	if acq.NodeDef == nil || len(acq.NodeDef.ClaimResolutions) == 0 {
-		return nil
+// Per claim-holders row this node owns, the function reads the parent
+// lock-holder row to find the acquirer node, looks up the acquirer's
+// NodeType, and selects the matching (acquirerType, alias) pair from
+// the precomputed holding-subgraph metadata. The acquirer's lock-holder
+// row carries `store_name`; when an acquirer declares multiple
+// aliases against the same store_name, we further disambiguate by
+// matching the lock-holder row's `region_data` against the alias's
+// substituted selector — falling back to the first matching alias if
+// the row has not yet had its substrate-chosen region written.
+//
+// This is deterministic on a per-row basis (no cartesian product) and
+// agrees with the acquirer-side computation that drove the original
+// `insertHeldClaimHoldersAtAcquire`.
+func findInheritedAliasesForNode(
+	ctx context.Context, args RunArgs,
+	subgraphs []node.HoldingSubgraph, nodeType string, nodeID, instanceID shared.UUID,
+) ([]inheritedAlias, error) {
+	if len(subgraphs) == 0 {
+		return nil, nil
 	}
-	storeCtx := store.WithTx(ctx, tx)
-	for _, r := range acq.NodeDef.ClaimResolutions {
-		s, ok := args.StoreRegistry.GetStore(r.Store)
-		if !ok {
-			return fmt.Errorf("resolveDeclaredClaimHolders: unknown store %q", r.Store)
-		}
-		cs, ok := s.(*claimstorepg.Store)
-		if !ok {
-			// Direct-mode stores don't have held-claim semantics; skip.
+	rows, err := args.Storage.ClaimHolders().ListByHolderNode(ctx, nodeID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("findInheritedAliasesForNode: ListByHolderNode: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	// Pre-index held subgraphs this node could inherit from (acquirer
+	// is somebody else; this node is a member; size > 1).
+	candidatesByAcquirer := map[string][]aliasCandidate{}
+	for _, sg := range subgraphs {
+		if sg.AcquirerType == nodeType {
 			continue
 		}
-		ids, err := selectActiveHolderClaimIDs(ctx, tx, acq.NodeID, r.Store)
+		if !sg.IsHeld() {
+			continue
+		}
+		if !memberOf(sg, nodeType) {
+			continue
+		}
+		candidatesByAcquirer[sg.AcquirerType] = append(
+			candidatesByAcquirer[sg.AcquirerType],
+			aliasCandidate{acquirerType: sg.AcquirerType, alias: sg.Alias},
+		)
+	}
+	if len(candidatesByAcquirer) == 0 {
+		return nil, nil
+	}
+	out := make([]inheritedAlias, 0, len(rows))
+	for _, r := range rows {
+		lh, err := args.Storage.LockHolders().Get(ctx, r.LockHolderID, nil)
 		if err != nil {
-			return fmt.Errorf("resolveDeclaredClaimHolders: %w", err)
+			return nil, fmt.Errorf("findInheritedAliasesForNode: LockHolders.Get: %w", err)
 		}
-		for _, claimID := range ids {
-			if err := cs.ResolveOnTerminal(storeCtx, claimID, acq.NodeID.String(), terminal); err != nil {
-				return fmt.Errorf("resolveDeclaredClaimHolders: %w", err)
-			}
+		if lh == nil {
+			continue // already auto-terminated by a sibling
 		}
+		acquirerNode, err := args.Storage.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		if err != nil {
+			return nil, fmt.Errorf("findInheritedAliasesForNode: Nodes.Get acquirer: %w", err)
+		}
+		if acquirerNode == nil {
+			continue
+		}
+		picks, ok := candidatesByAcquirer[acquirerNode.NodeType]
+		if !ok || len(picks) == 0 {
+			continue
+		}
+		alias := pickAliasForLockHolder(ctx, args, instanceID, acquirerNode.NodeType, picks, lh)
+		if alias == "" {
+			continue
+		}
+		out = append(out, inheritedAlias{
+			AcquirerType: acquirerNode.NodeType,
+			Alias:        alias,
+			LockHolderID: r.LockHolderID,
+		})
 	}
-	return nil
+	return out, nil
 }
 
-// selectActiveHolderClaimIDs returns every claim_id keyed by the
-// (holder_node_id, store_name) pair where state='active'. The §5.6.4
-// algorithm walks one (claim_id, holder_node_id) pair at a time;
-// returning a slice keeps the resolver loop in resolveDeclaredClaimHolders
-// independent of the SQL.
-func selectActiveHolderClaimIDs(
-	ctx context.Context, tx pgx.Tx, holderNodeID shared.UUID, storeName string,
-) ([]string, error) {
-	rows, err := tx.Query(ctx,
-		`SELECT claim_id FROM rimsky_claim_holders
-		  WHERE holder_node_id = $1 AND store_name = $2 AND state = 'active'`,
-		holderNodeID, storeName,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-// loadTemplateAndInstanceNodes pulls the instance's owning template spec
-// plus every node row in the instance. Returned together because the
-// caller needs both for the template-level §11.4 walk and the
-// per-instance node-id resolution. Either return value may be nil
-// (instance/template missing — degraded-but-tolerated).
-func loadTemplateAndInstanceNodes(
+// pickAliasForLockHolder picks the alias for an inherited lock-holder
+// row when the acquirer declares one or more aliases that name this
+// store. Single-candidate case: return that alias. Multi-candidate
+// case: walk the acquirer's NodeDef and match each alias's substituted
+// selector to the row's `region_data`; return the first match. Falls
+// back to the first candidate when no selector matches (the row may
+// have been inserted before the substrate-chosen region was written).
+func pickAliasForLockHolder(
 	ctx context.Context, args RunArgs, instanceID shared.UUID,
-) (*storage.TemplateRow, []storage.NodeRow, error) {
+	acquirerType string, picks []aliasCandidate, lh *storage.LockHolderRow,
+) string {
+	if len(picks) == 1 {
+		return picks[0].alias
+	}
 	inst, err := args.Storage.Instances().Get(ctx, instanceID, nil)
 	if err != nil || inst == nil {
-		return nil, nil, err
+		return picks[0].alias
 	}
 	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
 	if err != nil || tmpl == nil {
-		return nil, nil, err
+		return picks[0].alias
 	}
-	nodes, err := args.Storage.Nodes().ListByInstance(ctx, instanceID, nil)
-	if err != nil {
-		return tmpl, nil, err
+	def := lookupNodeDef(&tmpl.Spec, acquirerType)
+	if def == nil {
+		return picks[0].alias
 	}
-	return tmpl, nodes, nil
-}
-
-// resolveLeafIDs maps the template-level leaf type names to per-instance
-// node IDs, retaining only leaves whose template node carries a matching
-// claim_resolutions entry for (source, storeName). Defensive double-
-// check against the template-deploy validator (which should have
-// rejected non-resolving leaves already).
-func resolveLeafIDs(
-	tmpl *storage.TemplateRow, instanceNodes []storage.NodeRow,
-	leafTypes []string, sourceType, storeName string,
-) []shared.UUID {
-	resolves := make(map[string]struct{}, len(leafTypes))
-	for _, leafType := range leafTypes {
-		for _, tn := range tmpl.Spec.Nodes {
-			if tn.Type != leafType {
+	for _, p := range picks {
+		for _, sref := range def.Stores {
+			if sref.AliasOf() != p.alias {
 				continue
 			}
-			for _, cr := range tn.ClaimResolutions {
-				if cr.Source == sourceType && cr.Store == storeName {
-					resolves[leafType] = struct{}{}
-					break
-				}
+			// Best-effort selector match — we don't re-substitute
+			// params/deps here; the acquirer already wrote the
+			// substituted selector into region_data at acquire time.
+			if matchesRegion(lh.RegionData, sref.Selector) {
+				return p.alias
 			}
 		}
 	}
-	out := make([]shared.UUID, 0, len(resolves))
-	for _, n := range instanceNodes {
-		if _, ok := resolves[n.NodeType]; ok {
-			out = append(out, n.ID)
-		}
-	}
-	return out
+	return picks[0].alias
 }
 
-// holderActionsFor pulls the (on_commit, on_give_up) the source's
-// NodeStoreRef declares for storeName. Empty strings indicate
-// "use store default" — the caller resolves them via storeDefaultActions.
-func holderActionsFor(
-	def *node.TemplateNodeDef, storeName string,
-) (storage.ClaimHolderAction, storage.ClaimHolderAction) {
-	for _, s := range def.Stores {
-		if s.Name != storeName {
-			continue
-		}
-		return storage.ClaimHolderAction(s.OnCommit),
-			storage.ClaimHolderAction(s.OnGiveUp)
-	}
-	return "", ""
+// aliasCandidate is the per-acquirer alias-search element used by
+// pickAliasForLockHolder.
+type aliasCandidate struct {
+	acquirerType string
+	alias        string
 }
 
-// storeDefaultActions resolves the configured (on_commit_default,
-// on_give_up_default) for a postgres claim_store registered under
-// storeName. Returns ("", "") for unknown stores or non-claim stores;
-// the caller falls back to the empty string which the persisted holder
-// row treats as "use store default at resolution time".
-func storeDefaultActions(args RunArgs, storeName string) (storage.ClaimHolderAction, storage.ClaimHolderAction) {
-	s, ok := args.StoreRegistry.GetStore(storeName)
-	if !ok {
-		return "", ""
+// matchesRegion reports whether the lock-holder row's region_data
+// equals the JSON-encoded selector. Conservative: empty region_data is
+// non-matching; malformed bytes are non-matching.
+func matchesRegion(regionData []byte, selector string) bool {
+	if len(regionData) == 0 {
+		return false
 	}
-	cs, ok := s.(*claimstorepg.Store)
-	if !ok {
-		return "", ""
+	encoded, err := json.Marshal(selector)
+	if err != nil {
+		return false
 	}
-	return storage.ClaimHolderAction(cs.OnCommitDefault()),
-		storage.ClaimHolderAction(cs.OnGiveUpDefault())
+	return string(regionData) == string(encoded)
+}
+
+// inheritedAlias bundles the per-aliased-claim metadata an
+// inheritor terminal needs.
+type inheritedAlias struct {
+	AcquirerType string
+	Alias        string
+	LockHolderID shared.UUID
+}
+
+// memberOf reports whether nodeType is in subgraph.Members.
+func memberOf(sg node.HoldingSubgraph, nodeType string) bool {
+	for _, m := range sg.Members {
+		if m == nodeType {
+			return true
+		}
+	}
+	return false
+}
+
+// resolutionForAlias picks the per-alias ClaimResolution from the
+// acquirer's NodeDef. Returns the zero value (with empty action
+// strings) when not declared — the auto-terminal routing falls
+// through to the "commit"/"abandon" defaults.
+func resolutionForAlias(def *node.TemplateNodeDef, alias string) node.ClaimResolution {
+	if def == nil {
+		return node.ClaimResolution{}
+	}
+	return def.ClaimResolutions[alias]
+}
+
+// resolutionForAcquirerNode loads the acquirer's NodeDef from the
+// template and returns the per-alias ClaimResolution. Used when an
+// inheritor's terminal needs to fire the acquirer's resolution at
+// auto-terminal.
+func resolutionForAcquirerNode(
+	ctx context.Context, args RunArgs, instanceID shared.UUID, acquirerType, alias string,
+) (node.ClaimResolution, error) {
+	inst, err := args.Storage.Instances().Get(ctx, instanceID, nil)
+	if err != nil || inst == nil {
+		return node.ClaimResolution{}, err
+	}
+	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
+	if err != nil || tmpl == nil {
+		return node.ClaimResolution{}, err
+	}
+	for i := range tmpl.Spec.Nodes {
+		if tmpl.Spec.Nodes[i].Type == acquirerType {
+			return tmpl.Spec.Nodes[i].ClaimResolutions[alias], nil
+		}
+	}
+	return node.ClaimResolution{}, nil
 }

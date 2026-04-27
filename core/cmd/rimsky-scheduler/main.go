@@ -2,7 +2,7 @@
 // scheduler process. It is a thin shell that builds a typed
 // config.SchedulerConfig from environment variables, loads the stores config
 // from RIMSKY_STORES_CONFIG (used by the §13.5 step-4 visibility-timeout
-// sweep over claim-store-postgres instances), and calls
+// sweep over postgres pick-policy items tables), and calls
 // config.StartScheduler. Lifecycle is driven by SIGTERM/SIGINT with a 30s
 // graceful shutdown context.
 //
@@ -33,8 +33,8 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/claimstorepg"
 	"github.com/fallguy/rimsky/core/store/filesystem"
+	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
 // defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is unset.
@@ -57,7 +57,7 @@ func main() {
 	if storesPath == "" {
 		storesPath = defaultStoresConfigPath
 	}
-	storesCfg, err := loadStoresConfig(storesPath)
+	storesCfg, namedLocksCfg, err := loadStoresConfig(storesPath)
 	if err != nil {
 		log.Error("load stores config", "error", err.Error(), "path", storesPath)
 		os.Exit(1)
@@ -73,13 +73,13 @@ func main() {
 	sb := pgstorage.New(pool)
 	q := pgqueue.New(pool)
 
-	// Linked-in store factories. The scheduler only walks claim-store-postgres
-	// instances during the §13.5 step-4 visibility-timeout sweep, but it must
-	// still register every kind that may appear in stores.yml so the registry
-	// build does not fail.
+	// Linked-in store factories. The scheduler only walks postgres
+	// pick-policy items tables during the §12.12 visibility-timeout sweep,
+	// but it must still register every kind that may appear in stores.yml
+	// so the registry build does not fail.
 	storeFactories := []store.Factory{
 		filesystem.Factory{},
-		claimstorepg.Factory{Pool: pool},
+		pgstore.Factory{},
 	}
 
 	h, err := config.StartScheduler(config.SchedulerConfig{
@@ -92,6 +92,7 @@ func main() {
 		Pool:             pool,
 		StoreFactories:   storeFactories,
 		Stores:           storesCfg,
+		NamedLocks:       namedLocksCfg,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
@@ -108,26 +109,30 @@ func main() {
 	pool.Close()
 }
 
-// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR} references
-// before YAML parsing. A missing file is not an error: an empty
-// store.StoresConfig is returned, mirroring the supervisor and control-api
-// binaries.
-func loadStoresConfig(path string) (store.StoresConfig, error) {
+// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR}
+// references before YAML parsing. Returns the parsed stores +
+// named_locks blocks (spec §15.3 — one operator config bundle, two
+// top-level keys). A missing file is not an error: empty configs
+// returned, mirroring the supervisor and control-api binaries.
+func loadStoresConfig(path string) (store.StoresConfig, store.NamedLocksConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return store.StoresConfig{}, nil
+			return store.StoresConfig{}, store.NamedLocksConfig{}, nil
 		}
-		return store.StoresConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
+		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
 	}
 	expanded := os.ExpandEnv(string(raw))
 	var wrapper struct {
-		Stores map[string]map[string]any `yaml:"stores"`
+		Stores     map[string]map[string]any        `yaml:"stores"`
+		NamedLocks map[string]store.NamedLockConfig `yaml:"named_locks"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return store.StoresConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
+		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
 	}
-	return store.StoresConfig{Stores: wrapper.Stores}, nil
+	return store.StoresConfig{Stores: wrapper.Stores},
+		store.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		nil
 }
 
 func atoiDefault(s string, d int) int {

@@ -6,7 +6,9 @@ in any language — and wire it into a rimsky deployment.
 If you are operating an existing deployment, see `operator-guide.md`. For
 the wire-format reference, see `protocol.md` (authoritative wire contract;
 the proto source is `proto/v1/node_executor.proto`). For the conceptual
-model — nodes, attributes, stores, locks — see `node-graph-design.md`.
+model — nodes, attributes, claims, named locks — see `node-graph-design.md`.
+The vocabulary used throughout (claim, address, payload, region, intent,
+alias, value-pass, claim-pass, etc.) is defined in `docs/glossary.md`.
 
 ---
 
@@ -39,11 +41,10 @@ service NodeExecutor {
 | `userdata` | opaque per-node config from the template; **never substituted by rimsky** |
 | `attributes` | per-run typed attribute object; source-directive fields are pre-populated by the supervisor at dispatch (read-only input); sourceless fields are slots for you to fill |
 | `attributes_schema` | the JSON Schema for `attributes`, copied from the template, for executor-side reference |
-| `stores` | map of `<store_name> → StoreHandle` for every store the node references; the supervisor pre-acquires the declared regions / claims before dispatch |
+| `stores` | map of `<alias> → StoreHandle` for every claim the node acquired or inherited; the supervisor calls `Store.Open` per claim inside the atomic acquisition transaction and packages the returned `Address` bytes opaquely |
 | `callback_url` | base URL for both async-handoff terminal callbacks and incremental attribute writes (empty if the supervisor has no callback endpoint configured) |
 | `cancel_token` | bearer token to echo on callbacks; the supervisor authenticates by matching it against the live dispatch row |
-| `resumed` | `true` if this dispatch is a retry of a `resumable: true` node where the prior attempt routed through `resume_then_retry`; both store-side state and `attributes` survive the boundary |
-| `run_attempt` | 1-indexed retry counter, useful for idempotency keys |
+| `run_attempt` | 1-indexed retry counter, useful for idempotency keys. (There is no `resumed` flag — resume is universal; the substrate detects resumed-vs-fresh internally.) |
 
 #### 1.2.1 `attributes` and `attributes_schema`
 
@@ -53,12 +54,21 @@ The shape is declared by the template's `attributes.schema` and travels
 verbatim as `ExecuteRequest.attributes_schema`.
 
 At dispatch time the supervisor pre-populates fields whose schema declares
-a `source:` directive:
+a `source:` directive. The full set of substitution paths your attributes
+schema can use:
 
 - `source: "{{deps.<node>.<field>}}"` — pulled from an upstream node's
-  committed attributes.
-- `source: "{{claim.<store>.<field>}}"` — pulled from the payload of a
-  claim acquired against a claim store.
+  committed attributes (lifetime-independent — works after the upstream's
+  claim has closed).
+- `source: "{{claim.<alias>.address}}"` — the live claim's substrate-
+  native address (opaque bytes; same shape your executor receives in the
+  `stores` map). Requires the node to acquire `<alias>` itself OR
+  `inherits:` it from an upstream acquirer.
+- `source: "{{claim.<alias>.payload.<field>}}"` — a named field of the
+  live claim's payload. Same validity rule.
+- `source: "{{claim.<alias>.region}}"` — the live claim's region
+  identifier (resolved selector or pick-policy-chosen item id). Same
+  validity rule.
 - `source: "{{params.<key>}}"` — pulled from the instance's params.
 
 Source-directive fields are **read-only input**. Treat them as the
@@ -69,40 +79,46 @@ the incremental callback (§5). Rimsky never substitutes anything inside
 
 #### 1.2.2 `stores` map
 
-Each entry in `stores` is a `StoreHandle`:
+Each entry in `stores` is keyed by the per-claim **alias** (defaults to
+the store name; can be set explicitly when a node has multiple claims on
+the same store). The value is a `StoreHandle` whose `handle` field is the
+substrate-native `Address` bytes returned by `Store.Open`:
 
 ```
 {
-  kind:           "filesystem" | "claim_store" | ...,
-  handle:         <kind-specific Struct>,
-  write_regions:  [<resolved region strings>],
-  read_regions:   [<resolved region strings>],
-  resumed:        bool                       // store-side prior work exists
+  handle: <substrate-native bytes, opaque to Rimsky>
 }
 ```
 
-The handle's shape is per-kind. v1 ships:
+The address shape is **per store kind** — opaque to Rimsky, decoded by
+the executor per its substrate-specific knowledge of the `kind` declared
+in operator config. The kind is not in the wire envelope (the executor
+already knows which store kind backs each alias from the template + the
+deployment's `stores.yml`); for tooling that needs the full picture, the
+control-API exposes the operator config separately.
 
-| Kind | `handle` shape |
+Reference v1 shapes:
+
+| Kind | `handle` shape (illustrative) |
 | --- | --- |
-| `filesystem` | `{ "path": "/abs/path/to/locked/region" }` — open a directory the executor reads/writes with normal POSIX ops. In `direct` mode this points at the live region; in `sidecar`/`versioned` modes (post-v1) it points at the working copy. |
-| `claim_store` | `{ "claim_id": "...", "payload": <json> }` — `claim_id` is rimsky-internal bookkeeping (don't interpret); `payload` is the user data of the claimed item, also surfaced via `{{claim.<store>.payload.…}}` source directives if the template declared them. |
+| `filesystem` | `{ "path": "/abs/path/to/locked/region" }` — open a directory the executor reads/writes with normal POSIX ops. |
+| `postgres` | substrate-defined locator — typically a row or item identifier the executor can use against the operator-owned items table backing a configured pick policy. |
 
-Future kinds (`database`, `s3`, `git`) follow the same shape pattern; see
+Future kinds (`s3`, `git`, etc.) follow the same shape pattern; see
 `store-author-guide.md` once they ship.
 
-The supervisor has already acquired the declared `write_regions` /
-`read_regions` for the duration of your run. Stay within them — writing
-outside undercuts other in-flight nodes' lock reservations and is
-undefined behavior. Reading outside is similarly undefined; the supervisor
-does not police it.
+The supervisor has already acquired each claim — and held it across any
+inheritance — for the duration of your run. The orchestrator's
+`rimsky_lock_holders` row is the authority on "is anyone holding this
+claim"; the substrate enforces nothing extra. Stay within the regions
+your template declared; writing or reading outside is undefined and may
+collide with other in-flight nodes' acquisitions.
 
-`resumed: true` on a `StoreHandle` means the store has prior work for
-this dispatch (e.g. a sidecar tree from an earlier `resume_then_retry`
-attempt). Sidecar / versioned modes are post-v1; in v1 (filesystem
-direct + claim_store), `resumed` will reflect the underlying mode's
-capability — direct-mode filesystem stores naturally resume because
-prior writes already live in the region.
+There is no `resumed` flag on `StoreHandle`. Resume is universal — the
+substrate detects resumed-vs-fresh internally by lookup against its own
+state, keyed by the lock-holder identity. Your executor doesn't need to
+distinguish the two cases; the address it receives points at whatever
+state the substrate considers current.
 
 #### 1.2.3 `callback_url` and `cancel_token`
 
@@ -121,6 +137,44 @@ If `callback_url` is empty, the supervisor is not configured for
 callbacks: do not emit `AsyncAccepted` and do not attempt incremental
 writeback. Fall through to a synchronous `Complete` (with optional
 `attributes_delta`) or report `Errored { error_class: "no_callback_configured" }`.
+
+#### 1.2.4 Two propagation modes for downstream nodes
+
+When a node's claim payload should reach a downstream node, the template
+author has two options (spec §14.7 — pick per use case, not per
+preference):
+
+- **Value-pass.** The source node extracts captured fields into its own
+  attributes via `source: "{{claim.<alias>.payload.<f>}}"` (or `.region`
+  / `.address`); downstream nodes consume captured values via
+  `{{deps.<source>.<field>}}`. **Lifetime-independent** — works after the
+  source's claim has closed. Use this when the downstream only needs the
+  data, not live access to the substrate-side state.
+- **Claim-pass.** The downstream node declares `inherits: [{claim:
+  <alias>}]` and substitutes via `{{claim.<alias>.address |
+  payload.<f> | region}}`. **Requires the claim to remain open** — the
+  inheriting node's existence holds it; the supervisor's auto-terminal
+  mechanism fires resolution at holding-subgraph completion. Use this
+  when the downstream needs live access to the substrate (read the
+  picked file, write back to the locked region, etc.).
+
+The "no hold + pass address" combination is structurally impossible:
+`{{claim.<alias>.address}}` requires the alias to be acquired or
+inherited, and inheritance extends the claim's lifetime.
+
+#### 1.2.5 Encrypt-before-pass (operator practice)
+
+Sensitive fields inside claim content (any of payload / address / region)
+may be encrypted at the producer side before the bytes enter Rimsky's
+address space (spec §17.6). Rimsky transports ciphertext as opaque bytes;
+**executors decrypt at point of use**. Asymmetric is the recommended
+default — your executor holds the private key; the producer (substrate,
+admin tool, upstream pipeline) holds the public key. Encryption is
+field-level, not whole-content, so Rimsky can still substitute by name.
+
+This is a deployment-side practice, not a Rimsky feature. Document any
+crypto your executor performs (which fields, which key material, which
+algorithm) in your README so operators understand the boundary.
 
 ### 1.3 What you emit
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Implementation shape of rimsky v1 (Go). This document covers how the code is organized, which processes run, how distribution works, and where the conceptual invariants are enforced in source. Conceptual model lives in `node-graph-design.md`; wire protocol lives in `protocol.md`.
+Implementation shape of rimsky v1 (Go). This document covers how the code is organized, which processes run, how distribution works, and where the conceptual invariants are enforced in source. Conceptual model lives in `node-graph-design.md`; wire protocol lives in `protocol.md`. Vocabulary (claim, named lock, region, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, write_semantics, pick policy) lives in `glossary.md` — the authoritative naming reference.
 
 ---
 
@@ -16,17 +16,19 @@ The orchestrator is a single Go module (`github.com/fallguy/rimsky/core`). Packa
 
 ### 1.2 Store library
 
-Implementations of the `Store` interface (declared in `core/store/`). A store is a deployment-level data backend with regions, locks, and commit semantics — filesystems, claim queues, and (post-v1) databases, S3, append logs, git. Each implementation declares its capabilities (region locking, claim acquisition, discard, resume, restore) and exposes a native handle to executors. Stores are pure runtime objects built from process YAML config (`stores.yml`); each process has its own `Registry`. There is no `rimsky_stores` database table — templates reference stores by name, and resolution mirrors today's executor name resolution.
+Implementations of the `Store` interface (declared in `core/store/`). A store is a deployment-level data backend with two primitives — **claims** (substrate-bound, `(store, region, intent)` rows in `rimsky_lock_holders`) and **named locks** (non-substrate, `(name, limit)` rows). Stores are pure runtime objects built from operator YAML config (`stores.yml`); each process has its own `Registry`. There is no `rimsky_stores` database table — templates reference stores by name, and resolution mirrors executor name resolution.
 
-Lock state lives only in postgres (`rimsky_lock_holders`); stores never persist lock state. A supervisor pool's config lists the stores it has access to, and dispatch eligibility filters out nodes whose required stores aren't in the local pool (§14.2 of `docs/specs/2026-04-25-stores-redesign-design.md`).
+The `core/store/` package exports the universal 5-verb `Store` interface (`Open` / `Commit` / `Abandon` / `Delete` / `Release` per spec §6), `ClaimSpec` and `NamedLockSpec` (the two spec types — distinct, with no common interface), `Capabilities` (one field: `WriteSemantics`), `ClaimResult` (`Address` / `Payload` / `Region`, all `json.RawMessage` and inert in Rimsky per blessed invariant 20), `WriteSemantics` (`direct` / `staged_blocking` / `staged_async`), `Intent` (`r` / `rw`), the pure `ModeCoexists` helper that implements the spec §8.5 conflict matrix, the `Registry` (per-process, with `MaxWriteSemantics` enforcement at `BuildAll`), and the `LockHoldersClient` postgres helpers shared by supervisor and scheduler. Concrete store implementations live as subpackages.
+
+Lock state lives only in postgres (`rimsky_lock_holders`); stores never persist lock state (blessed invariant 9a). A supervisor pool's config lists the stores it has access to, and dispatch eligibility filters out nodes whose required stores aren't in the local pool.
 
 v1 ships two reference implementations and a stub:
 
-- `core/store/filesystem/` — direct-mode filesystem store. Lock acquisition + handle to the live region (an absolute directory path). Region grammar is path globs (`section-a/**`, `shared/glossary.md`). Atomicity at per-file rename granularity.
-- `core/store/claimstorepg/` — claim-store-postgres. Holds a backlog of items in an operator-owned items table; hands them out via claim. Configuration determines policy (queue with `on_commit: delete`, ring buffer with `on_commit: release_to_back`, etc.). Supports held claims with reference-counted resolution at terminal-leaf nodes (§5.6.4 of the spec).
-- `core/store/stub/` — in-process stub for scenario tests; configurable region table + claim queue + capability flags.
+- `core/store/filesystem/` — direct-mode filesystem store. `Open` returns a path-shaped address rooted at the configured directory. Region grammar is path globs (`section-a/**`, `shared/glossary.md`). Atomicity at per-file rename granularity.
+- `core/store/postgres/` — postgres-backed store (renamed from `claimstorepg`). Supports regional access AND substrate-side **pick policies** declared per-store under a `pick_policies:` block (recommended convention: `@policy-name` selectors, e.g. `@review-queue` for FIFO, `@docs-ring` for ring buffers). Multiple pick policies per store are supported; each carries its own substrate-specific config (item table, ordering, `on_commit_default`, visibility timeout). There is no separate `claim_store` kind — pick policies are substrate-side per spec §7.2.
+- `core/store/stub/` — in-process stub for scenario tests; configurable region table + selector handlers.
 
-Sidecar mode and versioned mode (with `Restore`) are accommodated by the interface but ship post-v1.
+Sidecar mode is post-v1; versioned mode is permanently eliminated (spec §10).
 
 ### 1.3 Executor library
 
@@ -53,7 +55,7 @@ rimsky-go/                          # repo root (becomes "/" on OSS extraction)
 │   ├── controlapi/                 # HTTP+JSON routes, schemas, error mapping, auth hook
 │   ├── storage/                    # storage interfaces + Postgres impls (all state tables)
 │   ├── migrations/                 # numbered SQL files + runner
-│   ├── store/                      # Store INTERFACE + reference impls (filesystem/, claimstorepg/, stub/)
+│   ├── store/                      # Store INTERFACE (5 verbs) + reference impls (filesystem/, postgres/, stub/)
 │   ├── attributes/                 # substitution engine + JSON Schema validation + callback handler
 │   ├── qualityrule/                # builtin rule implementations
 │   ├── executor/                   # protocol-client helpers (gRPC / HTTP bridge clients)
@@ -97,9 +99,9 @@ The core module's internal package graph is enforced by `go vet` plus a custom l
 
 - `node/` — pure logic (state machine, policy evaluator, template types, backoff math). Imports `shared/` only.
 - `message/` — types only. Imports `shared/` only.
-- `queue/` — `DispatchQueue` interface + Postgres implementation. Imports `shared/`, `store/` (interface — claim eligibility takes `[]store.LockSpec`), and `pgx`.
+- `queue/` — `DispatchQueue` interface + Postgres implementation. Imports `shared/` and `pgx`. Eligibility input carries the node's claim and named-lock requirements as `[]any` (concrete elements are `store.ClaimSpec` or `store.NamedLockSpec` values; the supervisor type-switches).
 - `storage/` — storage interfaces + Postgres implementations (nodes, supervisors, lock-holders, node-attributes, claim-holders, events, migrations). Imports `shared/` and `pgx`.
-- `store/` — `Store` interface declaration plus the reference implementations as subpackages (`filesystem/`, `claimstorepg/`, `stub/`) and postgres helpers for `rimsky_lock_holders`. The interface package imports `shared/` only. Subpackages may import `pgx` (for `claimstorepg/`) and stdlib filesystem APIs (for `filesystem/`). **Allowed importers:** `queue/`, `scheduler/`, `supervisor/`, `controlapi/`, `attributes/`, `config/`, `cmd/*`, `scenario/`.
+- `store/` — universal 5-verb `Store` interface plus the reference implementations as subpackages (`filesystem/`, `postgres/`, `stub/`) and the `LockHoldersClient` postgres helpers for `rimsky_lock_holders`. The interface package imports `shared/` and `pgx/v5` (the latter only for `pgx.Tx`, which `Open` consumes via `store.TxFromContext` per blessed invariant 15). Subpackages may import `pgx` (for `postgres/`) and stdlib filesystem APIs (for `filesystem/`). **Allowed importers:** `queue/`, `scheduler/`, `supervisor/`, `controlapi/`, `attributes/`, `config/`, `cmd/*`, `scenario/`.
 - `attributes/` — substitution engine, JSON Schema validation, callback handler, postgres helpers for `rimsky_node_attributes`. Imports `shared/`, `storage/`, `store/` (for claim-payload reads), and `pgx`. **Allowed importers:** `supervisor/`, `controlapi/`, `scheduler/`, `config/`, `cmd/*`, `scenario/`.
 - `qualityrule/` — builtin quality-rule implementations. Imports `shared/` and `store/` (interface).
 - `executor/` — protocol-client helpers (gRPC + HTTP bridge clients). Imports `shared/` and generated code from `proto/v1/`.
@@ -117,7 +119,7 @@ The scheduler and supervisor are independent processes. They communicate only th
 
 The control API has the same property: it never calls into scheduler or supervisor internals. It reads and writes shared state; the runtime subsystems observe those reads/writes through their own polling/query logic.
 
-The `store/` package declares the `Store` interface; reference implementations live as subpackages (`store/filesystem/`, `store/claimstorepg/`, `store/stub/`). Stores are constructed at process startup from `stores.yml`; deployers wire factories in at `main()` via `store.Register(kind, factory)` and the per-process registry resolves names declared in templates. There is no shared `rimsky_stores` table — each process's registry is independent runtime state.
+The `store/` package declares the universal 5-verb `Store` interface; reference implementations live as subpackages (`store/filesystem/`, `store/postgres/`, `store/stub/`). Stores are constructed at process startup from `stores.yml`; deployers wire factories in at `main()` and the per-process `Registry` resolves names declared in templates. There is no shared `rimsky_stores` table — each process's registry is independent runtime state.
 
 The `attributes/` package owns all `{{...}}` substitution and JSON Schema validation for per-run node attributes. Executors never substitute; userdata is opaque to rimsky (blessed invariant 11). Validation gates run twice — at dispatch (after substitution) and at commit (after executor writeback).
 
@@ -171,7 +173,7 @@ Responsibilities:
 6. **Handle response.** Terminal events map to commit (Complete), error routing (Blocked/Errored), or async-hold (AsyncAccepted).
 7. **Complete.** Delete dispatch row (claimant-guarded).
 
-Code locations: `core/supervisor/supervisor.go` is the top-level loop; `core/supervisor/runner.go` is the omnibus runner — per-dispatch execution including the verify-before-run step, attribute substitution, native-handle open, executor dispatch, and the heartbeat loop; `core/supervisor/callback.go` handles async-handoff callbacks; `core/supervisor/commit.go` drives the commit flow (`Store.Commit` + `Store.ReleaseLock` + held-claim resolution per §5.6.4 of the spec, all in one transaction); `core/supervisor/on_error.go` dispatches through the policy chain; `core/supervisor/terminal_outcome.go` maps protocol terminal events to `ReleaseAction` (commit / give_up / preserve_for_resume).
+Code locations: `core/supervisor/supervisor.go` is the top-level loop; `core/supervisor/runner.go` is the omnibus runner — per-dispatch execution including the verify-before-run step, attribute substitution, executor dispatch, and the heartbeat loop; `core/supervisor/runner_acquire.go` runs the §13.3 atomic acquisition transaction (lock-holder inserts + `Store.Open` calls all in one tx — blessed invariant 15); `core/supervisor/runner_terminal.go` drives per-claim release at the acquirer's terminal; `core/supervisor/auto_terminal.go` implements the auto-terminal mechanism per spec §14.4 (subgraph-complete check, aggregate-outcome routing, single-transaction substrate verb call + lock-holder deletion); `core/supervisor/callback.go` handles async-handoff callbacks; `core/supervisor/on_error.go` dispatches through the policy chain; `core/supervisor/terminal_outcome.go` maps protocol terminal events to per-claim verb intentions consumed by `runner_terminal` and `auto_terminal`.
 
 ### 4.3 Control API
 
@@ -184,8 +186,8 @@ HTTP+JSON endpoints:
 - `GET /nodes/:id`, `GET /instances/:id_or_key/nodes`.
 - `POST /nodes/:id/invalidate`, `POST /nodes/:id/reset`, `POST /nodes/:id/kill`.
 - `GET /events` (paginated, filterable).
-- `GET /claims/:claim_id/holders` — debug visibility into held-claim bookkeeping.
-- `POST /admin/claim-stores/:name/items` — admin-only enqueue endpoint (gated by `X-Rimsky-Admin-Token`); writes a row into the operator-owned items table.
+- `GET /lock-holders/:lock_holder_id/claim-holders` — debug visibility into held-claim bookkeeping (rows in `rimsky_claim_holders` keyed by FK to a lock-holder row).
+- `POST /admin/stores/:name/pick-policies/:selector/items` — admin-only enqueue endpoint (gated by `X-Rimsky-Admin-Token`); writes a row into the operator-owned items table backing the named pick policy on the named postgres store.
 - `POST /admin/scheduled-nodes/:node_id/force-fire` — admin-only; sets `rimsky_schedules.next_fire_at = now()` so the next scheduler tick fires the schedule. Used by the smoke test fixture.
 - `GET /health`, `GET /metrics` (Prometheus).
 
@@ -203,7 +205,7 @@ Code locations: `core/controlapi/app.go` is the route wiring; individual route h
 
 ## 5. Blessed invariants in source
 
-Each invariant from `node-graph-design.md` §11 is annotated `@blessed-invariant` in the Go source and exercised by a scenario test. Pointers:
+Each invariant is annotated `@blessed-invariant` in the Go source and exercised by a scenario test. The full list (with rationale and revision history) lives in `docs/specs/2026-04-27-stores-redesign-v2-design.md` §21. Pointers:
 
 ### 5.1 State machine rejects illegal transitions
 
@@ -221,7 +223,7 @@ Each invariant from `node-graph-design.md` §11 is annotated `@blessed-invariant
 ### 5.3 Multi-lock acquisition uses deterministic sorted order
 
 - **File:** `core/supervisor/runner.go` (the runner orchestrates atomic acquisition; the queue no longer holds tag-limit logic)
-- **Context:** when a node requires multiple locks (named, region, claim), acquisition sorts the lock specs in the §13.7 deterministic order before claiming. Prevents deadlock between concurrent claims sharing a lock subset.
+- **Context:** when a node requires multiple locks (named, region/claim), acquisition sorts the specs in the spec §13.7 deterministic order — `(lock_kind, lock_name | (store_name, region_data_canonical))` — before claiming. Prevents deadlock between concurrent claims sharing a lock subset.
 
 ### 5.4 Claimant-guarded release
 
@@ -249,15 +251,20 @@ Each invariant from `node-graph-design.md` §11 is annotated `@blessed-invariant
 - **File:** `core/migrations/runner.go`
 - **Context:** the migration runner acquires a session-level `pg_advisory_lock` for the duration of a migration batch. Released at session close; prevents concurrent-runner migration-table corruption.
 
-### 5.9 Lock state lives only in postgres
+### 5.9a Lock state lives only in postgres
 
 - **File:** `core/store/interface.go` (annotated on the `Store` interface comment)
-- **Context:** no store implementation persists lock state. Stores may persist *data* state — e.g. `claim-store-postgres` flips an items-table row to `in_progress` when claiming — but the question "is anyone holding lock X" is answered exclusively by `rimsky_lock_holders`.
+- **Context:** no store implementation persists lock state. Stores may persist *data* state — e.g. `core/store/postgres/` flips an items-table row to `'in_progress'` at `Open` for pick-policy claims — but the question "is anyone holding lock X" is answered exclusively by `rimsky_lock_holders`.
+
+### 5.9b Store implementations do not internally serialize on lock-shaped predicates
+
+- **File:** `core/store/interface.go` (annotated on the `Store` interface comment)
+- **Context:** the §9-strategy-2 reader-lease serialization pattern (substrate tracks active read leases; writers block at the substrate boundary) is forbidden as a way to fake `staged_async`. Honest support requires snapshot delegation (substrate creates a stable view materialized at `Open(read)`) or native MVCC pass-through (substrate opens a snapshot transaction at `Open(read)`, ends it at `Release`). A substrate that cannot honestly provide stable reads during writes declares `staged_blocking` (or `direct`) and lets the scheduler do the serialization.
 
 ### 5.10 Lock acquisition is atomic with dispatch claim
 
-- **Files:** `core/supervisor/runner.go` (acquisition function), `core/queue/postgres/queue.go` (dispatch SQL)
-- **Context:** the §13.3 transaction either claims dispatch and inserts all required `rimsky_lock_holders` rows AND completes all store `AcquireLock` mutations, or none of them. No partial state is observable.
+- **Files:** `core/supervisor/runner_acquire.go` (acquisition function), `core/queue/postgres/queue.go` (dispatch SQL)
+- **Context:** the §13.3 transaction either claims dispatch AND inserts all required `rimsky_lock_holders` rows AND completes all store `Open` mutations AND inserts any required `rimsky_claim_holders` rows for held claims, or none of them. No partial state is observable. (Preserved for in-process; revisited in the OOP cycle.)
 
 ### 5.11 Userdata is opaque to rimsky
 
@@ -269,15 +276,25 @@ Each invariant from `node-graph-design.md` §11 is annotated `@blessed-invariant
 - **File:** `core/attributes/validate.go`
 - **Context:** validation runs at dispatch (after source-directive substitution; every required source must resolve) and at commit (after executor writeback merges; the populated object must validate against the schema). Both gates mandatory; failure raises `template_resolution_failed` or `attributes_schema_failed` respectively.
 
-### 5.13 First-delete-wins, last-released-wins for held claims
+### 5.13 Held-claim resolution is auto-terminal, single, and aggregate-outcome-driven (revised)
 
-- **File:** `core/store/claimstorepg/holders.go`
-- **Context:** the §5.6.4 reference-counted resolution algorithm runs in the same DB transaction that releases the terminal node's lock-holder row. Once any sibling resolves with `delete`, the claim is gone and no release fires regardless of count; otherwise the store-side release fires only when all siblings are completed and none deleted.
+- **File:** `core/supervisor/auto_terminal.go`
+- **Context:** at holding-subgraph completion (all `rimsky_claim_holders` rows for the lock-holder are in `'completed'` or `'failed'`), the supervisor fires exactly one resolution per held claim based on aggregate outcome — all-completed → `on_commit`; any-failed → `on_give_up`. The substrate verb (`Commit` / `Abandon` / `Delete`, with `policyOverride` from the acquirer's `claim_resolutions[<alias>]` block) shares a single SQL transaction with the `rimsky_lock_holders` row deletion and the `rimsky_claim_holders` finalisation; cascade FK on `rimsky_claim_holders.lock_holder_id` cleans up the bookkeeping rows. **Replaces** the prior `claimstorepg/holders.go` first-delete-wins / last-released-wins algorithm; no per-terminal-leaf reconciliation, no `actual_action` column.
 
 ### 5.14 `RegionsConflict` and `UnmarshalRegion` are pure
 
-- **File:** `core/store/interface.go`
+- **File:** `core/store/interface.go` (annotated on the methods)
 - **Context:** these methods on `Store` have no side effects, read no external state, and are deterministic on inputs. The eligibility predicate and the in-process conflict checks rely on this purity for safety under concurrent calls.
+
+### 5.15 `Open` fires inside the acquisition transaction
+
+- **File:** `core/supervisor/runner_acquire.go`
+- **Context:** the supervisor passes its open `*pgx.Tx` via `store.WithTx(ctx, tx)`; the store's `Open` extracts it via `store.TxFromContext(ctx)` for any substrate-side state mutations (e.g. the postgres pick-policy items-table flip). Substrate state and the lock-holder row's `address` UPDATE participate in the same transaction. (In-process only; the OOP cycle will revisit the atomicity model.)
+
+### 5.20 Claim content (payload, address, region) is inert in Rimsky
+
+- **Files:** `core/store/types.go` (on `ClaimResult`); `core/attributes/substitution.go::walkPath` (sanctioned introspection site)
+- **Context:** Rimsky reads claim content by named-field path **only** at substitution-leaf extraction; does not log, validate, transform, normalize, decrypt, hash, index, pattern-match, attach to traces, include in errors, or otherwise act on claim content. `ClaimResult.Address` / `.Payload` / `.Region` are `json.RawMessage` to permanently narrow the surface for accidental pretty-printing via `slog.Any` or `%+v`. Distinct from store-config bytes (operator-managed; not under invariant 20 — see spec §17.5).
 
 ---
 
@@ -392,15 +409,15 @@ The end-state schema is defined in `core/migrations/001-initial.sql` (rewritten 
 - `rimsky_schedules` — cron + next-fire time for scheduled nodes.
 - `rimsky_supervisors` — supervisor registry with heartbeats, callback endpoints, plus `accepted_executors TEXT[]` and `accepted_stores TEXT[]` for pool eligibility.
 - `rimsky_node_attributes` — per-node typed attributes object (single row per node). `data JSONB` populated from source-directive substitution at dispatch and executor writeback during run; validated against the template's JSON Schema. Replaces the old per-run `result` and resource-version writes.
-- `rimsky_lock_holders` — single source of truth for held locks across all kinds (named, region, claim). Carries `holder_supervisor_id`, `holder_node_id`, `last_heartbeat_at`, `expires_at`. Inserted atomically with dispatch claim; orphan-reaped at `5 × heartbeat_interval`. (Stores never persist lock state — blessed invariant 9.)
-- `rimsky_claim_holders` — bookkeeping for held claims under reference-counted resolution. One row per (claim_id, terminal-leaf-node) inserted at commit of the claiming-source node; rows transition `active → completed` recording `actual_action` per the §5.6.4 algorithm.
+- `rimsky_lock_holders` — single source of truth for the two lock primitives (`lock_kind IN ('named', 'region')`). For region claims carries `store_name`, `region_data` (substrate's identifier — resolved selector text or pick-policy-chosen item identifier), `address` (substrate-supplied bytes from `Open`, needed by terminal verbs and the orphan reaper), and `intent` (`r` / `rw`). For named locks carries `lock_name`. Common fields: `holder_supervisor_id`, `holder_node_id`, `last_heartbeat_at`, `expires_at`. Inserted atomically with dispatch claim; orphan-reaped at `5 × heartbeat_interval`. (Stores never persist lock state — blessed invariant 9a.)
+- `rimsky_claim_holders` — bookkeeping for held claims under auto-terminal resolution. One row per (lock-holder × holding-subgraph-member) inserted at the acquirer's `Open` inside the §13.3 transaction. Carries `lock_holder_id UUID NOT NULL REFERENCES rimsky_lock_holders(id) ON DELETE CASCADE`, `holder_node_id`, `state TEXT IN ('active', 'completed', 'failed')`, `completed_at`, `frame_id` (observability-only). Cascade-deletes when the parent lock-holder row is removed at auto-terminal.
 - `rimsky_events` — append-only log; primary audit trail. New kinds added: `lock_acquired`, `lock_released`, `lock_orphan_reaped`, `attributes_substituted`, `attributes_committed`, `attributes_validation_failed`, `claim_acquired`, `claim_held`, `claim_resolved`, `template_resolution_failed`. Removed: `commit`, `pure_cascade_commit`.
 
 `rimsky_resources` and `rimsky_resource_versions` are no longer present.
 
-In addition, `claim-store-postgres` operates over an **operator-owned items table** with a documented schema (§9.10 of the spec): `item_id UUID`, `payload JSONB`, `enqueued_at TIMESTAMPTZ`, `state TEXT` (`'available' | 'in_progress' | 'dead_letter'`), `claim_token UUID`, `claimed_at TIMESTAMPTZ`. Operators create this table out-of-band; the factory verifies it at `Build` time.
+In addition, postgres-store **pick policies** that use an items-table pattern operate over an **operator-owned items table** per spec §12.12: `item_id TEXT PRIMARY KEY`, `payload JSONB`, `state TEXT IN ('available', 'in_progress', 'completed')`, `claim_token TEXT`, `claimed_at TIMESTAMPTZ`, `enqueued_at TIMESTAMPTZ`, `priority INTEGER`, `sequence BIGSERIAL`. Each pick-policy entry under a postgres store's `pick_policies:` block names its own items table. Operators create these tables out-of-band; the factory verifies them at `Build` time.
 
-Code location: `core/storage/postgres/` has one file per table cluster (including `lock_holders.go`, `node_attributes.go`, `claim_holders.go`). `core/storage/interfaces.go` declares the `StorageBackend` aggregation. Postgres helpers for `rimsky_lock_holders` also live under `core/store/lockholders.go` because that is the unified mechanism shared between supervisor and scheduler sweeps.
+Code location: `core/storage/postgres/` has one file per table cluster (including `lock_holders.go`, `node_attributes.go`, `claim_holders.go`). `core/storage/interfaces.go` declares the `StorageBackend` aggregation. Postgres helpers for `rimsky_lock_holders` also live under `core/store/lockholders.go` (the `LockHoldersClient` exported by the `core/store/` package) because that is the unified mechanism shared between supervisor acquisition / terminal flows and scheduler sweeps.
 
 ### 8.3 Migrations
 
@@ -492,7 +509,7 @@ Every store interface method, dispatch-queue claim contention, orphan-claim swee
 
 ### 11.3 Scenario tests
 
-`test/scenarios/` — full-stack end-to-end via the scenario harness (`core/scenario/harness.go`), bucketed by surface: top-level (existing happy-path / cascade scenarios), `stores/` (filesystem-direct write, disjoint vs. overlapping regions, pool specialization), `locks/` (named-lock mutex/counting, region-lock conflict, atomic acquisition, heartbeat-extends-expiry, orphan reap, sorted acquisition no-deadlock, claimant-guarded release), `attributes/` (substitution from deps/claim/params, schema validation gates, incremental and terminal-final writeback, resumable preserve/clear, userdata opacity), and `claim_stores/` (FIFO claim, on-commit/on-give-up actions, ring-buffer, held-claim resolution under linear chains and fan-out, claim resumption, multi-claim). Sidecar/versioned scenarios (`double_buffering_test.go`, `rollback_via_restore_version_test.go`) are post-v1 and not present.
+`test/scenarios/` — full-stack end-to-end via the scenario harness (`core/scenario/harness.go`), bucketed by surface: top-level (happy-path / cascade scenarios), `stores/` (filesystem-direct write, disjoint vs. overlapping regions, pool specialization, single-writer-per-region under all `write_semantics` values), `locks/` (named-lock counts, region-lock conflict, atomic acquisition, heartbeat-extends-expiry, orphan reap, sorted acquisition no-deadlock, claimant-guarded release), `attributes/` (substitution from deps/claim/params, schema validation gates, incremental and terminal-final writeback, userdata opacity, value-pass vs. claim-pass lifetime), `claim_stores/` (pick-policy selectors, on-commit/on-give-up actions, auto-terminal aggregate-outcome under linear chains and fan-out, multi-claim), and `frame_resolution/` (the per-instance frame engine). Versioned-mode scenarios are permanently eliminated; sidecar mode is post-v1.
 
 All scenarios use `SystemClock` against testcontainers Postgres (real `NOW()` governs claim eligibility).
 

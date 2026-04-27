@@ -1,9 +1,22 @@
+// Direct-mode filesystem store. Implements the five-verb store.Store
+// interface (spec §11.5). The selector is a path-glob list (post-
+// substitution); region_data is the canonical glob list serialised as
+// JSON; address is the resolved absolute path on disk.
+//
+// Per spec §22 the filesystem store stays direct in v1 — staged_blocking
+// via atomic-rename is a stretch goal not committed to. Commit and
+// Abandon are honest no-ops; Delete invokes os.RemoveAll on the resolved
+// region path.
+
 package filesystem
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/fallguy/rimsky/core/store"
 )
@@ -20,6 +33,9 @@ type Store struct {
 	root string
 }
 
+// Compile-time interface check.
+var _ store.Store = (*Store)(nil)
+
 // Name returns the operator-configured store name (matches stores.<name>
 // in YAML).
 func (s *Store) Name() string { return s.name }
@@ -28,148 +44,153 @@ func (s *Store) Name() string { return s.name }
 func (s *Store) Kind() string { return "filesystem" }
 
 // Root returns the root directory path the store was configured with.
-// Exposed primarily for tests; callers in the main runtime should use
-// the Path field on FilesystemDirectHandle instead.
+// Exposed primarily for tests.
 func (s *Store) Root() string { return s.root }
 
-// Capabilities reports the direct-mode filesystem store's supported
-// operations. Region locks: yes. Resume: yes (live region carries any
-// in-progress writes from a prior dispatch). Claim/discard/restore: no.
+// Capabilities reports the direct-mode filesystem store's
+// write_semantics. Always WriteSemanticsDirect for v1.
 func (s *Store) Capabilities() store.Capabilities {
-	return store.Capabilities{
-		SupportsRegionLock: true,
-		SupportsClaim:      false,
-		SupportsDiscard:    false,
-		SupportsResume:     true,
-		SupportsRestore:    false,
-	}
-}
-
-// LockEligible always returns true. The supervisor pre-screens region
-// locks against existing holders via RegionsConflict before this is
-// called; the direct-mode filesystem store has no additional eligibility
-// constraints (no quotas, no per-region pacing).
-func (s *Store) LockEligible(_ context.Context, _ store.LockSpec) (bool, error) {
-	return true, nil
+	return store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}
 }
 
 // RegionsConflict delegates to the package-level pure helper. Inputs are
-// expected to be []string of path globs (the store's region grammar).
-// Inputs of an unexpected type are treated as conflicting — the
-// supervisor must never silently admit an acquisition whose region we
-// cannot interpret.
-func (s *Store) RegionsConflict(a, b any) bool {
-	ga, okA := a.([]string)
-	gb, okB := b.([]string)
-	if !okA || !okB {
+// expected to be JSON-encoded []string of path globs (the store's
+// region grammar). Inputs of an unexpected shape are treated as
+// conflicting — the supervisor must never silently admit an acquisition
+// whose region we cannot interpret.
+//
+// @blessed-invariant 14: pure; no side effects; deterministic on inputs.
+func (s *Store) RegionsConflict(a, b []byte) bool {
+	ga, errA := decodeGlobs(a)
+	gb, errB := decodeGlobs(b)
+	if errA != nil || errB != nil {
 		return true
 	}
 	return RegionsConflict(ga, gb)
 }
 
-// UnmarshalRegion deserializes region_data JSONB into []string. The
-// returned `any` is the same []string typed back through `any` so the
-// caller can pass it straight to RegionsConflict.
-func (s *Store) UnmarshalRegion(raw []byte) (any, error) {
-	var globs []string
-	if err := json.Unmarshal(raw, &globs); err != nil {
+// UnmarshalRegion verifies the bytes are a JSON []string and returns
+// them as canonical bytes for use by RegionsConflict.
+//
+// @blessed-invariant 14: pure.
+func (s *Store) UnmarshalRegion(raw []byte) ([]byte, error) {
+	if _, err := decodeGlobs(raw); err != nil {
 		return nil, fmt.Errorf("filesystem store %q: unmarshal region: %w", s.name, err)
 	}
-	return globs, nil
+	out := make([]byte, len(raw))
+	copy(out, raw)
+	return out, nil
 }
 
-// AcquireLock is a no-op for direct-mode filesystem. The supervisor's
-// outer transaction has already inserted the lock-holder row by the
-// time this is called. Nothing to do on the store side; the caller
-// receives the LockHandle they passed an empty struct under.
+// Open resolves the selector to a concrete directory path under the
+// store's root and returns a ClaimResult whose Address is the resolved
+// path and whose Region is the canonical glob list.
 //
-// We return the lock handle the supervisor passed nothing for — the
-// supervisor populates LockHandle from the inserted row independently of
-// the store. AcquireLock's contract is: return LockHandle and
-// ClaimResult. Direct-mode returns zero values for both; the supervisor
-// only consumes ClaimResult for claim-mode acquisitions. The supervisor
-// fills in LockHandle's ID/timestamps from the SQL row before calling
-// OpenHandle.
-func (s *Store) AcquireLock(_ context.Context, _ store.LockSpec) (store.LockHandle, store.ClaimResult, error) {
-	return store.LockHandle{}, store.ClaimResult{}, nil
-}
-
-// OpenHandle returns the FilesystemDirectHandle pointing at the live
-// region. The supervisor passes the original LockSpec's RegionLockSpec
-// payload through `lh` indirectly — but AcquireLock didn't capture it,
-// so OpenHandle can't reconstruct the regions from `lh` alone.
-//
-// To keep OpenHandle pure (and to honour the spec's "OpenHandle takes
-// LockHandle, not LockSpec"), the supervisor's runner threads the
-// resolved write/read regions through a context value before calling
-// OpenHandle. See OpenHandleWithRegions for the entry point used in
-// practice; OpenHandle exists only to satisfy the Store interface and
-// returns a handle with empty region slices when called without context.
-//
-// resumed is ignored: in direct mode the live path is the same whether
-// or not a prior dispatch left in-progress writes behind.
-func (s *Store) OpenHandle(ctx context.Context, _ store.LockHandle, _ bool) (store.NativeHandle, error) {
-	write, read := regionsFromContext(ctx)
-	return store.FilesystemDirectHandle{
-		Path:         s.root,
-		WriteRegions: write,
-		ReadRegions:  read,
+// The selector grammar accepts a single string (one glob), a JSON array
+// of strings (a glob list), or comma-separated globs in a single string.
+// All forms resolve to a single Address — the store's root joined to
+// the first glob's fixed prefix. Substrate-side state: none for direct
+// mode.
+func (s *Store) Open(_ context.Context, spec store.ClaimSpec) (store.ClaimResult, error) {
+	globs := parseSelector(spec.Selector)
+	if len(globs) == 0 {
+		return store.ClaimResult{}, fmt.Errorf("filesystem store %q: Open: empty selector", s.name)
+	}
+	regionBytes, err := json.Marshal(globs)
+	if err != nil {
+		return store.ClaimResult{}, fmt.Errorf("filesystem store %q: Open: marshal region: %w", s.name, err)
+	}
+	// Resolve the address: root joined to the first glob's fixed prefix.
+	// Direct mode hands the executor the live path; reads/writes happen
+	// in place.
+	prefix := fixedPrefix(globs[0])
+	addrPath := filepath.Join(s.root, prefix)
+	addrBytes, err := json.Marshal(addrPath)
+	if err != nil {
+		return store.ClaimResult{}, fmt.Errorf("filesystem store %q: Open: marshal address: %w", s.name, err)
+	}
+	return store.ClaimResult{
+		Address: json.RawMessage(addrBytes),
+		Region:  json.RawMessage(regionBytes),
 	}, nil
 }
 
-// Commit is a no-op for direct mode. Writes already landed on the live
-// filesystem when the executor performed them; there is no sidecar to
-// apply. We return Changed:true unconditionally because the executor
-// signals Complete{changed: true} via a separate path before the
-// supervisor calls Commit; the value here is a placeholder for the
-// post-v1 sidecar/versioned modes that compute it.
-func (s *Store) Commit(_ context.Context, _ store.LockHandle) (store.CommitResult, error) {
-	return store.CommitResult{Changed: true}, nil
-}
-
-// ReleaseLock is a no-op for all actions. Direct-mode has no sidecar to
-// discard, no claim to release, no items-table flip to undo.
-func (s *Store) ReleaseLock(_ context.Context, _ store.LockHandle, _ store.ReleaseAction) error {
+// Commit is a substrate no-op for direct mode (writes already on disk
+// per spec §6.2 / §8.4). policyOverride is ignored — pick policies are
+// not configurable on the filesystem store.
+func (s *Store) Commit(_ context.Context, _ []byte, _ []byte, _ string) error {
 	return nil
 }
 
-// HasPriorWork reports whether prior in-progress state exists for the
-// given lock spec. In direct mode the live region is always usable, so
-// we conservatively return false: the supervisor will not pass
-// resumed=true to OpenHandle, and the executor sees a fresh dispatch
-// with the live region. (Direct-mode resumption semantics: §6.1 — the
-// executor itself is responsible for noticing prior partial state on
-// disk and skipping/redoing as appropriate.)
-func (s *Store) HasPriorWork(_ context.Context, _ store.LockSpec) (bool, error) {
-	return false, nil
+// Abandon is degenerate for direct mode (cannot undo direct writes per
+// spec §6.2). Logs an honest no-op via the store-author guide; returns
+// nil to allow the supervisor to proceed with terminal cleanup.
+func (s *Store) Abandon(_ context.Context, _ []byte, _ []byte, _ string) error {
+	return nil
 }
 
-// regionsCtxKey is the context key under which the supervisor's runner
-// stashes the resolved write/read regions before calling OpenHandle.
-// Unexported zero-size struct: no collision with other packages.
-type regionsCtxKey struct{}
-
-// regionsCtxValue is the payload attached via WithRegions.
-type regionsCtxValue struct {
-	write []string
-	read  []string
+// Delete removes the live region. Resolves the region's first glob's
+// fixed prefix to an absolute path and runs os.RemoveAll. Returns any
+// I/O error.
+func (s *Store) Delete(_ context.Context, region []byte) error {
+	globs, err := decodeGlobs(region)
+	if err != nil {
+		return fmt.Errorf("filesystem store %q: Delete: decode region: %w", s.name, err)
+	}
+	if len(globs) == 0 {
+		return nil
+	}
+	target := filepath.Join(s.root, fixedPrefix(globs[0]))
+	if err := os.RemoveAll(target); err != nil {
+		return fmt.Errorf("filesystem store %q: Delete %q: %w", s.name, target, err)
+	}
+	return nil
 }
 
-// WithRegions attaches resolved write and read regions to the context.
-// The supervisor's runner calls this with the values from the original
-// RegionLockSpec before calling Store.OpenHandle, so the direct-mode
-// store can echo them back into the FilesystemDirectHandle without
-// inflating the LockHandle struct.
-func WithRegions(ctx context.Context, write, read []string) context.Context {
-	return context.WithValue(ctx, regionsCtxKey{}, regionsCtxValue{write: write, read: read})
+// Release is a no-op: direct mode never registers substrate-side read
+// state at Open.
+func (s *Store) Release(_ context.Context, _ []byte, _ []byte) error {
+	return nil
 }
 
-// regionsFromContext returns the (write, read) regions attached via
-// WithRegions, or two nil slices if none is present.
-func regionsFromContext(ctx context.Context) (write, read []string) {
-	v, ok := ctx.Value(regionsCtxKey{}).(regionsCtxValue)
-	if !ok {
+// decodeGlobs parses region bytes into []string. Accepts a JSON array
+// of strings, a JSON single string, or returns an error on any other
+// shape.
+func decodeGlobs(b []byte) ([]string, error) {
+	if len(b) == 0 {
 		return nil, nil
 	}
-	return v.write, v.read
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		return arr, nil
+	}
+	var single string
+	if err := json.Unmarshal(b, &single); err != nil {
+		return nil, err
+	}
+	return []string{single}, nil
+}
+
+// parseSelector accepts the graph-author's selector (a single string)
+// and splits it into globs. Single-form selectors return [s]; comma-
+// separated forms split on commas (with whitespace trimmed). Empty
+// returns nil.
+func parseSelector(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if !strings.Contains(s, ",") {
+		return []string{s}
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t == "" {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }

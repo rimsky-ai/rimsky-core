@@ -24,7 +24,7 @@ import (
 // deployer registers the factories it has linked in and supplies the parsed
 // `stores.yml`; StartScheduler builds the per-process *store.Registry from
 // the pair. The scheduler needs the registry for the §13.5 step-4
-// visibility-timeout sweep over claim-store-postgres instances.
+// visibility-timeout sweep over postgres pick-policy items tables.
 type SchedulerConfig struct {
 	Storage              storage.StorageBackend
 	Queue                queue.DispatchQueue
@@ -37,8 +37,12 @@ type SchedulerConfig struct {
 	// StoreFactories enumerates the store-kind factories registered with
 	// this process. Required when Stores is non-empty.
 	StoreFactories []store.Factory
-	// Stores is the parsed YAML stores config (spec §14.1).
+	// Stores is the parsed YAML stores config (spec §15.1).
 	Stores store.StoresConfig
+	// NamedLocks is the operator-side named-lock config (spec §15.2).
+	// Validated at startup; templates referencing undeclared names are
+	// rejected at deploy.
+	NamedLocks store.NamedLocksConfig
 }
 
 // SchedulerHandle exposes graceful shutdown for a running scheduler process.
@@ -51,6 +55,10 @@ type SchedulerHandle interface {
 func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	registry, err := buildStoreRegistry(cfg.StoreFactories, cfg.Stores)
 	if err != nil {
+		return nil, fmt.Errorf("StartScheduler: %w", err)
+	}
+	if err := cfg.NamedLocks.Validate(); err != nil {
+		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
 	var lockHolders *store.LockHoldersClient
@@ -69,5 +77,19 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		LockHolders:          lockHolders,
 		StoreRegistry:        registry,
 	}
-	return scheduler.Start(inner), nil
+	return schedulerHandleWithRegistry{inner: scheduler.Start(inner), registry: registry}, nil
+}
+
+// schedulerHandleWithRegistry wraps the scheduler handle to release the
+// store registry's per-store pools (postgres store with `connection:`)
+// at shutdown.
+type schedulerHandleWithRegistry struct {
+	inner    SchedulerHandle
+	registry *store.Registry
+}
+
+func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
+	err := h.inner.Shutdown(ctx)
+	h.registry.Close()
+	return err
 }

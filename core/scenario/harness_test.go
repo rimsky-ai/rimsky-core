@@ -15,8 +15,7 @@ import (
 
 // TestHarnessSmoke verifies the scenario harness stands up every in-process
 // component and a trivial one-node template runs end-to-end against the stub
-// executor. Not representative of real scenarios — those live in
-// test/scenarios — but protects Start() from regressions.
+// executor.
 func TestHarnessSmoke(t *testing.T) {
 	t.Parallel()
 	h := Start(t, HarnessOpts{})
@@ -39,32 +38,22 @@ func TestHarnessSmoke(t *testing.T) {
 		"node did not reach fresh within 10s")
 }
 
-// TestHarnessClockInjection verifies HarnessOpts.Clock is threaded through to
-// the underlying components by reading the Clock field back. The orphan-reap
-// scenarios use this to advance past 5×heartbeat_interval deterministically.
+// TestHarnessClockInjection verifies HarnessOpts.Clock is threaded through.
 func TestHarnessClockInjection(t *testing.T) {
 	t.Parallel()
 	clk := shared.NewControllableClock(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC))
-	// NoSupervisor + NoScheduler keeps the harness lightweight: the test
-	// only needs to verify the Clock field is preserved.
 	h := Start(t, HarnessOpts{
 		Clock:        clk,
 		NoSupervisor: true,
 		NoScheduler:  true,
 	})
 	require.Same(t, clk, h.Clock, "harness should expose the injected clock")
-	// Clock must be wired through to the control-api too: a SystemClock
-	// fallback would cause time-dependent admin endpoints (e.g.
-	// /admin/scheduled-nodes/.../force-fire) to drift in scenario tests.
-	// We can't reach into the running app from here, but advancing the
-	// clock should not panic — proving the same instance is held.
 	clk.Advance(5 * time.Minute)
 	require.True(t, clk.Now().After(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC)))
 }
 
 // TestHarnessStubStoreFactoriesRegistered verifies the harness's Stores
-// registry has both stub factories registered out of the box, and that
-// passing a StoresConfig builds the configured stores against them.
+// registry has both stub factories registered out of the box.
 func TestHarnessStubStoreFactoriesRegistered(t *testing.T) {
 	t.Parallel()
 	h := Start(t, HarnessOpts{
@@ -73,7 +62,7 @@ func TestHarnessStubStoreFactoriesRegistered(t *testing.T) {
 		StoresConfig: store.StoresConfig{
 			Stores: map[string]map[string]any{
 				"fs":    {"kind": stub.KindFilesystem},
-				"queue": {"kind": stub.KindClaimStore},
+				"queue": {"kind": stub.KindPostgres},
 			},
 		},
 	})
@@ -83,15 +72,12 @@ func TestHarnessStubStoreFactoriesRegistered(t *testing.T) {
 	require.Equal(t, stub.KindFilesystem, gotFS.Kind())
 	gotQ, ok := h.Stores.GetStore("queue")
 	require.True(t, ok, "expected queue store registered")
-	require.Equal(t, stub.KindClaimStore, gotQ.Kind())
+	require.Equal(t, stub.KindPostgres, gotQ.Kind())
 }
 
 // TestTemplateSpecToJSONNewGrammar verifies the redesigned templateSpecToJSON
-// emits the new grammar (`stores`, `locks`, `attributes`,
-// `claim_resolutions`) and does NOT emit the retired keys. Catches
-// regressions if a future refactor accidentally re-introduces the old
-// owns_resources / reads_resources / concurrency_tags / restore_version
-// terminology (spec §11.3 explicitly retired these).
+// emits the new grammar (`stores`, `locks`, `attributes`, `claim_resolutions`,
+// `inherits`) and does NOT emit the retired keys.
 func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	t.Parallel()
 	spec := node.TemplateSpec{
@@ -101,18 +87,23 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			MakeNode(
 				node.TemplateNodeDef{Type: "consume", Executor: "stub"},
-				WithStores(ClaimAndHoldRef("inbound"), RegionRef("output", "region-A")),
-				WithLocks(MutexLock("global"), CountingLock("limited", 3)),
+				WithStores(
+					WriteClaimRef("inbound", "@queue"),
+					ClaimRef("output", "region-A"),
+				),
+				WithLocks(MutexLock("global"), CountingLock("limited")),
 				WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"item_id": map[string]any{
 							"type":   "string",
-							"source": "claim.payload.id",
+							"source": "claim.inbound.payload.id",
 						},
 					},
 				}),
-				WithClaimResolutions(ResolveClaim("consume", "inbound")),
+				WithClaimResolutions(map[string]node.ClaimResolution{
+					"inbound": {OnCommit: "delete", OnGiveUp: "release_to_back"},
+				}),
 			),
 		},
 	}
@@ -125,46 +116,39 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.Equal(t, "consume", n["type"])
 	require.Equal(t, "stub", n["executor"])
 
-	// New grammar present.
-	require.Contains(t, n, "stores", "stores key missing from emitted JSON")
-	require.Contains(t, n, "locks", "locks key missing")
-	require.Contains(t, n, "attributes", "attributes key missing")
-	require.Contains(t, n, "claim_resolutions", "claim_resolutions key missing")
+	require.Contains(t, n, "stores")
+	require.Contains(t, n, "locks")
+	require.Contains(t, n, "attributes")
+	require.Contains(t, n, "claim_resolutions")
 
-	// Old grammar absent.
 	require.NotContains(t, n, "concurrency_tags")
 	require.NotContains(t, n, "owns_resources")
 	require.NotContains(t, n, "reads_resources")
 	require.NotContains(t, n, "restore_version")
 
-	// Spot-check store/lock/attribute structure.
 	stores := n["stores"].([]map[string]any)
 	require.Len(t, stores, 2)
 	require.Equal(t, "inbound", stores[0]["name"])
-	require.Equal(t, true, stores[0]["claim"])
-	require.Equal(t, true, stores[0]["hold"])
+	require.Equal(t, "@queue", stores[0]["selector"])
+	require.Equal(t, "rw", stores[0]["intent"])
 
 	locks := n["locks"].([]map[string]any)
 	require.Len(t, locks, 2)
 	require.Equal(t, "global", locks[0]["name"])
-	require.Equal(t, "mutex", locks[0]["mode"])
 	require.Equal(t, "limited", locks[1]["name"])
-	require.Equal(t, "counting", locks[1]["mode"])
-	require.Equal(t, 3, locks[1]["limit"])
 
 	attrs := n["attributes"].(map[string]any)
 	schema := attrs["schema"].(map[string]any)
 	require.Equal(t, "object", schema["type"])
 
-	crs := n["claim_resolutions"].([]map[string]any)
-	require.Len(t, crs, 1)
-	require.Equal(t, "consume", crs[0]["source"])
-	require.Equal(t, "inbound", crs[0]["store"])
+	crs := n["claim_resolutions"].(map[string]any)
+	inbound := crs["inbound"].(map[string]any)
+	require.Equal(t, "delete", inbound["on_commit"])
+	require.Equal(t, "release_to_back", inbound["on_give_up"])
 }
 
 // TestMakeNodeOptions verifies the fluent helpers compose without aliasing
-// the slice-typed fields across multiple nodes. (A naive copy of the base
-// spec would share the underlying array between two MakeNode invocations.)
+// slice-typed fields across multiple nodes.
 func TestMakeNodeOptions(t *testing.T) {
 	t.Parallel()
 	base := node.TemplateNodeDef{Type: "worker", Executor: "stub"}

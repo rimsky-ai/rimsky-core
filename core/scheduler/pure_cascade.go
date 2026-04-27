@@ -203,21 +203,18 @@ func lookupTemplateNodeDef(ctx context.Context, sb storage.StorageBackend, n sto
 	return nil
 }
 
-// hasClaimStore reports whether any of the node-def's Stores entries
-// declares a claim acquisition. Returns false when def is nil — the
-// historically conservative default (§6.4): if the template can't be
-// resolved, treat the row as pure-cascade rather than enqueueing it onto
-// a queue no supervisor pool may have specialised for.
+// hasClaimStore reports whether the node-def declares any store
+// claim. Under stores-redesign-v2 every NodeStoreRef is a claim
+// (selector + intent + alias), so a non-empty Stores list answers yes.
+// Returns false when def is nil — the historically conservative
+// default (§6.4): if the template can't be resolved, treat the row as
+// pure-cascade rather than enqueueing it onto a queue no supervisor
+// pool may have specialised for.
 func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 	if def == nil {
 		return false
 	}
-	for _, s := range def.Stores {
-		if s.Claim {
-			return true
-		}
-	}
-	return false
+	return len(def.Stores) > 0
 }
 
 // cascadePropagateFrameID marks a child node stale + frame_id when it's

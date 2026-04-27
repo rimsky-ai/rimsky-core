@@ -39,16 +39,17 @@
 //
 //	The §13.3 acquisition transaction either claims the dispatch row
 //	AND inserts every required `rimsky_lock_holders` row AND completes
-//	every store `AcquireLock` mutation, or none of these. The
-//	acquisition tx itself lives in `core/supervisor/runner.go`
-//	(omnibus runner per §17.1) and `core/queue/postgres/queue.go`
-//	(building-block helpers); this file's contribution is structural
-//	— the heartbeat refresh below MUST NOT extend rows for nodes
-//	that have transitioned out of `running`. The
-//	`holder_node_id IN (running-nodes)` filter is the §13.4
-//	correctness predicate that keeps preserve-for-resume rows on the
-//	resume-grace cutoff. Removing it would make the resume-grace
-//	cutoff unreachable.
+//	every Store.Open mutation, or none of these. The acquisition tx
+//	itself lives in `core/supervisor/runner_acquire.go` and
+//	`core/queue/postgres/queue.go` (building-block helpers); this
+//	file's contribution is structural — the heartbeat refresh below
+//	MUST NOT extend rows for nodes that have transitioned out of
+//	`running`. The `holder_node_id IN (running-nodes)` filter is the
+//	§13.4 correctness predicate that keeps held-claim subgraph
+//	timeout reachable: once the acquirer leaves `running`, the
+//	heartbeat refresh stops touching the row and the orphan-reap
+//	cutoff (5 × heartbeat_interval) becomes attainable so stranded
+//	held subgraphs are eventually reaped.
 package supervisor
 
 import (

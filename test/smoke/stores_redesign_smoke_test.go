@@ -94,7 +94,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 			},
 		})
 	}
-	status, raw := stack.PostJSON("/admin/claim-stores/topics-ring/items", map[string]any{"items": items})
+	status, raw := stack.PostJSON("/admin/stores/topics-ring/pick-policies/@review-queue/items", map[string]any{"items": items})
 	require.Equal(t, http.StatusCreated, status, "bulkInsertItems: %s", string(raw))
 	var resp struct {
 		Inserted int `json:"inserted"`
@@ -258,10 +258,6 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 // about to fail anyway).
 func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	t.Helper()
-	type stateCount struct {
-		state string
-		count int
-	}
 	rows, err := stack.Pool.Query(ctx,
 		`SELECT n.node_type, n.state, count(*) FROM rimsky_nodes n GROUP BY 1, 2 ORDER BY 1, 2`)
 	if err == nil {
@@ -352,7 +348,6 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 		}
 		rows.Close()
 	}
-	_ = stateCount{}
 }
 
 // assertFinalState runs the post-cascade SQL assertions called out in
@@ -413,9 +408,9 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		return
 	}
 	type stuckItem struct {
-		ItemID     uuid.UUID
+		ItemID     string
 		State      string
-		ClaimToken *uuid.UUID
+		ClaimToken *string
 		ClaimedAt  *time.Time
 	}
 	var stuck []stuckItem
@@ -430,7 +425,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 	for _, s := range stuck {
 		ct := "<nil>"
 		if s.ClaimToken != nil {
-			ct = s.ClaimToken.String()
+			ct = *s.ClaimToken
 		}
 		ca := "<nil>"
 		if s.ClaimedAt != nil {
@@ -439,15 +434,20 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		t.Logf("item_id=%s state=%s claim_token=%s claimed_at=%s",
 			s.ItemID, s.State, ct, ca)
 
-		// Per-item: every rimsky_claim_holders row keyed by claim_id =
-		// item_id (that's the FK shape per §9.9.3 + §5.6.4).
+		// Per-item: every rimsky_claim_holders row whose lock-holder
+		// row points at this item via region_data. Under v2 the
+		// claim-holders rows key on lock_holder_id (FK to
+		// rimsky_lock_holders); we join both so the dump shows the
+		// full ledger for items still held by some node's claim.
 		hrows, herr := stack.Pool.Query(ctx,
-			`SELECT id, claim_id, store_name, holder_node_id, on_commit, on_give_up,
-			        state, actual_action, completed_at, frame_id
-			   FROM rimsky_claim_holders
-			  WHERE claim_id = $1
-			  ORDER BY id`,
-			s.ItemID.String(),
+			`SELECT ch.id, ch.lock_holder_id, ch.holder_node_id,
+			        ch.state, ch.completed_at,
+			        lh.store_name, lh.region_data
+			   FROM rimsky_claim_holders ch
+			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
+			  WHERE lh.region_data::text = $1
+			  ORDER BY ch.id`,
+			fmt.Sprintf("%q", s.ItemID),
 		)
 		if herr != nil {
 			t.Logf("  claim_holders query: %v", herr)
@@ -458,36 +458,25 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			anyHolders = true
 			var (
 				hid          uuid.UUID
-				claimID      string
-				storeName    string
+				lockHolderID uuid.UUID
 				holderNodeID uuid.UUID
-				onCommit     string
-				onGiveUp     string
 				state        string
-				actualAction *string
 				completedAt  *time.Time
-				frameID      *uuid.UUID
+				storeName    string
+				regionData   []byte
 			)
-			_ = hrows.Scan(&hid, &claimID, &storeName, &holderNodeID,
-				&onCommit, &onGiveUp, &state, &actualAction, &completedAt, &frameID)
-			aa := "<nil>"
-			if actualAction != nil {
-				aa = *actualAction
-			}
+			_ = hrows.Scan(&hid, &lockHolderID, &holderNodeID,
+				&state, &completedAt, &storeName, &regionData)
 			cAt := "<nil>"
 			if completedAt != nil {
 				cAt = completedAt.Format(time.RFC3339Nano)
 			}
-			fid := "<nil>"
-			if frameID != nil {
-				fid = frameID.String()
-			}
-			t.Logf("  claim_holder id=%s claim_id=%s store=%s holder_node=%s on_commit=%s on_give_up=%s state=%s actual_action=%s completed_at=%s frame_id=%s",
-				hid, claimID, storeName, holderNodeID, onCommit, onGiveUp, state, aa, cAt, fid)
+			t.Logf("  claim_holder id=%s lock_holder=%s store=%s holder_node=%s state=%s completed_at=%s region=%s",
+				hid, lockHolderID, storeName, holderNodeID, state, cAt, string(regionData))
 		}
 		hrows.Close()
 		if !anyHolders {
-			t.Logf("  (no rimsky_claim_holders rows for this claim_id)")
+			t.Logf("  (no rimsky_claim_holders rows for this item_id)")
 		}
 
 		// Per-item: any in-flight dispatch rows that may still reference
@@ -496,8 +485,9 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			`SELECT d.id, d.node_id, d.claimed_by, d.enqueued_at, d.frame_id
 			   FROM rimsky_dispatch d
 			   JOIN rimsky_claim_holders ch ON ch.holder_node_id = d.node_id
-			  WHERE ch.claim_id = $1`,
-			s.ItemID.String(),
+			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
+			  WHERE lh.region_data::text = $1`,
+			fmt.Sprintf("%q", s.ItemID),
 		)
 		if derr != nil {
 			t.Logf("  dispatch query: %v", derr)
@@ -547,25 +537,6 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 	t.Logf("rimsky_claim_holders aggregate: total=%d active=%d completed=%d",
 		totalHolders, activeHolders, completedHolders)
 
-	// Also list distinct (actual_action) values so we can confirm
-	// whether the resolver fired a release path or not.
-	arows, aerr := stack.Pool.Query(ctx,
-		`SELECT actual_action, count(*) FROM rimsky_claim_holders
-		  GROUP BY actual_action ORDER BY 1`)
-	if aerr == nil {
-		t.Logf("rimsky_claim_holders by actual_action:")
-		for arows.Next() {
-			var aa *string
-			var c int
-			_ = arows.Scan(&aa, &c)
-			label := "<null>"
-			if aa != nil {
-				label = *aa
-			}
-			t.Logf("  %s: %d", label, c)
-		}
-		arows.Close()
-	}
 }
 
 // smokeTemplateBody returns the JSON-shaped POST /templates body for the
@@ -591,18 +562,20 @@ func smokeTemplateBody() map[string]any {
 	}
 }
 
-// claimTopicNode is the source: cron-scheduled, claim-and-hold against
-// `topics-ring`, attributes substituted from the claim payload. No
-// executor (native claim-only path).
+// claimTopicNode is the source: cron-scheduled, holds a pick-policy
+// claim against `topics-ring` selected via the `@review-queue` selector.
+// No executor (native claim-only path); per-claim resolution declared
+// on this node since it is the acquirer of the held subgraph and
+// downstream `review` inherits the claim.
 func claimTopicNode() map[string]any {
 	return map[string]any{
 		"type":     "claim-topic",
 		"schedule": "* * * * *",
 		"stores": []map[string]any{
-			{"name": "topics-ring", "claim": true, "hold": true},
+			{"name": "topics-ring", "selector": "@review-queue", "intent": "rw"},
 		},
 		"locks": []map[string]any{
-			{"name": "topics-ring:concurrent-claims", "mode": "counting", "limit": 5},
+			{"name": "topics-ring:concurrent-claims"},
 		},
 		"attributes": map[string]any{
 			"schema": map[string]any{
@@ -614,12 +587,19 @@ func claimTopicNode() map[string]any {
 				"required": []any{"area", "subtopic"},
 			},
 		},
+		"claim_resolutions": map[string]any{
+			"topics-ring": map[string]any{
+				"on_commit":  "release_to_back",
+				"on_give_up": "release_to_back",
+			},
+		},
 	}
 }
 
 // scopeNode depends on claim-topic; pulls area/subtopic from deps and
 // receives `scope_notes` from the executor (stub returns "stub"). Holds
-// the model-budget counting lock.
+// the model-budget counting lock and inherits the topics-ring claim
+// from claim-topic for value-passing only.
 func scopeNode() map[string]any {
 	return map[string]any{
 		"type":         "scope",
@@ -641,7 +621,7 @@ func scopeNode() map[string]any {
 			"system_prompt_ref": "scope-system.md",
 		},
 		"locks": []map[string]any{
-			{"name": "model-budget", "mode": "counting", "limit": 50},
+			{"name": "model-budget"},
 		},
 		"error_types": map[string]any{
 			"review_rejected": map[string]any{
@@ -680,9 +660,9 @@ func draftNode() map[string]any {
 		},
 		"stores": []map[string]any{
 			{
-				"name":  "content",
-				"write": []string{"items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"},
-				"read":  []string{"items/**", "shared/**"},
+				"name":     "content",
+				"selector": "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md",
+				"intent":   "rw",
 			},
 		},
 		"userdata": map[string]any{
@@ -690,15 +670,16 @@ func draftNode() map[string]any {
 			"system_prompt_ref": "draft-system.md",
 		},
 		"locks": []map[string]any{
-			{"name": "model-budget", "mode": "counting", "limit": 50},
+			{"name": "model-budget"},
 		},
 	}
 }
 
-// reviewNode is the terminal: it resolves the held claim from
-// claim-topic against `topics-ring` (uses store defaults =
-// release_to_back per §19.2 ring-buffer settings). Reads the draft's
-// output region.
+// reviewNode is the terminal of the held subgraph: it inherits the
+// topics-ring claim from claim-topic (value-passing through scope is
+// not transitive — each downstream that needs the live claim declares
+// it explicitly). The acquirer's claim_resolutions block governs
+// release; this node just reads the draft's output region.
 func reviewNode() map[string]any {
 	return map[string]any{
 		"type":         "review",
@@ -715,19 +696,20 @@ func reviewNode() map[string]any {
 		},
 		"stores": []map[string]any{
 			{
-				"name": "content",
-				"read": []string{"items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"},
+				"name":     "content",
+				"selector": "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md",
+				"intent":   "r",
 			},
 		},
-		"claim_resolutions": []map[string]any{
-			{"source": "claim-topic", "store": "topics-ring"},
+		"inherits": []map[string]any{
+			{"claim": "topics-ring"},
 		},
 		"userdata": map[string]any{
 			"model":             "claude-sonnet-4-6",
 			"system_prompt_ref": "review-system.md",
 		},
 		"locks": []map[string]any{
-			{"name": "model-budget", "mode": "counting", "limit": 50},
+			{"name": "model-budget"},
 		},
 	}
 }

@@ -71,9 +71,8 @@ func toNodeResponse(n storage.NodeRow) nodeResponse {
 	}
 }
 
-// invalidateNodeRequest carries the optional human-readable reason an operator
-// supplies on POST /nodes/:id/invalidate. The pre-redesign `RestoreVersion`
-// field was removed alongside the resource versioning system (spec §11.3).
+// invalidateNodeRequest carries the optional human-readable reason an
+// operator supplies on POST /nodes/:id/invalidate.
 type invalidateNodeRequest struct {
 	Reason string `json:"reason,omitempty"`
 }

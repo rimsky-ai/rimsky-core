@@ -15,9 +15,10 @@
 //   - Row-level (in rimsky_dispatch): executor_name, required_stores. The
 //     dispatch SELECT filters on these via the supervisor's accept-lists.
 //   - Node-type-level (in the in-memory template registry, NOT in the row):
-//     locks: [] (named/region/claim specs). Every candidate has lock specs
-//     keyed by its node_type, but the queue cannot look them up — the
-//     template registry lives in core/node, which the queue does not import.
+//     locks: [] (named/region specs, two primitives). Every candidate has
+//     lock specs keyed by its node_type, but the queue cannot look them up
+//     — the template registry lives in core/node, which the queue does
+//     not import.
 //
 // Because of this split, the queue exposes building-block helpers and the
 // supervisor's runner.go orchestrates the §13.3 atomic-acquisition tx end
@@ -27,24 +28,20 @@
 //     batch (executor + required_stores filtered).
 //  2. For each candidate, looks up the node_type's lock specs from the
 //     in-memory template registry and runs the in-Go eligibility checks
-//     (§13.2): named-lock count, region conflict via store.RegionsConflict,
-//     claim availability via store.HasClaimableItem.
+//     (§13.2): named-lock count, region conflict via
+//     store.RegionsConflict.
 //  3. On the first eligible candidate, takes per-named-lock advisory
 //     locks (§13.3 step 3b), calls ClaimDispatchRow to do the claimant-
 //     guarded UPDATE (§13.3 step 3c), re-evaluates region locks under tx
-//     (§13.3 step 3d), then for each non-rebound spec calls
-//     store.AcquireLock and inserts a rimsky_lock_holders row (§13.3 step
+//     (§13.3 step 3d), then for each spec calls Store.Open (for
+//     ClaimSpec) and inserts a rimsky_lock_holders row (§13.3 step
 //     3e). All inside the same tx. COMMIT.
 //
-// The claim-time inputs the runner aggregates per candidate are described
-// by ClaimEligibilityInput below; see that doc-comment for the contract.
-//
 // Lock-holder reads/writes used by the runner during the acquisition tx
-// (Insert, ListByNodeAndStore for rebind, RebindForResume, ListByStoreRegion,
-// CountByNamedLock) live on core/store.LockHoldersClient. The queue
-// interface does NOT expose those — they are the store layer's
-// responsibility per the package import rules. The queue layer only owns
-// rimsky_dispatch.
+// (Insert, ListByStoreRegion, CountByNamedLock) live on
+// core/store.LockHoldersClient. The queue interface does NOT expose those
+// — they are the store layer's responsibility per the package import
+// rules. The queue layer only owns rimsky_dispatch.
 //
 // Tag-limit / concurrency_tags semantics are gone. Named locks (a §11.5
 // node-template construct) replace concurrency tags. The dispatch row no
@@ -59,7 +56,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
 )
 
 // DispatchRequest is the payload for Enqueue.
@@ -120,24 +116,6 @@ type Candidate struct {
 	FrameID shared.UUID
 }
 
-// ClaimEligibilityInput is the per-candidate data the runner aggregates
-// before committing to a candidate (spec §13.2 / §13.3 step 2).
-//
-// LockSpecs comes from the in-memory template registry keyed by the
-// candidate's node_type — the queue does not look these up itself. The
-// runner uses LockSpecs to run the in-Go eligibility checks (named-lock
-// count, region conflict, claim availability) and, if every spec is
-// eligible, to drive the §13.3 step 3 acquisition path (advisory locks,
-// store.AcquireLock calls, lock-holder inserts).
-//
-// SupervisorID is the candidate-claimant identity (FK target on
-// rimsky_dispatch.claimed_by and rimsky_lock_holders.holder_supervisor_id).
-type ClaimEligibilityInput struct {
-	Candidate    Candidate
-	LockSpecs    []store.LockSpec
-	SupervisorID string
-}
-
 // ClaimOwnership is the return shape of GetClaimedBy. Kind is:
 //
 //	"not_found" — dispatch row does not exist
@@ -173,7 +151,10 @@ type DispatchQueue interface {
 	// a nil tx.
 	//
 	// This is spec §13.3 step 1. Per-spec lock eligibility (step 2) is
-	// the caller's responsibility — see ClaimEligibilityInput.
+	// the caller's responsibility; in v2 the supervisor evaluates it
+	// in-Go inside the acquisition tx (see
+	// core/supervisor/runner_acquire.go::evaluateRegionConflict and
+	// the surrounding takeNamedAdvisoryLocks / acquireOneLock loop).
 	SelectCandidates(ctx context.Context, tx pgx.Tx, req SelectCandidatesRequest) ([]Candidate, error)
 
 	// ClaimDispatchRow performs the claimant-guarded UPDATE of

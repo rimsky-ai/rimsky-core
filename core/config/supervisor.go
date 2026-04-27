@@ -29,14 +29,19 @@ type SupervisorConfig struct {
 	Resolver          executor.Resolver
 	// StoreFactories enumerates the store-kind factories registered with
 	// this process. The deployer's main() builds this list from the set of
-	// store implementations it has linked in (filesystem, claim-store-pg,
-	// stub, custom). Required when Stores is non-empty.
+	// store implementations it has linked in (filesystem, postgres, stub,
+	// custom). Required when Stores is non-empty.
 	StoreFactories []store.Factory
 	// Stores is the parsed YAML stores config (spec §14.1). Each entry is
 	// keyed by operator-chosen store name; the value's "kind" picks a
 	// factory from StoreFactories. The supervisor's `accepted_stores`
 	// (§14.2) is derived from the resulting registry's store-name set.
-	Stores       store.StoresConfig
+	Stores store.StoresConfig
+	// NamedLocks is the operator-side named-lock config (spec §15.2).
+	// Keys are operator-chosen lock names; values carry the limit.
+	// Empty / missing → no named locks declared; templates that
+	// reference named locks will fail registry-dependent validation.
+	NamedLocks   store.NamedLocksConfig
 	CallbackHost string
 	CallbackPort int
 	// CallbackAdvertiseHost / CallbackAdvertisePort override the host:port
@@ -68,7 +73,11 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
-	return supervisor.Start(supervisor.Config{
+	if err := cfg.NamedLocks.Validate(); err != nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartSupervisor: %w", err)
+	}
+	inner, err := supervisor.Start(supervisor.Config{
 		SupervisorID:          cfg.SupervisorID,
 		Storage:               cfg.Storage,
 		Queue:                 cfg.Queue,
@@ -84,6 +93,30 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		CallbackAdvertiseHost: cfg.CallbackAdvertiseHost,
 		CallbackAdvertisePort: cfg.CallbackAdvertisePort,
 	})
+	if err != nil {
+		registry.Close()
+		return nil, err
+	}
+	return supervisorHandleWithRegistry{inner: inner, registry: registry}, nil
+}
+
+// supervisorHandleWithRegistry wraps supervisor.Handle to release the
+// store registry's per-store pools (postgres store with `connection:`)
+// at shutdown. The supervisor itself doesn't own the registry, so the
+// config wrapper is the right place to wire teardown.
+type supervisorHandleWithRegistry struct {
+	inner    SupervisorHandle
+	registry *store.Registry
+}
+
+func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
+	err := h.inner.Shutdown(ctx)
+	h.registry.Close()
+	return err
+}
+
+func (h supervisorHandleWithRegistry) CallbackAddr() string {
+	return h.inner.CallbackAddr()
 }
 
 // buildStoreRegistry constructs the supervisor's store registry from the

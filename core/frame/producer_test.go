@@ -19,11 +19,7 @@ func seedTemplateAndInstance(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	t.Helper()
 	templateID = uuid.New()
 	spec := `{}`
-	switch mode {
-	case "":
-		// Leave spec empty to simulate a template with no frame_resolution.
-		spec = `{}`
-	default:
+	if mode != "" {
 		spec = `{"frame_resolution":"` + mode + `"}`
 	}
 	_, err := pool.Exec(ctx, `
@@ -61,10 +57,10 @@ func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {
 	}
 
 	var (
-		count       int
-		modeMatch   int
-		stateMatch  int
-		singletons  int
+		count      int
+		modeMatch  int
+		stateMatch int
+		singletons int
 	)
 	require.NoError(t, pool.QueryRow(ctx, `
         SELECT COUNT(*),

@@ -1,13 +1,14 @@
-// claims.go — GET /claims/{claim_id}/holders.
+// claims.go — GET /lock-holders/{lock_holder_id}/claim-holders.
 //
-// Returns the held-claim ledger rows for a given claim_id (spec §9.9.3).
-// One row per terminal-leaf-node identified by §11.4 at commit-of-source;
-// each row carries its declared on_commit/on_give_up actions plus, once
-// the row transitions to 'completed' per §5.6.4, the actual_action that
-// fired.
+// Returns the held-claim ledger rows for a given lock-holder (spec
+// §12.11). Under stores-redesign-v2 each row simply records subgraph
+// membership and per-member terminal state; the resolution actions
+// live in template metadata (rimsky_templates.spec), not on the row.
 //
-// Read-only and unauthenticated under today's anonymous-by-default config;
-// the route is gated by AppDeps.Auth when the deployer wires one.
+// Read-only and unauthenticated under today's anonymous-by-default
+// config; the route is gated by AppDeps.Auth when the deployer wires
+// one.
+
 package controlapi
 
 import (
@@ -15,55 +16,49 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/storage"
 )
 
 type claimHolderResponse struct {
 	ID           string     `json:"id"`
-	ClaimID      string     `json:"claim_id"`
-	StoreName    string     `json:"store_name"`
+	LockHolderID string     `json:"lock_holder_id"`
 	HolderNodeID string     `json:"holder_node_id"`
-	OnCommit     string     `json:"on_commit"`
-	OnGiveUp     string     `json:"on_give_up"`
-	ActualAction string     `json:"actual_action,omitempty"`
 	State        string     `json:"state"`
-	CreatedAt    time.Time  `json:"created_at"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
 func toClaimHolderResponse(r storage.ClaimHolderRow) claimHolderResponse {
-	out := claimHolderResponse{
+	return claimHolderResponse{
 		ID:           r.ID.String(),
-		ClaimID:      r.ClaimID,
-		StoreName:    r.StoreName,
+		LockHolderID: r.LockHolderID.String(),
 		HolderNodeID: r.HolderNodeID.String(),
-		OnCommit:     string(r.OnCommit),
-		OnGiveUp:     string(r.OnGiveUp),
 		State:        string(r.State),
-		CreatedAt:    r.CreatedAt,
 		CompletedAt:  r.CompletedAt,
 	}
-	if r.ActualAction != nil {
-		out.ActualAction = string(*r.ActualAction)
-	}
-	return out
 }
 
-// registerClaimsRoutes wires GET /claims/{claim_id}/holders.
-// Replaces the Task-32 forward-declaration in app.go.
+// registerClaimsRoutes wires GET /lock-holders/{lock_holder_id}/claim-holders.
+// (Renamed from /claims/{claim_id}/holders per spec §12.11 — the
+// row's identity is by lock-holder FK, not by a free-form claim_id.)
 func registerClaimsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/claims/{claim_id}/holders", handleListClaimHolders(deps))
+	r.Get("/lock-holders/{lock_holder_id}/claim-holders", handleListClaimHolders(deps))
 }
 
 func handleListClaimHolders(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		claimID := chi.URLParam(req, "claim_id")
-		if claimID == "" {
-			badRequest(w, "claim_id is required")
+		raw := chi.URLParam(req, "lock_holder_id")
+		if raw == "" {
+			badRequest(w, "lock_holder_id is required")
 			return
 		}
-		rows, err := deps.Storage.ClaimHolders().ListByClaimID(req.Context(), claimID, nil)
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			badRequest(w, "lock_holder_id must be a UUID")
+			return
+		}
+		rows, err := deps.Storage.ClaimHolders().ListByLockHolderID(req.Context(), id, nil)
 		if err != nil {
 			writeError(w, err)
 			return

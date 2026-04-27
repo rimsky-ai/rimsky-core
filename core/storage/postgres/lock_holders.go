@@ -6,14 +6,19 @@
 // methods.
 //
 // The split exists because core/store/lockholders.go cannot import
-// core/storage (per the package layout rule on Task 11). The actual
-// helpers — including the §13.4 heartbeat SQL with the running-node
-// filter — live in core/store/lockholders.go; this file is the storage
-// surface adapter.
+// core/storage. The actual helpers — including the §13.4 heartbeat SQL
+// with the running-node filter — live in core/store/lockholders.go; this
+// file is the storage surface adapter.
+//
+// FrameID handling: the storage.LockHolderInsertInput carries an optional
+// FrameID that is plumbed through into the postgres row. Per spec
+// §12.10, frame_id on rimsky_lock_holders is observability-only — no
+// algorithm consults it; population is the supervisor's contract.
 package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,8 +42,8 @@ var _ storage.LockHoldersStore = (*LockHoldersStore)(nil)
 
 // Client returns the underlying core/store-layer helper. Callers in the
 // scheduler / supervisor that need the helpers not exposed by
-// storage.LockHoldersStore (RefreshHeartbeat, ListByNodeAndStore,
-// RebindForResume, etc.) reach for the client directly.
+// storage.LockHoldersStore (RefreshHeartbeat, ListByStoreRegion,
+// CountByNamedLock, etc.) reach for the client directly.
 func (s *LockHoldersStore) Client() *store.LockHoldersClient { return s.client }
 
 // Insert satisfies storage.LockHoldersStore.
@@ -59,14 +64,32 @@ func (s *LockHoldersStore) Insert(ctx context.Context, in storage.LockHolderInse
 		LockName:           in.LockName,
 		StoreName:          in.StoreName,
 		RegionData:         in.RegionData,
-		ClaimID:            in.ClaimID,
+		Address:            in.Address,
+		Intent:             in.Intent,
 		HolderSupervisorID: in.HolderSupervisorID,
 		HolderNodeID:       in.HolderNodeID,
 		ClaimedAt:          now,
 		LastHeartbeatAt:    now,
 		ExpiresAt:          in.ExpiresAt,
+		FrameID:            in.FrameID,
 	}
 	return s.client.Insert(ctx, pgT, row)
+}
+
+// UpdateAddress satisfies storage.LockHoldersStore. Tx-required because
+// the §13.3 step-4e address-update commits atomically with the rest of
+// the acquisition transaction.
+func (s *LockHoldersStore) UpdateAddress(
+	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx storage.Tx,
+) error {
+	pgT, err := pgxTxFromStorage(tx)
+	if err != nil {
+		return err
+	}
+	if pgT == nil {
+		return errors.New("lockholders.UpdateAddress: storage.Tx required")
+	}
+	return s.client.UpdateAddress(ctx, pgT, id, supervisorID, address)
 }
 
 // Get satisfies storage.LockHoldersStore.
@@ -138,16 +161,14 @@ func (s *LockHoldersStore) ListExpired(ctx context.Context, tx storage.Tx) ([]st
 // Delete satisfies storage.LockHoldersStore. Claimant-guarded on
 // supervisor_id; mismatch is a no-op (returns nil). A non-nil tx is
 // required: per spec §13.5 step 2 the lock-holder row deletion must
-// commit atomically with the store-side `ReleaseLock(give_up)` (so the
-// items-table flip and the lock-holder delete become visible together).
-// The orphan-reap caller holds the outer tx and threads it here.
+// commit atomically with the store-side substrate verb.
 func (s *LockHoldersStore) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx storage.Tx) error {
 	pgT, err := pgxTxFromStorage(tx)
 	if err != nil {
 		return err
 	}
 	if pgT == nil {
-		return errors.New("lockholders.Delete: storage.Tx required (must commit with store-side ReleaseLock per §13.5)")
+		return errors.New("lockholders.Delete: storage.Tx required")
 	}
 	return s.client.DeleteByID(ctx, pgT, id, expectedSupervisorID)
 }
@@ -161,12 +182,14 @@ func storeRowToStorageRow(in store.LockHolderRow) storage.LockHolderRow {
 		LockName:           in.LockName,
 		StoreName:          in.StoreName,
 		RegionData:         in.RegionData,
-		ClaimID:            in.ClaimID,
+		Address:            in.Address,
+		Intent:             in.Intent,
 		HolderSupervisorID: in.HolderSupervisorID,
 		HolderNodeID:       in.HolderNodeID,
 		ClaimedAt:          in.ClaimedAt,
 		LastHeartbeatAt:    in.LastHeartbeatAt,
 		ExpiresAt:          in.ExpiresAt,
+		FrameID:            in.FrameID,
 	}
 }
 

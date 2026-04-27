@@ -49,8 +49,8 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/claimstorepg"
 	"github.com/fallguy/rimsky/core/store/filesystem"
+	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
 )
 
@@ -97,11 +97,11 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	createTopicsItemsTable(t, pool, itemsTable)
 
 	contentRoot := t.TempDir()
-	storesCfg := buildStoresConfig(itemsTable, contentRoot)
+	storesCfg := buildStoresConfig(itemsTable, contentRoot, pool.Config().ConnString())
 
 	storeFactories := []store.Factory{
 		filesystem.Factory{},
-		claimstorepg.Factory{Pool: pool},
+		pgstore.Factory{},
 	}
 
 	stub := newSmokeExecutor()
@@ -193,14 +193,18 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	}
 }
 
-// buildStoresConfig constructs the §14.1 stores config in Go. The
-// filesystem `content` store points at `contentRoot`; the claim-store
-// `topics-ring` uses ring-buffer defaults (`release_to_back` for both
-// commit and give-up) and the supplied items table.
+// buildStoresConfig constructs the §15.1 stores config in Go. The
+// filesystem `content` store points at `contentRoot`; the postgres
+// `topics-ring` exposes one pick policy at the `@review-queue`
+// selector with ring-buffer defaults. `dsn` is the testcontainers DSN
+// the smoke fixture spun up — the smoke deployment collocates the
+// workload store with rimsky's control plane on the same database, so
+// the same DSN is supplied for both.
 //
 // Built programmatically rather than from a YAML fixture because the
-// `root` path is a per-test `t.TempDir()`.
-func buildStoresConfig(itemsTable, contentRoot string) store.StoresConfig {
+// `root` path is a per-test `t.TempDir()` and the `dsn` is per-test
+// container.
+func buildStoresConfig(itemsTable, contentRoot, dsn string) store.StoresConfig {
 	return store.StoresConfig{
 		Stores: map[string]map[string]any{
 			"content": {
@@ -209,32 +213,40 @@ func buildStoresConfig(itemsTable, contentRoot string) store.StoresConfig {
 				"root": contentRoot,
 			},
 			"topics-ring": {
-				"kind":                       "claim_store",
-				"backend":                    "postgres",
-				"items_table":                itemsTable,
-				"on_commit_default":          "release_to_back",
-				"on_give_up_default":         "release_to_back",
-				"visibility_timeout_seconds": 300,
+				"kind":            "postgres",
+				"connection":      dsn,
+				"write_semantics": "direct",
+				"pick_policies": map[string]any{
+					"@review-queue": map[string]any{
+						"type":                       "ring",
+						"items_table":                itemsTable,
+						"on_commit_default":          "release_to_back",
+						"on_give_up_default":         "release_to_back",
+						"visibility_timeout_seconds": 300,
+					},
+				},
 			},
 		},
 	}
 }
 
-// createTopicsItemsTable creates the operator-owned items table per §9.10.
-// Matches the column shape verified by claimstorepg.Factory.Build's
+// createTopicsItemsTable creates the operator-owned items table per
+// §12.12. Matches the column shape verified by pgstore.Factory.Build's
 // information_schema check.
 func createTopicsItemsTable(t *testing.T, pool *pgxpool.Pool, table string) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), fmt.Sprintf(`
 		CREATE TABLE %s (
-			item_id     UUID PRIMARY KEY,
+			item_id     TEXT PRIMARY KEY,
 			payload     JSONB NOT NULL,
-			enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			state       TEXT NOT NULL DEFAULT 'available',
-			claim_token UUID,
-			claimed_at  TIMESTAMPTZ
+			claim_token TEXT,
+			claimed_at  TIMESTAMPTZ,
+			enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			priority    INTEGER NOT NULL DEFAULT 0,
+			sequence    BIGSERIAL
 		);
-		CREATE INDEX %s_available_idx   ON %s (enqueued_at) WHERE state = 'available';
+		CREATE INDEX %s_available_idx   ON %s (priority DESC, sequence) WHERE state = 'available';
 		CREATE INDEX %s_in_progress_idx ON %s (claim_token) WHERE state = 'in_progress';
 	`, table, table, table, table, table))
 	if err != nil {

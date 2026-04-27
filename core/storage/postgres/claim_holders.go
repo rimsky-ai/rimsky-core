@@ -1,7 +1,9 @@
-// ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`
-// (spec §9.9.3). One row per (claim_id, terminal-leaf-node) pair, inserted
-// at commit of the claiming-source node. Rows transition `'active'` →
-// `'completed'` per the §5.6.4 resolution algorithm.
+// ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`.
+// One row per (lock_holder, holder_node) pair from the §18.4 holding
+// subgraph. Rows transition `'active'` → `'completed'` (success) or
+// `'failed'` (give-up/failure) per §14.4. The lock_holder_id FK cascades
+// deletes when the parent rimsky_lock_holders row is removed at
+// auto-terminal.
 package postgres
 
 import (
@@ -24,21 +26,16 @@ type ClaimHoldersStore struct {
 
 var _ storage.ClaimHoldersStore = (*ClaimHoldersStore)(nil)
 
-const claimHolderCols = `
-  id, claim_id, store_name, holder_node_id, on_commit, on_give_up,
-  actual_action, state, created_at, completed_at
-`
+const claimHolderCols = `id, lock_holder_id, holder_node_id, state, completed_at`
 
-// Insert satisfies storage.ClaimHoldersStore.
+// Insert satisfies storage.ClaimHoldersStore. Rows are inserted in
+// 'active' state.
 func (s *ClaimHoldersStore) Insert(ctx context.Context, in storage.ClaimHolderInsertInput, tx storage.Tx) error {
 	ex := q(tx, s.pool)
 	_, err := ex.Exec(ctx,
-		`INSERT INTO rimsky_claim_holders (
-		   id, claim_id, store_name, holder_node_id,
-		   on_commit, on_give_up, state, frame_id
-		 ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)`,
-		in.ID, in.ClaimID, in.StoreName, in.HolderNodeID,
-		string(in.OnCommit), string(in.OnGiveUp), in.FrameID,
+		`INSERT INTO rimsky_claim_holders (id, lock_holder_id, holder_node_id, state, frame_id)
+		 VALUES ($1, $2, $3, 'active', $4)`,
+		in.ID, in.LockHolderID, in.HolderNodeID, in.FrameID,
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Insert: %w", err)
@@ -62,13 +59,13 @@ func (s *ClaimHoldersStore) Get(ctx context.Context, id shared.UUID, tx storage.
 	return &out, nil
 }
 
-// ListByClaimID satisfies storage.ClaimHoldersStore.
-func (s *ClaimHoldersStore) ListByClaimID(ctx context.Context, claimID string, tx storage.Tx) ([]storage.ClaimHolderRow, error) {
+// ListByLockHolderID satisfies storage.ClaimHoldersStore.
+func (s *ClaimHoldersStore) ListByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx storage.Tx) ([]storage.ClaimHolderRow, error) {
 	ex := q(tx, s.pool)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE claim_id = $1
-		 ORDER BY created_at ASC`, claimID,
+		 WHERE lock_holder_id = $1
+		 ORDER BY id ASC`, lockHolderID,
 	)
 	if err != nil {
 		return nil, err
@@ -83,7 +80,7 @@ func (s *ClaimHoldersStore) ListByHolderNode(ctx context.Context, holderNodeID s
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
 		 WHERE holder_node_id = $1
-		 ORDER BY created_at ASC`, holderNodeID,
+		 ORDER BY id ASC`, holderNodeID,
 	)
 	if err != nil {
 		return nil, err
@@ -92,13 +89,13 @@ func (s *ClaimHoldersStore) ListByHolderNode(ctx context.Context, holderNodeID s
 	return collectClaimHolders(rows)
 }
 
-// ListActiveByClaimID satisfies storage.ClaimHoldersStore.
-func (s *ClaimHoldersStore) ListActiveByClaimID(ctx context.Context, claimID string, tx storage.Tx) ([]storage.ClaimHolderRow, error) {
+// ListActiveByLockHolderID satisfies storage.ClaimHoldersStore.
+func (s *ClaimHoldersStore) ListActiveByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx storage.Tx) ([]storage.ClaimHolderRow, error) {
 	ex := q(tx, s.pool)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE claim_id = $1 AND state = 'active'
-		 ORDER BY created_at ASC`, claimID,
+		 WHERE lock_holder_id = $1 AND state = 'active'
+		 ORDER BY id ASC`, lockHolderID,
 	)
 	if err != nil {
 		return nil, err
@@ -107,21 +104,42 @@ func (s *ClaimHoldersStore) ListActiveByClaimID(ctx context.Context, claimID str
 	return collectClaimHolders(rows)
 }
 
-// Complete satisfies storage.ClaimHoldersStore. Idempotent: re-running
-// Complete on an already-completed row is a no-op (the WHERE clause
-// filters on state='active').
-func (s *ClaimHoldersStore) Complete(ctx context.Context, id shared.UUID, actualAction storage.ClaimHolderAction, tx storage.Tx) error {
+// Complete satisfies storage.ClaimHoldersStore. Idempotent: only updates
+// rows still in 'active' state.
+func (s *ClaimHoldersStore) Complete(ctx context.Context, id shared.UUID, state storage.ClaimHolderState, tx storage.Tx) error {
 	ex := q(tx, s.pool)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_claim_holders
-		    SET state = 'completed',
-		        completed_at = now(),
-		        actual_action = $2
+		    SET state = $2,
+		        completed_at = now()
 		  WHERE id = $1 AND state = 'active'`,
-		id, string(actualAction),
+		id, string(state),
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Complete: %w", err)
+	}
+	return nil
+}
+
+// CompleteByLockHolderAndNode satisfies storage.ClaimHoldersStore. Single
+// targeted UPDATE on the unique (lock_holder_id, holder_node_id) pair —
+// avoids the read-then-write round-trip the supervisor's terminal-release
+// path would otherwise pay per held alias.
+func (s *ClaimHoldersStore) CompleteByLockHolderAndNode(
+	ctx context.Context, lockHolderID, holderNodeID shared.UUID, state storage.ClaimHolderState, tx storage.Tx,
+) error {
+	ex := q(tx, s.pool)
+	_, err := ex.Exec(ctx,
+		`UPDATE rimsky_claim_holders
+		    SET state = $3,
+		        completed_at = now()
+		  WHERE lock_holder_id = $1
+		    AND holder_node_id = $2
+		    AND state = 'active'`,
+		lockHolderID, holderNodeID, string(state),
+	)
+	if err != nil {
+		return fmt.Errorf("claim_holders.CompleteByLockHolderAndNode: %w", err)
 	}
 	return nil
 }
@@ -130,24 +148,17 @@ func (s *ClaimHoldersStore) Complete(ctx context.Context, id shared.UUID, actual
 
 func scanClaimHolder(sc scannable) (storage.ClaimHolderRow, error) {
 	var (
-		r            storage.ClaimHolderRow
-		actualAction *string
-		state        string
-		completedAt  *time.Time
+		r           storage.ClaimHolderRow
+		state       string
+		completedAt *time.Time
 	)
 	if err := sc.Scan(
-		&r.ID, &r.ClaimID, &r.StoreName, &r.HolderNodeID,
-		&r.OnCommit, &r.OnGiveUp,
-		&actualAction, &state,
-		&r.CreatedAt, &completedAt,
+		&r.ID, &r.LockHolderID, &r.HolderNodeID,
+		&state, &completedAt,
 	); err != nil {
 		return storage.ClaimHolderRow{}, err
 	}
 	r.State = storage.ClaimHolderState(state)
-	if actualAction != nil {
-		a := storage.ClaimHolderAction(*actualAction)
-		r.ActualAction = &a
-	}
 	r.CompletedAt = completedAt
 	return r, nil
 }

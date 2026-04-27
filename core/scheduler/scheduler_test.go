@@ -229,8 +229,11 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	// Test mimics that composition with a short tx. FrameID propagated from
 	// the node row (createNode seeded a running frame).
 	require.NotNil(t, n.FrameID)
+	// EnqueuedAt deliberately in the past so the SelectCandidates
+	// `enqueued_at <= NOW()` predicate isn't flaky against the postgres
+	// container's clock.
 	require.NoError(t, f.queue.Enqueue(ctx, queuepkg.DispatchRequest{
-		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now(),
+		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
 		FrameID: *n.FrameID,
 	}))
 

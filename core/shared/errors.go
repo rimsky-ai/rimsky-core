@@ -6,17 +6,17 @@ import (
 )
 
 var (
-	ErrTemplateValidation   = errors.New("template validation failed")
-	ErrTemplateNotFound     = errors.New("template not found")
-	ErrInstanceNotFound     = errors.New("instance not found")
-	ErrNodeNotFound         = errors.New("node not found")
-	ErrConsumerKeyConflict  = errors.New("consumer_key already exists for template")
-	ErrTemplateInUse        = errors.New("template has live instances")
-	ErrNodeRunning          = errors.New("node is currently running")
-	ErrNodeApplication      = errors.New("node application error")
-	ErrIllegalTransition    = errors.New("illegal state transition") // blessed-invariant (§17)
-	ErrRollbackUnsupported  = errors.New("rollback unsupported by resource implementation")
-	ErrExecutorNotFound     = errors.New("executor not found in supervisor config")
+	ErrTemplateValidation  = errors.New("template validation failed")
+	ErrTemplateNotFound    = errors.New("template not found")
+	ErrInstanceNotFound    = errors.New("instance not found")
+	ErrNodeNotFound        = errors.New("node not found")
+	ErrConsumerKeyConflict = errors.New("consumer_key already exists for template")
+	ErrTemplateInUse       = errors.New("template has live instances")
+	ErrNodeRunning         = errors.New("node is currently running")
+	ErrNodeApplication     = errors.New("node application error")
+	ErrIllegalTransition   = errors.New("illegal state transition") // blessed-invariant (§17)
+	ErrRollbackUnsupported = errors.New("rollback unsupported by resource implementation")
+	ErrExecutorNotFound    = errors.New("executor not found in supervisor config")
 )
 
 // RimskyError wraps a sentinel with context fields for structured logging.

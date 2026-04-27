@@ -16,19 +16,19 @@
 //     claimant-guarded so a fresh supervisor can pick them up. The redesign
 //     switched the predicate column from `claimed_at` to `last_heartbeat_at`
 //     so a long-running heartbeating supervisor is not reaped.
-//  6. Lock-holder sweep (§13.5 step 2) — `rimsky_lock_holders` rows whose
-//     `expires_at < now()` are released: for `lock_kind='claim'` the
-//     §5.6.4 resolution algorithm runs with `actual_action = on_give_up` if
-//     a `rimsky_claim_holders` row is still active; the lock-holder row is
-//     then deleted claimant-guarded.
-//  7. Claim-holder GC (§13.5 step 3) — `rimsky_claim_holders` rows whose
-//     `holder_node_id`'s state is `failed` or `fresh` AND whose `state` is
-//     still `'active'` are leaked-resolution survivors; run §5.6.4 with
-//     `actual_action = on_give_up` to drain them.
-//  8. Visibility-timeout sweep (§13.5 step 4 + §7.7) — for each
-//     `claim-store-postgres` store in the local registry, reset items-
-//     table rows whose `claimed_at + visibility_timeout < now()` and for
-//     which no `rimsky_lock_holders` row exists.
+//  6. Orphan-reap (§13.5) — `rimsky_lock_holders` rows whose
+//     `expires_at < now()` are released: for `lock_kind='region'`
+//     `Store.Abandon(region, address, "")` fires so the substrate
+//     undoes any in-progress state per its on_give_up_default; the
+//     lock-holder row is then deleted claimant-guarded. Cascade FK on
+//     `rimsky_claim_holders.lock_holder_id` cleans up held-claim rows.
+//  7. (Claim-holder GC removed — under stores-redesign-v2 the cascade
+//     FK on `rimsky_claim_holders.lock_holder_id` makes the dedicated
+//     leaked-claim-holder reap unnecessary.)
+//  8. Visibility-timeout sweep (§12.12) — for each postgres store with
+//     pick policies in the local registry, reset items-table rows
+//     whose `claimed_at + visibility_timeout < now()` and for which no
+//     `rimsky_lock_holders` row exists.
 //  9. Ready sweep — executor-backed stale nodes whose deps are all fresh
 //     get enqueued for the next claim cycle.
 package scheduler
@@ -245,16 +245,14 @@ func tick(ctx context.Context, cfg Config) error {
 		}
 	}
 
-	// 7. Claim-holder GC (§13.5 step 3). Same wiring requirement.
-	if cfg.LockHolders != nil && cfg.Pool != nil {
-		if err := claimHolderGC(ctx, cfg, log); err != nil {
-			return err
-		}
-	}
+	// 7. Claim-holder GC is no longer needed under stores-redesign-v2.
+	// rimsky_claim_holders.lock_holder_id has ON DELETE CASCADE, so when
+	// the lock-holder row is deleted (at terminal or by orphan reap), the
+	// claim-holder rows are cleaned up automatically.
 
-	// 8. Visibility-timeout sweep (§13.5 step 4 + §7.7). Requires the
-	// per-process store registry; skipped otherwise (e.g. tests without
-	// claim stores).
+	// 8. Visibility-timeout sweep (§12.12 + §13.5 step 4). Iterates each
+	// postgres store's configured pick_policies; skipped when the
+	// per-process store registry is unavailable.
 	if cfg.StoreRegistry != nil && cfg.Pool != nil {
 		if err := visibilityTimeoutSweep(ctx, cfg, log); err != nil {
 			return err

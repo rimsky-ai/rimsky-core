@@ -7,6 +7,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -660,16 +661,29 @@ func TestLockHoldersStore(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		regionData := []byte(`{"glob":"a/*"}`)
+		regionData := json.RawMessage(`{"glob":"a/*"}`)
+		intent := "rw"
 		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
 			ID: regionRowID, LockKind: storage.LockKindRegion,
 			StoreName:          &storeName,
 			RegionData:         regionData,
+			Intent:             &intent,
 			HolderSupervisorID: "sup-A", HolderNodeID: n2.ID,
 			ExpiresAt: expiresFar,
 		}, tx)
 	})
 	require.NoError(t, err)
+
+	// UpdateAddress: writes the substrate-supplied address into a region
+	// row inside the acquisition tx (§13.3 step-4e). Verify the round-trip.
+	addr := json.RawMessage(`{"path":"a/abc"}`)
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().UpdateAddress(ctx, regionRowID, "sup-A", addr, tx)
+	}))
+	withAddr, err := b.LockHolders().Get(ctx, regionRowID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, withAddr)
+	require.JSONEq(t, string(addr), string(withAddr.Address))
 
 	// Get + ListByHolderNode + ListBySupervisor work.
 	got, err := b.LockHolders().Get(ctx, namedRowID, nil)
@@ -747,12 +761,13 @@ func TestLockHoldersStore(t *testing.T) {
 	// verify its expires_at is unchanged after a refresh.
 	otherRowID := uuid.New()
 	otherStoreName := "topics"
-	otherClaimID := "i-77"
+	otherRegion := json.RawMessage(`{"id":"i-77"}`)
+	otherIntent := "rw"
 	otherExpires := time.Now().UTC().Add(5 * time.Minute)
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
-			ID: otherRowID, LockKind: storage.LockKindClaim,
-			StoreName: &otherStoreName, ClaimID: &otherClaimID,
+			ID: otherRowID, LockKind: storage.LockKindRegion,
+			StoreName: &otherStoreName, RegionData: otherRegion, Intent: &otherIntent,
 			HolderSupervisorID: "sup-A", HolderNodeID: n2.ID,
 			ExpiresAt: otherExpires,
 		}, tx)
@@ -774,45 +789,58 @@ func TestClaimHoldersStore(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
+	require.NoError(t, b.Supervisors().Register(ctx, storage.SupervisorRegisterInput{
+		ID: "sup-A", AcceptedExecutors: []string{"worker"}, Concurrency: 1,
+	}, nil))
+
 	tpl := deployedTemplate(ctx, t, b, "ch", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
+	acquirer := createNode(ctx, t, b, inst.ID, "worker")
 	terminalA := createNode(ctx, t, b, inst.ID, "worker")
 	terminalB := createNode(ctx, t, b, inst.ID, "worker")
 
-	claimID := "item-42"
+	// The parent lock_holder row must exist before any claim_holders FK
+	// inserts can land — under v2 claim_holders cascades on its
+	// lock_holder_id.
 	storeName := "topics"
+	regionData := json.RawMessage(`{"id":"item-42"}`)
+	intent := "rw"
+	lockHolderID := uuid.New()
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: lockHolderID, LockKind: storage.LockKindRegion,
+			StoreName:          &storeName,
+			RegionData:         regionData,
+			Intent:             &intent,
+			HolderSupervisorID: "sup-A",
+			HolderNodeID:       acquirer.ID,
+			ExpiresAt:          time.Now().UTC().Add(10 * time.Minute),
+		}, tx)
+	}))
 
-	// Insert one row per terminal using the production primitive
-	// (storage.ClaimHoldersStore.Insert), mirroring the supervisor's
-	// runner_held_claims.go loop.
+	// Insert one claim_holders row per terminal.
 	rowAID := uuid.New()
 	rowBID := uuid.New()
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		if err := b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
 			ID:           rowAID,
-			ClaimID:      claimID,
-			StoreName:    storeName,
+			LockHolderID: lockHolderID,
 			HolderNodeID: terminalA.ID,
-			OnCommit:     storage.ClaimHolderActionDelete,
-			OnGiveUp:     storage.ClaimHolderActionReleaseToBack,
 		}, tx); err != nil {
 			return err
 		}
 		return b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
 			ID:           rowBID,
-			ClaimID:      claimID,
-			StoreName:    storeName,
+			LockHolderID: lockHolderID,
 			HolderNodeID: terminalB.ID,
-			OnCommit:     storage.ClaimHolderActionDelete,
-			OnGiveUp:     storage.ClaimHolderActionReleaseToBack,
 		}, tx)
 	}))
 
-	all, err := b.ClaimHolders().ListByClaimID(ctx, claimID, nil)
+	all, err := b.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, nil)
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 
-	active, err := b.ClaimHolders().ListActiveByClaimID(ctx, claimID, nil)
+	active, err := b.ClaimHolders().ListActiveByLockHolderID(ctx, lockHolderID, nil)
 	require.NoError(t, err)
 	require.Len(t, active, 2)
 
@@ -822,26 +850,154 @@ func TestClaimHoldersStore(t *testing.T) {
 	require.Len(t, byNodeA, 1)
 	require.Equal(t, rowAID, byNodeA[0].ID)
 
-	// Complete terminalA's row with actual_action='delete'; the active
-	// list shrinks to one and Get returns the completed row.
-	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderActionDelete, nil))
+	// Complete terminalA's row → 'completed'. The active list shrinks to
+	// one and Get returns the completed row.
+	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderStateCompleted, nil))
 
 	gotA, err := b.ClaimHolders().Get(ctx, rowAID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, gotA)
 	require.Equal(t, storage.ClaimHolderStateCompleted, gotA.State)
-	require.NotNil(t, gotA.ActualAction)
-	require.Equal(t, storage.ClaimHolderActionDelete, *gotA.ActualAction)
+	require.NotNil(t, gotA.CompletedAt)
 
-	activeAfter, err := b.ClaimHolders().ListActiveByClaimID(ctx, claimID, nil)
+	activeAfter, err := b.ClaimHolders().ListActiveByLockHolderID(ctx, lockHolderID, nil)
 	require.NoError(t, err)
 	require.Len(t, activeAfter, 1)
 	require.Equal(t, terminalB.ID, activeAfter[0].HolderNodeID)
 
 	// Complete is idempotent: re-running on an already-completed row is a no-op.
-	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderActionReleaseToBack, nil))
+	// The state must remain 'completed' even if a different terminal state is requested.
+	require.NoError(t, b.ClaimHolders().Complete(ctx, rowAID, storage.ClaimHolderStateFailed, nil))
 	gotA2, err := b.ClaimHolders().Get(ctx, rowAID, nil)
 	require.NoError(t, err)
-	require.Equal(t, storage.ClaimHolderActionDelete, *gotA2.ActualAction,
-		"already-completed row's actual_action must not be overwritten")
+	require.Equal(t, storage.ClaimHolderStateCompleted, gotA2.State,
+		"already-completed row's state must not be overwritten")
+
+	// Failing terminalB → 'failed' is a valid first-time transition.
+	require.NoError(t, b.ClaimHolders().Complete(ctx, rowBID, storage.ClaimHolderStateFailed, nil))
+	gotB, err := b.ClaimHolders().Get(ctx, rowBID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.ClaimHolderStateFailed, gotB.State)
+
+	// Cascade: deleting the parent lock_holder row removes both
+	// claim_holders rows.
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Delete(ctx, lockHolderID, "sup-A", tx)
+	}))
+	gone, err := b.ClaimHolders().Get(ctx, rowAID, nil)
+	require.NoError(t, err)
+	require.Nil(t, gone, "claim_holders row must cascade-delete with parent lock_holder")
+}
+
+// TestClaimHoldersStore_CompleteByLockHolderAndNode exercises the
+// targeted UPDATE path used by the supervisor's terminal release loop:
+// per-node-per-lock-holder flip in a single round-trip, idempotent on
+// already-completed rows, no cross-row clobber.
+func TestClaimHoldersStore_CompleteByLockHolderAndNode(t *testing.T) {
+	t.Parallel()
+	b, _, teardown := newBackend(t)
+	defer teardown()
+	ctx := context.Background()
+
+	tmpl := deployedTemplate(ctx, t, b, "complete-targeted", "1")
+	inst := createInstance(ctx, t, b, tmpl.ID, "ck-complete-targeted")
+	acquirer := createNode(ctx, t, b, inst.ID, "acq")
+	terminalA := createNode(ctx, t, b, inst.ID, "tA")
+	terminalB := createNode(ctx, t, b, inst.ID, "tB")
+
+	storeName := "scenario-store"
+	intent := "rw"
+	lockHolderID := uuid.New()
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: lockHolderID, LockKind: storage.LockKindRegion,
+			StoreName:          &storeName,
+			RegionData:         json.RawMessage(`"r"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-X",
+			HolderNodeID:       acquirer.ID,
+			ExpiresAt:          time.Now().UTC().Add(10 * time.Minute),
+		}, tx)
+	}))
+	rowAID := uuid.New()
+	rowBID := uuid.New()
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		if err := b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+			ID: rowAID, LockHolderID: lockHolderID, HolderNodeID: terminalA.ID,
+		}, tx); err != nil {
+			return err
+		}
+		return b.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+			ID: rowBID, LockHolderID: lockHolderID, HolderNodeID: terminalB.ID,
+		}, tx)
+	}))
+
+	// Targeted complete on terminalA only.
+	require.NoError(t, b.ClaimHolders().CompleteByLockHolderAndNode(
+		ctx, lockHolderID, terminalA.ID, storage.ClaimHolderStateCompleted, nil,
+	))
+	gotA, err := b.ClaimHolders().Get(ctx, rowAID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.ClaimHolderStateCompleted, gotA.State)
+	gotB, err := b.ClaimHolders().Get(ctx, rowBID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.ClaimHolderStateActive, gotB.State,
+		"sibling row must not be touched by targeted complete")
+
+	// Re-running on already-completed row is a no-op (state filter).
+	require.NoError(t, b.ClaimHolders().CompleteByLockHolderAndNode(
+		ctx, lockHolderID, terminalA.ID, storage.ClaimHolderStateFailed, nil,
+	))
+	gotA2, err := b.ClaimHolders().Get(ctx, rowAID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.ClaimHolderStateCompleted, gotA2.State,
+		"already-completed row must not be overwritten")
+}
+
+// TestLockHoldersStore_FrameIDRoundTrip confirms the storage-layer
+// insert/update path persists FrameID on rimsky_lock_holders. Per spec
+// §12.10 the column is observability-only — no algorithm consults it,
+// but operators read it, and this test pins the storage adapter
+// contract.
+func TestLockHoldersStore_FrameIDRoundTrip(t *testing.T) {
+	t.Parallel()
+	b, pool, teardown := newBackend(t)
+	defer teardown()
+	ctx := context.Background()
+
+	tmpl := deployedTemplate(ctx, t, b, "frame-id-roundtrip", "1")
+	inst := createInstance(ctx, t, b, tmpl.ID, "ck-frame-id-roundtrip")
+	n := createNode(ctx, t, b, inst.ID, "worker")
+
+	frameID := shared.UUID(uuid.New())
+	// Seed a frame row so the rimsky_lock_holders frame_id observability
+	// reference points at a real frame (no FK in the v2 schema; this
+	// keeps the test self-documenting).
+	_, err := pool.Exec(ctx, `
+INSERT INTO rimsky_frames (frame_id, instance_id, mode, state, source_node_ids, frame_timeout_ms)
+VALUES ($1, $2, 'serial_queue', 'queued', ARRAY[$3]::uuid[], 60000)
+`, frameID, inst.ID, n.ID)
+	require.NoError(t, err)
+
+	storeName := "scenario-store"
+	intent := "rw"
+	lockHolderID := shared.UUID(uuid.New())
+	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
+		return b.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+			ID: lockHolderID, LockKind: storage.LockKindRegion,
+			StoreName:          &storeName,
+			RegionData:         json.RawMessage(`"r"`),
+			Intent:             &intent,
+			HolderSupervisorID: "sup-Y",
+			HolderNodeID:       n.ID,
+			ExpiresAt:          time.Now().UTC().Add(10 * time.Minute),
+			FrameID:            &frameID,
+		}, tx)
+	}))
+
+	row, err := b.LockHolders().Get(ctx, lockHolderID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.NotNil(t, row.FrameID)
+	require.Equal(t, frameID, *row.FrameID)
 }
