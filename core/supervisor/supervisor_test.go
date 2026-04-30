@@ -1,5 +1,5 @@
 // Minimal coverage of the supervisor Start/Shutdown lifecycle under
-// stores-redesign-v2.
+// the stores redesign.
 
 package supervisor_test
 
@@ -16,7 +16,6 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/stub"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
@@ -31,7 +30,6 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	backend := pgstorage.New(pool)
 	q := pgqueue.New(pool)
 	reg := store.NewRegistry()
-	reg.Register(stub.FilesystemFactory())
 
 	supID := "test-sv-startshutdown"
 	h, err := supervisor.Start(supervisor.Config{

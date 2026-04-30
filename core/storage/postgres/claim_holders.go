@@ -1,7 +1,7 @@
 // ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`.
 // One row per (lock_holder, holder_node) pair from the §18.4 holding
 // subgraph. Rows transition `'active'` → `'completed'` (success) or
-// `'failed'` (give-up/failure) per §14.4. The lock_holder_id FK cascades
+// `'failed'` (give-up/failure) per §4.10 invariant 13. The lock_holder_id FK cascades
 // deletes when the parent rimsky_lock_holders row is removed at
 // auto-terminal.
 package postgres

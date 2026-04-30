@@ -16,12 +16,12 @@
 //
 // # Boundaries
 //
-// Per spec §18 invariant 11, no code path in this package inspects, parses,
+// Per spec §4.10 invariant 11, no code path in this package inspects, parses,
 // substitutes, or validates `userdata`. The substitution grammar enumerates
 // exactly three source kinds (deps / claim / params); userdata is not a
 // source kind and never participates in resolution.
 //
-// Per spec §18 invariant 12, attributes are validated twice: once at
+// Per spec §4.10 invariant 12, attributes are validated twice: once at
 // dispatch (after substitution, before the executor sees the request) and
 // once at commit (after the executor's writes are merged). Both gates are
 // mandatory; this package exposes a single Validate entry point and the

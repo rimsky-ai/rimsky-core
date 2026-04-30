@@ -77,7 +77,7 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 //
 // QueuePool, LockHolders, and ResumeGrace are required for driving the
 // terminal-handling tx in `runner_terminal.go::applyTerminal*` (per
-// spec §13.6 / §17.1 step 6c). They are populated by the supervisor at
+// spec §7.6 / §7.3 step 6c). They are populated by the supervisor at
 // startup and threaded through here so the callback handler can run
 // the exact same flow the synchronous executor-RPC path runs.
 //

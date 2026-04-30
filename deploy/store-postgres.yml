@@ -1,0 +1,16 @@
+# Per-store-service config for the docker-compose `store-postgres`
+# instance. Mounted at /etc/store/config.yml inside the container.
+connection: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+write_semantics: direct
+pick_policies:
+  "@review-queue":
+    type: queue
+    items_table: topics_items
+    on_commit_default: release_to_back
+    on_give_up_default: release_to_back
+    visibility_timeout_seconds: 300
+host: 0.0.0.0
+grpc_port: 9101
+http_port: 9111
+admin_port: 9121
+sweep_interval_seconds: 30

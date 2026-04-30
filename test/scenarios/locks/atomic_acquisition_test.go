@@ -1,195 +1,232 @@
-// Substantive scenario coverage for the lock-acquisition path under
-// stores-redesign-v2.
+// Atomic-acquisition scenario coverage — invariants 10 and 15.
+//
+// Invariant 10 (rimsky-side, v3 §4.10): the §7.3 acquisition transaction
+// either claims dispatch AND inserts every required `rimsky_lock_holders`
+// row AND records the `Store.Open`-returned address, or none of these.
+// The substrate's own state mutations run in a decoupled tx; rimsky-side
+// atomicity is independent.
+//
+// Invariant 15 (revised v3): `Open` fires inside the rimsky-side
+// acquisition transaction. When `Open` errors, the rimsky-side INSERTs
+// must roll back so single-writer-per-region (4b) is not violated by an
+// orphan lock-holder row.
 //
 // Two tests:
-//
-//   - TestLockHolderRowDeletedAfterTerminal — drives the supervisor
-//     through one full execute cycle and asserts the per-spec
-//     lock-holder row is deleted at terminal time. Targets the
-//     claimant-guarded release predicate (blessed invariant 4) and the
-//     "lock state lives only in postgres" invariant (9a).
-//
-//   - TestAcquisitionTxRollsBackOnStoreOpenError — fault-injects an
-//     error from Store.Open inside the acquisition tx and asserts the
-//     tx rolled back: no rimsky_lock_holders row was committed for the
-//     candidate, and rimsky_dispatch.claimed_by is still NULL.
-//     Targets blessed invariant 10 (atomic acquisition).
+//   - TestAtomicAcquisitionRollsBackOnOpenError exercises the rollback
+//     path using `core/store/storetest.Fake` directly. The fake's
+//     in-process surface is sufficient because the rollback is a
+//     rimsky-side property — wire-roundtrip behaviour adds no additional
+//     coverage of invariant 10's all-or-nothing INSERT semantics.
+//   - TestLockHolderRowDeletedAfterTerminal complements the loopback wire
+//     coverage in stores/regional_claim_test.go by also asserting the
+//     post-terminal `rimsky_lock_holders` row count is zero — invariant
+//     4 (claimant-guarded release) end-to-end.
 package locks
 
 import (
-	"context"
-	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/core/config"
+	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/store"
+	"github.com/fallguy/rimsky/core/store/storetest"
+	"github.com/fallguy/rimsky/core/supervisor"
+	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
-// TestLockHolderRowDeletedAfterTerminal drives one node through a
-// complete execute cycle and asserts the per-spec lock-holder rows are
-// deleted at terminal time (claimant-guarded release per blessed
-// invariant 4).
+// TestAtomicAcquisitionRollsBackOnOpenError seeds a one-node template
+// whose claim is backed by a `storetest.Fake` configured to error on
+// every `open` call. The supervisor's per-candidate acquisition tx
+// must roll back: zero lock-holder rows for the node and the dispatch
+// row's `claimed_by` reverts to NULL.
 //
-// We use a stub store because the harness ships factories for it and
-// the node-template grammar requires every claim's store to be in the
-// configured registry.
+// Uses the in-Go fake (registered into the runner's RunArgs directly)
+// instead of an error-injecting wire fixture because the property
+// under test is rimsky-side rollback semantics — the substrate
+// success path is irrelevant. The wire-bridged happy path is covered in
+// stores/regional_claim_test.go. The harness still wires a loopback stub
+// fixture into the control-api / scheduler so template deploy and
+// candidate enqueue work; the supervisor (NoSupervisor=true) is replaced
+// by a hand-built RunArgs whose StoreRegistry holds the error-injecting
+// Fake under the same name.
+func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
+	t.Parallel()
+
+	// Loopback stub for control-api and scheduler startup. The Fake
+	// shadows it inside the runner-local registry built below.
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		NoSupervisor: true,
+		Stores: config.RemoteStoresConfig{
+			Stores: map[string]config.StoreEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+				},
+			},
+		},
+	})
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "open-error", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithStores(scenario.WriteClaimRef("content", "/region-A")),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-open-error", map[string]any{})
+
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForDispatch(n.ID, 5*time.Second),
+		"expected scheduler to enqueue a dispatch row")
+
+	pool := executor.NewClientPool()
+	t.Cleanup(func() { _ = pool.Close() })
+
+	// Build a runner-local registry with the error-injecting Fake. This
+	// registry shadows the harness control-api's registry — the runner
+	// uses what we hand it via RunArgs.
+	fake := storetest.NewFake("content", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
+	openErr := errOpenInjected{}
+	fake.ErrorFunc = func(verb string, _ store.ClaimID) error {
+		if verb == "open" {
+			return openErr
+		}
+		return nil
+	}
+	reg := store.NewRegistry()
+	reg.Add("content", fake)
+
+	args := supervisor.RunArgs{
+		Storage:           h.Storage,
+		Queue:             h.Queue,
+		QueuePool:         h.Pool,
+		LockHolders:       store.NewLockHoldersClient(h.Pool),
+		StoreRegistry:     reg,
+		Clock:             shared.SystemClock{},
+		Logger:            shared.SilentLogger{},
+		SupervisorID:      "scenario-runner-rollback",
+		AcceptedExecutors: []string{"stub"},
+		AcceptedStores:    []string{"content"},
+		Pool:              pool,
+		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
+			"stub": {Transport: "grpc", URL: h.StubAddr},
+		}),
+		HeartbeatInterval: 100 * time.Millisecond,
+	}
+	out, err := supervisor.RunNode(h.Ctx, args, nil)
+	// Open errors surface as the RunNode error (the per-candidate tx
+	// rolls back deferred-style). The load-bearing assertion is that
+	// the rollback actually happened — see the row-count checks below.
+	require.Error(t, err, "Open error must surface")
+	require.False(t, out.Ran,
+		"acquisition tx must roll back when Open errors; runner advertises Ran=false")
+
+	// Invariant 10 (rimsky-side): zero lock-holder rows for the node.
+	var lhCount int
+	err = h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_lock_holders WHERE holder_node_id = $1`, n.ID,
+	).Scan(&lhCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_lock_holders rows")
+
+	// Invariant 10 (rimsky-side): dispatch row's claimed_by is NULL again.
+	var claimedBy *string
+	err = h.Pool.QueryRow(h.Ctx,
+		`SELECT claimed_by FROM rimsky_dispatch WHERE node_id = $1`, n.ID,
+	).Scan(&claimedBy)
+	require.NoError(t, err)
+	require.Nil(t, claimedBy, "rollback must release the dispatch claim")
+
+	// The Fake observed exactly one open attempt (the supervisor tried,
+	// got the injected error, and rolled back).
+	calls := fake.Calls()
+	openCount := 0
+	for _, c := range calls {
+		if c.Verb == "open" {
+			openCount++
+		}
+	}
+	require.Equal(t, 1, openCount,
+		"Open should fire exactly once before the error rolls back the tx")
+}
+
+// errOpenInjected is the canary error the Fake's ErrorFunc returns for
+// the open verb in TestAtomicAcquisitionRollsBackOnOpenError.
+type errOpenInjected struct{}
+
+func (errOpenInjected) Error() string { return "injected open error" }
+
+// TestLockHolderRowDeletedAfterTerminal drives one regional claim
+// through the loopback gRPC fixture and asserts that after the worker
+// reaches `fresh`, zero `rimsky_lock_holders` rows remain for the node.
+// Complements stores/regional_claim_test.go by adding the post-terminal
+// row-count assertion — invariant 4 (claimant-guarded release) end to
+// end through the §7.3 atomic path.
 func TestLockHolderRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{
-		StoresConfig: store.StoresConfig{Stores: map[string]map[string]any{
-			"local-fs": {"kind": "stub_filesystem"},
-		}},
+
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok")
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		Stores: config.RemoteStoresConfig{
+			Stores: map[string]config.StoreEntry{
+				"content": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "claim-released", Version: "1",
+		Name: "release-after-terminal", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("local-fs", "tenant-A/path")),
+				scenario.WithStores(scenario.WriteClaimRef("content", "/region-B")),
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-claim-released", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-release-after-terminal", map[string]any{})
 
-	w := h.FindNode(iid, "worker")
-	require.NotNil(t, w)
-	require.True(t, h.WaitForNodeState(w.ID, shared.NodeStateFresh, 15*time.Second))
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
+		"worker did not reach fresh")
 
-	// Post-terminal, the lock-holder row for this node must be gone
-	// (release tx commits the DELETE alongside the state transition).
-	rows, err := h.Storage.LockHolders().ListByHolderNode(h.Ctx, w.ID, nil)
-	require.NoError(t, err)
-	require.Empty(t, rows, "lock-holder rows should be cleared at terminal")
-}
-
-// TestAcquisitionTxRollsBackOnStoreOpenError exercises blessed
-// invariant 10: the §13.3 acquisition transaction either claims the
-// dispatch row AND inserts every required rimsky_lock_holders row AND
-// completes every Store.Open mutation, or none of these.
-//
-// We register a fault-injecting store factory whose Open returns an
-// error on every call. The supervisor enqueues one node that needs the
-// store; the acquisition tx attempts to insert a lock-holder row, then
-// calls Store.Open, gets the error, and rolls back. We then assert:
-//   - no rimsky_lock_holders row exists for the candidate node
-//   - rimsky_dispatch.claimed_by IS NULL (the row is unclaimed and
-//     ready for re-acquisition on the next tick)
-//
-// If the acquisition path were not atomic (e.g. lock-holder row
-// committed before Open ran), the lock-holder row would persist after
-// rollback and this test would fail.
-func TestAcquisitionTxRollsBackOnStoreOpenError(t *testing.T) {
-	t.Parallel()
-	calls := &atomic.Int64{}
-	h := scenario.Start(t, scenario.HarnessOpts{
-		ExtraStoreFactories: []store.Factory{openErrorFactory{calls: calls}},
-		StoresConfig: store.StoresConfig{Stores: map[string]map[string]any{
-			"flaky-fs": {"kind": "open_error_store"},
-		}},
-	})
-	// The node never actually runs (Open fails inside the acquisition
-	// tx), so no executor stub registration is required.
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "atomic-acq-rollback", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("flaky-fs", "tenant-A/path")),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-atomic-acq-rollback", map[string]any{})
-
-	w := h.FindNode(iid, "worker")
-	require.NotNil(t, w)
-
-	// Wait for the supervisor to attempt acquisition at least once.
-	// open_error_store.Open is the inner-most call; we know acquisition
-	// reached step 4 once `calls` is non-zero.
-	require.Eventually(t, func() bool {
-		return calls.Load() > 0
-	}, 10*time.Second, 50*time.Millisecond,
-		"supervisor should have attempted acquisition (Store.Open) at least once")
-
-	// Atomicity assertion 1: no lock-holder row was committed for the
-	// candidate node. If the acquisition tx weren't atomic with
-	// Store.Open, the Insert that ran before Open would have
-	// committed and we'd see a row here.
-	rows, err := h.Storage.LockHolders().ListByHolderNode(h.Ctx, w.ID, nil)
-	require.NoError(t, err)
-	require.Empty(t, rows,
-		"acquisition tx must roll back the lock-holder Insert when Open errors (blessed invariant 10)")
-
-	// Atomicity assertion 2: every dispatch row for this node has
-	// claimed_by IS NULL. The ClaimDispatchRow UPDATE that ran inside
-	// the same tx as the failed Open must have rolled back too.
-	rowsClaimed := 0
-	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_dispatch WHERE node_id = $1 AND claimed_by IS NOT NULL`,
-		w.ID,
-	).Scan(&rowsClaimed))
-	require.Equal(t, 0, rowsClaimed,
-		"acquisition tx must roll back the dispatch claim when Open errors (blessed invariant 10)")
-}
-
-// openErrorFactory builds an in-process store whose Open always errors.
-// Used by TestAcquisitionTxRollsBackOnStoreOpenError to drive the
-// rollback path.
-type openErrorFactory struct {
-	calls *atomic.Int64
-}
-
-func (openErrorFactory) Kind() string                            { return "open_error_store" }
-func (openErrorFactory) MaxWriteSemantics() store.WriteSemantics { return store.WriteSemanticsDirect }
-
-func (f openErrorFactory) Build(name string, _ map[string]any) (store.Store, error) {
-	return &openErrorStore{name: name, calls: f.calls}, nil
-}
-
-// openErrorStore satisfies store.Store. Open errors; the other verbs
-// are unreachable on the rollback path (the supervisor never reaches
-// terminal state for a node whose acquisition rolls back).
-type openErrorStore struct {
-	name  string
-	calls *atomic.Int64
-}
-
-func (s *openErrorStore) Name() string { return s.name }
-func (*openErrorStore) Kind() string   { return "open_error_store" }
-func (*openErrorStore) Capabilities() store.Capabilities {
-	return store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}
-}
-func (*openErrorStore) RegionsConflict(a, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
+	// Invariant 4 / 10: post-terminal lock-holder row count is zero
+	// (the supervisor's claimant-guarded release deleted it).
+	deadline := time.Now().Add(2 * time.Second)
+	var lhCount int
+	for time.Now().Before(deadline) {
+		err := h.Pool.QueryRow(h.Ctx,
+			`SELECT count(*) FROM rimsky_lock_holders WHERE holder_node_id = $1`, n.ID,
+		).Scan(&lhCount)
+		require.NoError(t, err)
+		if lhCount == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return string(a) == string(b)
+	require.Equal(t, 0, lhCount,
+		"after worker reaches fresh, zero lock-holder rows must remain (invariant 4)")
 }
-func (*openErrorStore) UnmarshalRegion(raw []byte) ([]byte, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	out := make([]byte, len(raw))
-	copy(out, raw)
-	return out, nil
-}
-func (s *openErrorStore) Open(_ context.Context, _ store.ClaimSpec) (store.ClaimResult, error) {
-	s.calls.Add(1)
-	return store.ClaimResult{}, errors.New("open_error_store: synthetic error for atomicity test")
-}
-func (*openErrorStore) Commit(_ context.Context, _ []byte, _ []byte, _ string) error  { return nil }
-func (*openErrorStore) Abandon(_ context.Context, _ []byte, _ []byte, _ string) error { return nil }
-func (*openErrorStore) Delete(_ context.Context, _ []byte) error                      { return nil }
-func (*openErrorStore) Release(_ context.Context, _ []byte, _ []byte) error           { return nil }
-
-// Compile-time interface assertion.
-var _ store.Store = (*openErrorStore)(nil)

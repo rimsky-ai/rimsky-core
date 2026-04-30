@@ -1,5 +1,17 @@
 # Executor Author Guide
 
+> **v3 note:** the executor↔storage data path is unchanged from v2 —
+> executors receive the substrate-native `address` from rimsky in the
+> dispatch envelope and talk to the underlying storage directly. Under
+> v3 stores-redesign, those addresses are produced by remote
+> store-services rather than in-process Go code; from the executor's
+> perspective nothing changes (the bytes are still opaque, still
+> unwrapped per the executor's substrate knowledge).
+>
+> Auth-blind advisory: rimsky has no machinery for credentials,
+> encryption, or access control. Encrypt sensitive bytes before handing
+> them to rimsky if you need protection.
+
 This guide is for developers who want to implement a new rimsky executor —
 in any language — and wire it into a rimsky deployment.
 
@@ -166,7 +178,8 @@ inherited, and inheritance extends the claim's lifetime.
 
 Sensitive fields inside claim content (any of payload / address / region)
 may be encrypted at the producer side before the bytes enter Rimsky's
-address space (spec §17.6). Rimsky transports ciphertext as opaque bytes;
+address space (operator practice, not a Rimsky feature — Rimsky has no
+encryption mechanism). Rimsky transports ciphertext as opaque bytes;
 **executors decrypt at point of use**. Asymmetric is the recommended
 default — your executor holds the private key; the producer (substrate,
 admin tool, upstream pipeline) holds the public key. Encryption is

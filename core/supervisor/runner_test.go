@@ -1,8 +1,9 @@
-// Minimal coverage of supervisor.RunNode under stores-redesign-v2.
+// Minimal coverage of supervisor.RunNode under the stores redesign.
 //
-// The pre-v2 runner_test.go covered the omnibus runner against the old
-// AcquireLock/OpenHandle/ReleaseLock surface; under v2 the runner runs
-// candidate selection -> acquisition tx -> Open/Commit/Abandon directly.
+// The pre-redesign runner_test.go covered the omnibus runner against
+// the old AcquireLock/OpenHandle/ReleaseLock surface; under the
+// redesign the runner runs candidate selection -> acquisition tx ->
+// Open/Commit/Abandon directly.
 // This file keeps the package buildable and pins the small surfaces that
 // don't require a full scenario harness: validateRunArgs error paths,
 // and a no-candidate run against a real Postgres + stub store registry.
@@ -22,13 +23,12 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/stub"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
 // TestRunNode_NoCandidate verifies the runner returns Ran=false with
 // no error when there are no eligible dispatch rows. Drives the full
-// acquireCandidate path against a real Postgres so the §13.3 candidate
+// acquireCandidate path against a real Postgres so the §7.3 candidate
 // SELECT executes; an empty table is the expected baseline.
 func TestRunNode_NoCandidate(t *testing.T) {
 	t.Parallel()
@@ -39,7 +39,6 @@ func TestRunNode_NoCandidate(t *testing.T) {
 	backend := pgstorage.New(pool)
 	q := pgqueue.New(pool)
 	reg := store.NewRegistry()
-	reg.Register(stub.FilesystemFactory())
 
 	clientPool := executor.NewClientPool()
 	t.Cleanup(func() { _ = clientPool.Close() })

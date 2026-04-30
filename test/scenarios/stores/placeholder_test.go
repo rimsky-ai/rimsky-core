@@ -1,12 +1,13 @@
-// Placeholder package for the stores scenario suite under
-// stores-redesign-v2.
+// Stores scenario suite under the stores redesign.
 //
-// The pre-v2 tests in this directory used scenario.RegionRef and
-// node.NodeStoreRef.{Write, Read} — both removed. Region conflict
-// semantics under v2 derive from Store.RegionsConflict + the §8.5
-// ModeCoexists matrix; tests that recreate the prior coverage
+// Pre-redesign tests in this directory used scenario.RegionRef and
+// node.NodeStoreRef.{Write, Read} — both removed. Under v3 region
+// conflict is byte-equal (Store.RegionsConflict / Store.UnmarshalRegion
+// retired per spec §11.1, §7.7); coexistence is governed by
+// store.ModeCoexists, the substrate's WriteSemantics, and the
+// claim's intent. Tests that recreate the prior coverage
 // (overlapping write blocks, disjoint regions concurrent, read+write
-// concurrent only on staged_async) belong here but must use
-// scenario.ClaimRef / WriteClaimRef with explicit selectors.
+// concurrent only on staged_async) drive the loopback gRPC fixture
+// (see regional_claim_test.go for the scaffolding).
 
 package stores

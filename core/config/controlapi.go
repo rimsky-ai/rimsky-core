@@ -14,11 +14,9 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// ControlAPIConfig wires the control-api HTTP server. The store wiring follows
-// the same shape as SupervisorConfig (spec §16.2): the deployer registers a
-// list of factories it has linked in and supplies the parsed `stores.yml`;
-// StartControlAPI builds the per-process *store.Registry from the pair and
-// hands it to the controlapi app.
+// ControlAPIConfig wires the control-api HTTP server. The store config
+// follows the same name → endpoint + capabilities shape as the
+// supervisor and scheduler. Per spec §6.1.
 type ControlAPIConfig struct {
 	Storage storage.StorageBackend
 	Queue   queue.DispatchQueue
@@ -27,18 +25,10 @@ type ControlAPIConfig struct {
 	Host    string
 	Port    int
 	Auth    controlapi.Authenticator // nil = anonymous (default)
-	// StoreFactories enumerates the store-kind factories registered with
-	// this process. The deployer's main() builds this list from the set of
-	// store implementations it has linked in (filesystem, postgres, stub,
-	// custom). Required when Stores is non-empty.
-	StoreFactories []store.Factory
-	// Stores is the parsed YAML stores config (spec §15.1). Each entry is
-	// keyed by operator-chosen store name; the value's "kind" picks a
-	// factory from StoreFactories.
-	Stores store.StoresConfig
-	// NamedLocks is the operator-side named-lock config (spec §15.2).
-	// The control-api consults this at template-deploy time to validate
-	// that every template-referenced named lock is declared.
+	Stores  RemoteStoresConfig
+	// NamedLocks is the operator-side named-lock config. The control-
+	// api consults this at template-deploy time to validate that
+	// every template-referenced lock name is declared.
 	NamedLocks store.NamedLocksConfig
 }
 
@@ -65,13 +55,13 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 }
 func (h *controlAPIHandle) Addr() string { return h.addr }
 
-// StartControlAPI binds host:port (port=0 for OS-assigned) and starts serving.
-// Returns a handle whose Addr reports the bound address.
+// StartControlAPI binds host:port (port=0 for OS-assigned) and starts
+// serving.
 func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
-	registry, err := buildStoreRegistry(cfg.StoreFactories, cfg.Stores)
+	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
 	if err != nil {
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}

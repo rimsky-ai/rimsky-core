@@ -1,7 +1,13 @@
 # Store Protocol Inertness Cleanup — Notes
 
 **Date:** 2026-04-27
-**Status:** notes only; informal design doc to be turned into a spec via the standard brainstorm/spec/plan flow before execution.
+**Status:** Folded into Stores Redesign v3 — see
+`docs/specs/2026-04-27-stores-redesign-v3-design.md`. The four
+inertness violations called out below dissolve as natural consequences
+of moving stores out-of-process: the admin items endpoint, the
+pick-policy validator hook, the scheduler visibility-timeout sweep,
+and the substrate-only methods on `*pgstore.Store` are all gone. The
+notes below remain as historical record; the v3 spec is authoritative.
 
 ## Why this exists
 

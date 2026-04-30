@@ -37,7 +37,6 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 
 	baseNodes := []map[string]any{
 		{
-			"id":       "worker",
 			"type":     "worker",
 			"executor": "stub",
 		},

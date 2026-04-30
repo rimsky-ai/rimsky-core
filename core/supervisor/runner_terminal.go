@@ -1,11 +1,11 @@
-// Spec §17.1 step 6 + §13.6 — terminal-event handling under
-// stores-redesign-v2.
+// Terminal-event handling under the stores redesign — release path
+// (§7.6 / §4.10 invariant 13 auto-terminal).
 //
 // Branches per terminal kind:
 //
 //   - Complete{changed: true}  → validate attributes, run quality rules,
 //                                 fire per-claim release path (held vs.
-//                                 non-held branches per §13.6),
+//                                 non-held branches per §7.6),
 //                                 persist final attributes, state→fresh,
 //                                 emit `attributes_committed`,
 //                                 cascade message-pass on dependents.
@@ -42,7 +42,7 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// applyTerminal is the §17.1 step 6 entry point.
+// applyTerminal is the omnibus runner's terminal-event entry point.
 func applyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -59,7 +59,7 @@ func applyTerminal(
 	return fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
 }
 
-// applyTerminalComplete runs the §13.6 success-branch release tx
+// applyTerminalComplete runs the §7.6 success-branch release tx
 // alongside the state→fresh transition, final attribute upsert, and
 // cascade message-pass to dependents.
 func applyTerminalComplete(
@@ -331,7 +331,7 @@ func applyResolvedAction(
 }
 
 // enqueueInTx mirrors core/queue/postgres/queue.go::Enqueue but runs
-// on the supplied tx so the §13.6 release tx + state update +
+// on the supplied tx so the §7.6 release tx + state update +
 // re-enqueue are one atomic step.
 // @source: core/queue/postgres/queue.go:Enqueue
 func enqueueInTx(ctx context.Context, tx pgx.Tx, req queue.DispatchRequest) error {
@@ -445,24 +445,29 @@ func applyTerminalInfraError(
 	return nil
 }
 
-// releaseLocksInTx is the §13.6 release-tx body. Walks the
-// acquired-locks slice in §13.7 sort order. For each lock:
+// releaseLocksInTx is the release-tx body. Walks the acquired-locks
+// slice in sort order. For each lock:
 //
 //   - NamedLockSpec → claimant-guarded delete.
 //   - ClaimSpec acquirer + held → mark this node's claim_holders row
 //     'completed'/'failed', call CheckAndFireResolution.
-//   - ClaimSpec acquirer + non-held → call substrate verb (Commit /
-//     Abandon / Delete / release_to_*) per claim_resolutions, delete
-//     the lock-holder row.
+//   - ClaimSpec acquirer + non-held → call the substrate verb directly
+//     (success → Commit; failure → Abandon), delete the lock-holder
+//     row.
+//
+// Per spec §7.3 the substrate's verb runs in its own (substrate-side)
+// transaction; rimsky's bookkeeping tx commits the lock-holder DELETE
+// independently. At-least-once delivery + claim_id idempotency on the
+// substrate side handles transient failures (per spec §7.8 obligation
+// #3).
 //
 // The inheritor branch is handled by releaseInheritedClaimsInTx, run
 // from the same tx.
 func releaseLocksInTx(
 	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition, success bool,
 ) error {
-	storeCtx := store.WithTx(ctx, tx)
 	for _, lk := range acq.Locks {
-		if err := releaseAcquiredLock(storeCtx, args, tx, acq, lk, success); err != nil {
+		if err := releaseAcquiredLock(ctx, args, tx, acq, lk, success); err != nil {
 			return err
 		}
 	}
@@ -472,57 +477,65 @@ func releaseLocksInTx(
 // releaseAcquiredLock dispatches one acquired lock to the right
 // release branch.
 func releaseAcquiredLock(
-	storeCtx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx pgx.Tx,
 	acq *acquisition, lk AcquiredLock, success bool,
 ) error {
 	switch sp := lk.Spec.(type) {
 	case store.NamedLockSpec:
 		_ = sp
-		if err := args.LockHolders.DeleteByID(storeCtx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
+		if err := args.LockHolders.DeleteByID(ctx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
 			return fmt.Errorf("releaseAcquiredLock: named DeleteByID: %w", err)
 		}
-		emitLockReleased(storeCtx, args, acq, lk, releaseActionString(success))
+		emitLockReleased(ctx, args, acq, lk, releaseActionString(success))
 		return nil
 	case store.ClaimSpec:
-		return releaseClaim(storeCtx, args, tx, acq, lk, sp, success)
+		return releaseClaim(ctx, args, tx, acq, lk, sp, success)
 	}
 	return fmt.Errorf("releaseAcquiredLock: unknown spec %T", lk.Spec)
 }
 
 // releaseClaim handles the per-ClaimSpec release-path branching
 // (held vs. non-held). For non-held claims, region and address are
-// read from the lock-holder row (spec §13.6) so the substrate verb
-// receives the canonical bytes regardless of whether `lk.ClaimResult`
-// survived an async-callback round-trip.
+// read from the lock-holder row so the substrate verb receives the
+// canonical bytes regardless of whether `lk.ClaimResult` survived an
+// async-callback round-trip. Substrate disposition (what Commit /
+// Abandon mean for the substrate's own state) is governed entirely
+// by per-substrate config; rimsky carries only the success/failure
+// binary.
 func releaseClaim(
-	storeCtx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx pgx.Tx,
 	acq *acquisition, lk AcquiredLock, spec store.ClaimSpec, success bool,
 ) error {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, spec.Alias)
 	if held {
-		if err := markClaimHolderForNode(storeCtx, args, tx, lk.LockHolderID, acq.NodeID, success); err != nil {
+		if err := markClaimHolderForNode(ctx, args, tx, lk.LockHolderID, acq.NodeID, success); err != nil {
 			return err
 		}
-		if err := CheckAndFireResolution(storeCtx, args, tx,
-			lk.LockHolderID, spec.Alias, claimResolutionsForAcq(acq)); err != nil {
+		if err := CheckAndFireResolution(ctx, args, tx, lk.LockHolderID); err != nil {
 			return err
 		}
-		emitLockReleased(storeCtx, args, acq, lk, "held_marked")
+		emitLockReleased(ctx, args, acq, lk, "held_marked")
 		return nil
 	}
-	resolution := resolutionForAlias(acq.NodeDef, spec.Alias)
-	verbAction, _ := selectResolutionAction(resolution, success)
-	region, address, err := loadLockHolderRegionAndAddress(storeCtx, tx, lk.LockHolderID)
+	region, address, err := loadLockHolderRegionAndAddress(ctx, tx, lk.LockHolderID)
 	if err != nil {
 		return fmt.Errorf("releaseClaim: load region/address: %w", err)
 	}
-	if err := fireResolutionVerb(storeCtx, lk.Store, verbAction, success, region, address); err != nil {
-		return fmt.Errorf("releaseClaim: substrate verb (%s): %w", verbAction, err)
+	claimID := store.ClaimID(lk.LockHolderID.String())
+	verbAction := releaseActionString(success)
+	var verbErr error
+	if success {
+		verbErr = lk.Store.Commit(ctx, claimID, region, address)
+	} else {
+		verbErr = lk.Store.Abandon(ctx, claimID, region, address)
 	}
-	if err := args.LockHolders.DeleteByID(storeCtx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
+	if verbErr != nil {
+		return fmt.Errorf("releaseClaim: substrate verb (%s): %w", verbAction, verbErr)
+	}
+	if err := args.LockHolders.DeleteByID(ctx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
 		return fmt.Errorf("releaseClaim: DeleteByID: %w", err)
 	}
-	emitLockReleased(storeCtx, args, acq, lk, verbAction)
+	emitLockReleased(ctx, args, acq, lk, verbAction)
 	return nil
 }
 
@@ -530,6 +543,16 @@ func releaseClaim(
 // lock-holder row inside the supplied tx. Returns (nil, nil, nil) when
 // the row is gone — the caller treats that as a substrate no-op (the
 // row may have been auto-terminated by a sibling on a held subgraph).
+//
+// No `FOR UPDATE` is needed: from acquisition through this terminal
+// handler, the rimsky-side tx is the single writer for this lock-
+// holder row (claimant-guarded on holder_supervisor_id throughout).
+// Concurrent readers (the orphan-reap sweep in the scheduler, the
+// region-conflict re-check in another supervisor's acquisition tx)
+// either see this row as still-held (predicate matches the live
+// holder) or as deleted/expired — neither modifies it. The lock
+// guard for terminal-time mutations is the ownership of the rimsky
+// tx itself.
 func loadLockHolderRegionAndAddress(ctx context.Context, tx pgx.Tx, id shared.UUID) ([]byte, []byte, error) {
 	var (
 		region  []byte
@@ -563,27 +586,11 @@ func releaseInheritedClaimsInTx(
 		if err := markClaimHolderForNode(ctx, args, tx, ia.LockHolderID, acq.NodeID, success); err != nil {
 			return err
 		}
-		resolution, err := resolutionForAcquirerNode(ctx, args, acq.InstanceID, ia.AcquirerType, ia.Alias)
-		if err != nil {
-			return err
-		}
-		// The auto-terminal lookup needs the per-alias resolution
-		// keyed by alias; fake a single-entry map for this call.
-		resolutions := map[string]node.ClaimResolution{ia.Alias: resolution}
-		if err := CheckAndFireResolution(ctx, args, tx, ia.LockHolderID, ia.Alias, resolutions); err != nil {
+		if err := CheckAndFireResolution(ctx, args, tx, ia.LockHolderID); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// claimResolutionsForAcq returns the acquirer's per-alias resolution
-// map. Empty when NodeDef is nil.
-func claimResolutionsForAcq(acq *acquisition) map[string]node.ClaimResolution {
-	if acq == nil || acq.NodeDef == nil {
-		return nil
-	}
-	return acq.NodeDef.ClaimResolutions
 }
 
 // releaseActionString maps success bool → event payload string.

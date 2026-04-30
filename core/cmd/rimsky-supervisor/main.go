@@ -1,38 +1,17 @@
-// rimsky-supervisor is the reference YAML-configured entry point for the
-// supervisor process. Reads a YAML config path from RIMSKY_SUPERVISOR_CONFIG,
-// parses it into a typed struct, wires dependencies (pgxpool, storage, queue,
-// resolver), loads the stores config from RIMSKY_STORES_CONFIG and registers
-// the linked-in store factories (filesystem, postgres), then
-// calls config.StartSupervisor. SIGTERM/SIGINT triggers a 30s graceful
-// shutdown.
+// rimsky-supervisor is the YAML-configured entry point for the
+// supervisor process. Reads its config path from
+// RIMSKY_SUPERVISOR_CONFIG, parses the YAML into a typed struct, wires
+// dependencies (pgxpool, storage, queue, resolver), loads the stores
+// config from RIMSKY_STORES_CONFIG (per spec §6.1: name → endpoint +
+// declared capabilities), and calls config.StartSupervisor which dials
+// each remote store-service.
 //
 // Environment variables:
 //
-//	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML config.
+//	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML.
 //	RIMSKY_STORES_CONFIG      optional; path to stores.yml.
 //	                          default /etc/rimsky/stores.yml.
 //	RIMSKY_LOG_LEVEL          optional; debug|info|warn|error (default info).
-//
-// Supervisor YAML shape (values support ${ENV_VAR} expansion via os.ExpandEnv):
-//
-//	postgres_url: "${RIMSKY_DB_URL}"
-//	supervisor_id: ""           # optional; defaults to hostname-pid
-//	concurrency: 4
-//	heartbeat_interval_ms: 5000
-//	claim_poll_interval_ms: 1000
-//	callback:
-//	  host: 0.0.0.0
-//	  port: 0                   # 0 = OS-assigned
-//	  advertise_host: ""        # optional; peer-reachable host (e.g. docker service name)
-//	  advertise_port: 0         # optional; defaults to listener port when advertise_host set
-//	executors:
-//	  my-executor:
-//	    transport: grpc         # grpc | http
-//	    endpoint: "dns:///my-executor:50051"
-//	    tls: off                # off | optional | required
-//
-// stores.yml shape (spec §14.1) is documented in
-// docs/specs/2026-04-25-stores-redesign-design.md.
 package main
 
 import (
@@ -53,15 +32,12 @@ import (
 	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/filesystem"
-	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
-// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is unset.
+// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is
+// unset.
 const defaultStoresConfigPath = "/etc/rimsky/stores.yml"
 
-// yamlConfig mirrors the YAML shape documented in the package doc.
 type yamlConfig struct {
 	PostgresURL         string                  `yaml:"postgres_url"`
 	SupervisorID        string                  `yaml:"supervisor_id"`
@@ -104,7 +80,7 @@ func main() {
 	if storesPath == "" {
 		storesPath = defaultStoresConfigPath
 	}
-	storesCfg, namedLocksCfg, err := loadStoresConfig(storesPath)
+	storesCfg, namedLocksCfg, err := config.LoadStoresConfigYAML(storesPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
 		os.Exit(1)
@@ -150,10 +126,6 @@ func main() {
 	}
 	callbackPort := cfg.Callback.Port
 
-	// Advertised callback host:port preference order:
-	//   1. RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_{HOST,PORT} env vars
-	//   2. YAML `callback.advertise_host` / `callback.advertise_port`
-	//   3. Unset → supervisor falls back to listener addr (see supervisor.go)
 	advertiseHost := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
 	if advertiseHost == "" {
 		advertiseHost = cfg.Callback.AdvertiseHost
@@ -181,16 +153,6 @@ func main() {
 	sb := pgstorage.New(pool)
 	q := pgqueue.New(pool)
 
-	// Linked-in store factories. The reference binary registers the two
-	// production-ready store kinds (`filesystem` direct-mode and
-	// `postgres` substrate-side pick-policy). Embedding deployers can
-	// extend this list with custom factories before calling
-	// config.StartSupervisor.
-	storeFactories := []store.Factory{
-		filesystem.Factory{},
-		pgstore.Factory{},
-	}
-
 	resolver := executor.NewStaticResolver(endpoints)
 
 	h, err := config.StartSupervisor(config.SupervisorConfig{
@@ -203,7 +165,6 @@ func main() {
 		HeartbeatInterval:     time.Duration(heartbeatMs) * time.Millisecond,
 		ClaimPollInterval:     time.Duration(claimPollMs) * time.Millisecond,
 		Resolver:              resolver,
-		StoreFactories:        storeFactories,
 		Stores:                storesCfg,
 		NamedLocks:            namedLocksCfg,
 		CallbackHost:          callbackHost,
@@ -227,9 +188,7 @@ func main() {
 	pool.Close()
 }
 
-// loadYAML reads the given path, expands ${ENV_VAR} references in every string
-// field, and decodes into yamlConfig. Env expansion runs on the raw bytes
-// before YAML parsing, so all string values see it uniformly.
+// loadYAML reads the supervisor YAML, expanding ${ENV_VAR} references.
 func loadYAML(path string) (yamlConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -241,32 +200,6 @@ func loadYAML(path string) (yamlConfig, error) {
 		return yamlConfig{}, fmt.Errorf("parse config %q: %w", path, err)
 	}
 	return cfg, nil
-}
-
-// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR}
-// references before YAML parsing. Returns the parsed stores +
-// named_locks blocks (spec §15.3 — one operator config bundle, two
-// top-level keys). A missing file is not an error: empty configs
-// returned.
-func loadStoresConfig(path string) (store.StoresConfig, store.NamedLocksConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return store.StoresConfig{}, store.NamedLocksConfig{}, nil
-		}
-		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
-	}
-	expanded := os.ExpandEnv(string(raw))
-	var wrapper struct {
-		Stores     map[string]map[string]any        `yaml:"stores"`
-		NamedLocks map[string]store.NamedLockConfig `yaml:"named_locks"`
-	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
-	}
-	return store.StoresConfig{Stores: wrapper.Stores},
-		store.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		nil
 }
 
 func parseLogLevel(s string) slog.Level {

@@ -1,8 +1,9 @@
-// Minimal coverage of the supervisor's CallbackRegistry under
-// stores-redesign-v2.
+// Minimal coverage of the supervisor's CallbackRegistry under the
+// stores redesign.
 //
-// The pre-v2 callback_test.go drove the full callback HTTP server
-// against the old AcquireLock/OpenHandle/ReleaseLock surface. The new
+// The pre-redesign callback_test.go drove the full callback HTTP
+// server against the old AcquireLock/OpenHandle/ReleaseLock surface.
+// The new
 // release flow runs through Open/Commit/Abandon and the auto-terminal
 // algorithm; coverage of the full callback pipeline belongs in the
 // scenario suite, not here. This file pins the in-memory registry's

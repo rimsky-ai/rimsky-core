@@ -59,13 +59,13 @@ const (
 // DispatchRow is the claimable unit of work (see spec §9.6 / §11.1).
 //
 // ExecutorName is nullable: native (claim-only) nodes have no executor and
-// are run by the supervisor's omnibus runner directly (spec §17.1). The
+// are run by the supervisor's omnibus runner directly (spec §7.3). The
 // concurrency_tags field is gone — per-node concurrency now lives in the
 // template's `locks: [...]` declarations enforced via rimsky_lock_holders.
 //
 // RequiredStores is denormalised from the template at enqueue time and
-// drives the §14.2 supervisor-pool specialisation predicate. LastHeartbeatAt
-// drives the §13.5 dispatch-claim sweep predicate (claim age tracks
+// drives the §6.2 supervisor-pool specialisation predicate. LastHeartbeatAt
+// drives the §7.5 dispatch-claim sweep predicate (claim age tracks
 // heartbeat liveness rather than initial-claim time).
 type DispatchRow struct {
 	ID              UUID

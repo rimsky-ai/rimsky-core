@@ -9,13 +9,11 @@ import (
 
 	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/stub"
 )
 
-// TestHarnessSmoke verifies the scenario harness stands up every in-process
-// component and a trivial one-node template runs end-to-end against the stub
-// executor.
+// TestHarnessSmoke verifies the scenario harness stands up every
+// in-process component and a trivial one-node template runs end-to-end
+// against the stub executor.
 func TestHarnessSmoke(t *testing.T) {
 	t.Parallel()
 	h := Start(t, HarnessOpts{})
@@ -38,7 +36,8 @@ func TestHarnessSmoke(t *testing.T) {
 		"node did not reach fresh within 10s")
 }
 
-// TestHarnessClockInjection verifies HarnessOpts.Clock is threaded through.
+// TestHarnessClockInjection verifies HarnessOpts.Clock is threaded
+// through.
 func TestHarnessClockInjection(t *testing.T) {
 	t.Parallel()
 	clk := shared.NewControllableClock(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC))
@@ -52,32 +51,10 @@ func TestHarnessClockInjection(t *testing.T) {
 	require.True(t, clk.Now().After(time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC)))
 }
 
-// TestHarnessStubStoreFactoriesRegistered verifies the harness's Stores
-// registry has both stub factories registered out of the box.
-func TestHarnessStubStoreFactoriesRegistered(t *testing.T) {
-	t.Parallel()
-	h := Start(t, HarnessOpts{
-		NoSupervisor: true,
-		NoScheduler:  true,
-		StoresConfig: store.StoresConfig{
-			Stores: map[string]map[string]any{
-				"fs":    {"kind": stub.KindFilesystem},
-				"queue": {"kind": stub.KindPostgres},
-			},
-		},
-	})
-	require.NotNil(t, h.Stores, "harness must expose its store registry")
-	gotFS, ok := h.Stores.GetStore("fs")
-	require.True(t, ok, "expected fs store registered")
-	require.Equal(t, stub.KindFilesystem, gotFS.Kind())
-	gotQ, ok := h.Stores.GetStore("queue")
-	require.True(t, ok, "expected queue store registered")
-	require.Equal(t, stub.KindPostgres, gotQ.Kind())
-}
-
-// TestTemplateSpecToJSONNewGrammar verifies the redesigned templateSpecToJSON
-// emits the new grammar (`stores`, `locks`, `attributes`, `claim_resolutions`,
-// `inherits`) and does NOT emit the retired keys.
+// TestTemplateSpecToJSONNewGrammar verifies templateSpecToJSON emits the
+// new grammar (`stores`, `locks`, `attributes`, `inherits`) and does
+// NOT emit retired keys (including `claim_resolutions`, dropped by the
+// 2026-04-30 stores cleanup).
 func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	t.Parallel()
 	spec := node.TemplateSpec{
@@ -101,9 +78,6 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 						},
 					},
 				}),
-				WithClaimResolutions(map[string]node.ClaimResolution{
-					"inbound": {OnCommit: "delete", OnGiveUp: "release_to_back"},
-				}),
 			),
 		},
 	}
@@ -119,8 +93,8 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	require.Contains(t, n, "stores")
 	require.Contains(t, n, "locks")
 	require.Contains(t, n, "attributes")
-	require.Contains(t, n, "claim_resolutions")
 
+	require.NotContains(t, n, "claim_resolutions")
 	require.NotContains(t, n, "concurrency_tags")
 	require.NotContains(t, n, "owns_resources")
 	require.NotContains(t, n, "reads_resources")
@@ -140,15 +114,10 @@ func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	attrs := n["attributes"].(map[string]any)
 	schema := attrs["schema"].(map[string]any)
 	require.Equal(t, "object", schema["type"])
-
-	crs := n["claim_resolutions"].(map[string]any)
-	inbound := crs["inbound"].(map[string]any)
-	require.Equal(t, "delete", inbound["on_commit"])
-	require.Equal(t, "release_to_back", inbound["on_give_up"])
 }
 
-// TestMakeNodeOptions verifies the fluent helpers compose without aliasing
-// slice-typed fields across multiple nodes.
+// TestMakeNodeOptions verifies the fluent helpers compose without
+// aliasing slice-typed fields across multiple nodes.
 func TestMakeNodeOptions(t *testing.T) {
 	t.Parallel()
 	base := node.TemplateNodeDef{Type: "worker", Executor: "stub"}

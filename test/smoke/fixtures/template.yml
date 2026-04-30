@@ -5,8 +5,17 @@
 # programmatically (because the four-node body is built into the JSON
 # POST body to `/templates`, and the deviations below are easier to
 # express in code than to thread through a YAML→JSON converter at test
-# time). The shapes here mirror the spec verbatim so a future contributor
-# can read the canonical template alongside the smoke fixture.
+# time). The shapes here mirror what the smoke test actually deploys —
+# i.e. the current `nodeStoreRefJSON` grammar (`name`/`selector`/
+# `intent`/`alias?`) — so a future contributor can read the canonical
+# template alongside the smoke fixture.
+#
+# Per the 2026-04-30 stores-protocol-cleanup, rimsky carries only a
+# success/failure binary across the wire (success → `Commit`; failure
+# → `Abandon`). Substrate disposition (e.g. promote-to-tail vs.
+# release-to-back vs. delete) lives in each store-service's own config,
+# not in the template. There is no `claim_resolutions:` block, no
+# `policy_override` argument, and no `Delete` verb.
 #
 # Differences between this YAML and what the smoke test actually deploys:
 #   - The `quality_rules: must_match_regex` entry on `draft` is omitted
@@ -15,15 +24,19 @@
 #     §15 promises must_match_regex but it is not yet implemented.
 #   - The `model-budget` lock limit is 50 (§19.2 requirement; the spec
 #     example calls it "illustrative — set high in the smoke fixture").
+#     Limits live in operator config (`named_locks:` per spec §6.1);
+#     templates reference locks by name only.
 frame_resolution: serial_queue
 frame_timeout_ms: 600000
 nodes:
-  # Pure-infra node: no executor, just claims from a ring buffer and
-  # populates attributes from the claim payload.
+  # Pure-infra node: no executor, just claims from a ring buffer via the
+  # `@review-queue` substrate-side pick policy and populates attributes
+  # from the claim payload. The held claim is auto-released at
+  # holding-subgraph completion (acquirer + downstream `review` inheritor).
   - type: claim-topic
     schedule: "* * * * *"
     stores:
-      - { name: topics-ring, claim: true, hold: true }
+      - { name: topics-ring, selector: "@review-queue", intent: rw }
     attributes:
       schema:
         type: object
@@ -32,7 +45,7 @@ nodes:
           subtopic: { type: string, source: "{{claim.topics-ring.payload.subtopic}}" }
         required: [area, subtopic]
     locks:
-      - { name: "topics-ring:concurrent-claims", mode: counting, limit: 5 }
+      - { name: "topics-ring:concurrent-claims" }
 
   - type: scope
     dependencies: [claim-topic]
@@ -49,7 +62,7 @@ nodes:
       model: claude-sonnet-4-6
       system_prompt_ref: "scope-system.md"
     locks:
-      - { name: model-budget, mode: counting, limit: 50 }
+      - { name: model-budget }
     error_types:
       review_rejected:
         policy:
@@ -70,15 +83,15 @@ nodes:
         required: [area, subtopic, scope_notes]
     stores:
       - name: content
-        write: ["items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"]
-        read:  ["items/**", "shared/**"]
+        selector: "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"
+        intent: rw
     userdata:
       model: claude-sonnet-4-6
       system_prompt_ref: "draft-system.md"
     quality_rules:
       - { type: must_match_regex, target: write, pattern: "^---\\n", severity: error }
     locks:
-      - { name: model-budget, mode: counting, limit: 50 }
+      - { name: model-budget }
 
   - type: review
     dependencies: [claim-topic, scope, draft]
@@ -91,13 +104,12 @@ nodes:
         required: [accepted]
     stores:
       - name: content
-        read: ["items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"]
-    claim_resolutions:
-      - source: claim-topic
-        store:  topics-ring
-        # uses store defaults: release_to_back / release_to_back
+        selector: "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"
+        intent: r
+    inherits:
+      - { claim: topics-ring }
     userdata:
       model: claude-sonnet-4-6
       system_prompt_ref: "review-system.md"
     locks:
-      - { name: model-budget, mode: counting, limit: 50 }
+      - { name: model-budget }

@@ -1,13 +1,12 @@
 // admin_routes_test.go — handler tests for the admin routes under the
-// stores-redesign-v2 surface:
+// stores-redesign-v3 surface:
 //
 //   - GET  /lock-holders/{lock_holder_id}/claim-holders
-//   - POST /admin/stores/{name}/pick-policies/{selector}/items
 //   - POST /admin/scheduled-nodes/{node_id}/force-fire
 //
-// Each test wires only the route under test against a real Postgres-backed
-// StorageBackend (via pgtest); the rest of the control-api surface is
-// covered in app_test.go.
+// (The pick-policy items endpoint was removed in v3; item seeding is
+// done by talking to the store-service's own admin surface — see
+// docs/operator-guide.md §3.4.X.)
 package controlapi
 
 import (
@@ -29,8 +28,6 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
-	"github.com/fallguy/rimsky/core/store"
-	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
 type adminHarness struct {
@@ -117,100 +114,6 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Equal(t, lockHolderID.String(), resp.Holders[0]["lock_holder_id"])
 	require.Equal(t, holderNodeID.String(), resp.Holders[0]["holder_node_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
-}
-
-// TestAdminPickPolicyInsertRoute verifies POST
-// /admin/stores/{name}/pick-policies/{selector}/items.
-func TestAdminPickPolicyInsertRoute(t *testing.T) {
-	t.Parallel()
-	h, teardown := newAdminHarness(t)
-	t.Cleanup(teardown)
-	ctx := context.Background()
-
-	itemsTable := "items_admin_route_test"
-	createItemsTable(t, h.pool, itemsTable)
-
-	reg := store.NewRegistry()
-	reg.Register(pgstore.Factory{})
-	_, err := reg.BuildAll(store.StoresConfig{
-		Stores: map[string]map[string]any{
-			"inbound": {
-				"kind":            "postgres",
-				"connection":      h.pool.Config().ConnString(),
-				"write_semantics": "direct",
-				"pick_policies": map[string]any{
-					"@queue": map[string]any{
-						"type":                       "queue",
-						"items_table":                itemsTable,
-						"on_commit_default":          "delete",
-						"on_give_up_default":         "release_to_head",
-						"visibility_timeout_seconds": 300,
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	deps := AppDeps{
-		Storage: h.backend,
-		Stores:  reg,
-		Logger:  shared.SilentLogger{},
-	}
-	router := buildRouter(registerAdminClaimStoresRoutes, deps)
-
-	body := map[string]any{
-		"items": []map[string]any{
-			{"payload": map[string]any{"topic": "alpha"}},
-			{"payload": map[string]any{"topic": "beta"}},
-		},
-	}
-	status, raw := doJSON(t, router, http.MethodPost, "/admin/stores/inbound/pick-policies/@queue/items", body)
-	require.Equal(t, http.StatusCreated, status, string(raw))
-	var resp struct {
-		Inserted int `json:"inserted"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &resp))
-	require.Equal(t, 2, resp.Inserted)
-
-	var n int
-	require.NoError(t, h.pool.QueryRow(ctx,
-		`SELECT count(*) FROM `+itemsTable+` WHERE state = 'available'`,
-	).Scan(&n))
-	require.Equal(t, 2, n)
-
-	// Unknown store → 404.
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/stores/missing/pick-policies/@queue/items", body)
-	require.Equal(t, http.StatusNotFound, status)
-
-	// Unknown selector → 400.
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/stores/inbound/pick-policies/@unknown/items", body)
-	require.Equal(t, http.StatusBadRequest, status)
-
-	// Empty items → 400.
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/stores/inbound/pick-policies/@queue/items",
-		map[string]any{"items": []map[string]any{}})
-	require.Equal(t, http.StatusBadRequest, status)
-
-	// Nil registry → 503.
-	depsNoReg := AppDeps{Storage: h.backend, Logger: shared.SilentLogger{}}
-	router2 := buildRouter(registerAdminClaimStoresRoutes, depsNoReg)
-	status, _ = doJSON(t, router2, http.MethodPost, "/admin/stores/inbound/pick-policies/@queue/items", body)
-	require.Equal(t, http.StatusServiceUnavailable, status)
-
-	// Percent-encoded `@` (i.e. `%40queue`) must resolve to the same
-	// route as the raw form. URL-builder libraries auto-encode `@`;
-	// operator tooling that does this should keep working. Spec/doc
-	// contract: both forms reach the handler with the leading `@`.
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/stores/inbound/pick-policies/%40queue/items", body)
-	require.Equal(t, http.StatusCreated, status, "percent-encoded @ should resolve to the same selector")
-
-	// Double-encoded `@` (i.e. `%2540queue`) decodes to the literal
-	// string `%40queue`, which is NOT a configured selector — reject
-	// with 400 (rather than silently inserting under a phantom name).
-	// This is the documented operator footgun.
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/stores/inbound/pick-policies/%2540queue/items", body)
-	require.Equal(t, http.StatusBadRequest, status, "double-encoded @ should be rejected as unknown selector")
 }
 
 func TestAdminForceFireRoute(t *testing.T) {
@@ -314,22 +217,4 @@ func seedRegionLockHolder(ctx context.Context, t *testing.T, h *adminHarness, no
 		}, tx)
 	}))
 	return id
-}
-
-// createItemsTable creates the §12.12 schema for a postgres-store
-// pick-policy items table.
-func createItemsTable(t *testing.T, pool *pgxpool.Pool, name string) {
-	t.Helper()
-	ctx := context.Background()
-	_, err := pool.Exec(ctx, `CREATE TABLE `+name+` (
-		item_id     TEXT PRIMARY KEY,
-		payload     JSONB NOT NULL,
-		state       TEXT NOT NULL DEFAULT 'available',
-		claim_token TEXT,
-		claimed_at  TIMESTAMPTZ,
-		enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		priority    INTEGER NOT NULL DEFAULT 0,
-		sequence    BIGSERIAL
-	)`)
-	require.NoError(t, err)
 }

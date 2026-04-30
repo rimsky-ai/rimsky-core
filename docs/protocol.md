@@ -1,8 +1,23 @@
-# Node-Executor Protocol
+# Wire Protocols
 
-Reference for the protocol rimsky supervisors use to dispatch work to executors. This document covers transports, message shapes, terminal-event semantics, async handoff, the incremental attributes callback, the supervisor-side action mapping, userdata conventions, versioning, auth, conformance, and worked examples. It is the wire contract in human-readable form; the authoritative source is `proto/v1/node_executor.proto`.
+Rimsky speaks two wire protocols: the **node-executor protocol** (this
+document; `proto/v1/node_executor.proto`) for dispatching work to
+executors, and the **store-service protocol**
+(`proto/v1/store_service.proto`) for talking to standard
+store-services running out-of-process per stores-redesign-v3.
 
-Conceptual context (nodes, messages, attributes, stores, locks) lives in `node-graph-design.md`; implementation shape (package layout, processes, library entry points) lives in `architecture.md`. The store-side surface (the 5-verb interface and how the executor envelope's per-store handle is produced) is specified in `specs/2026-04-27-stores-redesign-v2-design.md` §6 and §11; vocabulary lives in `glossary.md`.
+This document covers the executor side in detail. The store side is
+specified in `docs/specs/2026-04-27-stores-redesign-v3-design.md` §4
+and §5, as amended by the 2026-04-30 stores-protocol cleanup; in
+summary it ships 4 runtime verbs (`Open` / `Commit` / `Abandon` /
+`Release`) plus a startup `Capabilities()` handshake, with the same
+gRPC + HTTP+JSON bridge shape as the executor protocol. Each
+store-service implements the gRPC server; rimsky's `core/store/remote/`
+is the gRPC client. See the store-author guide for authoring details.
+
+Conceptual context (nodes, messages, attributes, stores, locks) lives
+in `node-graph-design.md`; implementation shape lives in
+`architecture.md`. Vocabulary lives in `glossary.md`.
 
 ## Vocabulary
 
@@ -122,7 +137,7 @@ Field details:
 - `userdata` — opaque JSON. See §6.
 - `attributes` — the node's typed per-run attribute object. Source-directive fields (`source: "{{deps.<n>.<f>}}"`, `source: "{{claim.<alias>.address}}"`, `source: "{{claim.<alias>.payload.<f>}}"`, `source: "{{claim.<alias>.region}}"`, or `source: "{{params.<k>}}"`) are pre-populated by the supervisor at dispatch from upstream attributes, claim content, and instance params; the executor should treat that subtree as read-only input. Sourceless fields are slots the executor is expected to fill in (terminal-final via `Complete.attributes_delta`, or incremental via the §5 callback).
 - `attributes_schema` — the JSON Schema for `attributes`, copied verbatim from the node template. Provided for executor reference. Rimsky validates `attributes` against this schema both at dispatch (after substitution) and at commit (after writeback) regardless of whether the executor validates.
-- `stores` — map of alias → `StoreHandle` for every claim the node acquired or inherited. The supervisor calls `Store.Open` per claim inside the atomic acquisition transaction (spec §13.3 / blessed invariant 15) and packages the returned `Address` bytes opaquely into each `StoreHandle.handle` field. The executor decodes the bytes per its substrate-specific knowledge of the store's `kind` (declared in operator config; e.g. `filesystem` returns a path-shaped address, `postgres` returns a row-locator-shaped address).
+- `stores` — map of alias → `StoreHandle` for every claim the node acquired or inherited. The supervisor calls `Store.Open` per claim inside the atomic acquisition transaction (spec §7.3 / blessed invariant 15) and packages the returned `Address` bytes opaquely into each `StoreHandle.handle` field. The executor decodes the bytes per its substrate-specific knowledge of the store's `kind` (declared in operator config; e.g. `filesystem` returns a path-shaped address, `postgres` returns a row-locator-shaped address).
 - `callback_url` — base URL for both the async-handoff terminal callback (§4) and the incremental attributes callback (§5). Empty string if the supervisor is not configured for callbacks; in that mode the executor must not emit `AsyncAccepted` and must not attempt incremental writeback.
 - `cancel_token` — supervisor-issued bearer token. Executors echo it as `Authorization: Bearer <cancel_token>` on incremental-attributes POSTs and on async terminal callbacks; the supervisor authenticates by comparing the token against the live dispatch row.
 - `run_attempt` — 1-indexed retry counter, useful for idempotency keys and progress reporting.
@@ -204,7 +219,7 @@ Successful execution. The executor reports:
 The supervisor:
 
 1. Merges the delta into the per-node attribute row, validates against `attributes_schema`, and on success emits `attributes_committed`. Validation failure is treated as a commit-time `attributes_schema_failed` and routed through the policy chain.
-2. Resolves each of the node's claims per the 5-verb store interface — non-held claims fire `Store.Commit` / `Abandon` / `Delete` immediately at the acquirer's terminal; held claims update their `rimsky_claim_holders` row and let the auto-terminal mechanism (spec §14.4) fire exactly one resolution at holding-subgraph completion. See §7 below.
+2. Resolves each of the node's claims per the 4-verb store interface — non-held claims fire `Store.Commit` / `Abandon` immediately at the acquirer's terminal; held claims update their `rimsky_claim_holders` row and let the auto-terminal mechanism (v3 spec §4.10 invariant 13) fire exactly one resolution at holding-subgraph completion. See §7 below.
 
 ### 3.3 `Blocked` (terminal)
 
@@ -410,19 +425,21 @@ The opacity is load-bearing. It is what lets rimsky serve every domain — HTTP,
 
 ## 7. Supervisor-side action mapping per terminal event
 
-The supervisor's per-store-claim action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative; the verbs are the 5-verb store interface (`Open` / `Commit` / `Abandon` / `Delete` / `Release`) defined in spec §6.
+The supervisor's per-store-claim action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative; the verbs are the 4-verb store interface (`Open` / `Commit` / `Abandon` / `Release`) defined in spec §4.1.
 
-| Terminal event                                 | Per-claim action (non-held; acquirer's terminal)                                                  |
-|------------------------------------------------|---------------------------------------------------------------------------------------------------|
-| `Complete{changed: true}`                      | Validate attributes; `Commit(region, address, policyOverride)`; delete lock-holder row            |
-| `Complete{changed: false}`                     | `Commit(region, address, policyOverride)`; delete lock-holder row                                 |
-| `Blocked` / `Errored` + `give_up`              | `Abandon(region, address, policyOverride)`; delete lock-holder row                                |
-| `Blocked` / `Errored` + `retry`                | `Abandon(region, address, policyOverride)`; delete lock-holder row; re-enqueue dispatch           |
-| `Errored` + `invalidate(targets)`              | `Abandon(region, address, policyOverride)`; delete lock-holder row; emit invalidate to targets    |
+Rimsky carries only a success/failure binary across the wire: success → `Commit(claim_id)`; failure → `Abandon(claim_id)`. There is no template-level action vocabulary, no `policy_override` argument, and no `Delete` verb. Substrate disposition (what `Commit` / `Abandon` mean for substrate state — e.g. promote-to-tail vs. release-to-back vs. delete vs. flip an items-table row) is governed by the substrate's own per-pick-policy / per-store configuration; rimsky neither inspects nor selects it.
 
-`policyOverride` is the value declared on the acquirer's `claim_resolutions[<alias>]` block — `"commit"` / `"abandon"` (defaults), `"delete"`, `"release_to_back"`, or `"release_to_head"`. The supervisor's auto-terminal routing per spec §14.4.1 maps these to verb calls: `"delete"` → `Store.Delete(region)` (regardless of success / failure path); pick-policy values pass through as the third argument to `Commit` / `Abandon`. For `direct`-mode regional `rw` claims, `Commit` is a substrate no-op and `Abandon` is degenerate (direct writes cannot be undone — the store-author guide documents this honest limitation).
+| Terminal event                                 | Per-claim action (non-held; acquirer's terminal)                                  |
+|------------------------------------------------|-----------------------------------------------------------------------------------|
+| `Complete{changed: true}`                      | Validate attributes; `Commit(claim_id)`; delete lock-holder row                   |
+| `Complete{changed: false}`                     | `Commit(claim_id)`; delete lock-holder row                                        |
+| `Blocked` / `Errored` + `give_up`              | `Abandon(claim_id)`; delete lock-holder row                                       |
+| `Blocked` / `Errored` + `retry`                | `Abandon(claim_id)`; delete lock-holder row; re-enqueue dispatch                  |
+| `Errored` + `invalidate(targets)`              | `Abandon(claim_id)`; delete lock-holder row; emit invalidate to targets           |
 
-For **held claims** (any claim referenced by an `inherits:` block in a downstream node), per-node terminals only update the corresponding `rimsky_claim_holders` row to `'completed'` or `'failed'` — no substrate verb fires. The auto-terminal mechanism (spec §14.4) fires exactly one resolution at holding-subgraph completion: aggregate outcome = all-completed → `on_commit`; any-failed → `on_give_up`. See §13 in `architecture.md` (blessed invariant 13) and `core/supervisor/auto_terminal.go`.
+For `direct`-mode regional `rw` claims, `Commit` is a substrate no-op and `Abandon` is degenerate (direct writes cannot be undone — the store-author guide documents this honest limitation).
+
+For **held claims** (any claim referenced by an `inherits:` block in a downstream node), per-node terminals only update the corresponding `rimsky_claim_holders` row to `'completed'` or `'failed'` — no substrate verb fires. The auto-terminal mechanism (v3 spec §4.10 invariant 13) fires exactly one resolution at holding-subgraph completion based on aggregate outcome: all-success → `Commit(claim_id)`; any-failure → `Abandon(claim_id)`. The substrate then applies its configured disposition. See `architecture.md` §5 (blessed invariant 13) and `core/supervisor/auto_terminal.go`.
 
 `AsyncAccepted` is not in the table because it is not a run-terminating outcome on its own — the row above is selected once the async terminal callback arrives carrying one of `complete | blocked | errored`.
 

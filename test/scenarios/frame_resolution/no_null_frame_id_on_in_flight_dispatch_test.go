@@ -67,7 +67,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 		"invariant 19 violated: %d non-fresh rimsky_nodes rows have NULL frame_id", nullNodes)
 
 	// On completion: nodes return to fresh and frame_id is cleared
-	// (per spec §14.2 — completed clears frame_id, failed preserves it).
+	// (per spec §6.2 — completed clears frame_id, failed preserves it).
 	for _, nodeType := range []string{"worker", "middle", "leaf"} {
 		nID := h.FindNode(iid, nodeType).ID
 		var state string

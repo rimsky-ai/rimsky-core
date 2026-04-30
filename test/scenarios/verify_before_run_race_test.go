@@ -1,6 +1,6 @@
 // Scenario 14 — verify-before-run race (blessed invariant 5): a dispatch
 // row already claimed by another supervisor must NOT be executed by ours.
-// In the redesigned omnibus runner this manifests as the §13.3 step 1
+// In the redesigned omnibus runner this manifests as the §7.3 step 1
 // candidate SELECT skipping the row (claimed_by IS NULL filter) AND, on
 // the rare path where another supervisor steals the row between commit
 // and the verify-before-run separate-read guard, the runner emits
@@ -76,7 +76,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		Queue:             h.Queue,
 		QueuePool:         h.Pool,
 		LockHolders:       store.NewLockHoldersClient(h.Pool),
-		StoreRegistry:     h.Stores,
+		StoreRegistry:     store.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		SupervisorID:      "scenario-runner",

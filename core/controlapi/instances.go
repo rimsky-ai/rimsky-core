@@ -14,7 +14,7 @@
 //  4. For schedule nodes, compute the next cron fire time and register.
 //  5. For root executor nodes (no deps, has executor), enqueue the first
 //     dispatch row with required_stores denormalised from the template
-//     so the supervisor-pool predicate (spec §14.2) can filter.
+//     so the supervisor-pool predicate (spec §6.2) can filter.
 //
 // Resources / concurrency-tags from the previous shape were retired in
 // the redesign (spec §11.3); their replacements (stores, locks) live

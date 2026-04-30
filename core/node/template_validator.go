@@ -49,19 +49,22 @@ var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params)\.(.+)$`)
 
 // RegistryHooks bundles the registry-dependent lookups the validator
-// uses for spec §18 / §14.5 / §15.2 checks. All fields may be nil; a
-// nil hook short-circuits to "skip the corresponding check," which is
-// useful for unit tests that don't wire a registry.
+// uses. All fields may be nil; a nil hook short-circuits to "skip the
+// corresponding check," which is useful for unit tests that don't wire
+// a registry.
+//
+// Per the v3 stores-redesign, rimsky no longer recognises pick-policy
+// selectors — the substrate is the only entity that does. The v2
+// IsPickPolicySelector hook (and the "pick-policy claims must be intent:
+// rw" check it drove) was deleted as part of the inertness cleanup.
 type RegistryHooks struct {
-	// StoreKindOf returns (Store.Kind(), true) for a known store name.
-	StoreKindOf func(name string) (string, bool)
-	// IsPickPolicySelector returns true when the (storeName, selector)
-	// pair matches a configured pick-policy on that store. Drives the
-	// §14.5 "pick-policy claims must be intent: rw" enforcement.
-	IsPickPolicySelector func(storeName, selector string) bool
+	// StoreDeclared returns true when `name` is declared in the
+	// operator's stores: block. Used by validateStores to reject
+	// references to unknown stores.
+	StoreDeclared func(name string) bool
 	// NamedLockDeclared returns true when `name` is declared in the
-	// operator's named_locks: block. Drives the §15.2 "templates
-	// reference named locks by name only" check.
+	// operator's named_locks: block. Drives the "templates reference
+	// named locks by name only" check.
 	NamedLockDeclared func(name string) bool
 }
 
@@ -232,8 +235,8 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			})
 			continue
 		}
-		if hooks.StoreKindOf != nil {
-			if _, known := hooks.StoreKindOf(name); !known {
+		if hooks.StoreDeclared != nil {
+			if !hooks.StoreDeclared(name) {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".name",
 					Msg:  fmt.Sprintf("unknown store %q", name),
@@ -261,17 +264,6 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			})
 		} else {
 			checkRegionDirectives(s.Selector, sbase+".selector", res)
-		}
-		// §14.5 — pick-policy claims must be intent: rw. Substrate
-		// recognises the selector by exact match; substituted selectors
-		// are checked at dispatch (no compile-time visibility).
-		if hooks.IsPickPolicySelector != nil && s.Intent == "r" {
-			if hooks.IsPickPolicySelector(name, s.Selector) {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".intent",
-					Msg:  fmt.Sprintf("pick-policy selector %q on store %q requires intent: \"rw\" (per spec §14.5)", s.Selector, name),
-				})
-			}
 		}
 		alias := s.AliasOf()
 		if prev, dup := seenAlias[alias]; dup {

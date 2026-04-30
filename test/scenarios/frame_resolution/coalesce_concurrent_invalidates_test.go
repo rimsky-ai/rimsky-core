@@ -1,4 +1,4 @@
-// Verifies the §13.1 coalesce upsert is race-free under concurrent
+// Verifies the §7.3 step 1 coalesce upsert is race-free under concurrent
 // producers. Two operator invalidates landing simultaneously must both
 // succeed (one INSERTs, the other DO UPDATEs source_node_ids) — neither
 // can hit a unique-violation that bubbles up as a 5xx.

@@ -1,11 +1,11 @@
-// Spec §12.6 — supervisor-side terminal action vocabulary.
+// Supervisor-side terminal action vocabulary.
 //
-// Under stores-redesign-v2 the legacy ReleaseAction enum is gone:
-// release routing happens per-claim via `claim_resolutions` (§14.3)
-// and the auto-terminal §14.4.1 routing table. What remains here is
-// the conceptual classification of terminal events and the
-// policy-resolution names that flow between the executor stream
-// classifier and the supervisor's runner_terminal.go.
+// Under the 2026-04-30 stores cleanup the rimsky-side release routing
+// is the success/failure binary: success → Commit; failure → Abandon.
+// The substrate decides what those mean for its own state per its
+// own configuration. What remains here is the conceptual
+// classification of terminal events that flow between the executor
+// stream classifier and the supervisor's runner_terminal.go.
 
 package supervisor
 
@@ -36,7 +36,7 @@ const (
 	// then re-enqueue.
 	PolicyDiscardThenRetry PolicyResolution = "discard_then_retry"
 	// PolicyResumeThenRetry — preserved for back-compat with templates
-	// that still reference it; under v2 there is no preserve-for-resume
+	// that still reference it; under v3 there is no preserve-for-resume
 	// release path (resume is universal at the substrate). The
 	// supervisor treats it as an alias of discard_then_retry.
 	PolicyResumeThenRetry PolicyResolution = "resume_then_retry"

@@ -6,13 +6,13 @@
 // methods.
 //
 // The split exists because core/store/lockholders.go cannot import
-// core/storage. The actual helpers — including the §13.4 heartbeat SQL
+// core/storage. The actual helpers — including the §7.5 heartbeat SQL
 // with the running-node filter — live in core/store/lockholders.go; this
 // file is the storage surface adapter.
 //
 // FrameID handling: the storage.LockHolderInsertInput carries an optional
-// FrameID that is plumbed through into the postgres row. Per spec
-// §12.10, frame_id on rimsky_lock_holders is observability-only — no
+// FrameID that is plumbed through into the postgres row. Per v3 spec §12
+// (schema), frame_id on rimsky_lock_holders is observability-only — no
 // algorithm consults it; population is the supervisor's contract.
 package postgres
 
@@ -77,7 +77,7 @@ func (s *LockHoldersStore) Insert(ctx context.Context, in storage.LockHolderInse
 }
 
 // UpdateAddress satisfies storage.LockHoldersStore. Tx-required because
-// the §13.3 step-4e address-update commits atomically with the rest of
+// the §7.3 step-4e address-update commits atomically with the rest of
 // the acquisition transaction.
 func (s *LockHoldersStore) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx storage.Tx,
@@ -126,9 +126,10 @@ func (s *LockHoldersStore) ListBySupervisor(ctx context.Context, supervisorID st
 // ExtendHeartbeat satisfies storage.LockHoldersStore. The set of
 // running nodes is determined by the underlying SQL itself — the
 // UPDATE filters on `holder_node_id IN (running nodes)` directly via
-// subquery (per spec §13.4). The supervisor does not pass a list of
-// running node IDs because the SQL is the single source of truth for
-// which rows are eligible for the heartbeat refresh.
+// subquery (per v3 spec §7.4 lifecycle / failure modes). The
+// supervisor does not pass a list of running node IDs because the SQL
+// is the single source of truth for which rows are eligible for the
+// heartbeat refresh.
 func (s *LockHoldersStore) ExtendHeartbeat(
 	ctx context.Context, supervisorID string, expiresAt time.Time, tx storage.Tx,
 ) error {
@@ -137,7 +138,7 @@ func (s *LockHoldersStore) ExtendHeartbeat(
 		return err
 	}
 	// Convert expiresAt offset into an integer-second budget so we can
-	// reuse the §13.4 SQL verbatim (which expresses the bound as
+	// reuse the §7.5 SQL verbatim (which expresses the bound as
 	// `now() + (N * interval '1 second')`).
 	heartbeatSeconds := int(time.Until(expiresAt).Seconds())
 	if heartbeatSeconds < 1 {
@@ -160,7 +161,7 @@ func (s *LockHoldersStore) ListExpired(ctx context.Context, tx storage.Tx) ([]st
 
 // Delete satisfies storage.LockHoldersStore. Claimant-guarded on
 // supervisor_id; mismatch is a no-op (returns nil). A non-nil tx is
-// required: per spec §13.5 step 2 the lock-holder row deletion must
+// required: per spec §7.5 step 2 the lock-holder row deletion must
 // commit atomically with the store-side substrate verb.
 func (s *LockHoldersStore) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx storage.Tx) error {
 	pgT, err := pgxTxFromStorage(tx)

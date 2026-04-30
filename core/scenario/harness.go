@@ -1,26 +1,13 @@
 // Package scenario provides a full-stack test harness spinning up every
-// in-process component (scheduler, supervisor, stub executor, control API)
-// against a testcontainers Postgres. Used by test/scenarios/*_test.go.
+// in-process component (scheduler, supervisor, stub executor, control
+// API) against a testcontainers Postgres. Used by test/scenarios/.
 //
-// Per the stores redesign (spec §16.2 inventory), the harness wires the new
-// store-based subsystem rather than the retired resource layer:
-//
-//   - control-api + supervisor are constructed with a *store.Registry
-//     containing the two stub stores ("stub_filesystem" + "stub_postgres");
-//     scenario tests that need real filesystem and postgres factories can
-//     pass them via HarnessOpts.ExtraStoreFactories.
-//   - the scheduler is wired with both the store registry and a
-//     *store.LockHoldersClient so the §13.5 step-2 (lock-holder),
-//     step-3 (claim-holder), and step-4 (visibility-timeout) sweeps run.
-//   - templateSpecToJSON emits the new node grammar (`stores`, `locks`,
-//     `attributes`, `claim_resolutions`, `quality_rules`); concurrency-tag /
-//     owns-resources / reads-resources / restore-version keys were retired
-//     in spec §11.3.
-//
-// The harness preserves shared.Clock injection on every long-running
-// component so scenario tests that need to advance time past the orphan-reap
-// cutoff (5 × heartbeat_interval) can pass a *shared.ControllableClock via
-// HarnessOpts.Clock and drive it from the test goroutine.
+// Per the v3 stores redesign the harness wires loopback gRPC store-
+// service binaries (via stores/<kind>/testfixture.Start) — there are no
+// in-process Factory instances anymore. Tests pass HarnessOpts.Stores
+// (a config.RemoteStoresConfig) populated with endpoints, and the
+// harness threads that through to the supervisor / scheduler /
+// control-api startup.
 package scenario
 
 import (
@@ -46,14 +33,11 @@ import (
 	storagepkg "github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/stub"
 	stubexec "github.com/fallguy/rimsky/executors/stub"
 )
 
 // Harness bundles every in-process component wired against a single
-// testcontainers Postgres instance. All fields are safe to access from the
-// test goroutine; background goroutines (scheduler, supervisor loop, HTTP
-// servers) are torn down via t.Cleanup hooks registered in Start.
+// testcontainers Postgres instance.
 type Harness struct {
 	T          testing.TB
 	Ctx        context.Context
@@ -65,81 +49,60 @@ type Harness struct {
 	Scheduler  config.SchedulerHandle
 	Supervisor config.SupervisorHandle
 	ControlAPI config.ControlAPIHandle
-	// ControlBase is the base URL of the in-process control-api
-	// (http://host:port). DeployTemplate / CreateInstance POST against this.
+	// ControlBase is the base URL of the in-process control-api.
 	ControlBase string
-	// Clock is the shared.Clock injected into every long-running component.
-	// Defaults to shared.SystemClock{}; scenarios that need deterministic
-	// time advancement pass HarnessOpts.Clock = shared.NewControllableClock(...)
-	// and drive it from the test goroutine.
+	// Clock is the shared.Clock injected into every long-running
+	// component.
 	Clock shared.Clock
-	// Stores is the per-harness *store.Registry shared between supervisor +
-	// control-api + scheduler. Pre-built with `stub_filesystem` and
-	// `stub_claim_store` factories registered, plus any factories supplied
-	// via HarnessOpts.ExtraStoreFactories. The configured store names + cfg
-	// come from HarnessOpts.StoresConfig.
-	Stores *store.Registry
 }
 
-// HarnessOpts tweaks which components the harness starts. Zero value yields
-// scheduler + supervisor + stub executor + control-api wired in the default
-// fast-tick configuration used by scenario tests, with the two stub-store
-// factories registered and no built stores.
+// HarnessOpts tweaks which components the harness starts.
 type HarnessOpts struct {
-	// ExtraExecutors registers these executor endpoints in addition to the
-	// stub. The stub binds at "stub" and "testexec" by default.
+	// ExtraExecutors registers these executor endpoints in addition
+	// to the stub.
 	ExtraExecutors map[string]executor.Endpoint
 
-	// NoSupervisor skips starting the supervisor (for scenarios that drive
-	// claims manually).
+	// NoSupervisor skips starting the supervisor.
 	NoSupervisor bool
 
-	// NoScheduler skips starting the scheduler (for scenarios that want
-	// manual tick control).
+	// NoScheduler skips starting the scheduler.
 	NoScheduler bool
 
-	// SchedulerTick overrides the default 250ms tick interval. Pass a long
-	// interval (e.g. 1h) when driving ticks manually via Clock advancement.
+	// SchedulerTick overrides the default 250ms tick interval.
 	SchedulerTick time.Duration
 
-	// HeartbeatInterval overrides the supervisor's heartbeat tick (default
-	// 500ms) and the scheduler's heartbeat-timeout cutoff (default 5s).
-	// Tests that exercise the orphan-reap path need a small interval so the
-	// 5×interval cutoff is reachable in test time, or they can pass a
-	// ControllableClock and advance it.
+	// HeartbeatInterval overrides the supervisor's heartbeat tick
+	// (default 500ms) and the scheduler's heartbeat-timeout cutoff
+	// (default 5s).
 	HeartbeatInterval time.Duration
 
-	// HeartbeatTimeout overrides the scheduler's stale-heartbeat / orphan-
-	// claim cutoff (default 5s). The orphan-claim cutoff is 5× this value.
+	// HeartbeatTimeout overrides the scheduler's stale-heartbeat /
+	// orphan-claim cutoff (default 5s).
 	HeartbeatTimeout time.Duration
 
-	// Clock injects a shared.Clock into every long-running component
-	// (scheduler, supervisor, control-api, callback server). Defaults to
-	// shared.SystemClock{}. Pass a *shared.ControllableClock to drive time
-	// deterministically.
+	// Clock injects a shared.Clock into every long-running component.
 	Clock shared.Clock
 
-	// ExtraStoreFactories registers store factories in addition to the two
-	// stub factories the harness registers by default. Use this to attach
-	// real filesystem and postgres factories for scenarios that
-	// need them.
-	ExtraStoreFactories []store.Factory
+	// Stores is the operator-facing remote-stores config (per v3 spec
+	// §6.1: name → endpoint + declared capabilities). Tests start
+	// loopback store-services via stores/<kind>/testfixture.Start
+	// before calling Start, then point endpoints at those addresses.
+	Stores config.RemoteStoresConfig
 
-	// StoresConfig is the parsed YAML stores config (spec §14.1) the
-	// registry builds at startup. Defaults to an empty map (no stores
-	// built). Test helpers like withStores reference these store names from
-	// the template grammar.
-	StoresConfig store.StoresConfig
+	// NamedLocks is the operator-side named-lock config (per v3 spec
+	// §6.1's `named_locks:` block). Without this, templates that
+	// reference any named lock fail validation in scenario tests
+	// because the always-on validator hook treats every name as
+	// undeclared.
+	NamedLocks store.NamedLocksConfig
 }
 
-// Start spins up a full-stack harness against a fresh Postgres container.
-// Cleanups are registered with t so callers typically don't need to do
-// anything at test teardown.
+// Start spins up a full-stack harness against a fresh Postgres
+// container.
 func Start(t testing.TB, opts HarnessOpts) *Harness {
 	t.Helper()
 	ctx := context.Background()
 
-	// pgtest requires *testing.T; scenario tests always pass one.
 	tT, ok := t.(*testing.T)
 	if !ok {
 		t.Fatalf("scenario: Start requires *testing.T, got %T", t)
@@ -168,27 +131,17 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		schedulerTick = 250 * time.Millisecond
 	}
 
-	// Stub executor.
 	s := stubexec.New()
 	_, stubAddr := s.Listen(t)
 
 	executors := map[string]executor.Endpoint{
 		"stub":     {Transport: "grpc", URL: stubAddr},
-		"testexec": {Transport: "grpc", URL: stubAddr}, // alias used by some scenarios
+		"testexec": {Transport: "grpc", URL: stubAddr},
 	}
 	for k, v := range opts.ExtraExecutors {
 		executors[k] = v
 	}
 	resolver := executor.NewStaticResolver(executors)
-
-	// Per-harness store registry so parallel scenario tests don't alias each
-	// other's in-memory stub state. Both stub factories are always registered;
-	// callers add more via opts.ExtraStoreFactories.
-	storeFactories := []store.Factory{
-		stub.FilesystemFactory(),
-		stub.PostgresFactory(),
-	}
-	storeFactories = append(storeFactories, opts.ExtraStoreFactories...)
 
 	h := &Harness{
 		T:        t,
@@ -201,9 +154,6 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Clock:    clock,
 	}
 
-	// Scheduler — wired with LockHolders + StoreRegistry so the §13.5
-	// step-2 (lock-holder), step-3 (claim-holder), and step-4 (visibility-
-	// timeout) sweeps run inside the harness.
 	if !opts.NoScheduler {
 		sh, err := config.StartScheduler(config.SchedulerConfig{
 			Storage:              sb,
@@ -214,8 +164,8 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			HeartbeatTimeout:     heartbeatTimeout,
 			OrphanedClaimTimeout: 5 * heartbeatTimeout,
 			Pool:                 pool,
-			StoreFactories:       storeFactories,
-			Stores:               opts.StoresConfig,
+			Stores:               opts.Stores,
+			NamedLocks:           opts.NamedLocks,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
@@ -228,11 +178,6 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		h.Scheduler = sh
 	}
 
-	// Supervisor — wired with the same store factories + cfg so its
-	// per-process registry matches the control-api's. The supervisor's
-	// AcceptedStores is derived from the registry's built-store names; an
-	// empty StoresConfig yields no built stores and the supervisor accepts
-	// only nodes whose RequiredStores is empty.
 	if !opts.NoSupervisor {
 		sv, err := config.StartSupervisor(config.SupervisorConfig{
 			SupervisorID:      "scenario-supervisor",
@@ -244,8 +189,8 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			HeartbeatInterval: heartbeatInterval,
 			ClaimPollInterval: 100 * time.Millisecond,
 			Resolver:          resolver,
-			StoreFactories:    storeFactories,
-			Stores:            opts.StoresConfig,
+			Stores:            opts.Stores,
+			NamedLocks:        opts.NamedLocks,
 			CallbackHost:      "127.0.0.1",
 			CallbackPort:      0,
 		})
@@ -257,34 +202,18 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			defer cancel()
 			_ = sv.Shutdown(sctx)
 		})
-		// The config wrapper returns a SupervisorHandle interface; the
-		// scenario harness exposes it directly so callers reach
-		// CallbackAddr via the interface (the wrapper around
-		// *supervisor.Handle owns the store registry for shutdown).
 		h.Supervisor = sv
 	}
 
-	// Control API. The store registry is built once inside StartControlAPI
-	// from the same factories+cfg; we re-build it locally so harness
-	// callers can introspect via h.Stores. Building twice is cheap (the
-	// stub factories are stateless and BuildAll is idempotent on input);
-	// the duplication is intentional to keep h.Stores observable without
-	// reaching into the control-api's internals.
-	regForHarness, err := buildStoreRegistry(storeFactories, opts.StoresConfig)
-	if err != nil {
-		t.Fatalf("scenario: build store registry: %v", err)
-	}
-	h.Stores = regForHarness
-
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
-		Storage:        sb,
-		Queue:          q,
-		Clock:          clock,
-		Logger:         shared.SilentLogger{},
-		Host:           "127.0.0.1",
-		Port:           0,
-		StoreFactories: storeFactories,
-		Stores:         opts.StoresConfig,
+		Storage:    sb,
+		Queue:      q,
+		Clock:      clock,
+		Logger:     shared.SilentLogger{},
+		Host:       "127.0.0.1",
+		Port:       0,
+		Stores:     opts.Stores,
+		NamedLocks: opts.NamedLocks,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -300,30 +229,8 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	return h
 }
 
-// buildStoreRegistry mirrors config.buildStoreRegistry (which is unexported).
-// Kept tiny on purpose — the scenario harness uses it to surface the live
-// registry for tests that want to seed claim items or inspect held regions.
-func buildStoreRegistry(factories []store.Factory, cfg store.StoresConfig) (*store.Registry, error) {
-	reg := store.NewRegistry()
-	for _, f := range factories {
-		reg.Register(f)
-	}
-	if len(cfg.Stores) == 0 {
-		return reg, nil
-	}
-	if _, err := reg.BuildAll(cfg); err != nil {
-		return nil, err
-	}
-	return reg, nil
-}
-
-// DeployTemplate marshals the spec to the control API's JSON schema and POSTs
-// to /templates. Returns the new template_id or fails the test on any error.
-//
-// If spec.FrameResolution is empty (existing scenarios that pre-date the
-// frame-resolution spec), the harness defaults to "serial_queue" so the
-// scenarios run unchanged. Tests that exercise frame semantics explicitly
-// should set FrameResolution themselves.
+// DeployTemplate marshals the spec to the control API's JSON schema
+// and POSTs to /templates.
 func (h *Harness) DeployTemplate(spec node.TemplateSpec) shared.UUID {
 	h.T.Helper()
 	if spec.FrameResolution == "" {
@@ -387,25 +294,10 @@ func (h *Harness) CreateInstance(templateID shared.UUID, consumerKey string, par
 	if err != nil {
 		h.T.Fatalf("CreateInstance: bad instance_id %q: %v", out.InstanceID, err)
 	}
-	// Under frame resolution, the instance factory enqueues a frame for
-	// root executor nodes; dispatch rows are created by the scheduler
-	// tick (frame engine advances the frame, sweepReady enqueues the
-	// dispatch). Tests that call RunNode synchronously after
-	// CreateInstance need the dispatch row to exist; wait briefly for
-	// the scheduler tick to materialize it. Skip the wait for instances
-	// whose template has no root executor nodes (no dispatch will ever
-	// be enqueued at instance-create time).
 	h.waitForRootDispatch(id, 5*time.Second)
 	return id
 }
 
-// waitForRootDispatch is a best-effort wait: it polls for any
-// rimsky_dispatch row in the new instance up to timeout, returning when
-// one exists or when timeout elapses. When the scheduler is not running
-// (HarnessOpts.NoScheduler == true), no scheduler tick will advance the
-// queued frame and create a dispatch row; this method drives a manual
-// frame-advance + dispatch-enqueue path so NoScheduler tests still see
-// the dispatch row materialize.
 func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Duration) {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
@@ -419,7 +311,6 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
 		if err == nil && count > 0 {
 			return
 		}
-		// No scheduler — drive frame engine + ready sweep manually.
 		if h.Scheduler == nil {
 			h.driveFrameAndEnqueue(instanceID)
 		}
@@ -427,18 +318,9 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
 	}
 }
 
-// driveFrameAndEnqueue manually advances any queued frame for the given
-// instance to running and enqueues dispatch rows for newly-stale ready
-// nodes. Used when NoScheduler is set so tests that synchronously hit
-// RunNode after CreateInstance still find an eligible candidate.
-//
-// Best-effort: errors are silenced (the scheduler-running path swallows
-// these too in production via the warn-and-continue pattern).
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
-	// Advance the queued frame.
 	_ = frame.RunTick(h.Ctx, h.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	// Enqueue dispatch rows for ready stale nodes in this instance.
 	rows, err := h.Storage.Nodes().ListReadyForDispatch(h.Ctx, nil)
 	if err != nil {
 		return
@@ -458,14 +340,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 }
 
 // WaitForNodeState polls the node row until state matches or timeout
-// elapses. Returns true when the state was observed.
-//
-// Under the frame model nodes start fresh (Create default), so a naive
-// "wait for fresh" can short-circuit before any work runs. When the
-// requested state is fresh, the helper additionally requires evidence
-// of execution: either a work_completed or pure_cascade_commit event
-// for this node. Tests that don't want this gating should call
-// WaitForEventKind directly or use a non-fresh target state.
+// elapses.
 func (h *Harness) WaitForNodeState(nodeID shared.UUID, state shared.NodeState, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
@@ -482,8 +357,6 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state shared.NodeState, t
 	return false
 }
 
-// hasRunEvent reports whether at least one work_completed or
-// pure_cascade_commit event has been recorded for nodeID.
 func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	var count int
 	err := h.Pool.QueryRow(h.Ctx, `
@@ -493,11 +366,8 @@ func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	return err == nil && count > 0
 }
 
-// WaitForEventKind polls rimsky_events for any row with the given (node,
-// kind) pair. Returns true when one is observed before timeout. Useful
-// for tests that need to confirm a node ran without relying on terminal
-// state (e.g. producer that returns to fresh whether changed=true or
-// changed=false).
+// WaitForEventKind polls rimsky_events for any row with the given
+// (node, kind) pair.
 func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
@@ -515,12 +385,8 @@ func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string, timeout time
 	return false
 }
 
-// WaitForDispatch polls until a rimsky_dispatch row exists for the given
-// node, then returns. Tests that synchronously invoke RunNode after a
-// CreateInstance need this to wait for the scheduler tick + frame engine
-// to advance the initial frame and enqueue the dispatch row (under the
-// frame-resolution model the dispatch enqueue is no longer instance-
-// factory-time; it's scheduler-tick-time).
+// WaitForDispatch polls until a rimsky_dispatch row exists for the
+// given node.
 func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
@@ -547,7 +413,8 @@ func (h *Harness) GetNodes(instanceID shared.UUID) []storagepkg.NodeRow {
 	return nodes
 }
 
-// FindNode returns the first node in the instance matching nodeType, or nil.
+// FindNode returns the first node in the instance matching nodeType,
+// or nil.
 func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *storagepkg.NodeRow {
 	for _, n := range h.GetNodes(instanceID) {
 		if n.NodeType == nodeType {
@@ -558,11 +425,8 @@ func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *storagepkg.
 	return nil
 }
 
-// templateSpecToJSON converts a node.TemplateSpec into the snake_case JSON
-// shape expected by POST /templates. Mirrors controlapi.templateDeployRequest;
-// the redesign retired concurrency_tags / owns_resources / reads_resources /
-// restore_version (spec §11.3) — every node now declares its store usage,
-// named locks, attribute schema, claim resolutions, and quality rules.
+// templateSpecToJSON converts a node.TemplateSpec into the snake_case
+// JSON shape expected by POST /templates.
 func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	nodes := make([]map[string]any, 0, len(spec.Nodes))
 	for _, n := range spec.Nodes {
@@ -589,9 +453,6 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	return out
 }
 
-// templateNodeToJSON encodes a single node def. Extracted so the per-node
-// fan-out doesn't push the parent over the ~100-line cold-read function
-// guideline.
 func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	nd := map[string]any{
 		"type": n.Type,
@@ -642,16 +503,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["quality_rules"] = qrs
 	}
-	if len(n.ClaimResolutions) > 0 {
-		crs := map[string]any{}
-		for alias, cr := range n.ClaimResolutions {
-			crs[alias] = map[string]any{
-				"on_commit":  cr.OnCommit,
-				"on_give_up": cr.OnGiveUp,
-			}
-		}
-		nd["claim_resolutions"] = crs
-	}
 	if len(n.Inherits) > 0 {
 		ihs := make([]map[string]any, 0, len(n.Inherits))
 		for _, ie := range n.Inherits {
@@ -695,7 +546,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	return nd
 }
 
-// storeRefToJSON encodes one node.NodeStoreRef per the JSON wire shape.
 func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	item := map[string]any{
 		"name":     s.Name,
@@ -708,67 +558,33 @@ func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	return item
 }
 
-// withStores returns a TemplateNodeDef option that appends store refs to the
-// node. Fluent: scenario tests build a node spec by chaining option helpers.
-//
-// Usage:
-//
-//	node.TemplateNodeDef{Type: "worker", Executor: "stub"}
-//	withStores(scenario.StoreRef("inbound", scenario.WithClaim(true)))(...)
-//
-// Kept lowercase so they're in-package helpers; scenario tests import the
-// scenario package and call them via scenario.WithStores etc.
+// withStores / withLocks / etc — fluent option helpers.
+
 func withStores(refs ...node.NodeStoreRef) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Stores = append(n.Stores, refs...)
 	}
 }
 
-// withLocks returns a TemplateNodeDef option that appends named-lock refs.
 func withLocks(refs ...node.NodeLockRef) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Locks = append(n.Locks, refs...)
 	}
 }
 
-// withAttributes returns a TemplateNodeDef option that sets the per-node
-// attributes JSON Schema. Replaces a previous setting (the schema is a
-// single map, not a list of fragments).
 func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Attributes = node.NodeAttributesDef{Schema: schema}
 	}
 }
 
-// withClaimResolutions returns a TemplateNodeDef option that sets per-
-// alias claim_resolutions on the node. Each entry maps an alias to its
-// (on_commit, on_give_up) action vocabulary.
-func withClaimResolutions(entries map[string]node.ClaimResolution) func(*node.TemplateNodeDef) {
-	return func(n *node.TemplateNodeDef) {
-		if n.ClaimResolutions == nil {
-			n.ClaimResolutions = map[string]node.ClaimResolution{}
-		}
-		for k, v := range entries {
-			n.ClaimResolutions[k] = v
-		}
-	}
-}
-
-// withInherits returns a TemplateNodeDef option that appends inherit
-// edges (alias references to upstream-acquirer claims).
 func withInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Inherits = append(n.Inherits, refs...)
 	}
 }
 
-// MakeNode constructs a TemplateNodeDef by applying option helpers
-// (withStores / withLocks / withAttributes / withClaimResolutions) to a
-// base spec. Exported so scenario tests can call it.
-//
-// The base spec carries the always-required fields (Type, optionally
-// Executor / Schedule / Dependencies / ErrorTypes / QualityRules); options
-// fill in store / lock / attribute / claim-resolution wiring.
+// MakeNode constructs a TemplateNodeDef by applying option helpers.
 func MakeNode(base node.TemplateNodeDef, opts ...func(*node.TemplateNodeDef)) node.TemplateNodeDef {
 	n := base
 	for _, o := range opts {
@@ -777,28 +593,20 @@ func MakeNode(base node.TemplateNodeDef, opts ...func(*node.TemplateNodeDef)) no
 	return n
 }
 
-// WithStores is the exported alias for withStores; scenario tests outside
-// this package call it as scenario.WithStores(...).
+// WithStores / WithLocks / WithAttributes / WithInherits — exported
+// aliases for the option helpers above.
 func WithStores(refs ...node.NodeStoreRef) func(*node.TemplateNodeDef) {
 	return withStores(refs...)
 }
 
-// WithLocks is the exported alias for withLocks.
 func WithLocks(refs ...node.NodeLockRef) func(*node.TemplateNodeDef) {
 	return withLocks(refs...)
 }
 
-// WithAttributes is the exported alias for withAttributes.
 func WithAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	return withAttributes(schema)
 }
 
-// WithClaimResolutions is the exported alias for withClaimResolutions.
-func WithClaimResolutions(entries map[string]node.ClaimResolution) func(*node.TemplateNodeDef) {
-	return withClaimResolutions(entries)
-}
-
-// WithInherits is the exported alias for withInherits.
 func WithInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 	return withInherits(refs...)
 }

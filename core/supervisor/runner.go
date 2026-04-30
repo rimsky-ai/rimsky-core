@@ -1,53 +1,50 @@
-// Omnibus runner — spec §17.1.
+// Omnibus runner — the stores redesign per-claim-cycle execution path.
 //
-// This file is the supervisor's per-claim-cycle execution path under the
-// stores-redesign-v2. One call to RunNode picks an eligible candidate,
-// runs the §13.3 atomic acquisition transaction (candidate selection,
-// in-Go eligibility, advisory locks, claim+lock-holder inserts, in-tx
+// One call to RunNode picks an eligible candidate, runs the §7.3
+// atomic acquisition transaction (candidate selection, in-Go
+// eligibility, advisory locks, claim+lock-holder inserts, in-tx
 // Store.Open for ClaimSpec acquisitions), runs the verify-before-run
-// guard (§13.3 step 4), transitions the node to running (§13.3 step
-// 4.5), resolves attribute source-directives (§17.1 step 3), determines
-// the dispatch path (§17.1 step 4), runs the heartbeat loop (§17.1 step
-// 5), and applies the terminal event (§17.1 step 6).
+// guard (§7.3 step 4), transitions the node to running (§7.3 step
+// 4.5), resolves attribute source-directives, determines the dispatch
+// path, runs the heartbeat loop, and applies the terminal event.
 //
 // Helpers split across files for readability:
-//   - runner_acquire.go  — §13.3 atomic acquisition + verify-before-run
-//   - runner_dispatch.go — §17.1 step 4 dispatch path (executor / native)
-//   - runner_terminal.go — §17.1 step 6 terminal-event handling
+//   - runner_acquire.go  — §7.3 atomic acquisition + verify-before-run
+//   - runner_dispatch.go — dispatch path (executor / native)
+//   - runner_terminal.go — terminal-event handling
 //
-// @blessed-invariant 3: Multi-lock acquisition uses deterministic sorted
-// order. (Spec §18 invariant 3; §13.7.) For each candidate dispatch all
-// per-spec lock acquisitions (named, region) are performed in
+// @blessed-invariant 3: Multi-lock acquisition uses deterministic
+// sorted order. (Spec §4.10 invariant 3.) For each candidate dispatch
+// all per-spec lock acquisitions (named, region) are performed in
 // `(lock_kind, sort_key)` order to prevent deadlock under concurrent
 // contention on overlapping lock sets. The sort happens in
-// runner_locks.go's `sortLockSpecs`; the per-named-lock advisory locks
-// (§13.3 step 3b), the region re-evaluation (§13.3 step 3d), and the
-// per-spec Store.Open + lock-holder INSERT loop (§13.3 step 3e) all walk
-// the same sorted slice. Removing the sort or walking it in a different
-// order in any of those steps reintroduces the deadlock the invariant
-// guards against.
+// runner_locks.go's `sortLockSpecs`; the per-named-lock advisory
+// locks, the region re-evaluation, and the per-spec Store.Open +
+// lock-holder INSERT loop all walk the same sorted slice. Removing
+// the sort or walking it in a different order in any of those steps
+// reintroduces the deadlock the invariant guards against.
 //
-// @blessed-invariant 5: Verify-before-run. (Spec §18 invariant 5.) After
-// the acquisition tx commits, the runner does a separate read of
-// `rimsky_dispatch.claimed_by` and bails to the orphan-claim-lost-race
-// handler if ownership has moved. The read happens in
-// runner_acquire.go's `verifyBeforeRun` and is intentionally outside the
-// acquisition tx — running the check inside the tx would race with
-// other supervisors that also see the row as theirs because of MVCC
-// snapshot isolation; the bail here is what catches the rare cross-
-// transaction handoff and keeps the §17 ownership invariant intact.
+// @blessed-invariant 5: Verify-before-run. (Spec §4.10 invariant 5.)
+// After the acquisition tx commits, the runner does a separate read
+// of `rimsky_dispatch.claimed_by` and bails to the orphan-claim-lost-
+// race handler if ownership has moved. The read happens in
+// runner_acquire.go's `verifyBeforeRun` and is intentionally outside
+// the acquisition tx — running the check inside the tx would race
+// with other supervisors that also see the row as theirs because of
+// MVCC snapshot isolation; the bail here is what catches the rare
+// cross-transaction handoff and keeps the ownership invariant intact.
 //
-// @blessed-invariant 10: Lock acquisition is atomic with dispatch claim.
-// (Spec §18 invariant 10.) The acquisition tx in runner_acquire.go
-// either claims the dispatch row AND inserts every required
-// `rimsky_lock_holders` row AND completes every Store.Open mutation, or
-// none of these. The whole sequence runs inside a single `pgx.Tx`;
-// advisory locks released on commit, lock-holder rows visible on commit,
-// store-side mutations (e.g. postgres pick-policy items-table flip)
-// committed via `store.WithTx(ctx, tx)` so they share the same
-// atomicity boundary. Adding a non-tx mutation between candidate
-// selection and commit (or sneaking a separate connection into
-// Store.Open) breaks the invariant.
+// @blessed-invariant 10: Lock acquisition is atomic with dispatch
+// claim (rimsky-side). Per spec §4.10 (revised in v3): the §7.3
+// atomic acquisition transaction either claims the dispatch row AND
+// inserts every required `rimsky_lock_holders` row AND records the
+// `Store.Open`-returned address, or none of these. The store's own
+// state mutations run in a substrate-internal transaction decoupled
+// from rimsky's — the v2 tx-sharing mechanism (`store.WithTx`) is
+// gone. Single-writer-per-region (invariant 4b) holds because
+// rimsky's conflict predicate gates lock-holder INSERTs against
+// `rimsky_lock_holders` only — store orphan state is invisible to
+// the predicate.
 package supervisor
 
 import (
@@ -87,8 +84,8 @@ type RunnerResult struct {
 //
 // The runner needs a richer surface than the pre-redesign per-dispatch
 // runner: it picks its own candidate (no DispatchID/NodeID input), needs
-// pool access to drive the §13.3 transaction directly, needs the store
-// registry for Store.Open / Commit / Abandon / Delete / Release
+// pool access to drive the §7.3 transaction directly, needs the store
+// registry for Store.Open / Commit / Abandon / Release
 // dispatch, and needs the lock-holders client for INSERT / DELETE /
 // UpdateAddress.
 type RunArgs struct {
@@ -96,34 +93,43 @@ type RunArgs struct {
 	Storage storage.StorageBackend
 	// Queue exposes the queue-side helpers (SelectCandidates,
 	// ClaimDispatchRow, RefreshHeartbeat, …) that participate in the
-	// §13.3 acquisition tx.
+	// §7.3 acquisition tx.
 	Queue queue.DispatchQueue
 	// QueuePool is the *pgxpool.Pool the queue is bound to. The runner
-	// opens the §13.3 acquisition tx on this pool so the queue helpers,
-	// the lock-holders inserts, and the per-store AcquireLock mutations
-	// all share one tx. core/queue/postgres.Queue exposes Pool() to make
-	// this trivial; non-postgres queue impls would need to wire their own
-	// pool.
+	// opens the v3 §7.3 rimsky-side acquisition tx on this pool so the
+	// queue helpers and the rimsky-side lock-holder + claim-holder
+	// inserts all participate in the same tx. The substrate's `Open`
+	// RPC fires inside this tx scope but the substrate runs its own
+	// decoupled tx for substrate-side state mutation (v3 spec §7.3 step
+	// 4); the two are not joined. core/queue/postgres.Queue exposes
+	// Pool() to make this trivial; non-postgres queue impls would need
+	// to wire their own pool.
 	QueuePool *pgxpool.Pool
 	// LockHolders is the database-facing helper for rimsky_lock_holders.
 	// Source: storage.LockHoldersClient(); we take it directly so the
 	// helpers (CountByNamedLock, ListByStoreRegion, Insert, DeleteByID,
 	// UpdateAddress) that the acquisition + release paths need are
 	// reachable without going through the storage adapter. Resume
-	// detection moved into the substrate per spec §11.5; the supervisor
-	// no longer probes for or rebinds existing rows.
+	// detection moved into the substrate; the supervisor no longer
+	// probes for or rebinds existing rows.
 	LockHolders *store.LockHoldersClient
 	// StoreRegistry is the per-process store registry built at supervisor
-	// startup from stores.yml (spec §15.1). The runner dispatches against
-	// the 5-verb store.Store interface (Open/Commit/Abandon/Delete/Release).
+	// startup from stores.yml (spec §6.1). The runner dispatches against
+	// the 4-verb store.Store interface (Open/Commit/Abandon/Release).
 	StoreRegistry *store.Registry
+	// NamedLocks is the operator-side named-lock config (limits per
+	// name). The §7.3 acquisition path enforces counter-semaphore
+	// semantics: under the per-name advisory lock, the unexpired
+	// lock-holder count must be < limit before insert. Empty / missing
+	// → no limits enforced (limit defaults to ∞).
+	NamedLocks store.NamedLocksConfig
 
 	Clock        shared.Clock
 	Logger       shared.Logger
 	SupervisorID string
 	// AcceptedExecutors / AcceptedStores are the supervisor pool's
 	// accept-lists. Threaded into SelectCandidates' dispatch SELECT so
-	// the runner only considers rows the pool can satisfy (spec §14.2).
+	// the runner only considers rows the pool can satisfy (spec §6.2).
 	AcceptedExecutors []string
 	AcceptedStores    []string
 
@@ -131,15 +137,15 @@ type RunArgs struct {
 	Resolver    executor.Resolver
 	CallbackURL string
 
-	// HeartbeatInterval drives the §13.3 step 3 lock-holder ExpiresAt
+	// HeartbeatInterval drives the §7.3 step 3 lock-holder ExpiresAt
 	// budget (5 × heartbeatInterval) and the in-loop heartbeat tick.
 	// Zero falls back to 5s.
 	HeartbeatInterval time.Duration
-	// ResumeGrace is the §13.6 preserve-for-resume cutoff. Zero falls
-	// back to 30 minutes.
+	// ResumeGrace is the preserve-for-resume cutoff. Zero falls back
+	// to 30 minutes.
 	ResumeGrace time.Duration
 	// SelectCandidatesLimit caps the dispatch SELECT batch size in the
-	// §13.3 step 1 candidate read. Zero falls back to 8 — small enough
+	// §7.3 step 1 candidate read. Zero falls back to 8 — small enough
 	// that one supervisor doesn't monopolise a candidate page, large
 	// enough that a single ineligible candidate doesn't stall the tick.
 	SelectCandidatesLimit int
@@ -151,11 +157,11 @@ type RunArgs struct {
 // everything the terminal-event handler needs to finalize the node.
 //
 // The shape mirrors `acquisition` plus the per-dispatch attribute
-// state — the §12.4 callback path reconstructs both before invoking
-// `applyTerminal*` so the same per-lock release tx, §5.6.4 resolution,
-// state-transition, and event-emission flow runs whether the terminal
-// arrived synchronously over the executor RPC or asynchronously via
-// HTTP callback.
+// state — the callback path reconstructs both before invoking
+// `applyTerminal*` so the same per-lock release tx, resolution
+// dispatch, state-transition, and event-emission flow runs whether
+// the terminal arrived synchronously over the executor RPC or
+// asynchronously via HTTP callback.
 type AsyncContext struct {
 	NodeID        shared.UUID
 	InstanceID    shared.UUID
@@ -164,15 +170,16 @@ type AsyncContext struct {
 	StoreRegistry *store.Registry
 	// FrameID is the dispatch row's frame_id — propagated through async
 	// handoff so the terminal handler can re-enqueue retries with the
-	// correct frame_id (per spec §10.2 / blessed-invariant 19).
+	// correct frame_id (per blessed-invariant 19).
 	FrameID shared.UUID
 	// AcquiredLocks is the set of lock-holder rows the runner inserted
-	// during acquisition. The terminal handler walks these in §13.7
-	// sort order to drive Commit + ReleaseLock + §5.6.4 resolution.
+	// during acquisition. The terminal handler walks these in sort
+	// order (deterministic per blessed-invariant 3) to drive Commit +
+	// Release + per-claim resolution dispatch.
 	AcquiredLocks []AcquiredLock
 	// NodeType is the candidate's template node type. Used by the
-	// terminal handler when classifying §12.6 actions and when
-	// re-enqueueing on retry / infra_reenqueue.
+	// terminal handler when classifying actions and when re-enqueueing
+	// on retry / infra_reenqueue.
 	NodeType string
 	// Executor mirrors `acquisition.Executor` — the runner needs it to
 	// re-enqueue the dispatch row on retry / infra_reenqueue branches.
@@ -183,9 +190,9 @@ type AsyncContext struct {
 	// runner could not locate a matching def at acquisition.
 	NodeDef *node.TemplateNodeDef
 	// ResolvedAttributes is the post-substitution attribute map the
-	// runner produced at dispatch time (§17.1 step 3). The Complete
-	// branch of the terminal handler merges the executor's
-	// `attributes_delta` into this map and validates the result.
+	// runner produced at dispatch time. The Complete branch of the
+	// terminal handler merges the executor's `attributes_delta` into
+	// this map and validates the result.
 	ResolvedAttributes map[string]any
 	// AttributesSchema is the per-node-type JSON schema fragment the
 	// terminal handler validates against on a Complete with non-empty
@@ -196,8 +203,8 @@ type AsyncContext struct {
 // AcquiredLock bundles a lock-holder row with its originating spec and
 // (for ClaimSpec) the store-returned ClaimResult. The runner builds
 // one of these per successful Open call; the terminal handler walks
-// the slice in §13.7 sort order to drive Commit/Abandon/Delete and
-// the auto-terminal subgraph check.
+// the slice in deterministic sort order (blessed-invariant 3) to drive
+// Commit/Abandon and the auto-terminal subgraph check.
 type AcquiredLock struct {
 	// Spec is one of store.NamedLockSpec or store.ClaimSpec.
 	Spec any
@@ -216,8 +223,9 @@ type AcquiredLock struct {
 }
 
 // RunNode runs one full claim-and-execute cycle. The eight-stage outline
-// of §17.1 is laid out here as a tall function with named helpers; each
-// stage either succeeds and continues or bails to a recoverable handler.
+// of the omnibus runner is laid out here as a tall function with named
+// helpers; each stage either succeeds and continues or bails to a
+// recoverable handler.
 //
 // Returns:
 //   - {Ran:false}, nil          — no candidate eligible / verify-before-run
@@ -246,7 +254,7 @@ func RunNode(
 		heartbeatInterval = 5 * time.Second
 	}
 
-	// Step 1 — §13.3 atomic acquisition + verify-before-run + state
+	// Step 1 — §7.3 atomic acquisition + verify-before-run + state
 	// transition.
 	acq, ok, err := acquireCandidate(ctx, args, heartbeatInterval)
 	if err != nil {
@@ -260,7 +268,7 @@ func RunNode(
 		return RunnerResult{Ran: false}, nil
 	}
 
-	// Step 2 (formerly OpenHandle) — gone in v2: the substrate's Open
+	// Step 2 (formerly OpenHandle) — retired: the substrate's Open
 	// returns the address inside the acquisition tx; there is no
 	// separate native-handle stage.
 
@@ -344,12 +352,12 @@ func validateRunArgs(args RunArgs) error {
 // to rimsky_node_attributes so the callback handler has a row to merge
 // into. Bumps `run_attempt` from any prior row's value.
 //
-// Resume detection moved into the substrate (per spec §11.5: substrate
-// detects resumed-vs-fresh by lookup against its own state keyed by
-// lock-holder identity). The supervisor no longer threads a
+// Resume detection lives in the substrate (the substrate detects
+// resumed-vs-fresh by lookup against its own state keyed by lock-
+// holder identity). The supervisor no longer threads a
 // resumed-from-rebind flag, so the row is replaced outright; the
-// executor's incremental MergeDelta calls (§5.7.2) are the canonical
-// channel for executor-populated fields.
+// executor's incremental MergeDelta calls are the canonical channel
+// for executor-populated fields.
 func upsertAttributesPreDispatch(
 	ctx context.Context,
 	args RunArgs,

@@ -1,0 +1,33 @@
+# Example config for the standard postgres store-service. Per spec §6.3
+# each store-service owns its own config schema; rimsky neither defines
+# nor validates this file.
+
+# Postgres connection string for the substrate's own pool.
+connection: "postgres://store_postgres:store_postgres@db:5432/rimsky?sslmode=disable"
+
+# Substrate's advertised write_semantics. Operator declares the same
+# value in stores.yml; the rimsky-side handshake is strict-equal.
+write_semantics: direct
+
+# Pick policies are substrate-internal — rimsky never sees them. Each
+# entry is keyed by the recognized selector form (recommended:
+# `@policy-name`). The substrate handles FOR UPDATE SKIP LOCKED on the
+# items table at Open time and the on_commit / on_give_up routing at
+# Commit / Abandon.
+pick_policies:
+  "@review-queue":
+    type: ring
+    items_table: topics_items
+    on_commit_default: release_to_back
+    on_give_up_default: release_to_back
+    visibility_timeout_seconds: 300
+
+# Listen addresses. The admin port hosts the substrate-internal items
+# insertion endpoint (per spec §13.1).
+host: 0.0.0.0
+grpc_port: 9101
+http_port: 9111
+admin_port: 9121
+
+# Substrate's internal sweep interval (visibility-timeout reclamation).
+sweep_interval_seconds: 30

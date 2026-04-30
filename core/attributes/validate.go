@@ -18,7 +18,7 @@
 //
 // This file exposes one entry point — Validate — and the caller picks the
 // gate. Removing either call site is a regression of invariant 12.
-// (Spec §18 invariant 12.)
+// (Spec §4.10 invariant 12.)
 
 package attributes
 

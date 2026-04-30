@@ -1,4 +1,4 @@
-// Substantive coverage for the §14.4 auto-terminal mechanism in
+// Substantive coverage for the §4.10 invariant 13 auto-terminal mechanism in
 // isolation. Drives CheckAndFireResolution against a real Postgres + a
 // stub-filesystem store and asserts the aggregate-outcome semantics.
 
@@ -18,15 +18,15 @@ import (
 	"github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/stub"
+	"github.com/fallguy/rimsky/core/store/storetest"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
 // TestCheckAndFireResolution_AllCompletedFiresCommit seeds a held
 // subgraph with two completed claim_holders rows and confirms
-// CheckAndFireResolution invokes the on_commit verb (Commit on the
-// substrate) and deletes the lock-holder row. Cascade FK removes the
-// claim-holders rows.
+// CheckAndFireResolution invokes Commit on the substrate and
+// deletes the lock-holder row. Cascade FK removes the claim-holders
+// rows.
 func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -51,18 +51,13 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	// Stub-filesystem store registered locally so the resolution verb
-	// has a substrate to dispatch against. The stub's Commit/Abandon
-	// are in-memory state mutators — sufficient for this test.
+	// In-Go fake store registered locally so the resolution verb has
+	// a substrate to dispatch against. The fake's Commit/Abandon
+	// record calls — sufficient for this test (the wire path is
+	// covered by scenario tests, not this in-isolation unit test).
 	reg := store.NewRegistry()
-	reg.Register(stub.FilesystemFactory())
-	_, err = reg.BuildAll(store.StoresConfig{Stores: map[string]map[string]any{
-		"workspace": {"kind": "stub_filesystem"},
-	}})
-	require.NoError(t, err)
-	wsStore, ok := reg.GetStore("workspace")
-	require.True(t, ok)
-	stubStore := wsStore.(*stub.Store)
+	stubStore := storetest.NewFake("workspace", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
+	reg.Add("workspace", stubStore)
 
 	// Seed one lock-holder row + two claim-holders rows in 'active'.
 	storeName := "workspace"
@@ -105,12 +100,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	}
 	tx, err := pool.Begin(ctx)
 	require.NoError(t, err)
-	require.NoError(t, supervisor.CheckAndFireResolution(
-		ctx, args, tx, lockHolderID, "alias-A",
-		map[string]node.ClaimResolution{
-			"alias-A": {OnCommit: "commit", OnGiveUp: "abandon"},
-		},
-	))
+	require.NoError(t, supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID))
 	require.NoError(t, tx.Commit(ctx))
 
 	// Lock-holder row is gone.
@@ -119,7 +109,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	require.Nil(t, row, "auto-terminal must delete lock-holder on aggregate-completed")
 
 	// Verb assertion: aggregate-completed must route to Commit, never
-	// Abandon. Mirror of the give-up test below.
+	// Abandon. Mirror of the aggregate-failed test below.
 	abandonSeen, commitSeen := false, false
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "abandon" {
@@ -135,7 +125,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 
 // TestCheckAndFireResolution_AnyFailedFiresGiveUp seeds a held subgraph
 // with one completed and one failed claim_holders row and confirms the
-// aggregate-outcome path picks on_give_up and deletes the lock-holder.
+// aggregate-outcome path picks Abandon and deletes the lock-holder.
 func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -161,19 +151,8 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	require.NoError(t, err)
 
 	reg := store.NewRegistry()
-	reg.Register(stub.FilesystemFactory())
-	_, err = reg.BuildAll(store.StoresConfig{Stores: map[string]map[string]any{
-		"workspace": {"kind": "stub_filesystem"},
-	}})
-	require.NoError(t, err)
-	// Recover the *stub.Store the registry built so we can assert which
-	// substrate verb the resolution path invoked. selectResolutionAction
-	// is the function under test; without checking the recorder a
-	// regression that always returned (commit, true) would still pass
-	// the lock-holder-row assertion.
-	wsStore, ok := reg.GetStore("workspace")
-	require.True(t, ok)
-	stubStore := wsStore.(*stub.Store)
+	stubStore := storetest.NewFake("workspace", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
+	reg.Add("workspace", stubStore)
 
 	storeName := "workspace"
 	intent := "rw"
@@ -214,12 +193,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	}
 	tx, err := pool.Begin(ctx)
 	require.NoError(t, err)
-	require.NoError(t, supervisor.CheckAndFireResolution(
-		ctx, args, tx, lockHolderID, "alias-G",
-		map[string]node.ClaimResolution{
-			"alias-G": {OnCommit: "commit", OnGiveUp: "abandon"},
-		},
-	))
+	require.NoError(t, supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID))
 	require.NoError(t, tx.Commit(ctx))
 
 	row, err := backend.LockHolders().Get(ctx, lockHolderID, nil)
@@ -228,7 +202,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 
 	// Verb assertion: aggregate-failed must route to Abandon, never
 	// Commit. Iterate every recorded call and assert at least one
-	// abandon and zero commits — guards against a selectResolutionAction
+	// abandon and zero commits — guards against an aggregate-outcome
 	// regression that always returns the success path.
 	abandonSeen, commitSeen := false, false
 	for _, c := range stubStore.Calls() {

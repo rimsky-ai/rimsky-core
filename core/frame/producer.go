@@ -78,7 +78,7 @@ func enqueueSerial(ctx context.Context, tx pgx.Tx,
 func enqueueCoalesce(ctx context.Context, tx pgx.Tx,
 	instanceID, sourceNodeID uuid.UUID, timeoutMs int64) (uuid.UUID, error) {
 
-	// Spec §13.1: one atomic statement keyed on the partial unique index
+	// Spec §7.3 step 1: one atomic statement keyed on the partial unique index
 	// uq_rimsky_frames_coalesce_queued (instance_id) WHERE state='queued'
 	// AND mode='coalesce'. Two concurrent producers (each in their own tx)
 	// must not deadlock or 5xx — exactly one wins the INSERT, all others

@@ -1,5 +1,5 @@
-// Spec §17.1 step 3 + step 4: attribute substitution + executor /
-// native dispatch path. Terminal handling lives in runner_terminal.go.
+// Omnibus runner — attribute substitution + executor / native
+// dispatch path. Terminal handling lives in runner_terminal.go.
 
 package supervisor
 
@@ -207,7 +207,7 @@ func readExecutorStream(
 	}
 }
 
-// resolveAttributes is the §17.1 step 3 substitution + validation
+// resolveAttributes is the runner's pre-dispatch substitution + validation
 // pass. Returns the populated attribute object and the schema (so
 // the terminal handler can re-validate at commit time).
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
@@ -469,7 +469,12 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 func makeStoreHandle(lk AcquiredLock, spec store.ClaimSpec) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	if lk.Store != nil {
-		out.Kind = lk.Store.Kind()
+		// The wire StoreHandle.kind field is informational only and
+		// the executor knows its substrate's kind from the
+		// deployment's operator config. Pass the
+		// operator-chosen store name as the closest analogue; the
+		// v2 Store.Kind() method is gone in v3.
+		out.Kind = lk.Store.Name()
 	}
 	fields := map[string]any{}
 	if len(lk.ClaimResult.Address) > 0 {

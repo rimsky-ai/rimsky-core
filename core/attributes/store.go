@@ -57,7 +57,7 @@ type NodeAttributesStore interface {
 // pool. The merge-delta path is intrinsically atomic (single UPDATE with
 // `data || $1::jsonb`); Upsert is a single ON CONFLICT statement. If a
 // future call site needs MergeDelta inside the supervisor's outer
-// dispatch transaction (see spec §13.3), we will widen the signature to
+// dispatch transaction (see spec §7.3), we will widen the signature to
 // take a storage.Tx parameter — the JSONB merge SQL is already
 // transaction-safe.
 type Store struct {

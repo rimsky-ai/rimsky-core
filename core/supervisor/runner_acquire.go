@@ -1,19 +1,22 @@
-// Spec §13.3 atomic acquisition under stores-redesign-v2.
+// Atomic acquisition under stores-redesign-v3 spec §7.3.
 //
-// One pgx.Tx end to end:
+// Per-candidate try tx (rimsky-side bookkeeping only):
 //   - candidate selection (FOR UPDATE SKIP LOCKED) in a short read tx;
 //   - per-candidate try tx: in-Go eligibility, advisory locks for
 //     named locks, claimant-guarded UPDATE on rimsky_dispatch, region
-//     re-evaluation per store via ModeCoexists + RegionsConflict,
-//     per-spec lock acquisition (Insert + Open + UpdateAddress for
+//     re-evaluation per store via byte-equal + ModeCoexists, per-spec
+//     lock acquisition (Insert + remote Open + UpdateAddress for
 //     ClaimSpec; Insert only for NamedLockSpec), held-claim
 //     rimsky_claim_holders inserts when the alias is in a held
-//     subgraph (size > 1).
+//     subgraph.
 //   - COMMIT, then verify-before-run (separate read), then a second
 //     short tx transitioning the node to running.
 //
+// Store.Open is invoked OVER THE WIRE in v3; the substrate runs its
+// own state mutation in its own transaction. Tx-sharing via
+// store.WithTx / TxFromContext is gone.
+//
 // Two primitives, two types: store.NamedLockSpec and store.ClaimSpec.
-// The acquisition slice is []any; per-step type-switches dispatch.
 
 package supervisor
 
@@ -35,34 +38,21 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// acquisition is the in-memory record of one successful §13.3
-// acquisition. After a successful acquireCandidate the dispatch row
-// is claimed by this supervisor (modulo verify-before-run race) and
-// every Locks element has its LockHolderID + (for ClaimSpec)
-// ClaimResult populated.
+// acquisition is the in-memory record of one successful acquisition.
 type acquisition struct {
-	DispatchID shared.UUID
-	NodeID     shared.UUID
-	InstanceID shared.UUID
-	NodeType   string
-	Executor   string // "" → native (pure-cascade or claim-only)
-	FrameID    shared.UUID
-	Locks      []AcquiredLock
-	NodeDef    *node.TemplateNodeDef
-	// HeldSubgraphs is the template's holding-subgraph metadata,
-	// computed once at acquisition. Drives the §5.6.3 claim-holder
-	// inserts at acquisition (held: subgraph size > 1) and the §13.6
-	// release-path branch (held vs. non-held alias).
-	HeldSubgraphs []node.HoldingSubgraph
-	// InstanceParams is the raw rimsky_instances.params for the
-	// candidate, captured for substitution and ExecuteRequest assembly.
+	DispatchID     shared.UUID
+	NodeID         shared.UUID
+	InstanceID     shared.UUID
+	NodeType       string
+	Executor       string
+	FrameID        shared.UUID
+	Locks          []AcquiredLock
+	NodeDef        *node.TemplateNodeDef
+	HeldSubgraphs  []node.HoldingSubgraph
 	InstanceParams map[string]any
 }
 
-// acquireCandidate runs §13.3 against the live database. Returns
-// (acquisition, true, nil) on a successful claim, (zero, false, nil)
-// when no eligible candidate or the verify-before-run / state-
-// transition guard fired, or (zero, false, err) on a low-level error.
+// acquireCandidate runs the §7.3 flow against the live database.
 func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.Duration) (acquisition, bool, error) {
 	candidates, err := selectCandidatesShortTx(ctx, args)
 	if err != nil {
@@ -111,7 +101,8 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 	return acquisition{}, false, nil
 }
 
-// selectCandidatesShortTx runs §13.3 step 1 in its own short read tx.
+// selectCandidatesShortTx runs the candidate-selection helper in its
+// own short read tx.
 func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]queue.Candidate, error) {
 	limit := args.SelectCandidatesLimit
 	if limit <= 0 {
@@ -164,10 +155,9 @@ func tryAcquireWithTx(
 	return acq, true, nil
 }
 
-// tryAcquire runs §13.3 steps 2-5 for a single candidate inside the
-// open tx. On success returns (acquisition, true, nil). In-Go
-// ineligibility / in-tx race returns (zero, false, nil). On low-level
-// error returns (zero, false, err) and the caller rolls back.
+// tryAcquire runs the acquisition steps for a single candidate inside
+// the open rimsky-side tx. Note: Store.Open RPCs over the wire and the
+// substrate runs in its own tx (per spec §7.3).
 func tryAcquire(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
 	cand queue.Candidate, heartbeatInterval time.Duration,
@@ -204,10 +194,9 @@ func tryAcquire(
 
 	heldSubgraphs := node.HoldingSubgraphsForTemplate(tmpl)
 
-	storeCtx := store.WithTx(ctx, tx)
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, ok, err := acquireOneLock(storeCtx, args, tx, sp, cand, heartbeatInterval, heldSubgraphs)
+		al, ok, err := acquireOneLock(ctx, args, tx, sp, cand, heartbeatInterval, heldSubgraphs)
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -235,8 +224,7 @@ func tryAcquire(
 }
 
 // takeNamedAdvisoryLocks walks the sorted spec slice and takes one
-// advisory lock per NamedLockSpec, in §13.7 sort order. Released on
-// COMMIT/ROLLBACK of tx.
+// advisory lock per NamedLockSpec.
 func takeNamedAdvisoryLocks(ctx context.Context, tx pgx.Tx, specs []any) error {
 	for _, sp := range specs {
 		named, ok := sp.(store.NamedLockSpec)
@@ -250,34 +238,43 @@ func takeNamedAdvisoryLocks(ctx context.Context, tx pgx.Tx, specs []any) error {
 	return nil
 }
 
-// acquireOneLock handles one spec inside the acquisition tx. For
-// NamedLockSpec: insert the row only (limit enforcement is operator-
-// config-driven; in v2 the supervisor honors operator-named-locks
-// limits via the queue eligibility predicate, not here). For
-// ClaimSpec: re-load existing region holders, re-check conflict +
-// ModeCoexists, insert lock-holder row with address=NULL, call
-// Store.Open inside the tx (so substrate writes participate),
-// UPDATE the row's address column, and (if alias is in a held
-// subgraph) insert one rimsky_claim_holders row per subgraph member.
+// acquireOneLock handles one spec inside the acquisition tx.
 func acquireOneLock(
-	storeCtx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx pgx.Tx,
 	sp any, cand queue.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, bool, error) {
 	switch spec := sp.(type) {
 	case store.NamedLockSpec:
-		return acquireNamedLock(storeCtx, args, tx, spec, cand, heartbeatInterval)
+		return acquireNamedLock(ctx, args, tx, spec, cand, heartbeatInterval)
 	case store.ClaimSpec:
-		return acquireClaim(storeCtx, args, tx, spec, cand, heartbeatInterval, heldSubgraphs)
+		return acquireClaim(ctx, args, tx, spec, cand, heartbeatInterval, heldSubgraphs)
 	}
 	return AcquiredLock{}, false, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
 
-// acquireNamedLock inserts the named lock-holder row.
+// acquireNamedLock enforces the counter-semaphore limit then inserts
+// the named lock-holder row. The per-name advisory lock has been
+// taken upstream (takeNamedAdvisoryLocks); under that lock the
+// CountByNamedLock + Insert pair is atomic against the limit.
+//
+// When the operator's NamedLocks config has no entry for this name,
+// no limit is enforced (limit defaults to ∞). Templates referencing
+// undeclared names should have failed validation at deploy time
+// (control-api wires NamedLockDeclared unconditionally).
 func acquireNamedLock(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
 	spec store.NamedLockSpec, cand queue.Candidate, heartbeatInterval time.Duration,
 ) (AcquiredLock, bool, error) {
+	if cfg, ok := args.NamedLocks.Get(spec.Name); ok {
+		count, err := args.LockHolders.CountByNamedLock(ctx, tx, spec.Name)
+		if err != nil {
+			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
+		}
+		if count >= cfg.Limit {
+			return AcquiredLock{}, false, nil
+		}
+	}
 	rowID := uuid.New()
 	frameID := cand.FrameID
 	now := args.Clock.Now()
@@ -302,17 +299,43 @@ func acquireNamedLock(
 	}, true, nil
 }
 
-// acquireClaim runs §13.3 step 4 for one ClaimSpec.
+// acquireClaim runs the claim-acquisition steps per spec §7.3 step 4.
+//
+// Conflict detection uses byte-equal comparison on region bytes (per
+// spec §7.7); the candidate's pre-Open region is the substituted-
+// selector bytes. For pick-policy claims the substrate's
+// FOR UPDATE SKIP LOCKED prevents two supervisors picking the same
+// item independently of rimsky's predicate. For regional claims
+// rimsky's predicate is the source of truth for invariant 4b.
+//
+// To prevent two supervisors from concurrently passing the in-Go
+// region-conflict predicate against each other's uncommitted INSERTs
+// (READ COMMITTED hides them), this function takes a per-(store_name,
+// region_data) transactional advisory lock before evaluateRegionConflict
+// runs. Analogous to the named-lock advisory; under the same lock the
+// list-then-INSERT pair is atomic against any concurrent acquirer
+// targeting the same (store, region) pair.
 func acquireClaim(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
 	spec store.ClaimSpec, cand queue.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, bool, error) {
-	s, ok := args.StoreRegistry.GetStore(spec.StoreName)
+	s, ok := args.StoreRegistry.Get(spec.StoreName)
 	if !ok {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: unknown store %q", spec.StoreName)
 	}
-	conflicted, err := evaluateRegionConflict(ctx, args, tx, s, spec, cand)
+	myCaps, err := s.Capabilities(ctx)
+	if err != nil {
+		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Capabilities: %w", err)
+	}
+	regionInitial, err := json.Marshal(spec.Selector)
+	if err != nil {
+		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: marshal selector: %w", err)
+	}
+	if err := pgqueue.TakeRegionAdvisory(ctx, tx, spec.StoreName, regionInitial); err != nil {
+		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: TakeRegionAdvisory: %w", err)
+	}
+	conflicted, err := evaluateRegionConflict(ctx, args, tx, myCaps, spec, cand)
 	if err != nil {
 		return AcquiredLock{}, false, err
 	}
@@ -325,10 +348,6 @@ func acquireClaim(
 	now := args.Clock.Now()
 	storeNameCopy := spec.StoreName
 	intentCopy := string(spec.Intent)
-	regionInitial, err := json.Marshal(spec.Selector)
-	if err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: marshal selector: %w", err)
-	}
 	row := store.LockHolderRow{
 		ID:                 rowID,
 		Kind:               store.LockHolderKindRegion,
@@ -346,15 +365,20 @@ func acquireClaim(
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
-	cr, err := s.Open(ctx, spec)
+	claimID := store.ClaimID(rowID.String())
+	outcome, err := s.Open(ctx, claimID, spec)
 	if err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Open(%s): %w", spec.StoreName, err)
 	}
-	// Pick policies signal "pool empty" by returning a zero ClaimResult
-	// without an error (per core/store/postgres/store.go::openPickPolicy).
-	if len(cr.Address) == 0 && len(cr.Region) == 0 && len(cr.Payload) == 0 {
+	// Substrate has nothing to give right now (e.g. drained items-table
+	// queue). Per the 2026-04-30 cleanup spec the substrate signals this
+	// via OpenOutcome.Available=false (was: all-empty ClaimResult under
+	// v3 §4.7's "pool-empty" convention). Roll back the tx and skip;
+	// the next scheduler tick may retry.
+	if !outcome.Available {
 		return AcquiredLock{}, false, nil
 	}
+	cr := outcome.Result
 
 	if err := args.LockHolders.UpdateAddress(ctx, tx, rowID, args.SupervisorID, cr.Address); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
@@ -381,12 +405,26 @@ func acquireClaim(
 }
 
 // evaluateRegionConflict re-loads existing region holders for the
-// store and runs RegionsConflict ∧ ModeCoexists against the candidate
-// spec. Skips own-node rows. Returns true if any holder conflicts
-// AND the modes don't coexist.
+// store and runs RegionsByteEqual ∧ ModeCoexists against the candidate
+// spec. Skips own-node rows. Returns true if any holder conflicts AND
+// the modes don't coexist.
+//
+// Per spec §7.7: byte-equal comparison; substrate canonicalizes its
+// region bytes such that two claims that should conflict produce
+// byte-equal regions. The candidate's pre-Open region is the
+// substituted-selector bytes (regional claims) — for pick-policy
+// claims the actual collision check happens in the substrate's
+// FOR UPDATE SKIP LOCKED.
+//
+// ModeCoexists is asymmetric: the (intent, write_semantics) pair on
+// the candidate side and the holder side may differ when holders live
+// in a different store (cross-store overlap is impossible by
+// construction since holders are filtered by store_name above — but
+// the holder's store may have been re-registered with different caps,
+// so we re-look-up its Capabilities).
 func evaluateRegionConflict(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
-	s store.Store, spec store.ClaimSpec, cand queue.Candidate,
+	myCaps store.Capabilities, spec store.ClaimSpec, cand queue.Candidate,
 ) (bool, error) {
 	holders, err := args.LockHolders.ListByStoreRegion(ctx, tx, spec.StoreName)
 	if err != nil {
@@ -396,34 +434,51 @@ func evaluateRegionConflict(
 	if err != nil {
 		return false, err
 	}
-	myCaps := s.Capabilities()
 	for _, h := range holders {
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID == args.SupervisorID {
 			continue
 		}
-		existingRegion, err := s.UnmarshalRegion(h.RegionData)
-		if err != nil {
-			return false, fmt.Errorf("evaluateRegionConflict: UnmarshalRegion: %w", err)
-		}
-		if !s.RegionsConflict(candidateRegion, existingRegion) {
+		if !store.RegionsByteEqual(candidateRegion, h.RegionData) {
 			continue
 		}
 		var holderIntent store.Intent
 		if h.Intent != nil {
 			holderIntent = store.Intent(*h.Intent)
 		}
-		// Both holders are on the same store, so semantics match.
-		if !store.ModeCoexists(spec.Intent, myCaps.WriteSemantics, holderIntent, myCaps.WriteSemantics) {
+		holderCaps, err := holderCapabilitiesFor(ctx, args, h)
+		if err != nil {
+			return false, err
+		}
+		if !store.ModeCoexists(spec.Intent, myCaps.WriteSemantics, holderIntent, holderCaps.WriteSemantics) {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
+// holderCapabilitiesFor looks up the capabilities of the store backing
+// a region-kind lock-holder row. Falls back to the candidate's caps
+// when the holder's store is no longer registered (best-effort: the
+// row is about to be reaped).
+func holderCapabilitiesFor(
+	ctx context.Context, args RunArgs, h store.LockHolderRow,
+) (store.Capabilities, error) {
+	if h.StoreName == nil {
+		return store.Capabilities{}, nil
+	}
+	s, ok := args.StoreRegistry.Get(*h.StoreName)
+	if !ok {
+		return store.Capabilities{}, nil
+	}
+	caps, err := s.Capabilities(ctx)
+	if err != nil {
+		return store.Capabilities{}, fmt.Errorf("holderCapabilitiesFor(%q): %w", *h.StoreName, err)
+	}
+	return caps, nil
+}
+
 // updateLockHolderRegion writes a new region_data to a region-kind
-// row, claimant-guarded. Used when Store.Open returns a substrate-
-// chosen region (pick policies) different from the substituted
-// selector the supervisor wrote at insert time.
+// row, claimant-guarded.
 func updateLockHolderRegion(
 	ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string, region json.RawMessage,
 ) error {
@@ -440,9 +495,7 @@ func updateLockHolderRegion(
 }
 
 // insertHeldClaimHoldersAtAcquire inserts one rimsky_claim_holders
-// row per holding-subgraph member when the alias is held (size > 1).
-// Resolves member node-types to in-instance node IDs via
-// Nodes().ListByInstance.
+// row per holding-subgraph member when the alias is held.
 func insertHeldClaimHoldersAtAcquire(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
 	lockHolderID shared.UUID, cand queue.Candidate, alias string,
@@ -484,8 +537,7 @@ func insertHeldClaimHoldersAtAcquire(
 }
 
 // findHoldingSubgraphForAcquirer locates the (acquirerType, alias)
-// subgraph in the precomputed list. Returns ok=false when the alias
-// has no entry (the acquirer's own claim never inherited).
+// subgraph in the precomputed list.
 func findHoldingSubgraphForAcquirer(subgraphs []node.HoldingSubgraph, acquirerType, alias string) (node.HoldingSubgraph, bool) {
 	for _, sg := range subgraphs {
 		if sg.AcquirerType == acquirerType && sg.Alias == alias {
@@ -495,7 +547,7 @@ func findHoldingSubgraphForAcquirer(subgraphs []node.HoldingSubgraph, acquirerTy
 	return node.HoldingSubgraph{}, false
 }
 
-// verifyBeforeRun is the §13.3 step 4 separate-read guard.
+// verifyBeforeRun is the separate-read guard.
 func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 	ownership, err := args.Queue.GetClaimedBy(ctx, acq.DispatchID)
 	if err != nil {
@@ -506,16 +558,31 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 	return ownership.Kind == "claimed_by" && ownership.SupervisorID == args.SupervisorID
 }
 
-// handleOrphanedClaim is the §13.3 step 4 bail handler. Best-effort
-// substrate Abandon for each ClaimSpec, then claimant-guarded DELETE
-// per inserted lock-holder row, then orphaned_claim_lost_race event.
-// Non-tx; the acquisition tx already committed.
+// handleOrphanedClaim is the race-detection bail path: the supervisor
+// has already opened the claim, inserted the lock-holder row, and
+// committed the acquisition tx — and then verify-before-run discovered
+// that another supervisor stole the dispatch row in the gap between
+// commit and the second-read guard. The supervisor knows it just
+// opened the substrate state and is now unwinding the in-progress
+// acquisition; it owns the cleanup and calls Abandon on the substrate
+// to release any partial state, then deletes its own lock-holder row
+// claimant-guarded, then emits orphaned_claim_lost_race.
+//
+// This is NOT the periodic orphan reaper. The periodic reaper at
+// `core/scheduler/sweep_locks.go::sweepLockHolders` deletes expired
+// lock-holder rows WITHOUT firing Abandon, per v3 spec §7.5: the
+// store's own TTL/sweep handles internal state for owners that
+// crashed without unwinding. The two paths are deliberately distinct:
+// the bail path fires Abandon because the supervisor knows what it
+// just did; the reaper does NOT fire Abandon because it can't
+// distinguish a crashed-supervisor state from any other.
 func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	for _, lk := range acq.Locks {
 		if lk.Store != nil {
 			region := claimRegion(lk)
 			address := claimAddress(lk)
-			if err := lk.Store.Abandon(ctx, region, address, ""); err != nil {
+			claimID := store.ClaimID(lk.LockHolderID.String())
+			if err := lk.Store.Abandon(ctx, claimID, region, address); err != nil {
 				args.Logger.Warn("handleOrphanedClaim: Abandon failed",
 					"store", storeNameForSpec(lk.Spec), "error", err.Error())
 			}
@@ -534,7 +601,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	}, nil)
 }
 
-// transitionToRunning is the §13.3 step 4.5 short-tx state transition.
+// transitionToRunning is the short-tx state transition.
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
 	return args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
 		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil)

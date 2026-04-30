@@ -1,4 +1,4 @@
-// LockHolders postgres helpers for `rimsky_lock_holders` (spec §12.10).
+// LockHolders postgres helpers for `rimsky_lock_holders` (v3 spec §12).
 //
 // Lives in core/store/ rather than core/storage/postgres/ because the
 // lock-holder table is the unified mechanism that ties stores to the
@@ -10,7 +10,8 @@
 //
 //	No store implementation persists lock state. The question
 //	"is anyone holding lock X" is answered exclusively by the rows
-//	managed in this file. (Spec §21 invariant 9a.)
+//	managed in this file. (Spec §4.10 — carries forward unchanged
+//	from v2 §4.10 invariant 9a.)
 //
 // Imports are pgx/v5 + core/shared only.
 
@@ -41,15 +42,20 @@ const (
 	LockHolderKindRegion LockHolderKind = "region"
 )
 
-// LockHolderRow mirrors a row of `rimsky_lock_holders` (spec §12.10).
+// LockHolderRow mirrors a row of `rimsky_lock_holders`.
 //
 // Exactly one of (LockName) / (StoreName + RegionData + Intent) is
-// populated, keyed by Kind. The §12.10 CHECK constraint enforces this
-// on the database side.
+// populated, keyed by Kind. A CHECK constraint enforces this on the
+// database side.
 //
 // Address is substrate-supplied bytes from Open(); written into the row
 // after Open returns successfully (within the same acquisition tx).
 // May be nil for region rows mid-acquisition; populated by terminal time.
+//
+// ID is generated client-side by the supervisor before Insert — same
+// UUID is passed to Store.Open as the claim_id (spec §4.2). The column
+// default `gen_random_uuid()` stays as a safety net but the supervisor
+// MUST supply the id explicitly.
 type LockHolderRow struct {
 	ID                 shared.UUID
 	Kind               LockHolderKind
@@ -63,7 +69,7 @@ type LockHolderRow struct {
 	ClaimedAt          time.Time
 	LastHeartbeatAt    time.Time
 	ExpiresAt          time.Time
-	// FrameID is observability-only (spec §12.10): records which frame
+	// FrameID is observability-only (v3 spec §12): records which frame
 	// the dispatch row carried at acquire time. Reads/sweeps and the
 	// auto-terminal algorithm do NOT consult this field.
 	FrameID *shared.UUID
@@ -99,11 +105,11 @@ const lockHolderCols = `
 `
 
 // Insert writes a new lock-holder row inside the caller-provided
-// transaction. The dispatch-acquisition transaction (§13.3) holds the tx;
+// transaction. The dispatch-acquisition transaction (§7.3) holds the tx;
 // every per-spec lock-holder row is inserted via this method so the row
 // commits atomically with the dispatch claim.
 //
-// For region rows the supervisor inserts with Address = nil; the §13.3
+// For region rows the supervisor inserts with Address = nil; the §7.3
 // step-4e UpdateAddress call writes the address after Open returns.
 func (c *LockHoldersClient) Insert(ctx context.Context, tx pgx.Tx, row LockHolderRow) error {
 	if tx == nil {
@@ -129,7 +135,7 @@ func (c *LockHoldersClient) Insert(ctx context.Context, tx pgx.Tx, row LockHolde
 }
 
 // UpdateAddress sets the address column on an existing region-kind row.
-// Used by the supervisor's §13.3 step-4e flow: after Store.Open returns
+// Used by the supervisor's §7.3 step-4e flow: after Store.Open returns
 // successfully, the supervisor writes the returned address to the row
 // inside the same acquisition tx. Claimant-guarded on supervisorID;
 // mismatches are a no-op (returns nil, no error).
@@ -172,6 +178,12 @@ func (c *LockHoldersClient) Get(ctx context.Context, id shared.UUID) (*LockHolde
 //
 // Cascade FK on rimsky_claim_holders.lock_holder_id cleans up any
 // claim-holder rows for held claims when the lock-holder row is deleted.
+//
+// This unconditional variant is for the supervisor's terminal flow,
+// where the row is being released by its owning supervisor as part of
+// normal completion — the expires_at may be in the future and that's
+// fine. The orphan reaper uses DeleteIfExpired instead so a fresh
+// heartbeat refresh in the reap window cannot lose a live row.
 func (c *LockHoldersClient) DeleteByID(ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string) error {
 	if tx == nil {
 		return errors.New("lockholders.DeleteByID: tx required")
@@ -187,9 +199,38 @@ func (c *LockHoldersClient) DeleteByID(ctx context.Context, tx pgx.Tx, id shared
 	return nil
 }
 
+// DeleteIfExpired removes the row keyed by id, claimant-guarded on
+// supervisor_id AND only when expires_at is still in the past. The
+// expires_at predicate closes the window where a fresh heartbeat tick
+// refreshes a row between the reaper's ListExpired and DeleteByID
+// calls — without it, a live (newly heartbeat-extended) row could be
+// reaped.
+//
+// Used by the orphan reaper. Returns (deleted=false, nil) on no-op
+// (claimant mismatch or row was freshly heartbeat-extended). Callers
+// use the boolean to suppress false-positive `lock_orphan_reaped`
+// telemetry when the reaper lost the race.
+func (c *LockHoldersClient) DeleteIfExpired(ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string) (bool, error) {
+	if tx == nil {
+		return false, errors.New("lockholders.DeleteIfExpired: tx required")
+	}
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM rimsky_lock_holders
+		 WHERE id = $1
+		   AND holder_supervisor_id = $2
+		   AND expires_at < now()`,
+		id, supervisorID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("lockholders.DeleteIfExpired: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // RefreshHeartbeat updates `last_heartbeat_at` and `expires_at` for every
 // row owned by `supervisorID` whose lifetime should currently be active.
-// Two cases (spec §13.4):
+// Two cases (spec §7.5 — the heartbeat keeps lock-holder rows alive
+// against the orphan reaper):
 //
 //   - Standard: holder_node_id is currently 'running' on this supervisor.
 //   - Held-claim: an active rimsky_claim_holders row referencing this
@@ -224,8 +265,9 @@ func (c *LockHoldersClient) RefreshHeartbeat(ctx context.Context, supervisorID s
 }
 
 // ListExpired returns rows whose `expires_at < now()`. The scheduler's
-// orphan-reap sweep (§13.5) iterates these, fires the appropriate
-// substrate verb, then deletes the row claimant-guarded on supervisor_id.
+// orphan-reap sweep (§7.5) iterates these and deletes each row
+// claimant-guarded on supervisor_id (no substrate verb fired in v3 —
+// the store's TTL handles its internal state).
 func (c *LockHoldersClient) ListExpired(ctx context.Context) ([]LockHolderRow, error) {
 	rows, err := c.pool.Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
@@ -294,7 +336,7 @@ func (c *LockHoldersClient) CountByNamedLock(ctx context.Context, tx pgx.Tx, loc
 
 // ListByStoreRegion returns every unexpired region-kind row for
 // `storeName`. Used by the supervisor's region-conflict re-check
-// (§13.3 step 4a/4b) and by the queue's eligibility predicate.
+// (§7.3 step 4a/4b) and by the queue's eligibility predicate.
 func (c *LockHoldersClient) ListByStoreRegion(ctx context.Context, tx pgx.Tx, storeName string) ([]LockHolderRow, error) {
 	if tx == nil {
 		return nil, errors.New("lockholders.ListByStoreRegion: tx required")
@@ -315,7 +357,9 @@ func (c *LockHoldersClient) ListByStoreRegion(ctx context.Context, tx pgx.Tx, st
 
 // ExtendHeartbeatForRunningNodes is an alias path used by code that
 // already has its own pgx.Tx (e.g. the heartbeat tick driving multiple
-// updates inside one transaction). Same predicate as RefreshHeartbeat.
+// updates inside one transaction). Same predicate as RefreshHeartbeat
+// (per spec §7.5 — keeps lock-holder rows alive against the orphan
+// reaper while the holder node is still `running`).
 func (c *LockHoldersClient) ExtendHeartbeatForRunningNodes(
 	ctx context.Context, tx pgx.Tx, supervisorID string, heartbeatSeconds int,
 ) error {

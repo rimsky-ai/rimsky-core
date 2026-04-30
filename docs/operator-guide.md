@@ -1,5 +1,10 @@
 # Rimsky Operator Guide
 
+> v3 spec at `docs/specs/2026-04-27-stores-redesign-v3-design.md` is the
+> authoritative contract; this guide is the operator-facing summary.
+
+---
+
 This guide is written for the person who runs rimsky in production: deploying
 the processes, writing the supervisor config, authoring templates, creating
 and operating instances, scraping metrics, and diagnosing failures.
@@ -255,249 +260,229 @@ is no longer consulted; remove it from supervisor configs on adoption.
 
 ### 3.4 Stores and named-locks configuration (`stores.yml`)
 
-In addition to the supervisor config above, **all three runtime processes
-(`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`) load a shared
-operator config bundle** at startup. The bundle has two top-level keys:
-`stores:` (one entry per configured store) and `named_locks:` (one entry per
-declared named lock — spec §15.2). Templates reference stores by name and
-named locks by name; resolution mirrors executor name resolution.
+In v3 each standard store implementation runs as a **separate process**
+(a "store-service") and rimsky talks to it over the 4-verb (plus
+`Capabilities` handshake) gRPC protocol defined in
+`proto/v1/store_service.proto`. Rimsky's per-process config
+collapses to a thin "name → endpoint + declared capabilities" form;
+substrate-specific configuration (DSNs, pick policies, items tables,
+filesystem roots) lives in the store-service's own config and rimsky
+never sees it (v3 spec §6.1, §6.3).
+
+All three rimsky processes (`rimsky-scheduler`, `rimsky-supervisor`,
+`rimsky-control-api`) load this same operator config bundle at startup.
+The bundle has two top-level keys: `stores:` (one entry per configured
+remote store-service) and `named_locks:` (one entry per declared named
+lock). Templates reference stores by name and named locks by name;
+resolution mirrors executor name resolution.
 
 **Env var:** `RIMSKY_STORES_CONFIG` — path to the YAML file. Default
-`/etc/rimsky/stores.yml`. The file must be readable by every process that
-loads it; supervisor pool specialization is achieved by giving each pool a
-different file. The canonical example is `deploy/stores.yml` — read it
-alongside this section.
+`/etc/rimsky/stores.yml`. The file must be readable by every rimsky
+process that loads it; supervisor pool specialization is achieved by
+giving each pool a different file. The canonical example is
+`deploy/stores.yml` — read it alongside this section.
 
 #### 3.4.1 Schema
 
 ```yaml
 stores:
   <name>:
-    kind: filesystem | postgres
-    write_semantics: direct | staged_blocking | staged_async   # optional override
-    # kind-specific config follows. For kind: postgres, `connection:`
-    # (a Postgres DSN) is REQUIRED — see §3.4.1.1 below. For kind:
-    # filesystem, `root:` (a directory path) is REQUIRED.
-    ...
-    pick_policies:                                              # optional, substrate-defined
-      "@<policy-name>": { ... }                                 # schema is per-substrate
+    endpoint: "grpc://<host>:<port>"        # required
+    capabilities:                           # required
+      write_semantics: direct | staged_blocking | staged_async
 
 named_locks:
-  <name>: { limit: <int> }
+  <name>: { limit: <int> }                  # limit ≥ 1
 ```
 
-`write_semantics` per store declares how writes coordinate with readers
-(spec §8). `direct` and `staged_blocking` block reads against in-flight
-writes on overlapping regions; `staged_async` does not (substrate provides
-stable views via snapshot delegation or native MVCC). Operators may
-**downgrade** the substrate's max capability (e.g. force `direct` on a
-`staged_blocking`-capable kind) but not upgrade — config-load validation
-rejects upgrades against the factory's `MaxWriteSemantics` ceiling with a
-clear error.
+The schema explicitly does **NOT** contain `kind`, `connection`,
+`pick_policies`, or any other substrate-specific keys. Each store-service
+runs at exactly one `write_semantics` (the value baked into its own
+config); rimsky's job is to verify the operator's declared expectation
+matches what the store-service advertises via the `Capabilities()`
+startup-handshake RPC (v3 spec §4.8). Mismatch fails the rimsky process
+at startup with a clear error naming the store, the declared
+capabilities, and the actual capabilities.
 
-`pick_policies` is a substrate-defined block: each entry is keyed by the
-substrate-recognized selector form (recommended convention: `@policy-name`,
-e.g. `@review-queue`, `@docs-ring`) and carries substrate-specific
-configuration. Rimsky does not introspect the contents — read each store
-implementation's documentation for its supported pick-policy types and
-config keys.
+`endpoint:` is the gRPC target (the `grpc://` scheme prefix is mandatory
+— `http://` / `https://` / `tcp://` / `unix://` are rejected). Auth
+between rimsky and the store-service is deployment-layer concern (mTLS,
+service mesh, IAM); rimsky uses insecure credentials by default and is
+auth-blind by design (see §3.4.4 below).
 
-`named_locks` is non-substrate state. Each entry declares a `limit` (the
+`named_locks:` is unchanged from v2. Each entry declares a `limit` (the
 maximum simultaneous holders; `limit: 1` is conventionally a "mutex",
-`limit: N>1` a counting semaphore). There is no `mode` field — the
-supervisor's conflict predicate is uniformly `count(holders) >= limit`.
-Templates reference named locks by name only (`locks: [{name: <name>}]`);
-deploy-time validation rejects template references to undeclared names.
+`limit: N>1` a counting semaphore). The supervisor's conflict predicate
+is uniformly `count(holders) >= limit`. Templates reference named locks
+by name only (`locks: [{name: <name>}]`); deploy-time validation rejects
+template references to undeclared names.
 
-**Filesystem direct-mode example:**
+**Reference example** (`deploy/stores.yml`):
 
 ```yaml
 stores:
   content:
-    kind: filesystem
-    write_semantics: direct
-    root: /workspace/content
+    endpoint: "grpc://store-filesystem:9100"
+    capabilities:
+      write_semantics: direct
+  topics-ring:
+    endpoint: "grpc://store-postgres:9101"
+    capabilities:
+      write_semantics: direct
+
+named_locks:
+  "topics-ring:concurrent-claims": { limit: 5 }
+  model-budget:                    { limit: 50 }
 ```
 
-`root` must exist and be readable/writable by the supervisor and by every
-executor that mounts it. In docker-compose this is a shared named volume; in
-Kubernetes it is a `PersistentVolumeClaim` mounted into all participating
-pods.
+Each store-service is a sibling process to the rimsky processes (running
+as its own container in the docker-compose stack, its own Pod in
+Kubernetes). The compose file at `deploy/docker-compose.yml` brings up
+`store-filesystem` and `store-postgres` as services that the rimsky
+processes dial via service-name DNS.
 
-**Postgres store with one configured pick policy:**
+#### 3.4.2 Store-service configuration (substrate-internal)
 
-```yaml
-stores:
-  topics:
-    kind: postgres
-    connection: "postgres://app:pw@workload-pg:5432/workload?sslmode=require"
-    write_semantics: direct
-    pick_policies:
-      "@review-queue":
-        type: queue
-        items_table: topics_items
-        on_commit_default: delete
-        on_give_up_default: release_to_head
-        visibility_timeout_seconds: 300
-```
+Each store-service binary owns its own config schema and loads it from
+its own env var. The schema is store-specific and out of rimsky's view.
+For the standard stores shipped under `stores/`:
 
-`connection:` is **required** on every `kind: postgres` store. The factory
-opens a dedicated `*pgxpool.Pool` against this DSN; the store uses it for
-its lock-holder, claim-holder, and items-table reads/writes. There is no
-implicit fallback to "rimsky's control-plane pool" — the conceptual
-distinction matters: the control plane (`RIMSKY_DB_URL`) is rimsky's own
-state machine; a `kind: postgres` store is workload data your DAGs claim.
-They may live in the same database for cheap deployments, but the
-operator must say so explicitly.
+- **`stores/filesystem`** loads `STORE_FILESYSTEM_CONFIG` (or whatever
+  env var the operator wires; the binary's `cmd/main.go` documents
+  the default). Reference example at `deploy/store-filesystem.yml`:
+  ```yaml
+  root: /workspace/content
+  host: 0.0.0.0
+  grpc_port: 9100
+  http_port: 9110
+  ```
+  `root:` must exist and be readable/writable by the store-service and
+  by every executor that mounts it on the data path. In docker-compose
+  this is a shared named volume; in Kubernetes it is a
+  `PersistentVolumeClaim` mounted into both the store-service Pod and
+  the executor Pods that read/write the files directly.
 
-`on_commit_default` and `on_give_up_default` are the substrate's defaults
-for the configured pick policy; nodes can override per-claim via
-`claim_resolutions:` in the template.
-`visibility_timeout_seconds` is a backstop — rimsky's heartbeat-driven
-release runs first (the items-table sweep's `NOT EXISTS` clause confirms);
-set it to at least `2 × 5 × heartbeat_interval`.
+- **`stores/postgres`** loads `STORE_POSTGRES_CONFIG`. Reference
+  example at `deploy/store-postgres.yml`:
+  ```yaml
+  connection: "postgres://app:pw@workload-pg:5432/workload?sslmode=require"
+  write_semantics: direct
+  pick_policies:
+    "@review-queue":
+      type: queue
+      items_table: topics_items
+      on_commit_default: release_to_back
+      on_give_up_default: release_to_back
+      visibility_timeout_seconds: 300
+  host: 0.0.0.0
+  grpc_port: 9101
+  http_port: 9111
+  admin_port: 9121
+  sweep_interval_seconds: 30
+  ```
+  `connection:` is the substrate's own Postgres pool, opened by the
+  store-service. Operators may collocate it with rimsky's control-plane
+  database (same DSN as `RIMSKY_DB_URL`) or point at a separate database
+  — the store-service is opaque to rimsky, so rimsky doesn't care.
+  `pick_policies` is a substrate-defined block keyed by the substrate-
+  recognised selector form (convention: `@policy-name`); each entry
+  configures the items-table backing, default actions, and the
+  visibility-timeout sweep period. The store-service's own admin
+  endpoint at `:admin_port` is documented in §5.5 below.
 
-A single postgres store may declare multiple pick policies side by side —
-e.g. `@review-queue` (FIFO) alongside `@audit-ring` (ring buffer). All are
-addressed via the same 5-verb interface (`Open` / `Commit` / `Abandon` /
-`Delete` / `Release`); the substrate dispatches internally based on the
-resolved selector.
+Read each store-author's documentation for its supported config schema.
+Rimsky neither defines nor validates these schemas.
 
-**Collocating a workload store with the rimsky control DB:**
+#### 3.4.3 Pick-policy timing constraint (postgres reference store-service)
 
-```yaml
-stores:
-  ledger:
-    kind: postgres
-    connection: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
-    write_semantics: direct
-    # … pick_policies, etc.
-```
+This subsection is guidance for operators of *the postgres reference
+store-service* specifically, not a rimsky-level constraint. The
+constraint exists because the postgres store implements an
+items-table queue with a substrate-internal visibility timeout that
+runs independently of rimsky's lock-holder bookkeeping. Other
+store-services may have their own analogous timing constraints (or
+none) — consult each store-service's own documentation.
 
-This is the cheap path for dev / single-cluster deployments — one Postgres
-hosts both rimsky's bookkeeping tables (`rimsky_*`) and the operator-owned
-items tables. The DSN is duplicated with `RIMSKY_DB_URL` by design: the
-operator config bundle is one place to read what each store talks to,
-without indirection through env-var fallbacks. Templating tools (helm,
-kustomize, env substitution) handle the duplication out-of-band.
+When the postgres store-service is configured with a pick policy
+that has a `visibility_timeout`, set that timeout **strictly greater
+than `5 × heartbeat_interval`** (the rimsky-side orphan-reap window).
+If `visibility_timeout` is shorter, the substrate's internal sweep
+can strip a healthy claim out from under a live supervisor —
+rimsky's heartbeat keeps the lock-holder row alive, but the
+substrate's TTL doesn't observe the lock-holder row. The reference
+postgres store-service ships `visibility_timeout_seconds: 300` and
+`sweep_interval_seconds: 30` against the rimsky default
+`heartbeat_interval_ms: 5000` (so `5 × 5s = 25s`); see
+`stores/postgres/store/sweep.go` for the substrate-side sweep shape.
 
-**Pointing a workload store at a separate database:**
-
-Just supply the separate DSN as `connection:`. The factory opens a fresh
-pool against that DSN; rimsky's control-plane pool is untouched. Works
-across hosts, clusters, credentials — anything `pgx` can dial. Each
-`kind: postgres` store gets one independent pool; pools are released at
-process shutdown via `Registry.Close`.
-
-#### 3.4.2 Per-region overrides not supported
-
-`write_semantics` is a per-store property. v1 does not support per-region
-overrides (spec §8.3). If you need different semantics for sub-regions of
-the same underlying storage, the cleaner expression is **two distinct
-stores pointing at the same underlying storage**, each with its own
-`write_semantics`. Operators that try to express this with one store and
-intra-store branching are encouraged to revisit the two-store pattern; it
-is the substrate-honesty boundary the spec is built around.
-
-#### 3.4.3 Operator-owned items tables for postgres pick policies
-
-Pick-policy items tables are **operator-owned**: rimsky never creates,
-migrates, or drops them. Create them out-of-band before any process loads
-`stores.yml` — otherwise factory `Build` fails fast at startup with a
-"table missing or malformed" error.
-
-Required schema per spec §12.12 (one table per items-backed pick policy;
-substitute your `<items_table>` name):
-
-```sql
-CREATE TABLE <items_table> (
-    item_id     TEXT PRIMARY KEY,
-    payload     JSONB NOT NULL,
-    state       TEXT NOT NULL CHECK (state IN ('available', 'in_progress', 'completed')),
-    claim_token TEXT,
-    claimed_at  TIMESTAMPTZ,
-    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    priority    INTEGER NOT NULL DEFAULT 0,
-    sequence    BIGSERIAL
-);
-CREATE INDEX idx_<items_table>_available
-    ON <items_table>(priority DESC, sequence ASC)
-    WHERE state = 'available';
-```
-
-Populate items via direct SQL or via the admin API endpoint
-`POST /admin/stores/:name/pick-policies/:selector/items` (see §5.5).
-
-The compose stack ships a one-shot `init-items` service that creates the
-default `topics_items` table; the Helm chart does not yet run an equivalent
-pre-install Job (known gap; see CHANGELOG).
+If you tune `heartbeat_interval_ms` upward in the supervisor config, you
+must tune `visibility_timeout_seconds` upward in the store-service
+config to match. Rimsky has no way to validate this constraint at
+startup — the two configs live in two different processes.
 
 #### 3.4.4 Auth-blind philosophy
 
-Rimsky has **no protocol surface for credentials** (spec §17.1). No verbs,
-fields, or types in the executor or store interfaces mention auth. Substrate
-connection details (postgres URLs, S3 bucket names with embedded keys, etc.)
-often carry credentials; Rimsky transports them as opaque substrate-specific
-config — no introspection, no validation, no logging of credential shape.
-Service-to-service auth between Rimsky processes (operator → control-api,
-supervisor ↔ executor) is configured at the deployment layer (mTLS, IAM,
-service mesh) — outside this YAML.
+Rimsky has **no protocol surface for credentials**. No verbs, fields, or
+types in the executor or store interfaces mention auth. Substrate
+connection details (DSNs in store-service configs, S3 bucket names with
+embedded keys, etc.) often carry credentials; rimsky never sees them in
+v3 because the store-service parses them internally. Service-to-service
+auth between rimsky processes (operator → control-api, supervisor ↔
+executor, supervisor ↔ store-service) is configured at the deployment
+layer (mTLS, service mesh, IAM) — outside any YAML rimsky reads.
 
-**Inertness boundary (spec §17.5):** store-config bytes (this YAML, loaded
-at process start) are operator-managed and under your discretion to log,
-redact, or audit. Routine startup logging like "loaded store `X` (kind:
-postgres)" is fine. **Claim content** — the runtime substrate-supplied
-`payload` / `address` / `region` bytes returned by `Store.Open` — is
-governed by blessed invariant 20 and is **never** under operator-side
-logging discretion. The boundary is verb-based: anything Rimsky receives
-via the 5-verb interface is claim content (inert); anything Rimsky reads
-from `RIMSKY_STORES_CONFIG` is store config (operator's call).
+**Inertness boundary (v3 spec §13.3):** *store-config bytes* (the
+`stores.yml` rimsky reads, plus each store-service's own config) are
+operator-managed; what to log, redact, or audit is your call. Routine
+startup logging like "loaded remote store `content` at
+`grpc://store-filesystem:9100`" is fine. **Claim content** — the runtime
+substrate-supplied `payload` / `address` / `region` bytes returned by
+`Store.Open` over the wire — is governed by blessed invariant 20 and is
+**never** under operator-side logging discretion. The boundary is
+verb-based: anything rimsky receives over the 4-verb wire is claim
+content (inert); anything rimsky reads from `RIMSKY_STORES_CONFIG` is
+store config (operator's call).
 
-#### 3.4.5 Encrypt-before-pass (operator practice)
+If you need to pass sensitive bytes through claim content (payload,
+address, or region), encrypt them before they enter the producer-side
+substrate. Rimsky transports ciphertext as opaque bytes; the consuming
+executor decrypts at point of use. Rimsky ships no helper library;
+implementers handle the crypto end-to-end.
 
-Sensitive fields inside claim content (any of payload / address / region)
-should be encrypted at any producer-side boundary before they enter
-Rimsky's address space (spec §17.6). Rimsky transports ciphertext as
-opaque bytes; the consuming executor decrypts at point of use.
-
-- Asymmetric is the recommended default (executor holds private key;
-  producer holds public).
-- Field-level, not whole-content — Rimsky needs to see structure to
-  substitute by name; sensitive values are individually encrypted.
-- Rimsky-side awareness: zero. The protocol is unaware of encryption.
-
-This is a documented operator practice, not a Rimsky feature. Rimsky ships
-no helper library; implementers handle the crypto end-to-end.
-
-#### 3.4.6 Deploy-time validation surface
+#### 3.4.5 Deploy-time validation surface
 
 When a template is uploaded to control-api, the validator (using the
 loaded operator config) checks:
 
-- Every `stores[*].name` resolves to a configured store kind in the local
-  registry.
+- Every `stores[*].name` resolves to a configured remote store in the
+  local `stores.yml`.
 - Every `stores[*].intent` is `"r"` or `"rw"`.
-- Every `stores[*].alias` (defaulting to the store name) is unique within
-  the node.
+- Every `stores[*].alias` (defaulting to the store name) is unique
+  within the node.
 - Every `locks[*].name` resolves to a declared `named_locks:` entry.
 - Every `inherits[*].claim` resolves to an upstream claim alias the
   inheriting node depends on (transitively).
 - Holding-subgraph computation succeeds for each held claim (acquirer +
-  inheritors, all reachable via deps).
-- Every claim served by a configured pick policy (selector matches a
-  `pick_policies` key on the store) declares `intent: rw` (spec §14.5 —
-  pick-policy claims are inherently mutating).
+  inheritors, all reachable via dependencies).
 - `frame_resolution` is `coalesce` or `serial_queue`.
 
 What deploy-time validation does **not** check:
 
-- **Selector text against substrate grammar.** Selectors may contain
-  `{{...}}` substitution directives resolved at dispatch; their post-
-  substitution shape is unknown until then. The authoritative validity
-  check is the substrate's response to `Open` at dispatch (spec §7.5).
-- Substrate-specific config inside `pick_policies` blocks (per-substrate
-  factories validate at `Build`).
-- Substrate connection-string contents.
+- **Selector text against substrate grammar.** Selectors are opaque
+  strings rimsky carries verbatim from template DSL (after `{{...}}`
+  substitution at dispatch) through to the store-service. Rimsky does
+  not parse, classify, or look up selectors against any store-side
+  state. The authoritative validity check is the substrate's response
+  to `Open` at dispatch (v3 spec §7.3).
+- **Pick-policy intent.** Pick-policy classification is store-side; the
+  control-api has no way to recognize a `@policy-name` selector as
+  pick-policy because pick-policy registration lives in the
+  store-service's own config. Operators are responsible for ensuring
+  pick-policy claims declare `intent: rw` (the substrate will reject
+  read-only `Open` against a pick-policy selector at dispatch).
+- **Substrate connection details / store-service configs.** These live
+  in the store-service binary's own config and rimsky has no view of
+  them.
 
 ---
 
@@ -528,7 +513,7 @@ params_schema:                      # JSON Schema for POST /instances {params}
 params_redact:                      # field names to redact in GET responses
   - api_key
 
-nodes:                              # the graph. order is irrelevant; deps drive ordering.
+nodes:                              # the graph. order is irrelevant; dependencies drive ordering.
   - type: discover                  # node_type, unique within template
     executor: http-node             # name from supervisor-config.executors
     userdata:                       # opaque to rimsky; passed through to executor
@@ -546,7 +531,7 @@ nodes:                              # the graph. order is irrelevant; deps drive
 
   - type: transform
     executor: http-node
-    deps: [discover]                # runs after `discover` reaches fresh
+    dependencies: [discover]        # runs after `discover` reaches fresh
     userdata:
       url: "http://transformer:8080/run"
       method: POST
@@ -560,10 +545,10 @@ nodes:                              # the graph. order is irrelevant; deps drive
 
   - type: nightly-refresh
     executor: http-node
-    schedule: "0 2 * * *"           # cron expression; invalidates deps chain at fire time
+    schedule: "0 2 * * *"           # cron expression; invalidates dependency chain at fire time
     userdata:
       url: "http://refresh:8080/go"
-    deps: [transform]
+    dependencies: [transform]
 ```
 
 ### 4.2 Common patterns
@@ -571,7 +556,7 @@ nodes:                              # the graph. order is irrelevant; deps drive
 **Pure-cascade fan-out.** A node with no `executor` and no `schedule` is a
 pure-cascade node: it contributes to dependency wiring but never dispatches.
 Use it to fan out one producer into multiple reader chains without duplicating
-execution. Declare it with `deps: [...]` only.
+execution. Declare it with `dependencies: [...]` only.
 
 **Schedule-driven ingestion.** A top-of-graph node with a `schedule:` cron
 invalidates itself (and cascades staleness down) at each fire time. Children
@@ -583,16 +568,19 @@ a selector and intent — e.g. `{name: topics, selector: "@review-queue",
 intent: rw, alias: queue}`. The supervisor calls `Store.Open` to acquire
 the claim; the executor receives the substrate-native address opaquely and
 the picked item's payload is available via `{{claim.queue.payload.<f>}}`
-substitution paths. Declare `claim_resolutions:` on the acquiring node to
-choose the substrate's terminal action (`delete`, `release_to_back`,
-`release_to_head`, etc.).
+substitution paths. Substrate disposition at terminal — what `Commit` /
+`Abandon` mean for the substrate's own state — is governed entirely by
+the substrate's own configuration (e.g. the postgres reference store-
+service exposes per-pick-policy `on_commit_default` / `on_give_up_default`
+in its own `config.yml`). Templates carry no substrate vocabulary.
 
 **Held claims (multi-node access to the same picked item).** A downstream
 node declares `inherits: [{claim: <alias>}]` to extend the claim's
 lifetime to cover its own run. The supervisor's auto-terminal mechanism
-(spec §14.4) fires exactly one resolution at holding-subgraph completion
-based on aggregate outcome (all-success → `on_commit`; any-failure →
-`on_give_up`). See `node-graph-design.md` for the full inheritance model.
+(v3 spec §4.10 invariant 13, as amended by the 2026-04-30 stores cleanup)
+fires exactly one substrate verb at holding-subgraph completion based
+on aggregate outcome (all-success → `Commit`; any-failure → `Abandon`).
+See `node-graph-design.md` for the full inheritance model.
 
 **Error-policy chains.** Declare `error_types.<class>.policy` as an
 ordered list of actions the scheduler walks on repeated failures.
@@ -613,19 +601,19 @@ Before a template is accepted, the control API validates:
   `intent: rw`
 - every `stores[*].alias` is unique within the node
 - every `locks[*].name` resolves to a declared `named_locks:` entry
-- every `deps[]` entry resolves to another node in the same template
+- every `dependencies[]` entry resolves to another node in the same template
 - every `inherits[*].claim` resolves to an upstream claim alias acquired
   by a node the inheritor depends on (transitively)
 - holding-subgraph computation succeeds for each held claim (acquirer +
-  inheritors all reachable via deps)
+  inheritors all reachable via dependencies)
 - placeholder strings: `{params.<key>}` (single brace, instantiation-time)
   references keys in `params_schema`; `{{...}}` (double brace,
   dispatch-time) references resolve to known dep / claim / params paths
 - `attributes.schema` is a valid JSON Schema (draft-07)
 
 What is **not** validated at deploy time: selector text against substrate
-grammar (substrate parses; resolved selector unknown until dispatch — spec
-§7.5).
+grammar (substrate parses; resolved selector unknown until dispatch — v3
+spec §7.3).
 
 Validation errors come back as HTTP 400 with a `validation_errors` array.
 
@@ -775,12 +763,25 @@ into the control-api process. Operators that want admin-only access wire an
 their configured token; processes started without an authenticator leave
 these routes anonymous (consistent with the rest of the API in pre-v1).
 
-**Insert items into a postgres-store pick-policy items table:**
+**There is no rimsky-side admin endpoint for items insertion.** v3 removed
+the `POST /admin/stores/{name}/pick-policies/{selector}/items` route
+entirely (v3 spec §11.1). Items insertion is store-internal and out of
+scope for the rimsky 4+1 protocol — each store-service that exposes
+items-table queue semantics owns its own admin surface on a separate
+listener port. Operators configure their item-seeding tooling to talk
+to the store-service directly, never through rimsky.
+
+**Insert items into a postgres store-service's pick-policy items table:**
+
+The reference postgres store-service (under `stores/postgres/`) ships
+with a documented admin endpoint at `POST /admin/items/{selector}` on
+its configured `admin_port` (separate from the `grpc_port` and
+`http_port` that carry the 4-verb store protocol). The reference
+docker-compose stack maps this to host port `9121`:
 
 ```bash
-curl -s -X POST 'http://localhost:8080/admin/stores/topics/pick-policies/@review-queue/items' \
+curl -s -X POST 'http://localhost:9121/admin/items/@review-queue' \
   -H 'Content-Type: application/json' \
-  -H 'X-Rimsky-Admin-Token: <token>' \
   -d '{
     "items": [
       {"payload": {"area": "A_1", "subtopic": "S_1"}},
@@ -789,41 +790,24 @@ curl -s -X POST 'http://localhost:8080/admin/stores/topics/pick-policies/@review
   }'
 ```
 
-URL shape: `POST /admin/stores/<store-name>/pick-policies/<selector>/items`.
-The `<selector>` is the substrate-recognized form configured under the
-store's `pick_policies:` block.
-
-**Selector encoding.** Both forms work and resolve to the same route:
-
-```bash
-# Raw '@' (what curl produces by default):
-.../pick-policies/@review-queue/items
-
-# Percent-encoded (what URL-builder libraries typically produce):
-.../pick-policies/%40review-queue/items
-```
-
-The chi router decodes the path segment once before dispatch, so the
-handler always sees the leading `@`. The one footgun is **double-
-encoding** — `.../pick-policies/%2540review-queue/items` decodes to
-the literal string `%40review-queue`, which won't match the selector
-configured in `stores.yml`. This usually shows up when a client URL-
-escapes a value that's already escaped (e.g. running the encoded form
-through a second `urlencode` pass). The endpoint will return `400`
-with a "no pick policy at selector" error when this happens.
+URL shape: `POST <admin_endpoint>/admin/items/<selector>`. The
+`<selector>` is the substrate-recognized form configured under the
+store-service's own `pick_policies:` block (see §3.4.2). Percent-encoded
+selectors are accepted (`%40review-queue` decodes to `@review-queue`);
+double-encoding is a footgun the store-service surfaces as a `400` with
+a "no pick policy at selector" error.
 
 Response: `201 Created` with `{"inserted": <n>}`. Bulk-inserts each
-`items[*].payload` into the items table backing the named pick policy on
-the named postgres store. Errors:
+`items[*].payload` into the items table backing the named pick policy.
+Authentication, TLS, and access control on this endpoint are operator-
+deployment concern (mTLS, service mesh, IAM); the reference store-service
+runs unauthenticated by default and is intended to live on an internal
+network.
 
-- `400` — empty `items` array, missing/invalid JSON in any payload, or the
-  store is not a postgres store, or the named selector is not a configured
-  pick policy on that store
-- `404` — no store registered under that name in the loaded `stores.yml`
-- `503` — control-api was started without a store registry (mis-wired)
-
-Rimsky itself never enqueues into pick-policy items tables; this endpoint
-exists for operators and external producers who prefer HTTP over direct SQL.
+Custom store-services that support pick policies expose their own admin
+surface (HTTP, gRPC, direct SQL — the store-author's choice). Read the
+store-author guide and each store-service's own documentation for the
+shape.
 
 **Force-fire a scheduled node (set `next_fire_at = now()`):**
 
@@ -837,7 +821,7 @@ Response: `204 No Content` the moment the row is updated. The handler does
 fires the schedule. Callers that need to observe the fire (e.g. acceptance
 tests) poll `rimsky_nodes.state` or the events table separately.
 
-This is the same primitive the §19.2 smoke fixture uses to drive the source
+This is the same primitive the v3 §10 smoke fixture uses to drive the source
 node 100 times in a row: with `RIMSKY_SCHEDULER_TICK_MS` set low (50ms in the
 fixture), each force-fire round-trips sub-second under stub executors. In
 production, prefer `POST /nodes/:id/invalidate` for one-off re-runs (it

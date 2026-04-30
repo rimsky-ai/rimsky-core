@@ -7,8 +7,9 @@
 // the pool for auto-commit queries.
 //
 // LockHolders is a special case: the concrete row-level helpers live in
-// core/store/lockholders.go (per spec §16.1, the lock-holder mechanism is
-// part of the unified store package's surface). The backend exposes a thin
+// core/store/lockholders.go (the lock-holder mechanism is part of the
+// unified store package's surface — carried forward unchanged in v3 per
+// §14). The backend exposes a thin
 // adapter (LockHoldersStore) that satisfies storage.LockHoldersStore by
 // delegating to *store.LockHoldersClient. Callers that need the helpers not
 // represented in the storage interface (RefreshHeartbeat,

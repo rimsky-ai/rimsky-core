@@ -1,4 +1,5 @@
-// Held-claim runtime helpers (spec §13.6 / §14.4).
+// Held-claim runtime helpers (release path §7.6 / auto-terminal
+// §4.10 invariant 13).
 //
 // Held-claim rimsky_claim_holders rows are inserted at acquisition
 // (in runner_acquire.go::insertHeldClaimHoldersAtAcquire), not at
@@ -56,7 +57,7 @@ func markClaimHolderForNode(
 
 // findInheritedAliasesForNode resolves one (acquirerType, alias,
 // lockHolderID) entry per held subgraph this node is a non-acquirer
-// member of. Used by the inheritor branch of the §13.6 release path.
+// member of. Used by the inheritor branch of the §7.6 release path.
 //
 // Per claim-holders row this node owns, the function reads the parent
 // lock-holder row to find the acquirer node, looks up the acquirer's
@@ -218,38 +219,4 @@ func memberOf(sg node.HoldingSubgraph, nodeType string) bool {
 		}
 	}
 	return false
-}
-
-// resolutionForAlias picks the per-alias ClaimResolution from the
-// acquirer's NodeDef. Returns the zero value (with empty action
-// strings) when not declared — the auto-terminal routing falls
-// through to the "commit"/"abandon" defaults.
-func resolutionForAlias(def *node.TemplateNodeDef, alias string) node.ClaimResolution {
-	if def == nil {
-		return node.ClaimResolution{}
-	}
-	return def.ClaimResolutions[alias]
-}
-
-// resolutionForAcquirerNode loads the acquirer's NodeDef from the
-// template and returns the per-alias ClaimResolution. Used when an
-// inheritor's terminal needs to fire the acquirer's resolution at
-// auto-terminal.
-func resolutionForAcquirerNode(
-	ctx context.Context, args RunArgs, instanceID shared.UUID, acquirerType, alias string,
-) (node.ClaimResolution, error) {
-	inst, err := args.Storage.Instances().Get(ctx, instanceID, nil)
-	if err != nil || inst == nil {
-		return node.ClaimResolution{}, err
-	}
-	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
-	if err != nil || tmpl == nil {
-		return node.ClaimResolution{}, err
-	}
-	for i := range tmpl.Spec.Nodes {
-		if tmpl.Spec.Nodes[i].Type == acquirerType {
-			return tmpl.Spec.Nodes[i].ClaimResolutions[alias], nil
-		}
-	}
-	return node.ClaimResolution{}, nil
 }

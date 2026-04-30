@@ -1,8 +1,8 @@
-// Substantive scenario coverage for attributes substitution at dispatch
-// under stores-redesign-v2: a `{{params.key}}` directive in the
-// attributes schema's `source:` is resolved at dispatch and lands in
-// the attributes payload that the supervisor persists alongside any
-// executor-supplied delta.
+// Substantive scenario coverage for attributes substitution at
+// dispatch under the stores redesign: a `{{params.key}}` directive in
+// the attributes schema's `source:` is resolved at dispatch and lands
+// in the attributes payload that the supervisor persists alongside
+// any executor-supplied delta.
 //
 // Targets blessed invariants 11 (userdata opaque — never substituted)
 // and 12 (attributes validate twice).

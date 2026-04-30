@@ -1,4 +1,4 @@
-// Empty-executor sweep. Per spec §17.1 step 4 (the omnibus runner) the
+// Empty-executor sweep. Per spec §7.3 step 4 (the omnibus runner) the
 // supervisor distinguishes three dispatch paths inside one runner; the
 // scheduler-side sweep here is the upstream-equivalent split for the
 // empty-executor rows that the supervisor never sees:
@@ -12,7 +12,7 @@
 //     claim=true): the node has real work — it owns a claim acquisition
 //     and lock orchestration. The scheduler enqueues it onto the dispatch
 //     queue just like an executor-backed node; the supervisor's omnibus
-//     runner picks it up via §17.1 step 4b and synthesises the
+//     runner picks it up via §7.3 step 4b and synthesises the
 //     Complete{changed:true} outcome itself once the claim+locks are
 //     acquired.
 //
@@ -51,12 +51,12 @@ type PureCascadeArgs struct {
 //     to every dependent. The node never enters the dispatch queue.
 //   - Native-claim-only: enqueue a dispatch row with the node-def's
 //     RequiredStores, leaving the node `stale`. The supervisor's omnibus
-//     runner (spec §17.1 step 4b) takes it from here.
+//     runner (spec §7.3 step 4b) takes it from here.
 //
 // Errors on individual nodes are logged and processing continues; the
 // return value is the count of nodes successfully processed (transitioned
 // for pure-cascade, enqueued for native-claim-only). Per spec §6.4 +
-// §17.1 step 4.
+// §7.3 step 4.
 func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) {
 	sb := args.Storage
 	log := args.Logger
@@ -156,9 +156,9 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n storage.
 // which the supervisor's SelectCandidates accepts via the `executor_name
 // IS NULL` branch). RequiredStores is populated from the template node
 // def so the supervisor-pool predicate (`required_stores ⊆
-// accepted_stores`, spec §14.2) routes the row correctly. The node row
+// accepted_stores`, spec §6.2) routes the row correctly. The node row
 // stays `stale` until the supervisor's omnibus runner claims it and
-// synthesises the §17.1 step 4b Complete.
+// synthesises the §7.3 step 4b Complete.
 func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n storage.NodeRow, def *nodepkg.TemplateNodeDef) error {
 	required := nodepkg.RequiredStores(*def)
 	if required == nil {
@@ -204,7 +204,7 @@ func lookupTemplateNodeDef(ctx context.Context, sb storage.StorageBackend, n sto
 }
 
 // hasClaimStore reports whether the node-def declares any store
-// claim. Under stores-redesign-v2 every NodeStoreRef is a claim
+// claim. Under the stores redesign every NodeStoreRef is a claim
 // (selector + intent + alias), so a non-empty Stores list answers yes.
 // Returns false when def is nil — the historically conservative
 // default (§6.4): if the template can't be resolved, treat the row as

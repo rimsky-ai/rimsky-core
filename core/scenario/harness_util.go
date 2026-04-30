@@ -37,22 +37,15 @@ func AliasedClaimRef(storeName, selector, intent, alias string) node.NodeStoreRe
 }
 
 // MutexLock returns a NodeLockRef for a process-wide mutex (limit
-// configured operator-side per spec §15.2).
+// configured operator-side per spec §6.1).
 func MutexLock(name string) node.NodeLockRef {
 	return node.NodeLockRef{Name: name}
 }
 
 // CountingLock returns a NodeLockRef. Limit is operator-configured per
-// spec §15.2; templates reference by name only.
+// spec §6.1; templates reference by name only.
 func CountingLock(name string) node.NodeLockRef {
 	return node.NodeLockRef{Name: name}
-}
-
-// ResolveClaim returns a (alias, ClaimResolution) pair declaring the
-// substrate-side actions auto-terminal fires for a held claim. Use
-// alongside scenario.WithClaimResolutions.
-func ResolveClaim(alias, onCommit, onGiveUp string) (string, node.ClaimResolution) {
-	return alias, node.ClaimResolution{OnCommit: onCommit, OnGiveUp: onGiveUp}
 }
 
 // Inherit returns an InheritEntry referencing an upstream-acquirer

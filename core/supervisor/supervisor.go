@@ -1,7 +1,5 @@
-// Plan A Task 10.4 — supervisor main loop.
-//
-// Port of rimsky/src/supervisor/supervisor.ts. Spec §6.2 (per-dispatch flow),
-// §17 (ownership @blessed-invariant). Supervisor:
+// Supervisor main loop. Spec §7.3 (per-dispatch flow) + §4.10
+// invariants for the ownership story. Supervisor:
 //
 //   - Registers self in rimsky_supervisors (callback host/port, accepted
 //     executors, accepted stores, concurrency).
@@ -11,7 +9,7 @@
 //   - Heartbeat tick (HeartbeatInterval): update own supervisor row, update
 //     per-active-node heartbeats, refresh `rimsky_lock_holders` rows owned
 //     by this supervisor whose holder_node_id is currently `running` (per
-//     spec §13.4). Operator invalidates do not preempt running work — they
+//     spec §7.5). Operator invalidates do not preempt running work — they
 //     enqueue/coalesce a frame (per
 //     docs/specs/2026-04-26-frame-resolution-design.md §3.3 / §5.4).
 //   - Claim tick (ClaimPollInterval): while active < concurrency, try to
@@ -20,11 +18,11 @@
 //   - On shutdown: stop claiming, wait up to 30s for active runs, close the
 //     callback server, unregister, close the executor client pool.
 //
-// @blessed-invariant 4: Claimant-guarded release. (Spec §18 invariant 4.)
+// @blessed-invariant 4: Claimant-guarded release. (Spec §4.10 invariant 4.)
 //
 //	Every DELETE FROM rimsky_lock_holders and every UPDATE
 //	rimsky_dispatch SET claimed_by = NULL is gated on
-//	`AND … = supervisor_id`. The §13.4 heartbeat refresh below is a
+//	`AND … = supervisor_id`. The §7.5 heartbeat refresh below is a
 //	WRITE (not a release), but it inherits the same claimant guard:
 //	the WHERE clause is `holder_supervisor_id = $1`, so a stale
 //	heartbeat from a different supervisor can never extend a row it
@@ -34,22 +32,22 @@
 //	heartbeat-write claimant guard. Do not relax the
 //	`holder_supervisor_id = $1` predicate on the heartbeat UPDATE.
 //
-// @blessed-invariant 10: Lock acquisition is atomic with dispatch claim.
-// (Spec §18 invariant 10.)
+// @blessed-invariant 10: Lock acquisition is atomic with dispatch
+// claim (rimsky-side). Per v3 spec §4.10:
 //
-//	The §13.3 acquisition transaction either claims the dispatch row
-//	AND inserts every required `rimsky_lock_holders` row AND completes
-//	every Store.Open mutation, or none of these. The acquisition tx
-//	itself lives in `core/supervisor/runner_acquire.go` and
-//	`core/queue/postgres/queue.go` (building-block helpers); this
-//	file's contribution is structural — the heartbeat refresh below
-//	MUST NOT extend rows for nodes that have transitioned out of
-//	`running`. The `holder_node_id IN (running-nodes)` filter is the
-//	§13.4 correctness predicate that keeps held-claim subgraph
-//	timeout reachable: once the acquirer leaves `running`, the
-//	heartbeat refresh stops touching the row and the orphan-reap
-//	cutoff (5 × heartbeat_interval) becomes attainable so stranded
-//	held subgraphs are eventually reaped.
+//	The §7.3 acquisition transaction either claims the dispatch row
+//	AND inserts every required `rimsky_lock_holders` row AND records
+//	the `Store.Open`-returned address, or none of these. The store's
+//	own state mutations run in a substrate-internal transaction
+//	decoupled from rimsky's. Single-writer-per-region (invariant 4b)
+//	holds because rimsky's conflict predicate gates lock-holder
+//	INSERTs against `rimsky_lock_holders` only. The acquisition tx
+//	lives in `core/supervisor/runner_acquire.go`; this file's
+//	contribution is structural — the heartbeat refresh below MUST
+//	NOT extend rows for nodes that have transitioned out of
+//	`running`. The `holder_node_id IN (running-nodes)` filter keeps
+//	the orphan-reap cutoff (5 × heartbeat_interval) attainable so
+//	stranded held subgraphs are eventually reaped.
 package supervisor
 
 import (
@@ -81,14 +79,22 @@ type Config struct {
 	ClaimPollInterval time.Duration // default 1s
 	Resolver          executor.Resolver
 	// StoreRegistry is the per-process store registry built by
-	// config.StartSupervisor from the YAML stores config (spec §14.1).
+	// config.StartSupervisor from the YAML stores config (spec §6.1).
 	// The supervisor uses it for: deriving `accepted_stores` at
-	// registration (§14.2), and looking up concrete *store.Store values
-	// during dispatch (§13.3) and commit (§13.6). Required (Start
+	// registration (§6.2), and looking up concrete *store.Store values
+	// during dispatch (§7.3) and commit (§7.6). Required (Start
 	// returns an error when nil).
 	StoreRegistry *store.Registry
-	CallbackHost  string
-	CallbackPort  int
+	// NamedLocks is the operator-side named-lock config (limits per
+	// name). The supervisor enforces counter-semaphore semantics at
+	// acquire time: under the per-name advisory lock, the unexpired
+	// lock-holder count must be < limit before insert. Empty / missing
+	// → no limits enforced; templates referencing any named lock will
+	// have failed validation at deploy time (control-api wires the
+	// hook).
+	NamedLocks   store.NamedLocksConfig
+	CallbackHost string
+	CallbackPort int
 	// CallbackAdvertiseHost / CallbackAdvertisePort override the host:port the
 	// supervisor *advertises* to executors for async-handoff callbacks. Use
 	// these when the listener bind address (e.g. `0.0.0.0:9100` in a
@@ -158,7 +164,7 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, errors.New("supervisor.Start: StoreRegistry is required")
 	}
 
-	// The omnibus runner (§17.1) and the §17.1 step 6c release tx both
+	// The omnibus runner and the release tx (§7.6 release path) both
 	// run on a *pgxpool.Pool. Type-assert on the queue impl for Pool();
 	// every production queue is core/queue/postgres which exposes it.
 	qpool, err := queuePool(cfg.Queue)
@@ -207,7 +213,7 @@ func Start(cfg Config) (*Handle, error) {
 }
 
 // queuePool extracts the underlying *pgxpool.Pool from a DispatchQueue
-// implementation. The omnibus runner needs a concrete pool to run §13.3
+// implementation. The omnibus runner needs a concrete pool to run §7.3
 // transactions; abstracting through a pool-less interface would force
 // every queue impl to expose the same — for v1 only the postgres impl
 // exists, so we type-assert here.
@@ -221,7 +227,7 @@ func queuePool(q queue.DispatchQueue) (*pgxpool.Pool, error) {
 
 // storeRegistryNames returns a sorted-stable copy of the registry's store
 // names. Used at registration time to populate `accepted_stores` per spec
-// §14.2 (operator-declared store set the supervisor pool can satisfy).
+// §6.2 (operator-declared store set the supervisor pool can satisfy).
 func storeRegistryNames(reg *store.Registry) []string {
 	stores := reg.Stores()
 	if len(stores) == 0 {
@@ -288,13 +294,13 @@ func runLoop(
 		if err := cfg.Storage.Supervisors().Heartbeat(context.Background(), cfg.SupervisorID, cnt, nil); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
-		// §13.4 lock-holder heartbeat refresh. ExtendHeartbeat issues the
+		// §7.5 lock-holder heartbeat refresh. ExtendHeartbeat issues the
 		// SQL with the running-nodes subquery filter so preserve-for-resume
 		// rows (anchored to nodes that have transitioned out of `running`
-		// to `stale`) are NOT refreshed — the resume-grace cutoff (§13.6)
+		// to `stale`) are NOT refreshed — the resume-grace cutoff
 		// would never fire otherwise. The expiresAt budget is `5 ×
 		// HeartbeatInterval` per the spec; the storage adapter converts
-		// the duration back to integer seconds for the §13.4 SQL literal.
+		// the duration back to integer seconds for the §7.5 SQL literal.
 		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
 		if err := cfg.Storage.LockHolders().ExtendHeartbeat(context.Background(), cfg.SupervisorID, expiresAt, nil); err != nil {
 			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
@@ -310,7 +316,7 @@ func runLoop(
 			activeMu.Unlock()
 			return
 		}
-		// Reserve a slot before launching. RunNode does its own §13.3
+		// Reserve a slot before launching. RunNode does its own §7.3
 		// candidate selection; if there's no eligible candidate it bails
 		// quickly and we release the slot in the defer below.
 		activeCount++
@@ -334,6 +340,7 @@ func runLoop(
 				Pool:              pool,
 				Resolver:          cfg.Resolver,
 				StoreRegistry:     cfg.StoreRegistry,
+				NamedLocks:        cfg.NamedLocks,
 				CallbackURL:       h.advertisedURL,
 				HeartbeatInterval: cfg.HeartbeatInterval,
 			}, reg.Register)

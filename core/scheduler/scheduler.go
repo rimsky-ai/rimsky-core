@@ -1,6 +1,6 @@
-// Package scheduler main loop. Port of rimsky/src/scheduler/scheduler.ts.
+// Package scheduler main loop.
 //
-// Per tick (spec §6.1 + §13.5):
+// Per tick:
 //  1. Advisory-lock guard (pg_try_advisory_lock) skips ticks when another
 //     replica holds the lock. Best-effort — if lock acquisition errors we
 //     fall through to an unlocked tick rather than dropping work.
@@ -11,24 +11,20 @@
 //     than the cutoff are forced running→stale, supervisor assignment is
 //     cleared, a heartbeat_lost event is appended, and the node is
 //     re-enqueued (no retry bump — infra event, not application error).
-//  5. Dispatch-claim sweep (§13.5 step 1) — dispatch rows whose
-//     `last_heartbeat_at` is older than the cutoff are released
-//     claimant-guarded so a fresh supervisor can pick them up. The redesign
-//     switched the predicate column from `claimed_at` to `last_heartbeat_at`
-//     so a long-running heartbeating supervisor is not reaped.
-//  6. Orphan-reap (§13.5) — `rimsky_lock_holders` rows whose
-//     `expires_at < now()` are released: for `lock_kind='region'`
-//     `Store.Abandon(region, address, "")` fires so the substrate
-//     undoes any in-progress state per its on_give_up_default; the
-//     lock-holder row is then deleted claimant-guarded. Cascade FK on
-//     `rimsky_claim_holders.lock_holder_id` cleans up held-claim rows.
-//  7. (Claim-holder GC removed — under stores-redesign-v2 the cascade
-//     FK on `rimsky_claim_holders.lock_holder_id` makes the dedicated
+//  5. Dispatch-claim sweep — dispatch rows whose `last_heartbeat_at` is
+//     older than the cutoff are released claimant-guarded so a fresh
+//     supervisor can pick them up.
+//  6. Orphan-reap — `rimsky_lock_holders` rows whose `expires_at < now()`
+//     are deleted claimant-guarded. Per v3 spec §7.5, Store.Abandon is NOT
+//     called — the store's own TTL/sweep handles its internal state.
+//     Cascade FK on `rimsky_claim_holders.lock_holder_id` cleans up
+//     held-claim rows.
+//  7. (Claim-holder GC removed — the cascade FK on
+//     `rimsky_claim_holders.lock_holder_id` makes the dedicated
 //     leaked-claim-holder reap unnecessary.)
-//  8. Visibility-timeout sweep (§12.12) — for each postgres store with
-//     pick policies in the local registry, reset items-table rows
-//     whose `claimed_at + visibility_timeout < now()` and for which no
-//     `rimsky_lock_holders` row exists.
+//  8. (v2's visibility-timeout sweep over operator-owned items tables is
+//     gone — each store-service runs its own internal sweep per v3 spec
+//     §7.8 obligation #1.)
 //  9. Ready sweep — executor-backed stale nodes whose deps are all fresh
 //     get enqueued for the next claim cycle.
 package scheduler
@@ -66,12 +62,15 @@ const RimskySchedulerTickLockKey int64 = 4853127298010834892
 
 // Config bundles everything the scheduler loop needs.
 //
-// LockHolders, StoreRegistry and Pool are required for the §13.5 step-2
-// (lock-holder sweep), step-3 (claim-holder GC), and step-4
-// (visibility-timeout) sweeps. When any of them are nil the corresponding
-// sweep is skipped — this keeps existing tests that exercise only the
-// dispatch-claim / heartbeat / ready sweeps from being forced into store
-// wiring.
+// LockHolders and Pool are required for the orphan-reap sweep. When
+// either is nil the corresponding sweep is skipped — this keeps tests
+// that exercise only the dispatch-claim / heartbeat / ready sweeps
+// from being forced into store wiring.
+//
+// In v3 the scheduler does not consult any store-side state — the v2
+// visibility-timeout sweep is gone, and the orphan reaper no longer
+// fires Store.Abandon per spec §7.5. There is no StoreRegistry on
+// this Config.
 type Config struct {
 	Storage              storage.StorageBackend
 	Queue                queue.DispatchQueue
@@ -80,9 +79,8 @@ type Config struct {
 	TickInterval         time.Duration
 	HeartbeatTimeout     time.Duration
 	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
-	Pool                 *pgxpool.Pool // required for advisory-lock guard + new sweeps
+	Pool                 *pgxpool.Pool // required for advisory-lock guard + orphan reap
 	LockHolders          *store.LockHoldersClient
-	StoreRegistry        *store.Registry
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -238,26 +236,22 @@ func tick(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	// 6. Lock-holder sweep (§13.5 step 2). Skipped when wiring is incomplete.
+	// 6. Lock-holder sweep. Skipped when wiring is incomplete. No
+	// substrate verb fired — store's own TTL handles internal state
+	// (per v3 spec §7.5).
 	if cfg.LockHolders != nil && cfg.Pool != nil {
 		if err := sweepLockHolders(ctx, cfg, log); err != nil {
 			return err
 		}
 	}
 
-	// 7. Claim-holder GC is no longer needed under stores-redesign-v2.
+	// 7. Claim-holder GC is no longer needed:
 	// rimsky_claim_holders.lock_holder_id has ON DELETE CASCADE, so when
 	// the lock-holder row is deleted (at terminal or by orphan reap), the
 	// claim-holder rows are cleaned up automatically.
 
-	// 8. Visibility-timeout sweep (§12.12 + §13.5 step 4). Iterates each
-	// postgres store's configured pick_policies; skipped when the
-	// per-process store registry is unavailable.
-	if cfg.StoreRegistry != nil && cfg.Pool != nil {
-		if err := visibilityTimeoutSweep(ctx, cfg, log); err != nil {
-			return err
-		}
-	}
+	// 8. (v2's visibility-timeout sweep is gone — each store-service
+	// runs its own internal sweep per v3 spec §7.8 obligation #1.)
 
 	// 9. Ready sweep.
 	if err := sweepReady(ctx, cfg, log); err != nil {
@@ -333,9 +327,12 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 }
 
 func sweepOrphanedClaims(ctx context.Context, cfg Config, log shared.Logger) error {
-	// §13.5 step 1: predicate column is `last_heartbeat_at`. The Queue's
-	// ListOrphanedClaims already encodes that predicate; the cutoff we pass
-	// is `now() - 5 × heartbeat_timeout`.
+	// §7.4 orphan-claim sweep: predicate column is
+	// `rimsky_dispatch.last_heartbeat_at`. The Queue's ListOrphanedClaims
+	// already encodes that predicate; the cutoff we pass is
+	// `now() - 5 × heartbeat_timeout`. (Distinct from the §7.5 lock-holder
+	// orphan reaper in sweep_locks.go which keys on
+	// `rimsky_lock_holders.expires_at`.)
 	cutoff := cfg.Clock.Now().Add(-cfg.OrphanedClaimTimeout)
 	orphans, err := cfg.Queue.ListOrphanedClaims(ctx, cutoff)
 	if err != nil {

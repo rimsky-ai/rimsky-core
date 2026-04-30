@@ -10,4 +10,8 @@ done
 docker build -f deploy/Dockerfile.http-node -t rimsky/executor-http-node:$VERSION -t rimsky/executor-http-node:latest .
 docker build -f deploy/Dockerfile.claude-agent -t rimsky/executor-claude-agent:$VERSION -t rimsky/executor-claude-agent:latest .
 
-echo "Built 6 images at version $VERSION"
+docker build -f stores/filesystem/Dockerfile.filesystem -t rimsky/store-filesystem:$VERSION -t rimsky/store-filesystem:latest .
+docker build -f stores/postgres/Dockerfile.postgres -t rimsky/store-postgres:$VERSION -t rimsky/store-postgres:latest .
+docker build -f stores/stub/Dockerfile.stub -t rimsky/store-stub:$VERSION -t rimsky/store-stub:latest .
+
+echo "Built 9 images at version $VERSION"

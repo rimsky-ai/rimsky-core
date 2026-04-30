@@ -1,11 +1,16 @@
-// Auto-terminal mechanism (spec §14.4).
+// Auto-terminal mechanism (spec §4.10 invariant 13, as amended by
+// docs/specs/2026-04-30-stores-protocol-cleanup-design.md).
 //
 // At a held claim's holding-subgraph completion, the supervisor fires
-// the substrate verb declared in the acquirer's claim_resolutions and
-// deletes the lock-holder row. Race-safe via SELECT … FOR UPDATE on
-// the lock-holder row plus a state='active' filter on the
-// claim-holders rows: concurrent terminations on the same subgraph
-// see the row already locked / already deleted and no-op.
+// exactly one substrate verb based on aggregate outcome — Commit if
+// every claim-holder reached `'completed'`, Abandon if any reached
+// `'failed'` — then deletes the lock-holder row. The substrate decides
+// what Commit / Abandon mean for its own state per its own
+// configuration; rimsky carries only the success/failure binary.
+// Race-safe via SELECT … FOR UPDATE on the lock-holder row plus a
+// state='active' filter on the claim-holders rows: concurrent
+// terminations on the same subgraph see the row already locked /
+// already deleted and no-op.
 
 package supervisor
 
@@ -16,18 +21,17 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/fallguy/rimsky/core/node"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// CheckAndFireResolution implements the spec §14.4 algorithm: lock
+// CheckAndFireResolution implements the spec §4.10 invariant 13 algorithm: lock
 // the rimsky_lock_holders row, check whether all rimsky_claim_holders
 // rows for the lock-holder are non-active, compute aggregate outcome
-// (any 'failed' → on_give_up; else → on_commit), route the substrate
-// verb per §14.4.1, and delete the lock-holder row claimant-guarded.
+// (any 'failed' → Abandon; else → Commit), fire that substrate verb,
+// and delete the lock-holder row claimant-guarded.
 //
 // Runs inside the caller's tx so the substrate verb + the lock-holder
 // delete + the cascade-cleared claim-holder rows commit atomically
@@ -35,10 +39,18 @@ import (
 //
 // Returns nil when the subgraph is not yet complete (some active
 // rows remain) — the next terminating member will re-check.
+//
+// Substrate-verb / commit-failure leak path: the substrate verb fires
+// over the wire BEFORE the surrounding rimsky tx commits. If the
+// substrate verb succeeds but the rimsky tx then fails to commit
+// (rare — Postgres connection drop between verb-return and Commit),
+// the next sibling-node terminal re-enters this function with the
+// lock-holder row still present and will fire the verb a second time.
+// This is safe because of v3 spec §7.8 obligation #3: terminal verbs
+// MUST be idempotent in `claim_id`. The second call is a no-op.
 func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
-	lockHolderID shared.UUID, alias string,
-	claimResolutions map[string]node.ClaimResolution,
+	lockHolderID shared.UUID,
 ) error {
 	row, err := lockLockHolderRow(ctx, tx, lockHolderID)
 	if err != nil {
@@ -46,7 +58,7 @@ func CheckAndFireResolution(
 	}
 	if row == nil {
 		// Already deleted by a concurrent termination on the same
-		// subgraph (race-safe per §14.4.2).
+		// subgraph (race-safe per §4.10 invariant 13.2).
 		return nil
 	}
 	if row.HolderSupervisorID != args.SupervisorID {
@@ -77,65 +89,31 @@ func CheckAndFireResolution(
 		return nil
 	}
 
-	resolution := claimResolutions[alias]
-	verbAction, success := selectResolutionAction(resolution, !anyFailed)
 	region := []byte(row.RegionData)
 	address := []byte(row.Address)
 	storeName := ""
 	if row.StoreName != nil {
 		storeName = *row.StoreName
 	}
-	s, ok := args.StoreRegistry.GetStore(storeName)
+	s, ok := args.StoreRegistry.Get(storeName)
 	if !ok {
 		return fmt.Errorf("CheckAndFireResolution: unknown store %q", storeName)
 	}
-	storeCtx := store.WithTx(ctx, tx)
-	if err := fireResolutionVerb(storeCtx, s, verbAction, success, region, address); err != nil {
-		return fmt.Errorf("CheckAndFireResolution: substrate verb (%s): %w", verbAction, err)
+	claimID := store.ClaimID(lockHolderID.String())
+	var verbErr error
+	if anyFailed {
+		verbErr = s.Abandon(ctx, claimID, region, address)
+	} else {
+		verbErr = s.Commit(ctx, claimID, region, address)
+	}
+	if verbErr != nil {
+		return fmt.Errorf("CheckAndFireResolution: substrate verb: %w", verbErr)
 	}
 
 	if err := args.LockHolders.DeleteByID(ctx, tx, lockHolderID, args.SupervisorID); err != nil {
 		return fmt.Errorf("CheckAndFireResolution: DeleteByID: %w", err)
 	}
 	return nil
-}
-
-// selectResolutionAction chooses the action vocabulary per §14.4.1.
-// Returns (verbAction, successPath). The verbAction passes through
-// to the substrate as policyOverride (or empty for default verbs).
-func selectResolutionAction(r node.ClaimResolution, success bool) (string, bool) {
-	if success {
-		if r.OnCommit == "" {
-			return "commit", true
-		}
-		return r.OnCommit, true
-	}
-	if r.OnGiveUp == "" {
-		return "abandon", false
-	}
-	return r.OnGiveUp, false
-}
-
-// fireResolutionVerb maps the action vocabulary to the substrate
-// verb call per §14.4.1's routing table.
-func fireResolutionVerb(
-	ctx context.Context, s store.Store,
-	action string, success bool, region, address []byte,
-) error {
-	switch action {
-	case "commit":
-		return s.Commit(ctx, region, address, "")
-	case "abandon":
-		return s.Abandon(ctx, region, address, "")
-	case "delete":
-		return s.Delete(ctx, region)
-	case "release_to_back", "release_to_head":
-		if success {
-			return s.Commit(ctx, region, address, action)
-		}
-		return s.Abandon(ctx, region, address, action)
-	}
-	return fmt.Errorf("fireResolutionVerb: unknown action %q", action)
 }
 
 // lockLockHolderRow does SELECT … FOR UPDATE on a lock-holder row.

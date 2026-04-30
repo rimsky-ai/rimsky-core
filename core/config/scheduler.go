@@ -1,6 +1,3 @@
-// Package config provides library entry points for rimsky's three long-running
-// processes: scheduler, supervisor, control API. Each entry point takes a
-// typed config struct and returns a handle with a Shutdown method.
 package config
 
 import (
@@ -17,14 +14,15 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// SchedulerConfig wires a scheduler process. Defaults apply when fields
-// are zero values.
+// SchedulerConfig wires a scheduler process. Defaults apply when
+// fields are zero values. Per spec §6.1.
 //
-// StoreFactories + Stores follow the same shape as SupervisorConfig: the
-// deployer registers the factories it has linked in and supplies the parsed
-// `stores.yml`; StartScheduler builds the per-process *store.Registry from
-// the pair. The scheduler needs the registry for the §13.5 step-4
-// visibility-timeout sweep over postgres pick-policy items tables.
+// In v3 the scheduler no longer dials remote stores at startup — the
+// v2 visibility-timeout sweep is gone and the orphan reaper does not
+// fire Store.Abandon per spec §7.5. The Stores field is retained on
+// the config struct for forwards/backwards compatibility with
+// embedders that pass a single config bundle to all three Start*
+// functions, but it is not consulted here.
 type SchedulerConfig struct {
 	Storage              storage.StorageBackend
 	Queue                queue.DispatchQueue
@@ -33,32 +31,32 @@ type SchedulerConfig struct {
 	TickInterval         time.Duration // default 1500ms
 	HeartbeatTimeout     time.Duration // default 15s
 	OrphanedClaimTimeout time.Duration // default 5×HeartbeatTimeout
-	Pool                 *pgxpool.Pool // for advisory lock; optional but recommended
-	// StoreFactories enumerates the store-kind factories registered with
-	// this process. Required when Stores is non-empty.
-	StoreFactories []store.Factory
-	// Stores is the parsed YAML stores config (spec §15.1).
-	Stores store.StoresConfig
-	// NamedLocks is the operator-side named-lock config (spec §15.2).
-	// Validated at startup; templates referencing undeclared names are
-	// rejected at deploy.
+	Pool                 *pgxpool.Pool // for advisory lock + orphan reap
+	// Stores is the parsed `stores:` block from stores.yml. Unused by
+	// the scheduler in v3 (kept for embedder ergonomics).
+	Stores RemoteStoresConfig
+	// NamedLocks is the operator-side named-lock config. Validated at
+	// startup; templates referencing undeclared names are rejected at
+	// deploy.
 	NamedLocks store.NamedLocksConfig
 }
 
-// SchedulerHandle exposes graceful shutdown for a running scheduler process.
+// SchedulerHandle exposes graceful shutdown for a running scheduler
+// process.
 type SchedulerHandle interface {
 	Shutdown(ctx context.Context) error
 }
 
 // StartScheduler starts a scheduler process and returns a handle for
 // graceful shutdown.
+//
+// Validates `cfg.NamedLocks` at startup; templates referencing
+// undeclared names are rejected at deploy time by the control-api.
+// The scheduler does not dial remote stores — see the SchedulerConfig
+// docstring.
 func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
-	registry, err := buildStoreRegistry(cfg.StoreFactories, cfg.Stores)
-	if err != nil {
-		return nil, fmt.Errorf("StartScheduler: %w", err)
-	}
+	_ = context.Background() // ctx kept for future use by sweep wiring
 	if err := cfg.NamedLocks.Validate(); err != nil {
-		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
 	var lockHolders *store.LockHoldersClient
@@ -75,21 +73,16 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
 		Pool:                 cfg.Pool,
 		LockHolders:          lockHolders,
-		StoreRegistry:        registry,
 	}
-	return schedulerHandleWithRegistry{inner: scheduler.Start(inner), registry: registry}, nil
+	return schedulerHandleNoRegistry{inner: scheduler.Start(inner)}, nil
 }
 
-// schedulerHandleWithRegistry wraps the scheduler handle to release the
-// store registry's per-store pools (postgres store with `connection:`)
-// at shutdown.
-type schedulerHandleWithRegistry struct {
-	inner    SchedulerHandle
-	registry *store.Registry
+// schedulerHandleNoRegistry wraps the scheduler handle. v3 drops the
+// remote-store registry — the scheduler no longer consults stores.
+type schedulerHandleNoRegistry struct {
+	inner SchedulerHandle
 }
 
-func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
-	err := h.inner.Shutdown(ctx)
-	h.registry.Close()
-	return err
+func (h schedulerHandleNoRegistry) Shutdown(ctx context.Context) error {
+	return h.inner.Shutdown(ctx)
 }

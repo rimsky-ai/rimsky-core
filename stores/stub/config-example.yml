@@ -1,0 +1,11 @@
+# Example config for the stub store-service. In-memory state;
+# deterministic; used by tests.
+
+write_semantics: direct
+
+# Optional pick policies for tests that need pick-policy semantics.
+pick_policies: {}
+
+host: 0.0.0.0
+grpc_port: 9102
+http_port: 9112

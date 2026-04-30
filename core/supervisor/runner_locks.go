@@ -4,7 +4,7 @@
 // There is no LockSpec interface; this file's helpers operate on `any`
 // values and dispatch by type-switch.
 //
-// Spec §13.7 deterministic ordering: (kind, sort_key) with
+// Deterministic ordering (blessed-invariant 3): (kind, sort_key) with
 // "named" < "region" and:
 //   - NamedLockSpec sort key: Name
 //   - ClaimSpec sort key:     StoreName + ":" + Selector (post-substitution)
@@ -22,8 +22,9 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// sortLockSpecs orders specs by (kind, sort_key) per §13.7. Inputs may
-// be NamedLockSpec or ClaimSpec values; unknown types sort last.
+// sortLockSpecs orders specs by (kind, sort_key) per blessed-invariant
+// 3. Inputs may be NamedLockSpec or ClaimSpec values; unknown types
+// sort last.
 func sortLockSpecs(specs []any) {
 	sort.SliceStable(specs, func(i, j int) bool {
 		ki, kj := kindForSpec(specs[i]), kindForSpec(specs[j])
@@ -34,8 +35,9 @@ func sortLockSpecs(specs []any) {
 	})
 }
 
-// kindForSpec returns the §13.7 kind tag for a spec value.
-// "named" < "region"; the lexical ordering matches the spec table.
+// kindForSpec returns the kind tag for a spec value.
+// "named" < "region"; the lexical ordering matches the spec table
+// (blessed-invariant 3).
 func kindForSpec(sp any) string {
 	switch sp.(type) {
 	case store.NamedLockSpec:
@@ -46,7 +48,7 @@ func kindForSpec(sp any) string {
 	return "zzz"
 }
 
-// sortKeyForSpec computes the §13.7 sort key for a spec.
+// sortKeyForSpec computes the sort key for a spec (blessed-invariant 3).
 func sortKeyForSpec(sp any) string {
 	switch v := sp.(type) {
 	case store.NamedLockSpec:
@@ -70,7 +72,7 @@ func storeNameForSpec(sp any) string {
 // declarations into concrete spec values. Substitutes `{{params.x}}`,
 // `{{deps.<n>.<f>}}`, and `{{claim.<alias>.{address|region|payload.<f>}}}`
 // (when the alias has a live inherited claim) into the selector and
-// named-lock name per spec §16.5.
+// named-lock name per the substitution grammar.
 func buildLockSpecs(
 	ctx context.Context, args RunArgs,
 	nd *storage.NodeRow, def *node.TemplateNodeDef, inst *storage.InstanceRow,

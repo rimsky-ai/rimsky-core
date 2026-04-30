@@ -13,9 +13,9 @@
 // class via the standard `error_types` block.
 //
 // Concurrency-tag plumbing is gone — the redesign expresses concurrency
-// through `locks: [{name, mode: counting, limit: N}]` (spec §11.3); the
-// runner builds and acquires those during dispatch (§13.3) and the queue
-// row carries `required_stores` rather than tags.
+// through named locks declared on the node and configured in
+// `named_locks:`; the runner builds and acquires those during dispatch
+// (§7.3) and the queue row carries `required_stores` rather than tags.
 package supervisor
 
 import (
@@ -228,7 +228,7 @@ func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.No
 // requiredStoresForNode resolves the node's required_stores list from
 // the template's per-node-type definition. Used when re-enqueueing on
 // retry so the rebooted dispatch row carries the same supervisor-pool
-// predicate (`required_stores ⊆ accepted_stores`, spec §14.2) as the
+// predicate (`required_stores ⊆ accepted_stores`, spec §6.2) as the
 // original. Returns nil when the template / node-def cannot be located —
 // the queue treats nil and []string{} as equivalent (no required stores
 // declared, accepted by every supervisor pool).

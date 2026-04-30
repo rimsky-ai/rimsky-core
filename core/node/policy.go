@@ -14,20 +14,29 @@ type ErrorTypePolicy struct {
 
 // PolicyAction is one entry in a node's per-error-class repair chain.
 //
-// Action vocabulary (spec §12.6 + §13.6):
-//   - "retry"              — generic retry; the runner picks the release
-//     mode from the spec's `resumable` flag (back-compat shape).
-//   - "discard_then_retry" — explicitly request `ReleaseLock(give_up)`
-//     before re-enqueue. Sidecar (post-v1) discards in-flight writes;
-//     direct mode is effectively keep-then-retry per §6.1.
-//   - "resume_then_retry"  — explicitly request
-//     `ReleaseLock(preserve_for_resume)` before re-enqueue. Requires at
-//     least one acq lock spec to declare `resumable: true`; the runner
-//     falls back to give_up otherwise.
-//   - "invalidate"         — return targets; lock release goes through
-//     give_up.
-//   - "give_up"            — terminal failure; lock release goes through
-//     give_up.
+// Action vocabulary (carried forward through the 2026-04-30 stores
+// cleanup; the rimsky-side substrate verb is the success/failure
+// binary — success → Commit, failure → Abandon — and the substrate
+// decides what those mean for its own state per its own configuration):
+//   - "retry"              — generic retry; the runner releases the
+//     claim by firing Abandon on the substrate before re-enqueue.
+//   - "discard_then_retry" — explicitly request `Abandon` (staged
+//     stores) or release-by-Abandon (pick-policy substrates) before
+//     re-enqueue. The v3 standard filesystem store is `direct`-only;
+//     for direct stores Abandon is degenerate (writes cannot be
+//     undone), so discard_then_retry is effectively keep-then-retry
+//     on those stores.
+//   - "resume_then_retry"  — historical action vocabulary preserved
+//     for backwards-compatible policy declarations. Behaviorally an
+//     alias for `discard_then_retry`: the runner releases each claim
+//     by firing `Abandon` on the substrate before re-enqueue. Explicit
+//     Release-routing for read-side state is not in scope for the
+//     2026-04-30 stores cleanup; if a future cycle reintroduces it,
+//     update both this comment and `applyResolvedAction` together.
+//   - "invalidate"         — return targets; per-claim release fires
+//     Abandon on the substrate.
+//   - "give_up"            — terminal failure; per-claim release
+//     fires Abandon on the substrate.
 type PolicyAction struct {
 	Action         string
 	Count          int
@@ -51,9 +60,14 @@ type EvaluatorState struct {
 // ResolvedAction is the outcome of one Evaluate call. Kind carries the
 // runtime intent the runner branches on:
 //
-//   - "retry"              — generic retry (release mode picked by runner).
-//   - "discard_then_retry" — retry with explicit give_up release.
-//   - "resume_then_retry"  — retry with explicit preserve_for_resume release.
+//   - "retry"              — generic retry; runner fires Abandon on
+//     the substrate before re-enqueue.
+//   - "discard_then_retry" — retry with explicit Abandon (or Release
+//     for substrates with read-side state at Open).
+//   - "resume_then_retry"  — alias for `discard_then_retry`; the
+//     runner fires `Abandon` on each claim before re-enqueue. Kept as
+//     a distinct kind so policy authors can express intent in
+//     declarations; the runtime routing is identical to retry today.
 //   - "invalidate"         — targets returned in Targets.
 //   - "give_up"            — terminal.
 type ResolvedAction struct {

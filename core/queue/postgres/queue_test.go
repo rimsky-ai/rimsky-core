@@ -125,7 +125,7 @@ func newQueueWithPool(t *testing.T) (*Queue, *pgxpool.Pool, func()) {
 // claimWithRunner emulates the runner orchestration the supervisor will
 // implement: open tx → SelectCandidates → ClaimDispatchRow → COMMIT, and
 // return the claimed candidate (or nil if none). It is a test-only
-// shorthand and intentionally skips the §13.2 lock-eligibility step
+// shorthand and intentionally skips the §7.3 step 2 lock-eligibility step
 // (named/region/claim) that the real runner does in Go between the two
 // helpers — these tests don't exercise lock specs.
 func claimWithRunner(
@@ -433,7 +433,7 @@ func TestClaimDispatchRow_GuardedReturnsFalseWhenAlreadyClaimed(t *testing.T) {
 
 	// Second attempt to claim the same dispatch id from a different supervisor:
 	// the row is no longer claimed_by IS NULL, so the guarded UPDATE returns
-	// claimed=false (defensive guard per spec §13.3 step 3c).
+	// claimed=false (defensive guard per spec §7.3 step 3c).
 	tx, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
@@ -503,6 +503,96 @@ func TestTakeNamedLockAdvisory_RequiresTx(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	require.Error(t, TakeNamedLockAdvisory(ctx, nil, "x"))
+}
+
+// TestTakeRegionAdvisory_SerializesConcurrentHolders is the regression
+// cover for the v3 cycle-4 fix that introduced TakeRegionAdvisory. Two
+// supervisors evaluating region-conflict against each other's
+// uncommitted INSERTs (READ COMMITTED hides them) would both pass the
+// in-Go conflict predicate without serialization — both would commit,
+// violating single-writer-per-region (blessed-invariant 4b). The
+// per-(store_name, region_data) advisory lock prevents this. This test
+// asserts that two transactions targeting the same (store, region) pair
+// serialize as expected, while distinct keys do NOT.
+func TestTakeRegionAdvisory_SerializesConcurrentHolders(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, _, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	storeName := "content"
+	regionA := []byte("/region-A")
+
+	tx1, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx1.Rollback(ctx) }()
+	require.NoError(t, TakeRegionAdvisory(ctx, tx1, storeName, regionA))
+
+	// Same key — must block until tx1 releases.
+	acquired := make(chan struct{})
+	tx2started := make(chan struct{})
+	go func() {
+		tx2, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return
+		}
+		defer func() { _ = tx2.Rollback(ctx) }()
+		close(tx2started)
+		if err := TakeRegionAdvisory(ctx, tx2, storeName, regionA); err != nil {
+			return
+		}
+		close(acquired)
+	}()
+
+	<-tx2started
+	select {
+	case <-acquired:
+		t.Fatal("tx2 acquired region advisory while tx1 still holds it — should be blocked")
+	case <-time.After(200 * time.Millisecond):
+		// expected: still blocked
+	}
+
+	require.NoError(t, tx1.Rollback(ctx))
+	select {
+	case <-acquired:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("tx2 never acquired region advisory after tx1 released")
+	}
+}
+
+// TestTakeRegionAdvisory_DistinctKeysDoNotBlock asserts that two
+// transactions on different (store, region) pairs proceed in parallel —
+// the advisory key is keyed by both fields, so disjoint regions on the
+// same store, or the same region on different stores, are not serialized.
+func TestTakeRegionAdvisory_DistinctKeysDoNotBlock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	q, _, teardown := newQueueWithPool(t)
+	t.Cleanup(teardown)
+
+	tx1, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx1.Rollback(ctx) }()
+	require.NoError(t, TakeRegionAdvisory(ctx, tx1, "store-A", []byte("/region-A")))
+
+	tx2, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx2.Rollback(ctx) }()
+	// Distinct region on the same store — must NOT block.
+	require.NoError(t, TakeRegionAdvisory(ctx, tx2, "store-A", []byte("/region-B")))
+
+	tx3, err := q.Pool().BeginTx(ctx, pgx.TxOptions{})
+	require.NoError(t, err)
+	defer func() { _ = tx3.Rollback(ctx) }()
+	// Same region on a different store — must NOT block.
+	require.NoError(t, TakeRegionAdvisory(ctx, tx3, "store-B", []byte("/region-A")))
+}
+
+func TestTakeRegionAdvisory_RequiresTx(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	require.Error(t, TakeRegionAdvisory(ctx, nil, "store-A", []byte("/region-A")))
 }
 
 func TestReleaseClaim_Guarded_NoOpOnMismatch(t *testing.T) {

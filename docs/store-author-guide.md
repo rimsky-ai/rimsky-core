@@ -1,5 +1,38 @@
 # Store Author Guide
 
+> **Status:** This guide is **v2-shaped and pending a full v3 rewrite.**
+> Per `docs/specs/2026-04-27-stores-redesign-v3-design.md` §13.1, store
+> implementations are now standalone binaries that implement the
+> rimsky store-service gRPC protocol
+> (`proto/v1/store_service.proto`) — not in-process Go subpackages.
+> The contract is:
+>
+> 1. Implement the 4 + 1 RPC handlers (`Open`, `Commit`, `Abandon`,
+>    `Release` plus `Capabilities()`) in any language with
+>    gRPC support; the standard reference impls under `stores/` are Go.
+> 2. Define your own config schema (loaded from your binary's
+>    config-file env var; rimsky never sees it).
+> 3. Ship a binary + Dockerfile + `config-example.yml`.
+> 4. Honor the **five store-author obligations** from spec §7.8:
+>    - Sweep / TTL for orphan reclamation.
+>    - Record `claim_id` before any state mutation in `Open` so the
+>      sweep can identify orphans.
+>    - All terminal verbs idempotent in `claim_id`.
+>    - Do not depend on rimsky calling `Abandon` for orphan cleanup.
+>    - Canonicalize `region` bytes such that byte-equal correctly
+>      indicates conflict (per spec §7.7).
+> 5. Auth-blind advisory: rimsky has no machinery for credentials,
+>    encryption, or access control. Encrypt sensitive bytes before
+>    handing them to rimsky if you need protection.
+>
+> The reference impls in `stores/filesystem/`, `stores/postgres/`,
+> `stores/stub/` are the working examples until this guide is rewritten.
+>
+> **The text below is v2 reference material — do not follow it for new
+> stores. The v3 spec is authoritative.**
+
+---
+
 This guide is for Go developers writing a new rimsky store implementation.
 
 In v1, store implementations are Go-only. Stores are tightly coupled to
@@ -202,7 +235,7 @@ suffices for read claims under `direct` / `staged_blocking`.
 | Regional `rw` | `staged_*` | `Commit` (atomic swap) or `Abandon` or `Delete` |
 | Pick-policy claim | (any) | `Commit(..., policyOverride)` or `Abandon(..., policyOverride)` |
 
-For **held claims**, the supervisor's auto-terminal mechanism (spec §14.4)
+For **held claims**, the supervisor's auto-terminal mechanism (v3 spec §4.10 invariant 13)
 fires exactly one resolution at holding-subgraph completion. Aggregate
 outcome — all-completed → `on_commit`; any-failed → `on_give_up` — drives
 the verb. From the store implementation's perspective, the verb call is
@@ -556,7 +589,7 @@ func TestMyStore_Integration(t *testing.T) {
     pool, teardown := pgtest.StartPostgres(ctx, t)
     t.Cleanup(teardown)
 
-    // Create the operator-owned items table the store expects (spec §12.12)
+    // Create the operator-owned items table the store expects (per v3 spec §13.1's items-table provisioning workflow)
     // ... construct your Factory, Build, Open inside a tx, assert ...
 }
 ```
@@ -583,7 +616,7 @@ brings its own fixtures.
 
 ## 6. Known limitations and store-author guidance
 
-These are accepted in v1 (spec §23) and may bite you in subtle ways.
+These are accepted in v1 (carried forward from v3 spec §14 / §15) and may bite you in subtle ways.
 Document them in your store's README so operators understand the
 guarantees.
 

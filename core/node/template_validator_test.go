@@ -1,13 +1,16 @@
 package node
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// knownStores is the default store-kind lookup used by most tests.
+// knownStores is the default store name set used by most tests. The
+// v3 validator no longer looks up store kinds; it only checks that
+// referenced names are declared.
 var knownStores = map[string]string{
 	"content": "filesystem",
 	"shared":  "filesystem",
@@ -15,10 +18,10 @@ var knownStores = map[string]string{
 	"inbound": "postgres",
 }
 
-func storeKindLookup(known map[string]string) func(string) (string, bool) {
-	return func(name string) (string, bool) {
-		k, ok := known[name]
-		return k, ok
+func storeDeclaredLookup(known map[string]string) func(string) bool {
+	return func(name string) bool {
+		_, ok := known[name]
+		return ok
 	}
 }
 
@@ -44,7 +47,7 @@ func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
 			Executor: "handler.a",
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -59,7 +62,7 @@ func TestValidateTemplate_Error_DependencyToUnknownNode(t *testing.T) {
 			Dependencies: []string{"ghost"},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].dependencies[0]")
 }
@@ -70,7 +73,7 @@ func TestValidateTemplate_Error_FrameResolutionMissing(t *testing.T) {
 		Version: "1.0.0",
 		Nodes:   []TemplateNodeDef{{Type: "a", Executor: "h"}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "frame_resolution")
 }
@@ -88,7 +91,7 @@ func TestValidateStores_Ok_RegionClaimWithIntent(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
@@ -103,7 +106,7 @@ func TestValidateStores_Error_MissingIntent(t *testing.T) {
 			Stores:   []NodeStoreRef{{Name: "content", Selector: "/data/x"}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[0].intent")
 }
@@ -122,7 +125,7 @@ func TestValidateStores_Error_DuplicateAlias(t *testing.T) {
 			},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[1].alias")
 }
@@ -138,12 +141,12 @@ func TestValidateStores_Error_UnknownStoreKind(t *testing.T) {
 			Stores:   []NodeStoreRef{{Name: "ghost", Selector: "/x", Intent: "r"}},
 		}},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].stores[0].name")
 }
 
-func TestValidateInheritance_Ok_HeldClaimWithResolutions(t *testing.T) {
+func TestValidateInheritance_Ok_HeldClaim(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:            "demo",
 		Version:         "1.0.0",
@@ -154,9 +157,6 @@ func TestValidateInheritance_Ok_HeldClaimWithResolutions(t *testing.T) {
 				Stores: []NodeStoreRef{
 					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
 				},
-				ClaimResolutions: map[string]ClaimResolution{
-					"queue": {OnCommit: "delete", OnGiveUp: "release_to_head"},
-				},
 			},
 			{
 				Type: "process", Executor: "h",
@@ -165,33 +165,8 @@ func TestValidateInheritance_Ok_HeldClaimWithResolutions(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateInheritance_Error_HeldClaimMissingResolutions(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:            "demo",
-		Version:         "1.0.0",
-		FrameResolution: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "pick", Executor: "h",
-				Stores: []NodeStoreRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-				// no ClaimResolutions
-			},
-			{
-				Type: "process", Executor: "h",
-				Dependencies: []string{"pick"},
-				Inherits:     []InheritEntry{{Claim: "queue"}},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].claim_resolutions")
 }
 
 func TestValidateInheritance_Error_UnknownAlias(t *testing.T) {
@@ -208,7 +183,7 @@ func TestValidateInheritance_Error_UnknownAlias(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[1].inherits[0].claim")
 }
@@ -224,9 +199,6 @@ func TestValidateInheritance_Error_AliasNotReachableViaDeps(t *testing.T) {
 				Stores: []NodeStoreRef{
 					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
 				},
-				ClaimResolutions: map[string]ClaimResolution{
-					"queue": {OnCommit: "delete", OnGiveUp: "release_to_head"},
-				},
 			},
 			{
 				Type:     "downstream",
@@ -236,9 +208,55 @@ func TestValidateInheritance_Error_AliasNotReachableViaDeps(t *testing.T) {
 			},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreKindOf: storeKindLookup(knownStores)})
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[1].inherits[0].claim")
+}
+
+func TestValidateInheritance_Error_AmbiguousAcquirers(t *testing.T) {
+	// Two distinct nodes both acquire alias "queue", and a downstream
+	// node depends on BOTH and inherits "queue". The validator must
+	// reject because the runtime cannot pick a deterministic acquirer.
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{
+				Type: "pick_a", Executor: "h",
+				Stores: []NodeStoreRef{
+					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
+				},
+			},
+			{
+				Type: "pick_b", Executor: "h",
+				Stores: []NodeStoreRef{
+					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
+				},
+			},
+			{
+				Type:         "downstream",
+				Executor:     "h",
+				Dependencies: []string{"pick_a", "pick_b"},
+				Inherits:     []InheritEntry{{Claim: "queue"}},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[2].inherits[0].claim")
+	// Confirm the error message specifically calls out the
+	// reachable-acquirer count, distinguishing this from the
+	// unknown-alias and not-reachable-via-deps cases.
+	var found bool
+	for _, e := range res.Errors {
+		if e.Path == "nodes[2].inherits[0].claim" &&
+			strings.Contains(e.Msg, "acquirers are reachable") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected error mentioning %q, got %+v", "acquirers are reachable", res.Errors)
 }
 
 func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {

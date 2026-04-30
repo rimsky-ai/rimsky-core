@@ -675,7 +675,7 @@ func TestLockHoldersStore(t *testing.T) {
 	require.NoError(t, err)
 
 	// UpdateAddress: writes the substrate-supplied address into a region
-	// row inside the acquisition tx (§13.3 step-4e). Verify the round-trip.
+	// row inside the acquisition tx (§7.3 step-4e). Verify the round-trip.
 	addr := json.RawMessage(`{"path":"a/abc"}`)
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		return b.LockHolders().UpdateAddress(ctx, regionRowID, "sup-A", addr, tx)
@@ -715,8 +715,9 @@ func TestLockHoldersStore(t *testing.T) {
 	require.Equal(t, regionRowID, expired[0].ID)
 
 	// Delete is claimant-guarded: wrong supervisor → no-op. Delete
-	// requires a non-nil tx (per spec §13.5 step 2 it must commit
-	// atomically with the store-side ReleaseLock).
+	// requires a non-nil tx so the lock-holder DELETE commits atomically
+	// with the rimsky-side terminal bookkeeping (the substrate-side
+	// Release / Abandon runs in its own decoupled tx per v3 spec §7.3).
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		return b.LockHolders().Delete(ctx, regionRowID, "sup-B", tx)
 	}))
@@ -733,7 +734,7 @@ func TestLockHoldersStore(t *testing.T) {
 	require.Nil(t, gone)
 
 	// RefreshHeartbeat only touches rows whose holder_node_id is currently
-	// running and assigned to the supervisor (§13.4 invariant).
+	// running and assigned to the supervisor (§7.5 invariant).
 	client := b.LockHoldersClient()
 
 	// Move n1 to running with assigned_supervisor_id = sup-A.
@@ -756,7 +757,7 @@ func TestLockHoldersStore(t *testing.T) {
 		"running-node lock-holder row's expires_at should advance")
 
 	// And a row whose holder_node_id is NOT in 'running' state must NOT
-	// be refreshed by RefreshHeartbeat (the §13.4 filter).
+	// be refreshed by RefreshHeartbeat (the §7.5 filter).
 	// Insert another lock-holder row anchored to n2 (state='stale') and
 	// verify its expires_at is unchanged after a refresh.
 	otherRowID := uuid.New()
@@ -778,7 +779,7 @@ func TestLockHoldersStore(t *testing.T) {
 	postOther, err := b.LockHolders().Get(ctx, otherRowID, nil)
 	require.NoError(t, err)
 	require.WithinDuration(t, preOther.ExpiresAt, postOther.ExpiresAt, 1*time.Millisecond,
-		"non-running-node lock-holder row must NOT be refreshed (§13.4 filter)")
+		"non-running-node lock-holder row must NOT be refreshed (§7.5 filter)")
 }
 
 // -------- Claim holders --------

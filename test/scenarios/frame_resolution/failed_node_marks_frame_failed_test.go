@@ -1,5 +1,5 @@
 // Verifies spec §8 ("Quality-rule failures and frame outcomes") and
-// spec §14.2 ("On terminal failure: frame_id is preserved"): a node
+// spec §6.2 ("On terminal failure: frame_id is preserved"): a node
 // failing during a frame causes the frame to end with state='failed';
 // the failed node's rimsky_nodes.frame_id is preserved; subsequent
 // queued frames advance.
@@ -59,7 +59,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"frame should end failed when its expected node ended failed")
 	require.NotNil(t, first.EndedAt, "failed frame must have ended_at set")
 
-	// frame_id on the failed node is preserved (per §14.2).
+	// frame_id on the failed node is preserved (per §6.2).
 	var nodeFrameID *uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeFrameID)

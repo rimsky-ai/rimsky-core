@@ -263,7 +263,7 @@ const (
 //
 // One row per (lock_holder, holder_node) pair from the §18.4 holding
 // subgraph. State flips 'active' -> 'completed' (success) or 'failed'
-// (give-up/failure) per §14.4. When all rows for a lock_holder reach a
+// (give-up/failure) per §4.10 invariant 13. When all rows for a lock_holder reach a
 // non-active state, auto-terminal fires the aggregate-outcome resolution
 // and the lock_holder row is deleted; ON DELETE CASCADE cleans up these
 // rows.
@@ -292,7 +292,7 @@ type ClaimHolderInsertInput struct {
 //
 // Auto-terminal predicate: rows for a given lock_holder are inspected
 // when any row transitions out of 'active'. When zero rows remain in
-// 'active', the §14.4 aggregate-outcome resolution fires and the
+// 'active', the §4.10 invariant 13 aggregate-outcome resolution fires and the
 // lock_holder row is deleted (cascading these rows away).
 type ClaimHoldersStore interface {
 	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
@@ -361,7 +361,7 @@ type ScheduleStore interface {
 	ListAll(ctx context.Context, tx Tx) ([]ScheduleRow, error)
 	// ForceFire bumps next_fire_at to now() so the next scheduler tick will
 	// pick the node up. Used by the admin force-fire endpoint and by the
-	// §19.2 smoke fixture to drive a deterministic source-node fire. No-ops
+	// §10 smoke fixture to drive a deterministic source-node fire. No-ops
 	// silently when no row matches node_id (the route layer treats that as
 	// 404 if needed by reading the node first).
 	ForceFire(ctx context.Context, nodeID shared.UUID, tx Tx) error

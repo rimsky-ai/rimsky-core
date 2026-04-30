@@ -7,15 +7,14 @@
 // the live claim declares it explicitly via `inherits: [{claim:
 // <alias>}]`.
 //
-// At deploy time we verify:
-//   - Every `inherits:` reference resolves to a real upstream claim
-//     alias acquired by some node N₁ that this node depends on
-//     (transitively through deps).
-//   - For held claims (subgraph size > 1), the acquirer has
-//     `claim_resolutions[<alias>]` declared with both on_commit and
-//     on_give_up.
+// At deploy time we verify that every `inherits:` reference resolves
+// to a real upstream claim alias acquired by some node N₁ that this
+// node depends on (transitively through deps). Per the 2026-04-30
+// stores cleanup, no per-alias claim_resolutions validation runs at
+// deploy: substrate disposition (Commit / Abandon) is governed by
+// per-substrate config, not by template-level declarations.
 //
-// Pick-policy intent enforcement (per spec §14.5: pick-policy claims
+// Pick-policy intent enforcement (per spec §4.6: pick-policy claims
 // must be intent: rw) needs the operator's store registry; that check
 // lives in T23 (registry-dependent).
 
@@ -56,14 +55,20 @@ func ValidateInheritance(spec *TemplateSpec, res *ValidationResult) {
 	if spec == nil {
 		return
 	}
-	// Build acquirer index: alias → list of acquisitions.
-	acquirerByAlias := make(map[string][]aliasAcquisition)
-	for i, n := range spec.Nodes {
-		for j, s := range n.Stores {
+	// Build acquirer index: alias → set of acquirer node types.
+	acquirerByAlias := make(map[string][]string)
+	seenAcq := make(map[string]map[string]struct{})
+	for _, n := range spec.Nodes {
+		for _, s := range n.Stores {
 			alias := s.AliasOf()
-			acquirerByAlias[alias] = append(acquirerByAlias[alias], aliasAcquisition{
-				nodeType: n.Type, nodeIndex: i, storeIndex: j,
-			})
+			if _, ok := seenAcq[alias]; !ok {
+				seenAcq[alias] = make(map[string]struct{})
+			}
+			if _, dup := seenAcq[alias][n.Type]; dup {
+				continue
+			}
+			seenAcq[alias][n.Type] = struct{}{}
+			acquirerByAlias[alias] = append(acquirerByAlias[alias], n.Type)
 		}
 	}
 
@@ -73,12 +78,6 @@ func ValidateInheritance(spec *TemplateSpec, res *ValidationResult) {
 	ancestors := transitiveAncestors(spec.Nodes)
 
 	// Walk inherits: declarations.
-	type inheritEdge struct {
-		acquirerType string
-		alias        string
-		inheritor    string
-	}
-	var edges []inheritEdge
 	for i, n := range spec.Nodes {
 		for j, ie := range n.Inherits {
 			alias := ie.Claim
@@ -102,17 +101,12 @@ func ValidateInheritance(spec *TemplateSpec, res *ValidationResult) {
 			// "no upstream", more than one is ambiguous and rejected
 			// here (the runtime cannot pick deterministically).
 			reachable := make([]string, 0, len(candidates))
-			seenReach := make(map[string]struct{}, len(candidates))
 			for _, c := range candidates {
-				if c.nodeType == n.Type {
+				if c == n.Type {
 					continue
 				}
-				if _, dup := seenReach[c.nodeType]; dup {
-					continue
-				}
-				if _, depended := ancestors[n.Type][c.nodeType]; depended {
-					seenReach[c.nodeType] = struct{}{}
-					reachable = append(reachable, c.nodeType)
+				if _, depended := ancestors[n.Type][c]; depended {
+					reachable = append(reachable, c)
 				}
 			}
 			if len(reachable) == 0 {
@@ -130,54 +124,6 @@ func ValidateInheritance(spec *TemplateSpec, res *ValidationResult) {
 				})
 				continue
 			}
-			resolvedAcquirer := reachable[0]
-			edges = append(edges, inheritEdge{
-				acquirerType: resolvedAcquirer,
-				alias:        alias,
-				inheritor:    n.Type,
-			})
-		}
-	}
-
-	// Group by (acquirer, alias) to compute subgraphs and validate
-	// claim_resolutions on the acquirer.
-	subgraphs := make(map[string]map[string]struct{}) // key: acquirer|alias → set of inheritor node types
-	for _, e := range edges {
-		key := e.acquirerType + "|" + e.alias
-		if _, ok := subgraphs[key]; !ok {
-			subgraphs[key] = make(map[string]struct{})
-		}
-		subgraphs[key][e.inheritor] = struct{}{}
-	}
-
-	// Index nodes by type for ClaimResolutions lookups.
-	nodeByType := make(map[string]*TemplateNodeDef, len(spec.Nodes))
-	nodeIndexByType := make(map[string]int, len(spec.Nodes))
-	for i := range spec.Nodes {
-		n := &spec.Nodes[i]
-		nodeByType[n.Type] = n
-		nodeIndexByType[n.Type] = i
-	}
-
-	for key, inheritors := range subgraphs {
-		// key format: "acquirer|alias" — split.
-		acquirer, alias := splitSubgraphKey(key)
-		acq, ok := nodeByType[acquirer]
-		if !ok {
-			continue
-		}
-		if len(inheritors) == 0 {
-			// Only the acquirer in the subgraph; no validation needed.
-			continue
-		}
-		// Held claim (subgraph size > 1): the acquirer must declare
-		// claim_resolutions[<alias>] with both actions.
-		cr, has := acq.ClaimResolutions[alias]
-		if !has || cr.OnCommit == "" || cr.OnGiveUp == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("nodes[%d].claim_resolutions", nodeIndexByType[acquirer]),
-				Msg:  fmt.Sprintf("held claim %q on store %q requires claim_resolutions[%q] with both on_commit and on_give_up declared", alias, acq.Stores[storeIndexForAlias(acq, alias)].Name, alias),
-			})
 		}
 	}
 }
@@ -300,13 +246,6 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 	return out
 }
 
-// aliasAcquisition records which node acquires which alias.
-type aliasAcquisition struct {
-	nodeType   string
-	nodeIndex  int
-	storeIndex int
-}
-
 // transitiveAncestors returns, for each node type, the set of all
 // node types it depends on transitively (the closure of the deps
 // relation upward). Self is not included.
@@ -343,16 +282,4 @@ func splitSubgraphKey(key string) (acquirer, alias string) {
 		}
 	}
 	return key, ""
-}
-
-// storeIndexForAlias returns the index in n.Stores of the entry whose
-// alias equals the given alias. Returns 0 if not found (caller already
-// validated existence).
-func storeIndexForAlias(n *TemplateNodeDef, alias string) int {
-	for i, s := range n.Stores {
-		if s.AliasOf() == alias {
-			return i
-		}
-	}
-	return 0
 }

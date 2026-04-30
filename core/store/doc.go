@@ -1,47 +1,60 @@
-// Package store defines the rimsky store abstraction (spec §11; see also
-// docs/glossary.md). A store is a deployment-level data backend whose
-// lock state is tracked centrally in postgres while its data semantics
-// remain native to the underlying primitive (filesystem path, postgres
-// table, S3 bucket, etc.).
+// Package store defines the rimsky-side store contract. Per spec
+// docs/specs/2026-04-27-stores-redesign-v3-design.md as amended by
+// docs/specs/2026-04-30-stores-protocol-cleanup-design.md (substrate-
+// vocabulary excision).
 //
-// This package owns interfaces, value types, the factory/registry, the
-// transaction-context helpers used to thread the supervisor's outer
-// pgx.Tx through store mutations, the rimsky_lock_holders postgres
-// helpers, and the pure ModeCoexists predicate (spec §8.5). Concrete
-// implementations live in subpackages (`core/store/filesystem/`,
-// `core/store/postgres/`, `core/store/stub/`).
+// In v3 the standard store implementations live in standalone binaries
+// under stores/ and rimsky talks to them via the gRPC client in
+// core/store/remote/. This package owns:
 //
-// # Two primitives (spec §5.1)
+//   - The Store interface (interface.go) — four runtime verbs plus
+//     Capabilities, every verb keyed on a rimsky-generated claim_id.
+//   - Value types (types.go) — ClaimID, ClaimSpec, ClaimResult,
+//     OpenOutcome, NamedLockSpec, Capabilities, WriteSemantics.
+//   - Registry (registry.go) — a simple name→Store map populated
+//     externally by the rimsky cmd binaries at startup.
+//   - rimsky_lock_holders postgres helpers (lockholders.go) — the
+//     bookkeeping table that backs invariant 9a.
+//   - Pure rimsky-side comparators (conflict.go) — ModeCoexists for
+//     the C3.1 mode-coexistence matrix; RegionsByteEqual for v3's
+//     byte-equal region conflict (per spec §7.7).
+//
+// Concrete implementations:
+//
+//   - core/store/remote/    — the gRPC client; the only concrete Store
+//     in the rimsky module.
+//   - core/store/storetest/ — an in-Go fake for unit tests where the
+//     wire isn't relevant.
+//   - stores/<kind>/        — standalone store-service binaries
+//     (filesystem, postgres, stub) that implement the wire protocol.
+//
+// # Two primitives
 //
 //   - Claim — substrate-bound. ClaimSpec carries (StoreName, Selector,
 //     Intent, Alias). Substrate parses Selector and decides what it
-//     means (regional access vs. configured pick policy).
+//     means (regional access vs. an items-table queue convention).
 //
 //   - Named lock — non-substrate. NamedLockSpec carries (Name) only.
-//     Limit lives in operator config (§15.2).
+//     Limit lives in operator config.
 //
-// Both are persisted as rows in `rimsky_lock_holders` (spec §12.10) but
-// the two specs are distinct types with no common interface.
+// Both are persisted as rows in rimsky_lock_holders but the two specs
+// are distinct types with no common interface.
 //
-// # Five protocol verbs (spec §6 / §11.5)
+// # Four protocol verbs (spec §4.1)
 //
-//   - Open(ctx, ClaimSpec) → ClaimResult
-//   - Commit(ctx, region, address, policyOverride)
-//   - Abandon(ctx, region, address, policyOverride)
-//   - Delete(ctx, region)
-//   - Release(ctx, region, address)
+//   - Open(ctx, claim_id, ClaimSpec) → OpenOutcome
+//   - Commit(ctx, claim_id, region, address)
+//   - Abandon(ctx, claim_id, region, address)
+//   - Release(ctx, claim_id, region, address)
 //
-// # write_semantics (spec §8)
+// Plus Capabilities(ctx) for the startup handshake. Substrate
+// disposition (what Commit / Abandon mean for the substrate's own
+// state) is governed by per-substrate config; rimsky carries only
+// the success/failure binary.
 //
-// Per-store config: direct | staged_blocking | staged_async. Determines
-// (a) whether reads can dispatch concurrently with writes on the same
-// region, and (b) whether the supervisor calls staging-related verbs.
-// Operator-configured; bounded above by the store kind's
-// MaxWriteSemantics().
+// # write_semantics (spec §4.8)
 //
-// # Package layout (spec §11.1)
-//
-// `core/store/` imports `core/shared/` and `pgx/v5` (the latter only
-// for the transaction-context helpers and lock-holder helpers; pgx.Tx
-// is the only pgx symbol leaked through this package's public surface).
+// Per-store-service: direct | staged_blocking | staged_async. Baked
+// into the store-service's own config; rimsky validates strict equality
+// against the operator-declared block in stores.yml.
 package store

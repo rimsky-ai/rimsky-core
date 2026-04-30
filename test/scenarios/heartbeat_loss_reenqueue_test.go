@@ -2,7 +2,7 @@
 // last_heartbeat_at. The scheduler's sweep transitions it running→stale,
 // emits heartbeat_lost, and re-enqueues. In addition, an expired
 // `rimsky_lock_holders` row owned by the same zombie supervisor is reaped
-// by the §13.5 step-2 lock-holder sweep.
+// by the §7.5 step-2 lock-holder sweep.
 //
 // Migrated to the stores-redesign template grammar (spec §11): the worker
 // node is built via scenario.MakeNode. The test then drives the
@@ -59,7 +59,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.NoError(t, err)
 
 	// Seed an expired `rimsky_lock_holders` row tied to the zombie node +
-	// supervisor so the §13.5 step-2 sweep has something to reap. We pick
+	// supervisor so the §7.5 step-2 sweep has something to reap. We pick
 	// kind='named' to avoid pulling a real claim_store into the harness;
 	// the sweep's per-row reap path is identical for all three kinds modulo
 	// the store-side ReleaseLock call (claim-only).
@@ -109,7 +109,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, claimedBy, "re-enqueued dispatch row should not be claimed")
 
-	// The §13.5 step-2 lock-holder sweep should reap the expired row we
+	// The §7.5 step-2 lock-holder sweep should reap the expired row we
 	// seeded above. Poll rimsky_lock_holders directly until the row is gone.
 	deadline = time.Now().Add(25 * time.Second)
 	var reaped bool
@@ -121,7 +121,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, reaped, "expired lock-holder row was not reaped by §13.5 step-2 sweep")
+	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
 	// And a `lock_orphan_reaped` event was emitted for the reaped row.
 	reapEvs, err := h.Storage.Events().List(h.Ctx,

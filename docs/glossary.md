@@ -1,8 +1,22 @@
 # Rimsky Glossary
 
-Vocabulary for the stores-redesign / lock-primitive refinement. Compiled from the brainstorm working document at `docs/2026-04-26-stores-spec-scope.md` (2026-04-26/27 conversations) and consolidated here as the spec's authoritative naming reference.
+Vocabulary for the stores-redesign / lock-primitive refinement. Compiled from the brainstorm working document at `docs/2026-04-26-stores-spec-scope.md` and consolidated here as the spec's authoritative naming reference. Stores-redesign-v3 (`docs/specs/2026-04-27-stores-redesign-v3-design.md`) introduces additional terms for the out-of-process world; they're listed in §V3 below.
 
 When this glossary contradicts older docs, the glossary wins. Spec text and code comments should align here.
+
+## V3 additions
+
+- **Store-service** — the standalone binary that implements the
+  `proto/v1/store_service.proto` gRPC server for a given substrate.
+  Standard impls live under `stores/<kind>/`. Rimsky talks to a
+  store-service exclusively via the wire protocol; it does not
+  in-process-link any substrate code.
+- **`claim_id`** — the rimsky-generated UUID (textual form on the
+  wire; `core/store.ClaimID` in Go) that identifies a single claim
+  across every protocol verb in its lifecycle. Generated client-side
+  immediately before `Open`; persisted in `rimsky_lock_holders.id`;
+  passed unchanged on `Commit` / `Abandon` / `Release`. Per spec
+  §4.2.
 
 ---
 
@@ -20,17 +34,16 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 ---
 
-## Verbs (option Y, 5 protocol verbs)
+## Verbs (4 runtime verbs + 1 startup handshake)
 
 | Verb | Signature | Purpose |
 |---|---|---|
-| **Open** | `Open(region, intent) → address` | Produce a substrate-native address for the executor and register whatever substrate-side state the `(intent × write_semantics)` combination requires (staging area, snapshot, MVCC transaction, or nothing). |
-| **Commit** | `Commit(region, address, policy_override?) → ()` | Publish staged writes into the live region (regional `rw` claims on `staged_*`), or apply the configured `on_commit` action (claims served by a pick policy). |
-| **Abandon** | `Abandon(region, address, policy_override?) → ()` | Discard staged writes (regional `rw` on `staged_*`), or apply the configured `on_give_up` action (pick-policy claims). |
-| **Delete** | `Delete(region) → ()` | Remove the live region. A third terminal action alongside `Commit` and `Abandon` for nodes whose intent is deletion. |
+| **Open** | `Open(region, intent) → OpenOutcome` | Produce a substrate-native address for the executor and register whatever substrate-side state the `(intent × write_semantics)` combination requires. Returns `OpenOutcome{Available: true, Result: ...}` on a successful acquisition; returns `OpenOutcome{Available: false}` (`Unavailable{}` on the wire) when the substrate has no claim to give right now (e.g. an empty items-table queue). |
+| **Commit** | `Commit(region, address) → ()` | Signals that the consumer of the claim succeeded. The substrate decides what to do with its own state per its own configuration. |
+| **Abandon** | `Abandon(region, address) → ()` | Signals that the consumer of the claim failed. The substrate decides what to do with its own state per its own configuration. |
 | **Release** | `Release(region, address) → ()` | Tear down substrate-side read state (snapshot, MVCC transaction) for a read claim. Fires only when the store implementation registered such state. |
 
-`intent ∈ {r, rw}`. `policy_override` is meaningful only for claims served by a pick policy; ignored otherwise.
+`intent ∈ {r, rw}`. Substrate disposition (commit-vs-release-vs-delete on the substrate's own state) is governed by per-substrate config. Per the 2026-04-30 stores cleanup, no substrate-vocabulary fields cross the rimsky↔store boundary; rimsky carries only the success/failure binary.
 
 ---
 
@@ -55,7 +68,7 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 | **Inheritor** | A downstream node that declares `inherits:` on the acquirer's claim alias. Inheritance extends the claim's lifetime to cover the inheritor's run. |
 | **Inheritance** | The DSL mechanism by which a downstream node declares it will use the live claim from an upstream acquirer. Direct only — does not propagate transitively through dep chains. Each node that needs the live claim declares it explicitly. |
 | **Holding subgraph** | The set of nodes a held claim's lifetime spans: acquirer + directly-declared inheritors. Computed at template deploy from explicit `inherits:` declarations. |
-| **Auto-terminal** | The mechanism by which a held claim's resolution fires automatically when the holding subgraph completes. Aggregate outcome (all-success → `on_commit`; any-failure → `on_give_up`) determines the substrate verb. No graph-author terminal designation required. |
+| **Auto-terminal** | The mechanism by which a held claim's resolution fires automatically when the holding subgraph completes. Aggregate outcome (all-success → `Commit`; any-failure → `Abandon`) determines the substrate verb. No graph-author terminal designation required. |
 | **Value-pass** | Propagation mode: source extracts captured fields into its own attributes; downstream nodes consume via `{{deps.<source>.<field>}}`. Lifetime-independent — works after the source's claim has closed. |
 | **Claim-pass** | Propagation mode: downstream node inherits the live claim and uses `{{claim.<alias>.address \| payload.<f> \| region}}`. Requires the claim to remain open; the inheriting node's existence holds it. |
 
@@ -65,11 +78,9 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 | Term | Definition |
 |---|---|
-| **Pick policy** | A substrate-side mechanism that recognizes special-form selectors (recommended convention: `@policy-name`) and picks an item per its configured logic (FIFO queue, ring buffer, LIFO scratchpad, etc.). Configured in the store's `pick_policies` block. Schema is substrate-specific; Rimsky doesn't introspect. |
 | **Staging area** | Informal — a substrate-internal private workspace where in-progress writes accumulate before atomic publication. Visible to Rimsky only as the address `Open` returned. |
 | **Atomic swap** | Informal — the substrate-native mechanism that publishes staging into live data atomically. Examples: filesystem rename, SQL `ALTER TABLE` swap, S3 manifest pointer flip, git merge. The moment of `Commit`. |
 | **`write_semantics`** | Per-store config field with values `direct \| staged_blocking \| staged_async`. Determines (a) whether reads can dispatch concurrently with writes on the same region, and (b) whether the supervisor calls the staging-related verbs. Operator-configured; bounded above by the store kind's max capability. |
-| **`pick_policies`** | A store-config block listing named pick policies the store implements. Each entry is keyed by the recognized selector form (e.g., `@review-queue`) and carries substrate-specific configuration (item path, ordering, default actions, visibility timeout, etc.). |
 
 ---
 
@@ -132,6 +143,44 @@ Named locks have no mode dimension; their coexistence rule is purely numeric (co
 - **"Bridge"** — replaced. Use "store" or "store implementation."
 - **"Substrate"** as a Rimsky-side concept — demoted to informal use only, when context genuinely requires referencing the physical layer.
 - **"Held: true" flag** — dissolved; held is implicit from inheritance.
-- **"Region claim" / "Item claim" / "Budget claim"** as sub-types — replaced by the cleaner two-noun split (claim / named lock); the "item" sub-form is just a claim whose substrate runs a pick policy behind the selector.
+- **"Region claim" / "Item claim" / "Budget claim"** as sub-types — replaced by the cleaner two-noun split (claim / named lock); the "item" sub-form is just a claim whose substrate runs an items-table queue convention behind the selector.
 - **"Versioned mode" / "Restore"** — eliminated entirely; orchestrator has no version concept.
 - **"`SupportsResume`" / "`ResumableStore`" / "`SupportsRegionLock`" / "`SupportsEmptySelector`" / etc.** — capability struct collapsed to one field (`write_semantics`); resume is a universal behaviour pattern, not a capability.
+
+---
+
+## Substrate-internal vocabulary (not part of rimsky's protocol surface)
+
+The terms below are used by some substrate-service implementations
+(e.g. the postgres reference store-service) but do not appear in the
+rimsky↔store wire protocol or the rimsky-side template grammar. They
+appear only in store-service-specific documentation and config. Per
+the 2026-04-30 stores cleanup
+(`docs/specs/2026-04-30-stores-protocol-cleanup-design.md`).
+
+- **Pick policy** — An items-table queue convention some substrates
+  implement. The substrate recognizes special-form selectors
+  (recommended convention: `@policy-name`) and picks an item per its
+  configured logic (FIFO queue, ring buffer, LIFO scratchpad, etc.).
+  The postgres reference store-service exposes per-policy
+  `on_commit_default` / `on_give_up_default` config in its own
+  `config.yml`. See `docs/store-author-guide.md` and
+  `deploy/store-postgres.yml`.
+
+- **`pick_policies`** — A substrate's own config block listing named
+  pick policies it implements. Each entry is keyed by the recognized
+  selector form (e.g. `@review-queue`) and carries substrate-specific
+  configuration (item path, ordering, default actions, visibility
+  timeout, etc.). Substrate-internal — not part of rimsky's
+  `stores.yml`.
+
+- **`release_to_back` / `release_to_head`** — Per-policy disposition
+  actions in pick-policy substrates' configs (e.g. the postgres
+  reference store-service). Substrate-internal; not visible to rimsky.
+
+- **Items-table `delete` (action)** — A per-policy disposition action
+  in pick-policy substrates that removes the row from the items
+  table. Distinct from any rimsky-level concept. (The legacy
+  `Store.Delete` wire verb that existed pre-2026-04-30 was removed
+  by the cleanup; the action lives entirely inside the substrate's
+  Commit / Abandon handlers.)

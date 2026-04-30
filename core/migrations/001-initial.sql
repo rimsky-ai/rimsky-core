@@ -1,4 +1,10 @@
--- Rimsky initial schema (stores-redesign v2 end state).
+-- Rimsky initial schema (v2-defined; preserved at v3).
+--
+-- Source: stores-redesign v2 (preserved unchanged at v3 — see
+-- docs/specs/2026-04-27-stores-redesign-v3-design.md §14). The schema
+-- itself did not change at v3; the v3 cycle moved stores out-of-process
+-- but kept rimsky_lock_holders / rimsky_claim_holders / dispatch /
+-- nodes / templates exactly as v2 left them.
 --
 -- This file defines the full v1 schema in a single migration. The
 -- stores-redesign v2 (docs/specs/2026-04-27-stores-redesign-v2-design.md)
@@ -20,9 +26,11 @@
 --     so claim-holder rows clean up when the lock-holder row is deleted
 --     at auto-terminal.
 --   * rimsky_claim_holders: claim_id, store_name, on_commit, on_give_up,
---     actual_action columns dropped. Resolution declarations live in
---     template metadata (rimsky_templates.spec). state enum gains
---     'failed'.
+--     actual_action columns dropped. Per the 2026-04-30 stores-protocol
+--     cleanup, rimsky carries only a success/failure binary across the
+--     wire (success → Commit; failure → Abandon); substrate disposition
+--     lives in each store-service's own config, not in template metadata.
+--     state enum gains 'failed'.
 --
 -- Idempotent: CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
 -- throughout. Belt-and-suspenders with the migration runner's advisory
@@ -38,7 +46,7 @@ CREATE TABLE IF NOT EXISTS rimsky_templates (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
     version     TEXT NOT NULL,
-    spec        JSONB NOT NULL,                       -- parsed template (stores/locks/inherits/claim_resolutions/attributes)
+    spec        JSONB NOT NULL,                       -- parsed template (stores/locks/inherits/attributes/quality_rules/error_types)
     deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (name, version)
 );
@@ -137,12 +145,12 @@ CREATE TABLE IF NOT EXISTS rimsky_node_attributes (
 --   * 'named'  — named-lock predicate (lock_name set)
 --   * 'region' — store region claim (store_name + region_data + intent set;
 --                address populated by Open within the same acquisition tx)
--- Inserted atomically with the dispatch claim (§13.3). last_heartbeat_at
+-- Inserted atomically with the dispatch claim (v3 spec §7.3). last_heartbeat_at
 -- and expires_at extended on each supervisor heartbeat tick. Removed at
 -- node terminal (claimant-guarded) or auto-terminal for held claims.
 -- Orphan-reaped at 5x heartbeat_interval.
 CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
-    id                   UUID PRIMARY KEY,
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     lock_kind            TEXT NOT NULL CHECK (lock_kind IN ('named', 'region')),
     lock_name            TEXT,                    -- non-null for kind='named'
     store_name           TEXT,                    -- non-null for kind='region'
@@ -160,7 +168,7 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
     -- Note: address may be NULL even for region rows, because Open writes
     -- the address only after a successful return (within the same
     -- acquisition tx). The supervisor inserts the row with NULL address
-    -- and updates it after Open returns (per §13.3).
+    -- and updates it after Open returns (per v3 spec §7.3).
     CONSTRAINT lock_kind_fields CHECK (
         (lock_kind = 'named'  AND lock_name IS NOT NULL AND store_name IS NULL     AND region_data IS NULL     AND intent IS NULL) OR
         (lock_kind = 'region' AND lock_name IS NULL     AND store_name IS NOT NULL AND region_data IS NOT NULL AND intent IN ('r', 'rw'))
@@ -173,11 +181,12 @@ CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_region     ON rimsky_lock_hol
 CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_expires    ON rimsky_lock_holders (expires_at) WHERE expires_at IS NOT NULL;
 
 -- Held-claim ledger. One row per (lock_holder, holder_node) pair from the
--- §18.4 holding subgraph, inserted at the acquirer's Open call when the
+-- holding subgraph (acquirer + transitive inheritors), inserted at the acquirer's Open call when the
 -- claim is held (subgraph size > 1). state flips 'active' -> 'completed'
--- (success) or 'failed' (give-up/failure) per §14.4. When all rows for a
--- lock_holder reach a non-active state, auto-terminal fires the
--- aggregate-outcome resolution (§14.4) and the lock_holder row is deleted;
+-- (success) or 'failed' (give-up/failure) per v3 spec §4.10 invariant 13.
+-- When all rows for a lock_holder reach a non-active state, auto-terminal
+-- fires the aggregate-outcome resolution (v3 spec §4.10 invariant 13) and
+-- the lock_holder row is deleted;
 -- ON DELETE CASCADE cleans up these rows.
 CREATE TABLE IF NOT EXISTS rimsky_claim_holders (
     id              UUID PRIMARY KEY,

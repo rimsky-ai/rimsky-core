@@ -5,8 +5,10 @@
 // (the in-memory representation) and runs node.ValidateTemplate against the
 // per-process store registry (AppDeps.Stores). Concurrency-tag /
 // owns-resources / reads-resources fields were retired in the stores
-// redesign (spec §11.3); the JSON shape mirrors the new template shape:
-// stores, locks, attributes, quality_rules, claim_resolutions.
+// redesign (spec §11.3); the JSON shape mirrors the current template
+// shape: stores, locks, attributes, quality_rules. Per the 2026-04-30
+// stores cleanup, claim_resolutions is gone — substrate disposition is
+// governed by per-substrate config, not by the template.
 package controlapi
 
 import (
@@ -20,7 +22,6 @@ import (
 	"github.com/fallguy/rimsky/core/qualityrule"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
-	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
 // templateDeployRequest matches the JSON form of node.TemplateSpec. Fields use
@@ -37,19 +38,18 @@ type templateDeployRequest struct {
 }
 
 type templateNodeDefJSON struct {
-	Type             string                         `json:"type"`
-	Description      string                         `json:"description,omitempty"`
-	Executor         string                         `json:"executor,omitempty"`
-	Userdata         map[string]any                 `json:"userdata,omitempty"`
-	Schedule         string                         `json:"schedule,omitempty"`
-	Dependencies     []string                       `json:"dependencies,omitempty"`
-	Stores           []nodeStoreRefJSON             `json:"stores,omitempty"`
-	Locks            []nodeLockRefJSON              `json:"locks,omitempty"`
-	Inherits         []inheritEntryJSON             `json:"inherits,omitempty"`
-	ClaimResolutions map[string]claimResolutionJSON `json:"claim_resolutions,omitempty"`
-	Attributes       *nodeAttributesDefJSON         `json:"attributes,omitempty"`
-	QualityRules     []qualityRuleJSON              `json:"quality_rules,omitempty"`
-	ErrorTypes       map[string]errorTypePolicyJSON `json:"error_types,omitempty"`
+	Type         string                         `json:"type"`
+	Description  string                         `json:"description,omitempty"`
+	Executor     string                         `json:"executor,omitempty"`
+	Userdata     map[string]any                 `json:"userdata,omitempty"`
+	Schedule     string                         `json:"schedule,omitempty"`
+	Dependencies []string                       `json:"dependencies,omitempty"`
+	Stores       []nodeStoreRefJSON             `json:"stores,omitempty"`
+	Locks        []nodeLockRefJSON              `json:"locks,omitempty"`
+	Inherits     []inheritEntryJSON             `json:"inherits,omitempty"`
+	Attributes   *nodeAttributesDefJSON         `json:"attributes,omitempty"`
+	QualityRules []qualityRuleJSON              `json:"quality_rules,omitempty"`
+	ErrorTypes   map[string]errorTypePolicyJSON `json:"error_types,omitempty"`
 }
 
 type nodeStoreRefJSON struct {
@@ -65,11 +65,6 @@ type nodeLockRefJSON struct {
 
 type inheritEntryJSON struct {
 	Claim string `json:"claim"`
-}
-
-type claimResolutionJSON struct {
-	OnCommit string `json:"on_commit"`
-	OnGiveUp string `json:"on_give_up"`
 }
 
 type nodeAttributesDefJSON struct {
@@ -132,15 +127,6 @@ func (r *templateDeployRequest) toTemplateSpec() node.TemplateSpec {
 		}
 		for _, ie := range n.Inherits {
 			def.Inherits = append(def.Inherits, node.InheritEntry{Claim: ie.Claim})
-		}
-		if len(n.ClaimResolutions) > 0 {
-			def.ClaimResolutions = make(map[string]node.ClaimResolution, len(n.ClaimResolutions))
-			for alias, cr := range n.ClaimResolutions {
-				def.ClaimResolutions[alias] = node.ClaimResolution{
-					OnCommit: cr.OnCommit,
-					OnGiveUp: cr.OnGiveUp,
-				}
-			}
 		}
 		if n.Attributes != nil {
 			def.Attributes = node.NodeAttributesDef{Schema: n.Attributes.Schema}
@@ -206,35 +192,27 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 }
 
 // validatorHooksFor builds the registry-dependent lookups consumed by
-// node.ValidateTemplate. Nil-safe on deps.Stores or empty NamedLocks.
+// node.ValidateTemplate. Nil-safe on deps.Stores.
+//
+// The pick-policy hook from v2 is gone (per the v3 inertness cleanup):
+// rimsky no longer recognises pick-policy selectors. Substrate is the
+// only entity with that knowledge.
+//
+// NamedLockDeclared is wired unconditionally so missing names always
+// fail validation — an empty `named_locks:` block is still a valid
+// (empty) declaration, and templates referencing any name when none
+// are declared must be rejected.
 func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 	hooks := node.RegistryHooks{}
 	if deps.Stores != nil {
-		hooks.StoreKindOf = func(name string) (string, bool) {
-			s, ok := deps.Stores.GetStore(name)
-			if !ok {
-				return "", false
-			}
-			return s.Kind(), true
-		}
-		hooks.IsPickPolicySelector = func(storeName, selector string) bool {
-			s, ok := deps.Stores.GetStore(storeName)
-			if !ok {
-				return false
-			}
-			ps, ok := s.(*pgstore.Store)
-			if !ok {
-				return false
-			}
-			_, has := ps.PickPolicyConfig(selector)
-			return has
-		}
-	}
-	if len(deps.NamedLocks.Locks) > 0 {
-		hooks.NamedLockDeclared = func(name string) bool {
-			_, ok := deps.NamedLocks.Get(name)
+		hooks.StoreDeclared = func(name string) bool {
+			_, ok := deps.Stores.Get(name)
 			return ok
 		}
+	}
+	hooks.NamedLockDeclared = func(name string) bool {
+		_, ok := deps.NamedLocks.Get(name)
+		return ok
 	}
 	return hooks
 }
@@ -242,7 +220,9 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var body templateDeployRequest
-		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		decoder := json.NewDecoder(req.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&body); err != nil {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}

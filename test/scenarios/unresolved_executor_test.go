@@ -13,7 +13,7 @@
 // policy-chain path (§7.3 / §11.6). The test runs the harness with
 // NoSupervisor and drives `supervisor.RunNode` directly so the dispatch
 // row's executor_name lives in the supervisor's accept-list while the
-// resolver has no entry for it (the §17.1 step 4a resolver-miss branch).
+// resolver has no entry for it (the §7.3 step 4a resolver-miss branch).
 package scenarios
 
 import (
@@ -79,7 +79,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Resolver has no entry for "does_not_exist_unknown" → §17.1 step 4a
+	// Resolver has no entry for "does_not_exist_unknown" → §7.3 step 4a
 	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
 	// admits the candidate.
 	args := supervisor.RunArgs{
@@ -87,7 +87,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		Queue:             h.Queue,
 		QueuePool:         h.Pool,
 		LockHolders:       store.NewLockHoldersClient(h.Pool),
-		StoreRegistry:     h.Stores,
+		StoreRegistry:     store.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		SupervisorID:      "scenario-runner",

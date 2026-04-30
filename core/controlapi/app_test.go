@@ -2,9 +2,9 @@
 // spins up an httptest.Server wrapping the real chi router, backed by a
 // throwaway Postgres container via pgtest.
 //
-// Coverage targets the post-stores-redesign-v2 template shape (stores
-// with selector + intent + alias, locks-by-name, attributes,
-// claim_resolutions, inherits) plus the renamed admin/claim routes.
+// Coverage targets the stores redesign template shape (stores with
+// selector + intent + alias, locks-by-name, attributes, inherits)
+// plus the renamed admin/claim routes.
 package controlapi
 
 import (
@@ -27,8 +27,7 @@ import (
 	"github.com/fallguy/rimsky/core/storage"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
-	pgstore "github.com/fallguy/rimsky/core/store/postgres"
-	"github.com/fallguy/rimsky/core/store/stub"
+	"github.com/fallguy/rimsky/core/store/storetest"
 )
 
 type harness struct {
@@ -39,9 +38,10 @@ type harness struct {
 }
 
 // newHarness boots Postgres, wires the app, and returns a harness +
-// teardown. Builds a *store.Registry with one stub-filesystem store
-// ("content") and one postgres store ("topics-ring") configured with a
-// pick policy backed by an items table.
+// teardown. Builds a *store.Registry with two unit-test fakes
+// ("content" and "topics-ring") satisfying store.Store; the wire is
+// not exercised here (the unit tests target template validation, route
+// wiring, and storage-backed paths — not the substrate protocol).
 func newHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -49,34 +49,9 @@ func newHarness(t *testing.T) (*harness, func()) {
 	backend := pgstorage.New(pool)
 	q := qpg.New(pool)
 
-	itemsTable := "items_app_test_" + sanitizeForTable(uuid.NewString())
-	createAppItemsTable(t, pool, itemsTable)
-
 	reg := store.NewRegistry()
-	reg.Register(pgstore.Factory{})
-	reg.Register(stub.FilesystemFactory())
-	_, err := reg.BuildAll(store.StoresConfig{
-		Stores: map[string]map[string]any{
-			"content": {
-				"kind": stub.KindFilesystem,
-			},
-			"topics-ring": {
-				"kind":            "postgres",
-				"connection":      pool.Config().ConnString(),
-				"write_semantics": "direct",
-				"pick_policies": map[string]any{
-					"@queue": map[string]any{
-						"type":                       "queue",
-						"items_table":                itemsTable,
-						"on_commit_default":          "delete",
-						"on_give_up_default":         "release_to_head",
-						"visibility_timeout_seconds": 300,
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
+	reg.Add("content", storetest.NewFake("content", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}))
+	reg.Add("topics-ring", storetest.NewFake("topics-ring", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}))
 
 	app := NewApp(AppDeps{
 		Storage: backend,
@@ -122,8 +97,9 @@ func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, ma
 	return resp.StatusCode, out
 }
 
-// validTemplateBody builds a minimal valid template request matching the
-// stores-redesign-v2 shape. Two executor-backed nodes; no stores or locks.
+// validTemplateBody builds a minimal valid template request matching
+// the stores redesign shape. Two executor-backed nodes; no stores or
+// locks.
 func validTemplateBody(name string) map[string]any {
 	return map[string]any{
 		"name":             name,
@@ -136,10 +112,11 @@ func validTemplateBody(name string) map[string]any {
 	}
 }
 
-// templateWithStoresAndLocks returns a template body exercising the new
-// stores-redesign-v2 fields: a node that takes a counting lock and holds
-// a pick-policy claim against the postgres store, and a downstream node
-// that reads from the filesystem store and resolves the held claim.
+// templateWithStoresAndLocks returns a template body exercising the
+// new stores redesign fields: a node that takes a counting lock and
+// holds a pick-policy claim against the postgres store, and a
+// downstream node that reads from the filesystem store and resolves
+// the held claim.
 func templateWithStoresAndLocks(name string) map[string]any {
 	return map[string]any{
 		"name":             name,
@@ -166,12 +143,6 @@ func templateWithStoresAndLocks(name string) map[string]any {
 							},
 						},
 						"required": []string{"area"},
-					},
-				},
-				"claim_resolutions": map[string]any{
-					"topics-ring": map[string]any{
-						"on_commit":  "delete",
-						"on_give_up": "release_to_head",
 					},
 				},
 			},
@@ -255,6 +226,31 @@ func TestTemplateDeploy_UnknownStore_400(t *testing.T) {
 	body["nodes"] = nodes
 	status, out := h.httpJSON(t, "POST", "/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
+}
+
+// TestTemplateDeploy_ClaimResolutions_Rejected asserts that a template
+// JSON body carrying a `claim_resolutions:` block (the v3 pre-cleanup
+// shape, now removed per the 2026-04-30 stores cleanup) fails deploy
+// with an unknown-field error rather than being silently accepted with
+// the field dropped on the floor. The handler's JSON decoder uses
+// DisallowUnknownFields() to surface this.
+func TestTemplateDeploy_ClaimResolutions_Rejected(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("cr-rejected-" + uuid.NewString())
+	nodes := body["nodes"].([]map[string]any)
+	nodes[0]["claim_resolutions"] = map[string]any{
+		"topics-ring": map[string]any{
+			"on_commit":  "commit",
+			"on_give_up": "abandon",
+		},
+	}
+	body["nodes"] = nodes
+	status, out := h.httpJSON(t, "POST", "/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, fmt.Sprint(out["error"]), "claim_resolutions")
 }
 
 func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
@@ -481,27 +477,6 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	require.Empty(t, holders)
 }
 
-// TestAdminPickPolicyInsert_RouteWired verifies the renamed admin route
-// is wired through NewApp.
-func TestAdminPickPolicyInsert_RouteWired(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	body := map[string]any{
-		"items": []map[string]any{
-			{"payload": map[string]any{"topic": "alpha"}},
-			{"payload": map[string]any{"topic": "beta"}},
-		},
-	}
-	status, out := h.httpJSON(t, "POST", "/admin/stores/topics-ring/pick-policies/@queue/items", body)
-	require.Equal(t, http.StatusCreated, status, out)
-	require.Equal(t, float64(2), out["inserted"])
-
-	status, _ = h.httpJSON(t, "POST", "/admin/stores/missing/pick-policies/@queue/items", body)
-	require.Equal(t, http.StatusNotFound, status)
-}
-
 func TestAdminForceFire_RouteWired(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -537,37 +512,4 @@ func firstNode(t *testing.T, h *harness, inst storage.InstanceRow) storage.NodeR
 	require.NoError(t, err)
 	require.Greater(t, len(nodes), 0)
 	return nodes[0]
-}
-
-// createAppItemsTable creates the §12.12 schema for a postgres-store
-// pick-policy items table.
-func createAppItemsTable(t *testing.T, pool *pgxpool.Pool, name string) {
-	t.Helper()
-	ctx := context.Background()
-	_, err := pool.Exec(ctx, `CREATE TABLE `+name+` (
-		item_id     TEXT PRIMARY KEY,
-		payload     JSONB NOT NULL,
-		state       TEXT NOT NULL DEFAULT 'available',
-		claim_token TEXT,
-		claimed_at  TIMESTAMPTZ,
-		enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		priority    INTEGER NOT NULL DEFAULT 0,
-		sequence    BIGSERIAL
-	)`)
-	require.NoError(t, err)
-}
-
-// sanitizeForTable swaps non-identifier characters for underscore.
-func sanitizeForTable(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
-			out = append(out, c)
-		default:
-			out = append(out, '_')
-		}
-	}
-	return string(out)
 }

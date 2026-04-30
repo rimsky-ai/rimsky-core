@@ -1,12 +1,12 @@
-// Verifies the new stores-redesign-v2 ClaimHolderInsertInput shape
-// round-trips through the storage interface and the (lock_holder_id,
+// Verifies the stores redesign ClaimHolderInsertInput shape round-
+// trips through the storage interface and the (lock_holder_id,
 // holder_node_id) uniqueness constraint holds.
 //
-// The pre-v2 test in this position exercised ClaimID/StoreName/
+// The pre-redesign test in this position exercised ClaimID/StoreName/
 // OnCommit/OnGiveUp/FrameID columns on rimsky_claim_holders — all
 // removed by the redesign. Per-row resolution actions now live in
 // template metadata; rows simply record subgraph membership and
-// per-member terminal state per spec §14.4.
+// per-member terminal state (auto-terminal: spec §4.10 invariant 13).
 package frame_resolution
 
 import (
@@ -40,7 +40,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 
 	// Seed a region-kind lock-holder anchored to worker; needed to
 	// satisfy the FK on rimsky_claim_holders.lock_holder_id. Both
-	// inserts run inside a single Tx — required by Insert per §13.3.
+	// inserts run inside a single Tx — required by Insert per §7.3.
 	storeName := "scenario-store"
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())

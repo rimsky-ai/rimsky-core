@@ -1,8 +1,8 @@
 // Package controlapi implements the HTTP+JSON control API for rimsky
 // orchestrators. Routes are registered in sibling files
 // (templates.go, instances.go, nodes.go, events.go, claims.go,
-// admin_claim_stores.go, admin_force_fire.go, health.go). Errors thrown
-// inside handlers are mapped to HTTP responses via setErrorHandler.
+// admin_force_fire.go, health.go). Errors thrown inside handlers are
+// mapped to HTTP responses via setErrorHandler.
 package controlapi
 
 import (
@@ -30,7 +30,7 @@ type AppDeps struct {
 	// the template-deploy validator. May be nil at construction time;
 	// admin handlers that need it return 503 when nil.
 	Stores *store.Registry
-	// NamedLocks is the operator-side named-lock config (spec §15.2).
+	// NamedLocks is the operator-side named-lock config (spec §6.1).
 	// Consulted at template-deploy time to validate that every
 	// template-referenced lock name is declared. Empty / missing → no
 	// named locks declared (templates referencing any will fail
@@ -72,7 +72,6 @@ func NewApp(deps AppDeps) http.Handler {
 	registerNodesRoutes(r, deps)
 	registerEventsRoutes(r, deps)
 	registerClaimsRoutes(r, deps)
-	registerAdminClaimStoresRoutes(r, deps)
 	registerAdminScheduleRoutes(r, deps)
 	registerHealthRoutes(r, deps)
 

@@ -1,5 +1,5 @@
-// Mode-coexistence helper (spec §8.5). Pure; no I/O; deterministic on
-// inputs. Lives in core/store/ so both the supervisor's acquisition flow
+// Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
+// Lives in core/store/ so both the supervisor's acquisition flow
 // (core/supervisor/runner_acquire.go) and the queue's eligibility
 // predicate (core/queue/postgres/queue.go) can call it without circular
 // imports.
@@ -7,8 +7,15 @@
 // A claim's effective mode is (sync|async, r|w) derived from
 // (intent, store.write_semantics) at conflict-check time. The matrix
 // is symmetric.
+//
+// Plus the rimsky-side region-conflict comparison (per spec §7.7):
+// byte-equal on canonical region bytes. v2's per-store RegionsConflict
+// / UnmarshalRegion methods are gone; canonicalization is the store's
+// responsibility, comparison is rimsky's.
 
 package store
+
+import "bytes"
 
 // ModeCoexists reports whether two claims with given intents on stores
 // with given write_semantics can coexist on overlapping regions, per the
@@ -48,6 +55,21 @@ func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB Writ
 	}
 	// Async block: r×r ✅, r×w ✅, w×r ✅, w×w ❌.
 	return !(rwA && rwB)
+}
+
+// RegionsByteEqual reports whether two store-supplied region byte
+// slices are equal under byte-wise comparison. The rimsky-side
+// implementation of the conflict comparison (per spec §7.7) — v2's
+// per-store Store.RegionsConflict is gone; substrates canonicalize
+// region bytes such that byte-equal correctly indicates conflict.
+//
+// Empty regions never conflict: an absent region (e.g. a NamedLockSpec
+// row in a region-keyed scan) cannot collide with another region.
+func RegionsByteEqual(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	return bytes.Equal(a, b)
 }
 
 // isSync reports whether the given write_semantics value is in the sync

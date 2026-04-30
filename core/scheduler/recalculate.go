@@ -85,7 +85,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 			"node_id", target.ID.String())
 		return nil
 	}
-	// RequiredStores is intentionally empty here. Per spec §14.2 an empty
+	// RequiredStores is intentionally empty here. Per spec §6.2 an empty
 	// slice trivially satisfies the supervisor-pool predicate
 	// (RequiredStores ⊆ AcceptedStores). The denormalisation from the
 	// in-memory template registry is threaded through the scheduler tick's

@@ -2,20 +2,90 @@
 
 ## Unreleased
 
-- **Stores: `connection:` is now required on every `kind: postgres`
-  store.** Removed the implicit "platform pool" fallback. Each
-  postgres store opens its own dedicated `*pgxpool.Pool` against an
-  operator-supplied DSN; rimsky's control-plane DB (the one behind
-  `RIMSKY_DB_URL`) is no longer reused as a default for unconfigured
-  stores. Operators who want a workload store collocated with the
-  control plane declare the same DSN as `connection:` — explicit, no
-  magic. Also dropped `Factory.Pool` (unused after the change) and
-  the `Store.ownsPool` flag (every store owns its pool now). Updated
-  the cmd binaries, smoke fixture, control-api tests, and store
-  tests to construct `pgstore.Factory{}` and supply explicit
-  `connection:` strings. `deploy/stores.yml` and operator-guide §3.4
-  rewritten to reflect the new contract; new examples for the
-  collocated-with-control-DB and separate-workload-DB cases.
+- **Stores Protocol Cleanup — substrate-vocabulary excision.**
+  Drops `policy_override` from `CommitRequest` / `AbandonRequest`,
+  deletes the `Delete` wire verb (4+1 verbs, was 5+1), replaces
+  `OpenResponse`'s implicit all-empty-bytes pool-empty signal with
+  an explicit `oneof Acquired | Unavailable` discriminator, and
+  removes the `claim_resolutions` template grammar
+  (`node.ClaimResolution` Go type deleted; `selectResolutionAction`
+  and `fireResolutionVerb` deleted from
+  `core/supervisor/auto_terminal.go`). Substrate disposition
+  (commit-vs-release-vs-delete on the substrate's own state) is
+  governed entirely by per-substrate config (e.g. the postgres
+  reference store-service's per-pick-policy `on_commit_default` /
+  `on_give_up_default`). Bridge handler switches from
+  `encoding/json` to `protojson` for response marshaling so the
+  new oneof round-trips correctly. Spec:
+  `docs/specs/2026-04-30-stores-protocol-cleanup-design.md`.
+  Supersedes v3 §4.1 / §4.5 / §4.7 third-paragraph / §4.10
+  invariant 13.1 / §5.1 / §5.2 / §7.8 obligation #3.
+
+- **http-node: fix stub-mode userdata validation ordering bug.**
+  `executeCore` validated `userdata.url` before the stub-mode
+  short-circuit, so the conformance suite's executor-agnostic
+  scenarios (which send `{stub_probe: true}` with no URL) errored
+  out before reaching `executeStub`. Move the stub-probe escape
+  hatch ahead of URL validation so the suite passes; the
+  `malformed_userdata` scenario (which omits `stub_probe`) still
+  exercises the URL check. Discovered while running the v3 T57
+  conformance verification against the reference http-node.
+  (`executors/http-node/server.go`)
+
+- **Stores Redesign v3 — out-of-process store-services.** Standard
+  store implementations (`filesystem`, `postgres`, `stub`) move from
+  in-process Go subpackages of `core/store/` to standalone binaries
+  under `stores/<kind>/`. Rimsky processes (`rimsky-supervisor`,
+  `rimsky-scheduler`, `rimsky-control-api`) talk to them exclusively
+  via the new 5+1-verb gRPC protocol defined in
+  `proto/v1/store_service.proto` (Open / Commit / Abandon / Delete /
+  Release plus a startup Capabilities() handshake). Spec:
+  `docs/specs/2026-04-27-stores-redesign-v3-design.md`.
+
+  Headline changes:
+  - **`Factory` / `Registry.BuildAll` / `StoresConfig` removed**
+    from `core/store/`. Registry collapses to a name → Store map
+    populated externally by each rimsky cmd binary at startup.
+  - **`stores.yml` schema rewritten**: thin name → endpoint +
+    declared capabilities form (no `kind`, no `connection`, no
+    `pick_policies` — substrate-specific keys live in each
+    store-service's own config).
+  - **Atomicity decoupled** (invariant 10 clarified): rimsky's
+    bookkeeping tx is independent of the substrate's tx. The v2
+    tx-sharing mechanism (`store.WithTx` / `TxFromContext`) is gone
+    along with `core/store/tx.go`. Store atomicity is the store's
+    concern (per the new §7.8 obligations).
+  - **Region conflict is byte-equal** (invariant 14 retired):
+    `Store.RegionsConflict` and `Store.UnmarshalRegion` are removed;
+    rimsky compares `rimsky_lock_holders.region_data` byte-for-byte.
+    Substrates canonicalize region bytes such that byte-equal
+    indicates conflict.
+  - **Filesystem store-service: glob support dropped**
+    (concrete-paths only). Operators needing globs write a custom
+    store-service.
+  - **4 inertness violations gone (structurally impossible)**: the
+    rimsky-side admin items endpoint
+    (`/admin/stores/.../pick-policies/.../items`), the pick-policy
+    validator hook, the scheduler visibility-timeout sweep, and the
+    `*pgstore.Store` substrate-only methods (`InsertItems`,
+    `PickPolicyConfig`, `PickPolicies`). The postgres store-service
+    ships with its own admin endpoint for items insertion (separate
+    listener port).
+  - **`rimsky_lock_holders.id` generated client-side** (so it can be
+    passed to `Store.Open` as `claim_id` per spec §4.2). Column
+    default `gen_random_uuid()` retained as safety net.
+  - **Invariant 15 revised**: `Open` still fires inside the
+    rimsky-side acquisition tx, but the store's state mutation runs
+    in its own tx.
+  - **Held-claim resolution mechanically updated**: substrate verb
+    calls go through the remote-client gRPC path; substrate-side
+    action runs in its own tx (no longer shares a tx with the
+    lock-holder DELETE).
+  - **Deployment**: three new Dockerfiles (`stores/{filesystem,
+    postgres,stub}/Dockerfile.<kind>`); `deploy/build-images.sh`
+    builds all 9 images; `deploy/docker-compose.yml` adds two new
+    services (`store-filesystem`, `store-postgres`) and removes the
+    `init-items` one-shot's coupling to rimsky's admin route.
 
 - **Stores Redesign v2 — code-review correctness pass.** Closed the
   `findInheritedAliasesForNode` cartesian-product bug (per-row

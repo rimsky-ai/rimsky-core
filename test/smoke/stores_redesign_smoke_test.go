@@ -1,11 +1,11 @@
-// Spec §19.2 — smoke fixture (acceptance criterion for the stores redesign).
+// Spec §10 — smoke fixture (acceptance criterion for the stores redesign).
 //
 // Drives the §11.5 four-node template (claim-topic / scope / draft / review)
 // against the in-process stack from setup.go: 100 sequential force-fires of
 // the claim-topic source node, then poll for the downstream cascade to
 // drain.
 //
-// Wall-clock structure (§19.2):
+// Wall-clock structure (§10):
 //   - Phase 1 (force-fires, sequential): 100 × per-fire wait. Per-fire
 //     timeout 5s; happy path is sub-second per fire. Fail-fast on the
 //     first per-fire timeout.
@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStoresRedesignSmoke is the §19.2 acceptance test. The whole flow must
+// TestStoresRedesignSmoke is the §10 acceptance test. The whole flow must
 // complete inside the 10-minute global budget; the per-fire and cascade
 // budgets are enforced internally so a hang in either phase fails fast
 // rather than waiting for the global timeout.
@@ -77,12 +77,14 @@ func TestStoresRedesignSmoke(t *testing.T) {
 	}
 	t.Logf("phase 2 complete: cascade drained in %v", time.Since(startPhase2))
 
-	// ---- Final assertions per §19.2 ----
+	// ---- Final assertions per §10 ----
 	assertFinalState(t, ctx, stack)
 }
 
-// bulkInsertItems POSTs 100 items via the admin claim-stores route. The
-// payload shape is `{"area": "A_<n>", "subtopic": "S_<n>"}` for n=1..count.
+// bulkInsertItems POSTs 100 items via the substrate-internal admin
+// endpoint of the postgres store-service (per v3 spec §7.3 step 1: rimsky no
+// longer has an items endpoint; the store-service owns its own admin
+// surface).
 func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 	t.Helper()
 	items := make([]map[string]any, 0, count)
@@ -94,7 +96,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 			},
 		})
 	}
-	status, raw := stack.PostJSON("/admin/stores/topics-ring/pick-policies/@review-queue/items", map[string]any{"items": items})
+	status, raw := stack.PostStoreAdmin("/admin/items/@review-queue", map[string]any{"items": items})
 	require.Equal(t, http.StatusCreated, status, "bulkInsertItems: %s", string(raw))
 	var resp struct {
 		Inserted int `json:"inserted"`
@@ -105,7 +107,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 
 // deploySmokeTemplate POSTs the §11.5 four-node template to /templates and
 // returns the new template_id. The `model-budget` lock limit is set to 50
-// per §19.2 to keep executor parallelism unconstrained.
+// per §10 to keep executor parallelism unconstrained.
 //
 // The §11.5 example carries a `quality_rules` entry with type
 // `must_match_regex`. v1 only ships `row_count_ratio` / `no_nulls` /
@@ -157,7 +159,7 @@ func findNodeIDByType(t *testing.T, stack *SmokeStack, instanceID uuid.UUID, nod
 
 // fireOnceAndWait POSTs a force-fire and polls the source node row until
 // it (a) leaves its current state and (b) returns to fresh. Per spec
-// §19.2 we want one full cycle per force-fire (no coalescing) — the
+// §10 we want one full cycle per force-fire (no coalescing) — the
 // `updated_at` snapshot before the POST guarantees we count only the new
 // cycle's transitions. Times out after `timeout` and fails the test
 // (fail-fast: a single per-fire timeout terminates Phase 1).
@@ -202,7 +204,7 @@ func fireOnceAndWait(
 		fireN, timeout, beforeUpdatedAt)
 }
 
-// cascadeAtSteadyState reports whether the four §19.2 steady-state checks
+// cascadeAtSteadyState reports whether the four §10 steady-state checks
 // are simultaneously true:
 //
 //  1. count(rimsky_events kind='work_completed' payload->>'node_type'='review') >= 100
@@ -351,7 +353,7 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 }
 
 // assertFinalState runs the post-cascade SQL assertions called out in
-// §19.2: every item back to 'available' (none in_progress / dead_letter),
+// §10: every item back to 'available' (none in_progress / dead_letter),
 // the items table contains exactly 100 rows (ring buffer never deletes),
 // and the control-api /health endpoint is reachable.
 //
@@ -546,7 +548,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 // docstring) to be expressed in code; the YAML fixture remains as
 // documentation alongside.
 //
-// The model-budget lock limit is 50 (§19.2 requirement).
+// The model-budget lock limit is 50 (§10 requirement).
 func smokeTemplateBody() map[string]any {
 	return map[string]any{
 		"name":             "smoke-stores-redesign",
@@ -585,12 +587,6 @@ func claimTopicNode() map[string]any {
 					"subtopic": map[string]any{"type": "string", "source": "{{claim.topics-ring.payload.subtopic}}"},
 				},
 				"required": []any{"area", "subtopic"},
-			},
-		},
-		"claim_resolutions": map[string]any{
-			"topics-ring": map[string]any{
-				"on_commit":  "release_to_back",
-				"on_give_up": "release_to_back",
 			},
 		},
 	}
@@ -678,8 +674,11 @@ func draftNode() map[string]any {
 // reviewNode is the terminal of the held subgraph: it inherits the
 // topics-ring claim from claim-topic (value-passing through scope is
 // not transitive — each downstream that needs the live claim declares
-// it explicitly). The acquirer's claim_resolutions block governs
-// release; this node just reads the draft's output region.
+// it explicitly). At terminal the supervisor fires Commit on the
+// substrate (success) or Abandon (failure); the postgres reference
+// store-service's per-policy `on_commit_default` /
+// `on_give_up_default` config governs disposition. This node just
+// reads the draft's output region.
 func reviewNode() map[string]any {
 	return map[string]any{
 		"type":         "review",

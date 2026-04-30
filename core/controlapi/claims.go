@@ -1,9 +1,9 @@
 // claims.go — GET /lock-holders/{lock_holder_id}/claim-holders.
 //
-// Returns the held-claim ledger rows for a given lock-holder (spec
-// §12.11). Under stores-redesign-v2 each row simply records subgraph
-// membership and per-member terminal state; the resolution actions
-// live in template metadata (rimsky_templates.spec), not on the row.
+// Returns the held-claim ledger rows for a given lock-holder. Under
+// the stores redesign each row simply records subgraph membership and
+// per-member terminal state; the resolution actions live in template
+// metadata (rimsky_templates.spec), not on the row.
 //
 // Read-only and unauthenticated under today's anonymous-by-default
 // config; the route is gated by AppDeps.Auth when the deployer wires

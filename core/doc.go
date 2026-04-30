@@ -9,8 +9,8 @@
 // via two messages (invalidate, recalculate), interact with stores via
 // claims and named locks (the two primitives — see docs/glossary.md),
 // and execute work through external executor services. The store
-// interface is five verbs: Open / Commit / Abandon / Delete / Release
-// (spec §11.5).
+// interface is four verbs: Open / Commit / Abandon / Release
+// (spec §4.1).
 //
 // Sub-packages follow a feature-first layout:
 //
@@ -41,16 +41,16 @@
 //     Logger.
 //   - storage/    — StorageBackend + sub-store interfaces; Postgres
 //     implementations.
-//   - store/      — Store interface (5 verbs) + value types
+//   - store/      — Store interface (4 verbs) + value types
 //     (ClaimSpec, NamedLockSpec, ClaimResult,
 //     Capabilities, WriteSemantics, Intent),
-//     ModeCoexists helper (spec §8.5), Registry with
-//     substrate-ceiling enforcement, LockHoldersClient
-//     helpers. Subpackages: filesystem/, postgres/,
-//     stub/.
+//     ModeCoexists helper, Registry, LockHoldersClient
+//     helpers. Subpackages: remote/ (gRPC client; the
+//     only concrete Store in the rimsky module),
+//     storetest/ (in-Go fake).
 //   - supervisor/ — supervisor main loop + runner + atomic
-//     acquisition (§13.3) + auto-terminal mechanism
-//     (§14.4) + release flow (§13.6) + async callback
+//     acquisition (§7.3) + auto-terminal mechanism
+//     (§4.10 invariant 13) + release flow (§7.6) + async callback
 //     server.
 //
 // The module has no cross-package cycles; the import DAG is enforced

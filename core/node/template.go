@@ -1,20 +1,22 @@
 // Template DSL types (spec §18). The graph-author's view of a node:
 // stores it interacts with, named locks it holds, attributes it
-// declares, claim-resolution actions for held claims it acquires, and
-// inheritance edges for held claims it consumes downstream.
+// declares, and inheritance edges for held claims it consumes
+// downstream.
 //
-// Stores-redesign-v2 changes (spec §18.3):
-//   - dropped: held: true flag on claim entries (held is implicit from
-//     downstream inherits:)
-//   - dropped: per-claim on_commit/on_give_up overrides (moved to
-//     claim_resolutions on the acquiring node, per spec §14.3)
-//   - dropped: per-claim Write/Read/Claim/Hold/Resumable (replaced by
-//     selector + intent + alias)
-//   - added: Selector (opaque text), Intent (r|rw), Alias (per-claim
-//     name within node) on NodeStoreRef
-//   - added: Inherits []InheritEntry on TemplateNodeDef
-//   - added: ClaimResolutions on acquiring node (was: per-resolver
-//     declaration on terminal-leaf nodes)
+// History (informational):
+//   - Stores-redesign-v2 dropped per-claim on_commit/on_give_up
+//     overrides from claim entries and added a `claim_resolutions`
+//     map on the acquiring node.
+//   - The 2026-04-30 stores cleanup
+//     (`docs/specs/2026-04-30-stores-protocol-cleanup-design.md`)
+//     removes `claim_resolutions` entirely. Substrate disposition
+//     (what Commit / Abandon mean for the substrate's own state) is
+//     governed entirely by per-substrate config; rimsky carries only
+//     the success/failure binary (success → Commit; failure →
+//     Abandon).
+//   - NodeStoreRef carries selector + intent + alias.
+//   - TemplateNodeDef carries Inherits []InheritEntry for held-claim
+//     consumers downstream of an acquirer.
 
 package node
 
@@ -46,19 +48,18 @@ const (
 // handler and is only used to express dependency fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
-	Type             string
-	Description      string
-	Executor         string // optional; empty = no executor
-	Userdata         map[string]any
-	Schedule         string // cron expr; optional
-	Dependencies     []string
-	Stores           []NodeStoreRef
-	Locks            []NodeLockRef
-	Attributes       NodeAttributesDef
-	QualityRules     []qualityrule.Spec
-	Inherits         []InheritEntry             `yaml:"inherits,omitempty"`
-	ClaimResolutions map[string]ClaimResolution `yaml:"claim_resolutions,omitempty"`
-	ErrorTypes       map[string]ErrorTypePolicy
+	Type         string
+	Description  string
+	Executor     string // optional; empty = no executor
+	Userdata     map[string]any
+	Schedule     string // cron expr; optional
+	Dependencies []string
+	Stores       []NodeStoreRef
+	Locks        []NodeLockRef
+	Attributes   NodeAttributesDef
+	QualityRules []qualityrule.Spec
+	Inherits     []InheritEntry `yaml:"inherits,omitempty"`
+	ErrorTypes   map[string]ErrorTypePolicy
 }
 
 // NodeStoreRef declares this node's claim against a registered store.
@@ -77,7 +78,7 @@ type NodeStoreRef struct {
 
 // NodeLockRef declares a named lock the node must hold for the
 // duration of its run. Limit lives in operator config (`named_locks:`
-// block per spec §15.2), so the template only references the lock by
+// block per spec §6.1), so the template only references the lock by
 // name.
 type NodeLockRef struct {
 	Name string `yaml:"name"`
@@ -103,21 +104,6 @@ type NodeAttributesDef struct {
 // a specific acquirer reachable via deps.
 type InheritEntry struct {
 	Claim string `yaml:"claim"`
-}
-
-// ClaimResolution declares the substrate-side actions auto-terminal
-// fires at holding-subgraph completion (spec §14.3 / §14.4). Declared
-// on the acquiring node, keyed by the per-claim alias. Required when
-// the claim is held (subgraph size > 1); optional otherwise (the
-// supervisor falls back to "commit" / "abandon" defaults at the
-// acquirer's own terminal).
-//
-// Action vocabulary: "commit" | "abandon" | "delete" |
-// "release_to_back" | "release_to_head". The supervisor's auto-terminal
-// routing (spec §14.4.1) maps these to the appropriate Store verb.
-type ClaimResolution struct {
-	OnCommit string `yaml:"on_commit"`
-	OnGiveUp string `yaml:"on_give_up"`
 }
 
 // AliasOf returns the claim alias for this store ref — defaults to

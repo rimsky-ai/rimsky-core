@@ -1,18 +1,16 @@
-// rimsky-scheduler is the reference env-var-driven entry point for the
-// scheduler process. It is a thin shell that builds a typed
-// config.SchedulerConfig from environment variables, loads the stores config
-// from RIMSKY_STORES_CONFIG (used by the §13.5 step-4 visibility-timeout
-// sweep over postgres pick-policy items tables), and calls
-// config.StartScheduler. Lifecycle is driven by SIGTERM/SIGINT with a 30s
-// graceful shutdown context.
+// rimsky-scheduler is the env-var-driven entry point for the
+// scheduler process. Builds a typed config.SchedulerConfig from
+// environment variables, loads the stores config from
+// RIMSKY_STORES_CONFIG (per spec §6.1: name → endpoint + declared
+// capabilities), and calls config.StartScheduler.
 //
 // Environment variables:
 //
-//	RIMSKY_DB_URL               required; Postgres DSN (e.g. postgres://...)
-//	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500
-//	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000
+//	RIMSKY_DB_URL               required; Postgres DSN.
+//	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500.
+//	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000.
 //	RIMSKY_STORES_CONFIG        optional; default /etc/rimsky/stores.yml.
-//	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info)
+//	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info).
 package main
 
 import (
@@ -26,18 +24,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"gopkg.in/yaml.v3"
 
 	"github.com/fallguy/rimsky/core/config"
 	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
 	"github.com/fallguy/rimsky/core/shared"
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/filesystem"
-	pgstore "github.com/fallguy/rimsky/core/store/postgres"
 )
 
-// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is unset.
+// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is
+// unset.
 const defaultStoresConfigPath = "/etc/rimsky/stores.yml"
 
 func main() {
@@ -57,7 +52,11 @@ func main() {
 	if storesPath == "" {
 		storesPath = defaultStoresConfigPath
 	}
-	storesCfg, namedLocksCfg, err := loadStoresConfig(storesPath)
+	// The scheduler does not dial remote stores in v3 (the v2 visibility-
+	// timeout sweep is gone; the orphan reaper no longer fires
+	// Store.Abandon per spec §7.5). It still consumes named_locks for
+	// validation; ignore the stores block.
+	_, namedLocksCfg, err := config.LoadStoresConfigYAML(storesPath)
 	if err != nil {
 		log.Error("load stores config", "error", err.Error(), "path", storesPath)
 		os.Exit(1)
@@ -73,15 +72,6 @@ func main() {
 	sb := pgstorage.New(pool)
 	q := pgqueue.New(pool)
 
-	// Linked-in store factories. The scheduler only walks postgres
-	// pick-policy items tables during the §12.12 visibility-timeout sweep,
-	// but it must still register every kind that may appear in stores.yml
-	// so the registry build does not fail.
-	storeFactories := []store.Factory{
-		filesystem.Factory{},
-		pgstore.Factory{},
-	}
-
 	h, err := config.StartScheduler(config.SchedulerConfig{
 		Storage:          sb,
 		Queue:            q,
@@ -90,8 +80,6 @@ func main() {
 		TickInterval:     time.Duration(tickMs) * time.Millisecond,
 		HeartbeatTimeout: time.Duration(heartbeatMs) * time.Millisecond,
 		Pool:             pool,
-		StoreFactories:   storeFactories,
-		Stores:           storesCfg,
 		NamedLocks:       namedLocksCfg,
 	})
 	if err != nil {
@@ -107,32 +95,6 @@ func main() {
 		log.Error("scheduler shutdown", "error", err.Error())
 	}
 	pool.Close()
-}
-
-// loadStoresConfig reads the stores.yml file, expanding ${ENV_VAR}
-// references before YAML parsing. Returns the parsed stores +
-// named_locks blocks (spec §15.3 — one operator config bundle, two
-// top-level keys). A missing file is not an error: empty configs
-// returned, mirroring the supervisor and control-api binaries.
-func loadStoresConfig(path string) (store.StoresConfig, store.NamedLocksConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return store.StoresConfig{}, store.NamedLocksConfig{}, nil
-		}
-		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("read stores config %q: %w", path, err)
-	}
-	expanded := os.ExpandEnv(string(raw))
-	var wrapper struct {
-		Stores     map[string]map[string]any        `yaml:"stores"`
-		NamedLocks map[string]store.NamedLockConfig `yaml:"named_locks"`
-	}
-	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
-		return store.StoresConfig{}, store.NamedLocksConfig{}, fmt.Errorf("parse stores config %q: %w", path, err)
-	}
-	return store.StoresConfig{Stores: wrapper.Stores},
-		store.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		nil
 }
 
 func atoiDefault(s string, d int) int {

@@ -1,5 +1,5 @@
 // Scenario 13 — orphaned claim: a `rimsky_lock_holders` row outlives its
-// supervisor's heartbeat. The scheduler's §13.5 step-2 lock-holder sweep
+// supervisor's heartbeat. The scheduler's §7.5 step-2 lock-holder sweep
 // reaps the expired row, deletes it claimant-guarded on
 // `holder_supervisor_id`, and emits a `lock_orphan_reaped` event.
 //
@@ -8,7 +8,7 @@
 // 5 × heartbeat_timeout) is still wired in `core/scheduler/scheduler.go` and
 // emits `orphaned_claim_released`, but the redesign relocates the
 // supervisor-side orphan signal onto `rimsky_lock_holders` (§9.9.2 +
-// §13.5). This scenario exercises the lock-holder path; `verify_before_run_
+// §7.5). This scenario exercises the lock-holder path; `verify_before_run_
 // race_test.go` covers the dispatch-row complement.
 package scenarios
 
@@ -43,7 +43,7 @@ func TestOrphanedClaim(t *testing.T) {
 
 	// Seed an expired `rimsky_lock_holders` row tied to a dead supervisor.
 	// We pick `kind='named'` so the per-row reap path runs without needing a
-	// real claim_store factory in the harness — the §13.5 step-2 reap is
+	// real claim_store factory in the harness — the §7.5 step-2 reap is
 	// identical for all three kinds modulo the store-side ReleaseLock call
 	// (claim-only). Same pattern as `heartbeat_loss_reenqueue_test.go`.
 	lockHolderID := uuid.New()
@@ -59,7 +59,7 @@ func TestOrphanedClaim(t *testing.T) {
 		}, tx)
 	}))
 
-	// Wait for the §13.5 step-2 sweep to reap the row. Scheduler tick
+	// Wait for the §7.5 step-2 sweep to reap the row. Scheduler tick
 	// interval in the harness is 250ms; orphan-reap cutoff is purely
 	// `expires_at < now()` for the lock-holder path.
 	deadline := time.Now().Add(20 * time.Second)
@@ -72,7 +72,7 @@ func TestOrphanedClaim(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, reaped, "expired lock-holder row was not reaped by §13.5 step-2 sweep")
+	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
 	// `lock_orphan_reaped` event was emitted with the reaped row's metadata.
 	nid := n.ID

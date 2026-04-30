@@ -1,7 +1,7 @@
 // Package postgres is the Postgres implementation of queue.DispatchQueue.
 //
-// Under the stores redesign (spec §13), this package owns rimsky_dispatch
-// only. The §13.3 atomic-acquisition transaction is orchestrated by
+// Under the stores redesign (spec §7), this package owns rimsky_dispatch
+// only. The §7.3 atomic-acquisition transaction is orchestrated by
 // core/supervisor/runner.go; the helpers below (SelectCandidates,
 // ClaimDispatchRow, TakeNamedLockAdvisory) are the building blocks the
 // runner calls inside the single pgx.Tx that brackets candidate selection,
@@ -13,7 +13,7 @@
 // gating data (named/region/claim locks) lives in the in-memory template
 // registry which this package does not import. Splitting the work into
 // helpers lets the supervisor's runner do the in-Go eligibility checks
-// (§13.2) between candidate selection and the claim UPDATE.
+// (§7.3 step 2) between candidate selection and the claim UPDATE.
 package postgres
 
 import (
@@ -48,7 +48,7 @@ func New(pool *pgxpool.Pool) *Queue {
 }
 
 // Pool returns the underlying connection pool. Callers that need to start
-// the §13.3 acquisition transaction (the supervisor's runner) use this so
+// the §7.3 acquisition transaction (the supervisor's runner) use this so
 // the rest of the helper surface can take an open pgx.Tx.
 func (q *Queue) Pool() *pgxpool.Pool { return q.pool }
 
@@ -58,7 +58,7 @@ var _ queue.DispatchQueue = (*Queue)(nil)
 // Enqueue inserts or refreshes a dispatch row for the given node. On conflict
 // (UNIQUE node_id) the row is updated ONLY if still unclaimed and already
 // eligible — a claimed or future-dated row is left alone. RequiredStores is
-// denormalised from the template at enqueue time and drives the §14.2
+// denormalised from the template at enqueue time and drives the §6.2
 // supervisor-pool specialisation predicate.
 func (q *Queue) Enqueue(ctx context.Context, req queue.DispatchRequest) error {
 	stores := req.RequiredStores
@@ -84,7 +84,7 @@ func (q *Queue) Enqueue(ctx context.Context, req queue.DispatchRequest) error {
 	return err
 }
 
-// SelectCandidates is the §13.3 step 1 candidate-selection helper.
+// SelectCandidates is the §7.3 step 1 candidate-selection helper.
 //
 // SQL: SELECT FROM rimsky_dispatch WHERE claimed_by IS NULL AND
 // required_stores <@ accepted_stores AND
@@ -94,11 +94,11 @@ func (q *Queue) Enqueue(ctx context.Context, req queue.DispatchRequest) error {
 // The caller MUST hold an open transaction; rows returned have their
 // per-row locks held until the tx commits or rolls back. The runner
 // iterates these candidates, evaluates the in-Go lock eligibility hints
-// (§13.2) for each, and on the first eligible one proceeds to step 3
+// (§7.3 step 2) for each, and on the first eligible one proceeds to step 3
 // (advisory locks + ClaimDispatchRow).
 //
 // The IS NULL branch of the executor predicate is load-bearing: native
-// (claim-only) nodes per §17.1 enqueue with executor_name IS NULL and are
+// (claim-only) nodes enqueue with executor_name IS NULL and are
 // run by the supervisor's omnibus runner without a separate executor
 // process.
 func (q *Queue) SelectCandidates(
@@ -164,7 +164,7 @@ func (q *Queue) SelectCandidates(
 	return out, nil
 }
 
-// ClaimDispatchRow is the §13.3 step 3c claimant-guarded UPDATE.
+// ClaimDispatchRow is the §7.3 step 3c claimant-guarded UPDATE.
 //
 // Sets claimed_by=supervisorID, claimed_at=now(), last_heartbeat_at=now()
 // for the given dispatch row, but only when claimed_by IS NULL.
@@ -172,15 +172,14 @@ func (q *Queue) SelectCandidates(
 // Returns claimed=true on a single-row update; claimed=false when the row
 // was already claimed by someone else. Under FOR UPDATE SKIP LOCKED inside
 // the same tx the false branch should not occur; the guard is the
-// invariant per spec §13.3 step 3c.
+// invariant per spec §7.3 step 3c.
 //
-// The dispatch row is the running-window primitive (the prior
-// @blessed-invariant on Claim): tag-limit / named-lock counts read
-// rimsky_dispatch.claimed_by IS NOT NULL (now: rimsky_lock_holders.expires_at
-// > now() under the redesign), so the running window must extend exactly
-// as long as the claim holds. The caller (runner) commits this UPDATE
-// alongside the lock-holder inserts in the same tx so claim and
-// lock-holder rows go visible atomically.
+// The dispatch row is the running-window primitive: tag-limit / named-
+// lock counts read rimsky_dispatch.claimed_by IS NOT NULL joined against
+// rimsky_lock_holders.expires_at > now(), so the running window must
+// extend exactly as long as the claim holds. The caller (runner) commits
+// this UPDATE alongside the lock-holder inserts in the same tx so claim
+// and lock-holder rows go visible atomically. (Blessed-invariant 2.)
 func (q *Queue) ClaimDispatchRow(
 	ctx context.Context, tx pgx.Tx, dispatchID shared.UUID, supervisorID string,
 ) (bool, error) {
@@ -200,12 +199,12 @@ func (q *Queue) ClaimDispatchRow(
 }
 
 // TakeNamedLockAdvisory takes a transactional advisory lock keyed on
-// "rimsky_lock:" + lockName. Spec §13.3 step 3b: under
+// "rimsky_lock:" + lockName. Spec §7.3 step 3b: under
 // pg_advisory_xact_lock, two supervisors trying to acquire the same named
 // lock serialize on this call before re-counting holders.
 //
 // The lock is released automatically on COMMIT / ROLLBACK of tx. The
-// caller is responsible for sorting lock names per the §13.7 invariant
+// caller is responsible for sorting lock names per blessed-invariant 3
 // before taking multiple locks in one tx — without sorting, two callers
 // holding different orderings of the same set deadlock.
 func TakeNamedLockAdvisory(ctx context.Context, tx pgx.Tx, lockName string) error {
@@ -217,6 +216,32 @@ func TakeNamedLockAdvisory(ctx context.Context, tx pgx.Tx, lockName string) erro
 		fmt.Sprintf("rimsky_lock:%s", lockName),
 	); err != nil {
 		return fmt.Errorf("postgres.TakeNamedLockAdvisory(%q): %w", lockName, err)
+	}
+	return nil
+}
+
+// TakeRegionAdvisory takes a transactional advisory lock keyed on
+// "rimsky_region:" + storeName + ":" + regionData. Used by
+// runner_acquire to serialize concurrent acquisitions targeting the
+// same (store, region) pair so that two supervisors evaluating
+// region-conflict against an uncommitted INSERT cannot both pass —
+// preserves single-writer-per-region (invariant 4b) for non-pick-policy
+// regional claims, where the store's FOR UPDATE SKIP LOCKED predicate
+// is unavailable.
+//
+// The lock is released automatically on COMMIT / ROLLBACK of tx. Per
+// blessed-invariant 3, callers must take all advisory locks (named
+// AND region) in deterministic sort order — runner_acquire sorts the
+// spec slice via sortLockSpecs before any advisory call.
+func TakeRegionAdvisory(ctx context.Context, tx pgx.Tx, storeName string, regionData []byte) error {
+	if tx == nil {
+		return errors.New("postgres.TakeRegionAdvisory: tx required")
+	}
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`,
+		fmt.Sprintf("rimsky_region:%s:%s", storeName, string(regionData)),
+	); err != nil {
+		return fmt.Errorf("postgres.TakeRegionAdvisory(%q): %w", storeName, err)
 	}
 	return nil
 }
@@ -277,13 +302,13 @@ func (q *Queue) RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedC
 }
 
 // ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is older
-// than cutoff and claimed_by IS NOT NULL. Spec §13.5 step 1: the redesign
+// than cutoff and claimed_by IS NOT NULL. Spec §7.5 step 1: the redesign
 // switched the predicate column from claimed_at to last_heartbeat_at so a
 // long-running but heartbeating supervisor is not reaped.
 //
 // The previous implementation also filtered on `rimsky_nodes.state = 'stale'`
 // to avoid releasing a claim under a still-running node. Under the redesign
-// the heartbeat tick (§13.4) refreshes last_heartbeat_at while the node is
+// the heartbeat tick (§7.5) refreshes last_heartbeat_at while the node is
 // running, so a running node's claim cannot satisfy the predicate;
 // dropping the join keeps the sweep aligned with the spec text.
 func (q *Queue) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]shared.DispatchRow, error) {
@@ -363,7 +388,7 @@ func (q *Queue) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (queue
 }
 
 // RefreshHeartbeat extends rimsky_dispatch.last_heartbeat_at to NOW() for
-// every row claimed by supervisorID. Spec §13.4 — paired with the
+// every row claimed by supervisorID. Spec §7.5 — paired with the
 // lock-holder heartbeat extend (in core/store/lockholders.go); the
 // dispatch sweep predicate filters on this column so a heartbeating
 // supervisor is not reaped.
@@ -379,8 +404,7 @@ func (q *Queue) RefreshHeartbeat(ctx context.Context, supervisorID string) error
 }
 
 // nullableText converts an empty string to a SQL NULL marker so a
-// native (claim-only) node enqueues with executor_name IS NULL per
-// spec §17.1.
+// native (claim-only) node enqueues with executor_name IS NULL.
 func nullableText(s string) any {
 	if s == "" {
 		return nil

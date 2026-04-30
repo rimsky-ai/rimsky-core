@@ -241,7 +241,7 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	assert.Empty(t, q.snapshot())
 }
 
-// TestProcessPureCascade_NativeClaimOnly_Enqueues pins the §17.1 step 4b
+// TestProcessPureCascade_NativeClaimOnly_Enqueues pins the §7.3 step 4b
 // branch: an empty-executor node whose template node-def declares at
 // least one store with claim=true is treated as native claim-only — the
 // scheduler enqueues it onto the dispatch queue with the template's
