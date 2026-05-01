@@ -148,7 +148,7 @@ type NodeStore interface {
 // LockKind discriminates a lock-holder row's payload columns. Two kinds:
 // 'named' (named-lock primitive) and 'region' (claim primitive). The prior
 // 'claim' kind dissolved under stores-redesign v2 — pick-policy claims are
-// 'region' rows with substrate-chosen region_data.
+// 'region' rows with store-chosen region_data.
 type LockKind string
 
 const (
@@ -160,7 +160,7 @@ const (
 // (LockName) / (StoreName + RegionData + Intent) is populated, keyed by
 // LockKind; the CHECK constraint enforces this on the database side.
 //
-// Address is substrate-supplied bytes from Open(); written into the row
+// Address is store-supplied bytes from Open(); written into the row
 // after Open returns successfully (within the same acquisition tx). May be
 // nil for region rows mid-acquisition; populated by terminal time.
 type LockHolderRow struct {
@@ -169,7 +169,7 @@ type LockHolderRow struct {
 	LockName           *string         // non-nil when LockKind = "named"
 	StoreName          *string         // non-nil when LockKind = "region"
 	RegionData         json.RawMessage // opaque JSONB; non-nil when LockKind = "region"
-	Address            json.RawMessage // opaque JSONB; substrate-supplied from Open
+	Address            json.RawMessage // opaque JSONB; store-supplied from Open
 	Intent             *string         // 'r' | 'rw' for region rows; nil for named
 	HolderSupervisorID string
 	HolderNodeID       shared.UUID
@@ -209,7 +209,7 @@ type LockHolderInsertInput struct {
 //
 // Sweep predicate: ListExpired returns rows where expires_at < now(). The
 // scheduler's lock-holder sweep iterates these, runs the store-side
-// substrate verb, then deletes the row claimant-guarded on
+// store verb, then deletes the row claimant-guarded on
 // holder_supervisor_id.
 type LockHoldersStore interface {
 	Insert(ctx context.Context, in LockHolderInsertInput, tx Tx) error

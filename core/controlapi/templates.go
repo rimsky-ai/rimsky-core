@@ -7,8 +7,8 @@
 // owns-resources / reads-resources fields were retired in the stores
 // redesign (spec §11.3); the JSON shape mirrors the current template
 // shape: stores, locks, attributes, quality_rules. Per the 2026-04-30
-// stores cleanup, claim_resolutions is gone — substrate disposition is
-// governed by per-substrate config, not by the template.
+// stores cleanup, claim_resolutions is gone — store disposition is
+// governed by per-store config, not by the template.
 package controlapi
 
 import (

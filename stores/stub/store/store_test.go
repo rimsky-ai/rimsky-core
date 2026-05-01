@@ -129,7 +129,7 @@ func TestApplyPickActionReleaseToHead(t *testing.T) {
 
 func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"v":"a"}`)}
-	// Configure an invalid default action; substrate should reject at terminal.
+	// Configure an invalid default action; the store should reject at terminal.
 	st := newStubWithPolicy(t, "@queue", items, "what-is-this", "what-is-this")
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")

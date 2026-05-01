@@ -9,9 +9,9 @@
 //     map on the acquiring node.
 //   - The 2026-04-30 stores cleanup
 //     (`docs/specs/2026-04-30-stores-protocol-cleanup-design.md`)
-//     removes `claim_resolutions` entirely. Substrate disposition
-//     (what Commit / Abandon mean for the substrate's own state) is
-//     governed entirely by per-substrate config; rimsky carries only
+//     removes `claim_resolutions` entirely. Store disposition
+//     (what Commit / Abandon mean for the store's own state) is
+//     governed entirely by per-store config; rimsky carries only
 //     the success/failure binary (success → Commit; failure →
 //     Abandon).
 //   - NodeStoreRef carries selector + intent + alias.
@@ -63,7 +63,7 @@ type TemplateNodeDef struct {
 }
 
 // NodeStoreRef declares this node's claim against a registered store.
-// Selector is opaque text post-substitution; substrate parses and
+// Selector is opaque text post-substitution; the store parses and
 // decides what it means (regional access vs. configured pick policy).
 // Intent is "r" (read) or "rw" (read-write). Alias is the per-claim
 // name within the node, used in {{claim.<alias>.<...>}} substitution

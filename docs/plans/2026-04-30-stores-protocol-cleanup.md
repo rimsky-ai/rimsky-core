@@ -931,11 +931,11 @@ Expect: no matches in CLAUDE.md / architecture.md / operator-guide.md. (Glossary
 ## Task 19 — Mark v3-completion Issues 1 + 3 resolved
 
 **Files:**
-- `docs/v3-completion.md`
+- `docs/history/v3-completion.md`
 
 **Steps:**
 
-1. In `docs/v3-completion.md`, locate the headers for Issue 1 (`## Issue 1 — Open error vs. "pool-empty" signal: rimsky shouldn't be guessing`) and Issue 3 (`## Issue 3 — Pick-policy excision: rimsky-side surface still leaks substrate vocabulary`).
+1. In `docs/history/v3-completion.md`, locate the headers for Issue 1 (`## Issue 1 — Open error vs. "pool-empty" signal: rimsky shouldn't be guessing`) and Issue 3 (`## Issue 3 — Pick-policy excision: rimsky-side surface still leaks substrate vocabulary`).
 
 2. Append a "**Status:** Resolved by `docs/specs/2026-04-30-stores-protocol-cleanup-design.md` (cycle landed YYYY-MM-DD)." line directly after each Issue's `## Issue N — ...` header. Use the literal string `(cycle landed by the implementing user)` if a date is not yet known — leave the sentence template in place either way.
 
@@ -943,7 +943,7 @@ Expect: no matches in CLAUDE.md / architecture.md / operator-guide.md. (Glossary
 
 **Verification:**
 ```sh
-grep -nE "Status: Resolved" docs/v3-completion.md
+grep -nE "Status: Resolved" docs/history/v3-completion.md
 ```
 Expect: at least two matches (one per resolved issue).
 

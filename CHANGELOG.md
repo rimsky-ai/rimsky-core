@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Stores Protocol Cleanup — substrate-vocabulary excision.**
+- **Stores Protocol Cleanup — store-internal-vocabulary excision.**
   Drops `policy_override` from `CommitRequest` / `AbandonRequest`,
   deletes the `Delete` wire verb (4+1 verbs, was 5+1), replaces
   `OpenResponse`'s implicit all-empty-bytes pool-empty signal with
@@ -10,9 +10,9 @@
   removes the `claim_resolutions` template grammar
   (`node.ClaimResolution` Go type deleted; `selectResolutionAction`
   and `fireResolutionVerb` deleted from
-  `core/supervisor/auto_terminal.go`). Substrate disposition
-  (commit-vs-release-vs-delete on the substrate's own state) is
-  governed entirely by per-substrate config (e.g. the postgres
+  `core/supervisor/auto_terminal.go`). Store disposition
+  (commit-vs-release-vs-delete on the store's own state) is
+  governed entirely by per-store config (e.g. the postgres
   reference store-service's per-pick-policy `on_commit_default` /
   `on_give_up_default`). Bridge handler switches from
   `encoding/json` to `protojson` for response marshaling so the
@@ -48,17 +48,17 @@
     populated externally by each rimsky cmd binary at startup.
   - **`stores.yml` schema rewritten**: thin name → endpoint +
     declared capabilities form (no `kind`, no `connection`, no
-    `pick_policies` — substrate-specific keys live in each
+    `pick_policies` — store-service-specific keys live in each
     store-service's own config).
   - **Atomicity decoupled** (invariant 10 clarified): rimsky's
-    bookkeeping tx is independent of the substrate's tx. The v2
+    bookkeeping tx is independent of the store-service's tx. The v2
     tx-sharing mechanism (`store.WithTx` / `TxFromContext`) is gone
     along with `core/store/tx.go`. Store atomicity is the store's
     concern (per the new §7.8 obligations).
   - **Region conflict is byte-equal** (invariant 14 retired):
     `Store.RegionsConflict` and `Store.UnmarshalRegion` are removed;
     rimsky compares `rimsky_lock_holders.region_data` byte-for-byte.
-    Substrates canonicalize region bytes such that byte-equal
+    Stores canonicalize region bytes such that byte-equal
     indicates conflict.
   - **Filesystem store-service: glob support dropped**
     (concrete-paths only). Operators needing globs write a custom
@@ -67,7 +67,7 @@
     rimsky-side admin items endpoint
     (`/admin/stores/.../pick-policies/.../items`), the pick-policy
     validator hook, the scheduler visibility-timeout sweep, and the
-    `*pgstore.Store` substrate-only methods (`InsertItems`,
+    `*pgstore.Store` store-internal methods (`InsertItems`,
     `PickPolicyConfig`, `PickPolicies`). The postgres store-service
     ships with its own admin endpoint for items insertion (separate
     listener port).
@@ -77,8 +77,8 @@
   - **Invariant 15 revised**: `Open` still fires inside the
     rimsky-side acquisition tx, but the store's state mutation runs
     in its own tx.
-  - **Held-claim resolution mechanically updated**: substrate verb
-    calls go through the remote-client gRPC path; substrate-side
+  - **Held-claim resolution mechanically updated**: store verb
+    calls go through the remote-client gRPC path; the store-side
     action runs in its own tx (no longer shares a tx with the
     lock-holder DELETE).
   - **Deployment**: three new Dockerfiles (`stores/{filesystem,
@@ -140,8 +140,8 @@
 
 - Stores Redesign v2 (third major rewrite of core/store/):
   - 5 protocol verbs (Open, Commit, Abandon, Delete, Release) replace the prior AcquireLock/OpenHandle/Commit/ReleaseLock shape.
-  - Two-noun primitives split: claim (substrate-bound) vs named lock (non-substrate).
-  - Pick policies are substrate-side via substrate-recognized selector forms (`@policy-name` convention).
+  - Two-noun primitives split: claim (store-bound) vs named lock (store-independent).
+  - Pick policies are store-side via store-recognized selector forms (`@policy-name` convention).
   - Held claims via explicit `inherits:` declarations; auto-terminal at holding-subgraph completion.
   - Capability struct collapsed to one field (write_semantics).
   - Schema: rimsky_lock_holders gains address column, drops claim_id; rimsky_claim_holders gains lock_holder_id FK, drops actual_action/delete_won.

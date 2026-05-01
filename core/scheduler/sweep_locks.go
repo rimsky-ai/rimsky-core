@@ -9,7 +9,7 @@
 // The visibility-timeout sweep that v2 did against operator-owned items
 // tables is gone — under v3 each store-service runs its own sweep
 // internally (per spec §7.8 obligation #1). Rimsky has no visibility
-// into substrate items tables.
+// into store items tables.
 
 package scheduler
 
@@ -50,7 +50,7 @@ func sweepLockHolders(ctx context.Context, cfg Config, log shared.Logger) error 
 }
 
 // reapOneLockHolder runs the per-row reap in its own transaction. No
-// substrate verb is fired; the store's TTL is the source of truth for
+// store verb is fired; the store's TTL is the source of truth for
 // its own state.
 //
 // If DeleteIfExpired finds no row to delete (claimant mismatch, or the

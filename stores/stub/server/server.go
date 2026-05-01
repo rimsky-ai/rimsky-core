@@ -1,4 +1,4 @@
-// Package server adapts the substrate-internal stub Store to the rimsky
+// Package server adapts the store-internal stub Store to the rimsky
 // StoreService gRPC + HTTP+JSON bridge.
 package server
 
@@ -74,7 +74,7 @@ type Server struct {
 	Store *stubstore.Store
 }
 
-// Capabilities returns the substrate's advertised capability struct.
+// Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.Store.Capabilities()
 	return &genv1.CapabilitiesResponse{

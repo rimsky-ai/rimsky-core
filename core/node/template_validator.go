@@ -54,7 +54,7 @@ var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params)\.(.+)$`)
 // a registry.
 //
 // Per the v3 stores-redesign, rimsky no longer recognises pick-policy
-// selectors — the substrate is the only entity that does. The v2
+// selectors — the store is the only entity that does. The v2
 // IsPickPolicySelector hook (and the "pick-policy claims must be intent:
 // rw" check it drove) was deleted as part of the inertness cleanup.
 type RegistryHooks struct {

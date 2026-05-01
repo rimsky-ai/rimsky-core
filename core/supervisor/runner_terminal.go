@@ -451,14 +451,14 @@ func applyTerminalInfraError(
 //   - NamedLockSpec → claimant-guarded delete.
 //   - ClaimSpec acquirer + held → mark this node's claim_holders row
 //     'completed'/'failed', call CheckAndFireResolution.
-//   - ClaimSpec acquirer + non-held → call the substrate verb directly
+//   - ClaimSpec acquirer + non-held → call the store verb directly
 //     (success → Commit; failure → Abandon), delete the lock-holder
 //     row.
 //
-// Per spec §7.3 the substrate's verb runs in its own (substrate-side)
+// Per spec §7.3 the store's verb runs in its own (store-side)
 // transaction; rimsky's bookkeeping tx commits the lock-holder DELETE
 // independently. At-least-once delivery + claim_id idempotency on the
-// substrate side handles transient failures (per spec §7.8 obligation
+// store side handles transient failures (per spec §7.8 obligation
 // #3).
 //
 // The inheritor branch is handled by releaseInheritedClaimsInTx, run
@@ -496,11 +496,11 @@ func releaseAcquiredLock(
 
 // releaseClaim handles the per-ClaimSpec release-path branching
 // (held vs. non-held). For non-held claims, region and address are
-// read from the lock-holder row so the substrate verb receives the
+// read from the lock-holder row so the store verb receives the
 // canonical bytes regardless of whether `lk.ClaimResult` survived an
-// async-callback round-trip. Substrate disposition (what Commit /
-// Abandon mean for the substrate's own state) is governed entirely
-// by per-substrate config; rimsky carries only the success/failure
+// async-callback round-trip. Store disposition (what Commit /
+// Abandon mean for the store's own state) is governed entirely
+// by per-store config; rimsky carries only the success/failure
 // binary.
 func releaseClaim(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
@@ -530,7 +530,7 @@ func releaseClaim(
 		verbErr = lk.Store.Abandon(ctx, claimID, region, address)
 	}
 	if verbErr != nil {
-		return fmt.Errorf("releaseClaim: substrate verb (%s): %w", verbAction, verbErr)
+		return fmt.Errorf("releaseClaim: store verb (%s): %w", verbAction, verbErr)
 	}
 	if err := args.LockHolders.DeleteByID(ctx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
 		return fmt.Errorf("releaseClaim: DeleteByID: %w", err)
@@ -541,7 +541,7 @@ func releaseClaim(
 
 // loadLockHolderRegionAndAddress reads region_data and address from the
 // lock-holder row inside the supplied tx. Returns (nil, nil, nil) when
-// the row is gone — the caller treats that as a substrate no-op (the
+// the row is gone — the caller treats that as a store no-op (the
 // row may have been auto-terminated by a sibling on a held subgraph).
 //
 // No `FOR UPDATE` is needed: from acquisition through this terminal
@@ -574,7 +574,7 @@ func loadLockHolderRegionAndAddress(ctx context.Context, tx pgx.Tx, id shared.UU
 // metadata and, for each subgraph this node is a non-acquirer
 // member of, marks the inheritor's claim_holders row and calls
 // CheckAndFireResolution. The auto-terminal mechanism handles the
-// substrate verb.
+// store verb.
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition, success bool,
 ) error {
@@ -594,7 +594,7 @@ func releaseInheritedClaimsInTx(
 }
 
 // releaseActionString maps success bool → event payload string.
-// Named locks have no substrate verb so we synthesize "release" /
+// Named locks have no store verb so we synthesize "release" /
 // "release_failed" labels for the audit trail.
 func releaseActionString(success bool) string {
 	if success {

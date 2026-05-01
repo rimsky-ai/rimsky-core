@@ -12,7 +12,7 @@
 //     spec §4.2 before Open is called and threaded through every
 //     subsequent verb for that claim's lifecycle.
 //   - region, address, payload are opaque bytes (json.RawMessage on the
-//     rimsky side; substrates choose their own canonical encoding).
+//     rimsky side; stores choose their own canonical encoding).
 //   - selector, intent, alias, store_name are strings.
 //
 // Errors flow as gRPC status codes per spec §5.3.
@@ -33,28 +33,28 @@ service StoreService {
   rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
 
   // Open creates whatever store-internal state the (intent,
-  // write_semantics) combination requires and returns the substrate-
-  // native address the executor will use on the data path. Called
-  // inside the rimsky-side acquisition transaction (per spec §7.3
-  // step 4); the store runs its own state mutation in its own
+  // write_semantics) combination requires and returns the
+  // store-supplied address the executor will use on the data path.
+  // Called inside the rimsky-side acquisition transaction (per spec
+  // §7.3 step 4); the store runs its own state mutation in its own
   // transaction.
   rpc Open(OpenRequest) returns (OpenResponse);
 
   // Commit signals that the consumer of the claim succeeded. The
-  // substrate decides what to do with its own state (publish staging
+  // store decides what to do with its own state (publish staging
   // into live, delete the items-table row, release-to-back, etc.) per
-  // the substrate's own configuration. For direct rw, typically a
+  // the store's own configuration. For direct rw, typically a
   // no-op.
   rpc Commit(CommitRequest) returns (CommitResponse);
 
   // Abandon signals that the consumer of the claim failed. The
-  // substrate decides what to do with its own state per its own
+  // store decides what to do with its own state per its own
   // configuration. Not called for read-only claims and not called by
   // the orphan reaper in v3 default behavior (per spec §7.5).
   rpc Abandon(AbandonRequest) returns (AbandonResponse);
 
   // Release tears down store-internal read state created at Open.
-  // Fires only when the substrate registered such state at Open; for
+  // Fires only when the store registered such state at Open; for
   // direct stores, typically a no-op.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
 }
@@ -75,7 +75,7 @@ message CapabilitiesResponse {
 }
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
-// claim spec. selector is post-substitution; the substrate parses it.
+// claim spec. selector is post-substitution; the store parses it.
 message OpenRequest {
   string claim_id = 1;
   string store_name = 2;
@@ -84,10 +84,10 @@ message OpenRequest {
   string alias = 5;   // template-side identifier; store ignores
 }
 
-// OpenResponse signals acquisition outcome. Substrates that always
-// have a claim to give return Acquired. Substrates that may have
+// OpenResponse signals acquisition outcome. Stores that always
+// have a claim to give return Acquired. Stores that may have
 // nothing right now (e.g. an empty items-table queue) return
-// Unavailable; rimsky retries on the next scheduler tick. Substrate-
+// Unavailable; rimsky retries on the next scheduler tick. Store-
 // side faults flow as gRPC error status codes, not as an Unavailable
 // response.
 message OpenResponse {
@@ -97,7 +97,7 @@ message OpenResponse {
   }
 }
 
-// Acquired carries the substrate's acquisition outputs. Address,
+// Acquired carries the store's acquisition outputs. Address,
 // payload, and region are opaque bytes per blessed invariant 20;
 // any or all may be empty depending on the (write_semantics, intent)
 // combination.

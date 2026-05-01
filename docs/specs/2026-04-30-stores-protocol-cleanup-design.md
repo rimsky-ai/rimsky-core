@@ -1,11 +1,11 @@
-# Stores Protocol Cleanup — Substrate-Vocabulary Excision
+# Stores Protocol Cleanup — Store-Internal-Vocabulary Excision
 
 **Status:** Spec, ready for review.
 **Supersedes:** Sections of `docs/specs/2026-04-27-stores-redesign-v3-design.md`
 (see §6 "Spec sections superseded"). The v3 spec remains authoritative for
 everything else.
-**Driver:** `docs/v3-completion.md` Issues 1 + 3, paired into one cycle
-because both excise substrate-internal vocabulary from rimsky's
+**Driver:** `docs/history/v3-completion.md` Issues 1 + 3, paired into one cycle
+because both excise store-internal vocabulary from rimsky's
 protocol/grammar surface.
 
 ---
@@ -14,15 +14,15 @@ protocol/grammar surface.
 
 The v3 spec landed the rimsky↔store wire protocol as five runtime verbs
 plus a startup `Capabilities()` handshake. Two structural leaks of
-substrate-internal vocabulary survived into v3 unintentionally and contradict
+store-internal vocabulary survived into v3 unintentionally and contradict
 v3 §3.3 ("Store-internal capabilities"):
 
 1. **Open's "pool-empty signal" is in-band on success bytes.** v3 §4.7
    defines an all-zero-length `ClaimResult` (address + payload + region all
-   empty) as the substrate's signal that "no item is available right now."
+   empty) as the store's signal that "no item is available right now."
    The signal is in-band with success values, the term "pool" is
-   substrate-implementation vocabulary (postgres-store concept), and a
-   substrate bug that returns zero-length bytes for a real claim silently
+   store-implementation vocabulary (postgres-store concept), and a
+   store bug that returns zero-length bytes for a real claim silently
    evaporates the dispatch with no operator-visible signal.
 
 2. **`policy_override` and `claim_resolutions` carry pick-policy
@@ -35,24 +35,24 @@ v3 §3.3 ("Store-internal capabilities"):
    None of this should exist on the rimsky side under v3 §3.3.
 
 This cycle excises both leaks with one set of coordinated edits to the
-proto, the rimsky source, the template grammar, the substrate impls, the
+proto, the rimsky source, the template grammar, the store impls, the
 spec text, and the glossary.
 
 For the discovery / trade-off discussion that motivated this cycle, see
-`docs/v3-completion.md` Issues 1 + 3.
+`docs/history/v3-completion.md` Issues 1 + 3.
 
 ## 2. Goals and non-goals
 
 ### 2.1 Goals
 
-- The rimsky↔store wire protocol carries no substrate-implementation
-  vocabulary. Specifically: no `policy_override` field, no enumerated
+- The rimsky↔store wire protocol carries no store-internal vocabulary.
+  Specifically: no `policy_override` field, no enumerated
   pick-policy action strings, no implicit "all-empty bytes" signal.
-- The rimsky-side template grammar carries no substrate-implementation
-  vocabulary. Specifically: no `claim_resolutions` map, no
+- The rimsky-side template grammar carries no store-internal vocabulary.
+  Specifically: no `claim_resolutions` map, no
   `on_commit` / `on_give_up` action strings.
-- Substrate disposition (what Commit/Abandon mean on the substrate's
-  state) is governed entirely by per-substrate config (e.g. the
+- Store disposition (what Commit/Abandon mean on the store's
+  state) is governed entirely by per-store config (e.g. the
   postgres reference store's `pick_policies[*].on_commit_default` /
   `on_give_up_default`). Operators express disposition there, not in
   rimsky-side templates.
@@ -61,7 +61,7 @@ For the discovery / trade-off discussion that motivated this cycle, see
 - The v3 spec's invariants and atomicity model carry over unchanged.
   Specifically: invariants 10, 13, 15, 20 hold; the rimsky-side
   acquisition tx still calls `Open` between lock-holder INSERT and
-  commit; the substrate's tx is still decoupled.
+  commit; the store's tx is still decoupled.
 
 ### 2.2 Non-goals
 
@@ -77,7 +77,7 @@ For the discovery / trade-off discussion that motivated this cycle, see
   material. Rewriting the body coherently is its own writing-quality
   cycle, deferred until after this excision lands so the rewrite
   doesn't immediately drift.
-- **Rename or restructure of v3 features that don't touch substrate
+- **Rename or restructure of v3 features that don't touch store-internal
   vocabulary.** Selectors, regions, claim_id, capabilities, atomicity
   model, frame engine, scheduler — all unchanged.
 - **Backwards-compatibility shims.** The platform is pre-v1 (per
@@ -112,8 +112,8 @@ control-api JSON shape `claimResolutionJSON` is deleted. The template
 validator no longer accepts the field; templates that still declare it
 fail deploy with `unknown field claim_resolutions`. No grace period.
 
-**Why this is sufficient.** Substrate disposition was the only thing
-the field carried. The substrate already has its own per-policy config
+**Why this is sufficient.** Store disposition was the only thing
+the field carried. The store already has its own per-policy config
 where disposition lives (e.g. the postgres reference store's
 `pick_policies[<selector>].on_commit_default` /
 `on_give_up_default`). The smoke fixture
@@ -150,7 +150,7 @@ Abandon(ctx context.Context, claimID ClaimID, region, address []byte) error
 
 The rimsky-side gRPC client (`core/store/remote/client.go`), the bridge
 HTTP handler (`stores/internal/bridge/bridge.go`), the standard
-substrate impls (`stores/postgres/store/store.go`,
+store impls (`stores/postgres/store/store.go`,
 `stores/filesystem/store/store.go`, `stores/stub/store/store.go`) and
 the test fakes (`core/store/storetest/fake.go`) all lose the parameter.
 The postgres store's `applyPickAction` drops its `policyOverride`
@@ -159,7 +159,7 @@ argument; per-policy config defaults are the only governing input.
 The `ClaimSpec` docstring in `core/store/types.go` (lines 39-45)
 references `policyOverride` and `claim_resolutions` to describe the
 semantic context of the type; that prose is rewritten to match the
-post-cleanup model (substrate disposition is governed by per-substrate
+post-cleanup model (store disposition is governed by per-store
 config, not by a `claim_resolutions` block on the rimsky side).
 
 ### 3.3 `Delete` wire verb — DELETE
@@ -199,7 +199,7 @@ message OpenResponse {
 ```
 
 The all-empty case is in-band: `len(address) == 0 && len(payload) == 0
-&& len(region) == 0` is the substrate's signal "no item available."
+&& len(region) == 0` is the store's signal "no item available."
 
 After:
 
@@ -220,13 +220,13 @@ message Acquired {
 message Unavailable {}
 ```
 
-The `oneof` makes the two outcomes structurally distinct. A substrate
+The `oneof` makes the two outcomes structurally distinct. A store
 can no longer accidentally return `Unavailable` while populating
-bytes (that combination is unrepresentable). A substrate that wants to
+bytes (that combination is unrepresentable). A store that wants to
 return `Acquired` with empty bytes (e.g. a side-effect-only claim) is
 syntactically distinguishable from "nothing to give right now."
 
-A non-nil gRPC status code remains the third path (substrate-side
+A non-nil gRPC status code remains the third path (store-side
 fault; rimsky surfaces it to the operator via supervisor logging /
 metrics; dispatch row stays unclaimed for retry).
 
@@ -259,7 +259,7 @@ type Store interface {
 
 ```go
 type OpenOutcome struct {
-    // Available is true when the substrate returned Acquired{...}.
+    // Available is true when the store returned Acquired{...}.
     // False when it returned Unavailable{}.
     Available bool
     // ClaimResult is populated when Available == true. Its three
@@ -270,7 +270,7 @@ type OpenOutcome struct {
 
 (Alternative shape considered: a sealed interface with two impls. The
 plain struct is simpler for the four-call-site rimsky surface and the
-substrate adapters in `core/store/remote/`. Sealed-interface form has
+store adapters in `core/store/remote/`. Sealed-interface form has
 no callsite advantage here.)
 
 The proto-to-struct mapping inside `core/store/remote/client.go::Open`
@@ -314,7 +314,7 @@ if err != nil {
     return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Open: %w", err)
 }
 if !outcome.Available {
-    // Substrate has no claim to give right now. The dispatch tx
+    // The store has no claim to give right now. The dispatch tx
     // rolls back; the next scheduler tick may retry.
     return AcquiredLock{}, false, nil
 }
@@ -324,7 +324,7 @@ cr := outcome.Result
 
 The function signature and outer call shape are unchanged. The error
 surface (`AcquiredLock{}, false, nil` for "not available";
-`AcquiredLock{}, false, err` for "substrate fault") matches what
+`AcquiredLock{}, false, err` for "store fault") matches what
 the supervisor already does for the verify-before-run / state-machine
 bail paths, so callers don't need to learn a new convention.
 
@@ -350,7 +350,7 @@ func CheckAndFireResolution(
         verbErr = s.Commit(ctx, claimID, region, address)
     }
     if verbErr != nil {
-        return fmt.Errorf("CheckAndFireResolution: substrate verb: %w", verbErr)
+        return fmt.Errorf("CheckAndFireResolution: store verb: %w", verbErr)
     }
     return args.LockHolders.DeleteByID(ctx, tx, lockHolderID, args.SupervisorID)
 }
@@ -392,7 +392,7 @@ guards (claimant-supervisor-ID, idempotency-by-claim_id) as today.
   lines 11-22 that describes the validator's contract gets the
   `claim_resolutions` mention scrubbed accordingly. Held-claim
   acquirers no longer need any per-alias declaration; the supervisor's
-  success-vs-failure binary drives the substrate verb directly.
+  success-vs-failure binary drives the store verb directly.
 
 ### 4.6 `core/controlapi/templates.go`
 
@@ -406,7 +406,7 @@ guards (claimant-supervisor-ID, idempotency-by-claim_id) as today.
 The gRPC client adapter drops the `policyOverride` parameter from its
 `Commit` / `Abandon` methods, drops its `Delete` method entirely, and
 maps the `OpenResponse` oneof to `OpenOutcome` per the snippet in §4.1.
-Behavior on `UnimplementedDeleteRequest` for an old substrate:
+Behavior on `UnimplementedDeleteRequest` for an old store:
 irrelevant — the client never calls `Delete` anymore, and the proto
 change rebuilds both ends together.
 
@@ -425,7 +425,7 @@ lockstep:
   argument from their signatures; the fake's `Delete` method is
   deleted.
 
-## 5. Substrate-side updates
+## 5. Store-side updates
 
 ### 5.1 `stores/postgres/store/store.go`
 
@@ -472,8 +472,8 @@ lockstep:
 
 ### 5.5 Capabilities response — unchanged
 
-Substrates do not advertise pick-policy support over `Capabilities()`;
-substrate-internal capabilities remain substrate-internal (per v3
+Stores do not advertise pick-policy support over `Capabilities()`;
+store-internal capabilities remain store-internal (per v3
 §3.3). The `CapabilityStruct.write_semantics` field is the only
 declared capability; that stays.
 
@@ -486,7 +486,7 @@ This document supersedes the following sections of v3:
   count revised throughout.
 - **§4.5 (`policy_override`)** — entire section deleted.
 - **§4.7 (`ClaimResult`, "Pool-empty signal")** — the third paragraph
-  ("Pool-empty signal") is replaced with: "The substrate signals
+  ("Pool-empty signal") is replaced with: "The store signals
   acquisition outcome via the `OpenResponse` oneof (`Acquired` |
   `Unavailable`); see the revised §4.7 above." The `ClaimResult`
   type and the second paragraph ("All three fields are opaque bytes
@@ -511,10 +511,10 @@ All other v3 sections carry over unmodified.
 
 ## 7. Glossary
 
-`docs/glossary.md` gets a new section "Substrate-internal vocabulary
+`docs/glossary.md` gets a new section "Store-internal vocabulary
 (not part of rimsky's protocol surface)" appended after the rimsky-
 vocabulary entries. The "pick policy" entry moves under that section
-with a one-liner: "An items-table queue convention some substrates
+with a one-liner: "An items-table queue convention some stores
 implement (e.g. the postgres reference store-service). Not part of
 rimsky's protocol surface; appears only in store-service-specific
 docs and config." The terms `release_to_back`, `release_to_head`,
@@ -551,7 +551,7 @@ These get rewritten or deleted:
 - `test/scenarios/frame_resolution/held_claim_resolution_at_frame_end_test.go` —
   drop the resolution-vocabulary parts; assert success → Commit.
 
-### 8.2 Tests that exercise `policy_override` substrate behavior
+### 8.2 Tests that exercise `policy_override` store behavior
 
 `stores/stub/store/store_test.go` and the postgres store tests that
 call `Commit / Abandon` with a non-empty `policyOverride` argument
@@ -566,7 +566,7 @@ passing an override argument).
 `TestDeleteEmptyRegionIsNoop` get deleted. The integration scenarios
 under `test/scenarios/stores/` that exercised regional-delete
 through the rimsky stack are dropped or rewritten; the resulting
-coverage is "the substrate's `Delete` capability is excised; verify
+coverage is "the store's `Delete` capability is excised; verify
 no rimsky path attempts to call it."
 
 ### 8.4 Tests that exercise the `Open` outcome
@@ -575,7 +575,7 @@ The two scenarios that drove the all-empty-bytes signal
 (`test/scenarios/stores/...` and the unit-level coverage in
 `stores/postgres/store/store_test.go`,
 `stores/stub/store/store_test.go`) get rewritten to drive the new
-`Unavailable{}` variant. Substrate-side: a configured pick policy
+`Unavailable{}` variant. Store-side: a configured pick policy
 with an empty items table now returns `Unavailable{}` from
 `openPickPolicy` (postgres) or the stub's empty-FIFO path. Rimsky-
 side: `runner_acquire` returns `(AcquiredLock{}, false, nil)` and
@@ -599,7 +599,7 @@ and both are updated:
   semantics, success-path Commit / Abandon outcomes) stay; only the
   override-vocabulary disappears. The package-level comment at line
   683 ("the acquirer's `claim_resolutions` block governs ...") is
-  rewritten to describe the per-substrate-config defaults model.
+  rewritten to describe the per-store-config defaults model.
 
 Behavior is preserved: the postgres store-service's `@review-queue`
 policy already declares `on_commit_default: release_to_back` /
@@ -623,9 +623,9 @@ vocabulary is updated:
   Abandon. Updated to "Four protocol verbs (spec §4.1)" with the
   `Delete` entry removed and the `policyOverride` mentions scrubbed.
 - **`docs/architecture.md` §1.2** — the postgres reference store
-  description rewords "supports regional access AND substrate-side
+  description rewords "supports regional access AND store-side
   pick policies" to "supports regional access AND items-table queue
-  semantics implemented substrate-internally." Verb count updated
+  semantics implemented store-internally." Verb count updated
   in any place that says "5 + 1."
 - **`docs/operator-guide.md`** — the timing-constraint discussion
   (`visibility_timeout > 5 × heartbeat_interval`) is relabeled as
@@ -635,26 +635,26 @@ vocabulary is updated:
   rewrite is **out of scope** (per §2.2). The banner's section list
   drops `Delete` and `policy_override` references. Operator-author
   prose freely uses "pick policy" / "release_to_back" / etc., since
-  this guide is the substrate-author-facing surface where that
+  this guide is the store-author-facing surface where that
   vocabulary belongs.
 - **`docs/glossary.md`** — see §7.
 - **CHANGELOG.md** — single combined entry under `## Unreleased`
   describing the cycle:
 
-  > **Stores Protocol Cleanup — substrate-vocabulary excision.**
+  > **Stores Protocol Cleanup — store-internal-vocabulary excision.**
   > Drops `policy_override` from `CommitRequest` / `AbandonRequest`,
   > deletes the `Delete` wire verb, replaces `OpenResponse`'s
   > implicit all-empty-bytes pool-empty signal with an explicit
   > `oneof Acquired | Unavailable` discriminator, and removes the
   > `claim_resolutions` template grammar. The wire surface is now
-  > 4 runtime verbs + 1 startup handshake; substrate disposition
-  > (commit-vs-release-vs-delete on the substrate's own state) is
-  > governed entirely by per-substrate config. Spec:
+  > 4 runtime verbs + 1 startup handshake; store disposition
+  > (commit-vs-release-vs-delete on the store's own state) is
+  > governed entirely by per-store config. Spec:
   > `docs/specs/2026-04-30-stores-protocol-cleanup-design.md`.
   > Supersedes v3 §4.1 / §4.5 / §4.7 / §4.10 invariant 13.1 / §7.8
   > obligation #3.
 
-- **`docs/v3-completion.md`** — Issues 1 and 3 marked as resolved
+- **`docs/history/v3-completion.md`** — Issues 1 and 3 marked as resolved
   by this cycle; the doc retains the Issue 2 (frame-engine
   multi-source observation) and the lower-priority follow-ups.
 

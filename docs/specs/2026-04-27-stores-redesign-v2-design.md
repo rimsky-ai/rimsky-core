@@ -4,8 +4,8 @@
 **Authoritative for:** the second-major-rewrite of `core/store/` and adjacent code paths after the prior stores-redesign landed.
 **Companion documents:**
 - `docs/glossary.md` — vocabulary reference (authoritative; this spec aligns to it).
-- `docs/2026-04-26-stores-spec-scope.md` — brainstorm working document (decision history).
-- `docs/2026-04-26-stores-redesign.md` — discursive design conversation (rationale, alternatives explored). §19 of that doc is the authoritative resolution where it differs from in-line text.
+- `docs/history/2026-04-26-stores-spec-scope.md` — brainstorm working document (decision history).
+- `docs/history/2026-04-26-stores-redesign.md` — discursive design conversation (rationale, alternatives explored). §19 of that doc is the authoritative resolution where it differs from in-line text.
 **Supersedes:** `docs/specs/2026-04-25-stores-redesign-design.md` substantially (see §1.1 for the relationship).
 
 ---
@@ -1284,8 +1284,8 @@ Updated to exercise:
 ## 24. Pointer to companions
 
 - **Glossary:** `docs/glossary.md` — authoritative naming reference.
-- **Brainstorm decision log:** `docs/2026-04-26-stores-spec-scope.md` — sectional walkthrough with decision rationale and what-was-considered-but-rejected.
-- **Discursive design:** `docs/2026-04-26-stores-redesign.md` — the discussion that produced this spec. §19 of that document is the authoritative resolution where it differs from in-line text.
+- **Brainstorm decision log:** `docs/history/2026-04-26-stores-spec-scope.md` — sectional walkthrough with decision rationale and what-was-considered-but-rejected.
+- **Discursive design:** `docs/history/2026-04-26-stores-redesign.md` — the discussion that produced this spec. §19 of that document is the authoritative resolution where it differs from in-line text.
 - **Frame-resolution spec (preserved):** `docs/specs/2026-04-26-frame-resolution-design.md`.
 - **Prior stores-redesign (substantially superseded):** `docs/specs/2026-04-25-stores-redesign-design.md`.
 - **Control-layer design (sibling concern):** `docs/2026-04-26-control-layer.md` — provisioning / multi-tenant; out of scope for this spec.

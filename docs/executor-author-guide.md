@@ -1,12 +1,12 @@
 # Executor Author Guide
 
 > **v3 note:** the executor↔storage data path is unchanged from v2 —
-> executors receive the substrate-native `address` from rimsky in the
+> executors receive the store-supplied `address` from rimsky in the
 > dispatch envelope and talk to the underlying storage directly. Under
 > v3 stores-redesign, those addresses are produced by remote
 > store-services rather than in-process Go code; from the executor's
 > perspective nothing changes (the bytes are still opaque, still
-> unwrapped per the executor's substrate knowledge).
+> unwrapped per the executor's store-specific knowledge).
 >
 > Auth-blind advisory: rimsky has no machinery for credentials,
 > encryption, or access control. Encrypt sensitive bytes before handing
@@ -56,7 +56,7 @@ service NodeExecutor {
 | `stores` | map of `<alias> → StoreHandle` for every claim the node acquired or inherited; the supervisor calls `Store.Open` per claim inside the atomic acquisition transaction and packages the returned `Address` bytes opaquely |
 | `callback_url` | base URL for both async-handoff terminal callbacks and incremental attribute writes (empty if the supervisor has no callback endpoint configured) |
 | `cancel_token` | bearer token to echo on callbacks; the supervisor authenticates by matching it against the live dispatch row |
-| `run_attempt` | 1-indexed retry counter, useful for idempotency keys. (There is no `resumed` flag — resume is universal; the substrate detects resumed-vs-fresh internally.) |
+| `run_attempt` | 1-indexed retry counter, useful for idempotency keys. (There is no `resumed` flag — resume is universal; the store detects resumed-vs-fresh internally.) |
 
 #### 1.2.1 `attributes` and `attributes_schema`
 
@@ -72,9 +72,9 @@ schema can use:
 - `source: "{{deps.<node>.<field>}}"` — pulled from an upstream node's
   committed attributes (lifetime-independent — works after the upstream's
   claim has closed).
-- `source: "{{claim.<alias>.address}}"` — the live claim's substrate-
-  native address (opaque bytes; same shape your executor receives in the
-  `stores` map). Requires the node to acquire `<alias>` itself OR
+- `source: "{{claim.<alias>.address}}"` — the live claim's
+  store-supplied address (opaque bytes; same shape your executor receives
+  in the `stores` map). Requires the node to acquire `<alias>` itself OR
   `inherits:` it from an upstream acquirer.
 - `source: "{{claim.<alias>.payload.<field>}}"` — a named field of the
   live claim's payload. Same validity rule.
@@ -94,16 +94,16 @@ the incremental callback (§5). Rimsky never substitutes anything inside
 Each entry in `stores` is keyed by the per-claim **alias** (defaults to
 the store name; can be set explicitly when a node has multiple claims on
 the same store). The value is a `StoreHandle` whose `handle` field is the
-substrate-native `Address` bytes returned by `Store.Open`:
+store-supplied `Address` bytes returned by `Store.Open`:
 
 ```
 {
-  handle: <substrate-native bytes, opaque to Rimsky>
+  handle: <store-supplied bytes, opaque to Rimsky>
 }
 ```
 
 The address shape is **per store kind** — opaque to Rimsky, decoded by
-the executor per its substrate-specific knowledge of the `kind` declared
+the executor per its store-specific knowledge of the `kind` declared
 in operator config. The kind is not in the wire envelope (the executor
 already knows which store kind backs each alias from the template + the
 deployment's `stores.yml`); for tooling that needs the full picture, the
@@ -114,7 +114,7 @@ Reference v1 shapes:
 | Kind | `handle` shape (illustrative) |
 | --- | --- |
 | `filesystem` | `{ "path": "/abs/path/to/locked/region" }` — open a directory the executor reads/writes with normal POSIX ops. |
-| `postgres` | substrate-defined locator — typically a row or item identifier the executor can use against the operator-owned items table backing a configured pick policy. |
+| `postgres` | store-defined locator — typically a row or item identifier the executor can use against the operator-owned items table backing a configured pick policy. |
 
 Future kinds (`s3`, `git`, etc.) follow the same shape pattern; see
 `store-author-guide.md` once they ship.
@@ -122,15 +122,15 @@ Future kinds (`s3`, `git`, etc.) follow the same shape pattern; see
 The supervisor has already acquired each claim — and held it across any
 inheritance — for the duration of your run. The orchestrator's
 `rimsky_lock_holders` row is the authority on "is anyone holding this
-claim"; the substrate enforces nothing extra. Stay within the regions
+claim"; the store enforces nothing extra. Stay within the regions
 your template declared; writing or reading outside is undefined and may
 collide with other in-flight nodes' acquisitions.
 
 There is no `resumed` flag on `StoreHandle`. Resume is universal — the
-substrate detects resumed-vs-fresh internally by lookup against its own
+store detects resumed-vs-fresh internally by lookup against its own
 state, keyed by the lock-holder identity. Your executor doesn't need to
 distinguish the two cases; the address it receives points at whatever
-state the substrate considers current.
+state the store considers current.
 
 #### 1.2.3 `callback_url` and `cancel_token`
 
@@ -161,13 +161,13 @@ preference):
   / `.address`); downstream nodes consume captured values via
   `{{deps.<source>.<field>}}`. **Lifetime-independent** — works after the
   source's claim has closed. Use this when the downstream only needs the
-  data, not live access to the substrate-side state.
+  data, not live access to the store-side state.
 - **Claim-pass.** The downstream node declares `inherits: [{claim:
   <alias>}]` and substitutes via `{{claim.<alias>.address |
   payload.<f> | region}}`. **Requires the claim to remain open** — the
   inheriting node's existence holds it; the supervisor's auto-terminal
   mechanism fires resolution at holding-subgraph completion. Use this
-  when the downstream needs live access to the substrate (read the
+  when the downstream needs live access to the store (read the
   picked file, write back to the locked region, etc.).
 
 The "no hold + pass address" combination is structurally impossible:
@@ -181,7 +181,7 @@ may be encrypted at the producer side before the bytes enter Rimsky's
 address space (operator practice, not a Rimsky feature — Rimsky has no
 encryption mechanism). Rimsky transports ciphertext as opaque bytes;
 **executors decrypt at point of use**. Asymmetric is the recommended
-default — your executor holds the private key; the producer (substrate,
+default — your executor holds the private key; the producer (store,
 admin tool, upstream pipeline) holds the public key. Encryption is
 field-level, not whole-content, so Rimsky can still substitute by name.
 

@@ -4,7 +4,7 @@
 # validates this file.
 #
 # Selector grammar: concrete paths only. v2's glob support is dropped
-# (per v3 spec §7.7 — byte-equal region conflict requires substrate
+# (per v3 spec §7.7 — byte-equal region conflict requires store
 # canonicalisation; glob canonicalisation is out of scope for the
 # standard filesystem). Operators who need glob semantics write a
 # custom store-service.

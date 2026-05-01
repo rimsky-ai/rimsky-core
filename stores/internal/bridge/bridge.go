@@ -6,7 +6,7 @@
 // calls Mount with its own genv1.StoreServiceServer implementation.
 //
 // Per spec §15 (out of scope): the bridge currently surfaces every
-// substrate error as HTTP 500 / gRPC Internal. Finer-grained
+// store error as HTTP 500 / gRPC Internal. Finer-grained
 // status.Code mapping (NotFound, AlreadyExists, ResourceExhausted,
 // FailedPrecondition, …) is deferred to a follow-up cycle.
 package bridge
@@ -27,7 +27,7 @@ import (
 )
 
 // errBadRequest tags decode errors so the handler can map them to 400
-// while keeping all substrate errors at 500 (per the spec §15 deferral
+// while keeping all store errors at 500 (per the spec §15 deferral
 // noted on the package comment).
 var errBadRequest = errors.New("bridge: bad request")
 
@@ -45,7 +45,7 @@ func Mount(mux *http.ServeMux, srv genv1.StoreServiceServer) {
 }
 
 // handler builds an HTTP handler for a single verb. Per the spec §15
-// deferral above, all substrate errors surface as HTTP 500.
+// deferral above, all store errors surface as HTTP 500.
 func handler(srv genv1.StoreServiceServer, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

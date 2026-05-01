@@ -39,7 +39,7 @@
 // atomic acquisition transaction either claims the dispatch row AND
 // inserts every required `rimsky_lock_holders` row AND records the
 // `Store.Open`-returned address, or none of these. The store's own
-// state mutations run in a substrate-internal transaction decoupled
+// state mutations run in a store-internal transaction decoupled
 // from rimsky's — the v2 tx-sharing mechanism (`store.WithTx`) is
 // gone. Single-writer-per-region (invariant 4b) holds because
 // rimsky's conflict predicate gates lock-holder INSERTs against
@@ -98,9 +98,9 @@ type RunArgs struct {
 	// QueuePool is the *pgxpool.Pool the queue is bound to. The runner
 	// opens the v3 §7.3 rimsky-side acquisition tx on this pool so the
 	// queue helpers and the rimsky-side lock-holder + claim-holder
-	// inserts all participate in the same tx. The substrate's `Open`
-	// RPC fires inside this tx scope but the substrate runs its own
-	// decoupled tx for substrate-side state mutation (v3 spec §7.3 step
+	// inserts all participate in the same tx. The store-service's `Open`
+	// RPC fires inside this tx scope but the store runs its own
+	// decoupled tx for store-side state mutation (v3 spec §7.3 step
 	// 4); the two are not joined. core/queue/postgres.Queue exposes
 	// Pool() to make this trivial; non-postgres queue impls would need
 	// to wire their own pool.
@@ -110,7 +110,7 @@ type RunArgs struct {
 	// helpers (CountByNamedLock, ListByStoreRegion, Insert, DeleteByID,
 	// UpdateAddress) that the acquisition + release paths need are
 	// reachable without going through the storage adapter. Resume
-	// detection moved into the substrate; the supervisor no longer
+	// detection moved into the store; the supervisor no longer
 	// probes for or rebinds existing rows.
 	LockHolders *store.LockHoldersClient
 	// StoreRegistry is the per-process store registry built at supervisor
@@ -268,7 +268,7 @@ func RunNode(
 		return RunnerResult{Ran: false}, nil
 	}
 
-	// Step 2 (formerly OpenHandle) — retired: the substrate's Open
+	// Step 2 (formerly OpenHandle) — retired: the store's Open
 	// returns the address inside the acquisition tx; there is no
 	// separate native-handle stage.
 
@@ -352,7 +352,7 @@ func validateRunArgs(args RunArgs) error {
 // to rimsky_node_attributes so the callback handler has a row to merge
 // into. Bumps `run_attempt` from any prior row's value.
 //
-// Resume detection lives in the substrate (the substrate detects
+// Resume detection lives in the store (the store detects
 // resumed-vs-fresh by lookup against its own state keyed by lock-
 // holder identity). The supervisor no longer threads a
 // resumed-from-rebind flag, so the row is replaced outright; the

@@ -2,7 +2,7 @@
 
 ## Status
 
-- 2026-04-26 brainstorm working document. Drives the conversion of `docs/2026-04-26-stores-redesign.md` into a formal spec.
+- 2026-04-26 brainstorm working document. Drives the conversion of `docs/history/2026-04-26-stores-redesign.md` into a formal spec.
 - §19 of the discussion doc is authoritative wherever it differs from the in-line text in §§4–15.
 - Spec destination: `docs/specs/2026-04-27-stores-redesign-v2-design.md`.
 - Multi-tenant store provisioning is out of scope; lives in `docs/2026-04-26-control-layer.md`.

@@ -3,7 +3,7 @@ package store
 import "testing"
 
 // TestValidIdent covers the construction-time validation of operator-
-// supplied items_table names. The substrate uses fmt.Sprintf to
+// supplied items_table names. The store uses fmt.Sprintf to
 // interpolate the table name into SQL; rejecting non-identifier inputs
 // at construction is the only thing standing between operator typo and
 // SQL injection.

@@ -1,4 +1,4 @@
-// Package store is the substrate-internal logic for the stub store-
+// Package store is the store-internal logic for the stub store-
 // service. In-memory state; deterministic; no external dependencies.
 // Per spec §8.3.
 package store
@@ -13,7 +13,7 @@ import (
 	corestore "github.com/fallguy/rimsky/core/store"
 )
 
-// Store is the in-memory substrate. Two operating modes: regional-direct
+// Store is the in-memory store implementation. Two operating modes: regional-direct
 // (selectors echoed verbatim) and pick-policy (FIFO queue per
 // configured selector).
 type Store struct {
@@ -49,13 +49,13 @@ type Call struct {
 	Address  []byte
 }
 
-// Config is the substrate's config schema.
+// Config is the store's config schema.
 type Config struct {
 	Capabilities corestore.Capabilities
 	PickPolicies map[string]PickPolicyConfig
 }
 
-// PickPolicyConfig is the per-policy config (substrate-internal).
+// PickPolicyConfig is the per-policy config (store-internal).
 type PickPolicyConfig struct {
 	OnCommitDefault string
 	OnGiveUpDefault string
@@ -94,9 +94,9 @@ func New(cfg Config) *Store {
 // Capabilities returns the configured capability struct.
 func (s *Store) Capabilities() corestore.Capabilities { return s.caps }
 
-// Open performs the substrate's claim acquisition. ctx is accepted for
-// signature uniformity with the postgres / filesystem substrates; the
-// stub substrate has no async work that consults it.
+// Open performs the store's claim acquisition. ctx is accepted for
+// signature uniformity with the postgres / filesystem stores; the
+// stub store has no async work that consults it.
 func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,7 +174,7 @@ func (s *Store) Release(_ context.Context, claimID string, region, address []byt
 // obligation #3: an unknown claim_id (already terminated, or never
 // belonged to a pick policy) is a no-op. The configured default
 // (defaultOnCommit when successPath, defaultOnGiveUp otherwise) is
-// the only governing input — substrate-vocabulary excised from the
+// the only governing input — store-internal vocabulary excised from the
 // rimsky surface per the 2026-04-30 cleanup.
 func (s *Store) applyPickActionByClaimID(claimID string, successPath bool) error {
 	itemID, ok := s.claims[claimID]

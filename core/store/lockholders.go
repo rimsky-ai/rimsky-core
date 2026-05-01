@@ -33,7 +33,7 @@ import (
 // LockHolderKind discriminates a lock-holder row's payload columns.
 // Two kinds: 'named' (named-lock primitive) and 'region' (claim primitive).
 // The prior 'claim' kind dissolved — pick-policy claims are 'region' rows
-// with substrate-chosen region_data.
+// with store-chosen region_data.
 type LockHolderKind string
 
 // Lock-holder kinds.
@@ -48,7 +48,7 @@ const (
 // populated, keyed by Kind. A CHECK constraint enforces this on the
 // database side.
 //
-// Address is substrate-supplied bytes from Open(); written into the row
+// Address is store-supplied bytes from Open(); written into the row
 // after Open returns successfully (within the same acquisition tx).
 // May be nil for region rows mid-acquisition; populated by terminal time.
 //
@@ -61,8 +61,8 @@ type LockHolderRow struct {
 	Kind               LockHolderKind
 	LockName           *string
 	StoreName          *string
-	RegionData         json.RawMessage // opaque bytes; substrate's region identifier
-	Address            json.RawMessage // opaque bytes; substrate-supplied from Open
+	RegionData         json.RawMessage // opaque bytes; the store's region identifier
+	Address            json.RawMessage // opaque bytes; store-supplied from Open
 	Intent             *string         // 'r' | 'rw' for region rows; nil for named
 	HolderSupervisorID string
 	HolderNodeID       shared.UUID
@@ -266,7 +266,7 @@ func (c *LockHoldersClient) RefreshHeartbeat(ctx context.Context, supervisorID s
 
 // ListExpired returns rows whose `expires_at < now()`. The scheduler's
 // orphan-reap sweep (§7.5) iterates these and deletes each row
-// claimant-guarded on supervisor_id (no substrate verb fired in v3 —
+// claimant-guarded on supervisor_id (no store verb fired in v3 —
 // the store's TTL handles its internal state).
 func (c *LockHoldersClient) ListExpired(ctx context.Context) ([]LockHolderRow, error) {
 	rows, err := c.pool.Query(ctx,

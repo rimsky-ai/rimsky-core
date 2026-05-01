@@ -11,8 +11,8 @@
 // to a real upstream claim alias acquired by some node N₁ that this
 // node depends on (transitively through deps). Per the 2026-04-30
 // stores cleanup, no per-alias claim_resolutions validation runs at
-// deploy: substrate disposition (Commit / Abandon) is governed by
-// per-substrate config, not by template-level declarations.
+// deploy: store disposition (Commit / Abandon) is governed by
+// per-store config, not by template-level declarations.
 //
 // Pick-policy intent enforcement (per spec §4.6: pick-policy claims
 // must be intent: rw) needs the operator's store registry; that check

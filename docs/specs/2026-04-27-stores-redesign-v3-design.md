@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-27
 **Predecessor:** `docs/specs/2026-04-27-stores-redesign-v2-design.md` (v2; landed as commit `e46b952`).
-**Genesis:** `docs/2026-04-26-stores-redesign.md` (the original out-of-process design discussion; this spec implements §17 #3 and the L1 row from the v2 spec-scope working doc) and `docs/2026-04-27-store-protocol-inertness-cleanup.md` (the cleanup notes folded into v3 because they are natural consequences of OOP).
+**Genesis:** `docs/history/2026-04-26-stores-redesign.md` (the original out-of-process design discussion; this spec implements §17 #3 and the L1 row from the v2 spec-scope working doc) and `docs/history/2026-04-27-store-protocol-inertness-cleanup.md` (the cleanup notes folded into v3 because they are natural consequences of OOP).
 **Glossary:** `docs/glossary.md` is authoritative for vocabulary.
 
 ---
@@ -149,7 +149,7 @@ Single field for v3 (forward-compat for additional fields). Rimsky calls `Capabi
 
 ### 4.9 v2 spec sections superseded
 
-This v3 spec supersedes the following v2 sections. None should be retroactively edited (per the principle established in `docs/2026-04-27-store-protocol-inertness-cleanup.md`); they remain in the v2 spec as historical record. The supersession is documented here so future readers see the trail.
+This v3 spec supersedes the following v2 sections. None should be retroactively edited (per the principle established in `docs/history/2026-04-27-store-protocol-inertness-cleanup.md`); they remain in the v2 spec as historical record. The supersession is documented here so future readers see the trail.
 
 - **v2 §8.1 (operator downgrade of store max).** Superseded by v3 §4.8 / §6.2: strict equality between operator-declared and store-advertised capabilities. Operators run two store-services for two semantics rather than downgrading at config-load time. (Already documented in §4.8.)
 - **v2 §8.2 (`Factory.MaxWriteSemantics()` + `BuildAll`-time validation).** Superseded by v3 §6.3 (per-store-service config baked in at store-service startup; `Factory` and `BuildAll` removed entirely per §11.1).
@@ -464,7 +464,7 @@ Run on demand (not in CI fast-path) because of the image-build and container-sta
 
 ### 9.4 Test coverage
 
-The scenario test suite is rebuilt on top of the loopback fixture. The plan-spec'd scenarios from `docs/2026-04-27-store-protocol-inertness-cleanup.md` (held-claim invariant tests, inertness audit, single-writer-per-region, atomic acquisition, etc.) land against the loopback wire path.
+The scenario test suite is rebuilt on top of the loopback fixture. The plan-spec'd scenarios from `docs/history/2026-04-27-store-protocol-inertness-cleanup.md` (held-claim invariant tests, inertness audit, single-writer-per-region, atomic acquisition, etc.) land against the loopback wire path.
 
 ## 10. Smoke fixture
 

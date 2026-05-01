@@ -1,4 +1,4 @@
-// Package server adapts the substrate-internal filesystem Store to the
+// Package server adapts the store-internal filesystem Store to the
 // rimsky StoreService gRPC + HTTP+JSON bridge.
 package server
 
@@ -70,7 +70,7 @@ type Server struct {
 	store *fsstore.Store
 }
 
-// Capabilities returns the substrate's advertised capability struct.
+// Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
 	return &genv1.CapabilitiesResponse{
@@ -80,7 +80,7 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 	}, nil
 }
 
-// Open delegates to the substrate logic and packages the OpenOutcome
+// Open delegates to the store logic and packages the OpenOutcome
 // as the wire-form OpenResponse oneof.
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector())

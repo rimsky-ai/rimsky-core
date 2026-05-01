@@ -237,7 +237,7 @@ func tick(ctx context.Context, cfg Config) error {
 	}
 
 	// 6. Lock-holder sweep. Skipped when wiring is incomplete. No
-	// substrate verb fired — store's own TTL handles internal state
+	// store verb fired — store's own TTL handles internal state
 	// (per v3 spec §7.5).
 	if cfg.LockHolders != nil && cfg.Pool != nil {
 		if err := sweepLockHolders(ctx, cfg, log); err != nil {

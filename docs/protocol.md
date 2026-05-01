@@ -112,7 +112,7 @@ message ExecuteRequest {
   // async terminal callback. Format is opaque to executors.
   string cancel_token = 9;
 
-  // Reserved (formerly `resumed`). Resume is universal — the substrate
+  // Reserved (formerly `resumed`). Resume is universal — the store
   // detects resumed-vs-fresh internally by lookup against its own state,
   // keyed by the lock-holder identity. There is no protocol-level resume
   // flag; see §11.5 of the v2 design.
@@ -123,8 +123,8 @@ message ExecuteRequest {
 }
 
 message StoreHandle {
-  // Substrate-native address bytes returned by Store.Open. Opaque to Rimsky
-  // (transported as JSON); the executor decodes per its substrate-specific
+  // Store-supplied address bytes returned by Store.Open. Opaque to Rimsky
+  // (transported as JSON); the executor decodes per its store-specific
   // knowledge of the store's `kind`.
   google.protobuf.Struct handle = 2;
 }
@@ -137,14 +137,14 @@ Field details:
 - `userdata` — opaque JSON. See §6.
 - `attributes` — the node's typed per-run attribute object. Source-directive fields (`source: "{{deps.<n>.<f>}}"`, `source: "{{claim.<alias>.address}}"`, `source: "{{claim.<alias>.payload.<f>}}"`, `source: "{{claim.<alias>.region}}"`, or `source: "{{params.<k>}}"`) are pre-populated by the supervisor at dispatch from upstream attributes, claim content, and instance params; the executor should treat that subtree as read-only input. Sourceless fields are slots the executor is expected to fill in (terminal-final via `Complete.attributes_delta`, or incremental via the §5 callback).
 - `attributes_schema` — the JSON Schema for `attributes`, copied verbatim from the node template. Provided for executor reference. Rimsky validates `attributes` against this schema both at dispatch (after substitution) and at commit (after writeback) regardless of whether the executor validates.
-- `stores` — map of alias → `StoreHandle` for every claim the node acquired or inherited. The supervisor calls `Store.Open` per claim inside the atomic acquisition transaction (spec §7.3 / blessed invariant 15) and packages the returned `Address` bytes opaquely into each `StoreHandle.handle` field. The executor decodes the bytes per its substrate-specific knowledge of the store's `kind` (declared in operator config; e.g. `filesystem` returns a path-shaped address, `postgres` returns a row-locator-shaped address).
+- `stores` — map of alias → `StoreHandle` for every claim the node acquired or inherited. The supervisor calls `Store.Open` per claim inside the atomic acquisition transaction (spec §7.3 / blessed invariant 15) and packages the returned `Address` bytes opaquely into each `StoreHandle.handle` field. The executor decodes the bytes per its store-specific knowledge of the store's `kind` (declared in operator config; e.g. `filesystem` returns a path-shaped address, `postgres` returns a row-locator-shaped address).
 - `callback_url` — base URL for both the async-handoff terminal callback (§4) and the incremental attributes callback (§5). Empty string if the supervisor is not configured for callbacks; in that mode the executor must not emit `AsyncAccepted` and must not attempt incremental writeback.
 - `cancel_token` — supervisor-issued bearer token. Executors echo it as `Authorization: Bearer <cancel_token>` on incremental-attributes POSTs and on async terminal callbacks; the supervisor authenticates by comparing the token against the live dispatch row.
 - `run_attempt` — 1-indexed retry counter, useful for idempotency keys and progress reporting.
 
 #### 2.1.1 Intent vs. write_semantics
 
-Each claim in a node template carries an `intent` field — `"r"` (read-only) or `"rw"` (read-write) — which is the **graph author's** declaration of how the executor will use the claim. Each store carries a `write_semantics` field — `"direct"`, `"staged_blocking"`, or `"staged_async"` — which is the **substrate's** declaration of how writes coordinate with readers (operator-configured, bounded above by the store kind's max capability). Together they form the claim's effective mode used for the conflict predicate (sync vs. async × r vs. w; see spec §8.5). Both are invisible at the wire level — the executor sees only the resolved `Address` — but matter for understanding which dispatches are eligible to run concurrently.
+Each claim in a node template carries an `intent` field — `"r"` (read-only) or `"rw"` (read-write) — which is the **graph author's** declaration of how the executor will use the claim. Each store carries a `write_semantics` field — `"direct"`, `"staged_blocking"`, or `"staged_async"` — which is the **store's** declaration of how writes coordinate with readers (operator-configured, bounded above by the store kind's max capability). Together they form the claim's effective mode used for the conflict predicate (sync vs. async × r vs. w; see spec §8.5). Both are invisible at the wire level — the executor sees only the resolved `Address` — but matter for understanding which dispatches are eligible to run concurrently.
 
 ### 2.2 `ExecuteEvent`
 
@@ -427,7 +427,7 @@ The opacity is load-bearing. It is what lets rimsky serve every domain — HTTP,
 
 The supervisor's per-store-claim action when the run terminates is determined by the terminal event together with the policy-chain action selected for the run. The table below is normative; the verbs are the 4-verb store interface (`Open` / `Commit` / `Abandon` / `Release`) defined in spec §4.1.
 
-Rimsky carries only a success/failure binary across the wire: success → `Commit(claim_id)`; failure → `Abandon(claim_id)`. There is no template-level action vocabulary, no `policy_override` argument, and no `Delete` verb. Substrate disposition (what `Commit` / `Abandon` mean for substrate state — e.g. promote-to-tail vs. release-to-back vs. delete vs. flip an items-table row) is governed by the substrate's own per-pick-policy / per-store configuration; rimsky neither inspects nor selects it.
+Rimsky carries only a success/failure binary across the wire: success → `Commit(claim_id)`; failure → `Abandon(claim_id)`. There is no template-level action vocabulary, no `policy_override` argument, and no `Delete` verb. Store disposition (what `Commit` / `Abandon` mean for the store's own state — e.g. promote-to-tail vs. release-to-back vs. delete vs. flip an items-table row) is governed by the store's own per-pick-policy / per-store configuration; rimsky neither inspects nor selects it.
 
 | Terminal event                                 | Per-claim action (non-held; acquirer's terminal)                                  |
 |------------------------------------------------|-----------------------------------------------------------------------------------|
@@ -437,9 +437,9 @@ Rimsky carries only a success/failure binary across the wire: success → `Commi
 | `Blocked` / `Errored` + `retry`                | `Abandon(claim_id)`; delete lock-holder row; re-enqueue dispatch                  |
 | `Errored` + `invalidate(targets)`              | `Abandon(claim_id)`; delete lock-holder row; emit invalidate to targets           |
 
-For `direct`-mode regional `rw` claims, `Commit` is a substrate no-op and `Abandon` is degenerate (direct writes cannot be undone — the store-author guide documents this honest limitation).
+For `direct`-mode regional `rw` claims, `Commit` is a store no-op and `Abandon` is degenerate (direct writes cannot be undone — the store-author guide documents this honest limitation).
 
-For **held claims** (any claim referenced by an `inherits:` block in a downstream node), per-node terminals only update the corresponding `rimsky_claim_holders` row to `'completed'` or `'failed'` — no substrate verb fires. The auto-terminal mechanism (v3 spec §4.10 invariant 13) fires exactly one resolution at holding-subgraph completion based on aggregate outcome: all-success → `Commit(claim_id)`; any-failure → `Abandon(claim_id)`. The substrate then applies its configured disposition. See `architecture.md` §5 (blessed invariant 13) and `core/supervisor/auto_terminal.go`.
+For **held claims** (any claim referenced by an `inherits:` block in a downstream node), per-node terminals only update the corresponding `rimsky_claim_holders` row to `'completed'` or `'failed'` — no store verb fires. The auto-terminal mechanism (v3 spec §4.10 invariant 13) fires exactly one resolution at holding-subgraph completion based on aggregate outcome: all-success → `Commit(claim_id)`; any-failure → `Abandon(claim_id)`. The store then applies its configured disposition. See `architecture.md` §5 (blessed invariant 13) and `core/supervisor/auto_terminal.go`.
 
 `AsyncAccepted` is not in the table because it is not a run-terminating outcome on its own — the row above is selected once the async terminal callback arrives carrying one of `complete | blocked | errored`.
 

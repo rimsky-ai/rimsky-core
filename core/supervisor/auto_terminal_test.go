@@ -24,7 +24,7 @@ import (
 
 // TestCheckAndFireResolution_AllCompletedFiresCommit seeds a held
 // subgraph with two completed claim_holders rows and confirms
-// CheckAndFireResolution invokes Commit on the substrate and
+// CheckAndFireResolution invokes Commit on the store and
 // deletes the lock-holder row. Cascade FK removes the claim-holders
 // rows.
 func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
@@ -52,7 +52,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	require.NoError(t, err)
 
 	// In-Go fake store registered locally so the resolution verb has
-	// a substrate to dispatch against. The fake's Commit/Abandon
+	// a store to dispatch against. The fake's Commit/Abandon
 	// record calls — sufficient for this test (the wire path is
 	// covered by scenario tests, not this in-isolation unit test).
 	reg := store.NewRegistry()
@@ -119,8 +119,8 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 			commitSeen = true
 		}
 	}
-	require.True(t, commitSeen, "aggregate-completed must invoke Commit on the substrate")
-	require.False(t, abandonSeen, "aggregate-completed must NOT invoke Abandon on the substrate")
+	require.True(t, commitSeen, "aggregate-completed must invoke Commit on the store")
+	require.False(t, abandonSeen, "aggregate-completed must NOT invoke Abandon on the store")
 }
 
 // TestCheckAndFireResolution_AnyFailedFiresGiveUp seeds a held subgraph
@@ -213,6 +213,6 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 			commitSeen = true
 		}
 	}
-	require.True(t, abandonSeen, "aggregate-failed must invoke Abandon on the substrate")
-	require.False(t, commitSeen, "aggregate-failed must NOT invoke Commit on the substrate")
+	require.True(t, abandonSeen, "aggregate-failed must invoke Abandon on the store")
+	require.False(t, commitSeen, "aggregate-failed must NOT invoke Commit on the store")
 }

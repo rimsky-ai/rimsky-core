@@ -38,7 +38,7 @@
 //	The §7.3 acquisition transaction either claims the dispatch row
 //	AND inserts every required `rimsky_lock_holders` row AND records
 //	the `Store.Open`-returned address, or none of these. The store's
-//	own state mutations run in a substrate-internal transaction
+//	own state mutations run in a store-internal transaction
 //	decoupled from rimsky's. Single-writer-per-region (invariant 4b)
 //	holds because rimsky's conflict predicate gates lock-holder
 //	INSERTs against `rimsky_lock_holders` only. The acquisition tx

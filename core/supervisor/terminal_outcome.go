@@ -2,7 +2,7 @@
 //
 // Under the 2026-04-30 stores cleanup the rimsky-side release routing
 // is the success/failure binary: success → Commit; failure → Abandon.
-// The substrate decides what those mean for its own state per its
+// The store decides what those mean for its own state per its
 // own configuration. What remains here is the conceptual
 // classification of terminal events that flow between the executor
 // stream classifier and the supervisor's runner_terminal.go.
@@ -37,7 +37,7 @@ const (
 	PolicyDiscardThenRetry PolicyResolution = "discard_then_retry"
 	// PolicyResumeThenRetry — preserved for back-compat with templates
 	// that still reference it; under v3 there is no preserve-for-resume
-	// release path (resume is universal at the substrate). The
+	// release path (resume is universal at the store). The
 	// supervisor treats it as an alias of discard_then_retry.
 	PolicyResumeThenRetry PolicyResolution = "resume_then_retry"
 	// PolicyGiveUp — release with failure-branch verb; node→failed.

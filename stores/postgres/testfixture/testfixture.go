@@ -13,7 +13,7 @@ import (
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 )
 
-// Config is the per-test substrate config (a thin re-export of
+// Config is the per-test store config (a thin re-export of
 // server.Config so tests don't need to import the server package
 // directly).
 type Config struct {

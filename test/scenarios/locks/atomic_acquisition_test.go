@@ -3,7 +3,7 @@
 // Invariant 10 (rimsky-side, v3 §4.10): the §7.3 acquisition transaction
 // either claims dispatch AND inserts every required `rimsky_lock_holders`
 // row AND records the `Store.Open`-returned address, or none of these.
-// The substrate's own state mutations run in a decoupled tx; rimsky-side
+// The store's own state mutations run in a decoupled tx; rimsky-side
 // atomicity is independent.
 //
 // Invariant 15 (revised v3): `Open` fires inside the rimsky-side
@@ -49,7 +49,7 @@ import (
 //
 // Uses the in-Go fake (registered into the runner's RunArgs directly)
 // instead of an error-injecting wire fixture because the property
-// under test is rimsky-side rollback semantics — the substrate
+// under test is rimsky-side rollback semantics — the store
 // success path is irrelevant. The wire-bridged happy path is covered in
 // stores/regional_claim_test.go. The harness still wires a loopback stub
 // fixture into the control-api / scheduler so template deploy and

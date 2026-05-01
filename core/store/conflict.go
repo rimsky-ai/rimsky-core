@@ -60,7 +60,7 @@ func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB Writ
 // RegionsByteEqual reports whether two store-supplied region byte
 // slices are equal under byte-wise comparison. The rimsky-side
 // implementation of the conflict comparison (per spec §7.7) — v2's
-// per-store Store.RegionsConflict is gone; substrates canonicalize
+// per-store Store.RegionsConflict is gone; stores canonicalize
 // region bytes such that byte-equal correctly indicates conflict.
 //
 // Empty regions never conflict: an absent region (e.g. a NamedLockSpec

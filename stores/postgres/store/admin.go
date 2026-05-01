@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// AdminHandler returns an http.Handler for the substrate's admin
+// AdminHandler returns an http.Handler for the store's admin
 // surface. Per spec §13: each store-service that supports pick
 // policies owns its own admin endpoint for items insertion. Operators
 // configure their seeding tooling to talk to the store-service

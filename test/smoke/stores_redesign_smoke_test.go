@@ -81,7 +81,7 @@ func TestStoresRedesignSmoke(t *testing.T) {
 	assertFinalState(t, ctx, stack)
 }
 
-// bulkInsertItems POSTs 100 items via the substrate-internal admin
+// bulkInsertItems POSTs 100 items via the store-internal admin
 // endpoint of the postgres store-service (per v3 spec §7.3 step 1: rimsky no
 // longer has an items endpoint; the store-service owns its own admin
 // surface).
@@ -675,7 +675,7 @@ func draftNode() map[string]any {
 // topics-ring claim from claim-topic (value-passing through scope is
 // not transitive — each downstream that needs the live claim declares
 // it explicitly). At terminal the supervisor fires Commit on the
-// substrate (success) or Abandon (failure); the postgres reference
+// store (success) or Abandon (failure); the postgres reference
 // store-service's per-policy `on_commit_default` /
 // `on_give_up_default` config governs disposition. This node just
 // reads the draft's output region.

@@ -1,7 +1,7 @@
 // Package store defines the rimsky-side store contract. Per spec
 // docs/specs/2026-04-27-stores-redesign-v3-design.md as amended by
-// docs/specs/2026-04-30-stores-protocol-cleanup-design.md (substrate-
-// vocabulary excision).
+// docs/specs/2026-04-30-stores-protocol-cleanup-design.md (store-
+// internal-vocabulary excision).
 //
 // In v3 the standard store implementations live in standalone binaries
 // under stores/ and rimsky talks to them via the gRPC client in
@@ -30,11 +30,11 @@
 //
 // # Two primitives
 //
-//   - Claim — substrate-bound. ClaimSpec carries (StoreName, Selector,
-//     Intent, Alias). Substrate parses Selector and decides what it
+//   - Claim — store-bound. ClaimSpec carries (StoreName, Selector,
+//     Intent, Alias). The store parses Selector and decides what it
 //     means (regional access vs. an items-table queue convention).
 //
-//   - Named lock — non-substrate. NamedLockSpec carries (Name) only.
+//   - Named lock — store-independent. NamedLockSpec carries (Name) only.
 //     Limit lives in operator config.
 //
 // Both are persisted as rows in rimsky_lock_holders but the two specs
@@ -47,9 +47,9 @@
 //   - Abandon(ctx, claim_id, region, address)
 //   - Release(ctx, claim_id, region, address)
 //
-// Plus Capabilities(ctx) for the startup handshake. Substrate
-// disposition (what Commit / Abandon mean for the substrate's own
-// state) is governed by per-substrate config; rimsky carries only
+// Plus Capabilities(ctx) for the startup handshake. Store
+// disposition (what Commit / Abandon mean for the store's own
+// state) is governed by per-store config; rimsky carries only
 // the success/failure binary.
 //
 // # write_semantics (spec §4.8)

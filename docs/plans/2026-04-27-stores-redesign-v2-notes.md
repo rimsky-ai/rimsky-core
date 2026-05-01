@@ -181,7 +181,7 @@ The user re-invoked `/ok-planner:execute-plan` after the bottom-line summary abo
 
 ### T25 (inline-jsonb / Resource sweep)
 
-**Deviation:** active code is clean (no production hits). The historical-decision docs at `docs/2026-04-26-stores-redesign.md`, `docs/2026-04-26-stores-spec-scope.md`, `docs/plans/2026-04-25-stores-redesign.md` still mention `inline-jsonb` — these are documented decision logs (acceptable per plan T58 rules: "occurrences inside historical changelogs or design discussion docs are acceptable").
+**Deviation:** active code is clean (no production hits). The historical-decision docs at `docs/history/2026-04-26-stores-redesign.md`, `docs/history/2026-04-26-stores-spec-scope.md`, `docs/plans/2026-04-25-stores-redesign.md` still mention `inline-jsonb` — these are documented decision logs (acceptable per plan T58 rules: "occurrences inside historical changelogs or design discussion docs are acceptable").
 **Surfaced for:** none.
 
 ### T26-T29 (inertness audit)

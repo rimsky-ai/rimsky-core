@@ -4,7 +4,7 @@
 // Test 1 (`TestAutoTerminalAggregateCommitEndToEnd`) drives a two-node
 // template (acquirer + held inheritor) end-to-end through the loopback
 // stub fixture and asserts that:
-//   - exactly one substrate `commit` verb fires for the held claim
+//   - exactly one store `commit` verb fires for the held claim
 //     (aggregate-completed → Commit per spec §4.10 invariant 13).
 //   - zero `rimsky_lock_holders` rows remain for the instance after
 //     both nodes reach `fresh`.
@@ -39,7 +39,7 @@ import (
 
 // TestAutoTerminalAggregateCommitEndToEnd deploys an acquirer + held
 // inheritor, lets both reach `fresh`, and asserts the auto-terminal
-// mechanism fired exactly one `commit` against the substrate.
+// mechanism fired exactly one `commit` against the store.
 func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -86,7 +86,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(inheritor.ID, shared.NodeStateFresh, 15*time.Second),
 		"inheritor did not reach fresh")
 
-	// Collect substrate verb counts. Auto-terminal must fire exactly
+	// Collect store verb counts. Auto-terminal must fire exactly
 	// one Commit (aggregate-completed). Abandon must not fire.
 	deadline := time.Now().Add(2 * time.Second)
 	var commitCount, abandonCount int

@@ -2,9 +2,9 @@
 // docs/specs/2026-04-30-stores-protocol-cleanup-design.md).
 //
 // At a held claim's holding-subgraph completion, the supervisor fires
-// exactly one substrate verb based on aggregate outcome — Commit if
+// exactly one store verb based on aggregate outcome — Commit if
 // every claim-holder reached `'completed'`, Abandon if any reached
-// `'failed'` — then deletes the lock-holder row. The substrate decides
+// `'failed'` — then deletes the lock-holder row. The store decides
 // what Commit / Abandon mean for its own state per its own
 // configuration; rimsky carries only the success/failure binary.
 // Race-safe via SELECT … FOR UPDATE on the lock-holder row plus a
@@ -30,19 +30,19 @@ import (
 // CheckAndFireResolution implements the spec §4.10 invariant 13 algorithm: lock
 // the rimsky_lock_holders row, check whether all rimsky_claim_holders
 // rows for the lock-holder are non-active, compute aggregate outcome
-// (any 'failed' → Abandon; else → Commit), fire that substrate verb,
+// (any 'failed' → Abandon; else → Commit), fire that store verb,
 // and delete the lock-holder row claimant-guarded.
 //
-// Runs inside the caller's tx so the substrate verb + the lock-holder
+// Runs inside the caller's tx so the store verb + the lock-holder
 // delete + the cascade-cleared claim-holder rows commit atomically
 // with whatever else the caller is mutating.
 //
 // Returns nil when the subgraph is not yet complete (some active
 // rows remain) — the next terminating member will re-check.
 //
-// Substrate-verb / commit-failure leak path: the substrate verb fires
+// Store-verb / commit-failure leak path: the store verb fires
 // over the wire BEFORE the surrounding rimsky tx commits. If the
-// substrate verb succeeds but the rimsky tx then fails to commit
+// store verb succeeds but the rimsky tx then fails to commit
 // (rare — Postgres connection drop between verb-return and Commit),
 // the next sibling-node terminal re-enters this function with the
 // lock-holder row still present and will fire the verb a second time.
@@ -107,7 +107,7 @@ func CheckAndFireResolution(
 		verbErr = s.Commit(ctx, claimID, region, address)
 	}
 	if verbErr != nil {
-		return fmt.Errorf("CheckAndFireResolution: substrate verb: %w", verbErr)
+		return fmt.Errorf("CheckAndFireResolution: store verb: %w", verbErr)
 	}
 
 	if err := args.LockHolders.DeleteByID(ctx, tx, lockHolderID, args.SupervisorID); err != nil {

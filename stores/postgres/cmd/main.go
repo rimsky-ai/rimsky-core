@@ -1,5 +1,5 @@
 // store-postgres is the standard direct-mode postgres store-service
-// with substrate-side pick-policy support. Per spec §8.2.
+// with store-side pick-policy support. Per spec §8.2.
 //
 // Loads its YAML config from STORE_POSTGRES_CONFIG, opens listeners
 // on configured gRPC + HTTP + admin ports, and calls server.Run.

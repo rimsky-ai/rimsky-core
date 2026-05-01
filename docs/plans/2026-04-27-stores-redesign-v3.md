@@ -676,7 +676,7 @@ go test ./core/... -count=1
    - Build `core/config.SupervisorConfig.Stores` programmatically with the loopback endpoints and declared capabilities.
    - Start in-process `rimsky-supervisor`, `rimsky-scheduler`, `rimsky-control-api`.
    - Run the scenario.
-2. Land the priority scenario tests per spec §9.4 + the `docs/2026-04-27-store-protocol-inertness-cleanup.md` follow-up list:
+2. Land the priority scenario tests per spec §9.4 + the `docs/history/2026-04-27-store-protocol-inertness-cleanup.md` follow-up list:
    - `test/scenarios/locks/atomic_acquisition_test.go` — exercises the 7-step acquisition flow under contention.
    - `test/scenarios/locks/named_lock_counting_test.go` and `named_lock_mutex_test.go` — named-lock primitive coverage.
    - `test/scenarios/locks/sorted_acquisition_no_deadlock_test.go` — multi-lock sort-order invariant.
@@ -960,9 +960,9 @@ grep -rln '@blessed-invariant 14' core/ stores/      # should return nothing
 go build ./...                                      # confirm comment changes don't break build
 ```
 
-### T49: Update `docs/2026-04-27-store-protocol-inertness-cleanup.md`
+### T49: Update `docs/history/2026-04-27-store-protocol-inertness-cleanup.md`
 
-**Files:** `docs/2026-04-27-store-protocol-inertness-cleanup.md`.
+**Files:** `docs/history/2026-04-27-store-protocol-inertness-cleanup.md`.
 
 **Steps:**
 

@@ -41,7 +41,7 @@ type harness struct {
 // teardown. Builds a *store.Registry with two unit-test fakes
 // ("content" and "topics-ring") satisfying store.Store; the wire is
 // not exercised here (the unit tests target template validation, route
-// wiring, and storage-backed paths — not the substrate protocol).
+// wiring, and storage-backed paths — not the store protocol).
 func newHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()

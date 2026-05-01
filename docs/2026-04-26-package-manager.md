@@ -5,7 +5,7 @@
 - Design notes, 2026-04-26.
 - Companion to:
   - `docs/specs/2026-04-25-stores-redesign-design.md` — the landed stores redesign (foundation; templates, attributes, locks, claim stores, the `core/store/` interface).
-  - `docs/2026-04-25-store-redesign.md` — store ecosystem and lock primitive refinement (provides context on bridges, the auth-blind philosophy, and multi-tenant stores).
+  - `docs/2026-04-25-store-redesign.md` — store ecosystem and lock primitive refinement (provides context on store-services, the auth-blind philosophy, and multi-tenant stores).
 - Captures the package manager design as worked through in conversation.
 - **Sub-graph composability is deliberately deferred** to a separate session. Local graph composition (within a single deployment) should be designed first; package-level graph composition is an add-on after that.
 - Authored as conversation notes for use in a future session. Not blocking any in-flight implementation work; the design captures decisions made now so they're not re-litigated later.
@@ -68,7 +68,7 @@ The artifact types differ fundamentally in their nature and provisioning cost:
 |---|---|---|---|
 | Graph spec | Pure data (YAML / structured config) | Free — just register | Trivial; file or registry blob |
 | Executor | OCI image + runtime container | Compute resources | OCI registry |
-| Store / bridge | OCI image + runtime container, OR external substrate (managed S3, hosted postgres) | Compute + storage + auth | OCI registry |
+| Store-service | OCI image + runtime container, OR a wrapper over external infrastructure (managed S3, hosted postgres) | Compute + storage + auth | OCI registry |
 
 Graphs are free to install. Executors and stores cost real resources.
 
@@ -142,7 +142,7 @@ Key points:
 - **Dependencies are declared by capability**, not by specific package version. The graph says "I need an llm-agent executor implementing protocol v1, ≥2.0"; the deployment provides whatever package satisfies that.
 - **Sub-stores are first-class manifest content** (per `docs/2026-04-25-store-redesign.md` §15). The package manager provisions them at install time.
 - **The spec is the graph definition** — what would today be a Rimsky template.
-- **No infrastructure references**. The graph never names a specific bridge instance, postgres cluster, or container; it names a *kind* and a *capability requirement*.
+- **No infrastructure references**. The graph never names a specific store-service instance, postgres cluster, or container; it names a *kind* and a *capability requirement*.
 
 ### 3.2 Executor package
 
@@ -196,13 +196,13 @@ A store package is similar to an executor package — image reference plus capab
 
 ```yaml
 package:
-  name: postgres-multitenant-bridge
+  name: postgres-multitenant-store
   version: 1.0.0
   type: store
   publisher: fallguy.com
   license: Apache-2.0
 
-image: ghcr.io/fallguy/store-postgres-bridge:1.0.0@sha256:def...
+image: ghcr.io/fallguy/store-postgres:1.0.0@sha256:def...
 
 provides:
   kind: postgres
@@ -244,28 +244,28 @@ Two distinct distribution channels would force duplicate tooling for the same pr
 
 ## 4. Multi-tenant store integration
 
-Per `docs/2026-04-25-store-redesign.md` §15, multi-tenant bridges support sub-store provisioning via an admin verb set. The package manager is the natural orchestrator for this.
+Per `docs/2026-04-25-store-redesign.md` §15, multi-tenant store-services support sub-store provisioning via an admin verb set. The package manager is the natural orchestrator for this.
 
 When installing a graph package that declares `substores`:
 
-1. **Find a registered multi-tenant bridge** of each required `parent_kind` whose capabilities meet the graph's `capabilities_required`. Fail fast if none matches.
-2. **Validate quota against parent capacity** (bridge's `GetSubstoreUsage` plus configured pool capacity).
-3. **Call `ProvisionSubstore`** on each bridge with the requested name, capabilities, and quota. Receive a `SubstoreID` per provisioned sub-store.
+1. **Find a registered multi-tenant store-service** of each required `parent_kind` whose capabilities meet the graph's `capabilities_required`. Fail fast if none matches.
+2. **Validate quota against parent capacity** (store-service's `GetSubstoreUsage` plus configured pool capacity).
+3. **Call `ProvisionSubstore`** on each store-service with the requested name, capabilities, and quota. Receive a `SubstoreID` per provisioned sub-store.
 4. **Register each sub-store** as a regular store in the control-api, scoped to this graph instance.
 5. **Bind logical names** (`workspace`, `data`) to the provisioned `SubstoreID`s.
 6. **Persist the binding** in the control-api's per-instance store registry.
 
 On uninstall, for sub-stores with `auto_destroy: true`:
 
-1. Call `DestroySubstore(id)` on the bridge.
+1. Call `DestroySubstore(id)` on the store-service.
 2. Remove the binding from the registry.
 
 This is **logical provisioning** — namespacing inside already-provisioned infrastructure. The IaC boundary holds:
 
 - **Real infrastructure** (compute, storage, IAM, network) → ops + IaC.
-- **Logical sub-namespaces** (schemas, prefixes, directories) → bridge admin verbs invoked by the package manager at install.
+- **Logical sub-namespaces** (schemas, prefixes, directories) → store-service admin verbs invoked by the package manager at install.
 
-Critically: nothing the package manager does at install time can fail because of missing real-world resources. If the parent substrate is too small, that fails at quota validation (early, with a clear error). If the bridge is missing, that fails at capability matching (early, also clear). Real infrastructure costs are bounded by what ops already provisioned.
+Critically: nothing the package manager does at install time can fail because of missing real-world resources. If the parent store's underlying capacity is too small, that fails at quota validation (early, with a clear error). If the store-service is missing, that fails at capability matching (early, also clear). Real infrastructure costs are bounded by what ops already provisioned.
 
 ## 5. Local DAG registry (Option D)
 
@@ -374,7 +374,7 @@ resolved:
         digest: sha256:claude-digest...
         instance: claude-prod
     stores:
-      - resolved_package: filesystem-bridge
+      - resolved_package: filesystem-store
         digest: sha256:fs-digest...
         instance: fs-shared
         substore_bound:
@@ -445,8 +445,8 @@ Operator pulls package manifests for executors and stores they want to use:
 
 ```bash
 $ rimsky-cli pkg fetch claude-agent@2.5.1
-$ rimsky-cli pkg fetch postgres-multitenant-bridge@1.0.0
-$ rimsky-cli pkg fetch filesystem-direct-bridge@0.9.2
+$ rimsky-cli pkg fetch postgres-multitenant-store@1.0.0
+$ rimsky-cli pkg fetch filesystem-direct-store@0.9.2
 ```
 
 This fetches manifests (and optionally the OCI image references) into the operator's working directory.
@@ -476,9 +476,9 @@ $ rimsky-cli register-executor \
     --endpoint claude-agent.workloads.svc.cluster.local:9090
 
 $ rimsky-cli register-store \
-    --package postgres-multitenant-bridge@1.0.0 \
+    --package postgres-multitenant-store@1.0.0 \
     --instance-name pg-shared \
-    --endpoint pg-bridge.workloads.svc.cluster.local:9091
+    --endpoint pg-store.workloads.svc.cluster.local:9091
 ```
 
 The control-api validates the registration against the package's `registration.schema`, stores the binding, and exposes the executor/store to graphs.
@@ -498,7 +498,7 @@ The package manager:
 1. Fetches the graph package and verifies its signature.
 2. Resolves dependencies against registered executors and stores.
 3. Validates capability matches; fails fast if any unsatisfied.
-4. For each `substores` declaration, finds a multi-tenant bridge of the required kind, validates quota, calls `ProvisionSubstore`.
+4. For each `substores` declaration, finds a multi-tenant store-service of the required kind, validates quota, calls `ProvisionSubstore`.
 5. Binds logical names to the provisioned `SubstoreID`s.
 6. Registers the graph spec with the control-api template registry, scoped to instance `daily-ingest`.
 7. Writes the lockfile.
@@ -534,8 +534,8 @@ Sub-stores with `auto_destroy: false` remain; the operator can manually destroy 
 To keep the IaC boundary visible, here's what the package manager **does not** do:
 
 - **Provision real infrastructure.** No `terraform apply`, no `kubectl create`, no cloud API calls.
-- **Manage substrate-level credentials.** Bridge admin creds, executor API keys, etc. are operator-config inputs to IaC; the package manager just forwards the schema.
-- **Enforce runtime quotas.** Bridges enforce at runtime; the package manager only validates at install.
+- **Manage store-level credentials.** Store-service admin creds, executor API keys, etc. are operator-config inputs to IaC; the package manager just forwards the schema.
+- **Enforce runtime quotas.** Store-services enforce at runtime; the package manager only validates at install.
 - **Run graphs.** The control-api runs graphs; the package manager just installs them.
 - **Replace IaC.** The operator's existing IaC tooling continues to drive deployment and resource provisioning.
 - **Compose sub-graphs.** Sub-graph composability is deliberately deferred; today a package contains exactly one graph spec.
@@ -560,7 +560,7 @@ Items the conversation surfaced but did not settle. Each is worth its own focuse
 
 7. **Migration semantics for graph upgrades.** Graph version N → N+1 with running instances. Schema migration, backfill, rollback. This is its own design space and probably needs a dedicated session.
 
-8. **Inlined stores in the catalog.** The package format describes OCI-image bridges naturally. Inlined stores (Go modules compiled into Rimsky) need a slightly different shape — Go module reference instead of OCI image. Worth nailing down whether they share the same manifest or diverge.
+8. **Inlined stores in the catalog.** The package format describes OCI-image store-services naturally. Inlined stores (Go modules compiled into Rimsky) need a slightly different shape — Go module reference instead of OCI image. Worth nailing down whether they share the same manifest or diverge.
 
 9. **CLI vs declarative install.** §8 sketches a CLI (`rimsky-cli install`); a real deployment may want a declarative installer (Helm chart, Terraform provider) that can sit alongside other IaC. Both probably exist; the CLI is the canonical reference and the declarative wrappers ride on top.
 
@@ -588,7 +588,7 @@ A consolidated record of the substantive design decisions made during the conver
 
 7. **Don't reinvent IaC.** Package manager stays strictly on the data side. Considered full-stack provisioning (deploy executors, allocate storage, manage networking). Reinventing k8s/Terraform/CloudFormation badly is worse than not trying; existing IaC tooling handles infrastructure better.
 
-8. **Multi-tenant integration is logical sub-namespacing, not real provisioning.** Package manager calls bridge admin verbs to carve namespaces inside ops-provisioned substrates. Considered provisioning real resources. Logical carving is bounded and automatic; real provisioning is ops + IaC.
+8. **Multi-tenant integration is logical sub-namespacing, not real provisioning.** Package manager calls store-service admin verbs to carve namespaces inside ops-provisioned stores. Considered provisioning real resources. Logical carving is bounded and automatic; real provisioning is ops + IaC.
 
 9. **Sub-graph composability deferred to a future session.** Considered including in v1 package design. Composing local graph fragments is a separate concern; should be designed as a local feature first, then layered onto packages once the local model is solid.
 
@@ -611,7 +611,7 @@ A consolidated record of the substantive design decisions made during the conver
 - **Three-artifact catalog** (graphs, executors, stores) with a unified manifest shape and consistent capability/registration declarations.
 - **Data-vs-infrastructure boundary** is the load-bearing principle. The package manager owns the data side; ops + IaC owns the infrastructure side.
 - **Local DAG registry** as the recommended deployment pattern; standard OCI registry, no Rimsky-specific service.
-- **Multi-tenant store integration** at install time via bridge admin verbs (per `docs/2026-04-25-store-redesign.md` §15).
+- **Multi-tenant store integration** at install time via store-service admin verbs (per `docs/2026-04-25-store-redesign.md` §15).
 - **Hybrid versioning** (semver + digest), with capability-based dependency matching.
 - **OCI-native trust** (sigstore/cosign) and conformance attestations as signed metadata.
 - **Sub-graph composability deliberately deferred** to a separate session — must be designed as a local feature first.

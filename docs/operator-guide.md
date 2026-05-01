@@ -265,9 +265,9 @@ In v3 each standard store implementation runs as a **separate process**
 `Capabilities` handshake) gRPC protocol defined in
 `proto/v1/store_service.proto`. Rimsky's per-process config
 collapses to a thin "name → endpoint + declared capabilities" form;
-substrate-specific configuration (DSNs, pick policies, items tables,
-filesystem roots) lives in the store-service's own config and rimsky
-never sees it (v3 spec §6.1, §6.3).
+store-service-specific configuration (DSNs, pick policies, items
+tables, filesystem roots) lives in the store-service's own config and
+rimsky never sees it (v3 spec §6.1, §6.3).
 
 All three rimsky processes (`rimsky-scheduler`, `rimsky-supervisor`,
 `rimsky-control-api`) load this same operator config bundle at startup.
@@ -296,7 +296,7 @@ named_locks:
 ```
 
 The schema explicitly does **NOT** contain `kind`, `connection`,
-`pick_policies`, or any other substrate-specific keys. Each store-service
+`pick_policies`, or any other store-service-specific keys. Each store-service
 runs at exactly one `write_semantics` (the value baked into its own
 config); rimsky's job is to verify the operator's declared expectation
 matches what the store-service advertises via the `Capabilities()`
@@ -341,7 +341,7 @@ Kubernetes). The compose file at `deploy/docker-compose.yml` brings up
 `store-filesystem` and `store-postgres` as services that the rimsky
 processes dial via service-name DNS.
 
-#### 3.4.2 Store-service configuration (substrate-internal)
+#### 3.4.2 Store-service configuration (store-internal)
 
 Each store-service binary owns its own config schema and loads it from
 its own env var. The schema is store-specific and out of rimsky's view.
@@ -380,13 +380,13 @@ For the standard stores shipped under `stores/`:
   admin_port: 9121
   sweep_interval_seconds: 30
   ```
-  `connection:` is the substrate's own Postgres pool, opened by the
-  store-service. Operators may collocate it with rimsky's control-plane
-  database (same DSN as `RIMSKY_DB_URL`) or point at a separate database
-  — the store-service is opaque to rimsky, so rimsky doesn't care.
-  `pick_policies` is a substrate-defined block keyed by the substrate-
-  recognised selector form (convention: `@policy-name`); each entry
-  configures the items-table backing, default actions, and the
+  `connection:` is the store-service's own Postgres pool, opened by
+  the store-service. Operators may collocate it with rimsky's
+  control-plane database (same DSN as `RIMSKY_DB_URL`) or point at a
+  separate database — the store-service is opaque to rimsky, so rimsky
+  doesn't care. `pick_policies` is a store-defined block keyed by the
+  store-recognised selector form (convention: `@policy-name`); each
+  entry configures the items-table backing, default actions, and the
   visibility-timeout sweep period. The store-service's own admin
   endpoint at `:admin_port` is documented in §5.5 below.
 
@@ -398,7 +398,7 @@ Rimsky neither defines nor validates these schemas.
 This subsection is guidance for operators of *the postgres reference
 store-service* specifically, not a rimsky-level constraint. The
 constraint exists because the postgres store implements an
-items-table queue with a substrate-internal visibility timeout that
+items-table queue with a store-internal visibility timeout that
 runs independently of rimsky's lock-holder bookkeeping. Other
 store-services may have their own analogous timing constraints (or
 none) — consult each store-service's own documentation.
@@ -406,14 +406,14 @@ none) — consult each store-service's own documentation.
 When the postgres store-service is configured with a pick policy
 that has a `visibility_timeout`, set that timeout **strictly greater
 than `5 × heartbeat_interval`** (the rimsky-side orphan-reap window).
-If `visibility_timeout` is shorter, the substrate's internal sweep
+If `visibility_timeout` is shorter, the store's internal sweep
 can strip a healthy claim out from under a live supervisor —
 rimsky's heartbeat keeps the lock-holder row alive, but the
-substrate's TTL doesn't observe the lock-holder row. The reference
+store's TTL doesn't observe the lock-holder row. The reference
 postgres store-service ships `visibility_timeout_seconds: 300` and
 `sweep_interval_seconds: 30` against the rimsky default
 `heartbeat_interval_ms: 5000` (so `5 × 5s = 25s`); see
-`stores/postgres/store/sweep.go` for the substrate-side sweep shape.
+`stores/postgres/store/sweep.go` for the store-side sweep shape.
 
 If you tune `heartbeat_interval_ms` upward in the supervisor config, you
 must tune `visibility_timeout_seconds` upward in the store-service
@@ -436,7 +436,7 @@ layer (mTLS, service mesh, IAM) — outside any YAML rimsky reads.
 operator-managed; what to log, redact, or audit is your call. Routine
 startup logging like "loaded remote store `content` at
 `grpc://store-filesystem:9100`" is fine. **Claim content** — the runtime
-substrate-supplied `payload` / `address` / `region` bytes returned by
+store-supplied `payload` / `address` / `region` bytes returned by
 `Store.Open` over the wire — is governed by blessed invariant 20 and is
 **never** under operator-side logging discretion. The boundary is
 verb-based: anything rimsky receives over the 4-verb wire is claim
@@ -445,7 +445,7 @@ store config (operator's call).
 
 If you need to pass sensitive bytes through claim content (payload,
 address, or region), encrypt them before they enter the producer-side
-substrate. Rimsky transports ciphertext as opaque bytes; the consuming
+store. Rimsky transports ciphertext as opaque bytes; the consuming
 executor decrypts at point of use. Rimsky ships no helper library;
 implementers handle the crypto end-to-end.
 
@@ -468,19 +468,19 @@ loaded operator config) checks:
 
 What deploy-time validation does **not** check:
 
-- **Selector text against substrate grammar.** Selectors are opaque
+- **Selector text against store grammar.** Selectors are opaque
   strings rimsky carries verbatim from template DSL (after `{{...}}`
   substitution at dispatch) through to the store-service. Rimsky does
   not parse, classify, or look up selectors against any store-side
-  state. The authoritative validity check is the substrate's response
+  state. The authoritative validity check is the store's response
   to `Open` at dispatch (v3 spec §7.3).
 - **Pick-policy intent.** Pick-policy classification is store-side; the
   control-api has no way to recognize a `@policy-name` selector as
   pick-policy because pick-policy registration lives in the
   store-service's own config. Operators are responsible for ensuring
-  pick-policy claims declare `intent: rw` (the substrate will reject
+  pick-policy claims declare `intent: rw` (the store will reject
   read-only `Open` against a pick-policy selector at dispatch).
-- **Substrate connection details / store-service configs.** These live
+- **Store connection details / store-service configs.** These live
   in the store-service binary's own config and rimsky has no view of
   them.
 
@@ -566,19 +566,19 @@ is the idiomatic shape for periodic ingestion.
 **Claim-based work assignment.** A node may declare a `stores:` entry with
 a selector and intent — e.g. `{name: topics, selector: "@review-queue",
 intent: rw, alias: queue}`. The supervisor calls `Store.Open` to acquire
-the claim; the executor receives the substrate-native address opaquely and
+the claim; the executor receives the store-supplied address opaquely and
 the picked item's payload is available via `{{claim.queue.payload.<f>}}`
-substitution paths. Substrate disposition at terminal — what `Commit` /
-`Abandon` mean for the substrate's own state — is governed entirely by
-the substrate's own configuration (e.g. the postgres reference store-
+substitution paths. Store disposition at terminal — what `Commit` /
+`Abandon` mean for the store's own state — is governed entirely by
+the store's own configuration (e.g. the postgres reference store-
 service exposes per-pick-policy `on_commit_default` / `on_give_up_default`
-in its own `config.yml`). Templates carry no substrate vocabulary.
+in its own `config.yml`). Templates carry no store-internal vocabulary.
 
 **Held claims (multi-node access to the same picked item).** A downstream
 node declares `inherits: [{claim: <alias>}]` to extend the claim's
 lifetime to cover its own run. The supervisor's auto-terminal mechanism
 (v3 spec §4.10 invariant 13, as amended by the 2026-04-30 stores cleanup)
-fires exactly one substrate verb at holding-subgraph completion based
+fires exactly one store verb at holding-subgraph completion based
 on aggregate outcome (all-success → `Commit`; any-failure → `Abandon`).
 See `node-graph-design.md` for the full inheritance model.
 
@@ -611,8 +611,8 @@ Before a template is accepted, the control API validates:
   dispatch-time) references resolve to known dep / claim / params paths
 - `attributes.schema` is a valid JSON Schema (draft-07)
 
-What is **not** validated at deploy time: selector text against substrate
-grammar (substrate parses; resolved selector unknown until dispatch — v3
+What is **not** validated at deploy time: selector text against store
+grammar (the store parses; resolved selector unknown until dispatch — v3
 spec §7.3).
 
 Validation errors come back as HTTP 400 with a `validation_errors` array.
@@ -791,7 +791,7 @@ curl -s -X POST 'http://localhost:9121/admin/items/@review-queue' \
 ```
 
 URL shape: `POST <admin_endpoint>/admin/items/<selector>`. The
-`<selector>` is the substrate-recognized form configured under the
+`<selector>` is the store-recognized form configured under the
 store-service's own `pick_policies:` block (see §3.4.2). Percent-encoded
 selectors are accepted (`%40review-queue` decodes to `@review-queue`);
 double-encoding is a footgun the store-service surfaces as a `400` with

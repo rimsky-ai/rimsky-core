@@ -1,10 +1,10 @@
-// Package store is the substrate-internal logic for the standard
+// Package store is the store-internal logic for the standard
 // postgres store-service. Per spec §8.2: regional access via byte-equal
 // region match (selector echoed); pick-policy access via FOR UPDATE SKIP
 // LOCKED on operator-owned items tables.
 //
-// Substrate atomicity is the substrate's concern: every state mutation
-// happens inside the substrate's own pgx tx. Rimsky's bookkeeping tx
+// Store atomicity is the store's concern: every state mutation
+// happens inside the store's own pgx tx. Rimsky's bookkeeping tx
 // is decoupled per spec §7.3.
 package store
 
@@ -22,7 +22,7 @@ import (
 	corestore "github.com/fallguy/rimsky/core/store"
 )
 
-// Store is the in-process substrate. Owns its own pgxpool.Pool; lock
+// Store is the in-process store implementation. Owns its own pgxpool.Pool; lock
 // state lives on rimsky's side and is not consulted here.
 //
 // No in-process claim tracking: the items table's `claim_token`
@@ -36,7 +36,7 @@ type Store struct {
 	pickPolicies   map[string]*PickPolicy
 }
 
-// PickPolicy is one configured pick policy. Substrate-defined.
+// PickPolicy is one configured pick policy. Store-internal.
 type PickPolicy struct {
 	Type              string
 	ItemsTable        string
@@ -45,7 +45,7 @@ type PickPolicy struct {
 	VisibilityTimeout time.Duration
 }
 
-// Config is the substrate's config schema (operator-managed).
+// Config is the store's config schema (operator-managed).
 type Config struct {
 	Connection     string
 	WriteSemantics corestore.WriteSemantics
@@ -92,27 +92,27 @@ func (s *Store) Close() {
 	}
 }
 
-// Pool exposes the substrate's pool for the admin server's items
+// Pool exposes the store's pool for the admin server's items
 // insertion.
 //
-// This accessor is intended ONLY for the substrate's own admin
+// This accessor is intended ONLY for the store's own admin
 // endpoint (`/admin/stores/{name}/pick-policies/{selector}/items`,
 // served by the postgres store-service in-process). External callers
 // MUST NOT use it: rimsky's control-plane processes (scheduler,
 // supervisor, control-api) talk to this store via the gRPC
-// StoreService bridge — reaching for the substrate pool from outside
+// StoreService bridge — reaching for the store pool from outside
 // the store-service binary indicates a wiring error (e.g. a test or
 // scenario harness trying to short-circuit the wire). Treat any new
 // caller as a code-review red flag.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
-// Capabilities reports the substrate's advertised capability struct.
+// Capabilities reports the store's advertised capability struct.
 func (s *Store) Capabilities() corestore.Capabilities {
 	return corestore.Capabilities{WriteSemantics: s.writeSemantics}
 }
 
 // PickPolicies returns a snapshot of every configured policy. Used by
-// the substrate's own sweep.
+// the store's own sweep.
 func (s *Store) PickPolicies() map[string]PickPolicy {
 	out := make(map[string]PickPolicy, len(s.pickPolicies))
 	for sel, pp := range s.pickPolicies {
@@ -121,14 +121,14 @@ func (s *Store) PickPolicies() map[string]PickPolicy {
 	return out
 }
 
-// Open performs the substrate's claim acquisition. For pick-policy
+// Open performs the store's claim acquisition. For pick-policy
 // selectors, runs FOR UPDATE SKIP LOCKED on the items table. For
 // regional selectors (no pick policy match), echoes the selector as
 // address + region.
 //
-// Runs inside the substrate's own pgx tx; rimsky's tx is decoupled.
+// Runs inside the store's own pgx tx; rimsky's tx is decoupled.
 // Returns OpenOutcome{Available: false} when a configured pick policy
-// finds no available item; substrates that always have a claim to
+// finds no available item; stores that always have a claim to
 // give wrap their result in OpenOutcome{Available: true, Result: ...}.
 func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
 	if pp, ok := s.pickPolicies[selector]; ok {
@@ -198,7 +198,7 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 
 // Commit applies the configured on_commit_default action for pick-
 // policy claims; no-op for regional claims. address is accepted for
-// signature uniformity across the three standard substrates and
+// signature uniformity across the three standard stores and
 // ignored — postgres looks up the in-flight pick-policy item by
 // claim_token (= rimsky claim_id) so that a duplicated terminal RPC
 // under a different claim_id is a no-op rather than a double-bump
@@ -216,7 +216,7 @@ func (s *Store) Abandon(ctx context.Context, claimID string, _ []byte, _ []byte)
 	return s.applyPickAction(ctx, claimID, false)
 }
 
-// Release tears down substrate-side read state. v3 standard postgres
+// Release tears down store-side read state. v3 standard postgres
 // registers no read state at Open; always a no-op. region/address are
 // accepted for signature uniformity and ignored.
 func (s *Store) Release(_ context.Context, _ string, _ []byte, _ []byte) error {
@@ -234,9 +234,9 @@ func (s *Store) Release(_ context.Context, _ string, _ []byte, _ []byte) error {
 // needing per-row policy_selector bookkeeping.
 //
 // successPath=true uses on_commit_default; false uses
-// on_give_up_default. Substrate-side defaults are the only governing
+// on_give_up_default. Store-side defaults are the only governing
 // input; per the 2026-04-30 cleanup amending v3 §4.5, no rimsky-side
-// override is plumbed across the wire. Runs in its own substrate tx.
+// override is plumbed across the wire. Runs in its own store-side tx.
 func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath bool) error {
 	if claimID == "" {
 		return nil
@@ -324,7 +324,7 @@ func (s *Store) findPolicyForClaim(ctx context.Context, claimID string) (*PickPo
 }
 
 // InsertItems bulk-inserts payloads into one configured pick-policy's
-// items table. Used by the substrate's own admin endpoint (per spec
+// items table. Used by the store's own admin endpoint (per spec
 // §13). Each row gets a fresh item_id and state='available'.
 func (s *Store) InsertItems(ctx context.Context, selector string, payloads []json.RawMessage) error {
 	pp, ok := s.pickPolicies[selector]
@@ -375,7 +375,7 @@ func validIdent(s string) bool {
 	return true
 }
 
-// expectedColumns lists the substrate's items-table column requirements.
+// expectedColumns lists the store's items-table column requirements.
 var expectedColumns = []struct {
 	name     string
 	dataType string

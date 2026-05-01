@@ -674,7 +674,7 @@ func TestLockHoldersStore(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// UpdateAddress: writes the substrate-supplied address into a region
+	// UpdateAddress: writes the store-supplied address into a region
 	// row inside the acquisition tx (§7.3 step-4e). Verify the round-trip.
 	addr := json.RawMessage(`{"path":"a/abc"}`)
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
@@ -716,7 +716,7 @@ func TestLockHoldersStore(t *testing.T) {
 
 	// Delete is claimant-guarded: wrong supervisor → no-op. Delete
 	// requires a non-nil tx so the lock-holder DELETE commits atomically
-	// with the rimsky-side terminal bookkeeping (the substrate-side
+	// with the rimsky-side terminal bookkeeping (the store-side
 	// Release / Abandon runs in its own decoupled tx per v3 spec §7.3).
 	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		return b.LockHolders().Delete(ctx, regionRowID, "sup-B", tx)

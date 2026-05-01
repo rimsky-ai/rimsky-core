@@ -12,7 +12,7 @@
 //   - COMMIT, then verify-before-run (separate read), then a second
 //     short tx transitioning the node to running.
 //
-// Store.Open is invoked OVER THE WIRE in v3; the substrate runs its
+// Store.Open is invoked OVER THE WIRE in v3; the store runs its
 // own state mutation in its own transaction. Tx-sharing via
 // store.WithTx / TxFromContext is gone.
 //
@@ -157,7 +157,7 @@ func tryAcquireWithTx(
 
 // tryAcquire runs the acquisition steps for a single candidate inside
 // the open rimsky-side tx. Note: Store.Open RPCs over the wire and the
-// substrate runs in its own tx (per spec §7.3).
+// store runs in its own tx (per spec §7.3).
 func tryAcquire(
 	ctx context.Context, args RunArgs, tx pgx.Tx,
 	cand queue.Candidate, heartbeatInterval time.Duration,
@@ -303,7 +303,7 @@ func acquireNamedLock(
 //
 // Conflict detection uses byte-equal comparison on region bytes (per
 // spec §7.7); the candidate's pre-Open region is the substituted-
-// selector bytes. For pick-policy claims the substrate's
+// selector bytes. For pick-policy claims the store's
 // FOR UPDATE SKIP LOCKED prevents two supervisors picking the same
 // item independently of rimsky's predicate. For regional claims
 // rimsky's predicate is the source of truth for invariant 4b.
@@ -370,8 +370,8 @@ func acquireClaim(
 	if err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Open(%s): %w", spec.StoreName, err)
 	}
-	// Substrate has nothing to give right now (e.g. drained items-table
-	// queue). Per the 2026-04-30 cleanup spec the substrate signals this
+	// Store has nothing to give right now (e.g. drained items-table
+	// queue). Per the 2026-04-30 cleanup spec the store signals this
 	// via OpenOutcome.Available=false (was: all-empty ClaimResult under
 	// v3 §4.7's "pool-empty" convention). Roll back the tx and skip;
 	// the next scheduler tick may retry.
@@ -383,7 +383,7 @@ func acquireClaim(
 	if err := args.LockHolders.UpdateAddress(ctx, tx, rowID, args.SupervisorID, cr.Address); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
-	// Pick-policy claims have substrate-chosen region; regional claims
+	// Pick-policy claims have store-chosen region; regional claims
 	// keep the substituted selector (already written above).
 	if len(cr.Region) > 0 && string(cr.Region) != string(regionInitial) {
 		if err := updateLockHolderRegion(ctx, tx, rowID, args.SupervisorID, cr.Region); err != nil {
@@ -409,11 +409,11 @@ func acquireClaim(
 // spec. Skips own-node rows. Returns true if any holder conflicts AND
 // the modes don't coexist.
 //
-// Per spec §7.7: byte-equal comparison; substrate canonicalizes its
+// Per spec §7.7: byte-equal comparison; the store canonicalizes its
 // region bytes such that two claims that should conflict produce
 // byte-equal regions. The candidate's pre-Open region is the
 // substituted-selector bytes (regional claims) — for pick-policy
-// claims the actual collision check happens in the substrate's
+// claims the actual collision check happens in the store's
 // FOR UPDATE SKIP LOCKED.
 //
 // ModeCoexists is asymmetric: the (intent, write_semantics) pair on
@@ -563,8 +563,8 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // committed the acquisition tx — and then verify-before-run discovered
 // that another supervisor stole the dispatch row in the gap between
 // commit and the second-read guard. The supervisor knows it just
-// opened the substrate state and is now unwinding the in-progress
-// acquisition; it owns the cleanup and calls Abandon on the substrate
+// opened the store state and is now unwinding the in-progress
+// acquisition; it owns the cleanup and calls Abandon on the store
 // to release any partial state, then deletes its own lock-holder row
 // claimant-guarded, then emits orphaned_claim_lost_race.
 //
@@ -629,7 +629,7 @@ func emitLockAcquired(ctx context.Context, args RunArgs, acq acquisition, lk Acq
 	}, nil)
 }
 
-// claimRegion returns the substrate's region bytes for a ClaimSpec
+// claimRegion returns the store's region bytes for a ClaimSpec
 // acquisition; nil for NamedLockSpec.
 func claimRegion(lk AcquiredLock) []byte {
 	if lk.Store == nil {
@@ -638,7 +638,7 @@ func claimRegion(lk AcquiredLock) []byte {
 	return []byte(lk.ClaimResult.Region)
 }
 
-// claimAddress returns the substrate's address bytes for a ClaimSpec
+// claimAddress returns the store's address bytes for a ClaimSpec
 // acquisition; nil for NamedLockSpec.
 func claimAddress(lk AcquiredLock) []byte {
 	if lk.Store == nil {

@@ -2,11 +2,11 @@
 //
 // Two primitives split (spec §3 / glossary):
 //
-//   - Claim — substrate-bound; ClaimSpec carries (StoreName, Selector,
-//     Intent, Alias). The substrate parses Selector and decides what it
+//   - Claim — store-bound; ClaimSpec carries (StoreName, Selector,
+//     Intent, Alias). The store parses Selector and decides what it
 //     means (regional access vs. configured pick policy).
 //
-//   - Named lock — non-substrate; NamedLockSpec carries (Name) only.
+//   - Named lock — store-independent; NamedLockSpec carries (Name) only.
 //     Limit lives in operator config.
 //
 // Two types, no common interface: ClaimSpec and NamedLockSpec are
@@ -34,38 +34,38 @@ const (
 	IntentReadWrite Intent = "rw"
 )
 
-// ClaimSpec is the substrate-bound claim primitive (spec §4.6).
+// ClaimSpec is the store-bound claim primitive (spec §4.6).
 //
 // Acquisition is the only thing the spec carries: rimsky tells the
-// substrate which store, which selector, which intent, and the
-// template-side alias (opaque to the substrate). Disposition at
-// terminal — what Commit / Abandon mean for the substrate's own state
+// store which store, which selector, which intent, and the
+// template-side alias (opaque to the store). Disposition at
+// terminal — what Commit / Abandon mean for the store's own state
 // (publish staging, delete an items-table row, release-to-back, etc.) —
-// is governed entirely by per-substrate config. Rimsky carries only
-// the success/failure binary; the substrate decides the rest. Per the
+// is governed entirely by per-store config. Rimsky carries only
+// the success/failure binary; the store decides the rest. Per the
 // 2026-04-30 cleanup amending v3 §4.6.
 type ClaimSpec struct {
 	StoreName string // operator-configured store name
-	Selector  string // opaque text (post-substitution); substrate parses
+	Selector  string // opaque text (post-substitution); store parses
 	Intent    Intent // "r" | "rw"
 	Alias     string // per-claim name within node; defaults to StoreName
 }
 
-// NamedLockSpec is the non-substrate named-lock primitive. Templates
+// NamedLockSpec is the store-independent named-lock primitive. Templates
 // reference named locks by name only; the limit (mutex vs. counting)
 // lives in the operator's named_locks: config block.
 type NamedLockSpec struct {
 	Name string
 }
 
-// ClaimResult bundles the three substrate-supplied outputs of a claim
+// ClaimResult bundles the three store-supplied outputs of a claim
 // acquisition. All three are opaque-bytes from rimsky's perspective;
 // the substitution engine extracts named-field paths only at the leaf
 // extraction site (core/attributes/substitution.go::walkPath).
 //
 // @blessed-invariant 20: claim content is inert in rimsky.
 //
-//	Address, Payload, Region are substrate-supplied opaque bytes.
+//	Address, Payload, Region are store-supplied opaque bytes.
 //	Rimsky reads them by named-field path only at substitution-leaf
 //	extraction (core/attributes/substitution.go::walkPath); does not
 //	log, validate, transform, normalize, decrypt, hash, index,
@@ -73,14 +73,14 @@ type NamedLockSpec struct {
 //	act on the content. Distinct from store-config bytes (operator-
 //	managed; not under invariant 20 — see v3 spec §13.3).
 type ClaimResult struct {
-	Address json.RawMessage // substrate-native pointer the executor uses
-	Payload json.RawMessage // substrate-supplied data captured at acquisition
-	Region  json.RawMessage // substrate's identifier for the claimed region
+	Address json.RawMessage // store-supplied pointer the executor uses
+	Payload json.RawMessage // store-supplied data captured at acquisition
+	Region  json.RawMessage // the store's identifier for the claimed region
 }
 
 // OpenOutcome is the rimsky-side discriminator that mirrors the
 // OpenResponse oneof on the wire. Available == true means the
-// substrate returned Acquired{...}; Available == false means
+// store returned Acquired{...}; Available == false means
 // Unavailable{}. Result is populated only when Available is true; its
 // fields remain opaque json.RawMessage bytes per blessed invariant 20.
 type OpenOutcome struct {
@@ -100,7 +100,7 @@ const (
 	// r×rw on overlapping regions blocks (sync semantics).
 	WriteSemanticsDirect WriteSemantics = "direct"
 
-	// WriteSemanticsStagedBlocking: writes go to a substrate-private
+	// WriteSemanticsStagedBlocking: writes go to a store-private
 	// staging area; Commit does atomic swap into live; Abandon
 	// discards staging. r×rw on overlapping regions blocks (sync
 	// semantics).

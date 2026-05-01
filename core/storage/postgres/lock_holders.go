@@ -162,7 +162,7 @@ func (s *LockHoldersStore) ListExpired(ctx context.Context, tx storage.Tx) ([]st
 // Delete satisfies storage.LockHoldersStore. Claimant-guarded on
 // supervisor_id; mismatch is a no-op (returns nil). A non-nil tx is
 // required: per spec §7.5 step 2 the lock-holder row deletion must
-// commit atomically with the store-side substrate verb.
+// commit atomically with the store verb.
 func (s *LockHoldersStore) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx storage.Tx) error {
 	pgT, err := pgxTxFromStorage(tx)
 	if err != nil {

@@ -1,4 +1,4 @@
-// Package server adapts the substrate-internal postgres Store to the
+// Package server adapts the store-internal postgres Store to the
 // rimsky StoreService gRPC + HTTP+JSON bridge.
 package server
 
@@ -19,7 +19,7 @@ import (
 )
 
 // gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight
-// RPC can't strand the substrate's pgxpool when ctx is cancelled.
+// RPC can't strand the store's pgxpool when ctx is cancelled.
 const gracefulStopBudget = 5 * time.Second
 
 // Config is the operator-facing config for the postgres store-service.
@@ -30,7 +30,7 @@ type Config struct {
 	SweepInterval  time.Duration
 }
 
-// Run starts the gRPC + HTTP + admin listeners and the substrate's
+// Run starts the gRPC + HTTP + admin listeners and the store's
 // internal sweep goroutine. Returns when ctx is cancelled.
 func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
 	st, err := pgsstore.New(ctx, pgsstore.Config{
@@ -74,7 +74,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	<-ctx.Done()
 	// Bound GracefulStop with a timer so a hung RPC doesn't keep the
-	// substrate's pool open indefinitely. After the budget elapses,
+	// store's pool open indefinitely. After the budget elapses,
 	// drop to the hard Stop. This also lets defer st.Close() at the
 	// end of Run actually run in bounded time.
 	stopTimer := time.AfterFunc(gracefulStopBudget, grpcSrv.Stop)
@@ -94,7 +94,7 @@ type Server struct {
 	store *pgsstore.Store
 }
 
-// Capabilities returns the substrate's advertised capability struct.
+// Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
 	return &genv1.CapabilitiesResponse{

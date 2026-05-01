@@ -32,7 +32,7 @@ import (
 )
 
 // TestRegionalClaimEndToEnd drives one regional-claim acquisition
-// through the loopback gRPC fixture and asserts the substrate saw the
+// through the loopback gRPC fixture and asserts the store saw the
 // expected verb sequence.
 func TestRegionalClaimEndToEnd(t *testing.T) {
 	t.Parallel()

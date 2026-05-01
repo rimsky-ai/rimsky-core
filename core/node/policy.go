@@ -15,13 +15,13 @@ type ErrorTypePolicy struct {
 // PolicyAction is one entry in a node's per-error-class repair chain.
 //
 // Action vocabulary (carried forward through the 2026-04-30 stores
-// cleanup; the rimsky-side substrate verb is the success/failure
-// binary — success → Commit, failure → Abandon — and the substrate
+// cleanup; the rimsky-side store verb is the success/failure
+// binary — success → Commit, failure → Abandon — and the store
 // decides what those mean for its own state per its own configuration):
 //   - "retry"              — generic retry; the runner releases the
-//     claim by firing Abandon on the substrate before re-enqueue.
+//     claim by firing Abandon on the store before re-enqueue.
 //   - "discard_then_retry" — explicitly request `Abandon` (staged
-//     stores) or release-by-Abandon (pick-policy substrates) before
+//     stores) or release-by-Abandon (pick-policy stores) before
 //     re-enqueue. The v3 standard filesystem store is `direct`-only;
 //     for direct stores Abandon is degenerate (writes cannot be
 //     undone), so discard_then_retry is effectively keep-then-retry
@@ -29,14 +29,14 @@ type ErrorTypePolicy struct {
 //   - "resume_then_retry"  — historical action vocabulary preserved
 //     for backwards-compatible policy declarations. Behaviorally an
 //     alias for `discard_then_retry`: the runner releases each claim
-//     by firing `Abandon` on the substrate before re-enqueue. Explicit
+//     by firing `Abandon` on the store before re-enqueue. Explicit
 //     Release-routing for read-side state is not in scope for the
 //     2026-04-30 stores cleanup; if a future cycle reintroduces it,
 //     update both this comment and `applyResolvedAction` together.
 //   - "invalidate"         — return targets; per-claim release fires
-//     Abandon on the substrate.
+//     Abandon on the store.
 //   - "give_up"            — terminal failure; per-claim release
-//     fires Abandon on the substrate.
+//     fires Abandon on the store.
 type PolicyAction struct {
 	Action         string
 	Count          int
@@ -61,9 +61,9 @@ type EvaluatorState struct {
 // runtime intent the runner branches on:
 //
 //   - "retry"              — generic retry; runner fires Abandon on
-//     the substrate before re-enqueue.
+//     the store before re-enqueue.
 //   - "discard_then_retry" — retry with explicit Abandon (or Release
-//     for substrates with read-side state at Open).
+//     for stores with read-side state at Open).
 //   - "resume_then_retry"  — alias for `discard_then_retry`; the
 //     runner fires `Abandon` on each claim before re-enqueue. Kept as
 //     a distinct kind so policy authors can express intent in

@@ -432,7 +432,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 
 // buildStoreHandles converts each ClaimSpec acquisition into a per-
 // store StoreHandle proto entry. The handle's `handle` struct carries
-// the substrate-supplied address bytes verbatim under the "address"
+// the store-supplied address bytes verbatim under the "address"
 // key — opaque to Rimsky per @blessed-invariant 20.
 func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
 	out := make(map[string]*genv1.StoreHandle, len(acq.Locks))
@@ -453,10 +453,10 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 // makeStoreHandle builds the per-store proto entry. The handle
 // payload is `{"address": <opaque shape>, "payload": <opaque shape>,
 // "alias": ..., "intent": ...}`; the executor unwraps it per its
-// substrate.
+// store knowledge.
 //
 // @blessed-invariant 20 (wire-encoding site exception): this function
-// decodes the substrate-supplied Address and Payload bytes via
+// decodes the store-supplied Address and Payload bytes via
 // json.Unmarshal solely to project them into a `google.protobuf.Struct`
 // for the wire. This is the SOLE sanctioned wire-encoding site outside
 // `core/attributes/substitution.go::walkPath` (which is the sole
@@ -470,7 +470,7 @@ func makeStoreHandle(lk AcquiredLock, spec store.ClaimSpec) (*genv1.StoreHandle,
 	out := &genv1.StoreHandle{}
 	if lk.Store != nil {
 		// The wire StoreHandle.kind field is informational only and
-		// the executor knows its substrate's kind from the
+		// the executor knows its store's kind from the
 		// deployment's operator config. Pass the
 		// operator-chosen store name as the closest analogue; the
 		// v2 Store.Kind() method is gone in v3.

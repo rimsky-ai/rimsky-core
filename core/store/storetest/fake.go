@@ -23,7 +23,7 @@ type Fake struct {
 	// OpenOutcome returned by Open. Default behavior echoes the
 	// selector as Address and Region (Available: true). Set to a
 	// function that returns OpenOutcome{Available: false} to simulate
-	// a substrate having no claim to give right now.
+	// a store having no claim to give right now.
 	OpenFunc func(claimID store.ClaimID, spec store.ClaimSpec) (store.OpenOutcome, error)
 
 	// ErrorFunc is an optional override the test sets to inject

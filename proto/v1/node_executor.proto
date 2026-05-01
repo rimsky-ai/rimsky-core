@@ -54,7 +54,7 @@ message ExecuteRequest {
   string cancel_token = 9;
 
   // Reserved (was: bool resumed = 10). Under stores-redesign-v2 resume
-  // is universal — the substrate detects resumed-vs-fresh internally
+  // is universal — the store detects resumed-vs-fresh internally
   // by lookup against its own state, keyed by the lock-holder identity
   // (per spec §11.5). The supervisor no longer threads a resumed flag
   // through the wire. Field number 10 is reserved to keep the wire
@@ -68,23 +68,23 @@ message ExecuteRequest {
 }
 
 // StoreHandle is the per-store reference handed to the executor at
-// dispatch (spec §19.1). `handle` carries the substrate-native Address
+// dispatch (spec §19.1). `handle` carries the store-supplied Address
 // bytes returned by Store.Open — opaque to Rimsky, decoded by the
-// executor per its substrate-specific knowledge.
+// executor per its store-specific knowledge.
 message StoreHandle {
   // Operator-configured store kind (e.g. "filesystem", "postgres", or
-  // a substrate's own canonical kind name). Conventionally informational
-  // — the executor knows its substrate's kind from the deployment's
+  // a store's own canonical kind name). Conventionally informational
+  // — the executor knows its store's kind from the deployment's
   // operator config.
   string kind = 1;
-  // Substrate-native Address bytes returned by Store.Open, wrapped as
+  // Store-supplied Address bytes returned by Store.Open, wrapped as
   // a google.protobuf.Struct so JSON-shaped addresses round-trip cleanly.
   // Opaque to Rimsky per @blessed-invariant 20.
   google.protobuf.Struct handle = 2;
   // Reserved field numbers (legacy `write_regions`, `read_regions`,
   // `resumed`). The new model uses ClaimSpec.Selector + .Intent on the
-  // template side; the substrate-side address handles whatever
-  // sub-region semantics the substrate chooses. Resume is universal
+  // template side; the store-side address handles whatever
+  // sub-region semantics the store chooses. Resume is universal
   // (spec §11.5).
   reserved 3, 4, 5;
   reserved "write_regions", "read_regions", "resumed";

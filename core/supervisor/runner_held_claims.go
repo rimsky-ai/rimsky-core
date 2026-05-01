@@ -67,7 +67,7 @@ func markClaimHolderForNode(
 // aliases against the same store_name, we further disambiguate by
 // matching the lock-holder row's `region_data` against the alias's
 // substituted selector — falling back to the first matching alias if
-// the row has not yet had its substrate-chosen region written.
+// the row has not yet had its store-chosen region written.
 //
 // This is deterministic on a per-row basis (no cartesian product) and
 // agrees with the acquirer-side computation that drove the original
@@ -146,7 +146,7 @@ func findInheritedAliasesForNode(
 // case: walk the acquirer's NodeDef and match each alias's substituted
 // selector to the row's `region_data`; return the first match. Falls
 // back to the first candidate when no selector matches (the row may
-// have been inserted before the substrate-chosen region was written).
+// have been inserted before the store-chosen region was written).
 func pickAliasForLockHolder(
 	ctx context.Context, args RunArgs, instanceID shared.UUID,
 	acquirerType string, picks []aliasCandidate, lh *storage.LockHolderRow,

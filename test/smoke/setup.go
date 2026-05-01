@@ -48,7 +48,7 @@ type SmokeStack struct {
 	// control-api.
 	ControlBase string
 
-	// PostgresStoreAdminURL is the substrate-internal admin endpoint
+	// PostgresStoreAdminURL is the store-internal admin endpoint
 	// of the postgres store-service. The smoke test POSTs items to
 	// `/admin/items/<selector>` here for seeding (per v3 spec §7.3 step 1).
 	PostgresStoreAdminURL string
@@ -243,7 +243,7 @@ func (s *SmokeStack) PostJSON(path string, body any) (int, []byte) {
 	return postJSON(s.T, s.ControlBase+path, body)
 }
 
-// PostStoreAdmin POSTs items to the substrate's admin endpoint for
+// PostStoreAdmin POSTs items to the store's admin endpoint for
 // seeding pick-policy items.
 func (s *SmokeStack) PostStoreAdmin(path string, body any) (int, []byte) {
 	s.T.Helper()

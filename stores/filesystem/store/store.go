@@ -1,4 +1,4 @@
-// Package store is the substrate-internal logic for the standard
+// Package store is the store-internal logic for the standard
 // filesystem store-service. Per spec §8.1 / §7.7: direct mode only,
 // concrete-paths only (no globs). Two claims on the same path conflict;
 // two claims on different paths do not.
@@ -16,18 +16,18 @@ import (
 	"github.com/fallguy/rimsky/core/store"
 )
 
-// Store is the in-process substrate. State held by Store itself is the
-// configured root plus a small map keyed by claim_id used to identify
-// orphaned state; lock state lives in postgres on the rimsky side and
-// is not consulted here.
+// Store is the in-process store implementation. State held by Store
+// itself is the configured root plus a small map keyed by claim_id used
+// to identify orphaned state; lock state lives in postgres on the rimsky
+// side and is not consulted here.
 type Store struct {
 	root string
 	mu   sync.Mutex
 
 	// claims maps claim_id → resolved path. Recorded in Open so the
-	// substrate's sweep (if any) can identify orphans by claim_id (per
+	// store's sweep (if any) can identify orphans by claim_id (per
 	// spec §7.8 obligation #2). Direct-mode filesystem has no
-	// substrate state per claim, so this is observability-only — the
+	// store-side state per claim, so this is observability-only — the
 	// sweep responsibility is satisfied trivially.
 	claims map[string]string
 }
@@ -43,13 +43,13 @@ func New(root string) (*Store, error) {
 	}, nil
 }
 
-// Capabilities reports the substrate's advertised capabilities.
+// Capabilities reports the store's advertised capabilities.
 func (s *Store) Capabilities() store.Capabilities {
 	return store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}
 }
 
 // Open resolves the selector to a concrete path and returns the
-// substrate's ClaimResult. Per §7.7 the standard filesystem store
+// store's ClaimResult. Per §7.7 the standard filesystem store
 // supports concrete paths only — globs are rejected.
 //
 // Selectors are canonicalized via filepath.Clean before use so that
@@ -61,8 +61,8 @@ func (s *Store) Capabilities() store.Capabilities {
 // resolve to a path outside s.root.
 //
 // ctx is accepted to keep the signature uniform across the three
-// standard substrates (filesystem, postgres, stub); the filesystem
-// substrate has no async work that consults it.
+// standard stores (filesystem, postgres, stub); the filesystem
+// store has no async work that consults it.
 func (s *Store) Open(_ context.Context, claimID, selector string) (store.OpenOutcome, error) {
 	raw := strings.TrimSpace(selector)
 	if raw == "" {
@@ -129,7 +129,7 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (store.OpenOut
 
 // Commit is a no-op: direct mode has no staging. region/address are
 // accepted to keep the signature uniform across the three standard
-// substrates; the filesystem substrate ignores them.
+// stores; the filesystem store ignores them.
 func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) error {
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -146,7 +146,7 @@ func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) e
 	return nil
 }
 
-// Release is a no-op: direct mode never registers substrate-side read
+// Release is a no-op: direct mode never registers store-side read
 // state at Open. region/address are accepted for signature uniformity
 // and ignored.
 func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {

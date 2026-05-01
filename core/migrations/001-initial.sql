@@ -15,10 +15,10 @@
 -- Key shape vs. the v1-prior-rewrite schema:
 --   * lock_kind enum reduced from ('named','region','claim') to
 --     ('named','region'). The 'claim' kind dissolved — pick-policy claims
---     are just region claims with substrate-chosen region_data.
---   * rimsky_lock_holders.claim_id column dropped. Substrate's identifier
+--     are just region claims with store-chosen region_data.
+--   * rimsky_lock_holders.claim_id column dropped. The store's identifier
 --     lives in region_data.
---   * rimsky_lock_holders.address column added — substrate-supplied
+--   * rimsky_lock_holders.address column added — store-supplied
 --     address from Open, needed by terminal verbs and the orphan reaper.
 --   * rimsky_lock_holders.intent column added ('r' | 'rw' | NULL for
 --     named locks).
@@ -28,7 +28,7 @@
 --   * rimsky_claim_holders: claim_id, store_name, on_commit, on_give_up,
 --     actual_action columns dropped. Per the 2026-04-30 stores-protocol
 --     cleanup, rimsky carries only a success/failure binary across the
---     wire (success → Commit; failure → Abandon); substrate disposition
+--     wire (success → Commit; failure → Abandon); store disposition
 --     lives in each store-service's own config, not in template metadata.
 --     state enum gains 'failed'.
 --
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
     lock_name            TEXT,                    -- non-null for kind='named'
     store_name           TEXT,                    -- non-null for kind='region'
     region_data          JSONB,                   -- non-null for kind='region'
-    address              JSONB,                   -- substrate-supplied address from Open;
+    address              JSONB,                   -- store-supplied address from Open;
                                                   -- needed by Commit/Abandon/Release/Delete at
                                                   -- terminal AND by orphan reaper. Opaque bytes;
                                                   -- inert in Rimsky per invariant 20.

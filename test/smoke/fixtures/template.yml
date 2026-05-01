@@ -30,7 +30,7 @@ frame_resolution: serial_queue
 frame_timeout_ms: 600000
 nodes:
   # Pure-infra node: no executor, just claims from a ring buffer via the
-  # `@review-queue` substrate-side pick policy and populates attributes
+  # `@review-queue` store-side pick policy and populates attributes
   # from the claim payload. The held claim is auto-released at
   # holding-subgraph completion (acquirer + downstream `review` inheritor).
   - type: claim-topic
