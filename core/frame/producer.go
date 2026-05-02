@@ -35,7 +35,7 @@ func EnqueueOrCoalesce(ctx context.Context, tx pgx.Tx,
         SELECT COALESCE(t.spec->>'frame_resolution', '') AS mode,
                COALESCE(NULLIF((t.spec->>'frame_timeout_ms'),'')::bigint, 600000) AS frame_timeout_ms
         FROM rimsky_instances i
-        JOIN rimsky_templates  t ON t.id = i.template_id
+        JOIN rimsky_templates  t ON t.id = i.template_hash
         WHERE i.id = $1
     `, instanceID).Scan(&mode, &frameTimeoutMs)
 	if err != nil {

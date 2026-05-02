@@ -34,7 +34,9 @@ type PostgresStorageBackend struct {
 	pool *pgxpool.Pool
 
 	templates      *TemplateStore
+	templateTags   *TemplateTagsStore
 	instances      *InstanceStore
+	storeLifecycle *StoreLifecycleStore
 	nodes          *NodeStore
 	lockHolders    *LockHoldersStore
 	nodeAttributes *NodeAttributesStore
@@ -49,7 +51,9 @@ type PostgresStorageBackend struct {
 func New(pool *pgxpool.Pool) *PostgresStorageBackend {
 	b := &PostgresStorageBackend{pool: pool}
 	b.templates = &TemplateStore{pool: pool}
+	b.templateTags = &TemplateTagsStore{pool: pool}
 	b.instances = &InstanceStore{pool: pool}
+	b.storeLifecycle = &StoreLifecycleStore{pool: pool}
 	b.nodes = &NodeStore{pool: pool}
 	b.lockHolders = &LockHoldersStore{pool: pool, client: store.NewLockHoldersClient(pool)}
 	b.nodeAttributes = &NodeAttributesStore{pool: pool}
@@ -65,8 +69,16 @@ var _ storage.StorageBackend = (*PostgresStorageBackend)(nil)
 // Templates returns the template accessor.
 func (b *PostgresStorageBackend) Templates() storage.TemplateStore { return b.templates }
 
+// TemplateTags returns the template-tags accessor.
+func (b *PostgresStorageBackend) TemplateTags() storage.TemplateTagsStore { return b.templateTags }
+
 // Instances returns the instance accessor.
 func (b *PostgresStorageBackend) Instances() storage.InstanceStore { return b.instances }
+
+// StoreLifecycle returns the rimsky_store_lifecycle accessor.
+func (b *PostgresStorageBackend) StoreLifecycle() storage.StoreLifecycleStore {
+	return b.storeLifecycle
+}
 
 // Nodes returns the node accessor.
 func (b *PostgresStorageBackend) Nodes() storage.NodeStore { return b.nodes }

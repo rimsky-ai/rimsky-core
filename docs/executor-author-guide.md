@@ -106,7 +106,7 @@ The address shape is **per store kind** — opaque to Rimsky, decoded by
 the executor per its store-specific knowledge of the `kind` declared
 in operator config. The kind is not in the wire envelope (the executor
 already knows which store kind backs each alias from the template + the
-deployment's `stores.yml`); for tooling that needs the full picture, the
+deployment's `rimsky.yml`); for tooling that needs the full picture, the
 control-API exposes the operator config separately.
 
 Reference v1 shapes:

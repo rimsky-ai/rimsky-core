@@ -1,16 +1,18 @@
 // rimsky-supervisor is the YAML-configured entry point for the
 // supervisor process. Reads its config path from
-// RIMSKY_SUPERVISOR_CONFIG, parses the YAML into a typed struct, wires
-// dependencies (pgxpool, storage, queue, resolver), loads the stores
-// config from RIMSKY_STORES_CONFIG (per spec §6.1: name → endpoint +
-// declared capabilities), and calls config.StartSupervisor which dials
-// each remote store-service.
+// RIMSKY_SUPERVISOR_CONFIG (per-process tuning: concurrency, callback,
+// heartbeat), parses the YAML into a typed struct, wires dependencies
+// (pgxpool, storage, queue, resolver), loads the unified deployment-
+// shape config from RIMSKY_CONFIG (stores + named_locks + executors
+// per docs/specs/2026-05-01-control-plane-and-store-lifecycle-
+// design.md §3.1), and calls config.StartSupervisor which dials each
+// remote store-service.
 //
 // Environment variables:
 //
 //	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML.
-//	RIMSKY_STORES_CONFIG      optional; path to stores.yml.
-//	                          default /etc/rimsky/stores.yml.
+//	RIMSKY_CONFIG             optional; path to rimsky.yml.
+//	                          default /etc/rimsky/rimsky.yml.
 //	RIMSKY_LOG_LEVEL          optional; debug|info|warn|error (default info).
 package main
 
@@ -34,18 +36,20 @@ import (
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
-// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is
-// unset.
-const defaultStoresConfigPath = "/etc/rimsky/stores.yml"
+// defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
+const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
+// yamlConfig is the supervisor-tuning YAML loaded from
+// RIMSKY_SUPERVISOR_CONFIG. The executors block was excised in the
+// 2026-05-01 control-plane spec — executors now live in rimsky.yml
+// under RIMSKY_CONFIG.
 type yamlConfig struct {
-	PostgresURL         string                  `yaml:"postgres_url"`
-	SupervisorID        string                  `yaml:"supervisor_id"`
-	Concurrency         int                     `yaml:"concurrency"`
-	HeartbeatIntervalMs int                     `yaml:"heartbeat_interval_ms"`
-	ClaimPollIntervalMs int                     `yaml:"claim_poll_interval_ms"`
-	Callback            yamlCallback            `yaml:"callback"`
-	Executors           map[string]yamlExecutor `yaml:"executors"`
+	PostgresURL         string       `yaml:"postgres_url"`
+	SupervisorID        string       `yaml:"supervisor_id"`
+	Concurrency         int          `yaml:"concurrency"`
+	HeartbeatIntervalMs int          `yaml:"heartbeat_interval_ms"`
+	ClaimPollIntervalMs int          `yaml:"claim_poll_interval_ms"`
+	Callback            yamlCallback `yaml:"callback"`
 }
 
 type yamlCallback struct {
@@ -53,12 +57,6 @@ type yamlCallback struct {
 	Port          int    `yaml:"port"`
 	AdvertiseHost string `yaml:"advertise_host"`
 	AdvertisePort int    `yaml:"advertise_port"`
-}
-
-type yamlExecutor struct {
-	Transport string `yaml:"transport"`
-	Endpoint  string `yaml:"endpoint"`
-	TLS       string `yaml:"tls"`
 }
 
 func main() {
@@ -76,15 +74,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	storesPath := os.Getenv("RIMSKY_STORES_CONFIG")
-	if storesPath == "" {
-		storesPath = defaultStoresConfigPath
+	configPath := os.Getenv("RIMSKY_CONFIG")
+	if configPath == "" {
+		configPath = defaultRimskyConfigPath
 	}
-	storesCfg, namedLocksCfg, err := config.LoadStoresConfigYAML(storesPath)
+	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
 		os.Exit(1)
 	}
+	if err := rimskyCfg.Executors.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
+		os.Exit(1)
+	}
+	storesCfg := rimskyCfg.Stores
+	namedLocksCfg := rimskyCfg.NamedLocks
 
 	dsn := cfg.PostgresURL
 	if dsn == "" {
@@ -112,7 +116,7 @@ func main() {
 	}
 
 	endpoints := map[string]executor.Endpoint{}
-	for name, e := range cfg.Executors {
+	for name, e := range rimskyCfg.Executors.Executors {
 		endpoints[name] = executor.Endpoint{
 			Transport: e.Transport,
 			URL:       e.Endpoint,

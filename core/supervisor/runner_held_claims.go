@@ -158,7 +158,7 @@ func pickAliasForLockHolder(
 	if err != nil || inst == nil {
 		return picks[0].alias
 	}
-	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, err := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil || tmpl == nil {
 		return picks[0].alias
 	}

@@ -101,16 +101,16 @@ func newFixture(t *testing.T) (*fixture, func()) {
 	pool, teardown := pgtest.StartPostgres(ctx, t)
 	b := pgstorage.New(pool)
 
-	tpl, err := b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
+	tpl := insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: "sched-test-" + uuid.NewString(), Version: "v1",
 		FrameResolution: nodepkg.FrameResolutionSerialQueue,
 		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
 		Nodes:           []nodepkg.TemplateNodeDef{},
-	}, nil)
-	require.NoError(t, err)
+	})
 
+	ck := "ck-" + uuid.NewString()
 	inst, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tpl.ID, ConsumerKey: "ck-" + uuid.NewString(),
+		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
 		Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)

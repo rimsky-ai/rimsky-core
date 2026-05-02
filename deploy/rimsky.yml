@@ -1,11 +1,11 @@
 # Operator config bundle for the docker-compose reference stack. Loaded
 # by rimsky-scheduler / rimsky-supervisor / rimsky-control-api at
-# startup via RIMSKY_STORES_CONFIG.
+# startup via RIMSKY_CONFIG.
 #
-# Per v3 spec §6.1 the schema collapses to a thin name → endpoint +
-# declared-capabilities form. Substrate-specific keys (kind, connection,
-# pick_policies, etc.) live in each store-service's own config and
-# rimsky never sees them.
+# Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+# §3.1 this is the unified deployment-shape config: stores +
+# named_locks + executors in one file, replacing the prior split between
+# RIMSKY_STORES_CONFIG and the supervisor's per-process executors block.
 #
 # Reference stack ships:
 #   - content       : filesystem direct-mode store-service.
@@ -32,3 +32,13 @@ stores:
 named_locks:
   "topics-ring:concurrent-claims": { limit: 5 }
   model-budget:                    { limit: 50 }
+
+executors:
+  claude-agent:
+    transport: grpc
+    endpoint: "claude-agent:9090"
+    tls: off
+  http-node:
+    transport: grpc
+    endpoint: "http-node:9091"
+    tls: off

@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,21 +164,24 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	t.Helper()
 	ctx := context.Background()
 
-	tplID := uuid.New()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	tplHash := "sha256-" + suffix
 	instID := uuid.New()
 	nodeID := uuid.New()
 
 	_, err := h.pool.Exec(ctx,
-		`INSERT INTO rimsky_templates (id, name, version, spec, deployed_at)
-		 VALUES ($1, $2, 'v1', '{}'::jsonb, now())`,
-		tplID, "tpl-"+uuid.NewString(),
+		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
+		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
+		tplHash,
 	)
 	require.NoError(t, err)
 
 	_, err = h.pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_id, consumer_key, params, created_at)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
 		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instID, tplID, "ck-"+uuid.NewString(),
+		instID, tplHash, "ck-"+uuid.NewString(),
 	)
 	require.NoError(t, err)
 

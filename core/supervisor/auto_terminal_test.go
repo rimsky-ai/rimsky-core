@@ -6,6 +6,8 @@ package supervisor_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -22,6 +24,30 @@ import (
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
+// insertDeployedTemplate inserts a template row in 'deployed' state with a
+// deterministic content hash derived from name+version. Replaces the
+// retired storage.TemplateStore.Deploy helper.
+//
+// @source: core/scheduler/helpers_test.go::insertDeployedTemplate
+//
+// Tracked duplicate (cold-read convention): the scheduler-package copy
+// is the canonical source. Kept duplicated here rather than extracted
+// because the only consumers are these two test files and extracting
+// would force a new shared test-helper package.
+func insertDeployedTemplate(ctx context.Context, t *testing.T, sb *pgstorage.PostgresStorageBackend, spec node.TemplateSpec) storage.TemplateRow {
+	t.Helper()
+	sum := sha256.Sum256([]byte(spec.Name + ":" + spec.Version))
+	hash := "sha256-" + hex.EncodeToString(sum[:])
+	require.NoError(t, sb.Templates().Insert(ctx, storage.TemplateInsertInput{
+		ID: hash, Spec: spec, State: storage.TemplateStateRegistered,
+	}, nil))
+	require.NoError(t, sb.Templates().UpdateState(ctx, hash, storage.TemplateStateDeployed, nil))
+	row, err := sb.Templates().GetByHash(ctx, hash, nil)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	return *row
+}
+
 // TestCheckAndFireResolution_AllCompletedFiresCommit seeds a held
 // subgraph with two completed claim_holders rows and confirms
 // CheckAndFireResolution invokes Commit on the store and
@@ -34,12 +60,12 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	t.Cleanup(teardown)
 	backend := pgstorage.New(pool)
 
-	tmpl, err := backend.Templates().Deploy(ctx, node.TemplateSpec{
+	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "auto-term-commit", Version: "1",
-	}, nil)
-	require.NoError(t, err)
+	})
+	ck := "ck"
 	inst, err := backend.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tmpl.ID, ConsumerKey: "ck", Params: map[string]any{},
+		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
 	acqNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{
@@ -133,12 +159,12 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	t.Cleanup(teardown)
 	backend := pgstorage.New(pool)
 
-	tmpl, err := backend.Templates().Deploy(ctx, node.TemplateSpec{
+	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "auto-term-give-up", Version: "1",
-	}, nil)
-	require.NoError(t, err)
+	})
+	ck := "ck"
 	inst, err := backend.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tmpl.ID, ConsumerKey: "ck", Params: map[string]any{},
+		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
 	acqNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{

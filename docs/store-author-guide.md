@@ -750,3 +750,51 @@ Before shipping your store implementation:
       address shape, the `pick_policies` schema (if any), the substrate's
       max `write_semantics`, and any v1 limitations from §6 that apply to
       your kind.
+
+---
+
+## Lifecycle events (control-plane v1)
+
+Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. Every
+store-service implements six lifecycle methods alongside the four runtime
+verbs and `Capabilities`. Stores that don't react to lifecycle events
+just return `nil` from each method; the in-tree filesystem and stub
+stores follow this pattern (see `stores/filesystem/store/store.go` and
+`stores/stub/store/store.go`).
+
+```go
+func (s *MyStore) OnTemplateRegistered(ctx context.Context, templateID string) error {
+    return nil
+}
+// ... and similarly for the other five.
+```
+
+The six methods:
+
+- `OnTemplateRegistered(ctx, template_id) error`
+- `OnTemplateDeployed(ctx, template_id) error`
+- `OnTemplateUndeployed(ctx, template_id) error`
+- `OnTemplateDeregistered(ctx, template_id) error`
+- `OnInstanceCreated(ctx, template_id, instance_id) error`
+- `OnInstanceTerminated(ctx, template_id, instance_id) error`
+
+`template_id` is the content hash (`sha256-<64-hex>`); `instance_id` is the
+rimsky-generated instance UUID. Both are opaque strings — the store may use
+them for namespace routing, audit log entries, or trace correlation.
+
+### Idempotency contract
+
+Each method must be safe to call twice with the same scope IDs. The control-
+api may re-fire an event after a partial failure or restart; the second call
+must produce the same observable state as the first.
+
+### `Open` scope envelope
+
+`OpenRequest` carries two new fields populated from the dispatch row's
+instance → template lookup:
+
+- `template_id` — content hash.
+- `instance_id` — instance UUID.
+
+Stores can ignore these fields without affecting protocol conformance; they
+exist for stores that want per-template or per-instance namespacing.

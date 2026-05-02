@@ -7,6 +7,7 @@ package attributes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,18 +28,21 @@ import (
 // need the FK target row, not exercising the storage code.
 func seedNodeFK(ctx context.Context, t *testing.T, pool *pgxpool.Pool) shared.UUID {
 	t.Helper()
-	tmplID := uuid.New()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	tmplHash := "sha256-" + suffix
 	_, err := pool.Exec(ctx,
-		`INSERT INTO rimsky_templates (id, name, version, spec, deployed_at)
-		 VALUES ($1, $2, '1', '{}'::jsonb, NOW())`,
-		tmplID, "attrs-test-"+tmplID.String()[:8])
+		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
+		 VALUES ($1, '{}'::jsonb, 'deployed', NOW())`,
+		tmplHash)
 	require.NoError(t, err, "seed: insert template")
 
 	instID := uuid.New()
 	_, err = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_id, consumer_key, params, created_at)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
 		 VALUES ($1, $2, $3, '{}'::jsonb, NOW())`,
-		instID, tmplID, "ck-"+instID.String()[:8])
+		instID, tmplHash, "ck-"+instID.String()[:8])
 	require.NoError(t, err, "seed: insert instance")
 
 	nodeID := uuid.New()

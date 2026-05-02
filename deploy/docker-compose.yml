@@ -102,9 +102,9 @@ services:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SCHEDULER_TICK_MS: "1500"
       RIMSKY_HEARTBEAT_TIMEOUT_MS: "15000"
-      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
     volumes:
-      - ./stores.yml:/etc/rimsky/stores.yml:ro
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
 
   supervisor:
     image: rimsky/supervisor:latest
@@ -122,11 +122,11 @@ services:
     environment:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SUPERVISOR_CONFIG: "/etc/rimsky/supervisor-config.yml"
-      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "supervisor"
     volumes:
       - ./supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro
-      - ./stores.yml:/etc/rimsky/stores.yml:ro
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
       - rimsky-content:/workspace/content
 
   control-api:
@@ -142,9 +142,9 @@ services:
       RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_CONTROL_API_HOST: "0.0.0.0"
       RIMSKY_CONTROL_API_PORT: "8080"
-      RIMSKY_STORES_CONFIG: "/etc/rimsky/stores.yml"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
     volumes:
-      - ./stores.yml:/etc/rimsky/stores.yml:ro
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
     ports:
       - "8080:8080"
 

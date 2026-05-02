@@ -1,4 +1,9 @@
-// TemplateStore — port of rimsky/src/storage/postgres/template-store.ts.
+// TemplateStore — Postgres-backed storage.TemplateStore. Per docs/specs/
+// 2026-05-01-control-plane-and-store-lifecycle-design.md §1.2:
+// rimsky_templates.id is the content hash ("sha256-<64-hex>"); state
+// has three persisted values (registered, deployed, undeployed) —
+// deregistered is the absent state, i.e., row deleted. Tags are
+// separate (rimsky_template_tags).
 package postgres
 
 import (
@@ -6,10 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,234 +28,207 @@ type TemplateStore struct {
 
 var _ storage.TemplateStore = (*TemplateStore)(nil)
 
-// Deploy inserts a template row; on (name, version) conflict the existing
-// spec is compared canonical-JSON-equal, and the existing row is returned
-// if identical (idempotent re-deploy). Divergent re-deploy returns
-// ErrTemplateInUse.
-func (s *TemplateStore) Deploy(ctx context.Context, spec nodepkg.TemplateSpec, tx storage.Tx) (storage.TemplateSummary, error) {
+const templateCols = `id, spec, state, registered_at, source`
+
+// Insert writes a new template row. Returns ErrTemplateInUse on
+// duplicate id (caller should treat as idempotent re-register and
+// short-circuit per spec §1.5).
+func (s *TemplateStore) Insert(ctx context.Context, in storage.TemplateInsertInput, tx storage.Tx) error {
 	ex := q(tx, s.pool)
-	specBytes, err := json.Marshal(spec)
+	specBytes, err := json.Marshal(in.Spec)
 	if err != nil {
-		return storage.TemplateSummary{}, fmt.Errorf("templates.deploy: marshal spec: %w", err)
+		return fmt.Errorf("templates.insert: marshal spec: %w", err)
 	}
-
-	var (
-		id         shared.UUID
-		name       string
-		version    string
-		deployedAt time.Time
+	source := in.Source
+	if source == "" {
+		source = "direct"
+	}
+	state := in.State
+	if state == "" {
+		state = storage.TemplateStateRegistered
+	}
+	_, err = ex.Exec(ctx,
+		`INSERT INTO rimsky_templates (id, spec, state, source)
+		 VALUES ($1, $2, $3, $4)`,
+		in.ID, specBytes, string(state), source,
 	)
-	err = ex.QueryRow(ctx,
-		`INSERT INTO rimsky_templates (id, name, version, spec)
-		 VALUES (gen_random_uuid(), $1, $2, $3)
-		 ON CONFLICT (name, version) DO NOTHING
-		 RETURNING id, name, version, deployed_at`,
-		spec.Name, spec.Version, specBytes,
-	).Scan(&id, &name, &version, &deployedAt)
-	if err == nil {
-		return storage.TemplateSummary{
-			ID: id, Name: name, Version: version, DeployedAt: deployedAt,
-		}, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return storage.TemplateSummary{}, fmt.Errorf("templates.deploy: insert: %w", err)
-	}
-
-	// Conflict — compare specs.
-	var existingSpec []byte
-	if err := ex.QueryRow(ctx,
-		`SELECT id, name, version, spec, deployed_at FROM rimsky_templates
-		 WHERE name = $1 AND version = $2`,
-		spec.Name, spec.Version,
-	).Scan(&id, &name, &version, &existingSpec, &deployedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return storage.TemplateSummary{}, shared.Wrap(shared.ErrTemplateInUse,
-				"template deploy race", map[string]any{
-					"name": spec.Name, "version": spec.Version,
-				})
+	if err != nil {
+		if isUniqueViolation(err) {
+			return shared.Wrap(shared.ErrTemplateInUse, "template already registered",
+				map[string]any{"id": in.ID})
 		}
-		return storage.TemplateSummary{}, fmt.Errorf("templates.deploy: select conflict: %w", err)
+		return fmt.Errorf("templates.insert: %w", err)
 	}
-	if !sameSpec(existingSpec, specBytes) {
-		return storage.TemplateSummary{}, shared.Wrap(shared.ErrTemplateInUse,
-			"template (name, version) already deployed with a different spec; bump version to change",
-			map[string]any{"name": spec.Name, "version": spec.Version})
-	}
-	return storage.TemplateSummary{
-		ID: id, Name: name, Version: version, DeployedAt: deployedAt,
-	}, nil
+	return nil
 }
 
-// Get returns a TemplateRow (summary + spec) or nil when not found.
-func (s *TemplateStore) Get(ctx context.Context, id shared.UUID, tx storage.Tx) (*storage.TemplateRow, error) {
+// GetByHash returns a TemplateRow or nil when not found.
+func (s *TemplateStore) GetByHash(ctx context.Context, hash string, tx storage.Tx) (*storage.TemplateRow, error) {
 	ex := q(tx, s.pool)
-	var (
-		outID      shared.UUID
-		name       string
-		version    string
-		specBytes  []byte
-		deployedAt time.Time
+	row := ex.QueryRow(ctx,
+		`SELECT `+templateCols+` FROM rimsky_templates WHERE id = $1`, hash,
 	)
-	err := ex.QueryRow(ctx,
-		`SELECT id, name, version, spec, deployed_at FROM rimsky_templates WHERE id = $1`,
-		id,
-	).Scan(&outID, &name, &version, &specBytes, &deployedAt)
+	out, err := scanTemplate(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("templates.get: %w", err)
+		return nil, fmt.Errorf("templates.getByHash: %w", err)
 	}
-	var spec nodepkg.TemplateSpec
-	if err := json.Unmarshal(specBytes, &spec); err != nil {
-		return nil, fmt.Errorf("templates.get: unmarshal spec: %w", err)
-	}
-	return &storage.TemplateRow{
-		TemplateSummary: storage.TemplateSummary{
-			ID: outID, Name: name, Version: version, DeployedAt: deployedAt,
-		},
-		Spec: spec,
-	}, nil
+	return &out, nil
 }
 
-// List returns a page of template summaries ordered (deployed_at DESC, id DESC).
+// LockForUpdate runs SELECT … FOR UPDATE on the template row. Used by
+// state-transition handlers to serialize against concurrent transitions.
+func (s *TemplateStore) LockForUpdate(ctx context.Context, hash string, tx storage.Tx) (*storage.TemplateRow, error) {
+	ex := q(tx, s.pool)
+	row := ex.QueryRow(ctx,
+		`SELECT `+templateCols+` FROM rimsky_templates WHERE id = $1 FOR UPDATE`, hash,
+	)
+	out, err := scanTemplate(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("templates.lockForUpdate: %w", err)
+	}
+	return &out, nil
+}
+
+// List returns a page of templates ordered (registered_at DESC, id DESC).
 func (s *TemplateStore) List(
 	ctx context.Context,
 	filter storage.TemplateListFilter,
 	pag storage.ListPagination,
 	tx storage.Tx,
-) (storage.PaginatedListResult[storage.TemplateSummary], error) {
+) (storage.PaginatedListResult[storage.TemplateRow], error) {
 	ex := q(tx, s.pool)
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor *shared.UUID
-	if pag.Cursor != "" {
-		u, err := uuid.Parse(pag.Cursor)
-		if err != nil {
-			return storage.PaginatedListResult[storage.TemplateSummary]{}, fmt.Errorf("templates.list: bad cursor: %w", err)
-		}
-		cursor = &u
+	var stateFilter *string
+	if filter.State != "" {
+		v := string(filter.State)
+		stateFilter = &v
 	}
-	var nameFilter *string
-	if filter.Name != "" {
-		nameFilter = &filter.Name
+	var cursor *string
+	if pag.Cursor != "" {
+		v := pag.Cursor
+		cursor = &v
 	}
 
 	rows, err := ex.Query(ctx,
-		`SELECT id, name, version, deployed_at
+		`SELECT `+templateCols+`
 		 FROM rimsky_templates
-		 WHERE ($1::text IS NULL OR name = $1)
+		 WHERE ($1::text IS NULL OR state = $1)
 		   AND (
-		     $2::uuid IS NULL
-		     OR (deployed_at, id) < (
-		       (SELECT deployed_at FROM rimsky_templates WHERE id = $2::uuid),
-		       $2::uuid
+		     $2::text IS NULL
+		     OR (registered_at, id) < (
+		       (SELECT registered_at FROM rimsky_templates WHERE id = $2),
+		       $2
 		     )
 		   )
-		 ORDER BY deployed_at DESC, id DESC
+		 ORDER BY registered_at DESC, id DESC
 		 LIMIT $3`,
-		nameFilter, cursor, limit,
+		stateFilter, cursor, limit,
 	)
 	if err != nil {
-		return storage.PaginatedListResult[storage.TemplateSummary]{}, fmt.Errorf("templates.list: %w", err)
+		return storage.PaginatedListResult[storage.TemplateRow]{}, fmt.Errorf("templates.list: %w", err)
 	}
 	defer rows.Close()
 
-	var out []storage.TemplateSummary
+	var out []storage.TemplateRow
 	for rows.Next() {
-		var r storage.TemplateSummary
-		if err := rows.Scan(&r.ID, &r.Name, &r.Version, &r.DeployedAt); err != nil {
-			return storage.PaginatedListResult[storage.TemplateSummary]{}, err
+		r, err := scanTemplateRows(rows)
+		if err != nil {
+			return storage.PaginatedListResult[storage.TemplateRow]{}, err
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return storage.PaginatedListResult[storage.TemplateSummary]{}, err
+		return storage.PaginatedListResult[storage.TemplateRow]{}, err
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
-		nextCursor = out[len(out)-1].ID.String()
+		nextCursor = out[len(out)-1].ID
 	}
-	return storage.PaginatedListResult[storage.TemplateSummary]{Rows: out, NextCursor: nextCursor}, nil
+	return storage.PaginatedListResult[storage.TemplateRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-// Delete removes a template. Returns ErrTemplateInUse if any instance
-// references it; ErrTemplateNotFound if the id doesn't exist.
-func (s *TemplateStore) Delete(ctx context.Context, id shared.UUID, tx storage.Tx) error {
+// UpdateState updates rimsky_templates.state for the given hash.
+func (s *TemplateStore) UpdateState(ctx context.Context, hash string, newState storage.TemplateState, tx storage.Tx) error {
 	ex := q(tx, s.pool)
-	var one int
-	err := ex.QueryRow(ctx,
-		`SELECT 1 FROM rimsky_instances WHERE template_id = $1 LIMIT 1`, id,
-	).Scan(&one)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("templates.delete: check in-use: %w", err)
-	}
-	if err == nil {
-		return shared.Wrap(shared.ErrTemplateInUse, "template has active instances",
-			map[string]any{"id": id})
-	}
-	tag, err := ex.Exec(ctx, `DELETE FROM rimsky_templates WHERE id = $1`, id)
+	tag, err := ex.Exec(ctx,
+		`UPDATE rimsky_templates SET state = $2 WHERE id = $1`,
+		hash, string(newState),
+	)
 	if err != nil {
-		return fmt.Errorf("templates.delete: %w", err)
+		return fmt.Errorf("templates.updateState: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return shared.Wrap(shared.ErrTemplateNotFound, "template not found",
-			map[string]any{"id": id})
+			map[string]any{"id": hash})
 	}
 	return nil
 }
 
-// ---- helpers shared by this package ----
-
-func sameSpec(a, b []byte) bool {
-	var va, vb any
-	if err := json.Unmarshal(a, &va); err != nil {
-		return false
+// DeleteByHash removes the template row. The schema enforces ON DELETE
+// RESTRICT against tags and instances; if either still references the
+// template, this returns the underlying Postgres FK violation. Callers
+// should pre-check those constraints and produce a more useful error.
+//
+// Per spec §1.6: rimsky_store_lifecycle rows for the (template-scope,
+// hash) tuple are cleaned up here transactionally so a follow-on
+// re-register starts with empty bookkeeping. The caller's tx (when
+// supplied) participates in the same atomic step.
+func (s *TemplateStore) DeleteByHash(ctx context.Context, hash string, tx storage.Tx) error {
+	ex := q(tx, s.pool)
+	if _, err := ex.Exec(ctx,
+		`DELETE FROM rimsky_store_lifecycle
+		 WHERE scope_kind = 'template' AND scope_id = $1`, hash); err != nil {
+		return fmt.Errorf("templates.deleteByHash: cleanup lifecycle rows: %w", err)
 	}
-	if err := json.Unmarshal(b, &vb); err != nil {
-		return false
+	tag, err := ex.Exec(ctx, `DELETE FROM rimsky_templates WHERE id = $1`, hash)
+	if err != nil {
+		if isFKViolation(err) {
+			return shared.Wrap(shared.ErrTemplateInUse,
+				"template has active references (tag or instance)",
+				map[string]any{"id": hash})
+		}
+		return fmt.Errorf("templates.deleteByHash: %w", err)
 	}
-	return canonicalJSON(va) == canonicalJSON(vb)
+	if tag.RowsAffected() == 0 {
+		return shared.Wrap(shared.ErrTemplateNotFound, "template not found",
+			map[string]any{"id": hash})
+	}
+	return nil
 }
 
-func canonicalJSON(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "null"
-	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		b := make([]byte, 0, 64)
-		b = append(b, '{')
-		for i, k := range keys {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			kb, _ := json.Marshal(k)
-			b = append(b, kb...)
-			b = append(b, ':')
-			b = append(b, canonicalJSON(x[k])...)
-		}
-		b = append(b, '}')
-		return string(b)
-	case []any:
-		b := make([]byte, 0, 64)
-		b = append(b, '[')
-		for i, e := range x {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			b = append(b, canonicalJSON(e)...)
-		}
-		b = append(b, ']')
-		return string(b)
-	default:
-		bs, _ := json.Marshal(v)
-		return string(bs)
+func scanTemplate(sc scannable) (storage.TemplateRow, error) {
+	var (
+		id           string
+		specBytes    []byte
+		stateStr     string
+		registeredAt time.Time
+		source       string
+	)
+	if err := sc.Scan(&id, &specBytes, &stateStr, &registeredAt, &source); err != nil {
+		return storage.TemplateRow{}, err
 	}
+	var spec nodepkg.TemplateSpec
+	if err := json.Unmarshal(specBytes, &spec); err != nil {
+		return storage.TemplateRow{}, fmt.Errorf("unmarshal spec: %w", err)
+	}
+	return storage.TemplateRow{
+		ID:           id,
+		Spec:         spec,
+		State:        storage.TemplateState(stateStr),
+		RegisteredAt: registeredAt,
+		Source:       source,
+	}, nil
+}
+
+func scanTemplateRows(rows pgx.Rows) (storage.TemplateRow, error) {
+	return scanTemplate(rows)
 }

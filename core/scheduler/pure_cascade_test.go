@@ -77,22 +77,21 @@ func newPureCascadeBackend(t *testing.T) (*pgstorage.PostgresStorageBackend, fun
 	return pgstorage.New(pool), teardown
 }
 
-func pcDeployTemplate(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, name string) storage.TemplateSummary {
+func pcDeployTemplate(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, name string) storage.TemplateRow {
 	t.Helper()
-	sum, err := b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
+	return insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: name, Version: "v1", Description: "test",
 		FrameResolution: nodepkg.FrameResolutionSerialQueue,
 		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
 		Nodes:           []nodepkg.TemplateNodeDef{},
-	}, nil)
-	require.NoError(t, err)
-	return sum
+	})
 }
 
-func pcCreateInstance(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, tplID shared.UUID, ck string) storage.InstanceRow {
+func pcCreateInstance(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, templateHash string, ck string) storage.InstanceRow {
 	t.Helper()
+	ckCopy := ck
 	inst, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tplID, ConsumerKey: ck, Params: map[string]any{},
+		ID: uuid.New(), TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
 	return inst
@@ -255,7 +254,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	t.Cleanup(teardown)
 
 	// Template has one node def whose Stores include a claim-true entry.
-	sum, err := b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
+	sum := insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: "claim-only", Version: "v1", Description: "test",
 		FrameResolution: nodepkg.FrameResolutionSerialQueue,
 		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
@@ -267,8 +266,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 				{Name: "beta", Selector: "y", Intent: "r"},
 			},
 		}},
-	}, nil)
-	require.NoError(t, err)
+	})
 	inst := pcCreateInstance(ctx, t, b, sum.ID, "ck-claim")
 	claimNode := pcCreateNode(ctx, t, b, inst.ID, "")
 	// Seed a running frame and assign claimNode.frame_id so the dispatch

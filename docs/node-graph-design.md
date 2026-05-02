@@ -161,7 +161,7 @@ Lock state lives **only** in postgres. Stores never persist lock state. Stores m
 
 Rimsky does not specify a single storage model. Each store declares its **kind** by name (`filesystem`, `postgres`, future `s3` / `git`). A kind is a Go struct satisfying the universal 4-verb `Store` interface; it decides what its regions look like, what its addresses look like, how data is committed, and what its store-side state machinery does.
 
-Kinds register at process startup (the orchestrator deployer's `main()` wires them in). A `stores.yml` file referenced by `RIMSKY_STORES_CONFIG` lists each operator-named store with its kind and kind-specific config (plus an optional `pick_policies` block). Templates reference stores by name; the store parses selectors.
+Kinds register at process startup (the orchestrator deployer's `main()` wires them in). A `rimsky.yml` file referenced by `RIMSKY_CONFIG` lists each operator-named store with its kind and kind-specific config (plus an optional `pick_policies` block). Templates reference stores by name; the store parses selectors.
 
 v1 ships two reference kinds:
 
@@ -611,8 +611,8 @@ Nodes do not declare message handlers; they inherit system defaults.
 
 ### 9.2 Instance registration
 
-`POST /instances` with `{template_id, consumer_key, params}`:
-1. Validate `consumer_key` unique within `template_id`.
+`POST /instances` with `{template, instance_key, params}` (where `template` is a tag or content hash):
+1. Validate `instance_key` (when supplied) is unique within the resolved template hash.
 2. Validate `params` against the template's `params_schema`.
 3. Allocate instance UUID.
 4. For each node: allocate node UUID; resolve `dependencies` to sibling node UUIDs; substitute single-brace `{params.<key>}` placeholders into any field that takes them (region patterns, lock names, attributes-schema source directives — all baked into per-instance node config so dispatch-time substitution operates on the resolved values).

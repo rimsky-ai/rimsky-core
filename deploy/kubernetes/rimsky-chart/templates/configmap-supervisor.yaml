@@ -14,12 +14,4 @@ data:
       host: 0.0.0.0
       port: 9100
       advertise_host: ${RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST:-}
-    executors:
-      claude-agent:
-        transport: grpc
-        endpoint: "{{ include "rimsky.fullname" . }}-claude-agent:{{ .Values.claudeAgent.service.port }}"
-        tls: off
-      http-node:
-        transport: grpc
-        endpoint: "{{ include "rimsky.fullname" . }}-http-node:{{ .Values.httpNode.service.port }}"
-        tls: off
+    # Executors are declared in rimsky.yml (RIMSKY_CONFIG), not here.

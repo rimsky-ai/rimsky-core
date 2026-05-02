@@ -205,6 +205,14 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		h.Supervisor = sv
 	}
 
+	executorsCfg := config.ExecutorsConfig{Executors: map[string]config.ExecutorEntry{}}
+	for name, ep := range executors {
+		executorsCfg.Executors[name] = config.ExecutorEntry{
+			Transport: ep.Transport,
+			Endpoint:  ep.URL,
+			TLS:       ep.TLS,
+		}
+	}
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
 		Storage:    sb,
 		Queue:      q,
@@ -214,6 +222,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		Port:       0,
 		Stores:     opts.Stores,
 		NamedLocks: opts.NamedLocks,
+		Executors:  executorsCfg,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -229,14 +238,18 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	return h
 }
 
-// DeployTemplate marshals the spec to the control API's JSON schema
-// and POSTs to /templates.
-func (h *Harness) DeployTemplate(spec node.TemplateSpec) shared.UUID {
+// DeployTemplate marshals the spec into the wrapped POST /templates body
+// (`{spec: {...}}`) the control API requires post-control-plane v1,
+// registers it, and then POSTs /templates/{id}/deploy to transition
+// state to 'deployed'. Returns the template content hash.
+func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	h.T.Helper()
 	if spec.FrameResolution == "" {
 		spec.FrameResolution = node.FrameResolutionSerialQueue
 	}
-	body, err := json.Marshal(templateSpecToJSON(spec))
+	body, err := json.Marshal(map[string]any{
+		"spec": templateSpecToJSON(spec),
+	})
 	if err != nil {
 		h.T.Fatal(err)
 	}
@@ -245,7 +258,7 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) shared.UUID {
 		h.T.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		buf := make([]byte, 4096)
 		n, _ := resp.Body.Read(buf)
 		h.T.Fatalf("DeployTemplate: status %d: %s", resp.StatusCode, string(buf[:n]))
@@ -256,21 +269,38 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) shared.UUID {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		h.T.Fatalf("DeployTemplate: decode: %v", err)
 	}
-	id, err := parseUUIDStr(out.TemplateID)
-	if err != nil {
-		h.T.Fatalf("DeployTemplate: bad template_id %q: %v", out.TemplateID, err)
+	if out.TemplateID == "" {
+		h.T.Fatalf("DeployTemplate: empty template_id")
 	}
-	return id
+	// Transition register → deployed so /instances will accept the id.
+	deployURL := h.ControlBase + "/templates/" + out.TemplateID + "/deploy"
+	deployResp, err := http.Post(deployURL, "application/json", bytesReader([]byte("{}")))
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	defer deployResp.Body.Close()
+	if deployResp.StatusCode != http.StatusOK {
+		buf := make([]byte, 4096)
+		n, _ := deployResp.Body.Read(buf)
+		h.T.Fatalf("DeployTemplate: deploy: status %d: %s", deployResp.StatusCode, string(buf[:n]))
+	}
+	return out.TemplateID
 }
 
-// CreateInstance POSTs to /instances; returns instance_id.
-func (h *Harness) CreateInstance(templateID shared.UUID, consumerKey string, params map[string]any) shared.UUID {
+// CreateInstance POSTs to /instances; returns instance_id. An empty
+// consumerKey is omitted from the body so the row's instance_key column
+// stays NULL (the unique-index sentinel), rather than being persisted as
+// the empty string and immediately conflicting on the next call.
+func (h *Harness) CreateInstance(templateHash string, consumerKey string, params map[string]any) shared.UUID {
 	h.T.Helper()
-	body, err := json.Marshal(map[string]any{
-		"template_id":  templateID.String(),
-		"consumer_key": consumerKey,
-		"params":       params,
-	})
+	bodyMap := map[string]any{
+		"template": templateHash,
+		"params":   params,
+	}
+	if consumerKey != "" {
+		bodyMap["instance_key"] = consumerKey
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		h.T.Fatal(err)
 	}

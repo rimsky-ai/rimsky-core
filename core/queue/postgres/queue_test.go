@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,7 +69,10 @@ func insertNodeWithInstance(t *testing.T, pool *pgxpool.Pool, state, nodeType st
 	t.Helper()
 	ctx := context.Background()
 
-	templateID := uuid.New()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	templateHash := "sha256-" + suffix
 	instanceID = uuid.New()
 	nodeID = uuid.New()
 
@@ -78,14 +82,14 @@ func insertNodeWithInstance(t *testing.T, pool *pgxpool.Pool, state, nodeType st
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx,
-		`INSERT INTO rimsky_templates (id, name, version, spec) VALUES ($1, $2, $3, $4)`,
-		templateID, "tpl-"+templateID.String(), "v1", spec,
+		`INSERT INTO rimsky_templates (id, spec, state) VALUES ($1, $2, 'deployed')`,
+		templateHash, spec,
 	)
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_id, consumer_key, params) VALUES ($1, $2, $3, $4)`,
-		instanceID, templateID, "ck-"+instanceID.String(), params,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params) VALUES ($1, $2, $3, $4)`,
+		instanceID, templateHash, "ck-"+instanceID.String(), params,
 	)
 	require.NoError(t, err)
 

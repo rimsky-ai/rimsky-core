@@ -114,7 +114,7 @@ type RunArgs struct {
 	// probes for or rebinds existing rows.
 	LockHolders *store.LockHoldersClient
 	// StoreRegistry is the per-process store registry built at supervisor
-	// startup from stores.yml (spec §6.1). The runner dispatches against
+	// startup from rimsky.yml (spec §6.1). The runner dispatches against
 	// the 4-verb store.Store interface (Open/Commit/Abandon/Release).
 	StoreRegistry *store.Registry
 	// NamedLocks is the operator-side named-lock config (limits per

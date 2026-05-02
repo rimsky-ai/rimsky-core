@@ -119,6 +119,12 @@ func runFrameEndDetection(ctx context.Context, db PgxBeginner, logger Logger) er
 // transitionFrameEnd applies one frame's running → completed|failed
 // transition in its own short tx. Determines the outcome by looking at
 // the frame's nodes (any failed → failed, else completed).
+//
+// After the frame transitions to terminal, the same tx evaluates the
+// instance's terminal predicate (no remaining queued/running frames,
+// no stale/running nodes) and sets rimsky_instances.terminated_at if
+// satisfied. Per docs/specs/2026-05-01-control-plane-and-store-
+// lifecycle-design.md §2.4: idempotent, set-once.
 func transitionFrameEnd(ctx context.Context, db PgxBeginner, frameID, instanceID uuid.UUID, logger Logger) error {
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -146,6 +152,27 @@ func transitionFrameEnd(ctx context.Context, db PgxBeginner, frameID, instanceID
         WHERE frame_id = $2 AND state = 'running'
     `, finalState, frameID)
 	if err != nil {
+		return err
+	}
+	// Mark the instance terminated when no further work remains. The
+	// UPDATE's WHERE clause encodes the terminal predicate so the call
+	// is set-once and idempotent: once terminated_at is non-NULL or any
+	// frame/node says otherwise, the row count is zero and the call is
+	// a no-op. Per spec §2.4.
+	if _, err := tx.Exec(ctx, `
+        UPDATE rimsky_instances i
+        SET terminated_at = now()
+        WHERE i.id = $1
+          AND i.terminated_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_frames f
+              WHERE f.instance_id = i.id AND f.state IN ('queued','running')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_nodes n
+              WHERE n.instance_id = i.id AND n.state IN ('stale','running')
+          )
+    `, instanceID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -344,8 +371,12 @@ func runReapStuckFrames(ctx context.Context, db PgxBeginner, logger Logger) erro
 }
 
 // reapOneStuckFrame fails one stuck frame in its own tx. Marks all
-// stale/running nodes in the instance as failed, then transitions the
-// frame to failed.
+// stale/running nodes in the instance as failed, transitions the frame
+// to failed, and (per spec §2.4) sets rimsky_instances.terminated_at
+// when no further work remains. Without the terminated_at write here
+// the next frame-end-detection pass would not pick the instance up
+// (its SELECT filters by state='running'), and the instance row would
+// stay un-terminated forever — leaking the OnInstanceTerminated event.
 func reapOneStuckFrame(ctx context.Context, db PgxBeginner, frameID, instanceID uuid.UUID) error {
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -363,6 +394,26 @@ func reapOneStuckFrame(ctx context.Context, db PgxBeginner, frameID, instanceID 
         UPDATE rimsky_frames SET state = 'failed', ended_at = now()
         WHERE frame_id = $1 AND state = 'running'
     `, frameID); err != nil {
+		return err
+	}
+	// Mirrors the terminal-predicate from transitionFrameEnd. Set-once,
+	// idempotent: the predicate ensures the row count is zero unless
+	// terminated_at is currently NULL and no queued/running frame and
+	// no stale/running node remains for this instance.
+	if _, err := tx.Exec(ctx, `
+        UPDATE rimsky_instances i
+        SET terminated_at = now()
+        WHERE i.id = $1
+          AND i.terminated_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_frames f
+              WHERE f.instance_id = i.id AND f.state IN ('queued','running')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_nodes n
+              WHERE n.instance_id = i.id AND n.state IN ('stale','running')
+          )
+    `, instanceID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

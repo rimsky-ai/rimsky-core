@@ -39,7 +39,7 @@ import "context"
 // requires snapshot delegation or native MVCC pass-through.
 type Store interface {
 	// Name returns the operator-configured store name (matches
-	// stores.<name> in stores.yml). Rimsky-side identifier; not
+	// stores.<name> in rimsky.yml). Rimsky-side identifier; not
 	// transported over the wire.
 	Name() string
 
@@ -86,4 +86,16 @@ type Store interface {
 	// Direct stores typically no-op; relevant when the store
 	// registered store-side state at Open (staged_async, etc.).
 	Release(ctx context.Context, claimID ClaimID, region []byte, address []byte) error
+
+	// Lifecycle events (per docs/specs/2026-05-01-control-plane-and-
+	// store-lifecycle-design.md §4.1 / §5). All stores implement all
+	// six; stores that don't care just return nil from each method.
+	// Idempotent: calling the same event for the same scope twice
+	// produces the same observable state.
+	OnTemplateRegistered(ctx context.Context, templateID string) error
+	OnTemplateDeployed(ctx context.Context, templateID string) error
+	OnTemplateUndeployed(ctx context.Context, templateID string) error
+	OnTemplateDeregistered(ctx context.Context, templateID string) error
+	OnInstanceCreated(ctx context.Context, templateID, instanceID string) error
+	OnInstanceTerminated(ctx context.Context, templateID, instanceID string) error
 }

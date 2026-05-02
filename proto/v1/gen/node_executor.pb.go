@@ -157,17 +157,17 @@ func (x *ExecuteRequest) GetRunAttempt() int32 {
 }
 
 // StoreHandle is the per-store reference handed to the executor at
-// dispatch (spec §19.1). `handle` carries the substrate-native Address
+// dispatch (spec §19.1). `handle` carries the store-supplied Address
 // bytes returned by Store.Open — opaque to Rimsky, decoded by the
-// executor per its substrate-specific knowledge.
+// executor per its store-specific knowledge.
 type StoreHandle struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Operator-configured store kind (e.g. "filesystem", "postgres", or
-	// a substrate's own canonical kind name). Conventionally informational
-	// — the executor knows its substrate's kind from the deployment's
+	// a store's own canonical kind name). Conventionally informational
+	// — the executor knows its store's kind from the deployment's
 	// operator config.
 	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
-	// Substrate-native Address bytes returned by Store.Open, wrapped as
+	// Store-supplied Address bytes returned by Store.Open, wrapped as
 	// a google.protobuf.Struct so JSON-shaped addresses round-trip cleanly.
 	// Opaque to Rimsky per @blessed-invariant 20.
 	Handle        *structpb.Struct `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`

@@ -42,49 +42,147 @@ type PaginatedListResult[T any] struct {
 }
 
 // -------- Templates --------
+//
+// Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+// §1: templates are content-addressed (id is "sha256-<64-hex>" over an
+// RFC 8785 JCS-canonicalized spec). State is one of three persisted
+// values (registered, deployed, undeployed); deregistered is the
+// absent state — i.e., row deleted. Tags live in rimsky_template_tags
+// as movable aliases.
 
-type TemplateSummary struct {
-	ID         shared.UUID
-	Name       string
-	Version    string
-	DeployedAt time.Time
-}
+// TemplateState is the persisted template lifecycle state. Three
+// values exist on disk (registered, deployed, undeployed); the fourth
+// conceptual state — deregistered — is the absence of the row.
+type TemplateState string
+
+const (
+	TemplateStateRegistered TemplateState = "registered"
+	TemplateStateDeployed   TemplateState = "deployed"
+	TemplateStateUndeployed TemplateState = "undeployed"
+)
+
+// TemplateRow mirrors a row of rimsky_templates. ID is the content
+// hash; Spec is the full parsed spec.
 type TemplateRow struct {
-	TemplateSummary
-	Spec node.TemplateSpec
+	ID           string
+	Spec         node.TemplateSpec
+	State        TemplateState
+	RegisteredAt time.Time
+	Source       string // "direct" | future package-manager values
 }
+
+type TemplateInsertInput struct {
+	ID     string
+	Spec   node.TemplateSpec
+	State  TemplateState
+	Source string
+}
+
 type TemplateStore interface {
-	Deploy(ctx context.Context, spec node.TemplateSpec, tx Tx) (TemplateSummary, error)
-	Get(ctx context.Context, id shared.UUID, tx Tx) (*TemplateRow, error)
-	List(ctx context.Context, filter TemplateListFilter, pag ListPagination, tx Tx) (PaginatedListResult[TemplateSummary], error)
-	Delete(ctx context.Context, id shared.UUID, tx Tx) error // ErrTemplateInUse if instances reference
+	Insert(ctx context.Context, in TemplateInsertInput, tx Tx) error
+	GetByHash(ctx context.Context, hash string, tx Tx) (*TemplateRow, error)
+	List(ctx context.Context, filter TemplateListFilter, pag ListPagination, tx Tx) (PaginatedListResult[TemplateRow], error)
+	UpdateState(ctx context.Context, hash string, newState TemplateState, tx Tx) error
+	DeleteByHash(ctx context.Context, hash string, tx Tx) error
+	// LockForUpdate runs SELECT … FOR UPDATE on the template row, used by
+	// state-transition handlers to serialize against concurrent transitions
+	// (per spec §2.2).
+	LockForUpdate(ctx context.Context, hash string, tx Tx) (*TemplateRow, error)
 }
-type TemplateListFilter struct{ Name string }
+type TemplateListFilter struct {
+	State TemplateState // empty = no filter
+}
+
+// -------- Template tags --------
+
+type TemplateTagRow struct {
+	Tag        string
+	TemplateID string // hash
+	UpdatedAt  time.Time
+}
+
+type TemplateTagsStore interface {
+	Upsert(ctx context.Context, tag, templateID string, tx Tx) error
+	Get(ctx context.Context, tag string, tx Tx) (*TemplateTagRow, error)
+	ListByTemplate(ctx context.Context, templateID string, tx Tx) ([]TemplateTagRow, error)
+	List(ctx context.Context, pag ListPagination, tx Tx) (PaginatedListResult[TemplateTagRow], error)
+	Delete(ctx context.Context, tag string, tx Tx) (deleted bool, err error)
+	CountByTemplate(ctx context.Context, templateID string, tx Tx) (int, error)
+}
 
 // -------- Instances --------
 
 type InstanceRow struct {
-	ID          shared.UUID
-	TemplateID  shared.UUID
-	ConsumerKey string
-	Params      map[string]any
-	CreatedAt   time.Time
+	ID           shared.UUID
+	TemplateHash string  // FK to rimsky_templates.id
+	InstanceKey  *string // nullable
+	Params       map[string]any
+	CreatedAt    time.Time
+	TerminatedAt *time.Time // nullable; set at terminal-state detection
 }
 type InstanceStore interface {
 	Create(ctx context.Context, args InstanceCreateInput, tx Tx) (InstanceRow, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*InstanceRow, error)
-	GetByConsumerKey(ctx context.Context, templateID shared.UUID, consumerKey string, tx Tx) (*InstanceRow, error)
+	GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx Tx) (*InstanceRow, error)
 	List(ctx context.Context, filter InstanceListFilter, pag ListPagination, tx Tx) (PaginatedListResult[InstanceRow], error)
 	Delete(ctx context.Context, id shared.UUID, tx Tx) error
+	// MarkTerminated sets terminated_at = now() if currently NULL. Idempotent.
+	MarkTerminated(ctx context.Context, id shared.UUID, tx Tx) error
+	// CountActiveByTemplate returns the count of instances where
+	// template_hash = $1 AND terminated_at IS NULL. Used by undeploy /
+	// deregister validation.
+	CountActiveByTemplate(ctx context.Context, templateHash string, tx Tx) (int, error)
+	// ListTerminatedWithLifecycleRows returns up to limit instances with
+	// terminated_at IS NOT NULL that still have at least one matching
+	// rimsky_store_lifecycle row at (scope_kind='instance', scope_id=id).
+	// Used by the control-api terminator worker.
+	ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx Tx) ([]InstanceRow, error)
 }
 type InstanceCreateInput struct {
-	TemplateID  shared.UUID
-	ConsumerKey string
-	Params      map[string]any
+	ID           shared.UUID
+	TemplateHash string
+	InstanceKey  *string // nullable
+	Params       map[string]any
 }
 type InstanceListFilter struct {
-	TemplateID  shared.UUID
-	ConsumerKey string
+	TemplateHash string
+	InstanceKey  string
+}
+
+// -------- Store lifecycle bookkeeping --------
+
+// StoreLifecycleScopeKind is "template" or "instance".
+type StoreLifecycleScopeKind string
+
+const (
+	StoreLifecycleScopeTemplate StoreLifecycleScopeKind = "template"
+	StoreLifecycleScopeInstance StoreLifecycleScopeKind = "instance"
+)
+
+// StoreLifecycleState mirrors the rimsky_store_lifecycle.state column.
+type StoreLifecycleState string
+
+const (
+	StoreLifecycleStateRegistered StoreLifecycleState = "registered"
+	StoreLifecycleStateDeployed   StoreLifecycleState = "deployed"
+	StoreLifecycleStateUndeployed StoreLifecycleState = "undeployed"
+	StoreLifecycleStateCreated    StoreLifecycleState = "created"
+)
+
+type StoreLifecycleRow struct {
+	StoreRegistrationName string
+	ScopeKind             StoreLifecycleScopeKind
+	ScopeID               string
+	State                 StoreLifecycleState
+	LastEventAt           time.Time
+}
+
+type StoreLifecycleStore interface {
+	Get(ctx context.Context, storeName string, scopeKind StoreLifecycleScopeKind, scopeID string, tx Tx) (*StoreLifecycleRow, error)
+	Upsert(ctx context.Context, row StoreLifecycleRow, tx Tx) error
+	Delete(ctx context.Context, storeName string, scopeKind StoreLifecycleScopeKind, scopeID string, tx Tx) error
+	DeleteByScope(ctx context.Context, scopeKind StoreLifecycleScopeKind, scopeID string, tx Tx) error
+	ListByScope(ctx context.Context, scopeKind StoreLifecycleScopeKind, scopeID string, tx Tx) ([]StoreLifecycleRow, error)
 }
 
 // -------- Nodes --------
@@ -401,7 +499,9 @@ type SupervisorStore interface {
 
 type StorageBackend interface {
 	Templates() TemplateStore
+	TemplateTags() TemplateTagsStore
 	Instances() InstanceStore
+	StoreLifecycle() StoreLifecycleStore
 	Nodes() NodeStore
 	LockHolders() LockHoldersStore
 	NodeAttributes() NodeAttributesStore

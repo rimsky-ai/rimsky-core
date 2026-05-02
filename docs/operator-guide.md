@@ -81,19 +81,19 @@ python3 -c 'import yaml, json, sys; print(json.dumps(yaml.safe_load(open("/tmp/h
 
 Expected response:
 ```json
-{"template_id": "...", "name": "hello-world", "version": "1.0.0"}
+{"template": "sha256-<64-hex>", "name": "hello-world", "version": "1.0.0"}
 ```
 
 ### 1.3 Create an instance
 
 ```bash
-TPL=<template_id from above>
+TPL=<template content hash from above>
 curl -s -X POST http://localhost:8080/instances \
   -H 'Content-Type: application/json' \
-  -d "{\"template_id\": \"$TPL\", \"consumer_key\": \"demo-1\"}" | jq .
+  -d "{\"template\": \"$TPL\", \"instance_key\": \"demo-1\"}" | jq .
 ```
 
-Expected: `{"instance_id": "...", "consumer_key": "demo-1", "node_count": 1}`.
+Expected: `{"instance_id": "...", "instance_key": "demo-1", "node_count": 1}`.
 
 ### 1.4 Watch the node run
 
@@ -194,71 +194,71 @@ create tables prefixed `rimsky_*` (`rimsky_templates`, `rimsky_instances`,
 in your database should be named `rimsky_*`.
 
 Postgres-store pick-policy **items tables** are caller-owned (you declare
-their names in `stores.yml` per §3.4.3 and create them out-of-band). Rimsky
+their names in `rimsky.yml` per §3.4.3 and create them out-of-band). Rimsky
 never creates those tables.
 
 ---
 
 ## 3. Supervisor configuration
 
-The supervisor reads one YAML file at `RIMSKY_CONFIG_PATH` (default in the
-Docker image: `/etc/rimsky/supervisor-config.yml`). Example:
+The supervisor reads two YAML files:
+
+- `RIMSKY_SUPERVISOR_CONFIG` (required; per-process tuning) — Postgres URL,
+  concurrency, heartbeat, callback bind/advertise. Example
+  `/etc/rimsky/supervisor-config.yml`:
+
+  ```yaml
+  postgres_url: "postgres://rimsky:rimsky@db:5432/rimsky?sslmode=disable"
+  supervisor_id: "supervisor-1"      # optional; defaults to <hostname>-<pid>
+  concurrency: 8
+  heartbeat_interval_ms: 5000
+  claim_poll_interval_ms: 1000
+  callback:
+    host: "0.0.0.0"                  # bind host for the callback HTTP listener
+    port: 9100
+    advertise_host: "supervisor"     # peer-reachable hostname executors dial back
+    advertise_port: 9100
+  ```
+
+- `RIMSKY_CONFIG` (optional; defaults to `/etc/rimsky/rimsky.yml`) — shared
+  deployment-shape config: `executors:`, `stores:`, `named_locks:`. The
+  supervisor, control-api, and scheduler all read this file. The
+  `executors:` block declared here is the source of truth for executor
+  endpoints; templates that reference an executor not declared here fail at
+  registration with `unknown executor`. The `stores:` and `named_locks:`
+  blocks are documented in §3.4.
+
+### 3.1 Supervisor-tuning fields
+
+| field | purpose |
+| --- | --- |
+| `postgres_url` | DSN for the rimsky Postgres database (required) |
+| `supervisor_id` | unique ID across running supervisors; defaults to `<hostname>-<pid>` |
+| `concurrency` | hard cap on in-flight dispatch claims per supervisor |
+| `heartbeat_interval_ms` | how often the supervisor updates `rimsky_supervisors.last_heartbeat_at` |
+| `claim_poll_interval_ms` | how often the supervisor polls for new claims |
+| `callback.host` / `callback.port` | bind address for the HTTP+JSON callback endpoint async executors POST to |
+| `callback.advertise_host` / `callback.advertise_port` | peer-reachable host:port embedded in the `callback_url` handed to executors (override via `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_{HOST,PORT}`) |
+
+### 3.2 Executors in `rimsky.yml`
+
+Every executor the supervisor is willing to dispatch must appear in the
+`executors:` block of `rimsky.yml`. A template that references an executor
+not declared there fails registration with `unknown executor`. The schema:
 
 ```yaml
-supervisor:
-  heartbeat_interval_ms: 5000
-  callback_addr: ":9100"
-  concurrency:
-    total: 8
-    per_executor:
-      claude-agent: 4
-      http-node: 8
-
 executors:
-  - name: claude-agent
-    transport: grpc
-    endpoint: "claude-agent:9090"
-    concurrency: 4
-  - name: http-node
-    transport: grpc
-    endpoint: "http-node:9091"
-    concurrency: 8
-
-sql_connections:
-  analytics_production:
-    dsn: "postgres://app:pw@pg-production:5432/analytics?sslmode=require"
-    max_conns: 20
+  <name>:
+    transport: grpc | http     # see protocol.md
+    endpoint:  "<host>:<port>" # gRPC target, or full URL for http
+    tls:       off | on        # optional; default off
 ```
 
-### 3.1 `supervisor` block
+The reference example is `deploy/rimsky.yml`. Control-api validates
+`executors[<n>]` references at template registration; supervisors dispatch
+through `core/executor`'s static resolver wired against the same map.
 
-| field | purpose |
-| --- | --- |
-| `heartbeat_interval_ms` | how often the supervisor updates `rimsky_supervisors.last_heartbeat_at` |
-| `callback_addr` | bind address for the HTTP+JSON callback endpoint async executors POST to |
-| `concurrency.total` | hard cap on in-flight dispatch claims per supervisor |
-| `concurrency.per_executor` | per-name soft cap; tighter than total |
-
-### 3.2 `executors` list
-
-Every executor the supervisor is willing to dispatch must appear here. A
-template that references an executor not in this list will fail at instance
-creation with `unknown executor`.
-
-| field | purpose |
-| --- | --- |
-| `name` | matches `node.executor` in templates |
-| `transport` | `grpc` or `http` (see `protocol.md`) |
-| `endpoint` | host:port for gRPC, full URL for HTTP |
-| `concurrency` | executor-specific claim cap |
-
-### 3.3 `sql_connections` (deprecated)
-
-The `external-sql` resource implementation is gone (replaced by the
-`postgres` store kind, configured per §3.4). The `sql_connections:` block
-is no longer consulted; remove it from supervisor configs on adoption.
-
-### 3.4 Stores and named-locks configuration (`stores.yml`)
+### 3.4 Stores and named-locks configuration (`rimsky.yml`)
 
 In v3 each standard store implementation runs as a **separate process**
 (a "store-service") and rimsky talks to it over the 4-verb (plus
@@ -276,11 +276,11 @@ remote store-service) and `named_locks:` (one entry per declared named
 lock). Templates reference stores by name and named locks by name;
 resolution mirrors executor name resolution.
 
-**Env var:** `RIMSKY_STORES_CONFIG` — path to the YAML file. Default
-`/etc/rimsky/stores.yml`. The file must be readable by every rimsky
+**Env var:** `RIMSKY_CONFIG` — path to the YAML file. Default
+`/etc/rimsky/rimsky.yml`. The file must be readable by every rimsky
 process that loads it; supervisor pool specialization is achieved by
 giving each pool a different file. The canonical example is
-`deploy/stores.yml` — read it alongside this section.
+`deploy/rimsky.yml` — read it alongside this section.
 
 #### 3.4.1 Schema
 
@@ -317,7 +317,7 @@ is uniformly `count(holders) >= limit`. Templates reference named locks
 by name only (`locks: [{name: <name>}]`); deploy-time validation rejects
 template references to undeclared names.
 
-**Reference example** (`deploy/stores.yml`):
+**Reference example** (`deploy/rimsky.yml`):
 
 ```yaml
 stores:
@@ -432,7 +432,7 @@ executor, supervisor ↔ store-service) is configured at the deployment
 layer (mTLS, service mesh, IAM) — outside any YAML rimsky reads.
 
 **Inertness boundary (v3 spec §13.3):** *store-config bytes* (the
-`stores.yml` rimsky reads, plus each store-service's own config) are
+`rimsky.yml` rimsky reads, plus each store-service's own config) are
 operator-managed; what to log, redact, or audit is your call. Routine
 startup logging like "loaded remote store `content` at
 `grpc://store-filesystem:9100`" is fine. **Claim content** — the runtime
@@ -440,7 +440,7 @@ store-supplied `payload` / `address` / `region` bytes returned by
 `Store.Open` over the wire — is governed by blessed invariant 20 and is
 **never** under operator-side logging discretion. The boundary is
 verb-based: anything rimsky receives over the 4-verb wire is claim
-content (inert); anything rimsky reads from `RIMSKY_STORES_CONFIG` is
+content (inert); anything rimsky reads from `RIMSKY_CONFIG` is
 store config (operator's call).
 
 If you need to pass sensitive bytes through claim content (payload,
@@ -455,7 +455,7 @@ When a template is uploaded to control-api, the validator (using the
 loaded operator config) checks:
 
 - Every `stores[*].name` resolves to a configured remote store in the
-  local `stores.yml`.
+  local `rimsky.yml`.
 - Every `stores[*].intent` is `"r"` or `"rw"`.
 - Every `stores[*].alias` (defaulting to the store name) is unique
   within the node.
@@ -657,18 +657,18 @@ Returns 409 `ErrTemplateInUse` if any instance still references it.
 curl -s -X POST http://localhost:8080/instances \
   -H 'Content-Type: application/json' \
   -d '{
-    "template_id": "'"$TPL"'",
-    "consumer_key": "alpha",
+    "template": "'"$TPL"'",
+    "instance_key": "alpha",
     "params": {"name": "alpha", "region": "r1"}
   }'
 ```
 
 **List instances:**
 ```bash
-curl -s 'http://localhost:8080/instances?template_id='"$TPL"
+curl -s 'http://localhost:8080/instances?template='"$TPL"
 ```
 
-**Get an instance (by UUID or consumer_key):**
+**Get an instance (by UUID or instance_key):**
 ```bash
 curl -s "http://localhost:8080/instances/alpha"
 ```
@@ -892,14 +892,14 @@ SELECT id, accepted_executors, active_node_count, last_heartbeat_at,
 
 **Instances ranked by node-state progress:**
 ```sql
-SELECT i.consumer_key,
+SELECT i.instance_key,
        count(*) FILTER (WHERE n.state='fresh')   AS fresh,
        count(*) FILTER (WHERE n.state='running') AS running,
        count(*) FILTER (WHERE n.state='stale')   AS stale,
        count(*) FILTER (WHERE n.state='failed')  AS failed
   FROM rimsky_instances i
   JOIN rimsky_nodes n ON n.instance_id = i.id
- GROUP BY i.consumer_key
+ GROUP BY i.instance_key
  ORDER BY failed DESC, stale DESC;
 ```
 
@@ -975,8 +975,8 @@ Postgres connectivity and logs.
 causes:
 
 - `unknown executor "foo"` — name not in supervisor config
-- `unknown store "foo"` — name not in `stores.yml`'s `stores:` block
-- `unknown named lock "foo"` — name not in `stores.yml`'s `named_locks:`
+- `unknown store "foo"` — name not in `rimsky.yml`'s `stores:` block
+- `unknown named lock "foo"` — name not in `rimsky.yml`'s `named_locks:`
   block
 - `pick policy claim must be intent: rw` — the selector matches a
   configured `pick_policies` key on the store; pick-policy claims are
@@ -1052,10 +1052,10 @@ After bringing the stack up:
 
 1. Create any operator-owned items tables per §3.4.3 (the compose
    `init-items` service handles `topics_items` automatically).
-2. Verify `RIMSKY_STORES_CONFIG` resolves to a readable `stores.yml` on
-   scheduler / supervisor / control-api (default `/etc/rimsky/stores.yml`)
-   — the bundle now carries both `stores:` and `named_locks:` top-level
-   blocks per §3.4.1.
+2. Verify `RIMSKY_CONFIG` resolves to a readable `rimsky.yml` on
+   scheduler / supervisor / control-api (default `/etc/rimsky/rimsky.yml`)
+   — the bundle carries `stores:`, `named_locks:`, and `executors:`
+   top-level blocks per §3.4.1.
 3. `curl -s http://localhost:8080/health` to confirm at least one supervisor
    has registered.
 
@@ -1084,7 +1084,99 @@ curl -s "http://localhost:8080/templates/$TPL" | jq '.spec'
 
 **Force-delete every instance of a template (emergency only):**
 ```bash
-for k in $(curl -s "http://localhost:8080/instances?template_id=$TPL" | jq -r '.instances[].consumer_key'); do
+for k in $(curl -s "http://localhost:8080/instances?template_hash=$TPL" | jq -r '.instances[].instance_key'); do
   curl -s -X DELETE "http://localhost:8080/instances/$k"
 done
 ```
+
+---
+
+## Control-plane v1: `rimsky.yml` and template lifecycle
+
+Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+
+### `RIMSKY_CONFIG`
+
+Replaces the prior `RIMSKY_STORES_CONFIG`. All three rimsky processes (control-
+api, supervisor, scheduler) load a single deployment-shape config from
+`$RIMSKY_CONFIG` (default `/etc/rimsky/rimsky.yml`). The file contains three
+top-level blocks:
+
+```yaml
+stores:
+  <name>:
+    endpoint: "grpc://<host>:<port>"
+    capabilities:
+      write_semantics: direct | staged_blocking | staged_async
+
+named_locks:
+  <name>: { limit: <int> }
+
+executors:
+  <name>:
+    transport: grpc | http
+    endpoint: "<host>:<port>"
+    tls: off | optional | required
+```
+
+The supervisor still reads its per-process tuning (concurrency, callback,
+heartbeat) from `$RIMSKY_SUPERVISOR_CONFIG`. The legacy `executors:` block
+inside that file is gone.
+
+### Four-state template lifecycle
+
+Templates are content-addressed: `rimsky_templates.id` is
+`sha256-<64-hex>` over an RFC 8785 JCS-canonicalized spec. Tags
+(`rimsky_template_tags`) are movable aliases. The four states are
+`registered → deployed → undeployed → deregistered (absent)`.
+
+- `POST /v1/templates`           — register; body `{spec: <TemplateSpec>, tag?,
+                                   source?}` or the bare `<TemplateSpec>` legacy
+                                   shape. Returns the content hash.
+- `GET /v1/templates`            — paginated list; filter by `?state=`.
+- `GET /v1/templates/{tag_or_hash}` — read.
+- `POST /v1/templates/{tag_or_hash}/deploy`     — `registered`/`undeployed` → `deployed`.
+- `POST /v1/templates/{tag_or_hash}/undeploy`   — `deployed` → `undeployed`.
+                                                 409 if active instances exist.
+- `DELETE /v1/templates/{tag_or_hash}`          — deregister. Refused (409) if
+                                                 the template is `deployed` or
+                                                 has active instances.
+
+### Tag operations
+
+- `POST /v1/tags`     body `{tag, template: <tag_or_hash>}` — create.
+- `GET /v1/tags`      paginated list.
+- `PUT /v1/tags/{tag}` body `{template: <tag_or_hash>}` — move.
+- `DELETE /v1/tags/{tag}` — drop the tag (does not delete the template).
+
+Tag identifiers must match `^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`. Hash-shape
+tags are rejected so `tag_or_hash` resolution stays unambiguous.
+
+### Instance content-pinning
+
+Instances bind to a template's content hash at creation time. Moving a tag to
+a different hash does **not** migrate live instances: the instance keeps
+running against the spec it was created with. Templates remain in the registry
+as long as any instance references them (the schema enforces `ON DELETE
+RESTRICT`).
+
+The instances request body shape is now:
+
+```json
+{
+  "template": "<tag_or_hash>",
+  "instance_key": "optional",
+  "params": {...}
+}
+```
+
+The legacy `template_id` and `consumer_key` field names are no longer
+accepted; bodies using those names are rejected at the control-api boundary.
+
+### Instance terminal-state detection
+
+When an instance's frame engine evaluates terminal (no queued/running frames,
+no stale/running nodes), the scheduler sets
+`rimsky_instances.terminated_at = now()`. A control-api background worker
+polls for terminated instances with outstanding lifecycle bookkeeping and
+fires `OnInstanceTerminated` to the relevant stores.

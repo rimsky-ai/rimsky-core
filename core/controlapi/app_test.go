@@ -64,6 +64,13 @@ func newHarness(t *testing.T) (*harness, func()) {
 				"topics-ring:concurrent": {Limit: 5},
 			},
 		},
+		// Wire the executor names referenced by validTemplateBody and
+		// templateWithStoresAndLocks so the validator's
+		// ExecutorDeclared hook actually runs (otherwise the hook is
+		// silently nil and missing-executor templates pass deploy).
+		Executors: map[string]ExecutorEntry{
+			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
+		},
 	})
 	srv := httptest.NewServer(app)
 
@@ -98,63 +105,73 @@ func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, ma
 }
 
 // validTemplateBody builds a minimal valid template request matching
-// the stores redesign shape. Two executor-backed nodes; no stores or
-// locks.
+// the wrapped POST /templates body shape (`{spec: {...}}`). Two
+// executor-backed nodes; no stores or locks.
 func validTemplateBody(name string) map[string]any {
 	return map[string]any{
-		"name":             name,
-		"version":          "v1",
-		"frame_resolution": "serial_queue",
-		"nodes": []map[string]any{
-			{"type": "root", "executor": "worker"},
-			{"type": "child", "executor": "worker", "dependencies": []string{"root"}},
+		"spec": map[string]any{
+			"name":             name,
+			"version":          "v1",
+			"frame_resolution": "serial_queue",
+			"nodes": []map[string]any{
+				{"type": "root", "executor": "worker"},
+				{"type": "child", "executor": "worker", "dependencies": []string{"root"}},
+			},
 		},
 	}
 }
 
-// templateWithStoresAndLocks returns a template body exercising the
-// new stores redesign fields: a node that takes a counting lock and
-// holds a pick-policy claim against the postgres store, and a
+// specOf returns the inner `spec` map of a wrapped POST /templates body.
+// Lets tests that need to mutate the spec keep the wrapped body shape.
+func specOf(body map[string]any) map[string]any {
+	return body["spec"].(map[string]any)
+}
+
+// templateWithStoresAndLocks returns a wrapped template body exercising
+// the new stores redesign fields: a node that takes a counting lock
+// and holds a pick-policy claim against the postgres store, and a
 // downstream node that reads from the filesystem store and resolves
 // the held claim.
 func templateWithStoresAndLocks(name string) map[string]any {
 	return map[string]any{
-		"name":             name,
-		"version":          "v1",
-		"frame_resolution": "serial_queue",
-		"nodes": []map[string]any{
-			{
-				"type":     "claim-topic",
-				"executor": "worker",
-				"schedule": "* * * * *",
-				"stores": []map[string]any{
-					{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
-				},
-				"locks": []map[string]any{
-					{"name": "topics-ring:concurrent"},
-				},
-				"attributes": map[string]any{
-					"schema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"area": map[string]any{
-								"type":   "string",
-								"source": "{{claim.topics-ring.payload.area}}",
+		"spec": map[string]any{
+			"name":             name,
+			"version":          "v1",
+			"frame_resolution": "serial_queue",
+			"nodes": []map[string]any{
+				{
+					"type":     "claim-topic",
+					"executor": "worker",
+					"schedule": "* * * * *",
+					"stores": []map[string]any{
+						{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
+					},
+					"locks": []map[string]any{
+						{"name": "topics-ring:concurrent"},
+					},
+					"attributes": map[string]any{
+						"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"area": map[string]any{
+									"type":   "string",
+									"source": "{{claim.topics-ring.payload.area}}",
+								},
 							},
+							"required": []string{"area"},
 						},
-						"required": []string{"area"},
 					},
 				},
-			},
-			{
-				"type":         "review",
-				"executor":     "worker",
-				"dependencies": []string{"claim-topic"},
-				"stores": []map[string]any{
-					{"name": "content", "selector": "items/x", "intent": "r"},
-				},
-				"inherits": []map[string]any{
-					{"claim": "topics-ring"},
+				{
+					"type":         "review",
+					"executor":     "worker",
+					"dependencies": []string{"claim-topic"},
+					"stores": []map[string]any{
+						{"name": "content", "selector": "items/x", "intent": "r"},
+					},
+					"inherits": []map[string]any{
+						{"claim": "topics-ring"},
+					},
 				},
 			},
 		},
@@ -205,7 +222,7 @@ func TestTemplateDeploy_MissingName_400(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("bad")
-	delete(body, "name")
+	delete(specOf(body), "name")
 	status, out := h.httpJSON(t, "POST", "/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, fmt.Sprint(out["error"]), "template validation")
@@ -219,11 +236,12 @@ func TestTemplateDeploy_UnknownStore_400(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("unknown-store-" + uuid.NewString())
-	nodes := body["nodes"].([]map[string]any)
+	spec := specOf(body)
+	nodes := spec["nodes"].([]map[string]any)
 	nodes[0]["stores"] = []map[string]any{
 		{"name": "ghost-store", "selector": "x", "intent": "r"},
 	}
-	body["nodes"] = nodes
+	spec["nodes"] = nodes
 	status, out := h.httpJSON(t, "POST", "/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 }
@@ -240,14 +258,15 @@ func TestTemplateDeploy_ClaimResolutions_Rejected(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("cr-rejected-" + uuid.NewString())
-	nodes := body["nodes"].([]map[string]any)
+	spec := specOf(body)
+	nodes := spec["nodes"].([]map[string]any)
 	nodes[0]["claim_resolutions"] = map[string]any{
 		"topics-ring": map[string]any{
 			"on_commit":  "commit",
 			"on_give_up": "abandon",
 		},
 	}
-	body["nodes"] = nodes
+	spec["nodes"] = nodes
 	status, out := h.httpJSON(t, "POST", "/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, fmt.Sprint(out["error"]), "claim_resolutions")
@@ -259,12 +278,14 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := map[string]any{
-		"name":             "cycle-" + uuid.NewString(),
-		"version":          "v1",
-		"frame_resolution": "serial_queue",
-		"nodes": []map[string]any{
-			{"type": "a", "executor": "worker", "dependencies": []string{"b"}},
-			{"type": "b", "executor": "worker", "dependencies": []string{"a"}},
+		"spec": map[string]any{
+			"name":             "cycle-" + uuid.NewString(),
+			"version":          "v1",
+			"frame_resolution": "serial_queue",
+			"nodes": []map[string]any{
+				{"type": "a", "executor": "worker", "dependencies": []string{"b"}},
+				{"type": "b", "executor": "worker", "dependencies": []string{"a"}},
+			},
 		},
 	}
 	status, out := h.httpJSON(t, "POST", "/templates", body)
@@ -279,21 +300,27 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	tplBody := validTemplateBody("inst-lc-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
+	// Transition register → deployed; instance creation requires
+	// state='deployed' per spec §2.2.
+	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
 
 	ck := "ck-" + uuid.NewString()
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template_id":  tplID,
-		"consumer_key": ck,
+		"template":     tplID,
+		"instance_key": ck,
 		"params":       map[string]any{"region": "us-east"},
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, instID)
+	require.Equal(t, tplID, out["template_hash"])
+	require.Equal(t, ck, out["instance_key"])
 	require.Equal(t, float64(2), out["node_count"])
 
 	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
-	require.Equal(t, ck, out["consumer_key"])
+	require.Equal(t, ck, out["instance_key"])
 
 	status, out = h.httpJSON(t, "GET", "/instances/"+ck, nil)
 	require.Equal(t, http.StatusOK, status, out)
@@ -302,6 +329,13 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 2)
+
+	// Drive the instance terminal — DELETE refuses to fire the
+	// OnInstanceTerminated fan-out against a still-active instance
+	// (spec §2.4).
+	_, err := h.pool.Exec(context.Background(),
+		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
+	require.NoError(t, err)
 
 	status, _ = h.httpJSON(t, "DELETE", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
@@ -319,9 +353,11 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 	tplBody := validTemplateBody("enq-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
 	tplID := out["template_id"].(string)
+	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template_id":  tplID,
-		"consumer_key": "ck-" + uuid.NewString(),
+		"template":     tplID,
+		"instance_key": "ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 
@@ -334,7 +370,7 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 	require.Equal(t, 1, frameCount, "expected root node to have a queued frame")
 }
 
-func TestInstanceDuplicateConsumerKey_409(t *testing.T) {
+func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -342,19 +378,26 @@ func TestInstanceDuplicateConsumerKey_409(t *testing.T) {
 	tplBody := validTemplateBody("dup-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
 	tplID := out["template_id"].(string)
+	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
 
 	ck := "ck-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template_id":  tplID,
-		"consumer_key": ck,
+	status, firstOut := h.httpJSON(t, "POST", "/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": ck,
 	})
 	require.Equal(t, http.StatusCreated, status)
+	firstID := firstOut["instance_id"].(string)
+	require.NotEmpty(t, firstID)
 
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template_id":  tplID,
-		"consumer_key": ck,
+	// Per spec §2.2 idempotent re-create: a second POST with the same
+	// (template_hash, instance_key) returns the existing row at 200 OK.
+	status, secondOut := h.httpJSON(t, "POST", "/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": ck,
 	})
-	require.Equal(t, http.StatusConflict, status, out)
+	require.Equal(t, http.StatusOK, status, secondOut)
+	require.Equal(t, firstID, secondOut["instance_id"], "idempotent re-create must return the existing instance_id")
 }
 
 func TestOperatorInvalidate(t *testing.T) {
@@ -491,10 +534,12 @@ func seedInstance(t *testing.T, h *harness, tplName string) storage.InstanceRow 
 	ctx := context.Background()
 	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody(tplName))
 	tplID := out["template_id"].(string)
+	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
 	ck := "ck-" + uuid.NewString()
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template_id":  tplID,
-		"consumer_key": ck,
+		"template":     tplID,
+		"instance_key": ck,
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	id, err := uuid.Parse(out["instance_id"].(string))

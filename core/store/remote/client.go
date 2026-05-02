@@ -12,7 +12,7 @@ import (
 
 // Client is a remote-gRPC implementation of the rimsky-side Store
 // interface. One Client per registered store (operator-chosen name in
-// stores.yml). Per spec §5.1.
+// rimsky.yml). Per spec §5.1.
 type Client struct {
 	name string
 	conn *grpc.ClientConn
@@ -40,11 +40,13 @@ func (c *Client) Capabilities(_ context.Context) (store.Capabilities, error) {
 // gRPC errors and are surfaced to the caller.
 func (c *Client) Open(ctx context.Context, claimID store.ClaimID, spec store.ClaimSpec) (store.OpenOutcome, error) {
 	resp, err := c.rpc.Open(ctx, &genv1.OpenRequest{
-		ClaimId:   string(claimID),
-		StoreName: spec.StoreName,
-		Selector:  spec.Selector,
-		Intent:    string(spec.Intent),
-		Alias:     spec.Alias,
+		ClaimId:    string(claimID),
+		StoreName:  spec.StoreName,
+		Selector:   spec.Selector,
+		Intent:     string(spec.Intent),
+		Alias:      spec.Alias,
+		TemplateId: spec.TemplateID,
+		InstanceId: spec.InstanceID,
 	})
 	if err != nil {
 		return store.OpenOutcome{}, fmt.Errorf("remote store %q: Open: %w", c.name, err)
@@ -102,6 +104,64 @@ func (c *Client) Release(ctx context.Context, claimID store.ClaimID, region, add
 	})
 	if err != nil {
 		return fmt.Errorf("remote store %q: Release: %w", c.name, err)
+	}
+	return nil
+}
+
+// Lifecycle event RPCs. Per docs/specs/2026-05-01-control-plane-and-
+// store-lifecycle-design.md §4.1: every store-service implements all
+// six. Stores that don't react return success immediately.
+
+func (c *Client) OnTemplateRegistered(ctx context.Context, templateID string) error {
+	_, err := c.rpc.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{TemplateId: templateID})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnTemplateRegistered: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *Client) OnTemplateDeployed(ctx context.Context, templateID string) error {
+	_, err := c.rpc.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{TemplateId: templateID})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnTemplateDeployed: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *Client) OnTemplateUndeployed(ctx context.Context, templateID string) error {
+	_, err := c.rpc.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{TemplateId: templateID})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnTemplateUndeployed: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *Client) OnTemplateDeregistered(ctx context.Context, templateID string) error {
+	_, err := c.rpc.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{TemplateId: templateID})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnTemplateDeregistered: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *Client) OnInstanceCreated(ctx context.Context, templateID, instanceID string) error {
+	_, err := c.rpc.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
+		TemplateId: templateID,
+		InstanceId: instanceID,
+	})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnInstanceCreated: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *Client) OnInstanceTerminated(ctx context.Context, templateID, instanceID string) error {
+	_, err := c.rpc.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
+		TemplateId: templateID,
+		InstanceId: instanceID,
+	})
+	if err != nil {
+		return fmt.Errorf("remote store %q: OnInstanceTerminated: %w", c.name, err)
 	}
 	return nil
 }

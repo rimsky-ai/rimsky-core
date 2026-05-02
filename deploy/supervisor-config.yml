@@ -1,3 +1,8 @@
+# Per-process supervisor tuning. Operator-managed deployment-shape
+# config (stores, named_locks, executors) lives in rimsky.yml under
+# RIMSKY_CONFIG; this file is loaded by RIMSKY_SUPERVISOR_CONFIG and
+# carries only supervisor-local knobs.
+
 postgres_url: "${RIMSKY_DB_URL}"
 concurrency: 8
 heartbeat_interval_ms: 5000
@@ -10,12 +15,3 @@ callback:
   # the Service DNS. Falls back to the listener addr when empty — which is
   # wrong for any non-loopback deployment because the listener binds 0.0.0.0.
   advertise_host: ${CALLBACK_ADVERTISE_HOST:-}
-executors:
-  claude-agent:
-    transport: grpc
-    endpoint: "claude-agent:9090"
-    tls: off
-  http-node:
-    transport: grpc
-    endpoint: "http-node:9091"
-    tls: off

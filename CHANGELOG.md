@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Control-plane v1 + store lifecycle protocol.** Templates are now
+  content-addressed (`rimsky_templates.id` is `sha256-<64-hex>` over RFC 8785
+  JCS-canonicalized spec); tags are movable aliases in `rimsky_template_tags`.
+  Four-state template lifecycle (registered/deployed/undeployed/deregistered).
+  Six new RPCs on `StoreService` (`OnTemplateRegistered`/`Deployed`/
+  `Undeployed`/`Deregistered` + `OnInstanceCreated`/`Terminated`); all stores
+  implement all six (the rimsky-side `Store` interface ships an embeddable
+  `LifecycleNoop` for stores that don't react). `OpenRequest` gains
+  `template_id` and `instance_id` fields. Per-(store, scope) bookkeeping in
+  `rimsky_store_lifecycle` drives idempotent fan-out. Unified `rimsky.yml`
+  (`RIMSKY_CONFIG`) replaces `RIMSKY_STORES_CONFIG` and the supervisor's
+  `executors:` block — declares stores, named_locks, and executors in one
+  place. Control-api gains `ExecutorDeclared` validation hook. Per
+  `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+  Pre-v1: drop+recreate of `rimsky_templates`/`rimsky_instances`; existing
+  dev DBs nuked.
+
 - **Stores Protocol Cleanup — store-internal-vocabulary excision.**
   Drops `policy_override` from `CommitRequest` / `AbandonRequest`,
   deletes the `Delete` wire verb (4+1 verbs, was 5+1), replaces

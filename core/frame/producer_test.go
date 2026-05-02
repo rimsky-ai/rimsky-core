@@ -2,6 +2,7 @@ package frame_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,27 +15,31 @@ import (
 )
 
 // seedTemplateAndInstance inserts a minimal rimsky_templates row carrying a
-// frame_resolution mode in spec, and a child rimsky_instances row.
-func seedTemplateAndInstance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, mode string) (templateID, instanceID uuid.UUID) {
+// frame_resolution mode in spec, and a child rimsky_instances row. Returns
+// (templateHash, instanceID).
+func seedTemplateAndInstance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, mode string) (templateHash string, instanceID uuid.UUID) {
 	t.Helper()
-	templateID = uuid.New()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	templateHash = "sha256-" + suffix
 	spec := `{}`
 	if mode != "" {
 		spec = `{"frame_resolution":"` + mode + `"}`
 	}
 	_, err := pool.Exec(ctx, `
-        INSERT INTO rimsky_templates (id, name, version, spec)
-        VALUES ($1, 't-`+templateID.String()[:8]+`', 'v1', $2::jsonb)
-    `, templateID, spec)
+        INSERT INTO rimsky_templates (id, spec, state)
+        VALUES ($1, $2::jsonb, 'deployed')
+    `, templateHash, spec)
 	require.NoError(t, err)
 
 	instanceID = uuid.New()
 	_, err = pool.Exec(ctx, `
-        INSERT INTO rimsky_instances (id, template_id, consumer_key, params)
+        INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
         VALUES ($1, $2, $3, '{}'::jsonb)
-    `, instanceID, templateID, "ck-"+instanceID.String()[:8])
+    `, instanceID, templateHash, "ck-"+instanceID.String()[:8])
 	require.NoError(t, err)
-	return templateID, instanceID
+	return templateHash, instanceID
 }
 
 func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {

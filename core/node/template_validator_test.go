@@ -297,3 +297,49 @@ func TestHoldingSubgraphsForTemplate_NotHeld(t *testing.T) {
 	require.Len(t, subs, 1)
 	require.False(t, subs[0].IsHeld())
 }
+
+func TestValidateTemplate_ExecutorDeclared_OK(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared:    storeDeclaredLookup(knownStores),
+		ExecutorDeclared: func(name string) bool { return name == "handler.a" },
+	}
+	res := ValidateTemplate(spec, hooks)
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "claude-agent",
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared:    storeDeclaredLookup(knownStores),
+		ExecutorDeclared: func(name string) bool { return false },
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].executor")
+	// Verify the error message names the executor.
+	var msg string
+	for _, e := range res.Errors {
+		if strings.HasPrefix(e.Path, "nodes[0].executor") {
+			msg = e.Msg
+			break
+		}
+	}
+	require.Contains(t, msg, "claude-agent")
+}

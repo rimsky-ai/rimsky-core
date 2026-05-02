@@ -12,7 +12,7 @@
 //     spec §4.2 before Open is called and threaded through every
 //     subsequent verb for that claim's lifecycle.
 //   - region, address, payload are opaque bytes (json.RawMessage on the
-//     rimsky side; substrates choose their own canonical encoding).
+//     rimsky side; stores choose their own canonical encoding).
 //   - selector, intent, alias, store_name are strings.
 //
 // Errors flow as gRPC status codes per spec §5.3.
@@ -38,11 +38,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	StoreService_Capabilities_FullMethodName = "/rimsky.v1.StoreService/Capabilities"
-	StoreService_Open_FullMethodName         = "/rimsky.v1.StoreService/Open"
-	StoreService_Commit_FullMethodName       = "/rimsky.v1.StoreService/Commit"
-	StoreService_Abandon_FullMethodName      = "/rimsky.v1.StoreService/Abandon"
-	StoreService_Release_FullMethodName      = "/rimsky.v1.StoreService/Release"
+	StoreService_Capabilities_FullMethodName           = "/rimsky.v1.StoreService/Capabilities"
+	StoreService_OnTemplateRegistered_FullMethodName   = "/rimsky.v1.StoreService/OnTemplateRegistered"
+	StoreService_OnTemplateDeployed_FullMethodName     = "/rimsky.v1.StoreService/OnTemplateDeployed"
+	StoreService_OnTemplateUndeployed_FullMethodName   = "/rimsky.v1.StoreService/OnTemplateUndeployed"
+	StoreService_OnTemplateDeregistered_FullMethodName = "/rimsky.v1.StoreService/OnTemplateDeregistered"
+	StoreService_OnInstanceCreated_FullMethodName      = "/rimsky.v1.StoreService/OnInstanceCreated"
+	StoreService_OnInstanceTerminated_FullMethodName   = "/rimsky.v1.StoreService/OnInstanceTerminated"
+	StoreService_Open_FullMethodName                   = "/rimsky.v1.StoreService/Open"
+	StoreService_Commit_FullMethodName                 = "/rimsky.v1.StoreService/Commit"
+	StoreService_Abandon_FullMethodName                = "/rimsky.v1.StoreService/Abandon"
+	StoreService_Release_FullMethodName                = "/rimsky.v1.StoreService/Release"
 )
 
 // StoreServiceClient is the client API for StoreService service.
@@ -58,26 +64,34 @@ type StoreServiceClient interface {
 	// and validated against the operator's declared requirements. Not
 	// called on the runtime path.
 	Capabilities(ctx context.Context, in *CapabilitiesRequest, opts ...grpc.CallOption) (*CapabilitiesResponse, error)
+	// Lifecycle events. Every store-service implements all six; stores that
+	// don't care return success immediately. Per spec §4.1 / §5.
+	OnTemplateRegistered(ctx context.Context, in *OnTemplateRegisteredRequest, opts ...grpc.CallOption) (*OnTemplateRegisteredResponse, error)
+	OnTemplateDeployed(ctx context.Context, in *OnTemplateDeployedRequest, opts ...grpc.CallOption) (*OnTemplateDeployedResponse, error)
+	OnTemplateUndeployed(ctx context.Context, in *OnTemplateUndeployedRequest, opts ...grpc.CallOption) (*OnTemplateUndeployedResponse, error)
+	OnTemplateDeregistered(ctx context.Context, in *OnTemplateDeregisteredRequest, opts ...grpc.CallOption) (*OnTemplateDeregisteredResponse, error)
+	OnInstanceCreated(ctx context.Context, in *OnInstanceCreatedRequest, opts ...grpc.CallOption) (*OnInstanceCreatedResponse, error)
+	OnInstanceTerminated(ctx context.Context, in *OnInstanceTerminatedRequest, opts ...grpc.CallOption) (*OnInstanceTerminatedResponse, error)
 	// Open creates whatever store-internal state the (intent,
-	// write_semantics) combination requires and returns the substrate-
-	// native address the executor will use on the data path. Called
-	// inside the rimsky-side acquisition transaction (per spec §7.3
-	// step 4); the store runs its own state mutation in its own
+	// write_semantics) combination requires and returns the
+	// store-supplied address the executor will use on the data path.
+	// Called inside the rimsky-side acquisition transaction (per spec
+	// §7.3 step 4); the store runs its own state mutation in its own
 	// transaction.
 	Open(ctx context.Context, in *OpenRequest, opts ...grpc.CallOption) (*OpenResponse, error)
 	// Commit signals that the consumer of the claim succeeded. The
-	// substrate decides what to do with its own state (publish staging
+	// store decides what to do with its own state (publish staging
 	// into live, delete the items-table row, release-to-back, etc.) per
-	// the substrate's own configuration. For direct rw, typically a
+	// the store's own configuration. For direct rw, typically a
 	// no-op.
 	Commit(ctx context.Context, in *CommitRequest, opts ...grpc.CallOption) (*CommitResponse, error)
 	// Abandon signals that the consumer of the claim failed. The
-	// substrate decides what to do with its own state per its own
+	// store decides what to do with its own state per its own
 	// configuration. Not called for read-only claims and not called by
 	// the orphan reaper in v3 default behavior (per spec §7.5).
 	Abandon(ctx context.Context, in *AbandonRequest, opts ...grpc.CallOption) (*AbandonResponse, error)
 	// Release tears down store-internal read state created at Open.
-	// Fires only when the substrate registered such state at Open; for
+	// Fires only when the store registered such state at Open; for
 	// direct stores, typically a no-op.
 	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseResponse, error)
 }
@@ -94,6 +108,66 @@ func (c *storeServiceClient) Capabilities(ctx context.Context, in *CapabilitiesR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CapabilitiesResponse)
 	err := c.cc.Invoke(ctx, StoreService_Capabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnTemplateRegistered(ctx context.Context, in *OnTemplateRegisteredRequest, opts ...grpc.CallOption) (*OnTemplateRegisteredResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnTemplateRegisteredResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnTemplateRegistered_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnTemplateDeployed(ctx context.Context, in *OnTemplateDeployedRequest, opts ...grpc.CallOption) (*OnTemplateDeployedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnTemplateDeployedResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnTemplateDeployed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnTemplateUndeployed(ctx context.Context, in *OnTemplateUndeployedRequest, opts ...grpc.CallOption) (*OnTemplateUndeployedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnTemplateUndeployedResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnTemplateUndeployed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnTemplateDeregistered(ctx context.Context, in *OnTemplateDeregisteredRequest, opts ...grpc.CallOption) (*OnTemplateDeregisteredResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnTemplateDeregisteredResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnTemplateDeregistered_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnInstanceCreated(ctx context.Context, in *OnInstanceCreatedRequest, opts ...grpc.CallOption) (*OnInstanceCreatedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnInstanceCreatedResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnInstanceCreated_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storeServiceClient) OnInstanceTerminated(ctx context.Context, in *OnInstanceTerminatedRequest, opts ...grpc.CallOption) (*OnInstanceTerminatedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnInstanceTerminatedResponse)
+	err := c.cc.Invoke(ctx, StoreService_OnInstanceTerminated_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,26 +227,34 @@ type StoreServiceServer interface {
 	// and validated against the operator's declared requirements. Not
 	// called on the runtime path.
 	Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error)
+	// Lifecycle events. Every store-service implements all six; stores that
+	// don't care return success immediately. Per spec §4.1 / §5.
+	OnTemplateRegistered(context.Context, *OnTemplateRegisteredRequest) (*OnTemplateRegisteredResponse, error)
+	OnTemplateDeployed(context.Context, *OnTemplateDeployedRequest) (*OnTemplateDeployedResponse, error)
+	OnTemplateUndeployed(context.Context, *OnTemplateUndeployedRequest) (*OnTemplateUndeployedResponse, error)
+	OnTemplateDeregistered(context.Context, *OnTemplateDeregisteredRequest) (*OnTemplateDeregisteredResponse, error)
+	OnInstanceCreated(context.Context, *OnInstanceCreatedRequest) (*OnInstanceCreatedResponse, error)
+	OnInstanceTerminated(context.Context, *OnInstanceTerminatedRequest) (*OnInstanceTerminatedResponse, error)
 	// Open creates whatever store-internal state the (intent,
-	// write_semantics) combination requires and returns the substrate-
-	// native address the executor will use on the data path. Called
-	// inside the rimsky-side acquisition transaction (per spec §7.3
-	// step 4); the store runs its own state mutation in its own
+	// write_semantics) combination requires and returns the
+	// store-supplied address the executor will use on the data path.
+	// Called inside the rimsky-side acquisition transaction (per spec
+	// §7.3 step 4); the store runs its own state mutation in its own
 	// transaction.
 	Open(context.Context, *OpenRequest) (*OpenResponse, error)
 	// Commit signals that the consumer of the claim succeeded. The
-	// substrate decides what to do with its own state (publish staging
+	// store decides what to do with its own state (publish staging
 	// into live, delete the items-table row, release-to-back, etc.) per
-	// the substrate's own configuration. For direct rw, typically a
+	// the store's own configuration. For direct rw, typically a
 	// no-op.
 	Commit(context.Context, *CommitRequest) (*CommitResponse, error)
 	// Abandon signals that the consumer of the claim failed. The
-	// substrate decides what to do with its own state per its own
+	// store decides what to do with its own state per its own
 	// configuration. Not called for read-only claims and not called by
 	// the orphan reaper in v3 default behavior (per spec §7.5).
 	Abandon(context.Context, *AbandonRequest) (*AbandonResponse, error)
 	// Release tears down store-internal read state created at Open.
-	// Fires only when the substrate registered such state at Open; for
+	// Fires only when the store registered such state at Open; for
 	// direct stores, typically a no-op.
 	Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error)
 	mustEmbedUnimplementedStoreServiceServer()
@@ -187,6 +269,24 @@ type UnimplementedStoreServiceServer struct{}
 
 func (UnimplementedStoreServiceServer) Capabilities(context.Context, *CapabilitiesRequest) (*CapabilitiesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
+}
+func (UnimplementedStoreServiceServer) OnTemplateRegistered(context.Context, *OnTemplateRegisteredRequest) (*OnTemplateRegisteredResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnTemplateRegistered not implemented")
+}
+func (UnimplementedStoreServiceServer) OnTemplateDeployed(context.Context, *OnTemplateDeployedRequest) (*OnTemplateDeployedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnTemplateDeployed not implemented")
+}
+func (UnimplementedStoreServiceServer) OnTemplateUndeployed(context.Context, *OnTemplateUndeployedRequest) (*OnTemplateUndeployedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnTemplateUndeployed not implemented")
+}
+func (UnimplementedStoreServiceServer) OnTemplateDeregistered(context.Context, *OnTemplateDeregisteredRequest) (*OnTemplateDeregisteredResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnTemplateDeregistered not implemented")
+}
+func (UnimplementedStoreServiceServer) OnInstanceCreated(context.Context, *OnInstanceCreatedRequest) (*OnInstanceCreatedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnInstanceCreated not implemented")
+}
+func (UnimplementedStoreServiceServer) OnInstanceTerminated(context.Context, *OnInstanceTerminatedRequest) (*OnInstanceTerminatedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnInstanceTerminated not implemented")
 }
 func (UnimplementedStoreServiceServer) Open(context.Context, *OpenRequest) (*OpenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Open not implemented")
@@ -235,6 +335,114 @@ func _StoreService_Capabilities_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StoreServiceServer).Capabilities(ctx, req.(*CapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnTemplateRegistered_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnTemplateRegisteredRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnTemplateRegistered(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnTemplateRegistered_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnTemplateRegistered(ctx, req.(*OnTemplateRegisteredRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnTemplateDeployed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnTemplateDeployedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnTemplateDeployed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnTemplateDeployed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnTemplateDeployed(ctx, req.(*OnTemplateDeployedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnTemplateUndeployed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnTemplateUndeployedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnTemplateUndeployed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnTemplateUndeployed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnTemplateUndeployed(ctx, req.(*OnTemplateUndeployedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnTemplateDeregistered_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnTemplateDeregisteredRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnTemplateDeregistered(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnTemplateDeregistered_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnTemplateDeregistered(ctx, req.(*OnTemplateDeregisteredRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnInstanceCreated_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnInstanceCreatedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnInstanceCreated(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnInstanceCreated_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnInstanceCreated(ctx, req.(*OnInstanceCreatedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StoreService_OnInstanceTerminated_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnInstanceTerminatedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StoreServiceServer).OnInstanceTerminated(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StoreService_OnInstanceTerminated_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StoreServiceServer).OnInstanceTerminated(ctx, req.(*OnInstanceTerminatedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -321,6 +529,30 @@ var StoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Capabilities",
 			Handler:    _StoreService_Capabilities_Handler,
+		},
+		{
+			MethodName: "OnTemplateRegistered",
+			Handler:    _StoreService_OnTemplateRegistered_Handler,
+		},
+		{
+			MethodName: "OnTemplateDeployed",
+			Handler:    _StoreService_OnTemplateDeployed_Handler,
+		},
+		{
+			MethodName: "OnTemplateUndeployed",
+			Handler:    _StoreService_OnTemplateUndeployed_Handler,
+		},
+		{
+			MethodName: "OnTemplateDeregistered",
+			Handler:    _StoreService_OnTemplateDeregistered_Handler,
+		},
+		{
+			MethodName: "OnInstanceCreated",
+			Handler:    _StoreService_OnInstanceCreated_Handler,
+		},
+		{
+			MethodName: "OnInstanceTerminated",
+			Handler:    _StoreService_OnInstanceTerminated_Handler,
 		},
 		{
 			MethodName: "Open",

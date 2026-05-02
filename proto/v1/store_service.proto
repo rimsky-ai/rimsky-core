@@ -32,6 +32,15 @@ service StoreService {
   // called on the runtime path.
   rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
 
+  // Lifecycle events. Every store-service implements all six; stores that
+  // don't care return success immediately. Per spec §4.1 / §5.
+  rpc OnTemplateRegistered(OnTemplateRegisteredRequest)     returns (OnTemplateRegisteredResponse);
+  rpc OnTemplateDeployed(OnTemplateDeployedRequest)         returns (OnTemplateDeployedResponse);
+  rpc OnTemplateUndeployed(OnTemplateUndeployedRequest)     returns (OnTemplateUndeployedResponse);
+  rpc OnTemplateDeregistered(OnTemplateDeregisteredRequest) returns (OnTemplateDeregisteredResponse);
+  rpc OnInstanceCreated(OnInstanceCreatedRequest)           returns (OnInstanceCreatedResponse);
+  rpc OnInstanceTerminated(OnInstanceTerminatedRequest)     returns (OnInstanceTerminatedResponse);
+
   // Open creates whatever store-internal state the (intent,
   // write_semantics) combination requires and returns the
   // store-supplied address the executor will use on the data path.
@@ -63,7 +72,7 @@ service StoreService {
 // Single-field shape in v3; forward-compat for additional fields.
 message CapabilityStruct {
   // write_semantics is one of "direct" | "staged_blocking" |
-  // "staged_async". Operator-declared in stores.yml; rimsky validates
+  // "staged_async". Operator-declared in rimsky.yml; rimsky validates
   // strict equality against this value at startup.
   string write_semantics = 1;
 }
@@ -76,12 +85,18 @@ message CapabilitiesResponse {
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
 // claim spec. selector is post-substitution; the store parses it.
+// template_id and instance_id form the per-spec §4.2 scope envelope:
+// opaque to rimsky, populated from the dispatch row's instance →
+// template lookup, available to the store-service for namespace
+// routing or trace correlation.
 message OpenRequest {
   string claim_id = 1;
   string store_name = 2;
   string selector = 3;
   string intent = 4;  // "r" | "rw"
   string alias = 5;   // template-side identifier; store ignores
+  string template_id = 6;  // content hash; opaque to rimsky.
+  string instance_id = 7;  // instance UUID; opaque to rimsky.
 }
 
 // OpenResponse signals acquisition outcome. Stores that always
@@ -133,3 +148,27 @@ message ReleaseRequest {
 }
 
 message ReleaseResponse {}
+
+// Template-scope lifecycle events. template_id is the content hash
+// ("sha256-<64-hex>"), opaque to rimsky.
+message OnTemplateRegisteredRequest    { string template_id = 1; }
+message OnTemplateRegisteredResponse   {}
+message OnTemplateDeployedRequest      { string template_id = 1; }
+message OnTemplateDeployedResponse     {}
+message OnTemplateUndeployedRequest    { string template_id = 1; }
+message OnTemplateUndeployedResponse   {}
+message OnTemplateDeregisteredRequest  { string template_id = 1; }
+message OnTemplateDeregisteredResponse {}
+
+// Instance-scope lifecycle events. instance_id is the rimsky-generated
+// instance UUID, opaque to rimsky.
+message OnInstanceCreatedRequest {
+  string template_id = 1;
+  string instance_id = 2;
+}
+message OnInstanceCreatedResponse {}
+message OnInstanceTerminatedRequest {
+  string template_id = 1;
+  string instance_id = 2;
+}
+message OnInstanceTerminatedResponse {}

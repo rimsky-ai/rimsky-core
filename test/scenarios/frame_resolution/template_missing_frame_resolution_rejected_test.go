@@ -25,8 +25,8 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	post := func(body map[string]any) (int, string) {
-		raw, err := json.Marshal(body)
+	post := func(spec map[string]any) (int, string) {
+		raw, err := json.Marshal(map[string]any{"spec": spec})
 		require.NoError(t, err)
 		resp, err := http.Post(h.ControlBase+"/templates", "application/json", bytes.NewReader(raw))
 		require.NoError(t, err)

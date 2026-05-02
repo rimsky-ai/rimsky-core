@@ -1,15 +1,16 @@
 // rimsky-scheduler is the env-var-driven entry point for the
 // scheduler process. Builds a typed config.SchedulerConfig from
-// environment variables, loads the stores config from
-// RIMSKY_STORES_CONFIG (per spec §6.1: name → endpoint + declared
-// capabilities), and calls config.StartScheduler.
+// environment variables, loads the unified deployment-shape config
+// from RIMSKY_CONFIG (stores + named_locks + executors per docs/specs/
+// 2026-05-01-control-plane-and-store-lifecycle-design.md §3.1), and
+// calls config.StartScheduler.
 //
 // Environment variables:
 //
 //	RIMSKY_DB_URL               required; Postgres DSN.
 //	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500.
 //	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000.
-//	RIMSKY_STORES_CONFIG        optional; default /etc/rimsky/stores.yml.
+//	RIMSKY_CONFIG               optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info).
 package main
 
@@ -31,9 +32,8 @@ import (
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
-// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is
-// unset.
-const defaultStoresConfigPath = "/etc/rimsky/stores.yml"
+// defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
+const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
 func main() {
 	dsn := os.Getenv("RIMSKY_DB_URL")
@@ -48,17 +48,17 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})))
 	log := shared.NewSlogLogger(slog.Default())
 
-	storesPath := os.Getenv("RIMSKY_STORES_CONFIG")
-	if storesPath == "" {
-		storesPath = defaultStoresConfigPath
+	configPath := os.Getenv("RIMSKY_CONFIG")
+	if configPath == "" {
+		configPath = defaultRimskyConfigPath
 	}
-	// The scheduler does not dial remote stores in v3 (the v2 visibility-
-	// timeout sweep is gone; the orphan reaper no longer fires
-	// Store.Abandon per spec §7.5). It still consumes named_locks for
-	// validation; ignore the stores block.
-	_, namedLocksCfg, err := config.LoadStoresConfigYAML(storesPath)
+	// All three rimsky processes dial stores at startup per spec §3.5 /
+	// §6.6. The scheduler does not call any of the four runtime verbs
+	// today, but the handshake guard keeps rimsky's three processes in
+	// lock-step on the operator-declared topology.
+	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
-		log.Error("load stores config", "error", err.Error(), "path", storesPath)
+		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
 		os.Exit(1)
 	}
 
@@ -80,7 +80,8 @@ func main() {
 		TickInterval:     time.Duration(tickMs) * time.Millisecond,
 		HeartbeatTimeout: time.Duration(heartbeatMs) * time.Millisecond,
 		Pool:             pool,
-		NamedLocks:       namedLocksCfg,
+		Stores:           rimskyCfg.Stores,
+		NamedLocks:       rimskyCfg.NamedLocks,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())

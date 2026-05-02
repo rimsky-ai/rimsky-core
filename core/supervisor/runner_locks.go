@@ -108,10 +108,12 @@ func buildLockSpecs(
 			return nil, err
 		}
 		out = append(out, store.ClaimSpec{
-			StoreName: sref.Name,
-			Selector:  selectorSub,
-			Intent:    store.Intent(sref.Intent),
-			Alias:     sref.AliasOf(),
+			StoreName:  sref.Name,
+			Selector:   selectorSub,
+			Intent:     store.Intent(sref.Intent),
+			Alias:      sref.AliasOf(),
+			TemplateID: instTemplateScope(inst),
+			InstanceID: instInstanceScope(inst),
 		})
 	}
 	return out, nil
@@ -135,7 +137,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *storage.N
 	if err != nil || inst == nil {
 		return nil
 	}
-	tmpl, err := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, err := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil || tmpl == nil {
 		return nil
 	}
@@ -224,12 +226,33 @@ func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) 
 	return out
 }
 
+// instTemplateScope returns the template-scope id sent to the store on
+// Open. Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-
+// design.md §4.2: the supervisor populates this from the dispatch row's
+// instance → template lookup. Returns the empty string when the
+// instance row is unavailable; the store treats empty as scope-absent.
+func instTemplateScope(inst *storage.InstanceRow) string {
+	if inst == nil {
+		return ""
+	}
+	return inst.TemplateHash
+}
+
+// instInstanceScope returns the instance-scope id (the rimsky-generated
+// instance UUID) sent to the store on Open.
+func instInstanceScope(inst *storage.InstanceRow) string {
+	if inst == nil {
+		return ""
+	}
+	return inst.ID.String()
+}
+
 // lookupTemplate fetches the template for an instance, or nil on miss.
 func lookupTemplate(ctx context.Context, args RunArgs, inst *storage.InstanceRow) *node.TemplateSpec {
 	if inst == nil {
 		return nil
 	}
-	tmpl, _ := args.Storage.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, _ := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if tmpl == nil {
 		return nil
 	}

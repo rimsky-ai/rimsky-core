@@ -17,7 +17,7 @@ import (
 // satisfies the rimsky-side store.Store interface.
 //
 // Endpoint may carry a "grpc://" prefix (the convention used in
-// stores.yml); the prefix is stripped before passing to grpc.NewClient.
+// rimsky.yml); the prefix is stripped before passing to grpc.NewClient.
 //
 // Insecure credentials are used by default. Per spec §15 (out of
 // scope) auth is deployment-layer concern (mTLS, service mesh, IAM)

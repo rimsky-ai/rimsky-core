@@ -1,4 +1,7 @@
-// InstanceStore — port of rimsky/src/storage/postgres/instance-store.ts.
+// InstanceStore — Postgres-backed storage.InstanceStore. Per docs/specs/
+// 2026-05-01-control-plane-and-store-lifecycle-design.md §2:
+// rimsky_instances binds to template_hash (TEXT) instead of template_id
+// (UUID); consumer_key renamed to instance_key (nullable).
 package postgres
 
 import (
@@ -17,14 +20,22 @@ import (
 	"github.com/fallguy/rimsky/core/storage"
 )
 
+// errInstanceIDRequired is returned by Create when in.ID is the zero UUID.
+// Callers must pass a pre-generated UUID (e.g. uuid.New()) so the row's
+// identity is established by the caller, not silently filled in by storage.
+var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
+
 type InstanceStore struct {
 	pool *pgxpool.Pool
 }
 
 var _ storage.InstanceStore = (*InstanceStore)(nil)
 
-const instanceCols = `id, template_id, consumer_key, params, created_at`
+const instanceCols = `id, template_hash, instance_key, params, created_at, terminated_at`
 
+// Create inserts a new rimsky_instances row. The caller supplies a
+// pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
+// instance_key) already exists.
 func (s *InstanceStore) Create(ctx context.Context, in storage.InstanceCreateInput, tx storage.Tx) (storage.InstanceRow, error) {
 	ex := q(tx, s.pool)
 	if in.Params == nil {
@@ -34,18 +45,22 @@ func (s *InstanceStore) Create(ctx context.Context, in storage.InstanceCreateInp
 	if err != nil {
 		return storage.InstanceRow{}, fmt.Errorf("instances.create: marshal params: %w", err)
 	}
+	if in.ID == (shared.UUID{}) {
+		return storage.InstanceRow{}, errInstanceIDRequired
+	}
+	id := in.ID
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_id, consumer_key, params)
-		 VALUES (gen_random_uuid(), $1, $2, $3)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
+		 VALUES ($1, $2, $3, $4)
 		 RETURNING `+instanceCols,
-		in.TemplateID, in.ConsumerKey, paramsBytes,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return storage.InstanceRow{}, shared.Wrap(shared.ErrConsumerKeyConflict,
-				"consumer_key already registered for template",
-				map[string]any{"template_id": in.TemplateID, "consumer_key": in.ConsumerKey})
+			return storage.InstanceRow{}, shared.Wrap(shared.ErrInstanceKeyConflict,
+				"instance_key already registered for template",
+				map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
 		}
 		return storage.InstanceRow{}, fmt.Errorf("instances.create: %w", err)
 	}
@@ -66,19 +81,19 @@ func (s *InstanceStore) Get(ctx context.Context, id shared.UUID, tx storage.Tx) 
 	return &out, nil
 }
 
-func (s *InstanceStore) GetByConsumerKey(ctx context.Context, templateID shared.UUID, consumerKey string, tx storage.Tx) (*storage.InstanceRow, error) {
+func (s *InstanceStore) GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx storage.Tx) (*storage.InstanceRow, error) {
 	ex := q(tx, s.pool)
 	row := ex.QueryRow(ctx,
 		`SELECT `+instanceCols+` FROM rimsky_instances
-		 WHERE template_id = $1 AND consumer_key = $2`,
-		templateID, consumerKey,
+		 WHERE template_hash = $1 AND instance_key = $2`,
+		templateHash, instanceKey,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("instances.getByConsumerKey: %w", err)
+		return nil, fmt.Errorf("instances.getByInstanceKey: %w", err)
 	}
 	return &out, nil
 }
@@ -102,20 +117,22 @@ func (s *InstanceStore) List(
 		}
 		cursor = &u
 	}
-	var tmpl *shared.UUID
-	if filter.TemplateID != (shared.UUID{}) {
-		tmpl = &filter.TemplateID
+	var tmplHash *string
+	if filter.TemplateHash != "" {
+		v := filter.TemplateHash
+		tmplHash = &v
 	}
-	var ckey *string
-	if filter.ConsumerKey != "" {
-		ckey = &filter.ConsumerKey
+	var ikey *string
+	if filter.InstanceKey != "" {
+		v := filter.InstanceKey
+		ikey = &v
 	}
 
 	rows, err := ex.Query(ctx,
 		`SELECT `+instanceCols+`
 		 FROM rimsky_instances
-		 WHERE ($1::uuid IS NULL OR template_id = $1)
-		   AND ($2::text IS NULL OR consumer_key = $2)
+		 WHERE ($1::text IS NULL OR template_hash = $1)
+		   AND ($2::text IS NULL OR instance_key = $2)
 		   AND (
 		     $3::uuid IS NULL
 		     OR (created_at, id) < (
@@ -125,7 +142,7 @@ func (s *InstanceStore) List(
 		   )
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT $4`,
-		tmpl, ckey, cursor, limit,
+		tmplHash, ikey, cursor, limit,
 	)
 	if err != nil {
 		return storage.PaginatedListResult[storage.InstanceRow]{}, fmt.Errorf("instances.list: %w", err)
@@ -159,6 +176,73 @@ func (s *InstanceStore) Delete(ctx context.Context, id shared.UUID, tx storage.T
 	return nil
 }
 
+// MarkTerminated sets terminated_at = now() if currently NULL. Idempotent
+// — repeated calls do not move the timestamp.
+func (s *InstanceStore) MarkTerminated(ctx context.Context, id shared.UUID, tx storage.Tx) error {
+	ex := q(tx, s.pool)
+	_, err := ex.Exec(ctx,
+		`UPDATE rimsky_instances SET terminated_at = now()
+		 WHERE id = $1 AND terminated_at IS NULL`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("instances.markTerminated: %w", err)
+	}
+	return nil
+}
+
+// CountActiveByTemplate returns the count of rimsky_instances rows
+// where template_hash = $1 AND terminated_at IS NULL.
+func (s *InstanceStore) CountActiveByTemplate(ctx context.Context, templateHash string, tx storage.Tx) (int, error) {
+	ex := q(tx, s.pool)
+	var n int
+	err := ex.QueryRow(ctx,
+		`SELECT COUNT(*) FROM rimsky_instances
+		 WHERE template_hash = $1 AND terminated_at IS NULL`,
+		templateHash,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("instances.countActiveByTemplate: %w", err)
+	}
+	return n, nil
+}
+
+// ListTerminatedWithLifecycleRows returns up to limit instances with
+// terminated_at IS NOT NULL that still have at least one matching
+// rimsky_store_lifecycle row at scope_kind='instance'.
+func (s *InstanceStore) ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx storage.Tx) ([]storage.InstanceRow, error) {
+	ex := q(tx, s.pool)
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := ex.Query(ctx,
+		`SELECT `+instanceCols+`
+		 FROM rimsky_instances i
+		 WHERE i.terminated_at IS NOT NULL
+		   AND EXISTS (
+		     SELECT 1 FROM rimsky_store_lifecycle l
+		     WHERE l.scope_kind = 'instance' AND l.scope_id = i.id::text
+		   )
+		 ORDER BY i.terminated_at ASC
+		 LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("instances.listTerminatedWithLifecycleRows: %w", err)
+	}
+	defer rows.Close()
+
+	var out []storage.InstanceRow
+	for rows.Next() {
+		r, err := scanInstanceRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ---- helpers ----
 
 // scannable is implemented by both pgx.Row and pgx.Rows.
@@ -168,13 +252,14 @@ type scannable interface {
 
 func scanInstance(sc scannable) (storage.InstanceRow, error) {
 	var (
-		id         shared.UUID
-		templateID shared.UUID
-		ckey       string
-		params     []byte
-		createdAt  time.Time
+		id           shared.UUID
+		templateHash string
+		instanceKey  *string
+		params       []byte
+		createdAt    time.Time
+		terminatedAt *time.Time
 	)
-	if err := sc.Scan(&id, &templateID, &ckey, &params, &createdAt); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &createdAt, &terminatedAt); err != nil {
 		return storage.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -184,7 +269,12 @@ func scanInstance(sc scannable) (storage.InstanceRow, error) {
 		}
 	}
 	return storage.InstanceRow{
-		ID: id, TemplateID: templateID, ConsumerKey: ckey, Params: m, CreatedAt: createdAt,
+		ID:           id,
+		TemplateHash: templateHash,
+		InstanceKey:  instanceKey,
+		Params:       m,
+		CreatedAt:    createdAt,
+		TerminatedAt: terminatedAt,
 	}, nil
 }
 
@@ -197,6 +287,15 @@ func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		return pgErr.Code == "23505"
+	}
+	return false
+}
+
+// isFKViolation checks pgconn.PgError SQLSTATE 23503.
+func isFKViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23503"
 	}
 	return false
 }

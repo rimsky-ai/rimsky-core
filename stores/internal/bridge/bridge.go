@@ -34,14 +34,23 @@ var errBadRequest = errors.New("bridge: bad request")
 // errUnknownVerb tags an unrecognised verb path; mapped to 404.
 var errUnknownVerb = errors.New("bridge: unknown verb")
 
-// Mount registers the five bridge routes on mux, dispatching each one
-// through the supplied genv1.StoreServiceServer.
+// Mount registers the bridge routes on mux, dispatching each one
+// through the supplied genv1.StoreServiceServer. The five runtime-verb
+// routes (capabilities/open/commit/abandon/release) plus six
+// lifecycle-event routes per docs/specs/2026-05-01-control-plane-and-
+// store-lifecycle-design.md §4.3.
 func Mount(mux *http.ServeMux, srv genv1.StoreServiceServer) {
 	mux.HandleFunc("/v1/capabilities", handler(srv, "capabilities"))
 	mux.HandleFunc("/v1/open", handler(srv, "open"))
 	mux.HandleFunc("/v1/commit", handler(srv, "commit"))
 	mux.HandleFunc("/v1/abandon", handler(srv, "abandon"))
 	mux.HandleFunc("/v1/release", handler(srv, "release"))
+	mux.HandleFunc("/v1/on_template_registered", handler(srv, "on_template_registered"))
+	mux.HandleFunc("/v1/on_template_deployed", handler(srv, "on_template_deployed"))
+	mux.HandleFunc("/v1/on_template_undeployed", handler(srv, "on_template_undeployed"))
+	mux.HandleFunc("/v1/on_template_deregistered", handler(srv, "on_template_deregistered"))
+	mux.HandleFunc("/v1/on_instance_created", handler(srv, "on_instance_created"))
+	mux.HandleFunc("/v1/on_instance_terminated", handler(srv, "on_instance_terminated"))
 }
 
 // handler builds an HTTP handler for a single verb. Per the spec §15
@@ -84,12 +93,22 @@ func dispatch(ctx context.Context, srv genv1.StoreServiceServer, verb string, bo
 		if err := decodeOptional(body, &req); err != nil {
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
+		// The proto types `intent` as a bare string; the wire schema
+		// permits only "r" or "rw" (per spec §4.2). Validate at the
+		// server-side bridge so a malformed client cannot reach a
+		// store-service's Open implementation with an unrecognized
+		// value.
+		if req.Intent != "r" && req.Intent != "rw" {
+			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.Intent)
+		}
 		return srv.Open(ctx, &genv1.OpenRequest{
-			ClaimId:   req.ClaimID,
-			StoreName: req.StoreName,
-			Selector:  req.Selector,
-			Intent:    req.Intent,
-			Alias:     req.Alias,
+			ClaimId:    req.ClaimID,
+			StoreName:  req.StoreName,
+			Selector:   req.Selector,
+			Intent:     req.Intent,
+			Alias:      req.Alias,
+			TemplateId: req.TemplateID,
+			InstanceId: req.InstanceID,
 		})
 	case "commit":
 		var req actionBody
@@ -115,17 +134,59 @@ func dispatch(ctx context.Context, srv genv1.StoreServiceServer, verb string, bo
 		return srv.Release(ctx, &genv1.ReleaseRequest{
 			ClaimId: req.ClaimID, Region: req.Region, Address: req.Address,
 		})
+	case "on_template_registered":
+		var req templateScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{TemplateId: req.TemplateID})
+	case "on_template_deployed":
+		var req templateScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{TemplateId: req.TemplateID})
+	case "on_template_undeployed":
+		var req templateScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{TemplateId: req.TemplateID})
+	case "on_template_deregistered":
+		var req templateScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{TemplateId: req.TemplateID})
+	case "on_instance_created":
+		var req instanceScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
+			TemplateId: req.TemplateID, InstanceId: req.InstanceID,
+		})
+	case "on_instance_terminated":
+		var req instanceScopeBody
+		if err := decodeOptional(body, &req); err != nil {
+			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
+		}
+		return srv.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
+			TemplateId: req.TemplateID, InstanceId: req.InstanceID,
+		})
 	}
 	return nil, errUnknownVerb
 }
 
 // openBody is the JSON shape decoded from POST /v1/open.
 type openBody struct {
-	ClaimID   string `json:"claim_id"`
-	StoreName string `json:"store_name"`
-	Selector  string `json:"selector"`
-	Intent    string `json:"intent"`
-	Alias     string `json:"alias"`
+	ClaimID    string `json:"claim_id"`
+	StoreName  string `json:"store_name"`
+	Selector   string `json:"selector"`
+	Intent     string `json:"intent"`
+	Alias      string `json:"alias"`
+	TemplateID string `json:"template_id"`
+	InstanceID string `json:"instance_id"`
 }
 
 // actionBody is the JSON shape decoded from POST /v1/{commit,abandon,
@@ -134,6 +195,19 @@ type actionBody struct {
 	ClaimID string `json:"claim_id"`
 	Region  []byte `json:"region"`
 	Address []byte `json:"address"`
+}
+
+// templateScopeBody is the JSON shape decoded from the four template-
+// scope lifecycle event endpoints.
+type templateScopeBody struct {
+	TemplateID string `json:"template_id"`
+}
+
+// instanceScopeBody is the JSON shape decoded from the two instance-
+// scope lifecycle event endpoints.
+type instanceScopeBody struct {
+	TemplateID string `json:"template_id"`
+	InstanceID string `json:"instance_id"`
 }
 
 // decodeOptional accepts either an empty body or a JSON object.

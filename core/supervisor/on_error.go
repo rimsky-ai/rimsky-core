@@ -204,7 +204,7 @@ func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.No
 	if inst == nil {
 		return nil, nil
 	}
-	tmpl, err := sb.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func requiredStoresForNode(ctx context.Context, sb storage.StorageBackend, nd *s
 	if err != nil || inst == nil {
 		return nil
 	}
-	tmpl, err := sb.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil || tmpl == nil {
 		return nil
 	}

@@ -56,5 +56,5 @@
 //
 // Per-store-service: direct | staged_blocking | staged_async. Baked
 // into the store-service's own config; rimsky validates strict equality
-// against the operator-declared block in stores.yml.
+// against the operator-declared block in rimsky.yml.
 package store

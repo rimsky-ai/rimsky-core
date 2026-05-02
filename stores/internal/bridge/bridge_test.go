@@ -183,3 +183,91 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 		}
 	}
 }
+
+// TestLifecycleBridge_TemplateScopeRoundTrip verifies that a POST to
+// /v1/on_template_deployed decodes the JSON body into the
+// corresponding proto request and forwards to the server.
+func TestLifecycleBridge_TemplateScopeRoundTrip(t *testing.T) {
+	var seen string
+	srv := &lifecycleFakeServer{
+		OnTemplateDeployedFunc: func(req *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
+			seen = req.GetTemplateId()
+			return &genv1.OnTemplateDeployedResponse{}, nil
+		},
+	}
+	mux := http.NewServeMux()
+	Mount(mux, srv)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	body := []byte(`{"template_id":"sha256-abc"}`)
+	resp, err := http.Post(ts.URL+"/v1/on_template_deployed", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, raw)
+	}
+	if seen != "sha256-abc" {
+		t.Fatalf("template_id mismatch: got %q want sha256-abc", seen)
+	}
+}
+
+// TestLifecycleBridge_InstanceScopeRoundTrip verifies that a POST to
+// /v1/on_instance_terminated decodes both template_id and instance_id.
+func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
+	var gotTemplate, gotInstance string
+	srv := &lifecycleFakeServer{
+		OnInstanceTerminatedFunc: func(req *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
+			gotTemplate = req.GetTemplateId()
+			gotInstance = req.GetInstanceId()
+			return &genv1.OnInstanceTerminatedResponse{}, nil
+		},
+	}
+	mux := http.NewServeMux()
+	Mount(mux, srv)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	body := []byte(`{"template_id":"sha256-xyz","instance_id":"00000000-0000-0000-0000-000000000abc"}`)
+	resp, err := http.Post(ts.URL+"/v1/on_instance_terminated", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status %d: %s", resp.StatusCode, raw)
+	}
+	if gotTemplate != "sha256-xyz" {
+		t.Fatalf("template_id mismatch: got %q", gotTemplate)
+	}
+	if gotInstance != "00000000-0000-0000-0000-000000000abc" {
+		t.Fatalf("instance_id mismatch: got %q", gotInstance)
+	}
+}
+
+// lifecycleFakeServer extends the bridge's test fakeServer pattern with
+// optional callbacks for the six lifecycle methods.
+type lifecycleFakeServer struct {
+	genv1.UnimplementedStoreServiceServer
+
+	OnTemplateDeployedFunc   func(*genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error)
+	OnInstanceTerminatedFunc func(*genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error)
+}
+
+func (f *lifecycleFakeServer) OnTemplateDeployed(_ context.Context, req *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
+	if f.OnTemplateDeployedFunc != nil {
+		return f.OnTemplateDeployedFunc(req)
+	}
+	return &genv1.OnTemplateDeployedResponse{}, nil
+}
+
+func (f *lifecycleFakeServer) OnInstanceTerminated(_ context.Context, req *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
+	if f.OnInstanceTerminatedFunc != nil {
+		return f.OnInstanceTerminatedFunc(req)
+	}
+	return &genv1.OnInstanceTerminatedResponse{}, nil
+}

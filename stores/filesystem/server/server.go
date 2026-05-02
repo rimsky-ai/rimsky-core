@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -81,8 +82,14 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 }
 
 // Open delegates to the store logic and packages the OpenOutcome
-// as the wire-form OpenResponse oneof.
+// as the wire-form OpenResponse oneof. Validates `intent` against
+// the wire schema (per spec §4.2: only "r" or "rw") before
+// dispatching, mirroring the HTTP bridge's gate so direct-gRPC
+// callers can't bypass the check.
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
+	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
+		return nil, fmt.Errorf("filesystem.Open: intent must be \"r\" or \"rw\", got %q", intent)
+	}
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector())
 	if err != nil {
 		return nil, err
@@ -123,4 +130,32 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 		return nil, err
 	}
 	return &genv1.ReleaseResponse{}, nil
+}
+
+// Lifecycle events: the filesystem store does not maintain template or
+// instance metadata; all six are no-ops returning success. Per
+// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
+
+func (s *Server) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.OnTemplateRegisteredResponse, error) {
+	return &genv1.OnTemplateRegisteredResponse{}, nil
+}
+
+func (s *Server) OnTemplateDeployed(_ context.Context, _ *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
+	return &genv1.OnTemplateDeployedResponse{}, nil
+}
+
+func (s *Server) OnTemplateUndeployed(_ context.Context, _ *genv1.OnTemplateUndeployedRequest) (*genv1.OnTemplateUndeployedResponse, error) {
+	return &genv1.OnTemplateUndeployedResponse{}, nil
+}
+
+func (s *Server) OnTemplateDeregistered(_ context.Context, _ *genv1.OnTemplateDeregisteredRequest) (*genv1.OnTemplateDeregisteredResponse, error) {
+	return &genv1.OnTemplateDeregisteredResponse{}, nil
+}
+
+func (s *Server) OnInstanceCreated(_ context.Context, _ *genv1.OnInstanceCreatedRequest) (*genv1.OnInstanceCreatedResponse, error) {
+	return &genv1.OnInstanceCreatedResponse{}, nil
+}
+
+func (s *Server) OnInstanceTerminated(_ context.Context, _ *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
+	return &genv1.OnInstanceTerminatedResponse{}, nil
 }

@@ -12,7 +12,7 @@
 //     spec §4.2 before Open is called and threaded through every
 //     subsequent verb for that claim's lifecycle.
 //   - region, address, payload are opaque bytes (json.RawMessage on the
-//     rimsky side; substrates choose their own canonical encoding).
+//     rimsky side; stores choose their own canonical encoding).
 //   - selector, intent, alias, store_name are strings.
 //
 // Errors flow as gRPC status codes per spec §5.3.
@@ -45,7 +45,7 @@ const (
 type CapabilityStruct struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// write_semantics is one of "direct" | "staged_blocking" |
-	// "staged_async". Operator-declared in stores.yml; rimsky validates
+	// "staged_async". Operator-declared in rimsky.yml; rimsky validates
 	// strict equality against this value at startup.
 	WriteSemantics string `protobuf:"bytes,1,opt,name=write_semantics,json=writeSemantics,proto3" json:"write_semantics,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -170,14 +170,20 @@ func (x *CapabilitiesResponse) GetCapabilities() *CapabilityStruct {
 }
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
-// claim spec. selector is post-substitution; the substrate parses it.
+// claim spec. selector is post-substitution; the store parses it.
+// template_id and instance_id form the per-spec §4.2 scope envelope:
+// opaque to rimsky, populated from the dispatch row's instance →
+// template lookup, available to the store-service for namespace
+// routing or trace correlation.
 type OpenRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	StoreName     string                 `protobuf:"bytes,2,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
 	Selector      string                 `protobuf:"bytes,3,opt,name=selector,proto3" json:"selector,omitempty"`
-	Intent        string                 `protobuf:"bytes,4,opt,name=intent,proto3" json:"intent,omitempty"` // "r" | "rw"
-	Alias         string                 `protobuf:"bytes,5,opt,name=alias,proto3" json:"alias,omitempty"`   // template-side identifier; store ignores
+	Intent        string                 `protobuf:"bytes,4,opt,name=intent,proto3" json:"intent,omitempty"`                           // "r" | "rw"
+	Alias         string                 `protobuf:"bytes,5,opt,name=alias,proto3" json:"alias,omitempty"`                             // template-side identifier; store ignores
+	TemplateId    string                 `protobuf:"bytes,6,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"` // content hash; opaque to rimsky.
+	InstanceId    string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // instance UUID; opaque to rimsky.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,10 +253,24 @@ func (x *OpenRequest) GetAlias() string {
 	return ""
 }
 
-// OpenResponse signals acquisition outcome. Substrates that always
-// have a claim to give return Acquired. Substrates that may have
+func (x *OpenRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+func (x *OpenRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+// OpenResponse signals acquisition outcome. Stores that always
+// have a claim to give return Acquired. Stores that may have
 // nothing right now (e.g. an empty items-table queue) return
-// Unavailable; rimsky retries on the next scheduler tick. Substrate-
+// Unavailable; rimsky retries on the next scheduler tick. Store-
 // side faults flow as gRPC error status codes, not as an Unavailable
 // response.
 type OpenResponse struct {
@@ -335,7 +355,7 @@ func (*OpenResponse_Acquired) isOpenResponse_Result() {}
 
 func (*OpenResponse_Unavailable) isOpenResponse_Result() {}
 
-// Acquired carries the substrate's acquisition outputs. Address,
+// Acquired carries the store's acquisition outputs. Address,
 // payload, and region are opaque bytes per blessed invariant 20;
 // any or all may be empty depending on the (write_semantics, intent)
 // combination.
@@ -724,6 +744,506 @@ func (*ReleaseResponse) Descriptor() ([]byte, []int) {
 	return file_store_service_proto_rawDescGZIP(), []int{12}
 }
 
+// Template-scope lifecycle events. template_id is the content hash
+// ("sha256-<64-hex>"), opaque to rimsky.
+type OnTemplateRegisteredRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateRegisteredRequest) Reset() {
+	*x = OnTemplateRegisteredRequest{}
+	mi := &file_store_service_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateRegisteredRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateRegisteredRequest) ProtoMessage() {}
+
+func (x *OnTemplateRegisteredRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateRegisteredRequest.ProtoReflect.Descriptor instead.
+func (*OnTemplateRegisteredRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *OnTemplateRegisteredRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+type OnTemplateRegisteredResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateRegisteredResponse) Reset() {
+	*x = OnTemplateRegisteredResponse{}
+	mi := &file_store_service_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateRegisteredResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateRegisteredResponse) ProtoMessage() {}
+
+func (x *OnTemplateRegisteredResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateRegisteredResponse.ProtoReflect.Descriptor instead.
+func (*OnTemplateRegisteredResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{14}
+}
+
+type OnTemplateDeployedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateDeployedRequest) Reset() {
+	*x = OnTemplateDeployedRequest{}
+	mi := &file_store_service_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateDeployedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateDeployedRequest) ProtoMessage() {}
+
+func (x *OnTemplateDeployedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateDeployedRequest.ProtoReflect.Descriptor instead.
+func (*OnTemplateDeployedRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *OnTemplateDeployedRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+type OnTemplateDeployedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateDeployedResponse) Reset() {
+	*x = OnTemplateDeployedResponse{}
+	mi := &file_store_service_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateDeployedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateDeployedResponse) ProtoMessage() {}
+
+func (x *OnTemplateDeployedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateDeployedResponse.ProtoReflect.Descriptor instead.
+func (*OnTemplateDeployedResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{16}
+}
+
+type OnTemplateUndeployedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateUndeployedRequest) Reset() {
+	*x = OnTemplateUndeployedRequest{}
+	mi := &file_store_service_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateUndeployedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateUndeployedRequest) ProtoMessage() {}
+
+func (x *OnTemplateUndeployedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateUndeployedRequest.ProtoReflect.Descriptor instead.
+func (*OnTemplateUndeployedRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *OnTemplateUndeployedRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+type OnTemplateUndeployedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateUndeployedResponse) Reset() {
+	*x = OnTemplateUndeployedResponse{}
+	mi := &file_store_service_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateUndeployedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateUndeployedResponse) ProtoMessage() {}
+
+func (x *OnTemplateUndeployedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateUndeployedResponse.ProtoReflect.Descriptor instead.
+func (*OnTemplateUndeployedResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{18}
+}
+
+type OnTemplateDeregisteredRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateDeregisteredRequest) Reset() {
+	*x = OnTemplateDeregisteredRequest{}
+	mi := &file_store_service_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateDeregisteredRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateDeregisteredRequest) ProtoMessage() {}
+
+func (x *OnTemplateDeregisteredRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateDeregisteredRequest.ProtoReflect.Descriptor instead.
+func (*OnTemplateDeregisteredRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *OnTemplateDeregisteredRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+type OnTemplateDeregisteredResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnTemplateDeregisteredResponse) Reset() {
+	*x = OnTemplateDeregisteredResponse{}
+	mi := &file_store_service_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnTemplateDeregisteredResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnTemplateDeregisteredResponse) ProtoMessage() {}
+
+func (x *OnTemplateDeregisteredResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnTemplateDeregisteredResponse.ProtoReflect.Descriptor instead.
+func (*OnTemplateDeregisteredResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{20}
+}
+
+// Instance-scope lifecycle events. instance_id is the rimsky-generated
+// instance UUID, opaque to rimsky.
+type OnInstanceCreatedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	InstanceId    string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnInstanceCreatedRequest) Reset() {
+	*x = OnInstanceCreatedRequest{}
+	mi := &file_store_service_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnInstanceCreatedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnInstanceCreatedRequest) ProtoMessage() {}
+
+func (x *OnInstanceCreatedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnInstanceCreatedRequest.ProtoReflect.Descriptor instead.
+func (*OnInstanceCreatedRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *OnInstanceCreatedRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+func (x *OnInstanceCreatedRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+type OnInstanceCreatedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnInstanceCreatedResponse) Reset() {
+	*x = OnInstanceCreatedResponse{}
+	mi := &file_store_service_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnInstanceCreatedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnInstanceCreatedResponse) ProtoMessage() {}
+
+func (x *OnInstanceCreatedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnInstanceCreatedResponse.ProtoReflect.Descriptor instead.
+func (*OnInstanceCreatedResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{22}
+}
+
+type OnInstanceTerminatedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TemplateId    string                 `protobuf:"bytes,1,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"`
+	InstanceId    string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnInstanceTerminatedRequest) Reset() {
+	*x = OnInstanceTerminatedRequest{}
+	mi := &file_store_service_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnInstanceTerminatedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnInstanceTerminatedRequest) ProtoMessage() {}
+
+func (x *OnInstanceTerminatedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnInstanceTerminatedRequest.ProtoReflect.Descriptor instead.
+func (*OnInstanceTerminatedRequest) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *OnInstanceTerminatedRequest) GetTemplateId() string {
+	if x != nil {
+		return x.TemplateId
+	}
+	return ""
+}
+
+func (x *OnInstanceTerminatedRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+type OnInstanceTerminatedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnInstanceTerminatedResponse) Reset() {
+	*x = OnInstanceTerminatedResponse{}
+	mi := &file_store_service_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnInstanceTerminatedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnInstanceTerminatedResponse) ProtoMessage() {}
+
+func (x *OnInstanceTerminatedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_store_service_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnInstanceTerminatedResponse.ProtoReflect.Descriptor instead.
+func (*OnInstanceTerminatedResponse) Descriptor() ([]byte, []int) {
+	return file_store_service_proto_rawDescGZIP(), []int{24}
+}
+
 var File_store_service_proto protoreflect.FileDescriptor
 
 const file_store_service_proto_rawDesc = "" +
@@ -733,14 +1253,18 @@ const file_store_service_proto_rawDesc = "" +
 	"\x0fwrite_semantics\x18\x01 \x01(\tR\x0ewriteSemantics\"\x15\n" +
 	"\x13CapabilitiesRequest\"W\n" +
 	"\x14CapabilitiesResponse\x12?\n" +
-	"\fcapabilities\x18\x01 \x01(\v2\x1b.rimsky.v1.CapabilityStructR\fcapabilities\"\x91\x01\n" +
+	"\fcapabilities\x18\x01 \x01(\v2\x1b.rimsky.v1.CapabilityStructR\fcapabilities\"\xd3\x01\n" +
 	"\vOpenRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1d\n" +
 	"\n" +
 	"store_name\x18\x02 \x01(\tR\tstoreName\x12\x1a\n" +
 	"\bselector\x18\x03 \x01(\tR\bselector\x12\x16\n" +
 	"\x06intent\x18\x04 \x01(\tR\x06intent\x12\x14\n" +
-	"\x05alias\x18\x05 \x01(\tR\x05alias\"\x87\x01\n" +
+	"\x05alias\x18\x05 \x01(\tR\x05alias\x12\x1f\n" +
+	"\vtemplate_id\x18\x06 \x01(\tR\n" +
+	"templateId\x12\x1f\n" +
+	"\vinstance_id\x18\a \x01(\tR\n" +
+	"instanceId\"\x87\x01\n" +
 	"\fOpenResponse\x121\n" +
 	"\bacquired\x18\x01 \x01(\v2\x13.rimsky.v1.AcquiredH\x00R\bacquired\x12:\n" +
 	"\vunavailable\x18\x02 \x01(\v2\x16.rimsky.v1.UnavailableH\x00R\vunavailableB\b\n" +
@@ -764,9 +1288,43 @@ const file_store_service_proto_rawDesc = "" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x16\n" +
 	"\x06region\x18\x02 \x01(\fR\x06region\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\fR\aaddress\"\x11\n" +
-	"\x0fReleaseResponse2\xdb\x02\n" +
+	"\x0fReleaseResponse\">\n" +
+	"\x1bOnTemplateRegisteredRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\"\x1e\n" +
+	"\x1cOnTemplateRegisteredResponse\"<\n" +
+	"\x19OnTemplateDeployedRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\"\x1c\n" +
+	"\x1aOnTemplateDeployedResponse\">\n" +
+	"\x1bOnTemplateUndeployedRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\"\x1e\n" +
+	"\x1cOnTemplateUndeployedResponse\"@\n" +
+	"\x1dOnTemplateDeregisteredRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\" \n" +
+	"\x1eOnTemplateDeregisteredResponse\"\\\n" +
+	"\x18OnInstanceCreatedRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\"\x1b\n" +
+	"\x19OnInstanceCreatedResponse\"_\n" +
+	"\x1bOnInstanceTerminatedRequest\x12\x1f\n" +
+	"\vtemplate_id\x18\x01 \x01(\tR\n" +
+	"templateId\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\"\x1e\n" +
+	"\x1cOnInstanceTerminatedResponse2\xc8\a\n" +
 	"\fStoreService\x12O\n" +
-	"\fCapabilities\x12\x1e.rimsky.v1.CapabilitiesRequest\x1a\x1f.rimsky.v1.CapabilitiesResponse\x127\n" +
+	"\fCapabilities\x12\x1e.rimsky.v1.CapabilitiesRequest\x1a\x1f.rimsky.v1.CapabilitiesResponse\x12g\n" +
+	"\x14OnTemplateRegistered\x12&.rimsky.v1.OnTemplateRegisteredRequest\x1a'.rimsky.v1.OnTemplateRegisteredResponse\x12a\n" +
+	"\x12OnTemplateDeployed\x12$.rimsky.v1.OnTemplateDeployedRequest\x1a%.rimsky.v1.OnTemplateDeployedResponse\x12g\n" +
+	"\x14OnTemplateUndeployed\x12&.rimsky.v1.OnTemplateUndeployedRequest\x1a'.rimsky.v1.OnTemplateUndeployedResponse\x12m\n" +
+	"\x16OnTemplateDeregistered\x12(.rimsky.v1.OnTemplateDeregisteredRequest\x1a).rimsky.v1.OnTemplateDeregisteredResponse\x12^\n" +
+	"\x11OnInstanceCreated\x12#.rimsky.v1.OnInstanceCreatedRequest\x1a$.rimsky.v1.OnInstanceCreatedResponse\x12g\n" +
+	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a'.rimsky.v1.OnInstanceTerminatedResponse\x127\n" +
 	"\x04Open\x12\x16.rimsky.v1.OpenRequest\x1a\x17.rimsky.v1.OpenResponse\x12=\n" +
 	"\x06Commit\x12\x18.rimsky.v1.CommitRequest\x1a\x19.rimsky.v1.CommitResponse\x12@\n" +
 	"\aAbandon\x12\x19.rimsky.v1.AbandonRequest\x1a\x1a.rimsky.v1.AbandonResponse\x12@\n" +
@@ -784,38 +1342,62 @@ func file_store_service_proto_rawDescGZIP() []byte {
 	return file_store_service_proto_rawDescData
 }
 
-var file_store_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_store_service_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_store_service_proto_goTypes = []any{
-	(*CapabilityStruct)(nil),     // 0: rimsky.v1.CapabilityStruct
-	(*CapabilitiesRequest)(nil),  // 1: rimsky.v1.CapabilitiesRequest
-	(*CapabilitiesResponse)(nil), // 2: rimsky.v1.CapabilitiesResponse
-	(*OpenRequest)(nil),          // 3: rimsky.v1.OpenRequest
-	(*OpenResponse)(nil),         // 4: rimsky.v1.OpenResponse
-	(*Acquired)(nil),             // 5: rimsky.v1.Acquired
-	(*Unavailable)(nil),          // 6: rimsky.v1.Unavailable
-	(*CommitRequest)(nil),        // 7: rimsky.v1.CommitRequest
-	(*CommitResponse)(nil),       // 8: rimsky.v1.CommitResponse
-	(*AbandonRequest)(nil),       // 9: rimsky.v1.AbandonRequest
-	(*AbandonResponse)(nil),      // 10: rimsky.v1.AbandonResponse
-	(*ReleaseRequest)(nil),       // 11: rimsky.v1.ReleaseRequest
-	(*ReleaseResponse)(nil),      // 12: rimsky.v1.ReleaseResponse
+	(*CapabilityStruct)(nil),               // 0: rimsky.v1.CapabilityStruct
+	(*CapabilitiesRequest)(nil),            // 1: rimsky.v1.CapabilitiesRequest
+	(*CapabilitiesResponse)(nil),           // 2: rimsky.v1.CapabilitiesResponse
+	(*OpenRequest)(nil),                    // 3: rimsky.v1.OpenRequest
+	(*OpenResponse)(nil),                   // 4: rimsky.v1.OpenResponse
+	(*Acquired)(nil),                       // 5: rimsky.v1.Acquired
+	(*Unavailable)(nil),                    // 6: rimsky.v1.Unavailable
+	(*CommitRequest)(nil),                  // 7: rimsky.v1.CommitRequest
+	(*CommitResponse)(nil),                 // 8: rimsky.v1.CommitResponse
+	(*AbandonRequest)(nil),                 // 9: rimsky.v1.AbandonRequest
+	(*AbandonResponse)(nil),                // 10: rimsky.v1.AbandonResponse
+	(*ReleaseRequest)(nil),                 // 11: rimsky.v1.ReleaseRequest
+	(*ReleaseResponse)(nil),                // 12: rimsky.v1.ReleaseResponse
+	(*OnTemplateRegisteredRequest)(nil),    // 13: rimsky.v1.OnTemplateRegisteredRequest
+	(*OnTemplateRegisteredResponse)(nil),   // 14: rimsky.v1.OnTemplateRegisteredResponse
+	(*OnTemplateDeployedRequest)(nil),      // 15: rimsky.v1.OnTemplateDeployedRequest
+	(*OnTemplateDeployedResponse)(nil),     // 16: rimsky.v1.OnTemplateDeployedResponse
+	(*OnTemplateUndeployedRequest)(nil),    // 17: rimsky.v1.OnTemplateUndeployedRequest
+	(*OnTemplateUndeployedResponse)(nil),   // 18: rimsky.v1.OnTemplateUndeployedResponse
+	(*OnTemplateDeregisteredRequest)(nil),  // 19: rimsky.v1.OnTemplateDeregisteredRequest
+	(*OnTemplateDeregisteredResponse)(nil), // 20: rimsky.v1.OnTemplateDeregisteredResponse
+	(*OnInstanceCreatedRequest)(nil),       // 21: rimsky.v1.OnInstanceCreatedRequest
+	(*OnInstanceCreatedResponse)(nil),      // 22: rimsky.v1.OnInstanceCreatedResponse
+	(*OnInstanceTerminatedRequest)(nil),    // 23: rimsky.v1.OnInstanceTerminatedRequest
+	(*OnInstanceTerminatedResponse)(nil),   // 24: rimsky.v1.OnInstanceTerminatedResponse
 }
 var file_store_service_proto_depIdxs = []int32{
 	0,  // 0: rimsky.v1.CapabilitiesResponse.capabilities:type_name -> rimsky.v1.CapabilityStruct
 	5,  // 1: rimsky.v1.OpenResponse.acquired:type_name -> rimsky.v1.Acquired
 	6,  // 2: rimsky.v1.OpenResponse.unavailable:type_name -> rimsky.v1.Unavailable
 	1,  // 3: rimsky.v1.StoreService.Capabilities:input_type -> rimsky.v1.CapabilitiesRequest
-	3,  // 4: rimsky.v1.StoreService.Open:input_type -> rimsky.v1.OpenRequest
-	7,  // 5: rimsky.v1.StoreService.Commit:input_type -> rimsky.v1.CommitRequest
-	9,  // 6: rimsky.v1.StoreService.Abandon:input_type -> rimsky.v1.AbandonRequest
-	11, // 7: rimsky.v1.StoreService.Release:input_type -> rimsky.v1.ReleaseRequest
-	2,  // 8: rimsky.v1.StoreService.Capabilities:output_type -> rimsky.v1.CapabilitiesResponse
-	4,  // 9: rimsky.v1.StoreService.Open:output_type -> rimsky.v1.OpenResponse
-	8,  // 10: rimsky.v1.StoreService.Commit:output_type -> rimsky.v1.CommitResponse
-	10, // 11: rimsky.v1.StoreService.Abandon:output_type -> rimsky.v1.AbandonResponse
-	12, // 12: rimsky.v1.StoreService.Release:output_type -> rimsky.v1.ReleaseResponse
-	8,  // [8:13] is the sub-list for method output_type
-	3,  // [3:8] is the sub-list for method input_type
+	13, // 4: rimsky.v1.StoreService.OnTemplateRegistered:input_type -> rimsky.v1.OnTemplateRegisteredRequest
+	15, // 5: rimsky.v1.StoreService.OnTemplateDeployed:input_type -> rimsky.v1.OnTemplateDeployedRequest
+	17, // 6: rimsky.v1.StoreService.OnTemplateUndeployed:input_type -> rimsky.v1.OnTemplateUndeployedRequest
+	19, // 7: rimsky.v1.StoreService.OnTemplateDeregistered:input_type -> rimsky.v1.OnTemplateDeregisteredRequest
+	21, // 8: rimsky.v1.StoreService.OnInstanceCreated:input_type -> rimsky.v1.OnInstanceCreatedRequest
+	23, // 9: rimsky.v1.StoreService.OnInstanceTerminated:input_type -> rimsky.v1.OnInstanceTerminatedRequest
+	3,  // 10: rimsky.v1.StoreService.Open:input_type -> rimsky.v1.OpenRequest
+	7,  // 11: rimsky.v1.StoreService.Commit:input_type -> rimsky.v1.CommitRequest
+	9,  // 12: rimsky.v1.StoreService.Abandon:input_type -> rimsky.v1.AbandonRequest
+	11, // 13: rimsky.v1.StoreService.Release:input_type -> rimsky.v1.ReleaseRequest
+	2,  // 14: rimsky.v1.StoreService.Capabilities:output_type -> rimsky.v1.CapabilitiesResponse
+	14, // 15: rimsky.v1.StoreService.OnTemplateRegistered:output_type -> rimsky.v1.OnTemplateRegisteredResponse
+	16, // 16: rimsky.v1.StoreService.OnTemplateDeployed:output_type -> rimsky.v1.OnTemplateDeployedResponse
+	18, // 17: rimsky.v1.StoreService.OnTemplateUndeployed:output_type -> rimsky.v1.OnTemplateUndeployedResponse
+	20, // 18: rimsky.v1.StoreService.OnTemplateDeregistered:output_type -> rimsky.v1.OnTemplateDeregisteredResponse
+	22, // 19: rimsky.v1.StoreService.OnInstanceCreated:output_type -> rimsky.v1.OnInstanceCreatedResponse
+	24, // 20: rimsky.v1.StoreService.OnInstanceTerminated:output_type -> rimsky.v1.OnInstanceTerminatedResponse
+	4,  // 21: rimsky.v1.StoreService.Open:output_type -> rimsky.v1.OpenResponse
+	8,  // 22: rimsky.v1.StoreService.Commit:output_type -> rimsky.v1.CommitResponse
+	10, // 23: rimsky.v1.StoreService.Abandon:output_type -> rimsky.v1.AbandonResponse
+	12, // 24: rimsky.v1.StoreService.Release:output_type -> rimsky.v1.ReleaseResponse
+	14, // [14:25] is the sub-list for method output_type
+	3,  // [3:14] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name
@@ -836,7 +1418,7 @@ func file_store_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_store_service_proto_rawDesc), len(file_store_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

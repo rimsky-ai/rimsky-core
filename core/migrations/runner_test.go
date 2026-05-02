@@ -19,7 +19,9 @@ import (
 var expectedTables = []string{
 	"rimsky_migrations",
 	"rimsky_templates",
+	"rimsky_template_tags",
 	"rimsky_instances",
+	"rimsky_store_lifecycle",
 	"rimsky_nodes",
 	"rimsky_supervisors",
 	"rimsky_dispatch",

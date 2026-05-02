@@ -105,9 +105,10 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 	require.Equal(t, count, resp.Inserted)
 }
 
-// deploySmokeTemplate POSTs the §11.5 four-node template to /templates and
-// returns the new template_id. The `model-budget` lock limit is set to 50
-// per §10 to keep executor parallelism unconstrained.
+// deploySmokeTemplate POSTs the §11.5 four-node template to /templates,
+// then transitions to deployed state, returning the new template hash.
+// The `model-budget` lock limit is set to 50 per §10 to keep executor
+// parallelism unconstrained.
 //
 // The §11.5 example carries a `quality_rules` entry with type
 // `must_match_regex`. v1 only ships `row_count_ratio` / `no_nulls` /
@@ -115,7 +116,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 // fixture omits the rule from the deployed template body so the
 // supervisor's per-commit evaluator does not error on an unregistered
 // type. The fixtures/template.yml file documents the spec'd rule alongside.
-func deploySmokeTemplate(t *testing.T, stack *SmokeStack) uuid.UUID {
+func deploySmokeTemplate(t *testing.T, stack *SmokeStack) string {
 	t.Helper()
 	status, raw := stack.PostJSON("/templates", smokeTemplateBody())
 	require.Equal(t, http.StatusCreated, status, "deploySmokeTemplate: %s", string(raw))
@@ -123,16 +124,23 @@ func deploySmokeTemplate(t *testing.T, stack *SmokeStack) uuid.UUID {
 		TemplateID string `json:"template_id"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &resp))
-	return stack.AssertUUID(resp.TemplateID)
+	hash := resp.TemplateID
+	require.NotEmpty(t, hash)
+	// Transition the freshly-registered template to 'deployed' so the
+	// /instances handler will accept it (per spec §1.4 / §2.2).
+	deployStatus, deployRaw := stack.PostJSON("/templates/"+hash+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus, "deploySmokeTemplate: deploy: %s", string(deployRaw))
+	return hash
 }
 
-// createSmokeInstance POSTs to /instances with consumer_key="smoke-1" and
-// returns the new instance_id.
-func createSmokeInstance(t *testing.T, stack *SmokeStack, templateID uuid.UUID) uuid.UUID {
+// createSmokeInstance POSTs to /instances with instance_key="smoke-1"
+// and returns the new instance_id.
+func createSmokeInstance(t *testing.T, stack *SmokeStack, templateHash string) uuid.UUID {
 	t.Helper()
+	instanceKey := "smoke-1"
 	status, raw := stack.PostJSON("/instances", map[string]any{
-		"template_id":  templateID.String(),
-		"consumer_key": "smoke-1",
+		"template":     templateHash,
+		"instance_key": instanceKey,
 		"params":       map[string]any{},
 	})
 	require.Equal(t, http.StatusCreated, status, "createSmokeInstance: %s", string(raw))
@@ -551,15 +559,17 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 // The model-budget lock limit is 50 (§10 requirement).
 func smokeTemplateBody() map[string]any {
 	return map[string]any{
-		"name":             "smoke-stores-redesign",
-		"version":          "1",
-		"frame_resolution": "serial_queue",
-		"frame_timeout_ms": 600000,
-		"nodes": []map[string]any{
-			claimTopicNode(),
-			scopeNode(),
-			draftNode(),
-			reviewNode(),
+		"spec": map[string]any{
+			"name":             "smoke-stores-redesign",
+			"version":          "1",
+			"frame_resolution": "serial_queue",
+			"frame_timeout_ms": 600000,
+			"nodes": []map[string]any{
+				claimTopicNode(),
+				scopeNode(),
+				draftNode(),
+				reviewNode(),
+			},
 		},
 	}
 }

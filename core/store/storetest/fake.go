@@ -4,9 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 
 	"github.com/fallguy/rimsky/core/store"
 )
+
+// fakeSequenceCounter is a process-global monotonic counter assigned
+// to every FakeCall across every Fake instance. Used by tests that
+// assert call ordering between two or more Fakes (e.g., that fan-out
+// dispatched alpha before beta regardless of input order).
+var fakeSequenceCounter atomic.Int64
+
+func nextFakeSequence() int {
+	return int(fakeSequenceCounter.Add(1))
+}
 
 // Fake is an in-memory store satisfying core/store.Store. Used by unit
 // tests that exercise rimsky-side logic in isolation. State is
@@ -40,12 +51,19 @@ type fakeState struct {
 // FakeCall records one verb invocation. Tests assert against the
 // Calls() slice to verify what fired.
 type FakeCall struct {
-	Verb     string
-	ClaimID  store.ClaimID
-	Selector string
-	Intent   store.Intent
-	Region   []byte
-	Address  []byte
+	Verb       string
+	ClaimID    store.ClaimID
+	Selector   string
+	Intent     store.Intent
+	Region     []byte
+	Address    []byte
+	TemplateID string // populated for lifecycle calls and Open
+	InstanceID string // populated for instance-scope lifecycle and Open
+	// Sequence is a process-global monotonic counter assigned at the
+	// moment the call was recorded. Use it to assert ordering across
+	// multiple Fake instances (e.g., that fan-out called alpha before
+	// beta regardless of input ordering).
+	Sequence int
 }
 
 // NewFake returns an empty Fake under name with the given capabilities.
@@ -81,10 +99,13 @@ func (f *Fake) Capabilities(_ context.Context) (store.Capabilities, error) {
 func (f *Fake) Open(_ context.Context, claimID store.ClaimID, spec store.ClaimSpec) (store.OpenOutcome, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
-		Verb:     "open",
-		ClaimID:  claimID,
-		Selector: spec.Selector,
-		Intent:   spec.Intent,
+		Verb:       "open",
+		ClaimID:    claimID,
+		Selector:   spec.Selector,
+		Intent:     spec.Intent,
+		TemplateID: spec.TemplateID,
+		InstanceID: spec.InstanceID,
+		Sequence:   nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	openFn := f.OpenFunc
@@ -120,6 +141,7 @@ func (f *Fake) Commit(_ context.Context, claimID store.ClaimID, region, address 
 	f.calls = append(f.calls, FakeCall{
 		Verb: "commit", ClaimID: claimID,
 		Region: cloneBytes(region), Address: cloneBytes(address),
+		Sequence: nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	f.mu.Unlock()
@@ -145,6 +167,7 @@ func (f *Fake) Abandon(_ context.Context, claimID store.ClaimID, region, address
 	f.calls = append(f.calls, FakeCall{
 		Verb: "abandon", ClaimID: claimID,
 		Region: cloneBytes(region), Address: cloneBytes(address),
+		Sequence: nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	f.mu.Unlock()
@@ -170,6 +193,7 @@ func (f *Fake) Release(_ context.Context, claimID store.ClaimID, region, address
 	f.calls = append(f.calls, FakeCall{
 		Verb: "release", ClaimID: claimID,
 		Region: cloneBytes(region), Address: cloneBytes(address),
+		Sequence: nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
 	f.mu.Unlock()
@@ -200,6 +224,52 @@ func (f *Fake) Reset() {
 	defer f.mu.Unlock()
 	f.calls = nil
 	f.state = make(map[store.ClaimID]fakeState)
+}
+
+// Lifecycle event methods. Each records a FakeCall and returns nil
+// unless ErrorFunc is set for the matching verb.
+
+func (f *Fake) OnTemplateRegistered(_ context.Context, templateID string) error {
+	return f.recordLifecycle("on_template_registered", templateID, "")
+}
+
+func (f *Fake) OnTemplateDeployed(_ context.Context, templateID string) error {
+	return f.recordLifecycle("on_template_deployed", templateID, "")
+}
+
+func (f *Fake) OnTemplateUndeployed(_ context.Context, templateID string) error {
+	return f.recordLifecycle("on_template_undeployed", templateID, "")
+}
+
+func (f *Fake) OnTemplateDeregistered(_ context.Context, templateID string) error {
+	return f.recordLifecycle("on_template_deregistered", templateID, "")
+}
+
+func (f *Fake) OnInstanceCreated(_ context.Context, templateID, instanceID string) error {
+	return f.recordLifecycle("on_instance_created", templateID, instanceID)
+}
+
+func (f *Fake) OnInstanceTerminated(_ context.Context, templateID, instanceID string) error {
+	return f.recordLifecycle("on_instance_terminated", templateID, instanceID)
+}
+
+func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, FakeCall{
+		Verb:       verb,
+		TemplateID: templateID,
+		InstanceID: instanceID,
+		Sequence:   nextFakeSequence(),
+	})
+	errFn := f.ErrorFunc
+	f.mu.Unlock()
+
+	if errFn != nil {
+		if err := errFn(verb, ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func cloneBytes(b []byte) []byte {

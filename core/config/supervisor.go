@@ -28,7 +28,7 @@ type SupervisorConfig struct {
 	HeartbeatInterval time.Duration
 	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
-	// Stores is the parsed `stores:` block from stores.yml: an
+	// Stores is the parsed `stores:` block from rimsky.yml: an
 	// endpoint URL plus declared capabilities per entry.
 	Stores RemoteStoresConfig
 	// NamedLocks is the operator-side named-lock config. Empty /

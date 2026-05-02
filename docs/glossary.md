@@ -172,7 +172,7 @@ the 2026-04-30 stores cleanup
   recognized selector form (e.g. `@review-queue`) and carries
   store-specific configuration (item path, ordering, default
   actions, visibility timeout, etc.). Store-internal — not part of
-  rimsky's `stores.yml`.
+  rimsky's `rimsky.yml`.
 
 - **`release_to_back` / `release_to_head`** — Per-policy disposition
   actions in pick-policy store-services' configs (e.g. the postgres
@@ -184,3 +184,61 @@ the 2026-04-30 stores cleanup
   `Store.Delete` wire verb that existed pre-2026-04-30 was removed
   by the cleanup; the action lives entirely inside the store's
   Commit / Abandon handlers.)
+
+---
+
+## Control-plane v1 vocabulary
+
+Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
+following terms supersede or refine the entries elsewhere in this glossary.
+
+- **Template**: a content-addressed bundle of node-defs, attribute schemas,
+  store/lock declarations, and frame-resolution config. The id is
+  `sha256-<64-hex>` over an RFC 8785 JCS-canonicalized spec. Re-registering
+  the same spec is a cheap no-op (idempotent on hash). Templates persist
+  through four lifecycle states: `registered → deployed → undeployed`,
+  with `deregistered` as the absent state.
+
+- **Instance**: a running execution of a template, identified by a rimsky-
+  generated UUID. Instances bind to a specific template content hash at
+  creation; tag movement does not migrate live instances. An instance's
+  `instance_key` (nullable) is a caller-supplied dedup key.
+
+- **Tag**: a movable alias from a string identifier to a template content
+  hash. Stored in `rimsky_template_tags`; created/moved via
+  `POST /v1/tags` and `PUT /v1/tags/{tag}`. Hash-shape strings (the
+  `sha256-<64-hex>` form) are rejected as tag identifiers so the
+  `tag_or_hash` resolution stays unambiguous.
+
+- **Deploy**: the state transition `registered → deployed` (or
+  `undeployed → deployed`). Required before any instance of the template
+  can be created. Triggers `OnTemplateDeployed` fan-out to every store
+  referenced by the template's nodes.
+
+- **Undeploy**: the state transition `deployed → undeployed`. Refused while
+  any active instances reference the template. Triggers
+  `OnTemplateUndeployed` fan-out.
+
+- **Register**: the act of inserting a template row in `registered` state.
+  The first observation of a given content hash; second registration of the
+  same spec is a cheap no-op.
+
+- **Deregister** (or "delete"): removal of the template row. Refused while
+  the row is `deployed` or any active instances reference it. Triggers
+  `OnTemplateDeregistered` fan-out before the row is deleted.
+
+- **Lifecycle event**: one of the six store-protocol RPCs fired at template
+  or instance state transitions: `OnTemplateRegistered`,
+  `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`,
+  `OnInstanceCreated`, `OnInstanceTerminated`. All stores implement all six;
+  stores that do not react just return `nil` from each method.
+
+- **Scope envelope**: the `(template_id, instance_id)` pair on
+  `OpenRequest`. Both fields are opaque strings rimsky never inspects;
+  populated from the dispatch row's instance → template lookup.
+
+- **Content hash**: the canonical SHA-256 of an RFC 8785 JCS-canonicalized
+  template spec, prefixed with `sha256-`. Serves as the template's identity
+  in the registry. Two semantically-identical specs (regardless of map
+  ordering, whitespace, or non-essential string-escape variations) produce
+  identical hashes.

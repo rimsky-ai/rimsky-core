@@ -7,6 +7,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -22,6 +24,14 @@ import (
 	"github.com/fallguy/rimsky/core/storage"
 )
 
+// fakeHash returns a deterministic "sha256-<64-hex>" string from the
+// supplied seed. Used by tests where the actual canonical hash is not
+// the focus.
+func fakeHash(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return "sha256-" + hex.EncodeToString(sum[:])
+}
+
 func newBackend(t *testing.T) (*PostgresStorageBackend, *pgxpool.Pool, func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -29,21 +39,36 @@ func newBackend(t *testing.T) (*PostgresStorageBackend, *pgxpool.Pool, func()) {
 	return New(pool), pool, teardown
 }
 
-func deployedTemplate(ctx context.Context, t *testing.T, b *PostgresStorageBackend, name, version string) storage.TemplateSummary {
+// registerTemplate inserts a template row in 'registered' state (ID
+// derived from name+version for deterministic test hashes) and returns
+// the TemplateRow. Tests that need a 'deployed' row should follow up
+// with sb.Templates().UpdateState(ctx, hash, TemplateStateDeployed, nil).
+func registerTemplate(ctx context.Context, t *testing.T, b *PostgresStorageBackend, name, version string) storage.TemplateRow {
 	t.Helper()
 	spec := nodepkg.TemplateSpec{
 		Name: name, Version: version, Description: "test",
 		Nodes: []nodepkg.TemplateNodeDef{},
 	}
-	sum, err := b.Templates().Deploy(ctx, spec, nil)
+	hash := fakeHash(name + ":" + version)
+	require.NoError(t, b.Templates().Insert(ctx, storage.TemplateInsertInput{
+		ID:    hash,
+		Spec:  spec,
+		State: storage.TemplateStateRegistered,
+	}, nil))
+	row, err := b.Templates().GetByHash(ctx, hash, nil)
 	require.NoError(t, err)
-	return sum
+	require.NotNil(t, row)
+	return *row
 }
 
-func createInstance(ctx context.Context, t *testing.T, b *PostgresStorageBackend, templateID shared.UUID, ck string) storage.InstanceRow {
+func createInstance(ctx context.Context, t *testing.T, b *PostgresStorageBackend, templateHash string, ck string) storage.InstanceRow {
 	t.Helper()
+	ckCopy := ck
 	inst, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: templateID, ConsumerKey: ck, Params: map[string]any{"k": "v"},
+		ID:           uuid.New(),
+		TemplateHash: templateHash,
+		InstanceKey:  &ckCopy,
+		Params:       map[string]any{"k": "v"},
 	}, nil)
 	require.NoError(t, err)
 	return inst
@@ -81,62 +106,218 @@ func TestTemplateStore(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	// Deploy + idempotent re-deploy.
-	sum1, err := b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
-		Name: "alpha", Version: "v1", Nodes: []nodepkg.TemplateNodeDef{},
-	}, nil)
-	require.NoError(t, err)
-	sum2, err := b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
-		Name: "alpha", Version: "v1", Nodes: []nodepkg.TemplateNodeDef{},
-	}, nil)
-	require.NoError(t, err)
-	require.Equal(t, sum1.ID, sum2.ID)
+	hash := fakeHash("alpha:v1")
+	spec := nodepkg.TemplateSpec{Name: "alpha", Version: "v1", Nodes: []nodepkg.TemplateNodeDef{}}
 
-	// Divergent re-deploy rejects with ErrTemplateInUse.
-	_, err = b.Templates().Deploy(ctx, nodepkg.TemplateSpec{
-		Name: "alpha", Version: "v1", Description: "changed",
-		Nodes: []nodepkg.TemplateNodeDef{},
+	// Insert + reject duplicate.
+	require.NoError(t, b.Templates().Insert(ctx, storage.TemplateInsertInput{
+		ID: hash, Spec: spec, State: storage.TemplateStateRegistered,
+	}, nil))
+	err := b.Templates().Insert(ctx, storage.TemplateInsertInput{
+		ID: hash, Spec: spec, State: storage.TemplateStateRegistered,
 	}, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, shared.ErrTemplateInUse)
 
-	// Get.
-	got, err := b.Templates().Get(ctx, sum1.ID, nil)
+	// GetByHash hit + miss.
+	got, err := b.Templates().GetByHash(ctx, hash, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	require.Equal(t, "alpha", got.Name)
-
-	// Get missing.
-	missing, err := b.Templates().Get(ctx, uuid.New(), nil)
+	require.Equal(t, "alpha", got.Spec.Name)
+	missing, err := b.Templates().GetByHash(ctx, fakeHash("missing"), nil)
 	require.NoError(t, err)
 	require.Nil(t, missing)
 
-	// List + filter + pagination.
-	deployedTemplate(ctx, t, b, "beta", "v1")
+	// UpdateState.
+	require.NoError(t, b.Templates().UpdateState(ctx, hash, storage.TemplateStateDeployed, nil))
+	deployed, err := b.Templates().GetByHash(ctx, hash, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.TemplateStateDeployed, deployed.State)
+
+	// List + state filter. "alpha" is in 'deployed' state above; insert
+	// "beta" in 'registered' so the deployed filter returns just alpha.
+	// Asserting on identity (not just count) prevents Issue 35-style
+	// false passes if the helper's default state ever changes.
+	registerTemplate(ctx, t, b, "beta", "v1")
 	listing, err := b.Templates().List(ctx, storage.TemplateListFilter{}, storage.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	require.Len(t, listing.Rows, 2)
-
-	named, err := b.Templates().List(ctx, storage.TemplateListFilter{Name: "beta"}, storage.ListPagination{Limit: 100}, nil)
+	stateFilter, err := b.Templates().List(ctx, storage.TemplateListFilter{State: storage.TemplateStateDeployed},
+		storage.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
-	require.Len(t, named.Rows, 1)
-	require.Equal(t, "beta", named.Rows[0].Name)
+	require.Len(t, stateFilter.Rows, 1)
+	require.Equal(t, hash, stateFilter.Rows[0].ID, "deployed filter must return only the explicitly-deployed row")
+	require.Equal(t, storage.TemplateStateDeployed, stateFilter.Rows[0].State)
 
-	// Delete empty template.
-	tombstone := deployedTemplate(ctx, t, b, "gamma", "v1")
-	require.NoError(t, b.Templates().Delete(ctx, tombstone.ID, nil))
+	// Delete empty (no tags, no instances).
+	tombstone := registerTemplate(ctx, t, b, "gamma", "v1")
+	require.NoError(t, b.Templates().DeleteByHash(ctx, tombstone.ID, nil))
 
-	// Delete missing template returns ErrTemplateNotFound.
-	err = b.Templates().Delete(ctx, uuid.New(), nil)
+	// Delete missing returns ErrTemplateNotFound.
+	err = b.Templates().DeleteByHash(ctx, fakeHash("missing"), nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, shared.ErrTemplateNotFound)
 
-	// Delete template with instance returns ErrTemplateInUse.
-	used := deployedTemplate(ctx, t, b, "delta", "v1")
+	// Delete template with instance returns ErrTemplateInUse (FK violation
+	// surfaced as our wrapped error).
+	used := registerTemplate(ctx, t, b, "delta", "v1")
 	createInstance(ctx, t, b, used.ID, "cons-1")
-	err = b.Templates().Delete(ctx, used.ID, nil)
+	err = b.Templates().DeleteByHash(ctx, used.ID, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, shared.ErrTemplateInUse)
+}
+
+// -------- Template tags --------
+
+func TestTemplateTagsStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, _, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	tpl := registerTemplate(ctx, t, b, "tagged", "v1")
+
+	// Upsert + Get.
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "latest", tpl.ID, nil))
+	row, err := b.TemplateTags().Get(ctx, "latest", nil)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, tpl.ID, row.TemplateID)
+
+	// Move tag (Upsert with same tag, different template).
+	other := registerTemplate(ctx, t, b, "tagged-other", "v1")
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "latest", other.ID, nil))
+	moved, err := b.TemplateTags().Get(ctx, "latest", nil)
+	require.NoError(t, err)
+	require.Equal(t, other.ID, moved.TemplateID)
+
+	// CountByTemplate + ListByTemplate.
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "second", other.ID, nil))
+	cnt, err := b.TemplateTags().CountByTemplate(ctx, other.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, cnt)
+
+	listing, err := b.TemplateTags().ListByTemplate(ctx, other.ID, nil)
+	require.NoError(t, err)
+	require.Len(t, listing, 2)
+
+	// Delete + idempotent re-delete.
+	deleted, err := b.TemplateTags().Delete(ctx, "latest", nil)
+	require.NoError(t, err)
+	require.True(t, deleted)
+	deleted, err = b.TemplateTags().Delete(ctx, "latest", nil)
+	require.NoError(t, err)
+	require.False(t, deleted)
+}
+
+// TestTemplateDelete_FKRefusals exercises the schema's ON DELETE
+// RESTRICT constraints: a template row with a tag pointing at it
+// cannot be deleted; a template row with an instance referencing it
+// cannot be deleted.
+func TestTemplateDelete_FKRefusals(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, pool, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	// With a tag.
+	tplA := registerTemplate(ctx, t, b, "fk-a", "v1")
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "fk-a-tag", tplA.ID, nil))
+	_, err := pool.Exec(ctx, `DELETE FROM rimsky_templates WHERE id = $1`, tplA.ID)
+	require.Error(t, err, "DELETE should be refused by FK")
+
+	// With an instance.
+	tplB := registerTemplate(ctx, t, b, "fk-b", "v1")
+	createInstance(ctx, t, b, tplB.ID, "fk-instance-1")
+	_, err = pool.Exec(ctx, `DELETE FROM rimsky_templates WHERE id = $1`, tplB.ID)
+	require.Error(t, err, "DELETE should be refused by FK")
+
+	// Tag delete does not cascade to template.
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "fk-c-1", tplA.ID, nil))
+	require.NoError(t, b.TemplateTags().Upsert(ctx, "fk-c-2", tplA.ID, nil))
+	_, err = b.TemplateTags().Delete(ctx, "fk-c-1", nil)
+	require.NoError(t, err)
+	stillThere, err := b.Templates().GetByHash(ctx, tplA.ID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, stillThere, "template must persist after a non-final tag delete")
+}
+
+// -------- Store lifecycle --------
+
+func TestStoreLifecycleStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b, pool, teardown := newBackend(t)
+	t.Cleanup(teardown)
+
+	tpl := registerTemplate(ctx, t, b, "lifecycle-test", "v1")
+
+	// Get on missing returns (nil, nil).
+	missing, err := b.StoreLifecycle().Get(ctx, "alpha",
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Nil(t, missing)
+
+	// Upsert + round-trip Get.
+	require.NoError(t, b.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+		StoreRegistrationName: "alpha",
+		ScopeKind:             storage.StoreLifecycleScopeTemplate,
+		ScopeID:               tpl.ID,
+		State:                 storage.StoreLifecycleStateRegistered,
+	}, nil))
+	got, err := b.StoreLifecycle().Get(ctx, "alpha",
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, storage.StoreLifecycleStateRegistered, got.State)
+
+	// Upsert moves state to deployed.
+	require.NoError(t, b.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+		StoreRegistrationName: "alpha",
+		ScopeKind:             storage.StoreLifecycleScopeTemplate,
+		ScopeID:               tpl.ID,
+		State:                 storage.StoreLifecycleStateDeployed,
+	}, nil))
+	got, err = b.StoreLifecycle().Get(ctx, "alpha",
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, storage.StoreLifecycleStateDeployed, got.State)
+
+	// Add another row at the same scope so ListByScope has > 1 entry,
+	// then verify both come back.
+	require.NoError(t, b.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+		StoreRegistrationName: "beta",
+		ScopeKind:             storage.StoreLifecycleScopeTemplate,
+		ScopeID:               tpl.ID,
+		State:                 storage.StoreLifecycleStateRegistered,
+	}, nil))
+	scopeRows, err := b.StoreLifecycle().ListByScope(ctx,
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Len(t, scopeRows, 2)
+
+	// Delete one row by (name, scope, scope_id).
+	require.NoError(t, b.StoreLifecycle().Delete(ctx, "alpha",
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil))
+	got, err = b.StoreLifecycle().Get(ctx, "alpha",
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Nil(t, got)
+
+	// DeleteByScope clears the remaining "beta" row.
+	require.NoError(t, b.StoreLifecycle().DeleteByScope(ctx,
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil))
+	scopeRows, err = b.StoreLifecycle().ListByScope(ctx,
+		storage.StoreLifecycleScopeTemplate, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Empty(t, scopeRows)
+
+	// Direct INSERT with an invalid state must fail the CHECK constraint.
+	_, err = pool.Exec(ctx, `
+        INSERT INTO rimsky_store_lifecycle (store_registration_name, scope_kind, scope_id, state)
+        VALUES ('gamma', 'template', $1, 'totally-not-a-valid-state')
+    `, tpl.ID)
+	require.Error(t, err, "CHECK (state IN (...)) must reject unknown state values")
 }
 
 // -------- Instances --------
@@ -147,40 +328,53 @@ func TestInstanceStore(t *testing.T) {
 	b, pool, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "alpha", "v1")
+	tpl := registerTemplate(ctx, t, b, "alpha", "v1")
 
 	// Create + duplicate.
 	inst := createInstance(ctx, t, b, tpl.ID, "ck-1")
 	require.NotEqual(t, shared.UUID{}, inst.ID)
 	require.Equal(t, "v", inst.Params["k"])
 
+	dupKey := "ck-1"
 	_, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tpl.ID, ConsumerKey: "ck-1", Params: map[string]any{},
+		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &dupKey, Params: map[string]any{},
 	}, nil)
 	require.Error(t, err)
-	require.ErrorIs(t, err, shared.ErrConsumerKeyConflict)
+	require.ErrorIs(t, err, shared.ErrInstanceKeyConflict)
 
-	// Get + GetByConsumerKey.
+	// Get + GetByInstanceKey.
 	got, err := b.Instances().Get(ctx, inst.ID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, inst.ID, got.ID)
 
-	byKey, err := b.Instances().GetByConsumerKey(ctx, tpl.ID, "ck-1", nil)
+	byKey, err := b.Instances().GetByInstanceKey(ctx, tpl.ID, "ck-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, byKey)
 	require.Equal(t, inst.ID, byKey.ID)
 
-	// GetByConsumerKey missing.
-	missing, err := b.Instances().GetByConsumerKey(ctx, tpl.ID, "nope", nil)
+	// GetByInstanceKey missing.
+	missing, err := b.Instances().GetByInstanceKey(ctx, tpl.ID, "nope", nil)
 	require.NoError(t, err)
 	require.Nil(t, missing)
 
 	// List filter.
 	_ = createInstance(ctx, t, b, tpl.ID, "ck-2")
-	list, err := b.Instances().List(ctx, storage.InstanceListFilter{TemplateID: tpl.ID}, storage.ListPagination{Limit: 100}, nil)
+	list, err := b.Instances().List(ctx, storage.InstanceListFilter{TemplateHash: tpl.ID}, storage.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	require.Len(t, list.Rows, 2)
+
+	// CountActiveByTemplate ignores terminated rows.
+	cnt, err := b.Instances().CountActiveByTemplate(ctx, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, cnt)
+
+	// MarkTerminated is idempotent and cuts the active count.
+	require.NoError(t, b.Instances().MarkTerminated(ctx, inst.ID, nil))
+	require.NoError(t, b.Instances().MarkTerminated(ctx, inst.ID, nil))
+	cnt, err = b.Instances().CountActiveByTemplate(ctx, tpl.ID, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, cnt)
 
 	// Delete cascades to nodes.
 	node := createNode(ctx, t, b, inst.ID, "exec")
@@ -199,7 +393,7 @@ func TestNodeStore(t *testing.T) {
 	b, pool, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "alpha", "v1")
+	tpl := registerTemplate(ctx, t, b, "alpha", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck-1")
 
 	// Pure cascade node: no executor, no deps -> ready.
@@ -344,7 +538,7 @@ func TestNodeStore_UpdateStateRejectsRunningToRunningUnderDispatchClaimed(t *tes
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "inv", "v1")
+	tpl := registerTemplate(ctx, t, b, "inv", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	n := createNode(ctx, t, b, inst.ID, "worker")
 
@@ -368,7 +562,7 @@ func TestEventStore(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "e", "v1")
+	tpl := registerTemplate(ctx, t, b, "e", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	n := createNode(ctx, t, b, inst.ID, "worker")
 
@@ -423,7 +617,7 @@ func TestScheduleStore(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "s", "v1")
+	tpl := registerTemplate(ctx, t, b, "s", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	n := createNode(ctx, t, b, inst.ID, "worker")
 
@@ -539,12 +733,13 @@ func TestTransaction_RollbackOnError(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "tx", "v1")
+	tpl := registerTemplate(ctx, t, b, "tx", "v1")
 
 	boom := errors.New("boom")
+	rollbackKey := "rollback"
 	err := b.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
 		_, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
-			TemplateID: tpl.ID, ConsumerKey: "rollback", Params: map[string]any{},
+			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &rollbackKey, Params: map[string]any{},
 		}, tx)
 		if err != nil {
 			return err
@@ -554,7 +749,7 @@ func TestTransaction_RollbackOnError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 
 	// Instance must not persist.
-	got, err := b.Instances().GetByConsumerKey(ctx, tpl.ID, "rollback", nil)
+	got, err := b.Instances().GetByInstanceKey(ctx, tpl.ID, "rollback", nil)
 	require.NoError(t, err)
 	require.Nil(t, got)
 }
@@ -567,7 +762,7 @@ func TestNodeAttributesStore(t *testing.T) {
 	b, _, teardown := newBackend(t)
 	t.Cleanup(teardown)
 
-	tpl := deployedTemplate(ctx, t, b, "attrs", "v1")
+	tpl := registerTemplate(ctx, t, b, "attrs", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	n := createNode(ctx, t, b, inst.ID, "worker")
 
@@ -639,7 +834,7 @@ func TestLockHoldersStore(t *testing.T) {
 		ID: "sup-B", AcceptedExecutors: []string{"exec"}, Concurrency: 1,
 	}, nil))
 
-	tpl := deployedTemplate(ctx, t, b, "locks", "v1")
+	tpl := registerTemplate(ctx, t, b, "locks", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	n1 := createNode(ctx, t, b, inst.ID, "worker")
 	n2 := createNode(ctx, t, b, inst.ID, "worker")
@@ -794,7 +989,7 @@ func TestClaimHoldersStore(t *testing.T) {
 		ID: "sup-A", AcceptedExecutors: []string{"worker"}, Concurrency: 1,
 	}, nil))
 
-	tpl := deployedTemplate(ctx, t, b, "ch", "v1")
+	tpl := registerTemplate(ctx, t, b, "ch", "v1")
 	inst := createInstance(ctx, t, b, tpl.ID, "ck")
 	acquirer := createNode(ctx, t, b, inst.ID, "worker")
 	terminalA := createNode(ctx, t, b, inst.ID, "worker")
@@ -900,7 +1095,7 @@ func TestClaimHoldersStore_CompleteByLockHolderAndNode(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 
-	tmpl := deployedTemplate(ctx, t, b, "complete-targeted", "1")
+	tmpl := registerTemplate(ctx, t, b, "complete-targeted", "1")
 	inst := createInstance(ctx, t, b, tmpl.ID, "ck-complete-targeted")
 	acquirer := createNode(ctx, t, b, inst.ID, "acq")
 	terminalA := createNode(ctx, t, b, inst.ID, "tA")
@@ -966,7 +1161,7 @@ func TestLockHoldersStore_FrameIDRoundTrip(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 
-	tmpl := deployedTemplate(ctx, t, b, "frame-id-roundtrip", "1")
+	tmpl := registerTemplate(ctx, t, b, "frame-id-roundtrip", "1")
 	inst := createInstance(ctx, t, b, tmpl.ID, "ck-frame-id-roundtrip")
 	n := createNode(ctx, t, b, inst.ID, "worker")
 

@@ -148,7 +148,7 @@ The scheduler and supervisor are independent processes. They communicate only th
 
 The control API has the same property: it never calls into scheduler or supervisor internals. It reads and writes shared state; the runtime subsystems observe those reads/writes through their own polling/query logic.
 
-The `store/` package declares the universal 4-verb `Store` interface; reference implementations live as standalone binaries under `stores/<kind>/` (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`). Stores are dialed at process startup from `stores.yml` over gRPC; the per-process `Registry` is a simple name → `Store` map populated at `main()` from the resolved remote clients. There is no shared `rimsky_stores` table and no in-process Factory pattern — each process's registry is independent runtime state.
+The `store/` package declares the universal 4-verb `Store` interface; reference implementations live as standalone binaries under `stores/<kind>/` (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`). Stores are dialed at process startup from the `stores:` block in `rimsky.yml` over gRPC; the per-process `Registry` is a simple name → `Store` map populated at `main()` from the resolved remote clients. There is no shared `rimsky_stores` table and no in-process Factory pattern — each process's registry is independent runtime state.
 
 The `attributes/` package owns all `{{...}}` substitution and JSON Schema validation for per-run node attributes. Executors never substitute; userdata is opaque to rimsky (blessed invariant 11). Validation gates run twice — at dispatch (after substitution) and at commit (after executor writeback).
 
@@ -339,7 +339,8 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error)
 
 // StartSupervisor starts a supervisor process. SupervisorID must be unique
 // across the deployment; Resolver maps executor names to endpoints+transports;
-// Stores is the per-process store registry built from stores.yml.
+// Stores is the per-process store registry built from the `stores:` block
+// in rimsky.yml.
 func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error)
 
 // StartControlAPI binds host:port (port=0 for OS-assigned) and starts serving.
@@ -351,11 +352,12 @@ Each handle exposes:
 - `Shutdown(ctx context.Context) error` — graceful shutdown with context timeout.
 - `Health() HealthReport` — current health status with subsystem details.
 
-Configuration structs:
+Configuration structs (per spec §6.1, the v3 stores cleanup, and the
+2026-05-01 control-plane design):
 
-- `SchedulerConfig` — Postgres URL, tick interval, heartbeat/orphan timeouts, advisory-lock key, `StoreFactories`, `Stores` map (for the visibility-timeout sweep), logger.
-- `SupervisorConfig` — `SupervisorID`, Postgres URL, concurrency limit, heartbeat interval, claim poll interval, `Resolver` for executor endpoints, `StoreFactories` and `Stores` map for the local store registry, callback host/port, logger.
-- `ControlAPIConfig` — Postgres URL, bind host/port, `StoreFactories` and `Stores` map, optional `Authenticator`, logger.
+- `SchedulerConfig` — Postgres URL, tick interval, heartbeat/orphan timeouts, advisory-lock key, `Stores RemoteStoresConfig` (one endpoint+capabilities entry per remote store-service), `NamedLocks store.NamedLocksConfig`, logger.
+- `SupervisorConfig` — `SupervisorID`, Postgres URL, concurrency limit, heartbeat interval, claim poll interval, `Resolver` for executor endpoints, `Stores RemoteStoresConfig`, `NamedLocks store.NamedLocksConfig`, callback host/port, logger.
+- `ControlAPIConfig` — Postgres URL, bind host/port, `Stores RemoteStoresConfig`, `NamedLocks store.NamedLocksConfig`, `Executors ExecutorsConfig` (declared executors validated at template registration), optional `Authenticator`, logger.
 
 Code locations: `core/config/scheduler.go`, `core/config/supervisor.go`, `core/config/controlapi.go`.
 
@@ -431,7 +433,7 @@ The end-state schema is defined in `core/migrations/001-initial.sql` (rewritten 
 
 - `rimsky_migrations` — migration bookkeeping.
 - `rimsky_templates` — stored templates with validated schema. The `spec` JSONB carries the post-cleanup template shape (`stores`, `locks`, `attributes`, `inherits`).
-- `rimsky_instances` — template instantiations (`template_id`, `consumer_key`, `params`).
+- `rimsky_instances` — template instantiations (`id`, `template_hash`, `instance_key`, `params`, `created_at`, `terminated_at`).
 - `rimsky_nodes` — per-instance nodes (state, metadata, executor name, schedule ref). `concurrency_tags` removed; concurrency control now lives in template `locks` declarations enforced via `rimsky_lock_holders`.
 - `rimsky_dispatch` — work queue; one row per outstanding dispatch. `executor_name` is nullable (native claim-only nodes); `required_stores TEXT[]` is denormalized at enqueue time for the pool-specialization predicate (each supervisor only claims dispatch rows whose required stores are a subset of its accepted-stores config); `last_heartbeat_at` drives the dispatch-claim sweep.
 - `rimsky_schedules` — cron + next-fire time for scheduled nodes.
@@ -560,3 +562,42 @@ All scenarios use `SystemClock` against testcontainers Postgres (real `NOW()` go
 - **Testing:** `testify/require` + `testcontainers-go`.
 
 Deliberate omissions: no Viper, no Cobra, no Zap, no Gin, no Echo. Lighter stack, fewer surprises.
+
+---
+
+## Control-plane v1 + store lifecycle protocol
+
+Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+
+**New packages:**
+
+- `core/canonical/` — RFC 8785 JCS canonicalization wrapper + `CanonicalSpecHash`.
+- `core/controlapi/lifecycle.go` — fan-out helper for the six lifecycle events.
+- `core/controlapi/tags.go` — tag CRUD HTTP handlers.
+- `core/controlapi/instance_terminator.go` — background worker that fires
+  `OnInstanceTerminated`.
+
+**New tables:**
+
+- `rimsky_template_tags` — movable tag → content hash aliases.
+- `rimsky_store_lifecycle` — per-(store, scope) bookkeeping for lifecycle
+  fan-out idempotency.
+
+**Schema changes:**
+
+- `rimsky_templates.id` is now TEXT (content hash) instead of UUID; gains
+  `state`, `registered_at`, `source` columns.
+- `rimsky_instances.template_id UUID` becomes `template_hash TEXT`;
+  `consumer_key` becomes `instance_key` (nullable); `terminated_at` added.
+
+**Protocol changes:**
+
+- Six new RPCs on `StoreService` (lifecycle events) — see
+  `proto/v1/store_service.proto`.
+- Two new fields on `OpenRequest`: `template_id`, `instance_id`.
+
+**Config changes:**
+
+- `RIMSKY_STORES_CONFIG` → `RIMSKY_CONFIG`. `rimsky.yml` is the unified
+  deployment-shape config (stores + named_locks + executors).
+- The supervisor's per-process YAML loses its `executors:` block.

@@ -29,15 +29,15 @@ spec:
               value: {{ .Values.scheduler.tickIntervalMs | quote }}
             - name: RIMSKY_HEARTBEAT_TIMEOUT_MS
               value: {{ .Values.scheduler.heartbeatTimeoutMs | quote }}
-            - name: RIMSKY_STORES_CONFIG
-              value: /etc/rimsky/stores.yml
+            - name: RIMSKY_CONFIG
+              value: /etc/rimsky/rimsky.yml
           volumeMounts:
-            - name: stores-config
+            - name: rimsky-config
               mountPath: /etc/rimsky
               readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
-        - name: stores-config
+        - name: rimsky-config
           configMap:
-            name: {{ include "rimsky.fullname" . }}-stores-config
+            name: {{ include "rimsky.fullname" . }}-rimsky-config

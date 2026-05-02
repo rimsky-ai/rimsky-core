@@ -25,7 +25,7 @@ type AppDeps struct {
 	Clock   shared.Clock
 	Logger  shared.Logger
 	Auth    Authenticator // may be nil → anonymous access
-	// Stores is the per-process *store.Registry built from stores.yml.
+	// Stores is the per-process *store.Registry built from rimsky.yml.
 	// Used by admin endpoints that target a specific named store and by
 	// the template-deploy validator. May be nil at construction time;
 	// admin handlers that need it return 503 when nil.
@@ -36,6 +36,23 @@ type AppDeps struct {
 	// named locks declared (templates referencing any will fail
 	// validation).
 	NamedLocks store.NamedLocksConfig
+	// Executors is the operator-side executors block from rimsky.yml
+	// (per docs/specs/2026-05-01-control-plane-and-store-lifecycle-
+	// design.md §3.1). Consulted at template registration to validate
+	// that every node-referenced executor name is declared. Empty / nil
+	// → templates referencing any executor will fail validation.
+	Executors map[string]ExecutorEntry
+}
+
+// ExecutorEntry mirrors core/config.ExecutorEntry but lives in the
+// controlapi package so the package compiles without the cyclic
+// import (controlapi → config). The wiring helper at AppDeps
+// construction time (config.StartControlAPI) populates this from the
+// parsed config struct.
+type ExecutorEntry struct {
+	Transport string
+	Endpoint  string
+	TLS       string
 }
 
 // NewApp builds the full chi router with all registered routes + middleware.
@@ -68,6 +85,7 @@ func NewApp(deps AppDeps) http.Handler {
 
 	// Route groups — sibling files register each group.
 	registerTemplatesRoutes(r, deps)
+	registerTagsRoutes(r, deps)
 	registerInstancesRoutes(r, deps)
 	registerNodesRoutes(r, deps)
 	registerEventsRoutes(r, deps)
@@ -124,7 +142,7 @@ func jsonMarshalStrict(v any) ([]byte, error) {
 
 // writeError translates rimsky sentinels to status codes, returning a JSON
 // {"error": "<msg>"} body. Sentinels: ErrTemplateNotFound/ErrInstanceNotFound/
-// ErrNodeNotFound → 404; ErrConsumerKeyConflict/ErrTemplateInUse → 409;
+// ErrNodeNotFound → 404; ErrInstanceKeyConflict/ErrTemplateInUse → 409;
 // ErrTemplateValidation → 400; everything else → 500.
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
@@ -133,7 +151,7 @@ func writeError(w http.ResponseWriter, err error) {
 		errorsIs(err, shared.ErrInstanceNotFound),
 		errorsIs(err, shared.ErrNodeNotFound):
 		status = http.StatusNotFound
-	case errorsIs(err, shared.ErrConsumerKeyConflict),
+	case errorsIs(err, shared.ErrInstanceKeyConflict),
 		errorsIs(err, shared.ErrTemplateInUse):
 		status = http.StatusConflict
 	case errorsIs(err, shared.ErrTemplateValidation):

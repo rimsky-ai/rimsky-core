@@ -1,17 +1,17 @@
 // rimsky-control-api is the env-var-driven entry point for the control
 // API HTTP server. Reads RIMSKY_DB_URL, RIMSKY_CONTROL_API_HOST,
-// RIMSKY_CONTROL_API_PORT, loads the stores config from
-// RIMSKY_STORES_CONFIG (per spec §6.1: name → endpoint + declared
-// capabilities), and calls config.StartControlAPI which dials each
-// remote store-service.
+// RIMSKY_CONTROL_API_PORT, loads the unified deployment-shape config
+// from RIMSKY_CONFIG (stores + named_locks + executors per docs/specs/
+// 2026-05-01-control-plane-and-store-lifecycle-design.md §3.1), and
+// calls config.StartControlAPI which dials each remote store-service.
 //
 // Environment variables:
 //
 //	RIMSKY_DB_URL            required; Postgres DSN for rimsky bookkeeping.
 //	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
 //	RIMSKY_CONTROL_API_PORT  optional; default 8080 (0 = OS-assigned).
-//	RIMSKY_STORES_CONFIG     optional; path to stores.yml.
-//	                         default /etc/rimsky/stores.yml.
+//	RIMSKY_CONFIG            optional; path to rimsky.yml.
+//	                         default /etc/rimsky/rimsky.yml.
 //	RIMSKY_LOG_LEVEL         optional; debug|info|warn|error (default info).
 package main
 
@@ -33,9 +33,8 @@ import (
 	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
-// defaultStoresConfigPath is the path used when RIMSKY_STORES_CONFIG is
-// unset.
-const defaultStoresConfigPath = "/etc/rimsky/stores.yml"
+// defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
+const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
 func main() {
 	dsn := os.Getenv("RIMSKY_DB_URL")
@@ -56,13 +55,13 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})))
 	log := shared.NewSlogLogger(slog.Default())
 
-	storesPath := os.Getenv("RIMSKY_STORES_CONFIG")
-	if storesPath == "" {
-		storesPath = defaultStoresConfigPath
+	configPath := os.Getenv("RIMSKY_CONFIG")
+	if configPath == "" {
+		configPath = defaultRimskyConfigPath
 	}
-	storesCfg, namedLocksCfg, err := config.LoadStoresConfigYAML(storesPath)
+	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
-		log.Error("load stores config", "error", err.Error(), "path", storesPath)
+		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
 		os.Exit(1)
 	}
 
@@ -83,8 +82,9 @@ func main() {
 		Logger:     log,
 		Host:       host,
 		Port:       port,
-		Stores:     storesCfg,
-		NamedLocks: namedLocksCfg,
+		Stores:     rimskyCfg.Stores,
+		NamedLocks: rimskyCfg.NamedLocks,
+		Executors:  rimskyCfg.Executors,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

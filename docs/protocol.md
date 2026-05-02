@@ -733,3 +733,63 @@ A conformant executor:
 ### 12.4 Supervisor-internal: `frame_id`
 
 The supervisor associates each dispatch with a `frame_id` per the frame-resolution design (`docs/specs/2026-04-26-frame-resolution-design.md`). This identifier is supervisor-internal — it is not transmitted in the executor protocol. Executors do not need to be aware of frames; the wire contract above is unchanged by the frame-resolution spec.
+
+---
+
+## 13. Store-service lifecycle protocol (control-plane v1)
+
+Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
+store-service protocol (`proto/v1/store_service.proto`) gains six lifecycle
+event RPCs alongside the existing 4 runtime verbs (`Open` / `Commit` /
+`Abandon` / `Release`) and the `Capabilities` startup handshake. Every
+store-service implements all six; stores that do not need to react to a
+particular event return success immediately (just return `nil` from each
+method on the rimsky-side `Store` interface).
+
+### 13.1 RPCs
+
+- `OnTemplateRegistered(template_id)` — fired when a template row enters the
+  registry (state `registered`).
+- `OnTemplateDeployed(template_id)` — fired on `registered → deployed` or
+  `undeployed → deployed`.
+- `OnTemplateUndeployed(template_id)` — fired on `deployed → undeployed`.
+- `OnTemplateDeregistered(template_id)` — fired before the template row is
+  deleted.
+- `OnInstanceCreated(template_id, instance_id)` — fired when an instance is
+  successfully created (post-tx, before the response returns).
+- `OnInstanceTerminated(template_id, instance_id)` — fired by the control-api
+  background terminator after `rimsky_instances.terminated_at` is set.
+
+`template_id` is the content hash (`sha256-<64-hex>`); both fields are opaque
+to rimsky.
+
+### 13.2 Idempotency
+
+Every method must be safe to call twice with the same scope IDs — observable
+state after the second call must equal observable state after the first. Rimsky
+tracks per-(store, scope) bookkeeping in `rimsky_store_lifecycle` and skips
+events that have already been acknowledged at the target state.
+
+### 13.3 HTTP+JSON bridge paths
+
+Each lifecycle RPC has a corresponding bridge endpoint following the existing
+`/v1/<verb>` convention:
+
+- `POST /v1/on_template_registered`    body: `{"template_id": "..."}`.
+- `POST /v1/on_template_deployed`      body: `{"template_id": "..."}`.
+- `POST /v1/on_template_undeployed`    body: `{"template_id": "..."}`.
+- `POST /v1/on_template_deregistered`  body: `{"template_id": "..."}`.
+- `POST /v1/on_instance_created`       body: `{"template_id": "...", "instance_id": "..."}`.
+- `POST /v1/on_instance_terminated`    body: `{"template_id": "...", "instance_id": "..."}`.
+
+### 13.4 `OpenRequest` scope envelope
+
+`OpenRequest` carries two new fields populated from the dispatch row's
+instance → template lookup:
+
+- `template_id` (string): the content hash.
+- `instance_id` (string): the rimsky-generated instance UUID.
+
+Both are rimsky-inert per spec §4.2 (the auth-blind / project-agnostic
+philosophy). Stores that route by namespace can use them for routing or
+trace correlation; stores that do not care can ignore them.

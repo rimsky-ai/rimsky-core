@@ -214,6 +214,42 @@ func TestRunTick_ReapStuckFrame(t *testing.T) {
 	require.Equal(t, "failed", nState)
 }
 
+// TestRunTick_ReapStuckFrame_TerminatesInstance pins the
+// terminated_at write inside reapOneStuckFrame: when the only frame
+// for an instance is wedged and gets reaped, the instance row's
+// terminated_at must be populated so the OnInstanceTerminated
+// fan-out can fire downstream. Without this set, the instance
+// would stay un-terminated forever and the lifecycle event would
+// leak.
+func TestRunTick_ReapStuckFrame_TerminatesInstance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, teardown := pgtest.StartPostgres(ctx, t)
+	t.Cleanup(teardown)
+
+	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "serial_queue")
+	src := uuid.New()
+	stuckStart := time.Now().Add(-11 * time.Minute)
+	frameID := seedFrameRow(t, ctx, pool, instanceID, "serial_queue", "running",
+		[]uuid.UUID{src}, &stuckStart, 600000)
+	seedNode(t, ctx, pool, instanceID, src, "stale", &frameID)
+
+	require.NoError(t, frame.RunTick(ctx, pool, quietLogger()))
+
+	var frameState string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, frameID).Scan(&frameState))
+	require.Equal(t, "failed", frameState)
+
+	var terminatedAt *time.Time
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, instanceID,
+	).Scan(&terminatedAt))
+	require.NotNil(t, terminatedAt,
+		"reaping the only stuck frame must set rimsky_instances.terminated_at so the lifecycle terminate fan-out fires")
+}
+
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

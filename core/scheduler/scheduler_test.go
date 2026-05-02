@@ -40,15 +40,15 @@ func newSchedFixture(t *testing.T) (*schedFixture, func()) {
 	pool, teardown := pgtest.StartPostgres(ctx, t)
 	sb := pgstorage.New(pool)
 
-	tpl, err := sb.Templates().Deploy(ctx, nodepkg.TemplateSpec{
+	tpl := insertDeployedTemplate(ctx, t, sb, nodepkg.TemplateSpec{
 		Name: "sched-loop-" + uuid.NewString(), Version: "v1",
 		FrameResolution: nodepkg.FrameResolutionSerialQueue,
 		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
 		Nodes:           []nodepkg.TemplateNodeDef{},
-	}, nil)
-	require.NoError(t, err)
+	})
+	ck := "ck-" + uuid.NewString()
 	inst, err := sb.Instances().Create(ctx, storage.InstanceCreateInput{
-		TemplateID: tpl.ID, ConsumerKey: "ck-" + uuid.NewString(),
+		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
 		Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)

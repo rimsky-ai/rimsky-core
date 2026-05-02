@@ -10,7 +10,7 @@ var (
 	ErrTemplateNotFound    = errors.New("template not found")
 	ErrInstanceNotFound    = errors.New("instance not found")
 	ErrNodeNotFound        = errors.New("node not found")
-	ErrConsumerKeyConflict = errors.New("consumer_key already exists for template")
+	ErrInstanceKeyConflict = errors.New("instance_key already exists for template")
 	ErrTemplateInUse       = errors.New("template has live instances")
 	ErrNodeRunning         = errors.New("node is currently running")
 	ErrNodeApplication     = errors.New("node application error")

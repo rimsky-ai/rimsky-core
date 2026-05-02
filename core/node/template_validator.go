@@ -66,6 +66,11 @@ type RegistryHooks struct {
 	// operator's named_locks: block. Drives the "templates reference
 	// named locks by name only" check.
 	NamedLockDeclared func(name string) bool
+	// ExecutorDeclared returns true when `name` is declared in the
+	// operator's executors: block (rimsky.yml per docs/specs/2026-05-
+	// 01-control-plane-and-store-lifecycle-design.md §3.1). Drives the
+	// per-node executor-name check.
+	ExecutorDeclared func(name string) bool
 }
 
 // ValidateTemplate walks a parsed template and reports errors per spec
@@ -115,6 +120,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateErrorTypes(n, base, declared, &res)
 		validateSchedule(n, base, cronParser, &res)
 		validateExecutorCoherence(n, base, &res)
+		validateExecutorDeclared(n, base, hooks, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, &res)
@@ -216,6 +222,23 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 			Msg:  "pure-cascade node has userdata; userdata is only consumed by executors",
 		})
 	}
+}
+
+// validateExecutorDeclared rejects nodes that reference an executor not
+// declared in the operator's rimsky.yml executors block. No-op when
+// the node has no executor (pure-cascade) or when the hook is not
+// supplied (unit tests that don't wire a registry).
+func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+	if n.Executor == "" || hooks.ExecutorDeclared == nil {
+		return
+	}
+	if hooks.ExecutorDeclared(n.Executor) {
+		return
+	}
+	res.Errors = append(res.Errors, ValidationError{
+		Path: base + ".executor",
+		Msg:  fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
+	})
 }
 
 // validateStores enforces the per-node store-usage rules from spec §18:

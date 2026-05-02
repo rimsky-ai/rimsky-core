@@ -252,16 +252,16 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// resolveInstance looks up an instance by UUID (preferred) or consumer_key
+// resolveInstance looks up an instance by UUID (preferred) or instance_key
 // (fallback). Returns nil, nil when not found.
 func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*storage.InstanceRow, error) {
 	if id, err := uuid.Parse(idOrKey); err == nil {
 		return deps.Storage.Instances().Get(ctx, id, nil)
 	}
-	// Consumer-key resolution requires a template ID today; walk the instance
-	// list filtered by consumer_key and return the first hit.
+	// instance_key resolution: walk the instance list filtered by
+	// instance_key and return the first hit.
 	page, err := deps.Storage.Instances().List(ctx, storage.InstanceListFilter{
-		ConsumerKey: idOrKey,
+		InstanceKey: idOrKey,
 	}, storage.ListPagination{Limit: 1}, nil)
 	if err != nil {
 		return nil, err

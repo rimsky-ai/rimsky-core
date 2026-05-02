@@ -2,8 +2,8 @@
 #
 # Best-effort env-var corrections were applied to align with the binaries'
 # current env-var contracts (see docs/operator-guide.md and the reference
-# `deploy/docker-compose.yml`), and a stores-config ConfigMap was added that
-# mirrors `deploy/stores.yml`. Remaining drift not repaired by Task 52:
+# `deploy/docker-compose.yml`), and a rimsky-config ConfigMap was added that
+# mirrors `deploy/rimsky.yml`. Remaining drift not repaired by Task 52:
 #   - the chart was not rendered through `helm lint` (helm CLI not installed
 #     in the Task 52 environment) — render and test before relying on it;
 #   - the operator-owned `topics_items` table required by the `topics-ring`
@@ -15,10 +15,10 @@
 #     store's `/workspace/content` root (compose mounts a docker volume; in
 #     k8s this needs to be a PVC or hostPath shared across executors and
 #     the supervisor);
-#   - the scheduler also reads `RIMSKY_STORES_CONFIG`; the chart now mounts
-#     the stores ConfigMap on scheduler / supervisor / control-api, but
-#     deeper validation of the volumeMount paths against actual binaries
-#     was not exercised here.
+#   - the scheduler also reads `RIMSKY_CONFIG`; the chart now mounts
+#     the rimsky-config ConfigMap on scheduler / supervisor / control-api,
+#     but deeper validation of the volumeMount paths against actual
+#     binaries was not exercised here.
 # When the chart is brought back to a known-good state, drop this TODO
 # block.
 apiVersion: v2

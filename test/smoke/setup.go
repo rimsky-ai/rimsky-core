@@ -194,6 +194,11 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		Port:       0,
 		Stores:     storesCfg,
 		NamedLocks: namedLocksCfg,
+		Executors: config.ExecutorsConfig{
+			Executors: map[string]config.ExecutorEntry{
+				"claude-agent": {Transport: "grpc", Endpoint: stubAddr, TLS: "off"},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("BringUpStack: StartControlAPI: %v", err)

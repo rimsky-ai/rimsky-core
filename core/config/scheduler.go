@@ -17,12 +17,13 @@ import (
 // SchedulerConfig wires a scheduler process. Defaults apply when
 // fields are zero values. Per spec §6.1.
 //
-// In v3 the scheduler no longer dials remote stores at startup — the
-// v2 visibility-timeout sweep is gone and the orphan reaper does not
-// fire Store.Abandon per spec §7.5. The Stores field is retained on
-// the config struct for forwards/backwards compatibility with
-// embedders that pass a single config bundle to all three Start*
-// functions, but it is not consulted here.
+// All three rimsky processes (scheduler, supervisor, control-api) dial
+// the configured stores at startup and run the Capabilities() handshake
+// per the 2026-05-01 control-plane spec §3.5 / §6.6 — even though the
+// scheduler does not call any of the runtime verbs. Failing fast when
+// a configured store is unreachable or its capabilities mismatch keeps
+// rimsky's three processes in lock-step on the operator-declared
+// topology.
 type SchedulerConfig struct {
 	Storage              storage.StorageBackend
 	Queue                queue.DispatchQueue
@@ -32,8 +33,9 @@ type SchedulerConfig struct {
 	HeartbeatTimeout     time.Duration // default 15s
 	OrphanedClaimTimeout time.Duration // default 5×HeartbeatTimeout
 	Pool                 *pgxpool.Pool // for advisory lock + orphan reap
-	// Stores is the parsed `stores:` block from stores.yml. Unused by
-	// the scheduler in v3 (kept for embedder ergonomics).
+	// Stores is the parsed `stores:` block from rimsky.yml. Each entry
+	// is dialed at startup and validated against the operator-declared
+	// capabilities; mismatches fail StartScheduler.
 	Stores RemoteStoresConfig
 	// NamedLocks is the operator-side named-lock config. Validated at
 	// startup; templates referencing undeclared names are rejected at
@@ -50,13 +52,18 @@ type SchedulerHandle interface {
 // StartScheduler starts a scheduler process and returns a handle for
 // graceful shutdown.
 //
-// Validates `cfg.NamedLocks` at startup; templates referencing
-// undeclared names are rejected at deploy time by the control-api.
-// The scheduler does not dial remote stores — see the SchedulerConfig
-// docstring.
+// Validates `cfg.NamedLocks` and dials each store in `cfg.Stores` at
+// startup (per spec §3.5 / §6.6). On any failure the dialed clients
+// are closed and the error is returned for the caller to propagate as
+// a startup failure. The scheduler does not call any of the four
+// runtime verbs at present, but the dialed registry is held for the
+// process lifetime so the handshake guard remains active.
 func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
-	_ = context.Background() // ctx kept for future use by sweep wiring
 	if err := cfg.NamedLocks.Validate(); err != nil {
+		return nil, fmt.Errorf("StartScheduler: %w", err)
+	}
+	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
+	if err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
 	var lockHolders *store.LockHoldersClient
@@ -74,15 +81,23 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		Pool:                 cfg.Pool,
 		LockHolders:          lockHolders,
 	}
-	return schedulerHandleNoRegistry{inner: scheduler.Start(inner)}, nil
+	return schedulerHandleWithRegistry{
+		inner:    scheduler.Start(inner),
+		registry: registry,
+	}, nil
 }
 
-// schedulerHandleNoRegistry wraps the scheduler handle. v3 drops the
-// remote-store registry — the scheduler no longer consults stores.
-type schedulerHandleNoRegistry struct {
-	inner SchedulerHandle
+// schedulerHandleWithRegistry wraps the scheduler handle plus the
+// dialed store registry; Shutdown closes both.
+type schedulerHandleWithRegistry struct {
+	inner    SchedulerHandle
+	registry *store.Registry
 }
 
-func (h schedulerHandleNoRegistry) Shutdown(ctx context.Context) error {
-	return h.inner.Shutdown(ctx)
+func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
+	err := h.inner.Shutdown(ctx)
+	if h.registry != nil {
+		h.registry.Close()
+	}
+	return err
 }

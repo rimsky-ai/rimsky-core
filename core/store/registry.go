@@ -3,7 +3,7 @@
 // v3-design.md §3.1 + §6.
 //
 // In v3 the Registry is a simple name→Store map populated externally:
-// each rimsky process's cmd binary loads stores.yml, dials a remote
+// each rimsky process's cmd binary loads rimsky.yml, dials a remote
 // gRPC client per entry (core/store/remote/), validates the
 // Capabilities() handshake, and Add()s the result. There is no Factory
 // interface, no per-kind dispatch, no BuildAll, no ceiling check —

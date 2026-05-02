@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,17 +78,20 @@ func TestOrphanDispatchReaper_ClaimantGuardedRelease(t *testing.T) {
 // Returns the dispatch row's id.
 func seedTerminalFrameAndDispatch(t *testing.T, ctx context.Context, pool *pgxpool.Pool, claimedBy string) uuid.UUID {
 	t.Helper()
-	templateID := uuid.New()
+	suffix := uuid.NewString()
+	suffix = strings.ReplaceAll(suffix, "-", "")
+	suffix = (suffix + suffix)[:64]
+	templateHash := "sha256-" + suffix
 	_, err := pool.Exec(ctx, `
-		INSERT INTO rimsky_templates (id, name, version, spec)
-		VALUES ($1, 't-orphan-reaper-`+templateID.String()[:8]+`', 'v1', '{"frame_resolution":"serial_queue"}'::jsonb)
-	`, templateID)
+		INSERT INTO rimsky_templates (id, spec, state)
+		VALUES ($1, '{"frame_resolution":"serial_queue"}'::jsonb, 'deployed')
+	`, templateHash)
 	require.NoError(t, err)
 	instanceID := uuid.New()
 	_, err = pool.Exec(ctx, `
-		INSERT INTO rimsky_instances (id, template_id, consumer_key, params)
+		INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
 		VALUES ($1, $2, 'ck-orphan-`+instanceID.String()[:8]+`', '{}'::jsonb)
-	`, instanceID, templateID)
+	`, instanceID, templateHash)
 	require.NoError(t, err)
 	nodeID := uuid.New()
 	_, err = pool.Exec(ctx, `

@@ -44,11 +44,18 @@ const (
 // is governed entirely by per-store config. Rimsky carries only
 // the success/failure binary; the store decides the rest. Per the
 // 2026-04-30 cleanup amending v3 §4.6.
+//
+// TemplateID and InstanceID carry the per-spec §4.2 (control-plane v1)
+// scope envelope: opaque strings rimsky never inspects, populated from
+// the dispatch row's instance → template lookup, sent to the store on
+// Open for namespace routing or trace correlation.
 type ClaimSpec struct {
-	StoreName string // operator-configured store name
-	Selector  string // opaque text (post-substitution); store parses
-	Intent    Intent // "r" | "rw"
-	Alias     string // per-claim name within node; defaults to StoreName
+	StoreName  string // operator-configured store name
+	Selector   string // opaque text (post-substitution); store parses
+	Intent     Intent // "r" | "rw"
+	Alias      string // per-claim name within node; defaults to StoreName
+	TemplateID string // content hash (template-scope envelope)
+	InstanceID string // instance UUID (instance-scope envelope)
 }
 
 // NamedLockSpec is the store-independent named-lock primitive. Templates

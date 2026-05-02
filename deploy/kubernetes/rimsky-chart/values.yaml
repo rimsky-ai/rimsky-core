@@ -6,13 +6,13 @@ image:
 postgres:
   dsn: ""                      # required; consumer supplies
 
-# stores.config — optional literal YAML body for the stores ConfigMap. When
-# empty, the ConfigMap renders the reference stores from `deploy/stores.yml`
-# (filesystem `content` rooted at /workspace/content + postgres `topics-ring`
-# claim store over `topics_items`). The operator-owned `topics_items` table
-# is NOT created by the chart — provision it out-of-band per spec §9.10
-# before installing.
-stores:
+# rimsky.config — optional literal YAML body for the unified rimsky.yml
+# ConfigMap (stores + named_locks + executors per docs/specs/2026-05-01-
+# control-plane-and-store-lifecycle-design.md §3.1). When empty, the
+# ConfigMap renders the reference values from `deploy/rimsky.yml`. The
+# operator-owned `topics_items` table is NOT created by the chart —
+# provision it out-of-band per spec §9.10 before installing.
+rimsky:
   config: ""
 
 scheduler:

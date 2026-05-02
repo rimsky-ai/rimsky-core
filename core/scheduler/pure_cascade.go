@@ -180,18 +180,20 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n storage
 }
 
 // lookupTemplateNodeDef resolves the template node-def for a node row by
-// hop: instance → template → node-by-type. Returns nil when any hop is
+// hop: rimsky_nodes.instance_id → rimsky_instances.template_hash →
+// rimsky_templates.spec → node-by-type. Returns nil when any hop is
 // missing — degraded-but-valid states a running scheduler must tolerate
-// (template/instance deletion, schema drift). Mirrors
-// supervisor.findNodeUserdata's contract.
-//
-// @source: core/supervisor/runner.go:findNodeUserdata
+// (template/instance deletion, schema drift). Post-control-plane v1
+// the binding is template_hash (content-addressed) rather than the
+// retired template_id UUID; templates may exist in registered /
+// deployed / undeployed state but the spec is identical across all
+// three so this lookup is state-agnostic.
 func lookupTemplateNodeDef(ctx context.Context, sb storage.StorageBackend, n storage.NodeRow) *nodepkg.TemplateNodeDef {
 	inst, _ := sb.Instances().Get(ctx, n.InstanceID, nil)
 	if inst == nil {
 		return nil
 	}
-	tmpl, _ := sb.Templates().Get(ctx, inst.TemplateID, nil)
+	tmpl, _ := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if tmpl == nil {
 		return nil
 	}
