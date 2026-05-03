@@ -16,7 +16,6 @@ write_semantics: direct
 # Commit / Abandon.
 pick_policies:
   "@review-queue":
-    type: ring
     items_table: topics_items
     on_commit_default: release_to_back
     on_give_up_default: release_to_back

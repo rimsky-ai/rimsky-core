@@ -10,7 +10,6 @@
 //	write_semantics: direct
 //	pick_policies:
 //	  "@queue":
-//	    type: queue
 //	    items_table: items_inbound
 //	    on_commit_default: delete
 //	    on_give_up_default: release_to_back
@@ -53,7 +52,6 @@ type yamlConfig struct {
 }
 
 type yamlPickPolicy struct {
-	Type                     string `yaml:"type"`
 	ItemsTable               string `yaml:"items_table"`
 	OnCommitDefault          string `yaml:"on_commit_default"`
 	OnGiveUpDefault          string `yaml:"on_give_up_default"`
@@ -88,7 +86,6 @@ func main() {
 	policies := make(map[string]*pgsstore.PickPolicy, len(cfg.PickPolicies))
 	for selector, pp := range cfg.PickPolicies {
 		policies[selector] = &pgsstore.PickPolicy{
-			Type:              pp.Type,
 			ItemsTable:        pp.ItemsTable,
 			OnCommitDefault:   pp.OnCommitDefault,
 			OnGiveUpDefault:   pp.OnGiveUpDefault,

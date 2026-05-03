@@ -37,8 +37,11 @@ type Store struct {
 }
 
 // PickPolicy is one configured pick policy. Store-internal.
+//
+// Queue-vs-ring behavior is emergent from on_commit_default /
+// on_give_up_default (delete = drain, release_to_back = recycle), not
+// switched on a discriminator field.
 type PickPolicy struct {
-	Type              string
 	ItemsTable        string
 	OnCommitDefault   string
 	OnGiveUpDefault   string
