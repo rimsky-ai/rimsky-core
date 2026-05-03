@@ -1,22 +1,22 @@
 // rimsky-scheduler is the env-var-driven entry point for the
 // scheduler process. Builds a typed config.SchedulerConfig from
 // environment variables, loads the unified deployment-shape config
-// from RIMSKY_CONFIG (stores + named_locks + executors per docs/specs/
-// 2026-05-01-control-plane-and-store-lifecycle-design.md §3.1), and
-// calls config.StartScheduler.
+// from RIMSKY_CONFIG (persistence + stores + named_locks + executors per
+// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+// §3.1 and 2026-05-02-persistence-pluggable-and-unified-image-design.md
+// §8), and calls config.StartScheduler.
 //
 // Environment variables:
 //
-//	RIMSKY_DB_URL               required; Postgres DSN.
+//	RIMSKY_CONFIG               optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500.
 //	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000.
-//	RIMSKY_CONFIG               optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info).
+//	RIMSKY_LOG_BINARY           optional; structured slog field for unified-image.
 package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -24,38 +24,34 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/config"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
+	_ "github.com/fallguy/rimsky/core/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
+
+	_ "github.com/fallguy/rimsky/core/persistence/sqlite" // register driver
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
 const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
 func main() {
-	dsn := os.Getenv("RIMSKY_DB_URL")
-	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "rimsky-scheduler: missing RIMSKY_DB_URL")
-		os.Exit(1)
-	}
 	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 1500)
 	heartbeatMs := atoiDefault(os.Getenv("RIMSKY_HEARTBEAT_TIMEOUT_MS"), 15000)
 	logLevel := os.Getenv("RIMSKY_LOG_LEVEL")
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})))
-	log := shared.NewSlogLogger(slog.Default())
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})
+	logger := slog.New(handler)
+	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
+		logger = logger.With("binary", name)
+	}
+	slog.SetDefault(logger)
+	log := shared.NewSlogLogger(logger)
 
 	configPath := os.Getenv("RIMSKY_CONFIG")
 	if configPath == "" {
 		configPath = defaultRimskyConfigPath
 	}
-	// All three rimsky processes dial stores at startup per spec §3.5 /
-	// §6.6. The scheduler does not call any of the four runtime verbs
-	// today, but the handshake guard keeps rimsky's three processes in
-	// lock-step on the operator-declared topology.
 	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
 	if err != nil {
 		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
@@ -63,29 +59,24 @@ func main() {
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
 	if err != nil {
-		log.Error("pgxpool.New", "error", err.Error())
+		log.Error("persistence.Open", "error", err.Error())
 		os.Exit(1)
 	}
 
-	sb := pgstorage.New(pool)
-	q := pgqueue.New(pool)
-
 	h, err := config.StartScheduler(config.SchedulerConfig{
-		Storage:          sb,
-		Queue:            q,
+		Driver:           driver,
 		Clock:            shared.SystemClock{},
 		Logger:           log,
 		TickInterval:     time.Duration(tickMs) * time.Millisecond,
 		HeartbeatTimeout: time.Duration(heartbeatMs) * time.Millisecond,
-		Pool:             pool,
 		Stores:           rimskyCfg.Stores,
 		NamedLocks:       rimskyCfg.NamedLocks,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
-		pool.Close()
+		_ = driver.Close()
 		os.Exit(1)
 	}
 
@@ -95,7 +86,7 @@ func main() {
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("scheduler shutdown", "error", err.Error())
 	}
-	pool.Close()
+	_ = driver.Close()
 }
 
 func atoiDefault(s string, d int) int {

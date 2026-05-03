@@ -131,8 +131,20 @@ environment and customize:
 2. `postgres.volumes` — replace the named volume with a bind-mount or managed
    block device for durability.
 3. `supervisor.volumes` — point at your own `supervisor-config.yml` (see §8).
-4. `claude-agent.environment.CLAUDE_STUB_MODE` — set to `0` and provide
-   `ANTHROPIC_API_KEY` to enable real agent execution.
+4. `claude-agent.environment.RIMSKY_EXECUTOR_STUB_MODE` — set to `0` and
+   provide `ANTHROPIC_API_KEY` (preferred) or `CLAUDE_CODE_OAUTH_TOKEN`
+   (dev fallback) to enable real agent execution. The executor exits at
+   startup if neither is set in non-stub mode. See
+   `executors/claude-agent/README.md` for the precedence and env-stripping
+   hygiene.
+5. **Filesystem-store volume mounts.** If any template node sets
+   `userdata.cwd_from_store: <fs-store-name>`, the claude-agent
+   container must mount the same volume the filesystem store-service
+   mounts, **at the same absolute path**. The address bytes the
+   filesystem store returns from `Open` are a path on its own
+   filesystem; the executor `chdir`s the spawned `claude` subprocess to
+   that path verbatim. A mount-path mismatch surfaces as
+   `invalid_cwd_from_store` errored outcomes on every dispatch.
 
 Bring up only infrastructure for local development:
 
@@ -186,16 +198,97 @@ curl -s http://localhost:8080/health | jq .
 
 ### 2.3 What lives where
 
-Rimsky writes to exactly one schema: the migrations in `core/migrations/`
-create tables prefixed `rimsky_*` (`rimsky_templates`, `rimsky_instances`,
-`rimsky_nodes`, `rimsky_dispatch`, `rimsky_events`, `rimsky_schedules`,
-`rimsky_supervisors`, `rimsky_node_attributes`, `rimsky_lock_holders`,
-`rimsky_claim_holders`, `rimsky_frames`, `rimsky_migrations`). Nothing else
-in your database should be named `rimsky_*`.
+Rimsky writes to exactly one schema: the migrations under
+`core/persistence/<driver>/migrations/` create tables prefixed `rimsky_*`
+(`rimsky_templates`, `rimsky_instances`, `rimsky_nodes`, `rimsky_dispatch`,
+`rimsky_events`, `rimsky_schedules`, `rimsky_supervisors`,
+`rimsky_node_attributes`, `rimsky_lock_holders`, `rimsky_claim_holders`,
+`rimsky_frames`, `rimsky_migrations`). Nothing else in your database should
+be named `rimsky_*`.
 
 Postgres-store pick-policy **items tables** are caller-owned (you declare
 their names in `rimsky.yml` per §8.4.3 and create them out-of-band). Rimsky
 never creates those tables.
+
+### 2.4 Persistence drivers
+
+Rimsky supports two persistence drivers, configured via the `persistence:`
+block in `rimsky.yml`:
+
+- **postgres** — production-grade. Multi-replica, multi-host, real
+  advisory locks, real `FOR UPDATE SKIP LOCKED`. Configured with a
+  `dsn:` field (e.g., `postgres://user:pass@host:5432/db?sslmode=...`).
+- **sqlite** — development-only. Single-process, single-writer, no
+  cross-host coordination. The driver logs a loud startup banner —
+  do not silence it. Multi-host or multi-replica deployments must use
+  the postgres driver. Configured with a `path:` field (must be an
+  absolute path).
+
+Example:
+
+```yaml
+persistence:
+  driver: postgres
+  postgres:
+    dsn: postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable
+```
+
+```yaml
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+```
+
+The `RIMSKY_DB_URL` environment variable is gone. All persistence config
+lives under `persistence.postgres.dsn` (or `persistence.sqlite.path`) in
+`RIMSKY_CONFIG`.
+
+> **SQLite is dev-only.** It runs the runtime stack end-to-end, but the
+> driver is single-process (cannot be replicated), single-writer
+> concurrency (`SetMaxOpenConns(1)` plus `_txlock=immediate` per spec
+> §6.2), and the cross-process advisory-lock methods on `Coordinator`
+> are no-ops (the BEGIN IMMEDIATE writer slot subsumes them). Production
+> / multi-replica deployments must declare `driver: postgres`.
+
+### 2.5 Unified Docker image (`rimsky/all`)
+
+For local development the `rimsky/all` image bundles the four runtime
+binaries (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`,
+`rimsky-migrate`) plus a small PID-1 process supervisor
+(`rimsky-entrypoint`) under one container. The bundled `rimsky-all.yml`
+declares `driver: sqlite` with state at `/var/lib/rimsky/state.db`.
+
+> **Unified image limitations.** The unified image runs the full runtime
+> stack end-to-end against the bundled SQLite default. It is dev-only:
+> single-process (running with `replicas > 1` creates independent SQLite
+> databases — broken); single-writer concurrency
+> (`SetMaxOpenConns(1)` plus `_txlock=immediate` per spec §6.2); cannot
+> be replicated. For production / multi-replica deployments, run the
+> per-process images plus the postgres driver.
+
+```sh
+# Default: bundled SQLite.
+docker run --rm -p 8080:8080 -v rimsky-state:/var/lib/rimsky rimsky/all
+
+# Production: override the bundled config to point at Postgres.
+docker run --rm -p 8080:8080 \
+  -v ./my-rimsky.yml:/etc/rimsky/rimsky.yml:ro \
+  rimsky/all
+```
+
+Override the bundled config to declare stores / executors as well:
+
+```sh
+docker run --rm -p 8080:8080 \
+  -v ./my-rimsky.yml:/etc/rimsky/rimsky.yml:ro \
+  rimsky/all
+```
+
+The unified image is **not** for production. Replicas > 1 each create
+their own SQLite database — broken. Use the per-process images
+(`rimsky/scheduler`, `rimsky/supervisor`, `rimsky/control-api`,
+`rimsky/migrate`) plus the postgres driver for deployed instances.
 
 ---
 
@@ -545,7 +638,6 @@ For the standard stores shipped under `stores/`:
   write_semantics: direct
   pick_policies:
     "@review-queue":
-      type: queue
       items_table: topics_items
       on_commit_default: release_to_back
       on_give_up_default: release_to_back
@@ -558,9 +650,9 @@ For the standard stores shipped under `stores/`:
   ```
   `connection:` is the store-service's own Postgres pool, opened by
   the store-service. Operators may collocate it with rimsky's
-  control-plane database (same DSN as `RIMSKY_DB_URL`) or point at a
-  separate database — the store-service is opaque to rimsky, so rimsky
-  doesn't care. `pick_policies` is a store-defined block keyed by the
+  control-plane database (same DSN as `persistence.postgres.dsn`) or
+  point at a separate database — the store-service is opaque to rimsky,
+  so rimsky doesn't care. `pick_policies` is a store-defined block keyed by the
   store-recognised selector form (convention: `@policy-name`); each
   entry configures the items-table backing, default actions, and the
   visibility-timeout sweep period. The store-service's own admin
@@ -1174,9 +1266,11 @@ ships a `init-items` one-shot for the reference `topics_items` table.
 
 **Symptom:** nodes using `claude-agent` sit `running` for a long time.
 
-**Diagnosis:** check `CLAUDE_STUB_MODE`. In stub mode (`"1"`), claude-agent
-short-circuits and always returns instantly. If stub mode is off and you
-see hangs, verify `ANTHROPIC_API_KEY` is set and check the executor's
+**Diagnosis:** check `RIMSKY_EXECUTOR_STUB_MODE`. In stub mode (`"1"`),
+claude-agent short-circuits and always returns instantly. If stub mode is
+off and you see hangs, verify `ANTHROPIC_API_KEY` (preferred) or
+`CLAUDE_CODE_OAUTH_TOKEN` (dev fallback) is set — the executor exits at
+startup if neither is present in non-stub mode — and check the executor's
 metrics endpoint for rate-limit errors.
 
 ---
@@ -1198,19 +1292,17 @@ metrics endpoint for rate-limit errors.
    curl -s http://localhost:8080/health | jq .
    ```
 
-### 13.1 Adopting the stores redesign (pre-v1, dev-only)
+### 13.1 Pre-v1 schema reset
 
-Rimsky is pre-v1: there is no production data preservation guarantee. The
-stores-redesign-v2 rewrite changes `rimsky_lock_holders` (drops `claim_id`,
-adds `address` and `intent`) and `rimsky_claim_holders` (adds
-`lock_holder_id` FK with cascade, drops `actual_action` / `delete_won`) in
-place against `core/migrations/001-initial.sql`. Because `rimsky_migrations`
-already records `001-initial.sql` as applied on existing dev databases, the
-migration runner will skip the rewritten file and the schema will be wrong.
+Rimsky is pre-v1: there is no production data preservation guarantee.
+When a refactor changes the schema in place (rewriting the existing
+migration files rather than appending a new one), `rimsky_migrations`
+will record the file as already applied and the migration runner will
+skip the rewrite, leaving the schema wrong.
 
-**Required step: nuke the dev database before running the new code.** This
-applies only to dev / staging environments adopting the redesign — there is
-no production-data migration path, by design.
+**Required step: nuke the dev database before running the new code.**
+This applies only to dev / staging environments — there is no
+production-data migration path, by design.
 
 Compose:
 
@@ -1220,9 +1312,9 @@ docker compose -f deploy/docker-compose.yml up -d     # fresh DB; migrate runs c
 ```
 
 Kubernetes / external Postgres: drop and recreate the rimsky database (or
-drop the `rimsky_*` tables plus `rimsky_migrations`) before bringing up the
-new images. The migration runner then re-applies `001-initial.sql` as the
-new end-state schema.
+drop the `rimsky_*` tables plus `rimsky_migrations`) before bringing up
+the new images. The migration runner then re-applies the embedded SQL
+(`core/persistence/<driver>/migrations/`) as the new end-state schema.
 
 After bringing the stack up:
 

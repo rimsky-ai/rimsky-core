@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestOrphanedClaim(t *testing.T) {
@@ -48,10 +48,10 @@ func TestOrphanedClaim(t *testing.T) {
 	// (claim-only). Same pattern as `heartbeat_loss_reenqueue_test.go`.
 	lockHolderID := uuid.New()
 	lockName := "orphan-zombie-lock"
-	require.NoError(t, h.Storage.Transaction(h.Ctx, func(ctx context.Context, tx storage.Tx) error {
-		return h.Storage.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
 			ID:                 lockHolderID,
-			LockKind:           storage.LockKindNamed,
+			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: "dead-supervisor",
 			HolderNodeID:       n.ID,
@@ -65,7 +65,7 @@ func TestOrphanedClaim(t *testing.T) {
 	deadline := time.Now().Add(20 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Storage.LockHolders().Get(h.Ctx, lockHolderID, nil)
+		got, _ := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, nil)
 		if got == nil {
 			reaped = true
 			break
@@ -76,9 +76,9 @@ func TestOrphanedClaim(t *testing.T) {
 
 	// `lock_orphan_reaped` event was emitted with the reaped row's metadata.
 	nid := n.ID
-	evs, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
-		storage.ListPagination{Limit: 10}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx,
+		persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
+		persistence.ListPagination{Limit: 10}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
 

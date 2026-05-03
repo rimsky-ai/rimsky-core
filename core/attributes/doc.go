@@ -1,8 +1,13 @@
 // Package attributes owns the per-node typed attribute object described in
 // stores-redesign spec §5.7: substitution of `{{deps...}}` / `{{claim...}}`
 // / `{{params...}}` directives at dispatch, JSON Schema validation at
-// dispatch and at commit, the incremental writeback HTTP handler, and the
-// `rimsky_node_attributes` postgres helpers.
+// dispatch and at commit, and the incremental writeback HTTP handler.
+//
+// Persistence for `rimsky_node_attributes` lives in
+// `core/persistence/postgres/node_attributes.go` and is exposed via
+// `persistence.NodeAttributesStore` from `core/persistence/store.go`.
+// The HTTP handler in `callback.go` accepts a narrower `NodeAttributesStore`
+// interface so test fakes don't have to implement the full persistence shape.
 //
 // # Surface
 //
@@ -11,8 +16,6 @@
 //     schema (validate.go).
 //   - Handler     — chi-compatible HTTP handler implementing the §12.5
 //     incremental attributes callback (callback.go).
-//   - Store       — postgres helpers for the `rimsky_node_attributes` table:
-//     Get / Upsert / MergeDelta (store.go).
 //
 // # Boundaries
 //

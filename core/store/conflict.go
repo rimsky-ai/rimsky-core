@@ -1,8 +1,8 @@
 // Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
 // Lives in core/store/ so both the supervisor's acquisition flow
 // (core/supervisor/runner_acquire.go) and the queue's eligibility
-// predicate (core/queue/postgres/queue.go) can call it without circular
-// imports.
+// predicate (core/persistence/postgres/queue.go) can call it without
+// circular imports.
 //
 // A claim's effective mode is (sync|async, r|w) derived from
 // (intent, store.write_semantics) at conflict-check time. The matrix

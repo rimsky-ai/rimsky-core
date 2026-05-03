@@ -3,15 +3,14 @@ package scheduler
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 // RecalculateArgs is the payload for RecalculateNode.
 type RecalculateArgs struct {
-	Storage      storage.StorageBackend
-	Queue        queue.DispatchQueue
+	Persist      persistence.Store
+	Queue        persistence.Queue
 	Clock        shared.Clock
 	Logger       shared.Logger
 	SourceNodeID *shared.UUID
@@ -29,7 +28,7 @@ type RecalculateArgs struct {
 //     the scheduler's pure-cascade sweep handles it — no dispatch needed;
 //     no-op here.
 func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
-	sb, log := args.Storage, args.Logger
+	sb, log := args.Persist, args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
@@ -39,7 +38,7 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
-	_ = sb.Events().Append(ctx, storage.EventAppendInput{
+	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &args.TargetNodeID,
 		Kind:   "message_received",
 		Payload: map[string]any{
@@ -87,12 +86,8 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	}
 	// RequiredStores is intentionally empty here. Per spec §6.2 an empty
 	// slice trivially satisfies the supervisor-pool predicate
-	// (RequiredStores ⊆ AcceptedStores). The denormalisation from the
-	// in-memory template registry is threaded through the scheduler tick's
-	// enqueue call sites in a separate task; recalculate.go does not have
-	// access to the template registry today and threading one through is
-	// out of scope for this task.
-	return args.Queue.Enqueue(ctx, queue.DispatchRequest{
+	// (RequiredStores ⊆ AcceptedStores).
+	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:         target.ID,
 		ExecutorName:   target.Executor,
 		RequiredStores: []string{},

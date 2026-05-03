@@ -19,10 +19,9 @@ import (
 
 	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 type nodeResponse struct {
@@ -43,7 +42,7 @@ type nodeResponse struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
-func toNodeResponse(n storage.NodeRow) nodeResponse {
+func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	deps := make([]string, 0, len(n.Dependencies))
 	for _, d := range n.Dependencies {
 		deps = append(deps, d.String())
@@ -92,7 +91,7 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		row, err := deps.Storage.Nodes().Get(req.Context(), id, nil)
+		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -116,7 +115,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		// Body is optional; ignore decode error when body is empty.
 		_ = json.NewDecoder(req.Body).Decode(&body)
 
-		row, err := deps.Storage.Nodes().Get(req.Context(), id, nil)
+		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -126,7 +125,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Record the operator action in the audit log.
-		_ = deps.Storage.Events().Append(req.Context(), storage.EventAppendInput{
+		_ = deps.Persist.Events().Append(req.Context(), persistence.EventAppendInput{
 			NodeID: &id,
 			Kind:   "operator_override",
 			Payload: map[string]any{
@@ -135,7 +134,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			},
 		}, nil)
 		if err := scheduler.InvalidateNode(req.Context(), scheduler.InvalidateArgs{
-			Storage:      deps.Storage,
+			Persist:      deps.Persist,
 			Queue:        deps.Queue,
 			Clock:        deps.Clock,
 			Logger:       deps.Logger,
@@ -167,7 +166,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		row, err := deps.Storage.Nodes().Get(req.Context(), id, nil)
+		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -184,14 +183,14 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Clear error bookkeeping.
-		if err := deps.Storage.Nodes().UpdateError(req.Context(), id, node.EvaluatorState{}, nil); err != nil {
+		if err := deps.Persist.Nodes().UpdateError(req.Context(), id, node.EvaluatorState{}, nil); err != nil {
 			writeError(w, err)
 			return
 		}
 		// Defensively clear the stale frame_id pointing at the previously-
 		// failed frame; the frame engine will write the new frame's id at
 		// frame-start.
-		if err := deps.Storage.Nodes().SetFrameID(req.Context(), id, nil, nil); err != nil {
+		if err := deps.Persist.Nodes().SetFrameID(req.Context(), id, nil, nil); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -200,18 +199,14 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 		// mode it appends this node to the pending coalesce row (or
 		// creates a new one). The source-eligibility predicate at
 		// frame-start (advanceOneFrame) accepts state=failed.
-		if err := deps.Storage.Transaction(req.Context(), func(ctx context.Context, stx storage.Tx) error {
-			pgT, err := pgstorage.PgxTxFromStorage(stx)
-			if err != nil {
-				return err
-			}
-			_, err = frame.EnqueueOrCoalesce(ctx, pgT, row.InstanceID, row.ID)
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			_, err := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, row.InstanceID, row.ID)
 			return err
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
-		_ = deps.Storage.Events().Append(req.Context(), storage.EventAppendInput{
+		_ = deps.Persist.Events().Append(req.Context(), persistence.EventAppendInput{
 			NodeID: &id,
 			Kind:   "operator_override",
 			Payload: map[string]any{
@@ -235,8 +230,8 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		}
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
-		page, err := deps.Storage.Nodes().ListByInstancePaged(req.Context(), inst.ID,
-			storage.ListPagination{Limit: limit, Cursor: cursor}, nil)
+		page, err := deps.Persist.Nodes().ListByInstancePaged(req.Context(), inst.ID,
+			persistence.ListPagination{Limit: limit, Cursor: cursor}, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -254,15 +249,15 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 
 // resolveInstance looks up an instance by UUID (preferred) or instance_key
 // (fallback). Returns nil, nil when not found.
-func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*storage.InstanceRow, error) {
+func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persistence.InstanceRow, error) {
 	if id, err := uuid.Parse(idOrKey); err == nil {
-		return deps.Storage.Instances().Get(ctx, id, nil)
+		return deps.Persist.Instances().Get(ctx, id, nil)
 	}
 	// instance_key resolution: walk the instance list filtered by
 	// instance_key and return the first hit.
-	page, err := deps.Storage.Instances().List(ctx, storage.InstanceListFilter{
+	page, err := deps.Persist.Instances().List(ctx, persistence.InstanceListFilter{
 		InstanceKey: idOrKey,
-	}, storage.ListPagination{Limit: 1}, nil)
+	}, persistence.ListPagination{Limit: 1}, nil)
 	if err != nil {
 		return nil, err
 	}

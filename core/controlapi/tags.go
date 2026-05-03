@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 // tagPattern is the canonical tag identifier shape per spec §1.1.
@@ -77,7 +77,7 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		// Reject when the tag already exists. Use Get to distinguish a
 		// pre-existing tag from a missing one; Upsert would silently
 		// overwrite, which the POST endpoint does not allow.
-		existing, err := deps.Storage.TemplateTags().Get(req.Context(), body.Tag, nil)
+		existing, err := deps.Persist.TemplateTags().Get(req.Context(), body.Tag, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -86,7 +86,7 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
 			return
 		}
-		if err := deps.Storage.TemplateTags().Upsert(req.Context(), body.Tag, hash, nil); err != nil {
+		if err := deps.Persist.TemplateTags().Upsert(req.Context(), body.Tag, hash, nil); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -99,9 +99,9 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 
 func handleListTags(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		page, err := deps.Storage.TemplateTags().List(
+		page, err := deps.Persist.TemplateTags().List(
 			req.Context(),
-			storage.ListPagination{
+			persistence.ListPagination{
 				Limit:  parseLimit(req, 100),
 				Cursor: req.URL.Query().Get("cursor"),
 			},
@@ -129,7 +129,7 @@ func handleListTags(deps AppDeps) http.HandlerFunc {
 func handleMoveTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		existing, err := deps.Storage.TemplateTags().Get(req.Context(), tag, nil)
+		existing, err := deps.Persist.TemplateTags().Get(req.Context(), tag, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -152,7 +152,7 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		if err := deps.Storage.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
+		if err := deps.Persist.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -166,7 +166,7 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 func handleDeleteTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		deleted, err := deps.Storage.TemplateTags().Delete(req.Context(), tag, nil)
+		deleted, err := deps.Persist.TemplateTags().Delete(req.Context(), tag, nil)
 		if err != nil {
 			writeError(w, err)
 			return

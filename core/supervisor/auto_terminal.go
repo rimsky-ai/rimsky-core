@@ -16,14 +16,10 @@ package supervisor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -49,10 +45,10 @@ import (
 // This is safe because of v3 spec §7.8 obligation #3: terminal verbs
 // MUST be idempotent in `claim_id`. The second call is a no-op.
 func CheckAndFireResolution(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	lockHolderID shared.UUID,
 ) error {
-	row, err := lockLockHolderRow(ctx, tx, lockHolderID)
+	row, err := args.LockHolders.LockForUpdate(ctx, lockHolderID, tx)
 	if err != nil {
 		return err
 	}
@@ -62,12 +58,15 @@ func CheckAndFireResolution(
 		return nil
 	}
 	if row.HolderSupervisorID != args.SupervisorID {
-		// Acquirer-supervisor crash case; orphan reaper handles it.
+		// UUID re-use case (defensive: should be impossible given
+		// UUID v4). Not the acquirer-supervisor-crash case — the
+		// orphan reaper deletes the row outright, so a crashed
+		// supervisor's row would have been LockForUpdate'd nil
+		// above, not surfaced with a mismatching holder id.
 		return nil
 	}
 
-	stx := pgstorage.WrapPgxTx(tx)
-	holders, err := args.Storage.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, stx)
+	holders, err := args.Persist.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
 	if err != nil {
 		return fmt.Errorf("CheckAndFireResolution: ListByLockHolderID: %w", err)
 	}
@@ -79,9 +78,9 @@ func CheckAndFireResolution(
 	anyActive, anyFailed := false, false
 	for _, h := range holders {
 		switch h.State {
-		case storage.ClaimHolderStateActive:
+		case persistence.ClaimHolderStateActive:
 			anyActive = true
-		case storage.ClaimHolderStateFailed:
+		case persistence.ClaimHolderStateFailed:
 			anyFailed = true
 		}
 	}
@@ -110,60 +109,12 @@ func CheckAndFireResolution(
 		return fmt.Errorf("CheckAndFireResolution: store verb: %w", verbErr)
 	}
 
-	if err := args.LockHolders.DeleteByID(ctx, tx, lockHolderID, args.SupervisorID); err != nil {
-		return fmt.Errorf("CheckAndFireResolution: DeleteByID: %w", err)
+	if err := args.LockHolders.Delete(ctx, lockHolderID, args.SupervisorID, tx); err != nil {
+		return fmt.Errorf("CheckAndFireResolution: Delete: %w", err)
 	}
 	return nil
 }
 
-// lockLockHolderRow does SELECT … FOR UPDATE on a lock-holder row.
-// Returns (nil, nil) when the row is gone (already deleted by a
-// concurrent termination).
-func lockLockHolderRow(ctx context.Context, tx pgx.Tx, id shared.UUID) (*store.LockHolderRow, error) {
-	const cols = `id, lock_kind, lock_name, store_name, region_data, address, intent,
-		holder_supervisor_id, holder_node_id,
-		claimed_at, last_heartbeat_at, expires_at, frame_id`
-	row := tx.QueryRow(ctx,
-		`SELECT `+cols+` FROM rimsky_lock_holders WHERE id = $1 FOR UPDATE`, id,
-	)
-	out, err := scanLockHolderForResolution(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("lockLockHolderRow: %w", err)
-	}
-	return &out, nil
-}
-
-// scanLockHolderForResolution mirrors core/store/lockholders.go's
-// scanLockHolder; duplicated here to avoid exporting the helper.
-// @source: core/store/lockholders.go:scanLockHolder
-func scanLockHolderForResolution(sc interface{ Scan(...any) error }) (store.LockHolderRow, error) {
-	var (
-		r          store.LockHolderRow
-		kind       string
-		lockName   *string
-		storeName  *string
-		regionData []byte
-		address    []byte
-		intent     *string
-		frameID    *shared.UUID
-	)
-	if err := sc.Scan(
-		&r.ID, &kind,
-		&lockName, &storeName, &regionData, &address, &intent,
-		&r.HolderSupervisorID, &r.HolderNodeID,
-		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
-	); err != nil {
-		return store.LockHolderRow{}, err
-	}
-	r.Kind = store.LockHolderKind(kind)
-	r.LockName = lockName
-	r.StoreName = storeName
-	r.RegionData = regionData
-	r.Address = address
-	r.Intent = intent
-	r.FrameID = frameID
-	return r, nil
-}
+// (lockLockHolderRow + scanLockHolderForResolution were retired when
+// the persistence layer landed `LockHoldersStore.LockForUpdate`. The
+// auto-terminal flow above calls that method directly.)

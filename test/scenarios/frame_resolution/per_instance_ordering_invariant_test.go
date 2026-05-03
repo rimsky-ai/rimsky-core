@@ -100,7 +100,7 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	var maxRunning atomic.Int32
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		n := countFramesByState(t, h.Pool, iid, "running")
+		n := countFramesByState(t, h, iid, "running")
 		if int32(n) > maxRunning.Load() {
 			maxRunning.Store(int32(n))
 		}
@@ -111,7 +111,7 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 
 	// And eventually all queued+running frames drain to terminal states.
 	require.True(t,
-		waitForFramesByState(t, h.Pool, iid, "completed", N+1, 30*time.Second) ||
+		waitForFramesByState(t, h, iid, "completed", N+1, 30*time.Second) ||
 			eventuallyAllTerminal(h, iid, 30*time.Second),
 		"expected all frames to terminate eventually")
 }

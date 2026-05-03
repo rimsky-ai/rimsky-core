@@ -2,6 +2,167 @@
 
 ## Unreleased
 
+- **Conformance coverage for per-feature interface methods + tighter
+  pgx-isolation depguard.** Added four cross-driver conformance areas
+  exercising the methods landed during the Tasks 23-28 pgx-removal
+  refactor — `Queue.EnqueueInTx` / `RemoveForNodeInTx` /
+  `GetDispatchNode` (`queue_in_tx.go`), `LockHoldersStore.UpdateRegion`
+  (`lock_holders_update_region.go`), `NodeStore.MarkStaleForCascade`
+  (`nodes_mark_stale_for_cascade.go`), and
+  `NodeAttributesStore.MergeDelta` (`node_attributes_merge_delta.go`,
+  including the wrapped-`persistence.ErrNotFound` sentinel check). All
+  four pass against both Postgres and SQLite drivers. Migrated
+  `core/frame/{engine,producer}_test.go` and the four
+  `test/scenarios/frame_resolution/*_test.go` files that still reached
+  for raw pgx (`coalesce_concurrent_invalidates_test.go`,
+  `frame_start_atomicity_test.go`, `frame_timeout_reaper_test.go`,
+  `orphan_dispatch_reaper_claimant_guarded_test.go`) onto the
+  persistence driver + a new pair of harness helpers
+  (`scenario.Harness.ExecSQL` / `QueryRowSQL` / `QuerySQL`) plus a
+  pgtest helper (`pgtest.QueryForTest`) that walks rows without
+  exposing `pgx.Rows` to non-whitelisted packages. With those files
+  off pgx, the depguard `pgx-isolation` allow-list shed two carve-outs
+  (`!**/core/frame/*_test.go`,
+  `!**/test/scenarios/frame_resolution/*_test.go`).
+- **Persistence layer pluggable; unified `rimsky/all` image scaffold.**
+  Land Tasks 19-22, 29-33, 36, 39-45 from
+  `docs/plans/2026-05-02-persistence-pluggable-and-unified-image.md`.
+  - `core/persistence/` is now the protocol package: `Driver` (open /
+    close / migrate / accessor surface), `Coordinator` (advisory locks +
+    migrate locks), `Store` (per-feature accessors including the new
+    `FrameStore`), and `Queue`. Driver impls live under `postgres/` (the
+    canonical pgx-backed impl, lifted from `core/storage/postgres/` and
+    `core/queue/postgres/`) and `sqlite/` (a dev-only `modernc.org/sqlite`
+    driver).
+  - `FrameStore` interface added so the frame engine no longer depends
+    directly on `*pgxpool.Pool`; the postgres backend implements it and
+    the supervisor / scheduler / controlapi packages drive it through
+    `persistence.Store` instead of bare SQL.
+  - All four cmd binaries (`rimsky-migrate`, `rimsky-scheduler`,
+    `rimsky-supervisor`, `rimsky-control-api`) now open a
+    `persistence.Driver` via `persistence.Open(ctx, cfg.Persistence)` at
+    startup. `RIMSKY_DB_URL` is gone; persistence config moved into the
+    `persistence:` block of `rimsky.yml` (`RIMSKY_CONFIG`).
+  - **Transition window.** The runtime packages still hold
+    `*pgxpool.Pool` internally during Tasks 23-26; the cmd binaries
+    extract the pool via the temporary
+    `pgpersist.PoolFromDriverOrNil(driver)` helper. When the driver is
+    not postgres (i.e. SQLite today), the binaries log a clear hint and
+    exit 1 — the SQLite driver is **not** yet wired through to the
+    runtime packages, and `Driver.Store()` / `Driver.Queue()` return nil
+    until Tasks 34-35 land.
+  - `rimsky-entrypoint` PID-1 process supervisor added under
+    `core/cmd/rimsky-entrypoint/`. Runs `rimsky-migrate` synchronously,
+    spawns the three runtime binaries concurrently, forwards
+    SIGTERM/SIGINT, exits when any child exits or the deadline fires.
+    Used by the new `rimsky/all` unified Docker image.
+  - `deploy/Dockerfile.all` + `deploy/rimsky-all.yml` ship the unified
+    image. **The bundled SQLite default is currently a structural
+    skeleton** — operators must override `/etc/rimsky/rimsky.yml` to
+    point at `driver: postgres` to run end-to-end work today (until
+    Tasks 23-26 + 34-35 land). Documented in `CLAUDE.md` and
+    `docs/operator-guide.md` §2.5.
+  - SQLite driver: single hand-written `001-initial.sql` capturing the
+    union schema; coordinator backed by `sync.Mutex` (single-process is
+    the only supported topology); loud startup banner per spec §1.
+    Per-feature impls (Task 34) and queue impl (Task 35) are still
+    pending — `Driver.Store()` and `Driver.Queue()` return nil until they
+    land. Integration tests query PRAGMA state on the driver's actual
+    `*sql.DB` (via the test-only `pgsqlite.DBFromDriver` accessor) so
+    they can't pass against a parallel handle.
+  - `RIMSKY_LOG_BINARY` env var added: when set, every binary's slog
+    output gains a structured `binary` field. Used by `rimsky-entrypoint`
+    to disambiguate combined stdout/stderr in the unified image.
+  - **Still ahead.** Tasks 23-26 (drop pgx from supervisor / scheduler /
+    controlapi; delete escape hatches in `core/persistence/postgres/transition.go`
+    and the `core/storage/` + `core/queue/` adapter packages); Tasks 34-35
+    (SQLite per-feature + queue impls); Tasks 37-38 (conformance suite
+    scaffolding + test bodies across 11 areas).
+
+- **`claude-agent` `cwd_from_store` workspace binding.** The TypeScript
+  claude-agent executor now reads two new optional `userdata` keys at
+  dispatch and, when set, `chdir`s the spawned `claude` subprocess into a
+  workspace the supervisor has already serialized via a store claim:
+  - `userdata.cwd_from_store: <store-name>` — looks up
+    `ExecuteRequest.stores[<store-name>].handle.address` (the
+    filesystem store fills this with an absolute path) and uses it as
+    the CLI's cwd.
+  - `userdata.cwd: <path>` — raw override of last resort; lower
+    priority than `cwd_from_store`.
+  The address must point to an existing directory at spawn time;
+  validation errors surface as `invalid_cwd_from_store` errored
+  outcomes before the spawn. Closes the gap where the supervisor was
+  delivering store handles via `ExecuteRequest.stores` but the executor
+  silently dropped them. Combined with the filesystem store's
+  concrete-path conflict semantics (two claims on the same path
+  conflict, two claims on different paths do not — `stores/filesystem`),
+  this gives templates a clean primitive: declare a directory selector
+  with `intent: rw`, set `cwd_from_store` to that store's name, and the
+  spawned agent owns that directory exclusively for the duration of
+  the run. **Operator note:** the executor pod must mount the
+  store-service's volume at the same absolute path the store-service
+  uses, since the address bytes flow through verbatim.
+
+- **`claude-agent` CLI auth precedence + env hygiene.** The TypeScript
+  claude-agent executor (`executors/claude-agent/`) now reads
+  `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` at startup and
+  requires at least one in non-stub mode (it exits fatally otherwise).
+  Resolution order: `ANTHROPIC_API_KEY` wins (production — written to a
+  0600 temp file, `apiKeyHelper` shell wrapper points
+  `$HOME/.claude/settings.json` at it, key never enters the child env);
+  `CLAUDE_CODE_OAUTH_TOKEN` is the dev fallback (passed through on the
+  child env). The spawned `claude` subprocess no longer inherits the
+  parent `process.env` — only `HOME`, `PATH`, the auth env, and the
+  per-run `RIMSKY_CALLBACK_URL` / `RIMSKY_CALLBACK_TOKEN` reach it,
+  keeping unrelated pod env (DB DSNs, internal callback secrets) out of
+  the CLI. Pattern ported from `skillprompting/brain/src/cli-env.ts`.
+  New `cli-env.ts` module with `buildCliEnv` + cleanup hook;
+  `createClaudeCliRunner` now requires a `CliAuthConfig`
+  (breaking — pre-v1 break-freely rule applies).
+
+- **Persistence cutover phase 4: lock-holders + attributes accessor consolidation.**
+  Land Tasks 17–18 from
+  `docs/plans/2026-05-02-persistence-pluggable-and-unified-image.md`.
+  - Delete `core/store/lockholders.go`. The supervisor and scheduler
+    now reach the rimsky-lock-holders accessor through
+    `persistence.LockHoldersStore` (sourced from
+    `pgpersist.StoreFromPool(pool).LockHolders()` while the cmd
+    binaries remain on `*pgxpool.Pool`; this collapses to a clean
+    `Driver.Store().LockHolders()` call when Task 22 lands).
+  - Delete `core/attributes/store.go` (the standalone pgx-backed
+    `*Store` impl). The local `attributes.NodeAttributesStore` interface
+    and `Row` type move into `core/attributes/callback.go` since only
+    the §12.5 incremental-writeback HTTP handler depends on them. The
+    canonical persistence-side impl lives at
+    `core/persistence/postgres/node_attributes.go`; the supervisor's
+    callback handler still bridges through its existing
+    `attributesStoreAdapter` (which now wraps `storage.NodeAttributesStore`
+    until Task 23 switches the supervisor's `cfg.Storage` to
+    `persistence.Store`).
+  - The storage-package adapter (`core/storage/postgres/lock_holders.go`)
+    delegates to `persistence.LockHoldersStore` instead of the deleted
+    `*store.LockHoldersClient`. Tests that previously constructed
+    `store.NewLockHoldersClient(pool)` for `RunArgs.LockHolders` now use
+    `pgpersist.StoreFromPool(pool).LockHolders()`. Pre-v1 break-freely
+    rule applies; no behavioral change.
+
+- **Postgres store: drop unused `type:` field on pick policies.** The
+  `pick_policies[*].type` YAML key (and `PickPolicy.Type` Go field) was
+  parsed from config and propagated into the in-memory struct, but no
+  code path read it — `Open` / `Commit` / `Abandon` / sweep behavior
+  was already fully governed by `on_commit_default` /
+  `on_give_up_default` (`delete` = drain, `release_to_back` = recycle,
+  `release_to_head` = retry-at-front). Removed the field from the
+  struct, the YAML schema, the package-doc example, the
+  `config-example.yml` reference, the `deploy/store-postgres.yml`
+  reference, the operator-guide example, and the test/smoke fixture.
+  Queue-vs-ring is documented as emergent from the action defaults, not
+  switched on a discriminator. No behavioral change; the YAML loader
+  uses non-strict `yaml.Unmarshal`, so legacy configs that still carry
+  `type:` are silently ignored at startup — operators may remove the
+  key at their convenience. Pre-v1 break-freely rule applies (no
+  production data; no compat shim).
+
 - **`rimsky-cli` and `rimsky-compose.yml`.** Add an operator-facing CLI
   (`core/cmd/rimsky-cli/`) plus a `rimsky-compose.yml` declarative
   manifest format (`core/cli/compose/`). The CLI is a thin client over

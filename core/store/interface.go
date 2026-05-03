@@ -26,12 +26,12 @@ import "context"
 // etc.) is governed entirely by per-store config. Rimsky carries only
 // the success/failure binary: success → Commit; failure → Abandon.
 //
-// @blessed-invariant 9a: Lock state lives only in postgres.
+// @blessed-invariant 9a: Lock state lives only in the persistence layer.
 //
 //	No Store implementation persists lock state. Stores may persist
 //	*data* state (e.g. items-table flips, staging metadata), but the
 //	question "is anyone holding lock X" is answered exclusively by
-//	rimsky_lock_holders.
+//	rimsky_lock_holders (managed via core/persistence/<driver>/lock_holders.go).
 //
 // @blessed-invariant 9b: Stores do not internally serialize on
 // lock-shaped predicates. The reader-lease serialization pattern is not

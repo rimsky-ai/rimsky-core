@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestPureCascadeNode(t *testing.T) {
@@ -57,8 +57,8 @@ func TestPureCascadeNode(t *testing.T) {
 
 	// Verify pure_cascade_commit event was emitted at some point.
 	nid := hub.ID
-	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid},
-		storage.ListPagination{Limit: 500}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+		persistence.ListPagination{Limit: 500}, nil)
 	require.NoError(t, err)
 	var sawCommit bool
 	for _, e := range evs.Events {

@@ -18,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestHeldClaimRowRoundTrip(t *testing.T) {
@@ -45,10 +45,10 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
 	holderID := shared.UUID(uuid.New())
-	require.NoError(t, h.Storage.Transaction(h.Ctx, func(ctx context.Context, tx storage.Tx) error {
-		if err := h.Storage.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
 			ID:                 lockHolderID,
-			LockKind:           storage.LockKindRegion,
+			LockKind:           persistence.LockKindRegion,
 			StoreName:          &storeName,
 			RegionData:         []byte(`"r-1"`),
 			Intent:             &intent,
@@ -58,24 +58,24 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		return h.Storage.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:           holderID,
 			LockHolderID: lockHolderID,
 			HolderNodeID: worker.ID,
 		}, tx)
 	}))
 
-	row, err := h.Storage.ClaimHolders().Get(h.Ctx, holderID, nil)
+	row, err := h.Persist.ClaimHolders().Get(h.Ctx, holderID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	require.Equal(t, lockHolderID, row.LockHolderID)
 	require.Equal(t, worker.ID, row.HolderNodeID)
-	require.Equal(t, storage.ClaimHolderStateActive, row.State)
+	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
 	// Second insert on same (lock_holder_id, holder_node_id) must fail
 	// per the §12.11 unique index.
-	err = h.Storage.Transaction(h.Ctx, func(ctx context.Context, tx storage.Tx) error {
-		return h.Storage.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+	err = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:           shared.UUID(uuid.New()),
 			LockHolderID: lockHolderID,
 			HolderNodeID: worker.ID,

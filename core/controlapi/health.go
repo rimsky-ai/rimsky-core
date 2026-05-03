@@ -34,12 +34,12 @@ func registerHealthRoutes(r chi.Router, deps AppDeps) {
 
 func handleHealth(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		sups, err := deps.Storage.Supervisors().List(req.Context(), nil)
+		sups, err := deps.Persist.Supervisors().List(req.Context(), nil)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		counts, err := deps.Storage.Nodes().CountByState(req.Context(), nil)
+		counts, err := deps.Persist.Nodes().CountByState(req.Context(), nil)
 		if err != nil {
 			writeError(w, err)
 			return

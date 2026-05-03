@@ -16,8 +16,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 // MessageDispatcher is the narrow interface the schedule ticker needs to
@@ -50,7 +50,7 @@ func NextFireAt(expr string, after time.Time) (time.Time, error) {
 // Errors in one row do not block others — each is logged and processing
 // continues. Returns the number of schedules fired (even if some of their
 // invalidates errored).
-func ProcessSchedules(ctx context.Context, sb storage.StorageBackend, disp MessageDispatcher, clock shared.Clock, log shared.Logger) (int, error) {
+func ProcessSchedules(ctx context.Context, sb persistence.Store, disp MessageDispatcher, clock shared.Clock, log shared.Logger) (int, error) {
 	due, err := sb.Schedules().DueBefore(ctx, clock.Now(), nil)
 	if err != nil {
 		return 0, err
@@ -77,7 +77,7 @@ func ProcessSchedules(ctx context.Context, sb storage.StorageBackend, disp Messa
 					"error", err.Error())
 			}
 			// Append schedule_dispatch_failed event (plan-added; see spec §11.2 + CHANGELOG).
-			_ = sb.Events().Append(ctx, storage.EventAppendInput{
+			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID:     ptrUUID(row.NodeID),
 				InstanceID: instancePtr,
 				Kind:       "schedule_dispatch_failed",
@@ -93,7 +93,7 @@ func ProcessSchedules(ctx context.Context, sb storage.StorageBackend, disp Messa
 			if log != nil {
 				log.Warn("schedule RecordFired failed", "node_id", row.NodeID.String(), "error", err.Error())
 			}
-			_ = sb.Events().Append(ctx, storage.EventAppendInput{
+			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID:     ptrUUID(row.NodeID),
 				InstanceID: instancePtr,
 				Kind:       "schedule_dispatch_failed",
@@ -110,7 +110,7 @@ func ProcessSchedules(ctx context.Context, sb storage.StorageBackend, disp Messa
 			if log != nil {
 				log.Warn("schedule emit invalidate failed", "node_id", row.NodeID.String(), "error", err.Error())
 			}
-			_ = sb.Events().Append(ctx, storage.EventAppendInput{
+			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID:     ptrUUID(row.NodeID),
 				InstanceID: instancePtr,
 				Kind:       "schedule_dispatch_failed",
@@ -119,7 +119,7 @@ func ProcessSchedules(ctx context.Context, sb storage.StorageBackend, disp Messa
 			continue
 		}
 		// Log the successful fire.
-		_ = sb.Events().Append(ctx, storage.EventAppendInput{
+		_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID:     ptrUUID(row.NodeID),
 			InstanceID: instancePtr,
 			Kind:       "schedule_fired",

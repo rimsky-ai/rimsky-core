@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestExecutorBlocked(t *testing.T) {
@@ -52,8 +52,8 @@ func TestExecutorBlocked(t *testing.T) {
 
 	// Verify error event carries executor_blocked class.
 	nid := n.ID
-	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid, Kind: "error"},
-		storage.ListPagination{Limit: 100}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "error"},
+		persistence.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	var found bool
 	for _, e := range evs.Events {

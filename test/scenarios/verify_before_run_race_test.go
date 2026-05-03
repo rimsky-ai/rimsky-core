@@ -72,10 +72,10 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// (the row's claimed_by is set), return Ran=false, and leave the
 	// node unchanged.
 	args := supervisor.RunArgs{
-		Storage:           h.Storage,
+		Persist:           h.Persist,
 		Queue:             h.Queue,
-		QueuePool:         h.Pool,
-		LockHolders:       store.NewLockHoldersClient(h.Pool),
+		LockHolders:       h.Persist.LockHolders(),
+		Coordinator:       h.Driver.Coordinator(),
 		StoreRegistry:     store.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
@@ -93,7 +93,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		"runner should not execute when another supervisor holds the claim")
 
 	// Node remains in stale; the dispatch row is still owned by fake-other.
-	got, err := h.Storage.Nodes().Get(h.Ctx, n.ID, nil)
+	got, err := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateStale, got.State)
 

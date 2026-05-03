@@ -46,7 +46,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 		"worker did not reach failed on first fire")
 
 	// Wait for the first frame to settle to failed.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "failed", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "failed", 1, 5*time.Second),
 		"first frame should end failed")
 
 	// Capture the prior frame_id; reset should not leave it pointing here.
@@ -72,10 +72,10 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 		"worker did not reach fresh after reset; if reset bypassed the frame engine the node would be stuck stale with nil/old frame_id")
 
 	// Verify a second frame was created and ended completed.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "completed", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"second frame should end completed")
 
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 2, "expected one failed frame plus one completed frame after reset")
 
 	// Final frame_id on the now-fresh node should be cleared (per the

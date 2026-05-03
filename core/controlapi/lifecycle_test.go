@@ -14,29 +14,26 @@ import (
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/storetest"
 )
 
-// fanOutFixture wires a real Postgres backend, two storetest.Fake stores
-// ("alpha", "beta") accessible via the registry, and the AppDeps the
-// helpers consume.
+// fanOutFixture wires a real persistence.Driver-backed Postgres, two
+// storetest.Fake stores ("alpha", "beta") accessible via the registry,
+// and the AppDeps the helpers consume.
 type fanOutFixture struct {
 	deps     AppDeps
 	alpha    *storetest.Fake
 	beta     *storetest.Fake
 	registry *store.Registry
-	teardown func()
 }
 
 func newFanOutFixture(t *testing.T) *fanOutFixture {
 	t.Helper()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	backend := pgstorage.New(pool)
+	d := pgtest.OpenDriver(ctx, t)
 	reg := store.NewRegistry()
 	alpha := storetest.NewFake("alpha", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
 	beta := storetest.NewFake("beta", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
@@ -44,13 +41,13 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	reg.Add("beta", beta)
 
 	deps := AppDeps{
-		Storage: backend,
+		Persist: d.Store(),
+		Queue:   d.Queue(),
 		Logger:  shared.SilentLogger{},
 		Stores:  reg,
 	}
 	return &fanOutFixture{
 		deps: deps, alpha: alpha, beta: beta, registry: reg,
-		teardown: teardown,
 	}
 }
 
@@ -74,7 +71,6 @@ func twoStoreSpec() node.TemplateSpec {
 func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
-	t.Cleanup(f.teardown)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("a", 64)
@@ -95,7 +91,6 @@ func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
-	t.Cleanup(f.teardown)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("b", 64)
@@ -120,7 +115,6 @@ func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
-	t.Cleanup(f.teardown)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("c", 64)
@@ -137,15 +131,15 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	require.Contains(t, perStore["beta"].Error(), "simulated beta failure")
 
 	// alpha row was committed before beta failed.
-	row, err := f.deps.Storage.StoreLifecycle().Get(ctx, "alpha",
-		storage.StoreLifecycleScopeTemplate, hash, nil)
+	row, err := f.deps.Persist.StoreLifecycle().Get(ctx, "alpha",
+		persistence.StoreLifecycleScopeTemplate, hash, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row, "alpha row must persist past beta's failure")
-	require.Equal(t, storage.StoreLifecycleStateRegistered, row.State)
+	require.Equal(t, persistence.StoreLifecycleStateRegistered, row.State)
 
 	// beta row was never written.
-	betaRow, err := f.deps.Storage.StoreLifecycle().Get(ctx, "beta",
-		storage.StoreLifecycleScopeTemplate, hash, nil)
+	betaRow, err := f.deps.Persist.StoreLifecycle().Get(ctx, "beta",
+		persistence.StoreLifecycleScopeTemplate, hash, nil)
 	require.NoError(t, err)
 	require.Nil(t, betaRow)
 
@@ -168,7 +162,6 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
-	t.Cleanup(f.teardown)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("d", 64)
@@ -179,8 +172,8 @@ func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, name := range []string{"alpha", "beta"} {
-		row, err := f.deps.Storage.StoreLifecycle().Get(ctx, name,
-			storage.StoreLifecycleScopeTemplate, hash, nil)
+		row, err := f.deps.Persist.StoreLifecycle().Get(ctx, name,
+			persistence.StoreLifecycleScopeTemplate, hash, nil)
 		require.NoError(t, err)
 		require.Nil(t, row, "deregister must delete %q row", name)
 	}
@@ -191,7 +184,6 @@ func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 	t.Parallel()
 	f := newFanOutFixture(t)
-	t.Cleanup(f.teardown)
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("e", 64)
@@ -199,16 +191,16 @@ func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 
 	_, _, err := FanOutInstanceEvent(ctx, f.deps, EventInstanceCreated, hash, instanceID, twoStoreSpec())
 	require.NoError(t, err)
-	row, err := f.deps.Storage.StoreLifecycle().Get(ctx, "alpha",
-		storage.StoreLifecycleScopeInstance, instanceID, nil)
+	row, err := f.deps.Persist.StoreLifecycle().Get(ctx, "alpha",
+		persistence.StoreLifecycleScopeInstance, instanceID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)
 
 	_, _, err = FanOutInstanceEvent(ctx, f.deps, EventInstanceTerminated, hash, instanceID, twoStoreSpec())
 	require.NoError(t, err)
 	for _, name := range []string{"alpha", "beta"} {
-		row, err := f.deps.Storage.StoreLifecycle().Get(ctx, name,
-			storage.StoreLifecycleScopeInstance, instanceID, nil)
+		row, err := f.deps.Persist.StoreLifecycle().Get(ctx, name,
+			persistence.StoreLifecycleScopeInstance, instanceID, nil)
 		require.NoError(t, err)
 		require.Nil(t, row, "terminate must delete %q row", name)
 	}

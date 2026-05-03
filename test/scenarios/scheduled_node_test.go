@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestScheduledNode(t *testing.T) {
@@ -60,9 +60,9 @@ func TestScheduledNode(t *testing.T) {
 	deadline := time.Now().Add(20 * time.Second)
 	var sawFired bool
 	for time.Now().Before(deadline) {
-		evs, err := h.Storage.Events().List(h.Ctx,
-			storage.EventListFilter{NodeID: &nid, Kind: "schedule_fired"},
-			storage.ListPagination{Limit: 10}, nil)
+		evs, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &nid, Kind: "schedule_fired"},
+			persistence.ListPagination{Limit: 10}, nil)
 		require.NoError(t, err)
 		if len(evs.Events) > 0 {
 			sawFired = true

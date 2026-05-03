@@ -8,9 +8,8 @@ import (
 	"strconv"
 
 	"github.com/fallguy/rimsky/core/controlapi"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -18,14 +17,14 @@ import (
 // follows the same name → endpoint + capabilities shape as the
 // supervisor and scheduler. Per spec §6.1.
 type ControlAPIConfig struct {
-	Storage storage.StorageBackend
-	Queue   queue.DispatchQueue
-	Clock   shared.Clock
-	Logger  shared.Logger
-	Host    string
-	Port    int
-	Auth    controlapi.Authenticator // nil = anonymous (default)
-	Stores  RemoteStoresConfig
+	// Driver is the unified persistence driver. Required.
+	Driver persistence.Driver
+	Clock  shared.Clock
+	Logger shared.Logger
+	Host   string
+	Port   int
+	Auth   controlapi.Authenticator // nil = anonymous (default)
+	Stores RemoteStoresConfig
 	// NamedLocks is the operator-side named-lock config. The control-
 	// api consults this at template-deploy time to validate that
 	// every template-referenced lock name is declared.
@@ -77,8 +76,19 @@ func (h *controlAPIHandle) Addr() string { return h.addr }
 // StartControlAPI binds host:port (port=0 for OS-assigned) and starts
 // serving.
 func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
+	if cfg.Driver == nil {
+		return nil, fmt.Errorf("StartControlAPI: Driver is required")
+	}
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
+	}
+	persistStore := cfg.Driver.Store()
+	if persistStore == nil {
+		return nil, fmt.Errorf("StartControlAPI: Driver.Store() returned nil — driver did not initialize the Store accessor")
+	}
+	persistQueue := cfg.Driver.Queue()
+	if persistQueue == nil {
+		return nil, fmt.Errorf("StartControlAPI: Driver.Queue() returned nil")
 	}
 	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
 	if err != nil {
@@ -101,8 +111,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		}
 	}
 	deps := controlapi.AppDeps{
-		Storage: cfg.Storage, Queue: cfg.Queue, Clock: cfg.Clock,
-		Logger: cfg.Logger, Auth: cfg.Auth,
+		Persist:    persistStore,
+		Queue:      persistQueue,
+		Clock:      cfg.Clock,
+		Logger:     cfg.Logger,
+		Auth:       cfg.Auth,
 		Stores:     registry,
 		NamedLocks: cfg.NamedLocks,
 		Executors:  executorsByName,

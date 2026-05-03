@@ -9,7 +9,6 @@
 package frame_resolution
 
 import (
-	"context"
 	"log/slog"
 	"sync"
 	"testing"
@@ -39,20 +38,16 @@ func TestFrameStartAtomicity(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Reset to a clean queued frame state for full control.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
-	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
-	require.NoError(t, err)
+	h.ExecSQL(`DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
+	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	var frameID uuid.UUID
-	err = h.Pool.QueryRow(h.Ctx, `
+	h.QueryRowSQL(`
 		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), 600000)
 		RETURNING frame_id
-	`, uuid.UUID(iid), uuid.UUID(worker.ID)).Scan(&frameID)
-	require.NoError(t, err)
+	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
 
 	// Race two RunTicks.
 	var wg sync.WaitGroup
@@ -61,30 +56,30 @@ func TestFrameStartAtomicity(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			_ = frame.RunTick(h.Ctx, h.Pool, slog.Default())
+			_ = frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), slog.Default())
 		}()
 	}
 	wg.Wait()
 
 	// Exactly one frame should have advanced to running (per uq_rimsky_frames_running).
-	require.Equal(t, 1, countFramesByState(t, h.Pool, iid, "running"),
+	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"exactly one frame should be running after the race")
 
 	// Atomic visibility: running row has started_at set, AND the source node
 	// has state='stale' (or has progressed onward via supervisor) with the matching frame_id.
 	var state string
 	var startedAt *time.Time
-	err = h.Pool.QueryRow(context.Background(),
-		`SELECT state, started_at FROM rimsky_frames WHERE frame_id = $1`, frameID).Scan(&state, &startedAt)
-	require.NoError(t, err)
+	h.QueryRowSQL(
+		`SELECT state, started_at FROM rimsky_frames WHERE frame_id = $1`,
+		[]any{frameID}, &state, &startedAt)
 	require.Equal(t, "running", state)
 	require.NotNil(t, startedAt, "running frame must have started_at set atomically")
 
 	var nodeState string
 	var nodeFrameID *uuid.UUID
-	err = h.Pool.QueryRow(context.Background(),
-		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeState, &nodeFrameID)
-	require.NoError(t, err)
+	h.QueryRowSQL(
+		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1`,
+		[]any{uuid.UUID(worker.ID)}, &nodeState, &nodeFrameID)
 	require.NotNil(t, nodeFrameID,
 		"source node must have frame_id set atomically with frame-start")
 	require.Equal(t, frameID, *nodeFrameID,

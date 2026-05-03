@@ -30,8 +30,8 @@ import (
 
 	"github.com/fallguy/rimsky/core/config"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -82,42 +82,42 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 	// Post-DeployTemplate: register + deploy fired, so the
 	// template-scope lifecycle row should be at state='deployed'.
-	tplRow := getLifecycleRow(t, h, "alpha", storage.StoreLifecycleScopeTemplate, templateHash)
+	tplRow := getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash)
 	require.NotNil(t, tplRow, "template-scope lifecycle row must exist after deploy")
-	require.Equal(t, storage.StoreLifecycleStateDeployed, tplRow.State)
+	require.Equal(t, persistence.StoreLifecycleStateDeployed, tplRow.State)
 
 	// Instantiate: triggers OnInstanceCreated.
 	instanceID := h.CreateInstance(templateHash, "ck-1", nil)
-	instRow := getLifecycleRow(t, h, "alpha", storage.StoreLifecycleScopeInstance, instanceID.String())
+	instRow := getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeInstance, instanceID.String())
 	require.NotNil(t, instRow, "instance-scope lifecycle row must exist after create")
-	require.Equal(t, storage.StoreLifecycleStateCreated, instRow.State)
+	require.Equal(t, persistence.StoreLifecycleStateCreated, instRow.State)
 
 	// Drive instance terminal — manual SQL bypass; lifecycle test
 	// doesn't depend on the frame engine.
-	require.NoError(t, h.Storage.Instances().MarkTerminated(ctx, instanceID, nil))
+	require.NoError(t, h.Persist.Instances().MarkTerminated(ctx, instanceID, nil))
 
 	// DELETE /instances triggers OnInstanceTerminated fan-out, which
 	// deletes the per-store lifecycle row before dropping the
 	// instance row. We verify both outcomes below.
 	deleteAndExpect(t, h, "/instances/"+instanceID.String(), http.StatusOK)
-	require.Nil(t, getLifecycleRow(t, h, "alpha", storage.StoreLifecycleScopeInstance, instanceID.String()),
+	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeInstance, instanceID.String()),
 		"instance-scope lifecycle row must be deleted by terminate fan-out")
 
 	// Undeploy: template-scope row state='undeployed'.
 	postAndExpect(t, h, "/templates/"+templateHash+"/undeploy", http.StatusOK)
-	tplRow = getLifecycleRow(t, h, "alpha", storage.StoreLifecycleScopeTemplate, templateHash)
+	tplRow = getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash)
 	require.NotNil(t, tplRow)
-	require.Equal(t, storage.StoreLifecycleStateUndeployed, tplRow.State)
+	require.Equal(t, persistence.StoreLifecycleStateUndeployed, tplRow.State)
 
 	// Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
 	deleteAndExpect(t, h, "/templates/"+templateHash, http.StatusOK)
-	require.Nil(t, getLifecycleRow(t, h, "alpha", storage.StoreLifecycleScopeTemplate, templateHash),
+	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash),
 		"template-scope lifecycle row must be deleted by deregister fan-out")
 }
 
-func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind storage.StoreLifecycleScopeKind, scopeID string) *storage.StoreLifecycleRow {
+func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind persistence.StoreLifecycleScopeKind, scopeID string) *persistence.StoreLifecycleRow {
 	t.Helper()
-	row, err := h.Storage.StoreLifecycle().Get(context.Background(), storeName, kind, scopeID, nil)
+	row, err := h.Persist.StoreLifecycle().Get(context.Background(), storeName, kind, scopeID, nil)
 	require.NoError(t, err)
 	return row
 }

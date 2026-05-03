@@ -14,16 +14,39 @@
 package attributes
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/shared"
 )
+
+// Row mirrors a row of `rimsky_node_attributes`. Carried by the local
+// NodeAttributesStore below so the HTTP handler can be used by tests
+// without depending on the full persistence layer.
+type Row struct {
+	NodeID     shared.UUID
+	RunAttempt int
+	Data       map[string]any
+	UpdatedAt  time.Time
+}
+
+// NodeAttributesStore is the narrow interface the HTTP handler depends
+// on. The supervisor adapts the canonical
+// `persistence.NodeAttributesStore` to this shape (the persistence
+// methods take an additional `tx persistence.Tx`; the callback handler
+// always runs outside any caller-owned tx).
+type NodeAttributesStore interface {
+	Get(ctx context.Context, nodeID shared.UUID) (*Row, error)
+	Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error
+	MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error
+}
 
 // AuthLookup resolves a supervisor-issued cancel_token to the node_id it
 // authorises. Returns ErrUnauthorizedCallback when the token is unknown

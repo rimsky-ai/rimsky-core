@@ -11,7 +11,6 @@
 package frame_resolution
 
 import (
-	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -42,12 +41,9 @@ func TestFrameTimeoutReaper(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frame for this instance so we have full control.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
-	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	require.NoError(t, err)
-	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
-	require.NoError(t, err)
+	h.ExecSQL(`DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
+	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	// Insert a wedged frame: started_at 2 minutes ago (past the 60s timeout),
 	// state=running, no claimed dispatches, but the source node is stale
@@ -55,32 +51,30 @@ func TestFrameTimeoutReaper(t *testing.T) {
 	// dispatch row tying it to a runnable queue entry — yet rimsky_nodes
 	// is in_motion, so the frame's expected work is not done).
 	var frameID uuid.UUID
-	err = h.Pool.QueryRow(h.Ctx, `
+	h.QueryRowSQL(`
 		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '3 minutes', now() - interval '2 minutes', 60000)
 		RETURNING frame_id
-	`, uuid.UUID(iid), uuid.UUID(worker.ID)).Scan(&frameID)
-	require.NoError(t, err)
+	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
 
 	// Mark the source node stale with this frame_id but no dispatch row.
-	_, err = h.Pool.Exec(h.Ctx, `
+	h.ExecSQL(`
 		UPDATE rimsky_nodes SET state = 'stale', frame_id = $1, updated_at = now() WHERE id = $2
 	`, frameID, uuid.UUID(worker.ID))
-	require.NoError(t, err)
 
 	// Drive the frame engine.
-	require.NoError(t, frame.RunTick(h.Ctx, h.Pool, slog.Default()))
+	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), slog.Default()))
 
 	// Frame should now be failed.
-	state, ok := waitForFrameTerminal(t, h.Pool, frameID, 5*time.Second)
+	state, ok := waitForFrameTerminal(t, h, frameID, 5*time.Second)
 	require.True(t, ok, "stuck frame did not transition to terminal")
 	require.Equal(t, "failed", state, "stuck frame should be failed by reaper")
 
 	// Wedged node should have been forced to failed.
 	var nodeState string
-	err = h.Pool.QueryRow(context.Background(),
-		`SELECT state FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeState)
-	require.NoError(t, err)
+	h.QueryRowSQL(
+		`SELECT state FROM rimsky_nodes WHERE id = $1`,
+		[]any{uuid.UUID(worker.ID)}, &nodeState)
 	require.Equal(t, "failed", nodeState,
 		"wedged node should be forced to failed by reaper")
 }

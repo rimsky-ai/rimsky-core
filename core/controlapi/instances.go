@@ -41,10 +41,9 @@ import (
 
 	"github.com/fallguy/rimsky/core/frame"
 	nodepkg "github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 type createInstanceRequest struct {
@@ -69,7 +68,7 @@ type instanceItem struct {
 	TerminatedAt *time.Time     `json:"terminated_at,omitempty"`
 }
 
-func toInstanceItem(r storage.InstanceRow, redact []string) instanceItem {
+func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	return instanceItem{
 		ID:           r.ID.String(),
 		TemplateHash: r.TemplateHash,
@@ -130,15 +129,15 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			respOut    createInstanceResponse
 			existedKey bool
 		)
-		err = deps.Storage.Transaction(req.Context(), func(ctx context.Context, tx storage.Tx) error {
-			row, err := deps.Storage.Templates().LockForUpdate(ctx, hash, tx)
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
 			if err != nil {
 				return err
 			}
 			if row == nil {
 				return shared.ErrTemplateNotFound
 			}
-			if row.State != storage.TemplateStateDeployed {
+			if row.State != persistence.TemplateStateDeployed {
 				return shared.Wrap(shared.ErrTemplateValidation,
 					"instance creation requires template state 'deployed'",
 					map[string]any{"template_hash": hash, "state": string(row.State)})
@@ -146,7 +145,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			tplSpec = row.Spec
 			// Idempotent resolution on (template_hash, instance_key).
 			if body.InstanceKey != nil {
-				existing, err := deps.Storage.Instances().GetByInstanceKey(ctx, hash, *body.InstanceKey, tx)
+				existing, err := deps.Persist.Instances().GetByInstanceKey(ctx, hash, *body.InstanceKey, tx)
 				if err != nil {
 					return err
 				}
@@ -204,15 +203,15 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 func handleListInstances(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
-		filter := storage.InstanceListFilter{
+		filter := persistence.InstanceListFilter{
 			TemplateHash: q.Get("template_hash"),
 			InstanceKey:  q.Get("instance_key"),
 		}
-		pag := storage.ListPagination{
+		pag := persistence.ListPagination{
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),
 		}
-		page, err := deps.Storage.Instances().List(req.Context(), filter, pag, nil)
+		page, err := deps.Persist.Instances().List(req.Context(), filter, pag, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -224,7 +223,7 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 		for _, r := range page.Rows {
 			redact, ok := redactCache[r.TemplateHash]
 			if !ok {
-				tpl, err := deps.Storage.Templates().GetByHash(req.Context(), r.TemplateHash, nil)
+				tpl, err := deps.Persist.Templates().GetByHash(req.Context(), r.TemplateHash, nil)
 				if err == nil && tpl != nil {
 					redact = tpl.Spec.ParamsRedact
 				}
@@ -250,7 +249,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
-		tpl, _ := deps.Storage.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
+		tpl, _ := deps.Persist.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
 		var redact []string
 		if tpl != nil {
 			redact = tpl.Spec.ParamsRedact
@@ -289,7 +288,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		// retry; surviving lifecycle rows are picked up by the
 		// terminator if the instance row remains. We only proceed with
 		// the row delete after fan-out fully succeeds.
-		tpl, err := deps.Storage.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
+		tpl, err := deps.Persist.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -317,12 +316,12 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}
 		// Defensive: per spec §1.6 any remaining lifecycle rows for
 		// scope='instance' on this id are deleted with the instance.
-		if err := deps.Storage.StoreLifecycle().DeleteByScope(req.Context(),
-			storage.StoreLifecycleScopeInstance, inst.ID.String(), nil); err != nil {
+		if err := deps.Persist.StoreLifecycle().DeleteByScope(req.Context(),
+			persistence.StoreLifecycleScopeInstance, inst.ID.String(), nil); err != nil {
 			writeError(w, err)
 			return
 		}
-		if err := deps.Storage.Instances().Delete(req.Context(), inst.ID, nil); err != nil {
+		if err := deps.Persist.Instances().Delete(req.Context(), inst.ID, nil); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -347,8 +346,8 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 	deps AppDeps,
 	templateHash, instanceID string,
 ) error {
-	rows, err := deps.Storage.StoreLifecycle().ListByScope(ctx,
-		storage.StoreLifecycleScopeInstance, instanceID, nil)
+	rows, err := deps.Persist.StoreLifecycle().ListByScope(ctx,
+		persistence.StoreLifecycleScopeInstance, instanceID, nil)
 	if err != nil {
 		return fmt.Errorf("lifecycle row list: %w", err)
 	}
@@ -362,9 +361,9 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 				"instance_id", instanceID,
 				"template_hash", templateHash,
 				"store_name", r.StoreRegistrationName)
-			if err := deps.Storage.StoreLifecycle().Delete(ctx,
+			if err := deps.Persist.StoreLifecycle().Delete(ctx,
 				r.StoreRegistrationName,
-				storage.StoreLifecycleScopeInstance,
+				persistence.StoreLifecycleScopeInstance,
 				instanceID, nil); err != nil {
 				return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
 			}
@@ -373,9 +372,9 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 		if err := s.OnInstanceTerminated(ctx, templateHash, instanceID); err != nil {
 			return fmt.Errorf("store %q OnInstanceTerminated: %w", r.StoreRegistrationName, err)
 		}
-		if err := deps.Storage.StoreLifecycle().Delete(ctx,
+		if err := deps.Persist.StoreLifecycle().Delete(ctx,
 			r.StoreRegistrationName,
-			storage.StoreLifecycleScopeInstance,
+			persistence.StoreLifecycleScopeInstance,
 			instanceID, nil); err != nil {
 			return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
 		}
@@ -398,13 +397,13 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 func provisionInstanceTx(
 	ctx context.Context,
 	deps AppDeps,
-	tx storage.Tx,
-	tpl *storage.TemplateRow,
+	tx persistence.Tx,
+	tpl *persistence.TemplateRow,
 	instanceKey *string,
 	params map[string]any,
 ) (createInstanceResponse, error) {
 	// Create instance row (fails with ErrInstanceKeyConflict if duplicate).
-	inst, err := deps.Storage.Instances().Create(ctx, storage.InstanceCreateInput{
+	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID:           uuid.New(),
 		TemplateHash: tpl.ID,
 		InstanceKey:  instanceKey,
@@ -437,7 +436,7 @@ func provisionInstanceTx(
 		}
 
 		// Create node row.
-		if _, err := deps.Storage.Nodes().Create(ctx, storage.NodeCreateInput{
+		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID:           nodeID,
 			InstanceID:   inst.ID,
 			NodeType:     def.Type,
@@ -454,7 +453,7 @@ func provisionInstanceTx(
 			if err != nil {
 				return createInstanceResponse{}, fmt.Errorf("instance-factory: invalid cron on node %q: %w", def.Type, err)
 			}
-			if err := deps.Storage.Schedules().Register(ctx, storage.ScheduleRegisterInput{
+			if err := deps.Persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
 				NodeID:     nodeID,
 				CronExpr:   def.Schedule,
 				NextFireAt: next,
@@ -467,16 +466,12 @@ func provisionInstanceTx(
 	// Phase 2: enqueue an initial frame for each root node (no deps),
 	// reusing the caller's tx so the frame inserts are atomic with the
 	// instance+node creation above.
-	pgT, err := pgstorage.PgxTxFromStorage(tx)
-	if err != nil {
-		return createInstanceResponse{}, fmt.Errorf("instance-factory: extract pgx tx: %w", err)
-	}
 	for _, def := range tpl.Spec.Nodes {
 		if len(def.Dependencies) != 0 {
 			continue
 		}
 		nodeID := nodeIDs[def.Type]
-		if _, err := frame.EnqueueOrCoalesce(ctx, pgT, inst.ID, nodeID); err != nil {
+		if _, err := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, inst.ID, nodeID); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: enqueue root node %q: %w", def.Type, err)
 		}
 	}

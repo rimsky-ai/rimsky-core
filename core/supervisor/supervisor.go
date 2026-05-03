@@ -27,10 +27,11 @@
 //	the WHERE clause is `holder_supervisor_id = $1`, so a stale
 //	heartbeat from a different supervisor can never extend a row it
 //	doesn't own. Concrete enforcement of the release path lives
-//	across `core/queue/postgres/queue.go`, `core/supervisor/runner.go`,
-//	and `core/scheduler/scheduler.go`; this file's contribution is the
-//	heartbeat-write claimant guard. Do not relax the
-//	`holder_supervisor_id = $1` predicate on the heartbeat UPDATE.
+//	across persistence.Queue / persistence.LockHoldersStore impls,
+//	`core/supervisor/runner.go`, and `core/scheduler/scheduler.go`;
+//	this file's contribution is the heartbeat-write claimant guard.
+//	Do not relax the `holder_supervisor_id = $1` predicate on the
+//	heartbeat UPDATE.
 //
 // @blessed-invariant 10: Lock acquisition is atomic with dispatch
 // claim (rimsky-side). Per v3 spec §4.10:
@@ -58,20 +59,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
 // Config is the supervisor's construction-time dependency bundle.
 type Config struct {
-	SupervisorID      string
-	Storage           storage.StorageBackend
-	Queue             queue.DispatchQueue
+	SupervisorID string
+	// Persist is the persistence.Store handle (rimsky_* tables). Required.
+	Persist persistence.Store
+	// Queue is the dispatch-queue accessor. Required.
+	Queue persistence.Queue
+	// Coordinator carries advisory-lock primitives the acquisition tx uses.
+	// Required.
+	Coordinator       persistence.Coordinator
 	Clock             shared.Clock
 	Logger            shared.Logger
 	Concurrency       int
@@ -157,28 +160,24 @@ func Start(cfg Config) (*Handle, error) {
 	if cfg.Clock == nil {
 		cfg.Clock = shared.SystemClock{}
 	}
-	if cfg.Storage == nil || cfg.Queue == nil || cfg.Resolver == nil {
-		return nil, errors.New("supervisor.Start: Storage, Queue, and Resolver are required")
+	if cfg.Persist == nil || cfg.Queue == nil || cfg.Resolver == nil {
+		return nil, errors.New("supervisor.Start: Persist, Queue, and Resolver are required")
+	}
+	if cfg.Coordinator == nil {
+		return nil, errors.New("supervisor.Start: Coordinator is required")
 	}
 	if cfg.StoreRegistry == nil {
 		return nil, errors.New("supervisor.Start: StoreRegistry is required")
 	}
 
-	// The omnibus runner and the release tx (§7.6 release path) both
-	// run on a *pgxpool.Pool. Type-assert on the queue impl for Pool();
-	// every production queue is core/queue/postgres which exposes it.
-	qpool, err := queuePool(cfg.Queue)
-	if err != nil {
-		return nil, err
-	}
-	lockHolders := store.NewLockHoldersClient(qpool)
+	lockHolders := cfg.Persist.LockHolders()
 
 	callbackReg := NewCallbackRegistry()
 	callbackSrv := &CallbackServer{
 		Registry:     callbackReg,
-		Storage:      cfg.Storage,
+		Persist:      cfg.Persist,
 		Queue:        cfg.Queue,
-		QueuePool:    qpool,
+		Coordinator:  cfg.Coordinator,
 		LockHolders:  lockHolders,
 		Clock:        cfg.Clock,
 		Logger:       cfg.Logger,
@@ -193,7 +192,7 @@ func Start(cfg Config) (*Handle, error) {
 	host, port := splitHostPort(addr)
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
-	if err := cfg.Storage.Supervisors().Register(context.Background(), storage.SupervisorRegisterInput{
+	if err := cfg.Persist.Supervisors().Register(context.Background(), persistence.SupervisorRegisterInput{
 		ID:                cfg.SupervisorID,
 		AcceptedExecutors: accepted,
 		AcceptedStores:    acceptedStores,
@@ -208,21 +207,8 @@ func Start(cfg Config) (*Handle, error) {
 	clientPool := executor.NewClientPool()
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised}
-	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, qpool, lockHolders)
+	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, lockHolders)
 	return h, nil
-}
-
-// queuePool extracts the underlying *pgxpool.Pool from a DispatchQueue
-// implementation. The omnibus runner needs a concrete pool to run §7.3
-// transactions; abstracting through a pool-less interface would force
-// every queue impl to expose the same — for v1 only the postgres impl
-// exists, so we type-assert here.
-func queuePool(q queue.DispatchQueue) (*pgxpool.Pool, error) {
-	pp, ok := q.(interface{ Pool() *pgxpool.Pool })
-	if !ok {
-		return nil, errors.New("supervisor.Start: Queue must expose Pool() *pgxpool.Pool")
-	}
-	return pp.Pool(), nil
 }
 
 // storeRegistryNames returns a sorted-stable copy of the registry's store
@@ -264,8 +250,7 @@ func runLoop(
 	pool *executor.ClientPool,
 	accepted []string,
 	acceptedStores []string,
-	qpool *pgxpool.Pool,
-	lockHolders *store.LockHoldersClient,
+	lockHolders persistence.LockHoldersStore,
 ) {
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
@@ -291,7 +276,7 @@ func runLoop(
 		}
 		activeMu.Unlock()
 
-		if err := cfg.Storage.Supervisors().Heartbeat(context.Background(), cfg.SupervisorID, cnt, nil); err != nil {
+		if err := cfg.Persist.Supervisors().Heartbeat(context.Background(), cfg.SupervisorID, cnt, nil); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
 		// §7.5 lock-holder heartbeat refresh. ExtendHeartbeat issues the
@@ -299,14 +284,14 @@ func runLoop(
 		// rows (anchored to nodes that have transitioned out of `running`
 		// to `stale`) are NOT refreshed — the resume-grace cutoff
 		// would never fire otherwise. The expiresAt budget is `5 ×
-		// HeartbeatInterval` per the spec; the storage adapter converts
+		// HeartbeatInterval` per the spec; the persistence layer converts
 		// the duration back to integer seconds for the §7.5 SQL literal.
 		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
-		if err := cfg.Storage.LockHolders().ExtendHeartbeat(context.Background(), cfg.SupervisorID, expiresAt, nil); err != nil {
+		if err := lockHolders.ExtendHeartbeat(context.Background(), cfg.SupervisorID, expiresAt, nil); err != nil {
 			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
 		}
 		for _, id := range ids {
-			_ = cfg.Storage.Nodes().UpdateHeartbeat(context.Background(), id, cfg.Clock.Now(), cfg.SupervisorID, nil)
+			_ = cfg.Persist.Nodes().UpdateHeartbeat(context.Background(), id, cfg.Clock.Now(), cfg.SupervisorID, nil)
 		}
 	}
 
@@ -328,9 +313,9 @@ func runLoop(
 			defer h.wg.Done()
 			defer cancel()
 			result, runErr := RunNode(ctx, RunArgs{
-				Storage:           cfg.Storage,
+				Persist:           cfg.Persist,
 				Queue:             cfg.Queue,
-				QueuePool:         qpool,
+				Coordinator:       cfg.Coordinator,
 				LockHolders:       lockHolders,
 				Clock:             cfg.Clock,
 				Logger:            cfg.Logger,
@@ -413,7 +398,7 @@ func runLoop(
 			}
 			cancelWait()
 			_ = srv.Close(context.Background())
-			if err := cfg.Storage.Supervisors().Unregister(context.Background(), cfg.SupervisorID, nil); err != nil {
+			if err := cfg.Persist.Supervisors().Unregister(context.Background(), cfg.SupervisorID, nil); err != nil {
 				cfg.Logger.Warn("supervisor: Unregister failed", "error", err.Error())
 			}
 			_ = pool.Close()

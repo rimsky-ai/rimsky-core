@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestNoOpCommit(t *testing.T) {
@@ -71,7 +71,7 @@ func TestNoOpCommit(t *testing.T) {
 
 	// Capture the dependent's last-updated time so we can later assert the
 	// no-op producer commit didn't drag it back through running.
-	depBefore, err := h.Storage.Nodes().Get(h.Ctx, dep.ID, nil)
+	depBefore, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, nil)
 	require.NoError(t, err)
 
 	// Swap the stub to changed=false and invalidate the producer; the
@@ -83,9 +83,9 @@ func TestNoOpCommit(t *testing.T) {
 	// pre-existing committed event from the first run doesn't false-positive
 	// the assertion below.
 	pid := producer.ID
-	priorCommitted, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
-		storage.ListPagination{Limit: 200}, nil)
+	priorCommitted, err := h.Persist.Events().List(h.Ctx,
+		persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+		persistence.ListPagination{Limit: 200}, nil)
 	require.NoError(t, err)
 	priorCount := len(priorCommitted.Events)
 
@@ -106,16 +106,16 @@ func TestNoOpCommit(t *testing.T) {
 		"producer did not emit no_op_commit after changed=false run")
 
 	// `no_op_commit` event recorded for the producer.
-	noOpEvs, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &pid, Kind: "no_op_commit"},
-		storage.ListPagination{Limit: 10}, nil)
+	noOpEvs, err := h.Persist.Events().List(h.Ctx,
+		persistence.EventListFilter{NodeID: &pid, Kind: "no_op_commit"},
+		persistence.ListPagination{Limit: 10}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, noOpEvs.Events, "expected no_op_commit event after changed=false run")
 
 	// No NEW `attributes_committed` event was emitted by the second run.
-	postCommitted, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
-		storage.ListPagination{Limit: 200}, nil)
+	postCommitted, err := h.Persist.Events().List(h.Ctx,
+		persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+		persistence.ListPagination{Limit: 200}, nil)
 	require.NoError(t, err)
 	require.Equal(t, priorCount, len(postCommitted.Events),
 		"no_op commit must NOT emit attributes_committed (changed=false)")
@@ -130,7 +130,7 @@ func TestNoOpCommit(t *testing.T) {
 	require.Equal(t, 0, depDispatchCount,
 		"dependent should not be re-enqueued after producer no_op commit")
 
-	depAfter, err := h.Storage.Nodes().Get(h.Ctx, dep.ID, nil)
+	depAfter, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateFresh, depAfter.State,
 		"dependent should still be fresh (never cascaded)")

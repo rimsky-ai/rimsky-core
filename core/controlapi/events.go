@@ -9,8 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 type eventResponseItem struct {
@@ -30,7 +30,7 @@ func registerEventsRoutes(r chi.Router, deps AppDeps) {
 func handleListEvents(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
-		filter := storage.EventListFilter{
+		filter := persistence.EventListFilter{
 			Kind: q.Get("kind"),
 		}
 		if s := q.Get("instance_id"); s != "" {
@@ -67,11 +67,11 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 			}
 			filter.Until = &t
 		}
-		pag := storage.ListPagination{
+		pag := persistence.ListPagination{
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),
 		}
-		page, err := deps.Storage.Events().List(req.Context(), filter, pag, nil)
+		page, err := deps.Persist.Events().List(req.Context(), filter, pag, nil)
 		if err != nil {
 			writeError(w, err)
 			return

@@ -18,7 +18,7 @@ import (
 
 	"github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -75,7 +75,7 @@ func storeNameForSpec(sp any) string {
 // named-lock name per the substitution grammar.
 func buildLockSpecs(
 	ctx context.Context, args RunArgs,
-	nd *storage.NodeRow, def *node.TemplateNodeDef, inst *storage.InstanceRow,
+	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
 ) ([]any, error) {
 	if def == nil {
 		return nil, nil
@@ -125,29 +125,29 @@ func buildLockSpecs(
 // Aliases for which this node is itself the acquirer are resolved from
 // the lock-holder rows the supervisor wrote at acquire time. Returns nil
 // when the node holds no claim-holder rows.
-func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *storage.NodeRow) map[string]store.ClaimResult {
+func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *persistence.NodeRow) map[string]store.ClaimResult {
 	if nd == nil {
 		return nil
 	}
-	rows, err := args.Storage.ClaimHolders().ListByHolderNode(ctx, nd.ID, nil)
+	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nd.ID, nil)
 	if err != nil || len(rows) == 0 {
 		return nil
 	}
-	inst, err := args.Storage.Instances().Get(ctx, nd.InstanceID, nil)
+	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, nil)
 	if err != nil || inst == nil {
 		return nil
 	}
-	tmpl, err := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil || tmpl == nil {
 		return nil
 	}
 	out := map[string]store.ClaimResult{}
 	for _, r := range rows {
-		lh, err := args.Storage.LockHolders().Get(ctx, r.LockHolderID, nil)
+		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, nil)
 		if err != nil || lh == nil {
 			continue
 		}
-		acquirer, err := args.Storage.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		acquirer, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, nil)
 		if err != nil || acquirer == nil {
 			continue
 		}
@@ -170,7 +170,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *storage.N
 // aliasFromAcquirerStores resolves the alias-name on the acquirer
 // NodeDef whose store_name matches the lock-holder row, preferring an
 // alias whose substituted selector matches the row's region_data.
-func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *storage.LockHolderRow) string {
+func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *persistence.LockHolderRow) string {
 	if def == nil || lh == nil || lh.StoreName == nil {
 		return ""
 	}
@@ -203,17 +203,17 @@ func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *storage.LockHolderRo
 // rimsky_node_attributes.data into a map keyed by the upstream's
 // node_type, marshalled to json.RawMessage so the substitution engine
 // can lazy-walk into it.
-func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) map[string]json.RawMessage {
+func loadDepsAttributes(ctx context.Context, args RunArgs, nd *persistence.NodeRow) map[string]json.RawMessage {
 	if nd == nil || len(nd.Dependencies) == 0 {
 		return nil
 	}
 	out := make(map[string]json.RawMessage, len(nd.Dependencies))
 	for _, depID := range nd.Dependencies {
-		depNode, _ := args.Storage.Nodes().Get(ctx, depID, nil)
+		depNode, _ := args.Persist.Nodes().Get(ctx, depID, nil)
 		if depNode == nil {
 			continue
 		}
-		row, err := args.Storage.NodeAttributes().Get(ctx, depNode.ID)
+		row, err := args.Persist.NodeAttributes().Get(ctx, depNode.ID, nil)
 		if err != nil || row == nil {
 			continue
 		}
@@ -231,7 +231,7 @@ func loadDepsAttributes(ctx context.Context, args RunArgs, nd *storage.NodeRow) 
 // design.md §4.2: the supervisor populates this from the dispatch row's
 // instance → template lookup. Returns the empty string when the
 // instance row is unavailable; the store treats empty as scope-absent.
-func instTemplateScope(inst *storage.InstanceRow) string {
+func instTemplateScope(inst *persistence.InstanceRow) string {
 	if inst == nil {
 		return ""
 	}
@@ -240,7 +240,7 @@ func instTemplateScope(inst *storage.InstanceRow) string {
 
 // instInstanceScope returns the instance-scope id (the rimsky-generated
 // instance UUID) sent to the store on Open.
-func instInstanceScope(inst *storage.InstanceRow) string {
+func instInstanceScope(inst *persistence.InstanceRow) string {
 	if inst == nil {
 		return ""
 	}
@@ -248,11 +248,11 @@ func instInstanceScope(inst *storage.InstanceRow) string {
 }
 
 // lookupTemplate fetches the template for an instance, or nil on miss.
-func lookupTemplate(ctx context.Context, args RunArgs, inst *storage.InstanceRow) *node.TemplateSpec {
+func lookupTemplate(ctx context.Context, args RunArgs, inst *persistence.InstanceRow) *node.TemplateSpec {
 	if inst == nil {
 		return nil
 	}
-	tmpl, _ := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, _ := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if tmpl == nil {
 		return nil
 	}

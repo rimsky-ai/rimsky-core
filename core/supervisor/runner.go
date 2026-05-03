@@ -52,14 +52,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -84,35 +81,27 @@ type RunnerResult struct {
 //
 // The runner needs a richer surface than the pre-redesign per-dispatch
 // runner: it picks its own candidate (no DispatchID/NodeID input), needs
-// pool access to drive the §7.3 transaction directly, needs the store
-// registry for Store.Open / Commit / Abandon / Release
-// dispatch, and needs the lock-holders client for INSERT / DELETE /
-// UpdateAddress.
+// the persistence.Store to drive the §7.3 transaction directly, needs the
+// store registry for Store.Open / Commit / Abandon / Release dispatch,
+// and needs the lock-holders accessor for INSERT / DELETE / UpdateAddress.
 type RunArgs struct {
-	// Storage is the rimsky_* table accessor surface.
-	Storage storage.StorageBackend
+	// Persist is the unified persistence.Store handle (rimsky_* tables).
+	// Required. The runner opens the §7.3 acquisition tx via
+	// Persist.Transaction so queue helpers, lock-holder INSERTs, and
+	// claim-holder INSERTs all participate in the same tx.
+	Persist persistence.Store
 	// Queue exposes the queue-side helpers (SelectCandidates,
 	// ClaimDispatchRow, RefreshHeartbeat, …) that participate in the
 	// §7.3 acquisition tx.
-	Queue queue.DispatchQueue
-	// QueuePool is the *pgxpool.Pool the queue is bound to. The runner
-	// opens the v3 §7.3 rimsky-side acquisition tx on this pool so the
-	// queue helpers and the rimsky-side lock-holder + claim-holder
-	// inserts all participate in the same tx. The store-service's `Open`
-	// RPC fires inside this tx scope but the store runs its own
-	// decoupled tx for store-side state mutation (v3 spec §7.3 step
-	// 4); the two are not joined. core/queue/postgres.Queue exposes
-	// Pool() to make this trivial; non-postgres queue impls would need
-	// to wire their own pool.
-	QueuePool *pgxpool.Pool
-	// LockHolders is the database-facing helper for rimsky_lock_holders.
-	// Source: storage.LockHoldersClient(); we take it directly so the
-	// helpers (CountByNamedLock, ListByStoreRegion, Insert, DeleteByID,
-	// UpdateAddress) that the acquisition + release paths need are
-	// reachable without going through the storage adapter. Resume
-	// detection moved into the store; the supervisor no longer
-	// probes for or rebinds existing rows.
-	LockHolders *store.LockHoldersClient
+	Queue persistence.Queue
+	// Coordinator carries the cross-process synchronization primitives
+	// (per-named-lock advisory locks, per-region advisory locks, etc.)
+	// the acquisition tx threads through.
+	Coordinator persistence.Coordinator
+	// LockHolders is the rimsky_lock_holders accessor. Reachable via
+	// Persist.LockHolders(); kept as an explicit field so call sites
+	// don't have to thread Persist + LockHolders separately.
+	LockHolders persistence.LockHoldersStore
 	// StoreRegistry is the per-process store registry built at supervisor
 	// startup from rimsky.yml (spec §6.1). The runner dispatches against
 	// the 4-verb store.Store interface (Open/Commit/Abandon/Release).
@@ -321,14 +310,14 @@ func RunNode(
 // error rather than panicking so the caller (supervisor.runLoop) can
 // shut down cleanly.
 func validateRunArgs(args RunArgs) error {
-	if args.Storage == nil {
-		return errors.New("supervisor.RunNode: Storage is required")
+	if args.Persist == nil {
+		return errors.New("supervisor.RunNode: Persist is required")
 	}
 	if args.Queue == nil {
 		return errors.New("supervisor.RunNode: Queue is required")
 	}
-	if args.QueuePool == nil {
-		return errors.New("supervisor.RunNode: QueuePool is required")
+	if args.Coordinator == nil {
+		return errors.New("supervisor.RunNode: Coordinator is required")
 	}
 	if args.LockHolders == nil {
 		return errors.New("supervisor.RunNode: LockHolders is required")
@@ -364,12 +353,12 @@ func upsertAttributesPreDispatch(
 	nodeID shared.UUID,
 	resolvedAttrs map[string]any,
 ) error {
-	prior, _ := args.Storage.NodeAttributes().Get(ctx, nodeID)
+	prior, _ := args.Persist.NodeAttributes().Get(ctx, nodeID, nil)
 	attempt := 1
 	if prior != nil {
 		attempt = prior.RunAttempt + 1
 	}
-	return args.Storage.NodeAttributes().Upsert(ctx, nodeID, attempt, resolvedAttrs)
+	return args.Persist.NodeAttributes().Upsert(ctx, nodeID, attempt, resolvedAttrs, nil)
 }
 
 // emitTemplateResolutionFailedEvent appends the typed event for a
@@ -378,7 +367,7 @@ func upsertAttributesPreDispatch(
 func emitTemplateResolutionFailedEvent(
 	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
 ) {
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &nodeID, InstanceID: &instanceID,
 		Kind: "template_resolution_failed",
 		Payload: map[string]any{

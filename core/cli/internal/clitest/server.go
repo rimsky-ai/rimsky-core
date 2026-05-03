@@ -584,7 +584,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
-	// Mirror the live control-api (`core/storage/postgres/events.go`):
+	// Mirror the live control-api (`core/persistence/postgres/events.go`):
 	// next_cursor is set only when the page is full (len == limit). A
 	// partial page returns next_cursor="" so clients know to wait
 	// rather than continue paging.

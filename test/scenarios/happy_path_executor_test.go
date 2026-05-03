@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestHappyPathExecutor(t *testing.T) {
@@ -50,8 +50,8 @@ func TestHappyPathExecutor(t *testing.T) {
 
 	// Verify a commit (or work_completed) event was appended.
 	nid := n.ID
-	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid},
-		storage.ListPagination{Limit: 200}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+		persistence.ListPagination{Limit: 200}, nil)
 	require.NoError(t, err)
 	var sawCompleted bool
 	for _, e := range evs.Events {
@@ -65,7 +65,7 @@ func TestHappyPathExecutor(t *testing.T) {
 	// Verify the executor's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
-	row, err := h.Storage.NodeAttributes().Get(h.Ctx, n.ID)
+	row, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row, "expected node_attributes row to exist after commit")
 	require.Equal(t, true, row.Data["ok"],

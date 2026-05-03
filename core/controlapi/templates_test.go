@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/store/storetest"
 )
 
@@ -323,9 +324,8 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 	// Setting terminated_at directly bypasses the frame engine; this
 	// test is targeted at the undeploy → instance-create state guard,
 	// not at terminal-state detection.
-	_, err := h.pool.Exec(context.Background(),
+	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
-	require.NoError(t, err)
 
 	// Move to undeployed.
 	undeployStatus, undeployOut := h.httpJSON(t, "POST", "/templates/"+tplID+"/undeploy", map[string]any{})

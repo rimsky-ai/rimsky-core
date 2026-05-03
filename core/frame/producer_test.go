@@ -7,17 +7,35 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/internal/pgtest"
+	"github.com/fallguy/rimsky/core/persistence"
 )
 
-// seedTemplateAndInstance inserts a minimal rimsky_templates row carrying a
-// frame_resolution mode in spec, and a child rimsky_instances row. Returns
-// (templateHash, instanceID).
-func seedTemplateAndInstance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, mode string) (templateHash string, instanceID uuid.UUID) {
+// enqueueAgainstDriver runs frame.EnqueueOrCoalesce inside a fresh tx
+// owned by the persistence driver. The tx commits when fn returns nil
+// and rolls back on a non-nil return.
+func enqueueAgainstDriver(ctx context.Context, d persistence.Driver,
+	instanceID, sourceNodeID uuid.UUID) (uuid.UUID, error) {
+	var fid uuid.UUID
+	err := d.Store().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		got, err := frame.EnqueueOrCoalesce(ctx, d.Store(), tx, instanceID, sourceNodeID)
+		if err != nil {
+			return err
+		}
+		fid = got
+		return nil
+	})
+	return fid, err
+}
+
+// seedTemplateAndInstance inserts a minimal rimsky_templates row carrying
+// a frame_resolution mode in spec, and a child rimsky_instances row.
+// Returns (templateHash, instanceID). Goes through ExecForTest because
+// the test fixture pins state='deployed' directly.
+func seedTemplateAndInstance(t *testing.T, ctx context.Context, d persistence.Driver, mode string) (templateHash string, instanceID uuid.UUID) {
 	t.Helper()
 	suffix := uuid.NewString()
 	suffix = strings.ReplaceAll(suffix, "-", "")
@@ -27,18 +45,16 @@ func seedTemplateAndInstance(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if mode != "" {
 		spec = `{"frame_resolution":"` + mode + `"}`
 	}
-	_, err := pool.Exec(ctx, `
+	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_templates (id, spec, state)
         VALUES ($1, $2::jsonb, 'deployed')
     `, templateHash, spec)
-	require.NoError(t, err)
 
 	instanceID = uuid.New()
-	_, err = pool.Exec(ctx, `
+	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
         VALUES ($1, $2, $3, '{}'::jsonb)
     `, instanceID, templateHash, "ck-"+instanceID.String()[:8])
-	require.NoError(t, err)
 	return templateHash, instanceID
 }
 
@@ -46,19 +62,15 @@ func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "serial_queue")
+	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
 
 	// Three calls produce three frames.
 	for i := 0; i < 3; i++ {
-		tx, err := pool.Begin(ctx)
-		require.NoError(t, err)
-		fid, err := frame.EnqueueOrCoalesce(ctx, tx, instanceID, uuid.New())
+		fid, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
 		require.NoError(t, err)
 		require.NotEqual(t, uuid.Nil, fid)
-		require.NoError(t, tx.Commit(ctx))
 	}
 
 	var (
@@ -67,13 +79,13 @@ func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {
 		stateMatch int
 		singletons int
 	)
-	require.NoError(t, pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, d, `
         SELECT COUNT(*),
                COUNT(*) FILTER (WHERE mode = 'serial_queue'),
                COUNT(*) FILTER (WHERE state = 'queued'),
                COUNT(*) FILTER (WHERE array_length(source_node_ids, 1) = 1)
         FROM rimsky_frames WHERE instance_id = $1
-    `, instanceID).Scan(&count, &modeMatch, &stateMatch, &singletons))
+    `, []any{instanceID}, &count, &modeMatch, &stateMatch, &singletons)
 	require.Equal(t, 3, count)
 	require.Equal(t, 3, modeMatch)
 	require.Equal(t, 3, stateMatch)
@@ -84,26 +96,22 @@ func TestEnqueueOrCoalesce_CoalesceFirstInsert(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "coalesce")
+	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	fid, err := frame.EnqueueOrCoalesce(ctx, tx, instanceID, uuid.New())
+	fid, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
 	require.NoError(t, err)
 	require.NotEqual(t, uuid.Nil, fid)
-	require.NoError(t, tx.Commit(ctx))
 
 	var (
 		count int
 		mode  string
 		state string
 	)
-	require.NoError(t, pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, d, `
         SELECT COUNT(*), MAX(mode), MAX(state) FROM rimsky_frames WHERE instance_id = $1
-    `, instanceID).Scan(&count, &mode, &state))
+    `, []any{instanceID}, &count, &mode, &state)
 	require.Equal(t, 1, count)
 	require.Equal(t, "coalesce", mode)
 	require.Equal(t, "queued", state)
@@ -113,25 +121,18 @@ func TestEnqueueOrCoalesce_CoalesceAppendsSources(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "coalesce")
+	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
 
 	src1 := uuid.New()
 	src2 := uuid.New()
 
-	tx, err := pool.Begin(ctx)
+	fid1, err := enqueueAgainstDriver(ctx, d, instanceID, src1)
 	require.NoError(t, err)
-	fid1, err := frame.EnqueueOrCoalesce(ctx, tx, instanceID, src1)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
 
-	tx, err = pool.Begin(ctx)
+	fid2, err := enqueueAgainstDriver(ctx, d, instanceID, src2)
 	require.NoError(t, err)
-	fid2, err := frame.EnqueueOrCoalesce(ctx, tx, instanceID, src2)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
 
 	require.Equal(t, fid1, fid2, "second call should return same frame id (coalesced)")
 
@@ -139,10 +140,10 @@ func TestEnqueueOrCoalesce_CoalesceAppendsSources(t *testing.T) {
 		count    int
 		srcCount int
 	)
-	require.NoError(t, pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, d, `
         SELECT COUNT(*), COALESCE(MAX(array_length(source_node_ids, 1)), 0)
         FROM rimsky_frames WHERE instance_id = $1
-    `, instanceID).Scan(&count, &srcCount))
+    `, []any{instanceID}, &count, &srcCount)
 	require.Equal(t, 1, count)
 	require.Equal(t, 2, srcCount)
 }
@@ -151,30 +152,23 @@ func TestEnqueueOrCoalesce_CoalesceDedupesSameSource(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "coalesce")
+	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
 
 	src := uuid.New()
 
-	tx, err := pool.Begin(ctx)
+	_, err := enqueueAgainstDriver(ctx, d, instanceID, src)
 	require.NoError(t, err)
-	_, err = frame.EnqueueOrCoalesce(ctx, tx, instanceID, src)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
 
-	tx, err = pool.Begin(ctx)
+	_, err = enqueueAgainstDriver(ctx, d, instanceID, src)
 	require.NoError(t, err)
-	_, err = frame.EnqueueOrCoalesce(ctx, tx, instanceID, src)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit(ctx))
 
 	var srcCount int
-	require.NoError(t, pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, d, `
         SELECT COALESCE(MAX(array_length(source_node_ids, 1)), 0)
         FROM rimsky_frames WHERE instance_id = $1
-    `, instanceID).Scan(&srcCount))
+    `, []any{instanceID}, &srcCount)
 	require.Equal(t, 1, srcCount)
 }
 
@@ -182,16 +176,12 @@ func TestEnqueueOrCoalesce_InvalidMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
 	// Empty string mode — template has no frame_resolution set.
-	_, instanceID := seedTemplateAndInstance(t, ctx, pool, "")
+	_, instanceID := seedTemplateAndInstance(t, ctx, d, "")
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	defer tx.Rollback(ctx) //nolint:errcheck
-	_, err = frame.EnqueueOrCoalesce(ctx, tx, instanceID, uuid.New())
+	_, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported mode")
 }
@@ -200,13 +190,9 @@ func TestEnqueueOrCoalesce_InstanceNotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	defer tx.Rollback(ctx) //nolint:errcheck
-	_, err = frame.EnqueueOrCoalesce(ctx, tx, uuid.New(), uuid.New())
+	_, err := enqueueAgainstDriver(ctx, d, uuid.New(), uuid.New())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }

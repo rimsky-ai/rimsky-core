@@ -1,0 +1,411 @@
+// queue.go is the SQLite implementation of persistence.Queue. Mirrors
+// core/persistence/postgres/queue.go method-for-method with SQLite
+// dialect translations per spec §6.3.
+//
+// @blessed-invariant 2: dispatch claim brackets the running window.
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/fallguy/rimsky/core/persistence"
+	"github.com/fallguy/rimsky/core/shared"
+)
+
+// defaultCandidateLimit caps the candidate batch returned by
+// SelectCandidates when the caller passes Limit==0.
+const defaultCandidateLimit = 100
+
+type queueImpl struct {
+	db *sql.DB
+}
+
+func newQueue(db *sql.DB) *queueImpl { return &queueImpl{db: db} }
+
+var _ persistence.Queue = (*queueImpl)(nil)
+
+// q returns the right querier for tx. Same convention as storeImpl.q.
+func (q *queueImpl) q(tx persistence.Tx) querier {
+	if tx == nil {
+		return q.db
+	}
+	t, ok := tx.(*sqliteTx)
+	if !ok {
+		panic(fmt.Sprintf("sqlite.queueImpl.q: persistence.Tx is not a sqlite tx: %T", tx))
+	}
+	return t.tx
+}
+
+func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
+	return q.EnqueueInTx(ctx, req, nil)
+}
+
+func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
+	stores := req.RequiredStores
+	if stores == nil {
+		stores = []string{}
+	}
+	if req.FrameID == (shared.UUID{}) {
+		return fmt.Errorf("sqlite.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
+	}
+	now := nowUTC()
+	_, err := q.q(tx).ExecContext(ctx,
+		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, enqueued_at, frame_id)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(node_id) DO UPDATE
+		   SET enqueued_at = excluded.enqueued_at,
+		       executor_name = excluded.executor_name,
+		       required_stores = excluded.required_stores,
+		       frame_id = excluded.frame_id
+		   WHERE rimsky_dispatch.claimed_by IS NULL
+		     AND rimsky_dispatch.enqueued_at <= ?`,
+		uuid.New().String(), req.NodeID.String(),
+		nullableString(req.ExecutorName), marshalStringArray(stores),
+		formatTime(req.EnqueuedAt), req.FrameID.String(),
+		now,
+	)
+	return err
+}
+
+// SelectCandidates returns up to req.Limit dispatch rows. SQLite has no
+// FOR UPDATE SKIP LOCKED; the surrounding BEGIN IMMEDIATE writer-slot
+// hold serialises any concurrent runner so there's no contention to skip.
+func (q *queueImpl) SelectCandidates(
+	ctx context.Context, tx persistence.Tx, req persistence.SelectCandidatesRequest,
+) ([]persistence.Candidate, error) {
+	if tx == nil {
+		return nil, errors.New("sqlite.SelectCandidates: tx required")
+	}
+	if _, err := unwrapTx(tx); err != nil {
+		return nil, fmt.Errorf("sqlite.SelectCandidates: %w", err)
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultCandidateLimit
+	}
+	acceptedStores := req.AcceptedStores
+	if acceptedStores == nil {
+		acceptedStores = []string{}
+	}
+	acceptedExecutors := req.AcceptedExecutors
+	if acceptedExecutors == nil {
+		acceptedExecutors = []string{}
+	}
+
+	// SQLite: filter required_stores ⊆ acceptedStores in app code by
+	// scanning then post-filtering. We push the executor and now filters
+	// into SQL where straightforward, but executor `IN (...)` and
+	// required_stores subset are easier in Go.
+	rows, err := q.q(tx).QueryContext(ctx,
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
+		   FROM rimsky_dispatch d
+		   JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE d.claimed_by IS NULL
+		    AND d.enqueued_at <= ?
+		  ORDER BY d.enqueued_at`,
+		nowUTC(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.SelectCandidates: %w", err)
+	}
+	defer rows.Close()
+
+	executorAccepted := func(executor string) bool {
+		if executor == "" {
+			return true // native node
+		}
+		for _, a := range acceptedExecutors {
+			if a == executor {
+				return true
+			}
+		}
+		return false
+	}
+	storeAccepted := func(required []string) bool {
+		// required ⊆ acceptedStores
+		for _, r := range required {
+			found := false
+			for _, a := range acceptedStores {
+				if a == r {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+
+	var out []persistence.Candidate
+	for rows.Next() {
+		var (
+			c                 persistence.Candidate
+			dispatchIDStr     string
+			nodeIDStr         string
+			nodeType          string
+			executorName      sql.NullString
+			requiredStoresStr string
+			enqueuedAtStr     string
+			frameIDStr        string
+		)
+		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
+			&requiredStoresStr, &enqueuedAtStr, &frameIDStr); err != nil {
+			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
+		}
+		c.NodeType = nodeType
+		if executorName.Valid {
+			c.ExecutorName = executorName.String
+		}
+		stores, err := unmarshalStringArray(requiredStoresStr)
+		if err != nil {
+			return nil, err
+		}
+		c.RequiredStores = stores
+		if !executorAccepted(c.ExecutorName) || !storeAccepted(c.RequiredStores) {
+			continue
+		}
+		if c.DispatchID, err = uuid.Parse(dispatchIDStr); err != nil {
+			return nil, err
+		}
+		if c.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+			return nil, err
+		}
+		if c.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+			return nil, err
+		}
+		if c.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+		if len(out) >= limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite.SelectCandidates: rows: %w", err)
+	}
+	return out, nil
+}
+
+// ClaimDispatchRow — @blessed-invariant 2.
+func (q *queueImpl) ClaimDispatchRow(
+	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
+) (bool, error) {
+	if tx == nil {
+		return false, errors.New("sqlite.ClaimDispatchRow: tx required")
+	}
+	now := nowUTC()
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_dispatch
+		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?
+		  WHERE id = ? AND claimed_by IS NULL`,
+		supervisorID, now, now, dispatchID.String(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("sqlite.ClaimDispatchRow: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
+	if expectedClaimedBy != "" {
+		_, err := q.db.ExecContext(ctx,
+			`DELETE FROM rimsky_dispatch WHERE id = ? AND claimed_by = ?`,
+			dispatchID.String(), expectedClaimedBy,
+		)
+		return err
+	}
+	_, err := q.db.ExecContext(ctx,
+		`DELETE FROM rimsky_dispatch WHERE id = ?`, dispatchID.String(),
+	)
+	return err
+}
+
+func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string) error {
+	return q.RemoveForNodeInTx(ctx, nodeID, expectedClaimedBy, nil)
+}
+
+func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+	if expectedClaimedBy != "" {
+		_, err := q.q(tx).ExecContext(ctx,
+			`DELETE FROM rimsky_dispatch WHERE node_id = ? AND claimed_by = ?`,
+			nodeID.String(), expectedClaimedBy,
+		)
+		return err
+	}
+	_, err := q.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_dispatch WHERE node_id = ?`, nodeID.String(),
+	)
+	return err
+}
+
+// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
+// older than cutoff. @blessed-invariant 6 (5× heartbeat cutoff).
+func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]shared.DispatchRow, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		        claimed_by, claimed_at, last_heartbeat_at, frame_id
+		   FROM rimsky_dispatch
+		  WHERE claimed_by IS NOT NULL
+		    AND last_heartbeat_at < ?`,
+		formatTime(cutoff),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []shared.DispatchRow
+	for rows.Next() {
+		var r shared.DispatchRow
+		var (
+			idStr             string
+			nodeIDStr         string
+			executorName      sql.NullString
+			requiredStoresStr string
+			enqueuedAtStr     string
+			claimedBy         sql.NullString
+			claimedAtStr      sql.NullString
+			lastHeartbeatStr  sql.NullString
+			frameIDStr        string
+		)
+		if err := rows.Scan(
+			&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
+			&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
+		); err != nil {
+			return nil, err
+		}
+		var err error
+		if r.ID, err = uuid.Parse(idStr); err != nil {
+			return nil, err
+		}
+		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+			return nil, err
+		}
+		if executorName.Valid {
+			v := executorName.String
+			r.ExecutorName = &v
+		}
+		stores, err := unmarshalStringArray(requiredStoresStr)
+		if err != nil {
+			return nil, err
+		}
+		r.RequiredStores = stores
+		if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
+			return nil, err
+		}
+		if claimedBy.Valid {
+			v := claimedBy.String
+			r.ClaimedBy = &v
+		}
+		if claimedAtStr.Valid {
+			t, err := parseTime(claimedAtStr.String)
+			if err != nil {
+				return nil, err
+			}
+			r.ClaimedAt = &t
+		}
+		if lastHeartbeatStr.Valid {
+			t, err := parseTime(lastHeartbeatStr.String)
+			if err != nil {
+				return nil, err
+			}
+			r.LastHeartbeatAt = &t
+		}
+		if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+			return nil, err
+		}
+		if r.RequiredStores == nil {
+			r.RequiredStores = []string{}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ReleaseClaim — @blessed-invariant 4.
+func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
+	if expectedClaimedBy != "" {
+		_, err := q.db.ExecContext(ctx,
+			`UPDATE rimsky_dispatch
+			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
+			  WHERE id = ? AND claimed_by = ?`,
+			dispatchID.String(), expectedClaimedBy,
+		)
+		return err
+	}
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE rimsky_dispatch
+		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
+		  WHERE id = ?`,
+		dispatchID.String(),
+	)
+	return err
+}
+
+func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	var (
+		nodeIDStr string
+		claimedBy sql.NullString
+	)
+	err := q.db.QueryRowContext(ctx,
+		`SELECT node_id, claimed_by FROM rimsky_dispatch WHERE id = ?`,
+		dispatchID.String(),
+	).Scan(&nodeIDStr, &claimedBy)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
+		}
+		return shared.UUID{}, persistence.ClaimOwnership{}, err
+	}
+	nodeID, perr := uuid.Parse(nodeIDStr)
+	if perr != nil {
+		return shared.UUID{}, persistence.ClaimOwnership{}, perr
+	}
+	if !claimedBy.Valid {
+		return nodeID, persistence.ClaimOwnership{Kind: "unclaimed"}, nil
+	}
+	return nodeID, persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: claimedBy.String}, nil
+}
+
+// GetClaimedBy — @blessed-invariant 5: verify-before-run.
+func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
+	var claimedBy sql.NullString
+	err := q.db.QueryRowContext(ctx,
+		`SELECT claimed_by FROM rimsky_dispatch WHERE id = ?`,
+		dispatchID.String(),
+	).Scan(&claimedBy)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return persistence.ClaimOwnership{Kind: "not_found"}, nil
+		}
+		return persistence.ClaimOwnership{}, err
+	}
+	if !claimedBy.Valid {
+		return persistence.ClaimOwnership{Kind: "unclaimed"}, nil
+	}
+	return persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: claimedBy.String}, nil
+}
+
+func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
+	_, err := q.db.ExecContext(ctx,
+		`UPDATE rimsky_dispatch SET last_heartbeat_at = ? WHERE claimed_by = ?`,
+		nowUTC(), supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite.RefreshHeartbeat: %w", err)
+	}
+	return nil
+}

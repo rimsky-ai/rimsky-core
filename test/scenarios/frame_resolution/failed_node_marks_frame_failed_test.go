@@ -48,7 +48,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var first frameRow
 	for time.Now().Before(deadline) {
-		frames := listFrames(t, h.Pool, iid)
+		frames := listFrames(t, h, iid)
 		if len(frames) == 1 && (frames[0].State == "failed" || frames[0].State == "completed") {
 			first = frames[0]
 			break
@@ -77,10 +77,10 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"worker did not reach fresh on second fire")
 
 	// Wait for the second frame to settle.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "completed", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"expected one completed frame after second fire")
 
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 2, "expected two frames total")
 	require.Equal(t, "failed", frames[0].State)
 	require.Equal(t, "completed", frames[1].State)

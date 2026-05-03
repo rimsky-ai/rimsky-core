@@ -6,7 +6,6 @@ package pgtest
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -15,7 +14,8 @@ import (
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/fallguy/rimsky/core/migrations"
+	"github.com/fallguy/rimsky/core/persistence"
+	pgpersist "github.com/fallguy/rimsky/core/persistence/postgres"
 	"github.com/fallguy/rimsky/core/shared"
 )
 
@@ -23,9 +23,26 @@ import (
 // rimsky migrations, and returns a connection pool. Caller MUST invoke the
 // returned teardown func (typically via t.Cleanup). Multi-test parallel-
 // safe: testcontainers assigns unique container names.
+//
+// Wraps OpenDriver and returns the underlying pool via the test-only
+// PoolFromDriverForTest helper. Prefer OpenDriver for new code.
 func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
+	d := OpenDriver(ctx, t)
+	pool, ok := pgpersist.PoolFromDriverForTest(d)
+	if !ok {
+		t.Fatalf("pgtest: PoolFromDriverForTest returned !ok")
+	}
+	// Cleanup is registered inside OpenDriver; return a no-op teardown
+	// so existing call sites remain backward-compatible.
+	return pool, func() {}
+}
 
+// StartFreshPostgresDSN spins up a Postgres container and returns the DSN
+// without applying any migrations. Caller MUST invoke the returned
+// teardown func. Used by tests that exercise the migration runner itself.
+func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
+	t.Helper()
 	container, err := pgmodule.Run(ctx,
 		"postgres:14-alpine",
 		pgmodule.WithDatabase("rimsky"),
@@ -38,53 +55,147 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	if err != nil {
 		t.Fatalf("pgtest: start postgres: %v", err)
 	}
-
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		t.Fatalf("pgtest: connection string: %v", err)
 	}
-
-	// SELECT-1 loop to be robust against "container says ready but isn't"
-	pool, err := waitForPool(ctx, dsn, 30*time.Second)
-	if err != nil {
-		t.Fatalf("pgtest: pool wait: %v", err)
-	}
-
-	if err := migrations.Run(ctx, pool, shared.SilentLogger{}); err != nil {
-		pool.Close()
-		_ = container.Terminate(context.Background())
-		t.Fatalf("pgtest: migrate: %v", err)
-	}
-
 	teardown := func() {
-		pool.Close()
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := container.Terminate(termCtx); err != nil {
 			t.Logf("pgtest: terminate warn: %v", err)
 		}
 	}
-	return pool, teardown
+	return dsn, teardown
 }
 
-func waitForPool(ctx context.Context, dsn string, timeout time.Duration) (*pgxpool.Pool, error) {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		pool, err := pgxpool.New(ctx, dsn)
-		if err != nil {
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if err := pool.Ping(ctx); err == nil {
-			return pool, nil
-		} else {
-			pool.Close()
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
+// ExecForTest runs a raw SQL command against the underlying Postgres
+// pool of a persistence.Driver. Test-only escape hatch for tests that
+// need to seed or mutate state through SQL paths the persistence
+// interface does not surface (e.g. directly inserting into
+// rimsky_dispatch.last_heartbeat_at). Fatals on driver-mismatch or
+// SQL error.
+//
+// Lives here (not in a per-test package) so callers can stay outside
+// the pgx-isolation depguard rule by importing pgtest instead of pgx
+// directly.
+func ExecForTest(ctx context.Context, t *testing.T, d persistence.Driver, sql string, args ...any) {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDriverForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.ExecForTest: not a postgres driver")
+	}
+	if _, err := pool.Exec(ctx, sql, args...); err != nil {
+		t.Fatalf("pgtest.ExecForTest: %v\nsql: %s", err, sql)
+	}
+}
+
+// QueryRowForTest runs a raw SQL SELECT against the underlying Postgres
+// pool of a persistence.Driver and scans into dest. Test-only escape
+// hatch in the same vein as ExecForTest. Fatals on driver-mismatch or
+// SQL error.
+func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Driver, sql string, args []any, dest ...any) {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDriverForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.QueryRowForTest: not a postgres driver")
+	}
+	if err := pool.QueryRow(ctx, sql, args...).Scan(dest...); err != nil {
+		t.Fatalf("pgtest.QueryRowForTest: %v\nsql: %s", err, sql)
+	}
+}
+
+// QueryForTest runs a raw SQL SELECT against the underlying Postgres
+// pool and invokes scan on each row. Test-only escape hatch for the
+// scenario tests that need to walk multiple rows (e.g. listing
+// rimsky_frames rows by instance_id) without importing pgx. Fatals on
+// driver-mismatch or SQL error; the scan callback returns its own
+// error which is reported via t.Fatalf.
+func QueryForTest(ctx context.Context, t *testing.T, d persistence.Driver,
+	sql string, args []any, scan func(scan func(...any) error) error) {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDriverForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.QueryForTest: not a postgres driver")
+	}
+	rows, err := pool.Query(ctx, sql, args...)
+	if err != nil {
+		t.Fatalf("pgtest.QueryForTest: %v\nsql: %s", err, sql)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := scan(rows.Scan); err != nil {
+			t.Fatalf("pgtest.QueryForTest: scan: %v\nsql: %s", err, sql)
 		}
 	}
-	return nil, fmt.Errorf("pgtest: pool not ready within %s: %w", timeout, lastErr)
+	if err := rows.Err(); err != nil {
+		t.Fatalf("pgtest.QueryForTest: rows: %v\nsql: %s", err, sql)
+	}
+}
+
+// HoldAdvisoryLock acquires a single Postgres advisory lock on a fresh
+// connection from the driver's pool and returns a release fn. Test-only
+// helper for the scheduler advisory-lock test (which needs to simulate a
+// peer replica holding the per-tick lock). Fatals on driver-mismatch or
+// SQL error.
+func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Driver, key int64) (release func()) {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDriverForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.HoldAdvisoryLock: not a postgres driver")
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("pgtest.HoldAdvisoryLock: acquire: %v", err)
+	}
+	var got bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&got); err != nil {
+		conn.Release()
+		t.Fatalf("pgtest.HoldAdvisoryLock: try lock: %v", err)
+	}
+	if !got {
+		conn.Release()
+		t.Fatalf("pgtest.HoldAdvisoryLock: failed to acquire (already held)")
+	}
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		// context.Background to avoid stranding the lock if the test ctx
+		// is already cancelled.
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
+		conn.Release()
+	}
+}
+
+// OpenDriver spins up a fresh Postgres container, opens a
+// persistence.Driver against it, applies migrations, and returns the
+// driver. Cleanup (Close + Terminate) is registered via t.Cleanup.
+//
+// Used by tests that target the persistence.Driver surface directly
+// (conformance suite, scenario harness, post-Task-22 cmd binaries).
+func OpenDriver(ctx context.Context, t *testing.T) persistence.Driver {
+	t.Helper()
+	dsn, terminate := StartFreshPostgresDSN(ctx, t)
+	// Register the container teardown immediately so a panic in
+	// persistence.Open does not leak the container. Cleanups run in LIFO
+	// order: the driver Close() registered below runs before this
+	// terminate.
+	t.Cleanup(terminate)
+
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver:   "postgres",
+		Postgres: &persistence.PostgresConfig{DSN: dsn},
+	})
+	if err != nil {
+		t.Fatalf("pgtest: open driver: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("pgtest: migrate: %v", err)
+	}
+	return d
 }

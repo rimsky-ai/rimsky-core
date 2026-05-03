@@ -6,14 +6,19 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/fallguy/rimsky/core/migrations"
+	"github.com/fallguy/rimsky/core/config"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
+
+	_ "github.com/fallguy/rimsky/core/persistence/postgres" // register driver
+	_ "github.com/fallguy/rimsky/core/persistence/sqlite"   // register driver
 )
 
 func main() {
 	logger := shared.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
+		logger = shared.NewSlogLogger(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", name))
+	}
 
 	if err := run(logger); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-migrate: %v\n", err)
@@ -22,20 +27,25 @@ func main() {
 }
 
 func run(logger shared.Logger) error {
-	dbURL := os.Getenv("RIMSKY_DB_URL")
-	if dbURL == "" {
-		return fmt.Errorf("missing RIMSKY_DB_URL")
+	cfgPath := os.Getenv("RIMSKY_CONFIG")
+	if cfgPath == "" {
+		cfgPath = "/etc/rimsky/rimsky.yml"
+	}
+	cfg, err := config.LoadRimskyConfigYAML(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load rimsky config: %w", err)
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dbURL)
+	driver, err := persistence.Open(ctx, cfg.Persistence)
 	if err != nil {
-		return fmt.Errorf("open pgxpool: %w", err)
+		return fmt.Errorf("persistence.Open: %w", err)
 	}
-	defer pool.Close()
+	defer func() { _ = driver.Close() }()
 
-	if err := migrations.Run(ctx, pool, logger); err != nil {
-		return fmt.Errorf("migrations.Run: %w", err)
+	if err := driver.Migrate(ctx, logger); err != nil {
+		return fmt.Errorf("driver.Migrate: %w", err)
 	}
+	logger.Info("migrations complete")
 	return nil
 }

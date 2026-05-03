@@ -26,25 +26,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
 
 	"github.com/fallguy/rimsky/core/config"
 	"github.com/fallguy/rimsky/core/executor"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
+	_ "github.com/fallguy/rimsky/core/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
+
+	_ "github.com/fallguy/rimsky/core/persistence/sqlite" // register driver
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
 const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
 // yamlConfig is the supervisor-tuning YAML loaded from
-// RIMSKY_SUPERVISOR_CONFIG. The executors block was excised in the
-// 2026-05-01 control-plane spec — executors now live in rimsky.yml
-// under RIMSKY_CONFIG.
+// RIMSKY_SUPERVISOR_CONFIG. Persistence config lives in rimsky.yml under
+// RIMSKY_CONFIG, not here.
 type yamlConfig struct {
-	PostgresURL         string       `yaml:"postgres_url"`
 	SupervisorID        string       `yaml:"supervisor_id"`
 	Concurrency         int          `yaml:"concurrency"`
 	HeartbeatIntervalMs int          `yaml:"heartbeat_interval_ms"`
@@ -65,8 +64,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rimsky-supervisor: missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
 		os.Exit(1)
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})))
-	log := shared.NewSlogLogger(slog.Default())
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
+	logger := slog.New(handler)
+	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
+		logger = logger.With("binary", name)
+	}
+	slog.SetDefault(logger)
+	log := shared.NewSlogLogger(logger)
 
 	cfg, err := loadYAML(cfgPath)
 	if err != nil {
@@ -89,12 +93,6 @@ func main() {
 	}
 	storesCfg := rimskyCfg.Stores
 	namedLocksCfg := rimskyCfg.NamedLocks
-
-	dsn := cfg.PostgresURL
-	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "rimsky-supervisor: postgres_url required")
-		os.Exit(1)
-	}
 
 	supID := cfg.SupervisorID
 	if supID == "" {
@@ -148,21 +146,17 @@ func main() {
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
 	if err != nil {
-		log.Error("pgxpool.New", "error", err.Error())
+		log.Error("persistence.Open", "error", err.Error())
 		os.Exit(1)
 	}
-
-	sb := pgstorage.New(pool)
-	q := pgqueue.New(pool)
 
 	resolver := executor.NewStaticResolver(endpoints)
 
 	h, err := config.StartSupervisor(config.SupervisorConfig{
 		SupervisorID:          supID,
-		Storage:               sb,
-		Queue:                 q,
+		Driver:                driver,
 		Clock:                 shared.SystemClock{},
 		Logger:                log,
 		Concurrency:           concurrency,
@@ -178,7 +172,7 @@ func main() {
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())
-		pool.Close()
+		_ = driver.Close()
 		os.Exit(1)
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
@@ -189,7 +183,7 @@ func main() {
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("supervisor shutdown", "error", err.Error())
 	}
-	pool.Close()
+	_ = driver.Close()
 }
 
 // loadYAML reads the supervisor YAML, expanding ${ENV_VAR} references.

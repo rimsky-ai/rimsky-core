@@ -1,0 +1,17 @@
+# Default rimsky.yml baked into rimsky/all. Operators override via:
+#
+#   docker run -v ./my.yml:/etc/rimsky/rimsky.yml:ro rimsky/all
+#
+# The unified image targets local development. Per spec §7.4, stores: {}
+# and executors: {} are intentionally empty — end-to-end work is exercised
+# via the scenario suite or by overriding this config with a richer
+# stores/executors block.
+
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+stores: {}
+named_locks: {}
+executors: {}

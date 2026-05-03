@@ -18,7 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/persistence"
 )
 
 type claimHolderResponse struct {
@@ -29,7 +29,7 @@ type claimHolderResponse struct {
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
-func toClaimHolderResponse(r storage.ClaimHolderRow) claimHolderResponse {
+func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 	return claimHolderResponse{
 		ID:           r.ID.String(),
 		LockHolderID: r.LockHolderID.String(),
@@ -58,7 +58,7 @@ func handleListClaimHolders(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "lock_holder_id must be a UUID")
 			return
 		}
-		rows, err := deps.Storage.ClaimHolders().ListByLockHolderID(req.Context(), id, nil)
+		rows, err := deps.Persist.ClaimHolders().ListByLockHolderID(req.Context(), id, nil)
 		if err != nil {
 			writeError(w, err)
 			return

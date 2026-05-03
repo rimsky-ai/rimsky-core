@@ -11,7 +11,7 @@ import (
 	"sort"
 
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -73,11 +73,11 @@ func FanOutTemplateEvent(
 	storeNames := storesReferencedBySpec(spec)
 	target := targetStateFor(event)
 	deletesRow := event == EventTemplateDeregistered
-	scopeKind := storage.StoreLifecycleScopeTemplate
+	scopeKind := persistence.StoreLifecycleScopeTemplate
 
 	perStoreErr := map[string]error{}
 	for _, name := range storeNames {
-		row, err := deps.Storage.StoreLifecycle().Get(ctx, name, scopeKind, templateHash, nil)
+		row, err := deps.Persist.StoreLifecycle().Get(ctx, name, scopeKind, templateHash, nil)
 		if err != nil {
 			perStoreErr[name] = err
 			return storeNames, perStoreErr, fmt.Errorf("FanOutTemplateEvent: lifecycle row lookup for %q: %w", name, err)
@@ -102,13 +102,13 @@ func FanOutTemplateEvent(
 			return storeNames, perStoreErr, fmt.Errorf("FanOutTemplateEvent: store %q: %w", name, err)
 		}
 		if deletesRow {
-			if err := deps.Storage.StoreLifecycle().Delete(ctx, name, scopeKind, templateHash, nil); err != nil {
+			if err := deps.Persist.StoreLifecycle().Delete(ctx, name, scopeKind, templateHash, nil); err != nil {
 				perStoreErr[name] = err
 				return storeNames, perStoreErr, fmt.Errorf("FanOutTemplateEvent: delete lifecycle row %q: %w", name, err)
 			}
 			continue
 		}
-		if err := deps.Storage.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+		if err := deps.Persist.StoreLifecycle().Upsert(ctx, persistence.StoreLifecycleRow{
 			StoreRegistrationName: name,
 			ScopeKind:             scopeKind,
 			ScopeID:               templateHash,
@@ -137,12 +137,12 @@ func FanOutInstanceEvent(
 	}
 	storeNames := storesReferencedBySpec(spec)
 	deletesRow := event == EventInstanceTerminated
-	scopeKind := storage.StoreLifecycleScopeInstance
+	scopeKind := persistence.StoreLifecycleScopeInstance
 	target := targetStateFor(event)
 
 	perStoreErr := map[string]error{}
 	for _, name := range storeNames {
-		row, err := deps.Storage.StoreLifecycle().Get(ctx, name, scopeKind, instanceID, nil)
+		row, err := deps.Persist.StoreLifecycle().Get(ctx, name, scopeKind, instanceID, nil)
 		if err != nil {
 			perStoreErr[name] = err
 			return storeNames, perStoreErr, fmt.Errorf("FanOutInstanceEvent: lifecycle row lookup for %q: %w", name, err)
@@ -167,13 +167,13 @@ func FanOutInstanceEvent(
 			return storeNames, perStoreErr, fmt.Errorf("FanOutInstanceEvent: store %q: %w", name, err)
 		}
 		if deletesRow {
-			if err := deps.Storage.StoreLifecycle().Delete(ctx, name, scopeKind, instanceID, nil); err != nil {
+			if err := deps.Persist.StoreLifecycle().Delete(ctx, name, scopeKind, instanceID, nil); err != nil {
 				perStoreErr[name] = err
 				return storeNames, perStoreErr, fmt.Errorf("FanOutInstanceEvent: delete lifecycle row %q: %w", name, err)
 			}
 			continue
 		}
-		if err := deps.Storage.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+		if err := deps.Persist.StoreLifecycle().Upsert(ctx, persistence.StoreLifecycleRow{
 			StoreRegistrationName: name,
 			ScopeKind:             scopeKind,
 			ScopeID:               instanceID,
@@ -210,16 +210,16 @@ func dispatchInstanceEvent(ctx context.Context, s store.Store, event LifecycleEv
 	return fmt.Errorf("dispatchInstanceEvent: %v is not instance-scope", event)
 }
 
-func targetStateFor(event LifecycleEvent) storage.StoreLifecycleState {
+func targetStateFor(event LifecycleEvent) persistence.StoreLifecycleState {
 	switch event {
 	case EventTemplateRegistered:
-		return storage.StoreLifecycleStateRegistered
+		return persistence.StoreLifecycleStateRegistered
 	case EventTemplateDeployed:
-		return storage.StoreLifecycleStateDeployed
+		return persistence.StoreLifecycleStateDeployed
 	case EventTemplateUndeployed:
-		return storage.StoreLifecycleStateUndeployed
+		return persistence.StoreLifecycleStateUndeployed
 	case EventInstanceCreated:
-		return storage.StoreLifecycleStateCreated
+		return persistence.StoreLifecycleStateCreated
 	}
 	return ""
 }

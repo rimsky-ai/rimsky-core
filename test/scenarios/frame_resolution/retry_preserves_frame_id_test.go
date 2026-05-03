@@ -87,7 +87,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		`UPDATE rimsky_nodes SET state='running' WHERE id=$1`,
 		uuid.UUID(worker.ID))
 	require.NoError(t, err)
-	require.NoError(t, h.Storage.Nodes().UpdateState(h.Ctx,
+	require.NoError(t, h.Persist.Nodes().UpdateState(h.Ctx,
 		worker.ID, "stale", node.ReasonPolicyRetry, nil))
 
 	// Re-read frame_id; it must still be set.

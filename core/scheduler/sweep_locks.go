@@ -15,13 +15,10 @@ package scheduler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
 )
 
 // sweepLockHolders implements the v3 orphan-reap. For each
@@ -34,7 +31,7 @@ import (
 // sweep. The store's TTL/sweep is responsible for any internal state
 // the killed claim left behind.
 func sweepLockHolders(ctx context.Context, cfg Config, log shared.Logger) error {
-	expired, err := cfg.LockHolders.ListExpired(ctx)
+	expired, err := cfg.LockHolders.ListExpired(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("tick: list expired lock-holders: %w", err)
 	}
@@ -42,7 +39,7 @@ func sweepLockHolders(ctx context.Context, cfg Config, log shared.Logger) error 
 		if err := reapOneLockHolder(ctx, cfg, lh, log); err != nil {
 			log.Warn("tick: reap lock-holder failed",
 				"lock_holder_id", lh.ID.String(),
-				"kind", string(lh.Kind),
+				"kind", string(lh.LockKind),
 				"error", err.Error())
 		}
 	}
@@ -56,43 +53,38 @@ func sweepLockHolders(ctx context.Context, cfg Config, log shared.Logger) error 
 // If DeleteIfExpired finds no row to delete (claimant mismatch, or the
 // row was heartbeat-extended in the race window between ListExpired
 // and DeleteIfExpired), the function returns early without emitting
-// `lock_orphan_reaped` and without committing the tx. This avoids
-// false-positive observability noise when the reaper loses the race.
-func reapOneLockHolder(ctx context.Context, cfg Config, lh store.LockHolderRow, log shared.Logger) error {
-	tx, err := cfg.Pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	deleted, err := cfg.LockHolders.DeleteIfExpired(ctx, tx, lh.ID, lh.HolderSupervisorID)
-	if err != nil {
-		return fmt.Errorf("delete lock-holder row: %w", err)
-	}
-	if !deleted {
-		// Lost the race (heartbeat-extended or claimant mismatch).
-		// Defer-rollback closes the empty tx; nothing to emit.
+// `lock_orphan_reaped`. This avoids false-positive observability noise
+// when the reaper loses the race.
+func reapOneLockHolder(ctx context.Context, cfg Config, lh persistence.LockHolderRow, log shared.Logger) error {
+	return cfg.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		deleted, err := cfg.LockHolders.DeleteIfExpired(ctx, lh.ID, lh.HolderSupervisorID, tx)
+		if err != nil {
+			return fmt.Errorf("delete lock-holder row: %w", err)
+		}
+		if !deleted {
+			// Lost the race (heartbeat-extended or claimant mismatch).
+			return nil
+		}
+		// Event emission is best-effort.
+		nodeID := lh.HolderNodeID
+		// Look up instance_id for the event row.
+		nd, _ := cfg.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
+		var instanceID *shared.UUID
+		if nd != nil {
+			id := nd.InstanceID
+			instanceID = &id
+		}
+		if err := cfg.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID:     &nodeID,
+			InstanceID: instanceID,
+			Kind:       "lock_orphan_reaped",
+			Payload:    lockReapPayload(lh),
+		}, tx); err != nil {
+			log.Warn("tick: append lock_orphan_reaped failed",
+				"lock_holder_id", lh.ID.String(), "error", err.Error())
+		}
 		return nil
-	}
-
-	// Event emission is best-effort; the DELETE above is the load-bearing
-	// operation. A failed event-append is logged but does NOT abort the
-	// surrounding tx — the reap-DELETE still commits because the event is
-	// observability-only (an audit-trail entry; nothing in the supervisor
-	// or scheduler hot path consumes `lock_orphan_reaped`). Losing one
-	// observability row is preferable to leaving a stale lock-holder
-	// row across a deploy: the row would block fresh acquisitions of
-	// the same region until the next sweep tick, and a held subgraph
-	// would stay live with no producer to advance it.
-	if err := appendEventInTx(ctx, tx, lh.HolderNodeID, "lock_orphan_reaped", lockReapPayload(lh)); err != nil {
-		log.Warn("tick: append lock_orphan_reaped failed",
-			"lock_holder_id", lh.ID.String(), "error", err.Error())
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit reap tx: %w", err)
-	}
-	return nil
+	})
 }
 
 // lockReapPayload builds the structured payload for the
@@ -101,10 +93,10 @@ func reapOneLockHolder(ctx context.Context, cfg Config, lh store.LockHolderRow, 
 // Per blessed invariant 20, this payload MUST NOT include claim
 // content (region_data, address). We surface only operator-relevant
 // identifiers.
-func lockReapPayload(lh store.LockHolderRow) map[string]any {
+func lockReapPayload(lh persistence.LockHolderRow) map[string]any {
 	payload := map[string]any{
 		"lock_holder_id": lh.ID.String(),
-		"lock_kind":      string(lh.Kind),
+		"lock_kind":      string(lh.LockKind),
 		"supervisor_id":  lh.HolderSupervisorID,
 		"holder_node_id": lh.HolderNodeID.String(),
 		"expires_at":     lh.ExpiresAt,
@@ -121,26 +113,4 @@ func lockReapPayload(lh store.LockHolderRow) map[string]any {
 		payload["intent"] = *lh.Intent
 	}
 	return payload
-}
-
-// appendEventInTx writes a row directly into rimsky_events inside the
-// supplied tx. The payload is JSON-marshalled here so pgx writes a
-// jsonb-compatible bytes value.
-//
-// instance_id is looked up from rimsky_nodes via a subquery so the
-// event row is anchored to the same instance as the node it describes.
-//
-// @source: core/storage/postgres/events.go:Append (inlined for in-tx
-// event emission during sweep)
-func appendEventInTx(ctx context.Context, tx pgx.Tx, nodeID shared.UUID, kind string, payload map[string]any) error {
-	bytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal event payload: %w", err)
-	}
-	_, err = tx.Exec(ctx,
-		`INSERT INTO rimsky_events (instance_id, node_id, kind, payload)
-		 VALUES ((SELECT instance_id FROM rimsky_nodes WHERE id = $1), $1, $2, $3)`,
-		nodeID, kind, bytes,
-	)
-	return err
 }

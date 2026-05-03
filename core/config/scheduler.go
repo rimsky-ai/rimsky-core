@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -25,14 +22,13 @@ import (
 // rimsky's three processes in lock-step on the operator-declared
 // topology.
 type SchedulerConfig struct {
-	Storage              storage.StorageBackend
-	Queue                queue.DispatchQueue
+	// Driver is the unified persistence driver. Required.
+	Driver               persistence.Driver
 	Clock                shared.Clock
 	Logger               shared.Logger
 	TickInterval         time.Duration // default 1500ms
 	HeartbeatTimeout     time.Duration // default 15s
 	OrphanedClaimTimeout time.Duration // default 5×HeartbeatTimeout
-	Pool                 *pgxpool.Pool // for advisory lock + orphan reap
 	// Stores is the parsed `stores:` block from rimsky.yml. Each entry
 	// is dialed at startup and validated against the operator-declared
 	// capabilities; mismatches fail StartScheduler.
@@ -59,6 +55,9 @@ type SchedulerHandle interface {
 // runtime verbs at present, but the dialed registry is held for the
 // process lifetime so the handshake guard remains active.
 func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
+	if cfg.Driver == nil {
+		return nil, fmt.Errorf("StartScheduler: Driver is required")
+	}
 	if err := cfg.NamedLocks.Validate(); err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
@@ -66,20 +65,31 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
-	var lockHolders *store.LockHoldersClient
-	if cfg.Pool != nil {
-		lockHolders = store.NewLockHoldersClient(cfg.Pool)
+	persistStore := cfg.Driver.Store()
+	if persistStore == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartScheduler: Driver.Store() returned nil — driver did not initialize the Store accessor")
+	}
+	persistQueue := cfg.Driver.Queue()
+	if persistQueue == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartScheduler: Driver.Queue() returned nil")
+	}
+	coordinator := cfg.Driver.Coordinator()
+	if coordinator == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
 	}
 	inner := scheduler.Config{
-		Storage:              cfg.Storage,
-		Queue:                cfg.Queue,
+		Persist:              persistStore,
+		Queue:                persistQueue,
+		Coordinator:          coordinator,
 		Clock:                cfg.Clock,
 		Logger:               cfg.Logger,
 		TickInterval:         cfg.TickInterval,
 		HeartbeatTimeout:     cfg.HeartbeatTimeout,
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
-		Pool:                 cfg.Pool,
-		LockHolders:          lockHolders,
+		LockHolders:          persistStore.LockHolders(),
 	}
 	return schedulerHandleWithRegistry{
 		inner:    scheduler.Start(inner),

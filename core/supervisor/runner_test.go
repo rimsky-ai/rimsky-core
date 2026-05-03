@@ -1,12 +1,4 @@
 // Minimal coverage of supervisor.RunNode under the stores redesign.
-//
-// The pre-redesign runner_test.go covered the omnibus runner against
-// the old AcquireLock/OpenHandle/ReleaseLock surface; under the
-// redesign the runner runs candidate selection -> acquisition tx ->
-// Open/Commit/Abandon directly.
-// This file keeps the package buildable and pins the small surfaces that
-// don't require a full scenario harness: validateRunArgs error paths,
-// and a no-candidate run against a real Postgres + stub store registry.
 
 package supervisor_test
 
@@ -19,9 +11,7 @@ import (
 
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/internal/pgtest"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
@@ -33,21 +23,18 @@ import (
 func TestRunNode_NoCandidate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	backend := pgstorage.New(pool)
-	q := pgqueue.New(pool)
 	reg := store.NewRegistry()
 
 	clientPool := executor.NewClientPool()
 	t.Cleanup(func() { _ = clientPool.Close() })
 
 	args := supervisor.RunArgs{
-		Storage:           backend,
-		Queue:             q,
-		QueuePool:         pool,
-		LockHolders:       store.NewLockHoldersClient(pool),
+		Persist:           d.Store(),
+		Queue:             d.Queue(),
+		Coordinator:       d.Coordinator(),
+		LockHolders:       d.Store().LockHolders(),
 		StoreRegistry:     reg,
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},

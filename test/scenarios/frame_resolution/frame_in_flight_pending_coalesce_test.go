@@ -30,7 +30,7 @@ func TestFrameInFlightPendingCoalesce(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "running", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
 	// Fire many invalidates rapidly. The partial unique index prevents
@@ -42,7 +42,7 @@ func TestFrameInFlightPendingCoalesce(t *testing.T) {
 	// Sample over a window: at every read, queued coalesce rows ≤ 1.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		n := countFramesByState(t, h.Pool, iid, "queued")
+		n := countFramesByState(t, h, iid, "queued")
 		require.LessOrEqual(t, n, 1,
 			"observed %d queued coalesce rows; uq_rimsky_frames_coalesce_queued violated", n)
 		time.Sleep(20 * time.Millisecond)
@@ -50,7 +50,7 @@ func TestFrameInFlightPendingCoalesce(t *testing.T) {
 
 	// Eventually drain.
 	require.Eventually(t, func() bool {
-		return countFramesByState(t, h.Pool, iid, "completed") == 2
+		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,
 		"expected exactly 2 completed frames")
 }

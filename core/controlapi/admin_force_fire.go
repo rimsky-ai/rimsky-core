@@ -35,7 +35,7 @@ func handleAdminForceFire(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid node_id")
 			return
 		}
-		if err := deps.Storage.Schedules().ForceFire(req.Context(), id, nil); err != nil {
+		if err := deps.Persist.Schedules().ForceFire(req.Context(), id, nil); err != nil {
 			writeError(w, err)
 			return
 		}

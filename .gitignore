@@ -10,7 +10,12 @@ vendor/
 /rimsky-supervisor
 /rimsky-scheduler
 /rimsky-control-api
+/rimsky-conformance
 /rimsky-conformance-probe
+/rimsky-cli
+/rimsky-migrate
+/rimsky-store-conformance
+/rimsky-entrypoint
 /http-node
 
 # Node executor deps / build output

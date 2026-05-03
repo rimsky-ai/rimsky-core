@@ -1,22 +1,22 @@
 // Package scheduler port of rimsky/src/scheduler/invalidate.ts and
-// recalculate.ts. Pure functions over storage.StorageBackend +
-// queue.DispatchQueue + shared.Clock + shared.Logger.
+// recalculate.ts. Pure functions over persistence.Store +
+// persistence.Queue + shared.Clock + shared.Logger.
 package scheduler
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/fallguy/rimsky/core/frame"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstore "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 // InvalidateArgs is the payload for InvalidateNode.
 type InvalidateArgs struct {
-	Storage      storage.StorageBackend
-	Queue        queue.DispatchQueue
+	// Persist is the unified persistence.Store handle. Required.
+	Persist      persistence.Store
+	Queue        persistence.Queue
 	Clock        shared.Clock
 	Logger       shared.Logger
 	SourceNodeID *shared.UUID
@@ -45,7 +45,10 @@ type InvalidateArgs struct {
 // kill_requested writes are gone (§blessed-invariant 11): operator
 // invalidates do not preempt running work; they enqueue a frame.
 func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
-	sb, log := args.Storage, args.Logger
+	if args.Persist == nil {
+		return fmt.Errorf("InvalidateNode: Persist is required (frame.EnqueueOrCoalesce dereferences it)")
+	}
+	sb, log := args.Persist, args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
@@ -58,7 +61,7 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
-	_ = sb.Events().Append(ctx, storage.EventAppendInput{
+	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &args.TargetNodeID,
 		Kind:   "message_emitted",
 		Payload: map[string]any{
@@ -68,7 +71,7 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 			"params":         params,
 		},
 	}, nil)
-	_ = sb.Events().Append(ctx, storage.EventAppendInput{
+	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &args.TargetNodeID,
 		Kind:   "message_received",
 		Payload: map[string]any{
@@ -90,12 +93,8 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	}
 
 	// Enqueue/coalesce into a frame for this instance.
-	return sb.Transaction(ctx, func(ctx context.Context, stx storage.Tx) error {
-		pgT, err := pgstore.PgxTxFromStorage(stx)
-		if err != nil {
-			return err
-		}
-		fid, err := frame.EnqueueOrCoalesce(ctx, pgT, target.InstanceID, target.ID)
+	return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		fid, err := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, target.InstanceID, target.ID)
 		if err != nil {
 			return err
 		}

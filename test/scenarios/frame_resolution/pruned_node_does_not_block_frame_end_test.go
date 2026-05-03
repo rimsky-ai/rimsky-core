@@ -51,7 +51,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 
 	// Wait for the frame to end (leaf is pruned, so frame-end fires once
 	// source+middle both fresh, even though leaf was never invoked).
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "completed", 1, 10*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
 		"frame did not end despite leaf pruning")
 
 	// Leaf should never have entered stale (it stays fresh).
@@ -63,7 +63,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 		"pruned leaf should remain fresh")
 
 	// No dispatch rows for the pruned leaf in this frame.
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	var leafDispatchCount int
 	err = h.Pool.QueryRow(context.Background(), `

@@ -31,21 +31,21 @@ func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// First frame is running due to the delay.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "running", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
 	// Fire second invalidate; it should queue, not run.
 	fireInvalidate(t, h, iid, worker.ID)
 
 	// While first is running, second must stay queued.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "queued", 1, 2*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "queued", 1, 2*time.Second),
 		"second frame did not appear in queued state")
-	require.Equal(t, 1, countFramesByState(t, h.Pool, iid, "running"),
+	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"only one frame may run at a time per instance")
 
 	// Wait for the cascade to fully drain.
 	require.Eventually(t, func() bool {
-		return countFramesByState(t, h.Pool, iid, "completed") == 2
+		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,
 		"expected both frames completed")
 }

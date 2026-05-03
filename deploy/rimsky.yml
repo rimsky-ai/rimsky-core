@@ -1,11 +1,12 @@
 # Operator config bundle for the docker-compose reference stack. Loaded
-# by rimsky-scheduler / rimsky-supervisor / rimsky-control-api at
-# startup via RIMSKY_CONFIG.
+# by rimsky-scheduler / rimsky-supervisor / rimsky-control-api / rimsky-migrate
+# at startup via RIMSKY_CONFIG.
 #
 # Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
-# §3.1 this is the unified deployment-shape config: stores +
+# §3.1 this is the unified deployment-shape config: persistence + stores +
 # named_locks + executors in one file, replacing the prior split between
-# RIMSKY_STORES_CONFIG and the supervisor's per-process executors block.
+# RIMSKY_DB_URL, RIMSKY_STORES_CONFIG and the supervisor's per-process
+# executors block.
 #
 # Reference stack ships:
 #   - content       : filesystem direct-mode store-service.
@@ -18,6 +19,11 @@
 #                                    paired with the topics-ring store.
 #   - model-budget: counting-semaphore (limit 50) for model-call
 #                   throttling.
+
+persistence:
+  driver: postgres
+  postgres:
+    dsn: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
 
 stores:
   content:

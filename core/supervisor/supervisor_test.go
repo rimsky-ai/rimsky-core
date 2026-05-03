@@ -12,9 +12,7 @@ import (
 
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/internal/pgtest"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
@@ -24,18 +22,16 @@ import (
 func TestSupervisor_StartShutdown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
+	d := pgtest.OpenDriver(ctx, t)
 
-	backend := pgstorage.New(pool)
-	q := pgqueue.New(pool)
 	reg := store.NewRegistry()
 
 	supID := "test-sv-startshutdown"
 	h, err := supervisor.Start(supervisor.Config{
 		SupervisorID:      supID,
-		Storage:           backend,
-		Queue:             q,
+		Persist:           d.Store(),
+		Queue:             d.Queue(),
+		Coordinator:       d.Coordinator(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		Concurrency:       1,
@@ -49,7 +45,7 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, h.CallbackAddr())
 
-	rec, err := backend.Supervisors().Get(ctx, supID, nil)
+	rec, err := d.Store().Supervisors().Get(ctx, supID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	require.Equal(t, 1, rec.Concurrency)
@@ -65,8 +61,6 @@ func TestSupervisor_StartRequiresStoreRegistry(t *testing.T) {
 	t.Parallel()
 	_, err := supervisor.Start(supervisor.Config{
 		SupervisorID: "test",
-		Storage:      nil,
-		Queue:        nil,
 		Resolver:     executor.NewStaticResolver(map[string]executor.Endpoint{}),
 	})
 	require.Error(t, err)

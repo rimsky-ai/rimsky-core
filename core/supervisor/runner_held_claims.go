@@ -13,12 +13,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 // isAliasHeld reports whether the alias acquired by acquirerType
@@ -39,16 +36,15 @@ func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) b
 // pair. Used by the terminal release path for both acquirer-of-held and
 // inheritor-of-held branches.
 func markClaimHolderForNode(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	lockHolderID, nodeID shared.UUID, success bool,
 ) error {
-	stx := pgstorage.WrapPgxTx(tx)
-	state := storage.ClaimHolderStateCompleted
+	state := persistence.ClaimHolderStateCompleted
 	if !success {
-		state = storage.ClaimHolderStateFailed
+		state = persistence.ClaimHolderStateFailed
 	}
-	if err := args.Storage.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, nodeID, state, stx,
+	if err := args.Persist.ClaimHolders().CompleteByLockHolderAndNode(
+		ctx, lockHolderID, nodeID, state, tx,
 	); err != nil {
 		return fmt.Errorf("markClaimHolderForNode: CompleteByLockHolderAndNode: %w", err)
 	}
@@ -79,7 +75,7 @@ func findInheritedAliasesForNode(
 	if len(subgraphs) == 0 {
 		return nil, nil
 	}
-	rows, err := args.Storage.ClaimHolders().ListByHolderNode(ctx, nodeID, nil)
+	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nodeID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("findInheritedAliasesForNode: ListByHolderNode: %w", err)
 	}
@@ -109,14 +105,14 @@ func findInheritedAliasesForNode(
 	}
 	out := make([]inheritedAlias, 0, len(rows))
 	for _, r := range rows {
-		lh, err := args.Storage.LockHolders().Get(ctx, r.LockHolderID, nil)
+		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, nil)
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: LockHolders.Get: %w", err)
 		}
 		if lh == nil {
 			continue // already auto-terminated by a sibling
 		}
-		acquirerNode, err := args.Storage.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		acquirerNode, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, nil)
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: Nodes.Get acquirer: %w", err)
 		}
@@ -149,16 +145,16 @@ func findInheritedAliasesForNode(
 // have been inserted before the store-chosen region was written).
 func pickAliasForLockHolder(
 	ctx context.Context, args RunArgs, instanceID shared.UUID,
-	acquirerType string, picks []aliasCandidate, lh *storage.LockHolderRow,
+	acquirerType string, picks []aliasCandidate, lh *persistence.LockHolderRow,
 ) string {
 	if len(picks) == 1 {
 		return picks[0].alias
 	}
-	inst, err := args.Storage.Instances().Get(ctx, instanceID, nil)
+	inst, err := args.Persist.Instances().Get(ctx, instanceID, nil)
 	if err != nil || inst == nil {
 		return picks[0].alias
 	}
-	tmpl, err := args.Storage.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
 	if err != nil || tmpl == nil {
 		return picks[0].alias
 	}

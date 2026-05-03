@@ -13,8 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/core/attributes"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
 )
@@ -73,7 +73,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 
 	ep, ok := args.Resolver.Resolve(acq.Executor)
 	if !ok {
-		_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "unresolved_executor",
 			Payload: map[string]any{
@@ -169,7 +169,7 @@ func readExecutorStream(
 		}
 		switch e := ev.Event.(type) {
 		case *genv1.ExecuteEvent_Heartbeat:
-			_ = args.Storage.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
+			_ = args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
 			_ = e
 		case *genv1.ExecuteEvent_Complete:
 			t := terminalEvent{
@@ -230,7 +230,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, err
 	}
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "attributes_substituted",
 		Payload: map[string]any{
@@ -374,7 +374,7 @@ func fieldNames(m map[string]any) []string {
 
 // loadDepsAttributesByID is the per-dispatch dep map.
 func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
-	nd, err := args.Storage.Nodes().Get(ctx, acq.NodeID, nil)
+	nd, err := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
 	if err != nil || nd == nil {
 		return nil
 	}
@@ -411,7 +411,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	}
 
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
-	prior, _ := dctx.Args.Storage.NodeAttributes().Get(ctx, acq.NodeID)
+	prior, _ := dctx.Args.Persist.NodeAttributes().Get(ctx, acq.NodeID, nil)
 	runAttempt := 1
 	if prior != nil {
 		runAttempt = prior.RunAttempt

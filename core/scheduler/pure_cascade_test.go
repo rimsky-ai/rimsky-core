@@ -1,7 +1,6 @@
-// Tests for ProcessPureCascade. Uses the real Postgres storage backend via
-// pgtest (same pattern as invalidate_test.go + core/storage/postgres tests)
-// and a lightweight fake DispatchQueue so assertions can inspect exactly
-// what propagated.
+// Tests for ProcessPureCascade. Uses the real persistence.Driver via
+// pgtest (same pattern as invalidate_test.go) and a lightweight fake
+// persistence.Queue so assertions can inspect exactly what propagated.
 package scheduler
 
 import (
@@ -11,73 +10,84 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
 	nodepkg "github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
-// --- Fake DispatchQueue (pure-cascade-local; invalidate_test.go has its own)
+// --- Fake persistence.Queue (pure-cascade-local; invalidate_test.go has its own)
 
 type fakeQueue struct {
 	mu       sync.Mutex
-	enqueued []queue.DispatchRequest
+	enqueued []persistence.DispatchRequest
 }
 
-func (f *fakeQueue) Enqueue(_ context.Context, req queue.DispatchRequest) error {
+func (f *fakeQueue) Enqueue(_ context.Context, req persistence.DispatchRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.enqueued = append(f.enqueued, req)
 	return nil
 }
-func (f *fakeQueue) SelectCandidates(_ context.Context, _ pgx.Tx, _ queue.SelectCandidatesRequest) ([]queue.Candidate, error) {
+func (f *fakeQueue) EnqueueInTx(_ context.Context, req persistence.DispatchRequest, _ persistence.Tx) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enqueued = append(f.enqueued, req)
+	return nil
+}
+func (f *fakeQueue) SelectCandidates(_ context.Context, _ persistence.Tx, _ persistence.SelectCandidatesRequest) ([]persistence.Candidate, error) {
 	return nil, nil
 }
-func (f *fakeQueue) ClaimDispatchRow(_ context.Context, _ pgx.Tx, _ shared.UUID, _ string) (bool, error) {
+func (f *fakeQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
 	return false, nil
 }
 func (f *fakeQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
-func (f *fakeQueue) Fail(_ context.Context, _ shared.UUID, _ string, _ string) error {
+func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ string) error {
 	return nil
 }
-func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ string) error {
+func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
 func (f *fakeQueue) ListOrphanedClaims(_ context.Context, _ time.Time) ([]shared.DispatchRow, error) {
 	return nil, nil
 }
 func (f *fakeQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
-func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (queue.ClaimOwnership, error) {
-	return queue.ClaimOwnership{Kind: "not_found"}, nil
+func (f *fakeQueue) GetClaimedBy(_ context.Context, _ shared.UUID) (persistence.ClaimOwnership, error) {
+	return persistence.ClaimOwnership{Kind: "not_found"}, nil
+}
+func (f *fakeQueue) GetDispatchNode(_ context.Context, _ shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
 func (f *fakeQueue) RefreshHeartbeat(_ context.Context, _ string) error { return nil }
 
-func (f *fakeQueue) snapshot() []queue.DispatchRequest {
+func (f *fakeQueue) snapshot() []persistence.DispatchRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]queue.DispatchRequest, len(f.enqueued))
+	out := make([]persistence.DispatchRequest, len(f.enqueued))
 	copy(out, f.enqueued)
 	return out
 }
 
-var _ queue.DispatchQueue = (*fakeQueue)(nil)
+var _ persistence.Queue = (*fakeQueue)(nil)
 
 // --- Local fixture helpers --------------------------------------------------
 
-func newPureCascadeBackend(t *testing.T) (*pgstorage.PostgresStorageBackend, func()) {
-	t.Helper()
-	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	return pgstorage.New(pool), teardown
+type pcFixture struct {
+	persist persistence.Store
+	driver  persistence.Driver
 }
 
-func pcDeployTemplate(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, name string) storage.TemplateRow {
+func newPureCascadeFixture(t *testing.T) *pcFixture {
+	t.Helper()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	return &pcFixture{persist: d.Store(), driver: d}
+}
+
+func pcDeployTemplate(ctx context.Context, t *testing.T, b persistence.Store, name string) persistence.TemplateRow {
 	t.Helper()
 	return insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: name, Version: "v1", Description: "test",
@@ -87,10 +97,10 @@ func pcDeployTemplate(ctx context.Context, t *testing.T, b *pgstorage.PostgresSt
 	})
 }
 
-func pcCreateInstance(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, templateHash string, ck string) storage.InstanceRow {
+func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Store, templateHash string, ck string) persistence.InstanceRow {
 	t.Helper()
 	ckCopy := ck
-	inst, err := b.Instances().Create(ctx, storage.InstanceCreateInput{
+	inst, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID: uuid.New(), TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
@@ -100,25 +110,25 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b *pgstorage.PostgresSt
 // pcCreateNode creates a node and forces it to 'stale'. Under the frame
 // model Create() defaults to 'fresh'; pure-cascade tests need an
 // in-flight stale source to exercise ProcessPureCascade.
-func pcCreateNode(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, instanceID shared.UUID, executor string, deps ...shared.UUID) storage.NodeRow {
+func pcCreateNode(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, executor string, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
-	n, err := b.Nodes().Create(ctx, storage.NodeCreateInput{
+	n, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID: uuid.New(), InstanceID: instanceID, NodeType: "t",
 		Executor: executor, Dependencies: deps,
 	}, nil)
 	require.NoError(t, err)
-	if err := b.Transaction(ctx, func(ctx context.Context, stx storage.Tx) error {
-		pgT, err := pgstorage.PgxTxFromStorage(stx)
-		if err != nil {
-			return err
-		}
-		_, err = pgT.Exec(ctx, `UPDATE rimsky_nodes SET state = 'stale' WHERE id = $1`, n.ID)
-		return err
-	}); err != nil {
-		t.Fatalf("pcCreateNode: force stale: %v", err)
-	}
+	forceState(ctx, t, f, n.ID, "stale")
 	n.State = shared.NodeStateStale
 	return n
+}
+
+// forceState bypasses the state machine and writes a literal state via
+// pgtest.ExecForTest. The pure-cascade tests need a stale node at
+// create time even though Create() defaults to fresh.
+func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID, state string) {
+	t.Helper()
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, state, id)
 }
 
 // pcSeedFrame inserts a running rimsky_frames row for the given instance,
@@ -126,31 +136,23 @@ func pcCreateNode(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorag
 // to satisfy blessed-invariant 19 (no NULL frame_id on in-flight dispatch
 // enqueue) for tests that drive ProcessPureCascade against pre-existing
 // stale nodes.
-func pcSeedFrame(ctx context.Context, t *testing.T, b *pgstorage.PostgresStorageBackend, instanceID, nodeID shared.UUID) shared.UUID {
+func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var frameID shared.UUID
-	require.NoError(t, b.Transaction(ctx, func(ctx context.Context, stx storage.Tx) error {
-		pgT, err := pgstorage.PgxTxFromStorage(stx)
-		if err != nil {
-			return err
-		}
-		if err := pgT.QueryRow(ctx, `
-            INSERT INTO rimsky_frames
-                (instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-            VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
-            RETURNING frame_id
-        `, instanceID, nodeID).Scan(&frameID); err != nil {
-			return err
-		}
-		_, err = pgT.Exec(ctx, `UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, nodeID)
-		return err
-	}))
+	pgtest.QueryRowForTest(ctx, t, f.driver, `
+        INSERT INTO rimsky_frames
+            (instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+        VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+        RETURNING frame_id
+    `, []any{instanceID, nodeID}, &frameID)
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, nodeID)
 	return frameID
 }
 
-func pcArgs(b *pgstorage.PostgresStorageBackend, q *fakeQueue) PureCascadeArgs {
+func pcArgs(b persistence.Store, q *fakeQueue) PureCascadeArgs {
 	return PureCascadeArgs{
-		Storage: b, Queue: q, Clock: shared.SystemClock{}, Logger: shared.SilentLogger{},
+		Persist: b, Queue: q, Clock: shared.SystemClock{}, Logger: shared.SilentLogger{},
 	}
 }
 
@@ -159,14 +161,13 @@ func pcArgs(b *pgstorage.PostgresStorageBackend, q *fakeQueue) PureCascadeArgs {
 func TestProcessPureCascade_NoReady_ReturnsZero(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, teardown := newPureCascadeBackend(t)
-	t.Cleanup(teardown)
+	f := newPureCascadeFixture(t)
 
-	tpl := pcDeployTemplate(ctx, t, b, "empty")
-	_ = pcCreateInstance(ctx, t, b, tpl.ID, "ck-0")
+	tpl := pcDeployTemplate(ctx, t, f.persist, "empty")
+	_ = pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-0")
 
 	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(b, q))
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 	assert.Empty(t, q.snapshot())
@@ -175,29 +176,28 @@ func TestProcessPureCascade_NoReady_ReturnsZero(t *testing.T) {
 func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, teardown := newPureCascadeBackend(t)
-	t.Cleanup(teardown)
+	f := newPureCascadeFixture(t)
 
-	tpl := pcDeployTemplate(ctx, t, b, "alpha")
-	inst := pcCreateInstance(ctx, t, b, tpl.ID, "ck-1")
+	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
+	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
 	// Pure-cascade node with no deps → starts stale, trivially ready.
-	pure := pcCreateNode(ctx, t, b, inst.ID, "")
+	pure := pcCreateNode(ctx, t, f, inst.ID, "")
 
 	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(b, q))
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
 	// State transitioned to fresh.
-	got, err := b.Nodes().Get(ctx, pure.ID, nil)
+	got, err := f.persist.Nodes().Get(ctx, pure.ID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, shared.NodeStateFresh, got.State)
 
 	// pure_cascade_commit event logged with correct node + instance.
-	evs, err := b.Events().List(ctx, storage.EventListFilter{
+	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
 		NodeID: &pure.ID, Kind: "pure_cascade_commit",
-	}, storage.ListPagination{Limit: 100}, nil)
+	}, persistence.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	require.Len(t, evs.Events, 1)
 	require.NotNil(t, evs.Events[0].NodeID)
@@ -212,27 +212,26 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, teardown := newPureCascadeBackend(t)
-	t.Cleanup(teardown)
+	f := newPureCascadeFixture(t)
 
-	tpl := pcDeployTemplate(ctx, t, b, "alpha")
-	inst := pcCreateInstance(ctx, t, b, tpl.ID, "ck-1")
+	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
+	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
 	// Executor-having node: stale, deps trivially fresh, but has an executor
 	// → ListPureCascadeReady must not pick it up.
-	execNode := pcCreateNode(ctx, t, b, inst.ID, "worker")
+	execNode := pcCreateNode(ctx, t, f, inst.ID, "worker")
 
 	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(b, q))
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 
-	got, err := b.Nodes().Get(ctx, execNode.ID, nil)
+	got, err := f.persist.Nodes().Get(ctx, execNode.ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, shared.NodeStateStale, got.State)
 
-	evs, err := b.Events().List(ctx, storage.EventListFilter{
+	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
 		NodeID: &execNode.ID, Kind: "pure_cascade_commit",
-	}, storage.ListPagination{Limit: 100}, nil)
+	}, persistence.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, evs.Events)
 
@@ -250,11 +249,10 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, teardown := newPureCascadeBackend(t)
-	t.Cleanup(teardown)
+	f := newPureCascadeFixture(t)
 
 	// Template has one node def whose Stores include a claim-true entry.
-	sum := insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
+	sum := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "claim-only", Version: "v1", Description: "test",
 		FrameResolution: nodepkg.FrameResolutionSerialQueue,
 		FrameTimeoutMs:  nodepkg.FrameTimeoutDefaultMs,
@@ -267,19 +265,19 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 			},
 		}},
 	})
-	inst := pcCreateInstance(ctx, t, b, sum.ID, "ck-claim")
-	claimNode := pcCreateNode(ctx, t, b, inst.ID, "")
+	inst := pcCreateInstance(ctx, t, f.persist, sum.ID, "ck-claim")
+	claimNode := pcCreateNode(ctx, t, f, inst.ID, "")
 	// Seed a running frame and assign claimNode.frame_id so the dispatch
 	// enqueue path can satisfy blessed-invariant 19.
-	pcSeedFrame(ctx, t, b, inst.ID, claimNode.ID)
+	pcSeedFrame(ctx, t, f, inst.ID, claimNode.ID)
 
 	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(b, q))
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
 	// Node stays stale — supervisor's omnibus runner will drive it.
-	got, err := b.Nodes().Get(ctx, claimNode.ID, nil)
+	got, err := f.persist.Nodes().Get(ctx, claimNode.ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, shared.NodeStateStale, got.State)
 
@@ -291,9 +289,9 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredStores)
 
 	// No pure_cascade_commit event for native claim-only nodes.
-	evs, err := b.Events().List(ctx, storage.EventListFilter{
+	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
 		NodeID: &claimNode.ID, Kind: "pure_cascade_commit",
-	}, storage.ListPagination{Limit: 100}, nil)
+	}, persistence.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, evs.Events)
 }
@@ -301,28 +299,27 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	b, teardown := newPureCascadeBackend(t)
-	t.Cleanup(teardown)
+	f := newPureCascadeFixture(t)
 
-	tpl := pcDeployTemplate(ctx, t, b, "alpha")
-	inst := pcCreateInstance(ctx, t, b, tpl.ID, "ck-1")
+	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
+	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
 
 	// A: pure cascade, no deps. B: executor "worker", depends on A.
 	// Before sweep: A=stale, B=stale (dep A stale). Sweep flips A → fresh,
 	// then emits recalculate to B; B's dep is now fresh so the recalculate
 	// enqueues B onto the dispatch queue.
-	pureA := pcCreateNode(ctx, t, b, inst.ID, "")
-	execB := pcCreateNode(ctx, t, b, inst.ID, "worker", pureA.ID)
+	pureA := pcCreateNode(ctx, t, f, inst.ID, "")
+	execB := pcCreateNode(ctx, t, f, inst.ID, "worker", pureA.ID)
 	// Seed a frame for both (B is the one that gets enqueued).
-	pcSeedFrame(ctx, t, b, inst.ID, execB.ID)
+	pcSeedFrame(ctx, t, f, inst.ID, execB.ID)
 
 	q := &fakeQueue{}
-	count, err := ProcessPureCascade(ctx, pcArgs(b, q))
+	count, err := ProcessPureCascade(ctx, pcArgs(f.persist, q))
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
 	// A is fresh.
-	gotA, err := b.Nodes().Get(ctx, pureA.ID, nil)
+	gotA, err := f.persist.Nodes().Get(ctx, pureA.ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, shared.NodeStateFresh, gotA.State)
 
@@ -333,9 +330,9 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	assert.Equal(t, "worker", enq[0].ExecutorName)
 
 	// pure_cascade_commit logged for A only.
-	evs, err := b.Events().List(ctx, storage.EventListFilter{
+	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
 		Kind: "pure_cascade_commit",
-	}, storage.ListPagination{Limit: 100}, nil)
+	}, persistence.ListPagination{Limit: 100}, nil)
 	require.NoError(t, err)
 	require.Len(t, evs.Events, 1)
 	require.NotNil(t, evs.Events[0].NodeID)

@@ -81,10 +81,10 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	reg.Add("content", fake)
 
 	args := supervisor.RunArgs{
-		Storage:           h.Storage,
+		Persist:           h.Persist,
 		Queue:             h.Queue,
-		QueuePool:         h.Pool,
-		LockHolders:       store.NewLockHoldersClient(h.Pool),
+		LockHolders:       h.Persist.LockHolders(),
+		Coordinator:       h.Driver.Coordinator(),
 		StoreRegistry:     reg,
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},

@@ -32,7 +32,7 @@ func TestCoalesceCollapsesInvalidates(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Wait until the first frame is running.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "running", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
 	// Fire 9 additional invalidates while the first is running. They
@@ -42,16 +42,16 @@ func TestCoalesceCollapsesInvalidates(t *testing.T) {
 	}
 
 	// uq_rimsky_frames_coalesce_queued enforces at most one queued coalesce row.
-	require.LessOrEqual(t, countFramesByState(t, h.Pool, iid, "queued"), 1,
+	require.LessOrEqual(t, countFramesByState(t, h, iid, "queued"), 1,
 		"more than one queued coalesce row")
 
 	// Wait for both frames to terminate.
 	require.Eventually(t, func() bool {
-		return countFramesByState(t, h.Pool, iid, "completed") == 2
+		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,
 		"expected exactly 2 completed frames under coalesce")
 
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 2,
 		"coalesce: should produce exactly 2 frames total (initial running + trailing coalesce); got %d", len(frames))
 

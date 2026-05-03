@@ -24,16 +24,17 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 // OnErrorArgs is the payload for OnError.
 type OnErrorArgs struct {
-	Storage    storage.StorageBackend
-	Queue      queue.DispatchQueue
+	// Persist is the unified persistence.Store handle (rimsky_* tables).
+	Persist persistence.Store
+	// Queue is the dispatch-queue accessor.
+	Queue      persistence.Queue
 	Clock      shared.Clock
 	Logger     shared.Logger
 	NodeID     shared.UUID
@@ -67,7 +68,7 @@ type OnErrorArgs struct {
 //	`attributes_schema_failed` when the template declares no override
 //	(via the policy == nil branch of node.Evaluate).
 func OnError(ctx context.Context, args OnErrorArgs) error {
-	sb, log := args.Storage, args.Logger
+	sb, log := args.Persist, args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
@@ -99,7 +100,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	}
 
 	// Log the occurrence.
-	_ = sb.Events().Append(ctx, storage.EventAppendInput{
+	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 		InstanceID: &args.InstanceID,
 		NodeID:     &args.NodeID,
 		Kind:       "error",
@@ -123,7 +124,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		if nd.FrameID == nil {
 			return fmt.Errorf("OnError retry: node %s has nil frame_id", args.NodeID)
 		}
-		return args.Queue.Enqueue(ctx, queue.DispatchRequest{
+		return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:         args.NodeID,
 			ExecutorName:   nd.Executor,
 			RequiredStores: requiredStoresForNode(ctx, sb, nd),
@@ -157,7 +158,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			}
 		}
 		if len(unresolved) > 0 {
-			_ = sb.Events().Append(ctx, storage.EventAppendInput{
+			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &args.InstanceID,
 				NodeID:     &args.NodeID,
 				Kind:       "unresolved_invalidate_target",
@@ -172,7 +173,8 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		src := args.NodeID
 		for _, tid := range resolvedTargets {
 			_ = scheduler.InvalidateNode(ctx, scheduler.InvalidateArgs{
-				Storage: sb, Queue: args.Queue, Clock: args.Clock, Logger: log,
+				Persist: sb, Queue: args.Queue,
+				Clock: args.Clock, Logger: log,
 				SourceNodeID: &src,
 				TargetNodeID: tid,
 				Reason:       "policy_invalidate",
@@ -196,7 +198,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 // give_up("unknown_error_class"). For the new redesign error classes
 // (`template_resolution_failed`, `attributes_schema_failed`) this is the
 // §10.4 / §9.4 default chain `[ {give_up} ]`.
-func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
+func lookupPolicy(ctx context.Context, sb persistence.Store, nd *persistence.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
 	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
 	if err != nil {
 		return nil, err
@@ -232,7 +234,7 @@ func lookupPolicy(ctx context.Context, sb storage.StorageBackend, nd *storage.No
 // original. Returns nil when the template / node-def cannot be located —
 // the queue treats nil and []string{} as equivalent (no required stores
 // declared, accepted by every supervisor pool).
-func requiredStoresForNode(ctx context.Context, sb storage.StorageBackend, nd *storage.NodeRow) []string {
+func requiredStoresForNode(ctx context.Context, sb persistence.Store, nd *persistence.NodeRow) []string {
 	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
 	if err != nil || inst == nil {
 		return nil

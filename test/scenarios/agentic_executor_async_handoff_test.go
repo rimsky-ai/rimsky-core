@@ -83,7 +83,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	// Verify the callback's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
-	row, err := h.Storage.NodeAttributes().Get(h.Ctx, n.ID)
+	row, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row, "expected node_attributes row to exist after async commit")
 	require.Equal(t, true, row.Data["done"],

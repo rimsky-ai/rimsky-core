@@ -24,21 +24,15 @@ package supervisor
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/fallguy/rimsky/core/attributes"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/qualityrule"
-	"github.com/fallguy/rimsky/core/queue"
 	"github.com/fallguy/rimsky/core/scheduler"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -70,7 +64,7 @@ func applyTerminalComplete(
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
 	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
-			_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+			_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: "attributes_schema_failed",
 				Payload: map[string]any{
@@ -90,46 +84,35 @@ func applyTerminalComplete(
 		}
 	}
 
-	tx, err := args.QueuePool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("applyTerminalComplete: begin tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	stx := pgstorage.WrapPgxTx(tx)
-
-	if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
-		return err
-	}
-	if err := upsertFinalAttributesTx(ctx, args, stx, acq, merged); err != nil {
-		return fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
-	}
-	if err := args.Storage.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, stx); err != nil {
-		return fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
-	}
-	if err := args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
-		shared.NodeStateFresh, node.ReasonWorkCompleted, stx); err != nil {
-		return err
-	}
-	if t.Changed {
-		if err := cascadeChildrenStaleInTx(ctx, args, tx, acq); err != nil {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
 			return err
 		}
+		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+			return fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
+		}
+		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
+			return fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
+		}
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+			shared.NodeStateFresh, node.ReasonWorkCompleted, tx); err != nil {
+			return err
+		}
+		if t.Changed {
+			if err := cascadeChildrenStaleInTx(ctx, args, tx, acq); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("applyTerminalComplete: commit tx: %w", err)
-	}
-	committed = true
 
 	commitKind := "attributes_committed"
 	if !t.Changed {
 		commitKind = "no_op_commit"
 	}
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: commitKind,
 		Payload: map[string]any{
@@ -138,7 +121,7 @@ func applyTerminalComplete(
 			"change_summary": t.ChangeSummary,
 		},
 	}, nil)
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "work_completed",
 		Payload: map[string]any{
@@ -160,7 +143,7 @@ func emitQualityRuleFailures(
 	ctx context.Context, args RunArgs, acq *acquisition, errs []qualityrule.Failure,
 ) {
 	for _, qe := range errs {
-		_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "quality_rule_failed",
 			Payload: map[string]any{
@@ -177,21 +160,14 @@ func emitQualityRuleFailures(
 // the same tx as the parent's commit so the next scheduler tick sees
 // the cascade atomically. Skipped on no-op commits per §4.4.
 func cascadeChildrenStaleInTx(
-	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition,
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
 ) error {
-	stx := pgstorage.WrapPgxTx(tx)
-	dependents, err := args.Storage.Nodes().ListDependentsOf(ctx, acq.NodeID, stx)
+	dependents, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, tx)
 	if err != nil {
 		return fmt.Errorf("cascadeChildrenStaleInTx: list dependents: %w", err)
 	}
 	for _, dep := range dependents {
-		_, err := tx.Exec(ctx, `
-			UPDATE rimsky_nodes
-			SET state = 'stale', frame_id = $1, updated_at = now()
-			WHERE id = $2
-			  AND (state = 'fresh' OR (state = 'stale' AND frame_id IS NULL))
-		`, acq.FrameID, dep.ID)
-		if err != nil {
+		if err := args.Persist.Nodes().MarkStaleForCascade(ctx, dep.ID, acq.FrameID, tx); err != nil {
 			return fmt.Errorf("cascadeChildrenStaleInTx: dep %s: %w", dep.ID, err)
 		}
 	}
@@ -203,14 +179,14 @@ func cascadeChildrenStaleInTx(
 // in-tx walk in cascadeChildrenStaleInTx mutates child state, this
 // post-commit walk routes the recalculate event.
 func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
-	dependents, err := args.Storage.Nodes().ListDependentsOf(ctx, acq.NodeID, nil)
+	dependents, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, nil)
 	if err != nil {
 		return
 	}
 	src := acq.NodeID
 	for _, dep := range dependents {
 		_ = scheduler.RecalculateNode(ctx, scheduler.RecalculateArgs{
-			Storage:      args.Storage,
+			Persist:      args.Persist,
 			Queue:        args.Queue,
 			Clock:        args.Clock,
 			Logger:       args.Logger,
@@ -232,7 +208,7 @@ func applyTerminalAppError(
 		return err
 	}
 	state := node.EvaluatorState{}
-	prior, _ := args.Storage.Nodes().Get(ctx, acq.NodeID, nil)
+	prior, _ := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
 	if prior != nil {
 		state = node.EvaluatorState{
 			ActionIndex:       prior.ActionIndex,
@@ -242,33 +218,22 @@ func applyTerminalAppError(
 	}
 	resolved := node.Evaluate(policy, state, errorClass, nil)
 
-	tx, err := args.QueuePool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("applyTerminalAppError: begin tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
+			return err
 		}
-	}()
-	stx := pgstorage.WrapPgxTx(tx)
+		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
+			return err
+		}
+		if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("applyTerminalAppError: %w", err)
+	}
 
-	if err := args.Storage.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, stx); err != nil {
-		return err
-	}
-	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
-		return err
-	}
-	if err := applyResolvedAction(ctx, args, tx, stx, acq, prior, resolved); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("applyTerminalAppError: commit: %w", err)
-	}
-	committed = true
-
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "error",
 		Payload: map[string]any{
@@ -289,101 +254,43 @@ func applyTerminalAppError(
 // queue mutation) so applyTerminalAppError stays inside the cold-read
 // 100-line guideline.
 func applyResolvedAction(
-	ctx context.Context, args RunArgs, tx pgx.Tx, stx storage.Tx,
-	acq *acquisition, prior *storage.NodeRow, resolved node.ResolvedAction,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	acq *acquisition, prior *persistence.NodeRow, resolved node.ResolvedAction,
 ) error {
 	switch resolved.Kind {
 	case "retry", "discard_then_retry", "resume_then_retry":
 		if prior != nil && prior.State == shared.NodeStateRunning {
-			if err := args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
-				shared.NodeStateStale, node.ReasonPolicyRetry, stx); err != nil {
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+				shared.NodeStateStale, node.ReasonPolicyRetry, tx); err != nil {
 				return err
 			}
 		}
-		if err := removeDispatchForNodeInTx(ctx, tx, acq.NodeID, args.SupervisorID); err != nil {
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx); err != nil {
 			return err
 		}
-		return enqueueInTx(ctx, tx, queue.DispatchRequest{
+		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         acq.NodeID,
 			ExecutorName:   acq.Executor,
 			RequiredStores: requiredStoresForAcq(acq),
 			EnqueuedAt:     args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
 			FrameID:        acq.FrameID,
-		})
+		}, tx)
 	case "invalidate":
 		if prior != nil && prior.State == shared.NodeStateRunning {
-			if err := args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
-				shared.NodeStateStale, node.ReasonPolicyInvalidate, stx); err != nil {
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+				shared.NodeStateStale, node.ReasonPolicyInvalidate, tx); err != nil {
 				return err
 			}
 		}
-		return removeDispatchForNodeInTx(ctx, tx, acq.NodeID, args.SupervisorID)
+		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
 	case "give_up":
 		if prior != nil && prior.State == shared.NodeStateRunning {
-			if err := args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
-				shared.NodeStateFailed, node.ReasonPolicyGiveUp, stx); err != nil {
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+				shared.NodeStateFailed, node.ReasonPolicyGiveUp, tx); err != nil {
 				return err
 			}
 		}
-		return removeDispatchForNodeInTx(ctx, tx, acq.NodeID, args.SupervisorID)
-	}
-	return nil
-}
-
-// enqueueInTx mirrors core/queue/postgres/queue.go::Enqueue but runs
-// on the supplied tx so the §7.6 release tx + state update +
-// re-enqueue are one atomic step.
-// @source: core/queue/postgres/queue.go:Enqueue
-func enqueueInTx(ctx context.Context, tx pgx.Tx, req queue.DispatchRequest) error {
-	stores := req.RequiredStores
-	if stores == nil {
-		stores = []string{}
-	}
-	var executor any
-	if req.ExecutorName != "" {
-		executor = req.ExecutorName
-	}
-	if req.FrameID == (shared.UUID{}) {
-		return fmt.Errorf("enqueueInTx: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
-	}
-	_, err := tx.Exec(ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, enqueued_at, frame_id)
-		 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
-		 ON CONFLICT (node_id) DO UPDATE
-		   SET enqueued_at = EXCLUDED.enqueued_at,
-		       executor_name = EXCLUDED.executor_name,
-		       required_stores = EXCLUDED.required_stores,
-		       frame_id = EXCLUDED.frame_id
-		   WHERE rimsky_dispatch.claimed_by IS NULL
-		     AND rimsky_dispatch.enqueued_at <= NOW()`,
-		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID,
-	)
-	if err != nil {
-		return fmt.Errorf("enqueueInTx: %w", err)
-	}
-	return nil
-}
-
-// removeDispatchForNodeInTx mirrors
-// core/queue/postgres/queue.go::RemoveForNode but runs on the
-// supplied tx.
-// @source: core/queue/postgres/queue.go:RemoveForNode
-func removeDispatchForNodeInTx(
-	ctx context.Context, tx pgx.Tx, nodeID shared.UUID, expectedClaimedBy string,
-) error {
-	if expectedClaimedBy != "" {
-		_, err := tx.Exec(ctx,
-			`DELETE FROM rimsky_dispatch WHERE node_id = $1 AND claimed_by = $2`,
-			nodeID, expectedClaimedBy,
-		)
-		if err != nil {
-			return fmt.Errorf("removeDispatchForNodeInTx: %w", err)
-		}
-		return nil
-	}
-	_, err := tx.Exec(ctx, `DELETE FROM rimsky_dispatch WHERE node_id = $1`, nodeID)
-	if err != nil {
-		return fmt.Errorf("removeDispatchForNodeInTx: %w", err)
+		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
 	}
 	return nil
 }
@@ -394,46 +301,32 @@ func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any,
 ) error {
-	prior, _ := args.Storage.Nodes().Get(ctx, acq.NodeID, nil)
-	tx, err := args.QueuePool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("applyTerminalInfraError: begin tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	stx := pgstorage.WrapPgxTx(tx)
-
-	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
-		return err
-	}
-	if prior != nil && prior.State == shared.NodeStateRunning {
-		if err := args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
-			shared.NodeStateStale, node.ReasonInfraReenqueue, stx); err != nil {
+	prior, _ := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
 			return err
 		}
-	}
-	if err := removeDispatchForNodeInTx(ctx, tx, acq.NodeID, args.SupervisorID); err != nil {
-		return err
-	}
-	if err := enqueueInTx(ctx, tx, queue.DispatchRequest{
-		NodeID:         acq.NodeID,
-		ExecutorName:   acq.Executor,
-		RequiredStores: requiredStoresForAcq(acq),
-		EnqueuedAt:     args.Clock.Now(),
-		FrameID:        acq.FrameID,
+		if prior != nil && prior.State == shared.NodeStateRunning {
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+				shared.NodeStateStale, node.ReasonInfraReenqueue, tx); err != nil {
+				return err
+			}
+		}
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx); err != nil {
+			return err
+		}
+		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:         acq.NodeID,
+			ExecutorName:   acq.Executor,
+			RequiredStores: requiredStoresForAcq(acq),
+			EnqueuedAt:     args.Clock.Now(),
+			FrameID:        acq.FrameID,
+		}, tx)
 	}); err != nil {
-		return err
+		return fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("applyTerminalInfraError: commit: %w", err)
-	}
-	committed = true
 
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "error",
 		Payload: map[string]any{
@@ -464,7 +357,7 @@ func applyTerminalInfraError(
 // The inheritor branch is handled by releaseInheritedClaimsInTx, run
 // from the same tx.
 func releaseLocksInTx(
-	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition, success bool,
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) error {
 	for _, lk := range acq.Locks {
 		if err := releaseAcquiredLock(ctx, args, tx, acq, lk, success); err != nil {
@@ -477,14 +370,14 @@ func releaseLocksInTx(
 // releaseAcquiredLock dispatches one acquired lock to the right
 // release branch.
 func releaseAcquiredLock(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, lk AcquiredLock, success bool,
 ) error {
 	switch sp := lk.Spec.(type) {
 	case store.NamedLockSpec:
 		_ = sp
-		if err := args.LockHolders.DeleteByID(ctx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
-			return fmt.Errorf("releaseAcquiredLock: named DeleteByID: %w", err)
+		if err := args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx); err != nil {
+			return fmt.Errorf("releaseAcquiredLock: named Delete: %w", err)
 		}
 		emitLockReleased(ctx, args, acq, lk, releaseActionString(success))
 		return nil
@@ -503,7 +396,7 @@ func releaseAcquiredLock(
 // by per-store config; rimsky carries only the success/failure
 // binary.
 func releaseClaim(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, lk AcquiredLock, spec store.ClaimSpec, success bool,
 ) error {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, spec.Alias)
@@ -517,9 +410,17 @@ func releaseClaim(
 		emitLockReleased(ctx, args, acq, lk, "held_marked")
 		return nil
 	}
-	region, address, err := loadLockHolderRegionAndAddress(ctx, tx, lk.LockHolderID)
+	row, err := args.LockHolders.Get(ctx, lk.LockHolderID, tx)
 	if err != nil {
 		return fmt.Errorf("releaseClaim: load region/address: %w", err)
+	}
+	var (
+		region  []byte
+		address []byte
+	)
+	if row != nil {
+		region = []byte(row.RegionData)
+		address = []byte(row.Address)
 	}
 	claimID := store.ClaimID(lk.LockHolderID.String())
 	verbAction := releaseActionString(success)
@@ -532,42 +433,11 @@ func releaseClaim(
 	if verbErr != nil {
 		return fmt.Errorf("releaseClaim: store verb (%s): %w", verbAction, verbErr)
 	}
-	if err := args.LockHolders.DeleteByID(ctx, tx, lk.LockHolderID, args.SupervisorID); err != nil {
-		return fmt.Errorf("releaseClaim: DeleteByID: %w", err)
+	if err := args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx); err != nil {
+		return fmt.Errorf("releaseClaim: Delete: %w", err)
 	}
 	emitLockReleased(ctx, args, acq, lk, verbAction)
 	return nil
-}
-
-// loadLockHolderRegionAndAddress reads region_data and address from the
-// lock-holder row inside the supplied tx. Returns (nil, nil, nil) when
-// the row is gone — the caller treats that as a store no-op (the
-// row may have been auto-terminated by a sibling on a held subgraph).
-//
-// No `FOR UPDATE` is needed: from acquisition through this terminal
-// handler, the rimsky-side tx is the single writer for this lock-
-// holder row (claimant-guarded on holder_supervisor_id throughout).
-// Concurrent readers (the orphan-reap sweep in the scheduler, the
-// region-conflict re-check in another supervisor's acquisition tx)
-// either see this row as still-held (predicate matches the live
-// holder) or as deleted/expired — neither modifies it. The lock
-// guard for terminal-time mutations is the ownership of the rimsky
-// tx itself.
-func loadLockHolderRegionAndAddress(ctx context.Context, tx pgx.Tx, id shared.UUID) ([]byte, []byte, error) {
-	var (
-		region  []byte
-		address []byte
-	)
-	err := tx.QueryRow(ctx,
-		`SELECT region_data, address FROM rimsky_lock_holders WHERE id = $1`, id,
-	).Scan(&region, &address)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, nil
-		}
-		return nil, nil, err
-	}
-	return region, address, nil
 }
 
 // releaseInheritedClaimsInTx walks the precomputed holding-subgraph
@@ -576,7 +446,7 @@ func loadLockHolderRegionAndAddress(ctx context.Context, tx pgx.Tx, id shared.UU
 // CheckAndFireResolution. The auto-terminal mechanism handles the
 // store verb.
 func releaseInheritedClaimsInTx(
-	ctx context.Context, args RunArgs, tx pgx.Tx, acq *acquisition, success bool,
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) error {
 	inherited, err := findInheritedAliasesForNode(ctx, args, acq.HeldSubgraphs, acq.NodeType, acq.NodeID, acq.InstanceID)
 	if err != nil {
@@ -609,9 +479,9 @@ func releaseActionString(success bool) string {
 // final row is `prior.Data + merged` so those incremental writes are
 // preserved.
 func upsertFinalAttributesTx(
-	ctx context.Context, args RunArgs, stx storage.Tx, acq *acquisition, merged map[string]any,
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, merged map[string]any,
 ) error {
-	prior, _ := args.Storage.NodeAttributes().Get(ctx, acq.NodeID)
+	prior, _ := args.Persist.NodeAttributes().Get(ctx, acq.NodeID, tx)
 	attempt := 1
 	final := merged
 	if prior != nil {
@@ -627,43 +497,10 @@ func upsertFinalAttributesTx(
 			final = combined
 		}
 	}
-	return upsertNodeAttributesInTx(ctx, stx, acq.NodeID, attempt, final)
-}
-
-// upsertNodeAttributesInTx writes a node_attributes row inside the
-// supplied storage.Tx.
-// @source: core/storage/postgres/node_attributes.go:Upsert
-func upsertNodeAttributesInTx(
-	ctx context.Context, stx storage.Tx, nodeID shared.UUID,
-	runAttempt int, data map[string]any,
-) error {
-	if data == nil {
-		data = map[string]any{}
+	if final == nil {
+		final = map[string]any{}
 	}
-	pgT, err := pgstorage.PgxTxFromStorage(stx)
-	if err != nil {
-		return fmt.Errorf("upsertNodeAttributesInTx: %w", err)
-	}
-	if pgT == nil {
-		return fmt.Errorf("upsertNodeAttributesInTx: stx is nil — caller must pass an active tx")
-	}
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("upsertNodeAttributesInTx: marshal: %w", err)
-	}
-	_, err = pgT.Exec(ctx,
-		`INSERT INTO rimsky_node_attributes (node_id, run_attempt, data, updated_at)
-		 VALUES ($1, $2, $3::jsonb, now())
-		 ON CONFLICT (node_id) DO UPDATE
-		   SET run_attempt = EXCLUDED.run_attempt,
-		       data        = EXCLUDED.data,
-		       updated_at  = now()`,
-		nodeID, runAttempt, raw,
-	)
-	if err != nil {
-		return fmt.Errorf("upsertNodeAttributesInTx: %w", err)
-	}
-	return nil
+	return args.Persist.NodeAttributes().Upsert(ctx, acq.NodeID, attempt, final, tx)
 }
 
 // mergeAttributesDelta shallow-merges the executor's attributes_delta
@@ -688,14 +525,14 @@ func emitLockReleased(ctx context.Context, args RunArgs, acq *acquisition, lk Ac
 	}
 	switch sp := lk.Spec.(type) {
 	case store.NamedLockSpec:
-		payload["lock_kind"] = string(store.LockHolderKindNamed)
+		payload["lock_kind"] = string(persistence.LockKindNamed)
 		payload["lock_name"] = sp.Name
 	case store.ClaimSpec:
-		payload["lock_kind"] = string(store.LockHolderKindRegion)
+		payload["lock_kind"] = string(persistence.LockKindRegion)
 		payload["store_name"] = sp.StoreName
 		payload["alias"] = sp.Alias
 	}
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "lock_released", Payload: payload,
 	}, nil)
@@ -732,7 +569,7 @@ func requiredStoresForAcq(acq *acquisition) []string {
 func invalidateTargets(
 	ctx context.Context, args RunArgs, acq *acquisition, targets []string,
 ) error {
-	other, err := args.Storage.Nodes().ListByInstance(ctx, acq.InstanceID, nil)
+	other, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, nil)
 	if err != nil {
 		return err
 	}
@@ -750,7 +587,7 @@ func invalidateTargets(
 		}
 	}
 	if len(unresolved) > 0 {
-		_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "unresolved_invalidate_target",
 			Payload: map[string]any{
@@ -761,7 +598,7 @@ func invalidateTargets(
 	src := acq.NodeID
 	for _, tid := range resolved {
 		_ = scheduler.InvalidateNode(ctx, scheduler.InvalidateArgs{
-			Storage: args.Storage, Queue: args.Queue,
+			Persist: args.Persist, Queue: args.Queue,
 			Clock: args.Clock, Logger: args.Logger,
 			SourceNodeID: &src,
 			TargetNodeID: tid,

@@ -59,16 +59,16 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 
 	// While agent is running, the frame must remain running too — frame-end
 	// cannot fire when a node is still in_motion.
-	require.Equal(t, 1, countFramesByState(t, h.Pool, iid, "running"),
+	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"frame should be running while async-handoff dispatch is open")
-	require.Equal(t, 0, countFramesByState(t, h.Pool, iid, "completed"),
+	require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
 		"frame must not complete before callback resolves")
 
 	// Hold the running invariant for a beat to give frame-end a chance to
 	// (incorrectly) fire.
 	for i := 0; i < 5; i++ {
 		time.Sleep(200 * time.Millisecond)
-		require.Equal(t, 0, countFramesByState(t, h.Pool, iid, "completed"),
+		require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
 			"frame completed prematurely while async dispatch was open")
 	}
 
@@ -98,11 +98,11 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 		"agent did not reach fresh after callback")
 
 	// Frame should now end.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "completed", 1, 10*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
 		"frame did not complete after callback resolved")
 
 	// Frame_id correlates: the snapshotted dispatch frame_id matches the frame row's frame_id.
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	require.Equal(t, frames[0].FrameID, dispatchFrameID,
 		"dispatch frame_id must match the running frame")

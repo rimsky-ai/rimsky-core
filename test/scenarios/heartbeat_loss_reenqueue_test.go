@@ -20,9 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 func TestHeartbeatLossReenqueue(t *testing.T) {
@@ -65,10 +65,10 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	// the store-side ReleaseLock call (claim-only).
 	lockHolderID := uuid.New()
 	lockName := "hb-loss-zombie-lock"
-	require.NoError(t, h.Storage.Transaction(h.Ctx, func(ctx context.Context, tx storage.Tx) error {
-		return h.Storage.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
 			ID:                 lockHolderID,
-			LockKind:           storage.LockKindNamed,
+			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
 			HolderSupervisorID: "zombie-sup",
 			HolderNodeID:       n.ID,
@@ -81,7 +81,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	deadline := time.Now().Add(25 * time.Second)
 	var sawStale bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Storage.Nodes().Get(h.Ctx, n.ID, nil)
+		got, _ := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
 		if got != nil && got.State == shared.NodeStateStale {
 			sawStale = true
 			break
@@ -92,8 +92,8 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 
 	// Verify heartbeat_lost event.
 	nid := n.ID
-	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid, Kind: "heartbeat_lost"},
-		storage.ListPagination{Limit: 10}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "heartbeat_lost"},
+		persistence.ListPagination{Limit: 10}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, evs.Events, "expected heartbeat_lost event")
 
@@ -114,7 +114,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	deadline = time.Now().Add(25 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Storage.LockHolders().Get(h.Ctx, lockHolderID, nil)
+		got, _ := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, nil)
 		if got == nil {
 			reaped = true
 			break
@@ -124,9 +124,9 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
 	// And a `lock_orphan_reaped` event was emitted for the reaped row.
-	reapEvs, err := h.Storage.Events().List(h.Ctx,
-		storage.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
-		storage.ListPagination{Limit: 10}, nil)
+	reapEvs, err := h.Persist.Events().List(h.Ctx,
+		persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
+		persistence.ListPagination{Limit: 10}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, reapEvs.Events, "expected lock_orphan_reaped event")
 }

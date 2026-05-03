@@ -1,5 +1,6 @@
 linters:
   enable:
+    - depguard
     - gofmt
     - goimports
     - govet
@@ -13,3 +14,22 @@ linters-settings:
     rules:
       - name: exported
         disabled: true
+  depguard:
+    rules:
+      pgx-isolation:
+        list-mode: lax
+        files:
+          - "$all"
+          - "!**/core/persistence/postgres/**"
+          - "!**/core/cmd/**"
+          - "!**/core/internal/pgtest/**"
+          - "!**/core/scenario/**"
+          - "!**/stores/**"
+          - "!**/test/smoke/**"
+        deny:
+          - pkg: "github.com/jackc/pgx/v5"
+            desc: "pgx is allowed only in core/persistence/postgres/, core/cmd/, core/internal/pgtest/, core/scenario/, stores/, and test/smoke/. Use the persistence interface."
+          - pkg: "github.com/jackc/pgx/v5/pgxpool"
+            desc: "see pgx isolation rule above"
+          - pkg: "github.com/jackc/pgx/v5/pgconn"
+            desc: "see pgx isolation rule above"

@@ -13,18 +13,20 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 )
 
 type AppDeps struct {
-	Storage storage.StorageBackend
-	Queue   queue.DispatchQueue
-	Clock   shared.Clock
-	Logger  shared.Logger
-	Auth    Authenticator // may be nil → anonymous access
+	// Persist is the unified persistence.Store handle (rimsky_* tables).
+	// Required.
+	Persist persistence.Store
+	// Queue is the dispatch-queue accessor. Required.
+	Queue  persistence.Queue
+	Clock  shared.Clock
+	Logger shared.Logger
+	Auth   Authenticator // may be nil → anonymous access
 	// Stores is the per-process *store.Registry built from rimsky.yml.
 	// Used by admin endpoints that target a specific named store and by
 	// the template-deploy validator. May be nil at construction time;

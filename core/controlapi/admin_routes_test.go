@@ -22,26 +22,23 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 type adminHarness struct {
-	pool    *pgxpool.Pool
-	backend *pgstorage.PostgresStorageBackend
+	driver  persistence.Driver
+	persist persistence.Store
 }
 
-func newAdminHarness(t *testing.T) (*adminHarness, func()) {
+func newAdminHarness(t *testing.T) *adminHarness {
 	t.Helper()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	backend := pgstorage.New(pool)
-	return &adminHarness{pool: pool, backend: backend}, teardown
+	d := pgtest.OpenDriver(ctx, t)
+	return &adminHarness{driver: d, persist: d.Store()}
 }
 
 func buildRouter(register func(chi.Router, AppDeps), deps AppDeps) http.Handler {
@@ -70,12 +67,11 @@ func doJSON(t *testing.T, h http.Handler, method, path string, body any) (int, [
 // TestClaimHoldersRoute verifies GET /lock-holders/{id}/claim-holders.
 func TestClaimHoldersRoute(t *testing.T) {
 	t.Parallel()
-	h, teardown := newAdminHarness(t)
-	t.Cleanup(teardown)
+	h := newAdminHarness(t)
 	ctx := context.Background()
 
 	deps := AppDeps{
-		Storage: h.backend,
+		Persist: h.persist,
 		Logger:  shared.SilentLogger{},
 	}
 	router := buildRouter(registerClaimsRoutes, deps)
@@ -98,7 +94,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	holderNodeID := seedThrowawayNode(t, h)
 	lockHolderID := seedRegionLockHolder(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
-	require.NoError(t, h.backend.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+	require.NoError(t, h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 		ID:           claimHolderID,
 		LockHolderID: lockHolderID,
 		HolderNodeID: holderNodeID,
@@ -119,19 +115,18 @@ func TestClaimHoldersRoute(t *testing.T) {
 
 func TestAdminForceFireRoute(t *testing.T) {
 	t.Parallel()
-	h, teardown := newAdminHarness(t)
-	t.Cleanup(teardown)
+	h := newAdminHarness(t)
 	ctx := context.Background()
 
 	deps := AppDeps{
-		Storage: h.backend,
+		Persist: h.persist,
 		Logger:  shared.SilentLogger{},
 	}
 	router := buildRouter(registerAdminScheduleRoutes, deps)
 
 	nodeID := seedThrowawayNode(t, h)
 	future := time.Now().Add(24 * time.Hour)
-	require.NoError(t, h.backend.Schedules().Register(ctx, storage.ScheduleRegisterInput{
+	require.NoError(t, h.persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
 		NodeID:     nodeID,
 		CronExpr:   "*/5 * * * *",
 		NextFireAt: future,
@@ -145,7 +140,7 @@ func TestAdminForceFireRoute(t *testing.T) {
 	status, _ = doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/"+nodeID.String()+"/force-fire", nil)
 	require.Equal(t, http.StatusNoContent, status)
 
-	rows, err := h.backend.Schedules().ListAll(ctx, nil)
+	rows, err := h.persist.Schedules().ListAll(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, nodeID, rows[0].NodeID)
@@ -171,21 +166,17 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	instID := uuid.New()
 	nodeID := uuid.New()
 
-	_, err := h.pool.Exec(ctx,
+	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		tplHash,
 	)
-	require.NoError(t, err)
-
-	_, err = h.pool.Exec(ctx,
+	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
 		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
 		instID, tplHash, "ck-"+uuid.NewString(),
 	)
-	require.NoError(t, err)
-
-	_, err = h.pool.Exec(ctx,
+	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
 		   id, instance_id, node_type, executor, schedule_cron, state,
 		   dependencies, current_error_class, retry_counter, action_index,
@@ -196,7 +187,6 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		 )`,
 		nodeID, instID,
 	)
-	require.NoError(t, err)
 	return nodeID
 }
 
@@ -208,10 +198,10 @@ func seedRegionLockHolder(ctx context.Context, t *testing.T, h *adminHarness, no
 	storeName := "test-store"
 	intent := "rw"
 	id := uuid.New()
-	require.NoError(t, h.backend.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
-		return h.backend.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
 			ID:                 id,
-			LockKind:           storage.LockKindRegion,
+			LockKind:           persistence.LockKindRegion,
 			StoreName:          &storeName,
 			RegionData:         []byte(`"r-1"`),
 			Intent:             &intent,

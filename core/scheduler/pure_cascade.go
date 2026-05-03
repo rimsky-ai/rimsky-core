@@ -17,10 +17,10 @@
 //     acquired.
 //
 // The split is template-driven: the scheduler reads each node's template
-// node-def via the storage-backed in-memory template registry to inspect
-// `Stores`. When the template / node-type cannot be resolved the row is
-// treated as pure-cascade — the historically conservative default (§6.4
-// behaviour preserved) and the only path that does not require any
+// node-def via the persistence-backed in-memory template registry to
+// inspect `Stores`. When the template / node-type cannot be resolved the
+// row is treated as pure-cascade — the historically conservative default
+// (§6.4 behaviour preserved) and the only path that does not require any
 // downstream supervisor coordination.
 package scheduler
 
@@ -28,16 +28,14 @@ import (
 	"context"
 
 	nodepkg "github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 )
 
 // PureCascadeArgs bundles the dependencies ProcessPureCascade needs.
 type PureCascadeArgs struct {
-	Storage storage.StorageBackend
-	Queue   queue.DispatchQueue
+	Persist persistence.Store
+	Queue   persistence.Queue
 	Clock   shared.Clock
 	Logger  shared.Logger
 }
@@ -58,7 +56,7 @@ type PureCascadeArgs struct {
 // for pure-cascade, enqueued for native-claim-only). Per spec §6.4 +
 // §7.3 step 4.
 func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) {
-	sb := args.Storage
+	sb := args.Persist
 	log := args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
@@ -96,8 +94,8 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 // this node so a future tick can retry); event-append and per-dependent
 // recalculate failures are logged and swallowed because the state
 // transition has already succeeded.
-func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n storage.NodeRow, log shared.Logger) error {
-	sb := args.Storage
+func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persistence.NodeRow, log shared.Logger) error {
+	sb := args.Persist
 	// UpdateState atomically clears frame_id when target state is 'fresh'
 	// (per the defensive guard in enforceAndUpdate; spec §4.4 + §10.3,
 	// fresh nodes carry no frame_id). No separate SetFrameID call needed.
@@ -108,7 +106,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n storage.
 	}
 	nodeID := n.ID
 	instanceID := n.InstanceID
-	if err := sb.Events().Append(ctx, storage.EventAppendInput{
+	if err := sb.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID:     &nodeID,
 		InstanceID: &instanceID,
 		Kind:       "pure_cascade_commit",
@@ -134,7 +132,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n storage.
 		}
 		srcID := n.ID
 		if rerr := RecalculateNode(ctx, RecalculateArgs{
-			Storage:      sb,
+			Persist:      sb,
 			Queue:        args.Queue,
 			Clock:        args.Clock,
 			Logger:       log,
@@ -159,18 +157,16 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n storage.
 // accepted_stores`, spec §6.2) routes the row correctly. The node row
 // stays `stale` until the supervisor's omnibus runner claims it and
 // synthesises the §7.3 step 4b Complete.
-func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n storage.NodeRow, def *nodepkg.TemplateNodeDef) error {
+func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persistence.NodeRow, def *nodepkg.TemplateNodeDef) error {
 	required := nodepkg.RequiredStores(*def)
 	if required == nil {
 		required = []string{}
 	}
-	// FrameID is sourced from the node row — pure-cascade-flagged stale
-	// nodes belong to the running frame (blessed-invariant 19).
 	if n.FrameID == nil {
 		// Defer: frame engine hasn't advanced the originating frame yet.
 		return nil
 	}
-	return args.Queue.Enqueue(ctx, queue.DispatchRequest{
+	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:         n.ID,
 		ExecutorName:   "",
 		RequiredStores: required,
@@ -181,14 +177,8 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n storage
 
 // lookupTemplateNodeDef resolves the template node-def for a node row by
 // hop: rimsky_nodes.instance_id → rimsky_instances.template_hash →
-// rimsky_templates.spec → node-by-type. Returns nil when any hop is
-// missing — degraded-but-valid states a running scheduler must tolerate
-// (template/instance deletion, schema drift). Post-control-plane v1
-// the binding is template_hash (content-addressed) rather than the
-// retired template_id UUID; templates may exist in registered /
-// deployed / undeployed state but the spec is identical across all
-// three so this lookup is state-agnostic.
-func lookupTemplateNodeDef(ctx context.Context, sb storage.StorageBackend, n storage.NodeRow) *nodepkg.TemplateNodeDef {
+// rimsky_templates.spec → node-by-type.
+func lookupTemplateNodeDef(ctx context.Context, sb persistence.Store, n persistence.NodeRow) *nodepkg.TemplateNodeDef {
 	inst, _ := sb.Instances().Get(ctx, n.InstanceID, nil)
 	if inst == nil {
 		return nil
@@ -205,13 +195,7 @@ func lookupTemplateNodeDef(ctx context.Context, sb storage.StorageBackend, n sto
 	return nil
 }
 
-// hasClaimStore reports whether the node-def declares any store
-// claim. Under the stores redesign every NodeStoreRef is a claim
-// (selector + intent + alias), so a non-empty Stores list answers yes.
-// Returns false when def is nil — the historically conservative
-// default (§6.4): if the template can't be resolved, treat the row as
-// pure-cascade rather than enqueueing it onto a queue no supervisor
-// pool may have specialised for.
+// hasClaimStore reports whether the node-def declares any store claim.
 func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 	if def == nil {
 		return false
@@ -228,19 +212,9 @@ func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 // fresh→stale via reasons unknown to it; the cascade message-pass is
 // the spec's mandated direct write. Errors are logged + swallowed so a
 // failed propagation to one child does not block siblings.
-func cascadePropagateFrameID(ctx context.Context, sb storage.StorageBackend, childID shared.UUID, frameID shared.UUID, log shared.Logger) {
-	err := sb.Transaction(ctx, func(ctx context.Context, stx storage.Tx) error {
-		pgT, err := pgstorage.PgxTxFromStorage(stx)
-		if err != nil {
-			return err
-		}
-		_, err = pgT.Exec(ctx, `
-            UPDATE rimsky_nodes
-            SET state = 'stale', frame_id = $1, updated_at = now()
-            WHERE id = $2
-              AND (state = 'fresh' OR (state = 'stale' AND frame_id IS NULL))
-        `, frameID, childID)
-		return err
+func cascadePropagateFrameID(ctx context.Context, sb persistence.Store, childID shared.UUID, frameID shared.UUID, log shared.Logger) {
+	err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Nodes().MarkStaleForCascade(ctx, childID, frameID, tx)
 	})
 	if err != nil && log != nil {
 		log.Warn("cascadePropagateFrameID: failed",

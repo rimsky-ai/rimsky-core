@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build of rimsky/all — the unified development image. Bundles
+# all four runtime binaries plus rimsky-entrypoint under a single PID-1
+# entrypoint. Defaults to driver: sqlite with state at
+# /var/lib/rimsky/state.db. Per spec §7.
+
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-scheduler   ./core/cmd/rimsky-scheduler && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-supervisor  ./core/cmd/rimsky-supervisor && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-control-api ./core/cmd/rimsky-control-api && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-migrate     ./core/cmd/rimsky-migrate && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-entrypoint  ./core/cmd/rimsky-entrypoint
+
+FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.title="rimsky/all"
+LABEL org.opencontainers.image.description="Unified rimsky orchestrator (development convenience image; defaults to SQLite — not for production)"
+
+COPY --from=build /out/rimsky-scheduler   /usr/local/bin/rimsky-scheduler
+COPY --from=build /out/rimsky-supervisor  /usr/local/bin/rimsky-supervisor
+COPY --from=build /out/rimsky-control-api /usr/local/bin/rimsky-control-api
+COPY --from=build /out/rimsky-migrate     /usr/local/bin/rimsky-migrate
+COPY --from=build /out/rimsky-entrypoint  /usr/local/bin/rimsky-entrypoint
+COPY deploy/rimsky-all.yml        /etc/rimsky/rimsky.yml
+COPY deploy/supervisor-config.yml /etc/rimsky/supervisor-config.yml
+
+USER nonroot:nonroot
+EXPOSE 8080
+VOLUME /var/lib/rimsky
+ENV RIMSKY_CONFIG=/etc/rimsky/rimsky.yml \
+    RIMSKY_SUPERVISOR_CONFIG=/etc/rimsky/supervisor-config.yml
+
+ENTRYPOINT ["/usr/local/bin/rimsky-entrypoint"]

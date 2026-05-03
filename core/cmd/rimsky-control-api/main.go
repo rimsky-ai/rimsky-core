@@ -1,23 +1,22 @@
 // rimsky-control-api is the env-var-driven entry point for the control
-// API HTTP server. Reads RIMSKY_DB_URL, RIMSKY_CONTROL_API_HOST,
-// RIMSKY_CONTROL_API_PORT, loads the unified deployment-shape config
-// from RIMSKY_CONFIG (stores + named_locks + executors per docs/specs/
-// 2026-05-01-control-plane-and-store-lifecycle-design.md §3.1), and
-// calls config.StartControlAPI which dials each remote store-service.
+// API HTTP server. Reads RIMSKY_CONFIG (persistence + stores +
+// named_locks + executors per docs/specs/2026-05-01-control-plane-and-
+// store-lifecycle-design.md §3.1 and 2026-05-02-persistence-pluggable-
+// and-unified-image-design.md §8) and calls config.StartControlAPI
+// which dials each remote store-service.
 //
 // Environment variables:
 //
-//	RIMSKY_DB_URL            required; Postgres DSN for rimsky bookkeeping.
-//	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
-//	RIMSKY_CONTROL_API_PORT  optional; default 8080 (0 = OS-assigned).
 //	RIMSKY_CONFIG            optional; path to rimsky.yml.
 //	                         default /etc/rimsky/rimsky.yml.
+//	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
+//	RIMSKY_CONTROL_API_PORT  optional; default 8080 (0 = OS-assigned).
 //	RIMSKY_LOG_LEVEL         optional; debug|info|warn|error (default info).
+//	RIMSKY_LOG_BINARY        optional; structured slog field for unified-image.
 package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -25,23 +24,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/config"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
+	_ "github.com/fallguy/rimsky/core/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
+
+	_ "github.com/fallguy/rimsky/core/persistence/sqlite" // register driver
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
 const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 
 func main() {
-	dsn := os.Getenv("RIMSKY_DB_URL")
-	if dsn == "" {
-		fmt.Fprintln(os.Stderr, "rimsky-control-api: missing RIMSKY_DB_URL")
-		os.Exit(1)
-	}
 	host := os.Getenv("RIMSKY_CONTROL_API_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -52,8 +46,13 @@ func main() {
 	}
 	logLevel := os.Getenv("RIMSKY_LOG_LEVEL")
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})))
-	log := shared.NewSlogLogger(slog.Default())
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})
+	logger := slog.New(handler)
+	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
+		logger = logger.With("binary", name)
+	}
+	slog.SetDefault(logger)
+	log := shared.NewSlogLogger(logger)
 
 	configPath := os.Getenv("RIMSKY_CONFIG")
 	if configPath == "" {
@@ -66,18 +65,14 @@ func main() {
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
 	if err != nil {
-		log.Error("pgxpool.New", "error", err.Error())
+		log.Error("persistence.Open", "error", err.Error())
 		os.Exit(1)
 	}
 
-	sb := pgstorage.New(pool)
-	q := pgqueue.New(pool)
-
 	h, err := config.StartControlAPI(config.ControlAPIConfig{
-		Storage:    sb,
-		Queue:      q,
+		Driver:     driver,
 		Clock:      shared.SystemClock{},
 		Logger:     log,
 		Host:       host,
@@ -88,7 +83,7 @@ func main() {
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())
-		pool.Close()
+		_ = driver.Close()
 		os.Exit(1)
 	}
 	log.Info("control api listening", "addr", h.Addr())
@@ -99,7 +94,7 @@ func main() {
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("control api shutdown", "error", err.Error())
 	}
-	pool.Close()
+	_ = driver.Close()
 }
 
 func parseLogLevel(s string) slog.Level {

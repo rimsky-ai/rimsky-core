@@ -44,10 +44,12 @@
 //   - store/      — Store interface (4 verbs) + value types
 //     (ClaimSpec, NamedLockSpec, ClaimResult,
 //     Capabilities, WriteSemantics, Intent),
-//     ModeCoexists helper, Registry, LockHoldersClient
-//     helpers. Subpackages: remote/ (gRPC client; the
-//     only concrete Store in the rimsky module),
-//     storetest/ (in-Go fake).
+//     ModeCoexists helper, Registry. Subpackages:
+//     remote/ (gRPC client; the only concrete Store
+//     in the rimsky module), storetest/ (in-Go fake).
+//     The rimsky_lock_holders postgres helpers
+//     (formerly LockHoldersClient) live in
+//     persistence/postgres/lock_holders.go now.
 //   - supervisor/ — supervisor main loop + runner + atomic
 //     acquisition (§7.3) + auto-terminal mechanism
 //     (§4.10 invariant 13) + release flow (§7.6) + async callback

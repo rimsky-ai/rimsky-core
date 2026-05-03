@@ -27,11 +27,9 @@ import (
 	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
+	pgpersist "github.com/fallguy/rimsky/core/persistence/postgres"
 	"github.com/fallguy/rimsky/core/shared"
-	storagepkg "github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	stubexec "github.com/fallguy/rimsky/executors/stub"
 )
@@ -39,11 +37,16 @@ import (
 // Harness bundles every in-process component wired against a single
 // testcontainers Postgres instance.
 type Harness struct {
-	T          testing.TB
-	Ctx        context.Context
+	T   testing.TB
+	Ctx context.Context
+	// Pool is the underlying *pgxpool.Pool. Test-only escape hatch
+	// (sourced via pgpersist.PoolFromDriverForTest) for scenario tests
+	// that seed fixtures via raw SQL. Use Driver / Persist / Queue for
+	// new code.
 	Pool       *pgxpool.Pool
-	Storage    storagepkg.StorageBackend
-	Queue      queue.DispatchQueue
+	Driver     persistence.Driver
+	Persist    persistence.Store
+	Queue      persistence.Queue
 	Stub       *stubexec.Stub
 	StubAddr   string
 	Scheduler  config.SchedulerHandle
@@ -107,11 +110,10 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	if !ok {
 		t.Fatalf("scenario: Start requires *testing.T, got %T", t)
 	}
-	pool, teardownPg := pgtest.StartPostgres(ctx, tT)
-	t.Cleanup(teardownPg)
-
-	sb := pgstorage.New(pool)
-	q := pgqueue.New(pool)
+	driver := pgtest.OpenDriver(ctx, tT)
+	pool, _ := pgpersist.PoolFromDriverForTest(driver)
+	persistStore := driver.Store()
+	q := driver.Queue()
 
 	clock := opts.Clock
 	if clock == nil {
@@ -147,7 +149,8 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		T:        t,
 		Ctx:      ctx,
 		Pool:     pool,
-		Storage:  sb,
+		Driver:   driver,
+		Persist:  persistStore,
 		Queue:    q,
 		Stub:     s,
 		StubAddr: stubAddr,
@@ -156,14 +159,12 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 
 	if !opts.NoScheduler {
 		sh, err := config.StartScheduler(config.SchedulerConfig{
-			Storage:              sb,
-			Queue:                q,
+			Driver:               driver,
 			Clock:                clock,
 			Logger:               shared.SilentLogger{},
 			TickInterval:         schedulerTick,
 			HeartbeatTimeout:     heartbeatTimeout,
 			OrphanedClaimTimeout: 5 * heartbeatTimeout,
-			Pool:                 pool,
 			Stores:               opts.Stores,
 			NamedLocks:           opts.NamedLocks,
 		})
@@ -181,8 +182,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	if !opts.NoSupervisor {
 		sv, err := config.StartSupervisor(config.SupervisorConfig{
 			SupervisorID:      "scenario-supervisor",
-			Storage:           sb,
-			Queue:             q,
+			Driver:            driver,
 			Clock:             clock,
 			Logger:            shared.SilentLogger{},
 			Concurrency:       4,
@@ -214,8 +214,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		}
 	}
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
-		Storage:    sb,
-		Queue:      q,
+		Driver:     driver,
 		Clock:      clock,
 		Logger:     shared.SilentLogger{},
 		Host:       "127.0.0.1",
@@ -350,8 +349,9 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
 
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
-	_ = frame.RunTick(h.Ctx, h.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	rows, err := h.Storage.Nodes().ListReadyForDispatch(h.Ctx, nil)
+	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rows, err := h.Persist.Nodes().ListReadyForDispatch(h.Ctx, nil)
 	if err != nil {
 		return
 	}
@@ -359,7 +359,7 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 		if n.InstanceID != instanceID || n.FrameID == nil {
 			continue
 		}
-		_ = h.Queue.Enqueue(h.Ctx, queue.DispatchRequest{
+		_ = h.Queue.Enqueue(h.Ctx, persistence.DispatchRequest{
 			NodeID:         n.ID,
 			ExecutorName:   n.Executor,
 			RequiredStores: []string{},
@@ -376,7 +376,7 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state shared.NodeState, t
 	deadline := time.Now().Add(timeout)
 	requireRun := state == shared.NodeStateFresh
 	for time.Now().Before(deadline) {
-		n, err := h.Storage.Nodes().Get(h.Ctx, nodeID, nil)
+		n, err := h.Persist.Nodes().Get(h.Ctx, nodeID, nil)
 		if err == nil && n != nil && n.State == state {
 			if !requireRun || h.hasRunEvent(nodeID) {
 				return true
@@ -434,9 +434,9 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 }
 
 // GetNodes fetches all nodes for an instance.
-func (h *Harness) GetNodes(instanceID shared.UUID) []storagepkg.NodeRow {
+func (h *Harness) GetNodes(instanceID shared.UUID) []persistence.NodeRow {
 	h.T.Helper()
-	nodes, err := h.Storage.Nodes().ListByInstance(h.Ctx, instanceID, nil)
+	nodes, err := h.Persist.Nodes().ListByInstance(h.Ctx, instanceID, nil)
 	if err != nil {
 		h.T.Fatalf("GetNodes: %v", err)
 	}
@@ -445,7 +445,7 @@ func (h *Harness) GetNodes(instanceID shared.UUID) []storagepkg.NodeRow {
 
 // FindNode returns the first node in the instance matching nodeType,
 // or nil.
-func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *storagepkg.NodeRow {
+func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *persistence.NodeRow {
 	for _, n := range h.GetNodes(instanceID) {
 		if n.NodeType == nodeType {
 			n := n
@@ -611,6 +611,48 @@ func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 func withInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Inherits = append(n.Inherits, refs...)
+	}
+}
+
+// ExecSQL runs a raw SQL command against the harness's underlying
+// Postgres pool. Test-only escape hatch for scenario tests that seed
+// fixtures via raw SQL — equivalent to h.Pool.Exec but does not force
+// callers to import pgxpool. Fatals on SQL error.
+func (h *Harness) ExecSQL(sql string, args ...any) {
+	h.T.Helper()
+	if _, err := h.Pool.Exec(h.Ctx, sql, args...); err != nil {
+		h.T.Fatalf("scenario.Harness.ExecSQL: %v\nsql: %s", err, sql)
+	}
+}
+
+// QueryRowSQL runs a raw SQL SELECT and scans the single returned row
+// into dest. Test-only escape hatch in the same vein as ExecSQL.
+// Fatals on SQL error.
+func (h *Harness) QueryRowSQL(sql string, args []any, dest ...any) {
+	h.T.Helper()
+	if err := h.Pool.QueryRow(h.Ctx, sql, args...).Scan(dest...); err != nil {
+		h.T.Fatalf("scenario.Harness.QueryRowSQL: %v\nsql: %s", err, sql)
+	}
+}
+
+// QuerySQL runs a raw SQL SELECT and invokes scan on each row. The
+// scan callback receives a closure that mirrors pgx.Rows.Scan; the test
+// can call it once per column-set without importing pgx itself.
+// Fatals on SQL error.
+func (h *Harness) QuerySQL(sql string, args []any, scan func(scan func(...any) error) error) {
+	h.T.Helper()
+	rows, err := h.Pool.Query(h.Ctx, sql, args...)
+	if err != nil {
+		h.T.Fatalf("scenario.Harness.QuerySQL: %v\nsql: %s", err, sql)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := scan(rows.Scan); err != nil {
+			h.T.Fatalf("scenario.Harness.QuerySQL: scan: %v\nsql: %s", err, sql)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		h.T.Fatalf("scenario.Harness.QuerySQL: rows: %v\nsql: %s", err, sql)
 	}
 }
 

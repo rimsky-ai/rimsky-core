@@ -39,17 +39,17 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 
 	// Wait for all 10 frames to terminate.
 	require.Eventually(t, func() bool {
-		return countFramesByState(t, h.Pool, iid, "completed") == totalFrames
+		return countFramesByState(t, h, iid, "completed") == totalFrames
 	}, 60*time.Second, 100*time.Millisecond,
 		"expected %d completed frames; got: queued=%d running=%d completed=%d failed=%d",
 		totalFrames,
-		countFramesByState(t, h.Pool, iid, "queued"),
-		countFramesByState(t, h.Pool, iid, "running"),
-		countFramesByState(t, h.Pool, iid, "completed"),
-		countFramesByState(t, h.Pool, iid, "failed"),
+		countFramesByState(t, h, iid, "queued"),
+		countFramesByState(t, h, iid, "running"),
+		countFramesByState(t, h, iid, "completed"),
+		countFramesByState(t, h, iid, "failed"),
 	)
 
-	frames := listFrames(t, h.Pool, iid)
+	frames := listFrames(t, h, iid)
 	require.Len(t, frames, totalFrames, "expected exactly %d frames", totalFrames)
 	for i, f := range frames {
 		require.Equal(t, "serial_queue", f.Mode, "frame %d wrong mode", i)

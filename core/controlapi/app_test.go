@@ -1,10 +1,10 @@
 // app_test.go — end-to-end HTTP tests for the control API. Each test
-// spins up an httptest.Server wrapping the real chi router, backed by a
-// throwaway Postgres container via pgtest.
+// spins up an httptest.Server wrapping the real chi router, backed by
+// a throwaway Postgres container via pgtest.OpenDriver.
 //
 // Coverage targets the stores redesign template shape (stores with
-// selector + intent + alias, locks-by-name, attributes, inherits)
-// plus the renamed admin/claim routes.
+// selector + intent + alias, locks-by-name, attributes, inherits) plus
+// the renamed admin/claim routes.
 package controlapi
 
 import (
@@ -18,22 +18,19 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
-	qpg "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/storetest"
 )
 
 type harness struct {
 	srv     *httptest.Server
-	backend *pgstorage.PostgresStorageBackend
-	pool    *pgxpool.Pool
+	driver  persistence.Driver
+	persist persistence.Store
 	stores  *store.Registry
 }
 
@@ -41,21 +38,19 @@ type harness struct {
 // teardown. Builds a *store.Registry with two unit-test fakes
 // ("content" and "topics-ring") satisfying store.Store; the wire is
 // not exercised here (the unit tests target template validation, route
-// wiring, and storage-backed paths — not the store protocol).
+// wiring, and persistence-backed paths — not the store protocol).
 func newHarness(t *testing.T) (*harness, func()) {
 	t.Helper()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	backend := pgstorage.New(pool)
-	q := qpg.New(pool)
+	d := pgtest.OpenDriver(ctx, t)
 
 	reg := store.NewRegistry()
 	reg.Add("content", storetest.NewFake("content", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}))
 	reg.Add("topics-ring", storetest.NewFake("topics-ring", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect}))
 
 	app := NewApp(AppDeps{
-		Storage: backend,
-		Queue:   q,
+		Persist: d.Store(),
+		Queue:   d.Queue(),
 		Clock:   shared.SystemClock{},
 		Logger:  shared.SilentLogger{},
 		Stores:  reg,
@@ -74,10 +69,9 @@ func newHarness(t *testing.T) (*harness, func()) {
 	})
 	srv := httptest.NewServer(app)
 
-	h := &harness{srv: srv, backend: backend, pool: pool, stores: reg}
+	h := &harness{srv: srv, driver: d, persist: d.Store(), stores: reg}
 	return h, func() {
 		srv.Close()
-		teardown()
 	}
 }
 
@@ -333,9 +327,8 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	// Drive the instance terminal — DELETE refuses to fire the
 	// OnInstanceTerminated fan-out against a still-active instance
 	// (spec §2.4).
-	_, err := h.pool.Exec(context.Background(),
+	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
-	require.NoError(t, err)
 
 	status, _ = h.httpJSON(t, "DELETE", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
@@ -362,11 +355,11 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 
 	var frameCount int
-	require.NoError(t, h.pool.QueryRow(ctx,
+	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT count(*) FROM rimsky_frames f
 		 JOIN rimsky_nodes n ON n.id = ANY(f.source_node_ids)
 		 WHERE n.node_type = 'root' AND f.state = 'queued'`,
-	).Scan(&frameCount))
+		nil, &frameCount)
 	require.Equal(t, 1, frameCount, "expected root node to have a queued frame")
 }
 
@@ -408,23 +401,22 @@ func TestOperatorInvalidate(t *testing.T) {
 	ctx := context.Background()
 	inst := seedInstance(t, h, "op-inv-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	_, err := h.pool.Exec(ctx, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
-	require.NoError(t, err)
+	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
 
 	status, out := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "manual-poke",
 	})
 	require.Equal(t, http.StatusOK, status, out)
 
-	loaded, err := h.backend.Nodes().Get(ctx, nodeRow.ID, nil)
+	loaded, err := h.persist.Nodes().Get(ctx, nodeRow.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateFresh, loaded.State)
 
 	var frameCount int
-	require.NoError(t, h.pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT COUNT(*) FROM rimsky_frames
         WHERE instance_id = $1 AND state = 'queued' AND $2 = ANY(source_node_ids)
-    `, inst.ID, nodeRow.ID).Scan(&frameCount))
+    `, []any{inst.ID, nodeRow.ID}, &frameCount)
 	require.GreaterOrEqual(t, frameCount, 1)
 }
 
@@ -440,21 +432,20 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	_, err := h.pool.Exec(ctx, `UPDATE rimsky_nodes SET state='failed' WHERE id=$1`, nodeRow.ID)
-	require.NoError(t, err)
+	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='failed' WHERE id=$1`, nodeRow.ID)
 	status, _ = h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 
-	loaded, err := h.backend.Nodes().Get(ctx, nodeRow.ID, nil)
+	loaded, err := h.persist.Nodes().Get(ctx, nodeRow.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateFailed, loaded.State)
 	require.Nil(t, loaded.FrameID)
 
 	var sourceCount int
-	require.NoError(t, h.pool.QueryRow(ctx, `
+	pgtest.QueryRowForTest(ctx, t, h.driver, `
 		SELECT count(*) FROM rimsky_frames
 		WHERE instance_id = $1 AND state = 'queued' AND $2 = ANY(source_node_ids)
-	`, inst.ID, nodeRow.ID).Scan(&sourceCount))
+	`, []any{inst.ID, nodeRow.ID}, &sourceCount)
 	require.GreaterOrEqual(t, sourceCount, 1)
 }
 
@@ -478,8 +469,7 @@ func TestEventsList(t *testing.T) {
 
 	inst := seedInstance(t, h, "ev-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	_, err := h.pool.Exec(ctx, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
-	require.NoError(t, err)
+	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
 	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "ev-test",
 	})
@@ -529,7 +519,7 @@ func TestAdminForceFire_RouteWired(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, status)
 }
 
-func seedInstance(t *testing.T, h *harness, tplName string) storage.InstanceRow {
+func seedInstance(t *testing.T, h *harness, tplName string) persistence.InstanceRow {
 	t.Helper()
 	ctx := context.Background()
 	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody(tplName))
@@ -544,16 +534,16 @@ func seedInstance(t *testing.T, h *harness, tplName string) storage.InstanceRow 
 	require.Equal(t, http.StatusCreated, status, out)
 	id, err := uuid.Parse(out["instance_id"].(string))
 	require.NoError(t, err)
-	inst, err := h.backend.Instances().Get(ctx, id, nil)
+	inst, err := h.persist.Instances().Get(ctx, id, nil)
 	require.NoError(t, err)
 	require.NotNil(t, inst)
 	return *inst
 }
 
-func firstNode(t *testing.T, h *harness, inst storage.InstanceRow) storage.NodeRow {
+func firstNode(t *testing.T, h *harness, inst persistence.InstanceRow) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
-	nodes, err := h.backend.Nodes().ListByInstance(ctx, inst.ID, nil)
+	nodes, err := h.persist.Nodes().ListByInstance(ctx, inst.ID, nil)
 	require.NoError(t, err)
 	require.Greater(t, len(nodes), 0)
 	return nodes[0]

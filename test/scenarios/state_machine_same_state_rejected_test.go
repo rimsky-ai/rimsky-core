@@ -34,12 +34,12 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 	require.NotNil(t, n)
 
 	// Force the node into running first (stale→running via dispatch_claimed).
-	require.NoError(t, h.Storage.Nodes().UpdateState(h.Ctx, n.ID,
+	require.NoError(t, h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
 		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil))
 
 	// Attempt running→running under dispatch_claimed. Should fail with
 	// ErrIllegalTransition (blessed-invariant §17).
-	err := h.Storage.Nodes().UpdateState(h.Ctx, n.ID,
+	err := h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
 		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, shared.ErrIllegalTransition),

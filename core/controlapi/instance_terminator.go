@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fallguy/rimsky/core/storage"
+	"github.com/fallguy/rimsky/core/persistence"
 )
 
 // tickBudget bounds a single terminator iteration so a wedged store
@@ -117,13 +117,13 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 	defer cancel()
 
 	const batch = 100
-	rows, err := t.deps.Storage.Instances().ListTerminatedWithLifecycleRows(tickCtx, batch, nil)
+	rows, err := t.deps.Persist.Instances().ListTerminatedWithLifecycleRows(tickCtx, batch, nil)
 	if err != nil {
 		t.logger.Warn("instance_terminator.list_failed", "error", err.Error())
 		return
 	}
 	for _, inst := range rows {
-		tpl, err := t.deps.Storage.Templates().GetByHash(tickCtx, inst.TemplateHash, nil)
+		tpl, err := t.deps.Persist.Templates().GetByHash(tickCtx, inst.TemplateHash, nil)
 		if err != nil {
 			t.logger.Warn("instance_terminator.template_lookup_failed",
 				"instance_id", inst.ID,
@@ -164,9 +164,9 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 // Rows whose store is no longer in the registry are skipped with a
 // warning so the operator can either re-introduce the store or delete
 // the bookkeeping row by hand.
-func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst storage.InstanceRow) error {
-	rows, err := t.deps.Storage.StoreLifecycle().ListByScope(ctx,
-		storage.StoreLifecycleScopeInstance, inst.ID.String(), nil)
+func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst persistence.InstanceRow) error {
+	rows, err := t.deps.Persist.StoreLifecycle().ListByScope(ctx,
+		persistence.StoreLifecycleScopeInstance, inst.ID.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -184,9 +184,9 @@ func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst s
 		if err := s.OnInstanceTerminated(ctx, inst.TemplateHash, inst.ID.String()); err != nil {
 			return err
 		}
-		if err := t.deps.Storage.StoreLifecycle().Delete(ctx,
+		if err := t.deps.Persist.StoreLifecycle().Delete(ctx,
 			r.StoreRegistrationName,
-			storage.StoreLifecycleScopeInstance,
+			persistence.StoreLifecycleScopeInstance,
 			inst.ID.String(), nil); err != nil {
 			return err
 		}

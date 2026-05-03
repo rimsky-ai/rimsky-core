@@ -22,7 +22,9 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
+    volumes:
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
     restart: "no"
 
   # One-shot service that creates the operator-owned `topics_items`
@@ -99,7 +101,6 @@ services:
       store-postgres:
         condition: service_started
     environment:
-      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SCHEDULER_TICK_MS: "1500"
       RIMSKY_HEARTBEAT_TIMEOUT_MS: "15000"
       RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
@@ -120,7 +121,6 @@ services:
       http-node:
         condition: service_started
     environment:
-      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_SUPERVISOR_CONFIG: "/etc/rimsky/supervisor-config.yml"
       RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "supervisor"
@@ -139,7 +139,6 @@ services:
       store-postgres:
         condition: service_started
     environment:
-      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
       RIMSKY_CONTROL_API_HOST: "0.0.0.0"
       RIMSKY_CONTROL_API_PORT: "8080"
       RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"

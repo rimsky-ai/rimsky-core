@@ -32,11 +32,12 @@ The `core/store/` package exports the rimsky-side `Store` interface
 `Capabilities`), `ClaimID` / `ClaimSpec` / `NamedLockSpec` /
 `Capabilities` / `ClaimResult` / `OpenOutcome` (the value types),
 `WriteSemantics` / `Intent`, the pure `ModeCoexists` and
-`RegionsByteEqual` helpers, the simple `Registry`, and the
-`LockHoldersClient` postgres helpers shared by supervisor and
-scheduler. The only concrete `Store` impls in this module are
-`core/store/remote/` (gRPC client) and `core/store/storetest/`
-(unit-test fake).
+`RegionsByteEqual` helpers, and the simple `Registry`. The only
+concrete `Store` impls in this module are `core/store/remote/`
+(gRPC client) and `core/store/storetest/` (unit-test fake). The
+`rimsky_lock_holders` postgres helpers used by supervisor and
+scheduler live in `core/persistence/postgres/lock_holders.go`
+under the `persistence.LockHoldersStore` interface.
 
 Lock state lives only in postgres (`rimsky_lock_holders`); stores never
 persist lock state (blessed invariant 9a). A supervisor pool's config
@@ -136,7 +137,7 @@ The core module's internal package graph is enforced by `go vet` plus a custom l
 - `message/` — types only. Imports `shared/` only.
 - `queue/` — `DispatchQueue` interface + Postgres implementation. Imports `shared/` and `pgx`. Eligibility input carries the node's claim and named-lock requirements as `[]any` (concrete elements are `store.ClaimSpec` or `store.NamedLockSpec` values; the supervisor type-switches).
 - `storage/` — storage interfaces + Postgres implementations (nodes, supervisors, lock-holders, node-attributes, claim-holders, events, migrations). Imports `shared/` and `pgx`.
-- `store/` — universal 4-verb `Store` interface plus `remote/` (gRPC client; the only concrete `Store` impl in the rimsky module), `storetest/` (in-Go fake), and the `LockHoldersClient` postgres helpers for `rimsky_lock_holders`. Reference store implementations live as standalone binaries under `stores/<kind>/` (filesystem, postgres, stub) per stores-redesign-v3 — no in-process subpackages. The interface package imports `shared/` and `pgx/v5` (the latter only for the lock-holder postgres helpers). `Open` is invoked over the wire; rimsky no longer shares a `pgx.Tx` with the store (the v2 `TxFromContext`/`WithTx` pattern is gone). **Allowed importers:** `queue/`, `scheduler/`, `supervisor/`, `controlapi/`, `attributes/`, `config/`, `cmd/*`, `scenario/`.
+- `store/` — universal 4-verb `Store` interface plus `remote/` (gRPC client; the only concrete `Store` impl in the rimsky module) and `storetest/` (in-Go fake). Reference store implementations live as standalone binaries under `stores/<kind>/` (filesystem, postgres, stub) per stores-redesign-v3 — no in-process subpackages. The interface package imports `shared/` only. `Open` is invoked over the wire; rimsky no longer shares a `pgx.Tx` with the store (the v2 `TxFromContext`/`WithTx` pattern is gone). The `rimsky_lock_holders` postgres helpers live at `core/persistence/postgres/lock_holders.go` under `persistence.LockHoldersStore`. **Allowed importers:** `persistence/`, `scheduler/`, `supervisor/`, `controlapi/`, `attributes/`, `config/`, `cmd/*`, `scenario/`.
 - `attributes/` — substitution engine, JSON Schema validation, callback handler, postgres helpers for `rimsky_node_attributes`. Imports `shared/`, `storage/`, `store/` (for claim-payload reads), and `pgx`. **Allowed importers:** `supervisor/`, `controlapi/`, `scheduler/`, `config/`, `cmd/*`, `scenario/`.
 - `qualityrule/` — builtin quality-rule implementations. Imports `shared/` and `store/` (interface).
 - `executor/` — protocol-client helpers (gRPC + HTTP bridge clients). Imports `shared/` and generated code from `proto/v1/`.
@@ -190,7 +191,7 @@ The frame engine implements the per-instance resolution model defined in `docs/s
   1. **Frame-end detection.** Closes any `running` frame whose nodes have all reached a terminal state (`fresh` for committed, `failed` for given-up).
   2. **Queued→running promotion.** Picks the next `queued` frame for any instance with no `running` frame and stamps `frame_id` on the source nodes' dispatch rows, atomically with the state transition.
   3. **Stuck-frame reaper.** Closes frames whose `frame_timeout_ms` has elapsed in `running`; same predicate the spec calls out in §7.
-- **Schema.** `rimsky_frames` carries the queue + state machine; `rimsky_dispatch.frame_id` (NOT NULL) brackets every dispatched run; `rimsky_nodes.frame_id` is non-null for `stale` / `running` nodes inside an active frame and cleared on a successful return to `fresh` (the centralised clear lives in `core/storage/postgres/nodes.go::enforceAndUpdate`). `rimsky_lock_holders.frame_id` and `rimsky_claim_holders.frame_id` are observability-only and forward-compat for the post-v1 Rule 3b parallel-buffered enhancement.
+- **Schema.** `rimsky_frames` carries the queue + state machine; `rimsky_dispatch.frame_id` (NOT NULL) brackets every dispatched run; `rimsky_nodes.frame_id` is non-null for `stale` / `running` nodes inside an active frame and cleared on a successful return to `fresh` (the centralised clear lives in `core/persistence/postgres/nodes.go::enforceAndUpdate`). `rimsky_lock_holders.frame_id` and `rimsky_claim_holders.frame_id` are observability-only and forward-compat for the post-v1 Rule 3b parallel-buffered enhancement.
 - **Cross-references.** Conceptual model: `docs/node-graph-design.md` "Frames as the unit of resolution." Authoritative behavior: `docs/specs/2026-04-26-frame-resolution-design.md`.
 
 Frames are per-instance. Mode is per-template (`coalesce` | `serial_queue`). Under both modes at most one `rimsky_frames` row is in `running` state per instance, enforced by the partial unique index `uq_rimsky_frames_running`.
@@ -247,14 +248,14 @@ Each invariant is annotated `@blessed-invariant` in the Go source and exercised 
 
 - **File:** `core/node/state.go`
 - **Context:** `NextState(current, requested, reason)` returns an error if the transition is illegal. In particular, `running → running` under reason `dispatch_claimed` is not silently idempotent.
-- **Storage layer enforcement:** `core/storage/postgres/nodes.go` — the `UpdateState` method calls into the state machine; no short-circuit on `from == to`.
+- **Persistence layer enforcement:** `core/persistence/postgres/nodes.go` — the `UpdateState` method calls into the state machine; no short-circuit on `from == to`.
 - **Scenario test:** `state-machine-same-state-rejected` (in `test/scenarios/`).
 
 ### 5.2 Dispatch claim brackets run
 
-- **File:** `core/queue/postgres/queue.go`
+- **File:** `core/persistence/postgres/queue.go`
 - **Context:** counts come from `rimsky_dispatch.claimed_by IS NOT NULL`. The claim window exactly brackets the node's `running` window. The invariant is annotated at the top of the claim query.
-- **Interface contract:** `core/queue/interface.go` documents the invariant at the interface level so any alternate implementation must respect it.
+- **Interface contract:** `core/persistence/queue.go` documents the invariant at the interface level so any alternate implementation must respect it.
 
 ### 5.3 Multi-lock acquisition uses deterministic sorted order
 
@@ -263,7 +264,7 @@ Each invariant is annotated `@blessed-invariant` in the Go source and exercised 
 
 ### 5.4 Claimant-guarded release
 
-- **Files:** `core/queue/postgres/queue.go`, `core/supervisor/runner.go`, `core/scheduler/scheduler.go`
+- **Files:** `core/persistence/postgres/queue.go`, `core/supervisor/runner.go`, `core/scheduler/scheduler.go`
 - **Context:** every `DELETE FROM rimsky_lock_holders` and every `UPDATE rimsky_dispatch SET claimed_by = NULL` carries `AND … = supervisor_id`. `ReleaseClaim(dispatchID, expectedClaimedBy)` and `ReleaseLock(...)` are no-ops on mismatch. Prevents stale orphan sweeps from nulling live claims or releasing live locks.
 
 ### 5.5 Verify-before-run
@@ -284,7 +285,7 @@ Each invariant is annotated `@blessed-invariant` in the Go source and exercised 
 
 ### 5.8 Session advisory lock on migrations
 
-- **File:** `core/migrations/runner.go`
+- **File:** `core/persistence/migrations.go`
 - **Context:** the migration runner acquires a session-level `pg_advisory_lock` for the duration of a migration batch. Released at session close; prevents concurrent-runner migration-table corruption.
 
 ### 5.9a Lock state lives only in postgres
@@ -299,7 +300,7 @@ Each invariant is annotated `@blessed-invariant` in the Go source and exercised 
 
 ### 5.10 Lock acquisition is atomic with dispatch claim
 
-- **Files:** `core/supervisor/runner_acquire.go` (acquisition function), `core/queue/postgres/queue.go` (dispatch SQL)
+- **Files:** `core/supervisor/runner_acquire.go` (acquisition function), `core/persistence/postgres/queue.go` (dispatch SQL)
 - **Context:** per v3 spec §4.10 invariant 10 + §7.3, the rimsky-side acquisition transaction either claims dispatch AND inserts all required `rimsky_lock_holders` rows AND records the `Store.Open`-returned address AND inserts any required `rimsky_claim_holders` rows for held claims, or none of them. The store's own state mutation runs in its own transaction (decoupled from rimsky's per §7.3); store atomicity is the store's concern. Single-writer-per-region (invariant 4b) holds because the rimsky-side conflict predicate gates lock-holder INSERTs against `rimsky_lock_holders` only — store orphan state is invisible to the predicate.
 
 ### 5.11 Userdata is opaque to rimsky
@@ -436,7 +437,9 @@ All state lives in Postgres. The orchestrator uses `jackc/pgx/v5`, in `database/
 
 ### 8.2 Core tables
 
-The end-state schema is defined in `core/migrations/001-initial.sql` (rewritten in place for the stores redesign per v3 spec §11). Tables:
+The end-state schema is defined under `core/persistence/<driver>/migrations/`
+(Postgres: a `001-initial.sql` + per-feature additions; SQLite: a single
+hand-written `001-initial.sql` capturing the union). Tables:
 
 - `rimsky_migrations` — migration bookkeeping.
 - `rimsky_templates` — stored templates with validated schema. The `spec` JSONB carries the post-cleanup template shape (`stores`, `locks`, `attributes`, `inherits`).
@@ -454,13 +457,26 @@ The end-state schema is defined in `core/migrations/001-initial.sql` (rewritten 
 
 In addition, postgres-store **pick policies** that use an items-table pattern operate over an **operator-owned items table** owned by the postgres store-service: `item_id TEXT PRIMARY KEY`, `payload JSONB`, `state TEXT IN ('available', 'in_progress', 'completed')`, `claim_token TEXT`, `claimed_at TIMESTAMPTZ`, `enqueued_at TIMESTAMPTZ`, `priority INTEGER`, `sequence BIGSERIAL`. Under v3 the items table lives entirely in the postgres store-service's domain (rimsky has no SQL contact with it); the table schema is documented in `stores/postgres/store/`. Each pick-policy entry in the postgres store-service's own config names its own items table; operators create these tables out-of-band, and the store verifies them at startup (`stores/postgres/store/store.go::New`).
 
-Code location: `core/storage/postgres/` has one file per table cluster (including `lock_holders.go`, `node_attributes.go`, `claim_holders.go`). `core/storage/interfaces.go` declares the `StorageBackend` aggregation. Postgres helpers for `rimsky_lock_holders` also live under `core/store/lockholders.go` (the `LockHoldersClient` exported by the `core/store/` package) because that is the unified mechanism shared between supervisor acquisition / terminal flows and scheduler sweeps.
+Code location: `core/persistence/postgres/` owns the postgres SQL — one file per table cluster (`templates.go`, `instances.go`, `nodes.go`, `lock_holders.go`, `claim_holders.go`, `node_attributes.go`, `events.go`, `schedules.go`, `supervisors.go`, `frames.go`, `queue.go`, plus `coordinator.go` and `backend.go` for the Driver/Store wiring). `core/persistence/store.go` and `core/persistence/queue.go` declare the cross-driver interfaces; the SQLite driver impl lives at `core/persistence/sqlite/`.
 
 ### 8.3 Migrations
 
-`core/migrations/*.sql`, numbered, applied in order, tracked in `rimsky_migrations`. Embedded into the binary via `//go:embed`. The migration runner (`core/migrations/runner.go`) holds a session-level advisory lock to prevent concurrent-runner corruption.
+Driver-agnostic runner: `core/persistence/migrations.go::Migrator` consults
+the per-driver embedded SQL FS (`core/persistence/<driver>/migrations/`),
+applies migrations in lexical order, and records each in `rimsky_migrations`.
+The Postgres driver acquires a session-level advisory lock for the duration
+of the batch; the SQLite driver holds an in-process mutex (single-process
+is the only supported topology). All four cmd binaries can run migrations:
+`rimsky-migrate` is dedicated, but the other three also call
+`driver.Migrate(ctx, log)` in tests / on-demand.
 
-v1 owns its own migration line. The first migration (`001-initial.sql`) defines the full Go v1 schema — it is not a diff against any predecessor.
+The Postgres driver ships three migrations (`001-initial.sql`,
+`002-frame-resolution.sql`, `003-template-registry-and-lifecycle.sql`).
+The SQLite driver ships a single hand-written init file capturing the
+union — migrations don't need to be replayed against a fresh SQLite DB.
+
+v1 owns its own migration line. The first migration on each driver
+defines the full Go v1 schema — it is not a diff against any predecessor.
 
 ---
 
@@ -538,7 +554,7 @@ Prometheus format at `/metrics` on each process. Core metrics:
 - Template validator (`core/node/template_validator_test.go`).
 - Backoff/jitter math (`core/node/backoff_test.go`).
 - Quality-rule evaluators (`core/qualityrule/rules_test.go`).
-- Storage interface methods (`core/storage/postgres/postgres_test.go`).
+- Persistence layer methods (`core/persistence/postgres/...` and `core/persistence/sqlite/...`; cross-driver conformance tests in `core/persistence/conformance/`).
 
 ### 11.2 Integration tests (testcontainers-go + Postgres)
 

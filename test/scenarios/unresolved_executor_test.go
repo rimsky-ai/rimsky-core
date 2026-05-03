@@ -24,9 +24,9 @@ import (
 
 	"github.com/fallguy/rimsky/core/executor"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
@@ -83,10 +83,10 @@ func TestUnresolvedExecutor(t *testing.T) {
 	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
 	// admits the candidate.
 	args := supervisor.RunArgs{
-		Storage:           h.Storage,
+		Persist:           h.Persist,
 		Queue:             h.Queue,
-		QueuePool:         h.Pool,
-		LockHolders:       store.NewLockHoldersClient(h.Pool),
+		LockHolders:       h.Persist.LockHolders(),
+		Coordinator:       h.Driver.Coordinator(),
 		StoreRegistry:     store.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
@@ -103,15 +103,15 @@ func TestUnresolvedExecutor(t *testing.T) {
 
 	// With no policy declared for unresolved_executor, node.Evaluate
 	// defaults to give_up(unknown_error_class) → state failed.
-	got, err := h.Storage.Nodes().Get(h.Ctx, n.ID, nil)
+	got, err := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
 	require.NoError(t, err)
 	require.Equal(t, shared.NodeStateFailed, got.State)
 
 	// Verify event trail: unresolved_executor followed by an `error`
 	// event with error_class=unresolved_executor and action_taken=give_up.
 	nid := n.ID
-	evs, err := h.Storage.Events().List(h.Ctx, storage.EventListFilter{NodeID: &nid},
-		storage.ListPagination{Limit: 500}, nil)
+	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+		persistence.ListPagination{Limit: 500}, nil)
 	require.NoError(t, err)
 	var (
 		sawUnresolved  bool

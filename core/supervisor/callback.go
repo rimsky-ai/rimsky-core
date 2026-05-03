@@ -21,7 +21,6 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -31,14 +30,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	rimskyattrs "github.com/fallguy/rimsky/core/attributes"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	"github.com/fallguy/rimsky/core/store"
 )
 
 // CallbackRegistry tracks pending async executions. Runners register an
@@ -75,9 +70,9 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 
 // CallbackServer is the supervisor's HTTP endpoint for async executor callbacks.
 //
-// QueuePool, LockHolders, and ResumeGrace are required for driving the
-// terminal-handling tx in `runner_terminal.go::applyTerminal*` (per
-// spec §7.6 / §7.3 step 6c). They are populated by the supervisor at
+// Persist, Queue, Coordinator, LockHolders, and ResumeGrace are required
+// for driving the terminal-handling tx in `runner_terminal.go::applyTerminal*`
+// (per spec §7.6 / §7.3 step 6c). They are populated by the supervisor at
 // startup and threaded through here so the callback handler can run
 // the exact same flow the synchronous executor-RPC path runs.
 //
@@ -87,10 +82,10 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 // the running window).
 type CallbackServer struct {
 	Registry     *CallbackRegistry
-	Storage      storage.StorageBackend
-	Queue        queue.DispatchQueue
-	QueuePool    *pgxpool.Pool
-	LockHolders  *store.LockHoldersClient
+	Persist      persistence.Store
+	Queue        persistence.Queue
+	Coordinator  persistence.Coordinator
+	LockHolders  persistence.LockHoldersStore
 	Clock        shared.Clock
 	Logger       shared.Logger
 	SupervisorID string
@@ -115,9 +110,9 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	// Spec §12.5: incremental attributes writeback. Mounted on the same
 	// listener as the async terminal callback so executors can reach both
 	// at the supervisor's advertised callback URL.
-	if c.Storage != nil && c.QueuePool != nil {
+	if c.Persist != nil {
 		r.Method(http.MethodPost, "/v1/attributes/{node_id}", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
-			Store:  attributesStoreAdapter{inner: c.Storage.NodeAttributes()},
+			Store:  attributesStoreAdapter{inner: c.Persist.NodeAttributes()},
 			Auth:   c.attributesAuth,
 			Logger: c.Logger,
 		}))
@@ -247,9 +242,9 @@ func classifyCallbackBody(body callbackBody) (terminalEvent, bool) {
 // re-enqueue, and event audit trail in one place.
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
 	args := RunArgs{
-		Storage:       c.Storage,
+		Persist:       c.Persist,
 		Queue:         c.Queue,
-		QueuePool:     c.QueuePool,
+		Coordinator:   c.Coordinator,
 		LockHolders:   c.LockHolders,
 		StoreRegistry: ac.StoreRegistry,
 		Clock:         c.Clock,
@@ -302,24 +297,13 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 	if err != nil {
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
-	// Single SQL read: dispatch must exist, be claimed by us, and target
-	// the URL's node_id. Cheaper than two round-trips and atomic against
-	// concurrent re-claims.
-	var (
-		gotNodeID    shared.UUID
-		gotClaimedBy *string
-	)
-	err = c.QueuePool.QueryRow(context.Background(),
-		`SELECT node_id, claimed_by FROM rimsky_dispatch WHERE id = $1`,
-		dispatchID,
-	).Scan(&gotNodeID, &gotClaimedBy)
+	// Single round-trip: dispatch must exist, be claimed by us, and
+	// target the URL's node_id.
+	gotNodeID, ownership, err := c.Queue.GetDispatchNode(context.Background(), dispatchID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return rimskyattrs.ErrUnauthorizedCallback
-		}
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
-	if gotClaimedBy == nil || *gotClaimedBy != tokSupervisor {
+	if ownership.Kind != "claimed_by" || ownership.SupervisorID != tokSupervisor {
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	if gotNodeID != nodeID {
@@ -328,22 +312,19 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 	return nil
 }
 
-// attributesStoreAdapter bridges the storage-package
-// `NodeAttributesStore` (canonical interface, returns
-// `*storage.NodeAttributesRow`) to the local `attributes.NodeAttributesStore`
-// (returns `*attributes.Row`) the callback handler depends on. The two
-// row shapes carry the same fields; the adapter copies between them.
+// attributesStoreAdapter bridges the persistence.NodeAttributesStore to
+// the local `attributes.NodeAttributesStore` (returns `*attributes.Row`)
+// the callback handler depends on. The two row shapes carry the same
+// fields; the adapter copies between them.
 //
 // The split exists because `core/attributes` cannot import
-// `core/storage` without a cycle (storage imports core/node which imports
-// core/store etc.). Plan Task 10's note acknowledges this; the adapter is
-// the bridge until the duplicate interface is removed.
+// `core/persistence` without a cycle.
 type attributesStoreAdapter struct {
-	inner storage.NodeAttributesStore
+	inner persistence.NodeAttributesStore
 }
 
 func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*rimskyattrs.Row, error) {
-	row, err := a.inner.Get(ctx, nodeID)
+	row, err := a.inner.Get(ctx, nodeID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -359,9 +340,9 @@ func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*r
 }
 
 func (a attributesStoreAdapter) Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error {
-	return a.inner.Upsert(ctx, nodeID, runAttempt, data)
+	return a.inner.Upsert(ctx, nodeID, runAttempt, data, nil)
 }
 
 func (a attributesStoreAdapter) MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error {
-	return a.inner.MergeDelta(ctx, nodeID, delta)
+	return a.inner.MergeDelta(ctx, nodeID, delta, nil)
 }

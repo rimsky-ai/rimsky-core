@@ -27,10 +27,9 @@ import (
 
 	"github.com/fallguy/rimsky/core/config"
 	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/migrations"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
+	pgpersist "github.com/fallguy/rimsky/core/persistence/postgres"
 	"github.com/fallguy/rimsky/core/shared"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
@@ -42,7 +41,10 @@ import (
 type SmokeStack struct {
 	T testing.TB
 
-	Pool *pgxpool.Pool
+	// Pool is the test-only escape hatch for raw SQL fixtures.
+	// Production code goes through Driver / Persist / Queue.
+	Pool   *pgxpool.Pool
+	Driver persistence.Driver
 
 	// ControlBase is "http://127.0.0.1:<port>" of the in-process
 	// control-api.
@@ -72,7 +74,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	t.Helper()
 	ctx := context.Background()
 
-	pool, teardown := startPostgresWithMigrations(ctx, t)
+	driver, pool, teardown := openDriverWithMigrations(ctx, t)
 	t.Cleanup(teardown)
 
 	const itemsTable = "topics_items"
@@ -92,7 +94,6 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		WriteSemantics: store.WriteSemanticsDirect,
 		PickPolicies: map[string]*pgsstore.PickPolicy{
 			"@review-queue": {
-				Type:              "ring",
 				ItemsTable:        itemsTable,
 				OnCommitDefault:   "release_to_back",
 				OnGiveUpDefault:   "release_to_back",
@@ -139,16 +140,11 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	logger := shared.SilentLogger{}
 	clock := shared.SystemClock{}
 
-	sb := pgstorage.New(pool)
-	q := pgqueue.New(pool)
-
 	sh, err := config.StartScheduler(config.SchedulerConfig{
-		Storage:      sb,
-		Queue:        q,
+		Driver:       driver,
 		Clock:        clock,
 		Logger:       logger,
 		TickInterval: 50 * time.Millisecond,
-		Pool:         pool,
 		Stores:       storesCfg,
 		NamedLocks:   namedLocksCfg,
 	})
@@ -163,8 +159,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 
 	sv, err := config.StartSupervisor(config.SupervisorConfig{
 		SupervisorID:      "smoke-supervisor",
-		Storage:           sb,
-		Queue:             q,
+		Driver:            driver,
 		Clock:             clock,
 		Logger:            logger,
 		Concurrency:       8,
@@ -186,8 +181,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	})
 
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
-		Storage:    sb,
-		Queue:      q,
+		Driver:     driver,
 		Clock:      clock,
 		Logger:     logger,
 		Host:       "127.0.0.1",
@@ -212,6 +206,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	return &SmokeStack{
 		T:                     t,
 		Pool:                  pool,
+		Driver:                driver,
 		ControlBase:           "http://" + ca.Addr(),
 		PostgresStoreAdminURL: "http://" + pgsAdminEndpoint,
 		ItemsTable:            itemsTable,
@@ -359,14 +354,10 @@ func (s *SmokeStack) AssertUUID(v string) shared.UUID {
 	return id
 }
 
-// startPostgresWithMigrations spins up a throwaway Postgres container
-// and runs migrations.
-//
-// @source: core/internal/pgtest/pgtest.go::StartPostgres
-// @diverged: true
-// @reason: core/internal/pgtest is a Go-internal package and cannot be
-// imported from `test/smoke/...`.
-func startPostgresWithMigrations(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
+// openDriverWithMigrations spins up a throwaway Postgres container,
+// opens a persistence.Driver against it, applies migrations, and
+// extracts the underlying *pgxpool.Pool for raw-SQL fixture seeding.
+func openDriverWithMigrations(ctx context.Context, t *testing.T) (persistence.Driver, *pgxpool.Pool, func()) {
 	t.Helper()
 	container, err := pgmodule.Run(ctx,
 		"postgres:14-alpine",
@@ -380,50 +371,38 @@ func startPostgresWithMigrations(ctx context.Context, t *testing.T) (*pgxpool.Po
 		),
 	)
 	if err != nil {
-		t.Fatalf("startPostgresWithMigrations: container: %v", err)
+		t.Fatalf("openDriverWithMigrations: container: %v", err)
 	}
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("startPostgresWithMigrations: dsn: %v", err)
+		t.Fatalf("openDriverWithMigrations: dsn: %v", err)
 	}
-	pool, err := waitForPool(ctx, dsn, 30*time.Second)
+	driver, err := persistence.Open(ctx, persistence.Config{
+		Driver:   "postgres",
+		Postgres: &persistence.PostgresConfig{DSN: dsn},
+	})
 	if err != nil {
-		t.Fatalf("startPostgresWithMigrations: pool: %v", err)
-	}
-	if err := migrations.Run(ctx, pool, shared.SilentLogger{}); err != nil {
-		pool.Close()
 		_ = container.Terminate(context.Background())
-		t.Fatalf("startPostgresWithMigrations: migrate: %v", err)
+		t.Fatalf("openDriverWithMigrations: open driver: %v", err)
+	}
+	if err := driver.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		_ = driver.Close()
+		_ = container.Terminate(context.Background())
+		t.Fatalf("openDriverWithMigrations: migrate: %v", err)
+	}
+	pool, ok := pgpersist.PoolFromDriverForTest(driver)
+	if !ok {
+		_ = driver.Close()
+		_ = container.Terminate(context.Background())
+		t.Fatalf("openDriverWithMigrations: PoolFromDriverForTest returned !ok")
 	}
 	teardown := func() {
-		pool.Close()
+		_ = driver.Close()
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := container.Terminate(termCtx); err != nil {
-			t.Logf("startPostgresWithMigrations: terminate warn: %v", err)
+			t.Logf("openDriverWithMigrations: terminate warn: %v", err)
 		}
 	}
-	return pool, teardown
-}
-
-func waitForPool(ctx context.Context, dsn string, timeout time.Duration) (*pgxpool.Pool, error) {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		pool, err := pgxpool.New(ctx, dsn)
-		if err != nil {
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if err := pool.Ping(ctx); err == nil {
-			return pool, nil
-		} else {
-			pool.Close()
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-	}
-	return nil, fmt.Errorf("waitForPool: not ready within %s: %w", timeout, lastErr)
+	return driver, pool, teardown
 }

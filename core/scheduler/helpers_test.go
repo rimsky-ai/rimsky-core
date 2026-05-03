@@ -1,6 +1,7 @@
 // helpers_test.go — small test helpers shared across the scheduler test
 // files. Migrated off the retired storage.TemplateStore.Deploy method:
-// tests now drive registration through Insert + UpdateState directly.
+// tests now drive registration through Insert + UpdateState directly
+// against persistence.Store.
 package scheduler
 
 import (
@@ -12,8 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	nodepkg "github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
 )
 
 // insertDeployedTemplate inserts a template row in 'deployed' state with
@@ -21,15 +21,15 @@ import (
 // plane-v1 these tests called sb.Templates().Deploy(...); the new
 // control-plane API splits register from deploy, so tests now drive
 // both steps explicitly.
-func insertDeployedTemplate(ctx context.Context, t *testing.T, sb *pgstorage.PostgresStorageBackend, spec nodepkg.TemplateSpec) storage.TemplateRow {
+func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.Store, spec nodepkg.TemplateSpec) persistence.TemplateRow {
 	t.Helper()
 	hash := deterministicTestHash(spec.Name, spec.Version)
-	require.NoError(t, sb.Templates().Insert(ctx, storage.TemplateInsertInput{
+	require.NoError(t, sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
 		ID:    hash,
 		Spec:  spec,
-		State: storage.TemplateStateRegistered,
+		State: persistence.TemplateStateRegistered,
 	}, nil))
-	require.NoError(t, sb.Templates().UpdateState(ctx, hash, storage.TemplateStateDeployed, nil))
+	require.NoError(t, sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, nil))
 	row, err := sb.Templates().GetByHash(ctx, hash, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)

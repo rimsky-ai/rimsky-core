@@ -16,32 +16,23 @@ import (
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/storetest"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
 
 // insertDeployedTemplate inserts a template row in 'deployed' state with a
-// deterministic content hash derived from name+version. Replaces the
-// retired storage.TemplateStore.Deploy helper.
-//
-// @source: core/scheduler/helpers_test.go::insertDeployedTemplate
-//
-// Tracked duplicate (cold-read convention): the scheduler-package copy
-// is the canonical source. Kept duplicated here rather than extracted
-// because the only consumers are these two test files and extracting
-// would force a new shared test-helper package.
-func insertDeployedTemplate(ctx context.Context, t *testing.T, sb *pgstorage.PostgresStorageBackend, spec node.TemplateSpec) storage.TemplateRow {
+// deterministic content hash derived from name+version.
+func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.Store, spec node.TemplateSpec) persistence.TemplateRow {
 	t.Helper()
 	sum := sha256.Sum256([]byte(spec.Name + ":" + spec.Version))
 	hash := "sha256-" + hex.EncodeToString(sum[:])
-	require.NoError(t, sb.Templates().Insert(ctx, storage.TemplateInsertInput{
-		ID: hash, Spec: spec, State: storage.TemplateStateRegistered,
+	require.NoError(t, sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
+		ID: hash, Spec: spec, State: persistence.TemplateStateRegistered,
 	}, nil))
-	require.NoError(t, sb.Templates().UpdateState(ctx, hash, storage.TemplateStateDeployed, nil))
+	require.NoError(t, sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, nil))
 	row, err := sb.Templates().GetByHash(ctx, hash, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)
@@ -56,42 +47,36 @@ func insertDeployedTemplate(ctx context.Context, t *testing.T, sb *pgstorage.Pos
 func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
-	backend := pgstorage.New(pool)
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Store()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "auto-term-commit", Version: "1",
 	})
 	ck := "ck"
-	inst, err := backend.Instances().Create(ctx, storage.InstanceCreateInput{
+	inst, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
-	acqNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{
+	acqNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
 	}, nil)
 	require.NoError(t, err)
-	inhNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{
+	inhNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
 	}, nil)
 	require.NoError(t, err)
 
-	// In-Go fake store registered locally so the resolution verb has
-	// a store to dispatch against. The fake's Commit/Abandon
-	// record calls — sufficient for this test (the wire path is
-	// covered by scenario tests, not this in-isolation unit test).
 	reg := store.NewRegistry()
 	stubStore := storetest.NewFake("workspace", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
 	reg.Add("workspace", stubStore)
 
-	// Seed one lock-holder row + two claim-holders rows in 'active'.
 	storeName := "workspace"
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
-	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
-		if err := backend.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
-			ID: lockHolderID, LockKind: storage.LockKindRegion,
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+			ID: lockHolderID, LockKind: persistence.LockKindRegion,
 			StoreName: &storeName, RegionData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A", HolderNodeID: acqNode.ID,
@@ -99,43 +84,38 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := backend.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: acqNode.ID,
 		}, tx); err != nil {
 			return err
 		}
-		return backend.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: inhNode.ID,
 		}, tx)
 	}))
 
-	// Mark both rows completed.
 	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, acqNode.ID, storage.ClaimHolderStateCompleted, nil,
+		ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, nil,
 	))
 	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, inhNode.ID, storage.ClaimHolderStateCompleted, nil,
+		ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateCompleted, nil,
 	))
 
 	args := supervisor.RunArgs{
-		Storage:       backend,
-		LockHolders:   store.NewLockHoldersClient(pool),
+		Persist:       backend,
+		LockHolders:   backend.LockHolders(),
 		StoreRegistry: reg,
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-A",
 	}
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	require.NoError(t, supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID))
-	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+	}))
 
-	// Lock-holder row is gone.
 	row, err := backend.LockHolders().Get(ctx, lockHolderID, nil)
 	require.NoError(t, err)
 	require.Nil(t, row, "auto-terminal must delete lock-holder on aggregate-completed")
 
-	// Verb assertion: aggregate-completed must route to Commit, never
-	// Abandon. Mirror of the aggregate-failed test below.
 	abandonSeen, commitSeen := false, false
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "abandon" {
@@ -155,23 +135,22 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	t.Cleanup(teardown)
-	backend := pgstorage.New(pool)
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Store()
 
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "auto-term-give-up", Version: "1",
 	})
 	ck := "ck"
-	inst, err := backend.Instances().Create(ctx, storage.InstanceCreateInput{
+	inst, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
-	acqNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{
+	acqNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
 	}, nil)
 	require.NoError(t, err)
-	inhNode, err := backend.Nodes().Create(ctx, storage.NodeCreateInput{
+	inhNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
 	}, nil)
 	require.NoError(t, err)
@@ -183,9 +162,9 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	storeName := "workspace"
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
-	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
-		if err := backend.LockHolders().Insert(ctx, storage.LockHolderInsertInput{
-			ID: lockHolderID, LockKind: storage.LockKindRegion,
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+			ID: lockHolderID, LockKind: persistence.LockKindRegion,
 			StoreName: &storeName, RegionData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-G", HolderNodeID: acqNode.ID,
@@ -193,43 +172,37 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := backend.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: acqNode.ID,
 		}, tx); err != nil {
 			return err
 		}
-		return backend.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: inhNode.ID,
 		}, tx)
 	}))
-	// One completed + one failed → aggregate failed.
 	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, acqNode.ID, storage.ClaimHolderStateCompleted, nil,
+		ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, nil,
 	))
 	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, inhNode.ID, storage.ClaimHolderStateFailed, nil,
+		ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateFailed, nil,
 	))
 
 	args := supervisor.RunArgs{
-		Storage:       backend,
-		LockHolders:   store.NewLockHoldersClient(pool),
+		Persist:       backend,
+		LockHolders:   backend.LockHolders(),
 		StoreRegistry: reg,
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-G",
 	}
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	require.NoError(t, supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID))
-	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return supervisor.CheckAndFireResolution(ctx, args, tx, lockHolderID)
+	}))
 
 	row, err := backend.LockHolders().Get(ctx, lockHolderID, nil)
 	require.NoError(t, err)
 	require.Nil(t, row, "auto-terminal must delete lock-holder on aggregate-failed too")
 
-	// Verb assertion: aggregate-failed must route to Abandon, never
-	// Commit. Iterate every recorded call and assert at least one
-	// abandon and zero commits — guards against an aggregate-outcome
-	// regression that always returns the success path.
 	abandonSeen, commitSeen := false, false
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "abandon" {

@@ -26,8 +26,8 @@ import (
 
 	"github.com/fallguy/rimsky/core/canonical"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 )
 
 // readAllBody reads the request body in full.
@@ -163,14 +163,14 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// Idempotent re-register: if a row with this hash already exists,
 		// short-circuit per spec §1.5 step 1. If a tag was supplied, upsert
 		// it pointing at the existing row.
-		existing, err := deps.Storage.Templates().GetByHash(req.Context(), hash, nil)
+		existing, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		if existing != nil {
 			if tag != "" {
-				if err := deps.Storage.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
+				if err := deps.Persist.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -195,17 +195,17 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		err = deps.Storage.Transaction(req.Context(), func(ctx context.Context, tx storage.Tx) error {
-			if err := deps.Storage.Templates().Insert(ctx, storage.TemplateInsertInput{
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			if err := deps.Persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
 				ID:     hash,
 				Spec:   spec,
-				State:  storage.TemplateStateRegistered,
+				State:  persistence.TemplateStateRegistered,
 				Source: source,
 			}, tx); err != nil {
 				return err
 			}
 			if tag != "" {
-				return deps.Storage.TemplateTags().Upsert(ctx, tag, hash, tx)
+				return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
 			}
 			return nil
 		})
@@ -227,9 +227,9 @@ func handleListTemplates(deps AppDeps) http.HandlerFunc {
 		state := req.URL.Query().Get("state")
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
-		page, err := deps.Storage.Templates().List(req.Context(),
-			storage.TemplateListFilter{State: storage.TemplateState(state)},
-			storage.ListPagination{Limit: limit, Cursor: cursor},
+		page, err := deps.Persist.Templates().List(req.Context(),
+			persistence.TemplateListFilter{State: persistence.TemplateState(state)},
+			persistence.ListPagination{Limit: limit, Cursor: cursor},
 			nil,
 		)
 		if err != nil {
@@ -265,7 +265,7 @@ func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		row, err := deps.Storage.Templates().GetByHash(req.Context(), hash, nil)
+		row, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -307,13 +307,13 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 
 		if isTag {
 			// Tag-form: count remaining tags pointing at the same hash.
-			n, err := deps.Storage.TemplateTags().CountByTemplate(req.Context(), hash, nil)
+			n, err := deps.Persist.TemplateTags().CountByTemplate(req.Context(), hash, nil)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
 			if n > 1 {
-				if _, err := deps.Storage.TemplateTags().Delete(req.Context(), idOrTag, nil); err != nil {
+				if _, err := deps.Persist.TemplateTags().Delete(req.Context(), idOrTag, nil); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -323,7 +323,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			// last tag → fall through to template deregister.
 		}
 
-		row, err := deps.Storage.Templates().GetByHash(req.Context(), hash, nil)
+		row, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -332,13 +332,13 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		if row.State == storage.TemplateStateDeployed {
+		if row.State == persistence.TemplateStateDeployed {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error": "template is in 'deployed' state; undeploy first",
 			})
 			return
 		}
-		active, err := deps.Storage.Instances().CountActiveByTemplate(req.Context(), hash, nil)
+		active, err := deps.Persist.Instances().CountActiveByTemplate(req.Context(), hash, nil)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -357,24 +357,24 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		err = deps.Storage.Transaction(req.Context(), func(ctx context.Context, tx storage.Tx) error {
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if isTag {
-				if _, err := deps.Storage.TemplateTags().Delete(ctx, idOrTag, tx); err != nil {
+				if _, err := deps.Persist.TemplateTags().Delete(ctx, idOrTag, tx); err != nil {
 					return err
 				}
 			} else {
 				// Direct-hash form: drop all tags pointing at this row.
-				tags, err := deps.Storage.TemplateTags().ListByTemplate(ctx, hash, tx)
+				tags, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
 				if err != nil {
 					return err
 				}
 				for _, t := range tags {
-					if _, err := deps.Storage.TemplateTags().Delete(ctx, t.Tag, tx); err != nil {
+					if _, err := deps.Persist.TemplateTags().Delete(ctx, t.Tag, tx); err != nil {
 						return err
 					}
 				}
 			}
-			return deps.Storage.Templates().DeleteByHash(ctx, hash, tx)
+			return deps.Persist.Templates().DeleteByHash(ctx, hash, tx)
 		})
 		if err != nil {
 			writeError(w, err)
@@ -413,20 +413,20 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			fanOutErr     error
 			fanOutDetails map[string]error
 		)
-		err = deps.Storage.Transaction(req.Context(), func(ctx context.Context, tx storage.Tx) error {
-			row, err := deps.Storage.Templates().LockForUpdate(ctx, hash, tx)
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
 			if err != nil {
 				return err
 			}
 			if row == nil {
 				return shared.ErrTemplateNotFound
 			}
-			if row.State == storage.TemplateStateDeployed {
+			if row.State == persistence.TemplateStateDeployed {
 				outState = "deployed"
 				noOp = true
 				return nil
 			}
-			if row.State != storage.TemplateStateRegistered && row.State != storage.TemplateStateUndeployed {
+			if row.State != persistence.TemplateStateRegistered && row.State != persistence.TemplateStateUndeployed {
 				return shared.Wrap(shared.ErrTemplateValidation,
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
@@ -436,7 +436,7 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 				fanOutDetails = perStore
 				return ferr
 			}
-			if err := deps.Storage.Templates().UpdateState(ctx, hash, storage.TemplateStateDeployed, tx); err != nil {
+			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
 				return err
 			}
 			outState = "deployed"
@@ -493,25 +493,25 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			fanOutErr     error
 			fanOutDetails map[string]error
 		)
-		err = deps.Storage.Transaction(req.Context(), func(ctx context.Context, tx storage.Tx) error {
-			row, err := deps.Storage.Templates().LockForUpdate(ctx, hash, tx)
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
 			if err != nil {
 				return err
 			}
 			if row == nil {
 				return shared.ErrTemplateNotFound
 			}
-			if row.State == storage.TemplateStateUndeployed {
+			if row.State == persistence.TemplateStateUndeployed {
 				outState = "undeployed"
 				noOp = true
 				return nil
 			}
-			if row.State != storage.TemplateStateDeployed {
+			if row.State != persistence.TemplateStateDeployed {
 				return shared.Wrap(shared.ErrTemplateValidation,
 					"template not undeployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
-			active, err := deps.Storage.Instances().CountActiveByTemplate(ctx, hash, tx)
+			active, err := deps.Persist.Instances().CountActiveByTemplate(ctx, hash, tx)
 			if err != nil {
 				return err
 			}
@@ -526,7 +526,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 				fanOutDetails = perStore
 				return ferr
 			}
-			if err := deps.Storage.Templates().UpdateState(ctx, hash, storage.TemplateStateUndeployed, tx); err != nil {
+			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateUndeployed, tx); err != nil {
 				return err
 			}
 			outState = "undeployed"
@@ -586,7 +586,7 @@ func resolveTagOrHash(ctx context.Context, deps AppDeps, value string) (string, 
 	if looksLikeHash(value) {
 		return value, nil
 	}
-	row, err := deps.Storage.TemplateTags().Get(ctx, value, nil)
+	row, err := deps.Persist.TemplateTags().Get(ctx, value, nil)
 	if err != nil {
 		return "", err
 	}
@@ -619,7 +619,7 @@ func looksLikeHash(s string) bool {
 // tagsForTemplate returns the sorted list of tag strings that point at
 // templateHash. Best-effort: a query failure produces a nil slice.
 func tagsForTemplate(ctx context.Context, deps AppDeps, templateHash string) []string {
-	rows, err := deps.Storage.TemplateTags().ListByTemplate(ctx, templateHash, nil)
+	rows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, templateHash, nil)
 	if err != nil {
 		return nil
 	}

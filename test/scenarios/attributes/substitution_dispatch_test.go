@@ -50,7 +50,7 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	require.NotNil(t, g)
 	require.True(t, h.WaitForNodeState(g.ID, shared.NodeStateFresh, 15*time.Second))
 
-	row, err := h.Storage.NodeAttributes().Get(h.Ctx, g.ID)
+	row, err := h.Persist.NodeAttributes().Get(h.Ctx, g.ID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	require.Equal(t, "hello-world", row.Data["greeting"], "params substitution should resolve at dispatch")

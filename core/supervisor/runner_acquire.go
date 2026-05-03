@@ -27,14 +27,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
-	pgqueue "github.com/fallguy/rimsky/core/queue/postgres"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 )
 
@@ -85,8 +81,8 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil
 		}
-		_ = args.Storage.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
-		_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+		_ = args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
+		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "work_started", Payload: map[string]any{
 				"supervisor_id": args.SupervisorID,
@@ -102,21 +98,25 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 }
 
 // selectCandidatesShortTx runs the candidate-selection helper in its
-// own short read tx.
-func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]queue.Candidate, error) {
+// own short read tx. Read-only — the surrounding tx commits with no
+// writes; the rows' FOR UPDATE SKIP LOCKED locks release at commit.
+func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]persistence.Candidate, error) {
 	limit := args.SelectCandidatesLimit
 	if limit <= 0 {
 		limit = 8
 	}
-	tx, err := args.QueuePool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("acquireCandidate: begin select tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	candidates, err := args.Queue.SelectCandidates(ctx, tx, queue.SelectCandidatesRequest{
-		AcceptedExecutors: args.AcceptedExecutors,
-		AcceptedStores:    args.AcceptedStores,
-		Limit:             limit,
+	var candidates []persistence.Candidate
+	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := args.Queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			AcceptedExecutors: args.AcceptedExecutors,
+			AcceptedStores:    args.AcceptedStores,
+			Limit:             limit,
+		})
+		if err != nil {
+			return err
+		}
+		candidates = out
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("acquireCandidate: SelectCandidates: %w", err)
@@ -128,48 +128,56 @@ func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]queue.Candida
 // candidate's partial mutations roll back rather than leak into the
 // next candidate.
 func tryAcquireWithTx(
-	ctx context.Context, args RunArgs, cand queue.Candidate,
+	ctx context.Context, args RunArgs, cand persistence.Candidate,
 	heartbeatInterval time.Duration,
 ) (acquisition, bool, error) {
-	tx, err := args.QueuePool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: begin tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
+	var (
+		acq acquisition
+		ok  bool
+	)
+	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var inner error
+		acq, ok, inner = tryAcquire(ctx, args, tx, cand, heartbeatInterval)
+		if inner != nil {
+			return inner
 		}
-	}()
-	acq, ok, err := tryAcquire(ctx, args, tx, cand, heartbeatInterval)
-	if err != nil {
-		return acquisition{}, false, err
+		if !ok {
+			// Roll back so partial mutations from a non-eligible
+			// candidate don't leak.
+			return errTryAcquireRollback
+		}
+		return nil
+	})
+	if err != nil && err != errTryAcquireRollback {
+		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: %w", err)
 	}
-	if !ok {
+	if err == errTryAcquireRollback {
 		return acquisition{}, false, nil
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: commit: %w", err)
-	}
-	committed = true
-	return acq, true, nil
+	return acq, ok, nil
 }
+
+// errTryAcquireRollback is a sentinel returned from the per-candidate
+// acquisition tx to force a clean rollback without surfacing a real
+// error to the caller. Used when in-Go eligibility checks bail before
+// any state mutation should commit.
+var errTryAcquireRollback = fmt.Errorf("supervisor: tryAcquire rollback (sentinel)")
 
 // tryAcquire runs the acquisition steps for a single candidate inside
 // the open rimsky-side tx. Note: Store.Open RPCs over the wire and the
 // store runs in its own tx (per spec §7.3).
 func tryAcquire(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	cand queue.Candidate, heartbeatInterval time.Duration,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	cand persistence.Candidate, heartbeatInterval time.Duration,
 ) (acquisition, bool, error) {
-	nd, err := args.Storage.Nodes().Get(ctx, cand.NodeID, nil)
+	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, nil)
 	if err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: nodes.Get: %w", err)
 	}
 	if nd == nil {
 		return acquisition{}, false, nil
 	}
-	inst, _ := args.Storage.Instances().Get(ctx, nd.InstanceID, nil)
+	inst, _ := args.Persist.Instances().Get(ctx, nd.InstanceID, nil)
 	tmpl := lookupTemplate(ctx, args, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	specs, err := buildLockSpecs(ctx, args, nd, nodeDef, inst)
@@ -180,7 +188,7 @@ func tryAcquire(
 	}
 	sortLockSpecs(specs)
 
-	if err := takeNamedAdvisoryLocks(ctx, tx, specs); err != nil {
+	if err := takeNamedAdvisoryLocks(ctx, args, tx, specs); err != nil {
 		return acquisition{}, false, err
 	}
 
@@ -225,13 +233,13 @@ func tryAcquire(
 
 // takeNamedAdvisoryLocks walks the sorted spec slice and takes one
 // advisory lock per NamedLockSpec.
-func takeNamedAdvisoryLocks(ctx context.Context, tx pgx.Tx, specs []any) error {
+func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx, specs []any) error {
 	for _, sp := range specs {
 		named, ok := sp.(store.NamedLockSpec)
 		if !ok {
 			continue
 		}
-		if err := pgqueue.TakeNamedLockAdvisory(ctx, tx, named.Name); err != nil {
+		if err := args.Coordinator.TakeNamedLockInTx(ctx, tx, named.Name); err != nil {
 			return fmt.Errorf("takeNamedAdvisoryLocks(%q): %w", named.Name, err)
 		}
 	}
@@ -240,8 +248,8 @@ func takeNamedAdvisoryLocks(ctx context.Context, tx pgx.Tx, specs []any) error {
 
 // acquireOneLock handles one spec inside the acquisition tx.
 func acquireOneLock(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	sp any, cand queue.Candidate, heartbeatInterval time.Duration,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	sp any, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, bool, error) {
 	switch spec := sp.(type) {
@@ -263,11 +271,11 @@ func acquireOneLock(
 // undeclared names should have failed validation at deploy time
 // (control-api wires NamedLockDeclared unconditionally).
 func acquireNamedLock(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	spec store.NamedLockSpec, cand queue.Candidate, heartbeatInterval time.Duration,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	spec store.NamedLockSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 ) (AcquiredLock, bool, error) {
 	if cfg, ok := args.NamedLocks.Get(spec.Name); ok {
-		count, err := args.LockHolders.CountByNamedLock(ctx, tx, spec.Name)
+		count, err := args.LockHolders.CountByNamedLock(ctx, spec.Name, tx)
 		if err != nil {
 			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
 		}
@@ -277,20 +285,17 @@ func acquireNamedLock(
 	}
 	rowID := uuid.New()
 	frameID := cand.FrameID
-	now := args.Clock.Now()
 	nameCopy := spec.Name
-	row := store.LockHolderRow{
+	in := persistence.LockHolderInsertInput{
 		ID:                 rowID,
-		Kind:               store.LockHolderKindNamed,
+		LockKind:           persistence.LockKindNamed,
 		LockName:           &nameCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ClaimedAt:          now,
-		LastHeartbeatAt:    now,
-		ExpiresAt:          now.Add(5 * heartbeatInterval),
+		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
 	}
-	if err := args.LockHolders.Insert(ctx, tx, row); err != nil {
+	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)
 	}
 	return AcquiredLock{
@@ -316,8 +321,8 @@ func acquireNamedLock(
 // list-then-INSERT pair is atomic against any concurrent acquirer
 // targeting the same (store, region) pair.
 func acquireClaim(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	spec store.ClaimSpec, cand queue.Candidate, heartbeatInterval time.Duration,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	spec store.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, bool, error) {
 	s, ok := args.StoreRegistry.Get(spec.StoreName)
@@ -332,8 +337,8 @@ func acquireClaim(
 	if err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: marshal selector: %w", err)
 	}
-	if err := pgqueue.TakeRegionAdvisory(ctx, tx, spec.StoreName, regionInitial); err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: TakeRegionAdvisory: %w", err)
+	if err := args.Coordinator.TakeRegionLockInTx(ctx, tx, spec.StoreName, regionInitial); err != nil {
+		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: TakeRegionLockInTx: %w", err)
 	}
 	conflicted, err := evaluateRegionConflict(ctx, args, tx, myCaps, spec, cand)
 	if err != nil {
@@ -345,23 +350,20 @@ func acquireClaim(
 
 	rowID := uuid.New()
 	frameID := cand.FrameID
-	now := args.Clock.Now()
 	storeNameCopy := spec.StoreName
 	intentCopy := string(spec.Intent)
-	row := store.LockHolderRow{
+	in := persistence.LockHolderInsertInput{
 		ID:                 rowID,
-		Kind:               store.LockHolderKindRegion,
+		LockKind:           persistence.LockKindRegion,
 		StoreName:          &storeNameCopy,
 		RegionData:         regionInitial,
 		Intent:             &intentCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ClaimedAt:          now,
-		LastHeartbeatAt:    now,
-		ExpiresAt:          now.Add(5 * heartbeatInterval),
+		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
 	}
-	if err := args.LockHolders.Insert(ctx, tx, row); err != nil {
+	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
@@ -380,14 +382,14 @@ func acquireClaim(
 	}
 	cr := outcome.Result
 
-	if err := args.LockHolders.UpdateAddress(ctx, tx, rowID, args.SupervisorID, cr.Address); err != nil {
+	if err := args.LockHolders.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
 	// Pick-policy claims have store-chosen region; regional claims
 	// keep the substituted selector (already written above).
 	if len(cr.Region) > 0 && string(cr.Region) != string(regionInitial) {
-		if err := updateLockHolderRegion(ctx, tx, rowID, args.SupervisorID, cr.Region); err != nil {
-			return AcquiredLock{}, false, err
+		if err := args.LockHolders.UpdateRegion(ctx, rowID, args.SupervisorID, cr.Region, tx); err != nil {
+			return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateRegion: %w", err)
 		}
 	}
 
@@ -423,10 +425,10 @@ func acquireClaim(
 // the holder's store may have been re-registered with different caps,
 // so we re-look-up its Capabilities).
 func evaluateRegionConflict(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	myCaps store.Capabilities, spec store.ClaimSpec, cand queue.Candidate,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	myCaps store.Capabilities, spec store.ClaimSpec, cand persistence.Candidate,
 ) (bool, error) {
-	holders, err := args.LockHolders.ListByStoreRegion(ctx, tx, spec.StoreName)
+	holders, err := args.LockHolders.ListByStoreRegion(ctx, spec.StoreName, tx)
 	if err != nil {
 		return false, fmt.Errorf("evaluateRegionConflict: ListByStoreRegion: %w", err)
 	}
@@ -461,7 +463,7 @@ func evaluateRegionConflict(
 // when the holder's store is no longer registered (best-effort: the
 // row is about to be reaped).
 func holderCapabilitiesFor(
-	ctx context.Context, args RunArgs, h store.LockHolderRow,
+	ctx context.Context, args RunArgs, h persistence.LockHolderRow,
 ) (store.Capabilities, error) {
 	if h.StoreName == nil {
 		return store.Capabilities{}, nil
@@ -477,39 +479,22 @@ func holderCapabilitiesFor(
 	return caps, nil
 }
 
-// updateLockHolderRegion writes a new region_data to a region-kind
-// row, claimant-guarded.
-func updateLockHolderRegion(
-	ctx context.Context, tx pgx.Tx, id shared.UUID, supervisorID string, region json.RawMessage,
-) error {
-	_, err := tx.Exec(ctx,
-		`UPDATE rimsky_lock_holders
-		    SET region_data = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
-		[]byte(region), id, supervisorID,
-	)
-	if err != nil {
-		return fmt.Errorf("updateLockHolderRegion: %w", err)
-	}
-	return nil
-}
-
 // insertHeldClaimHoldersAtAcquire inserts one rimsky_claim_holders
 // row per holding-subgraph member when the alias is held.
 func insertHeldClaimHoldersAtAcquire(
-	ctx context.Context, args RunArgs, tx pgx.Tx,
-	lockHolderID shared.UUID, cand queue.Candidate, alias string,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	lockHolderID shared.UUID, cand persistence.Candidate, alias string,
 	heldSubgraphs []node.HoldingSubgraph,
 ) error {
 	subgraph, ok := findHoldingSubgraphForAcquirer(heldSubgraphs, cand.NodeType, alias)
 	if !ok || !subgraph.IsHeld() {
 		return nil
 	}
-	nd, err := args.Storage.Nodes().Get(ctx, cand.NodeID, nil)
+	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, nil)
 	if err != nil || nd == nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: nodes.Get: %w", err)
 	}
-	siblings, err := args.Storage.Nodes().ListByInstance(ctx, nd.InstanceID, nil)
+	siblings, err := args.Persist.Nodes().ListByInstance(ctx, nd.InstanceID, nil)
 	if err != nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: ListByInstance: %w", err)
 	}
@@ -517,18 +502,17 @@ func insertHeldClaimHoldersAtAcquire(
 	for _, m := range subgraph.Members {
 		memberSet[m] = struct{}{}
 	}
-	stx := pgstorage.WrapPgxTx(tx)
 	frameID := cand.FrameID
 	for _, sib := range siblings {
 		if _, ok := memberSet[sib.NodeType]; !ok {
 			continue
 		}
-		err := args.Storage.ClaimHolders().Insert(ctx, storage.ClaimHolderInsertInput{
+		err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:           uuid.New(),
 			LockHolderID: lockHolderID,
 			HolderNodeID: sib.ID,
 			FrameID:      &frameID,
-		}, stx)
+		}, tx)
 		if err != nil {
 			return fmt.Errorf("insertHeldClaimHoldersAtAcquire: Insert: %w", err)
 		}
@@ -587,11 +571,11 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 					"store", storeNameForSpec(lk.Spec), "error", err.Error())
 			}
 		}
-		_ = args.Storage.Transaction(ctx, func(ctx context.Context, tx storage.Tx) error {
-			return args.Storage.LockHolders().Delete(ctx, lk.LockHolderID, args.SupervisorID, tx)
+		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx)
 		})
 	}
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "orphaned_claim_lost_race",
 		Payload: map[string]any{
@@ -603,7 +587,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 
 // transitionToRunning is the short-tx state transition.
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
-	return args.Storage.Nodes().UpdateState(ctx, acq.NodeID,
+	return args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
 		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil)
 }
 
@@ -615,15 +599,15 @@ func emitLockAcquired(ctx context.Context, args RunArgs, acq acquisition, lk Acq
 	}
 	switch sp := lk.Spec.(type) {
 	case store.NamedLockSpec:
-		payload["lock_kind"] = string(store.LockHolderKindNamed)
+		payload["lock_kind"] = string(persistence.LockKindNamed)
 		payload["lock_name"] = sp.Name
 	case store.ClaimSpec:
-		payload["lock_kind"] = string(store.LockHolderKindRegion)
+		payload["lock_kind"] = string(persistence.LockKindRegion)
 		payload["store_name"] = sp.StoreName
 		payload["alias"] = sp.Alias
 		payload["intent"] = string(sp.Intent)
 	}
-	_ = args.Storage.Events().Append(ctx, storage.EventAppendInput{
+	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "lock_acquired", Payload: payload,
 	}, nil)

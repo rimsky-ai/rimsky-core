@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/supervisor"
 )
@@ -19,9 +18,9 @@ import (
 // form; the supervisor dials each entry and validates the
 // Capabilities() handshake at startup.
 type SupervisorConfig struct {
-	SupervisorID      string
-	Storage           storage.StorageBackend
-	Queue             queue.DispatchQueue
+	SupervisorID string
+	// Driver is the unified persistence driver. Required.
+	Driver            persistence.Driver
 	Clock             shared.Clock
 	Logger            shared.Logger
 	Concurrency       int
@@ -58,6 +57,9 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if cfg.Resolver == nil {
 		return nil, fmt.Errorf("StartSupervisor: Resolver required")
 	}
+	if cfg.Driver == nil {
+		return nil, fmt.Errorf("StartSupervisor: Driver required")
+	}
 	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
@@ -66,10 +68,26 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
+	persistStore := cfg.Driver.Store()
+	if persistStore == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartSupervisor: Driver.Store() returned nil — driver did not initialize the Store accessor")
+	}
+	persistQueue := cfg.Driver.Queue()
+	if persistQueue == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartSupervisor: Driver.Queue() returned nil")
+	}
+	coordinator := cfg.Driver.Coordinator()
+	if coordinator == nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartSupervisor: Driver.Coordinator() returned nil")
+	}
 	inner, err := supervisor.Start(supervisor.Config{
 		SupervisorID:          cfg.SupervisorID,
-		Storage:               cfg.Storage,
-		Queue:                 cfg.Queue,
+		Persist:               persistStore,
+		Queue:                 persistQueue,
+		Coordinator:           coordinator,
 		Clock:                 cfg.Clock,
 		Logger:                cfg.Logger,
 		Concurrency:           cfg.Concurrency,

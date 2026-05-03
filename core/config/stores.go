@@ -1,9 +1,10 @@
-// Stores + executors config + remote-dialing helpers for the three
-// rimsky processes. Per spec docs/specs/2026-04-27-stores-redesign-v3-
+// Stores + executors config + remote-dialing helpers for the rimsky
+// processes. Per spec docs/specs/2026-04-27-stores-redesign-v3-
 // design.md §6 (stores) and docs/specs/2026-05-01-control-plane-and-
 // store-lifecycle-design.md §3.1 / §6.6 (unified rimsky.yml shape:
-// stores + named_locks + executors loaded together by all three
-// rimsky processes from $RIMSKY_CONFIG).
+// stores + named_locks + executors loaded together by all four rimsky
+// binaries — control-api, supervisor, scheduler, migrate — from
+// $RIMSKY_CONFIG).
 package config
 
 import (
@@ -16,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/remote"
 )
@@ -83,12 +85,13 @@ func (c ExecutorsConfig) ExecutorDeclared(name string) bool {
 }
 
 // RimskyConfig is the parsed rimsky.yml: the unified deployment-shape
-// config loaded by all three rimsky processes from $RIMSKY_CONFIG. Per
-// spec §3.1.
+// config loaded by all four rimsky binaries (control-api, supervisor,
+// scheduler, migrate) from $RIMSKY_CONFIG. Per spec §3.1.
 type RimskyConfig struct {
-	Stores     RemoteStoresConfig
-	NamedLocks store.NamedLocksConfig
-	Executors  ExecutorsConfig
+	Persistence persistence.Config
+	Stores      RemoteStoresConfig
+	NamedLocks  store.NamedLocksConfig
+	Executors   ExecutorsConfig
 }
 
 // LoadRimskyConfigYAML reads rimsky.yml: the unified deployment-shape
@@ -106,6 +109,18 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	}
 	expanded := os.ExpandEnv(string(raw))
 	var wrapper struct {
+		Persistence struct {
+			Driver   string `yaml:"driver"`
+			Postgres *struct {
+				DSN             string        `yaml:"dsn"`
+				MaxOpenConns    int           `yaml:"max_open_conns"`
+				MaxIdleConns    int           `yaml:"max_idle_conns"`
+				ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+			} `yaml:"postgres"`
+			SQLite *struct {
+				Path string `yaml:"path"`
+			} `yaml:"sqlite"`
+		} `yaml:"persistence"`
 		Stores map[string]struct {
 			Endpoint     string `yaml:"endpoint"`
 			Capabilities struct {
@@ -139,10 +154,27 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			TLS:       e.TLS,
 		}
 	}
+	pcfg := persistence.Config{Driver: wrapper.Persistence.Driver}
+	if wrapper.Persistence.Postgres != nil {
+		pcfg.Postgres = &persistence.PostgresConfig{
+			DSN:             wrapper.Persistence.Postgres.DSN,
+			MaxOpenConns:    wrapper.Persistence.Postgres.MaxOpenConns,
+			MaxIdleConns:    wrapper.Persistence.Postgres.MaxIdleConns,
+			ConnMaxLifetime: wrapper.Persistence.Postgres.ConnMaxLifetime,
+		}
+	}
+	if wrapper.Persistence.SQLite != nil {
+		pcfg.SQLite = &persistence.SQLiteConfig{Path: wrapper.Persistence.SQLite.Path}
+	}
+	if err := pcfg.Validate(); err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence: %w", path, err)
+	}
+
 	return RimskyConfig{
-		Stores:     stores,
-		NamedLocks: store.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		Executors:  executors,
+		Persistence: pcfg,
+		Stores:      stores,
+		NamedLocks:  store.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		Executors:   executors,
 	}, nil
 }
 

@@ -12,41 +12,40 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/core/internal/pgtest"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	pgstorage "github.com/fallguy/rimsky/core/storage/postgres"
 	"github.com/fallguy/rimsky/core/store"
 	"github.com/fallguy/rimsky/core/store/storetest"
 )
 
 type terminatorFixture struct {
 	deps     AppDeps
-	backend  *pgstorage.PostgresStorageBackend
-	pool     *pgxpool.Pool
+	driver   persistence.Driver
+	persist  persistence.Store
 	alpha    *storetest.Fake
 	registry *store.Registry
-	teardown func()
 }
 
 func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	t.Helper()
 	ctx := context.Background()
-	pool, teardown := pgtest.StartPostgres(ctx, t)
-	backend := pgstorage.New(pool)
+	d := pgtest.OpenDriver(ctx, t)
 	reg := store.NewRegistry()
 	alpha := storetest.NewFake("alpha", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
 	reg.Add("alpha", alpha)
 	deps := AppDeps{
-		Storage: backend, Logger: shared.SilentLogger{}, Stores: reg,
+		Persist: d.Store(),
+		Queue:   d.Queue(),
+		Logger:  shared.SilentLogger{},
+		Stores:  reg,
 	}
 	return &terminatorFixture{
-		deps: deps, backend: backend, pool: pool, alpha: alpha,
-		registry: reg, teardown: teardown,
+		deps: deps, driver: d, persist: d.Store(), alpha: alpha,
+		registry: reg,
 	}
 }
 
@@ -59,7 +58,9 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	t.Helper()
 	ctx := context.Background()
 
-	templateHash = "sha256-" + repeatHex("a", 64)
+	// Use a unique hash per call so parallel tests don't collide on the
+	// rimsky_templates PK.
+	templateHash = "sha256-" + repeatHex("a", 32) + uuid.NewString()[:32]
 	spec := node.TemplateSpec{
 		Name: "term-test", Version: "v1",
 		Nodes: []node.TemplateNodeDef{{
@@ -67,36 +68,34 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 			Stores: []node.NodeStoreRef{{Name: storeName, Selector: "x", Intent: "r"}},
 		}},
 	}
-	require.NoError(t, f.backend.Templates().Insert(ctx, storage.TemplateInsertInput{
-		ID: templateHash, Spec: spec, State: storage.TemplateStateDeployed,
+	require.NoError(t, f.persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
+		ID: templateHash, Spec: spec, State: persistence.TemplateStateDeployed,
 	}, nil))
 
 	instanceID = uuid.New()
 	ck := "ck-" + uuid.NewString()
-	_, err := f.backend.Instances().Create(ctx, storage.InstanceCreateInput{
+	_, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
 		Params: map[string]any{},
 	}, nil)
 	require.NoError(t, err)
 
-	require.NoError(t, f.backend.Instances().MarkTerminated(ctx, instanceID, nil))
-	require.NoError(t, f.backend.StoreLifecycle().Upsert(ctx, storage.StoreLifecycleRow{
+	require.NoError(t, f.persist.Instances().MarkTerminated(ctx, instanceID, nil))
+	require.NoError(t, f.persist.StoreLifecycle().Upsert(ctx, persistence.StoreLifecycleRow{
 		StoreRegistrationName: storeName,
-		ScopeKind:             storage.StoreLifecycleScopeInstance,
+		ScopeKind:             persistence.StoreLifecycleScopeInstance,
 		ScopeID:               instanceID.String(),
-		State:                 storage.StoreLifecycleStateCreated,
+		State:                 persistence.StoreLifecycleStateCreated,
 	}, nil))
 
 	if !withTemplate {
 		// Drop the FK constraint so we can null/replace the binding,
 		// then delete the template row to simulate a force-deleted
 		// template.
-		_, err := f.pool.Exec(ctx,
+		pgtest.ExecForTest(ctx, t, f.driver,
 			`ALTER TABLE rimsky_instances DROP CONSTRAINT IF EXISTS rimsky_instances_template_hash_fkey`)
-		require.NoError(t, err)
-		_, err = f.pool.Exec(ctx,
+		pgtest.ExecForTest(ctx, t, f.driver,
 			`DELETE FROM rimsky_templates WHERE id = $1`, templateHash)
-		require.NoError(t, err)
 	}
 	return templateHash, instanceID
 }
@@ -107,7 +106,6 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	t.Cleanup(f.teardown)
 
 	hash, inst := seedTerminatedInstance(t, f, "alpha", true)
 
@@ -120,8 +118,8 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.Equal(t, hash, calls[0].TemplateID)
 	require.Equal(t, inst.String(), calls[0].InstanceID)
 
-	row, err := f.deps.Storage.StoreLifecycle().Get(context.Background(),
-		"alpha", storage.StoreLifecycleScopeInstance, inst.String(), nil)
+	row, err := f.deps.Persist.StoreLifecycle().Get(context.Background(),
+		"alpha", persistence.StoreLifecycleScopeInstance, inst.String(), nil)
 	require.NoError(t, err)
 	require.Nil(t, row, "lifecycle row must be deleted on success")
 }
@@ -131,7 +129,6 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	t.Cleanup(f.teardown)
 
 	_, inst := seedTerminatedInstance(t, f, "alpha", true)
 	f.alpha.ErrorFunc = func(verb string, _ store.ClaimID) error {
@@ -144,8 +141,8 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	term := NewInstanceTerminator(f.deps, time.Hour)
 	term.tick(context.Background())
 
-	row, err := f.deps.Storage.StoreLifecycle().Get(context.Background(),
-		"alpha", storage.StoreLifecycleScopeInstance, inst.String(), nil)
+	row, err := f.deps.Persist.StoreLifecycle().Get(context.Background(),
+		"alpha", persistence.StoreLifecycleScopeInstance, inst.String(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, row, "lifecycle row must survive a per-store failure")
 }
@@ -157,7 +154,6 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	t.Cleanup(f.teardown)
 
 	_, inst := seedTerminatedInstance(t, f, "alpha", false)
 	term := NewInstanceTerminator(f.deps, time.Hour)
@@ -167,8 +163,8 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 	require.Len(t, calls, 1, "fallback path must fire OnInstanceTerminated against the lifecycle-row store")
 	require.Equal(t, "on_instance_terminated", calls[0].Verb)
 
-	row, err := f.deps.Storage.StoreLifecycle().Get(context.Background(),
-		"alpha", storage.StoreLifecycleScopeInstance, inst.String(), nil)
+	row, err := f.deps.Persist.StoreLifecycle().Get(context.Background(),
+		"alpha", persistence.StoreLifecycleScopeInstance, inst.String(), nil)
 	require.NoError(t, err)
 	require.Nil(t, row, "fallback path must delete the lifecycle row on success")
 }
@@ -178,7 +174,6 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	t.Cleanup(f.teardown)
 
 	term := NewInstanceTerminator(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -211,7 +206,6 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 func TestInstanceTerminator_StopBoundedByBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
-	t.Cleanup(f.teardown)
 
 	// Started=false → Stop is a no-op fast path.
 	term := NewInstanceTerminator(f.deps, time.Hour)

@@ -12,6 +12,7 @@
 package frame_resolution
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/node"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/scenario"
 )
 
@@ -45,11 +47,11 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 
 	// Wait until the first frame is running so subsequent invalidates
 	// must coalesce rather than become the running frame.
-	require.True(t, waitForFramesByState(t, h.Pool, iid, "running", 1, 5*time.Second),
+	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
-	// Fire N concurrent invalidates. Each runs in its own short tx
-	// against the harness pool, exactly mirroring how two operator
+	// Fire N concurrent invalidates. Each runs in its own short tx via
+	// the persistence driver, exactly mirroring how two operator
 	// invalidate handlers would race in production.
 	const N = 32
 	var wg sync.WaitGroup
@@ -58,22 +60,12 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			tx, err := h.Pool.Begin(h.Ctx)
-			if err != nil {
-				errs <- err
-				return
-			}
-			_, err = frame.EnqueueOrCoalesce(h.Ctx, tx, uuid.UUID(iid), uuid.UUID(worker.ID))
-			if err != nil {
-				_ = tx.Rollback(h.Ctx)
-				errs <- err
-				return
-			}
-			if err := tx.Commit(h.Ctx); err != nil {
-				errs <- err
-				return
-			}
-			errs <- nil
+			err := h.Driver.Store().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+				_, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Store(), tx,
+					uuid.UUID(iid), uuid.UUID(worker.ID))
+				return err
+			})
+			errs <- err
 		}()
 	}
 	wg.Wait()
@@ -88,7 +80,7 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	// is just about to terminate.
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		n := countFramesByState(t, h.Pool, iid, "queued")
+		n := countFramesByState(t, h, iid, "queued")
 		require.LessOrEqual(t, n, 1,
 			"observed %d queued coalesce rows; uq_rimsky_frames_coalesce_queued violated", n)
 		time.Sleep(20 * time.Millisecond)
@@ -97,7 +89,7 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	// Drain to terminal: exactly 2 completed frames (initial running +
 	// the single coalesced trailing frame).
 	require.Eventually(t, func() bool {
-		return countFramesByState(t, h.Pool, iid, "completed") == 2
+		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,
 		"expected exactly 2 completed frames after concurrent coalesce drain")
 }

@@ -1,7 +1,7 @@
 // Package scheduler main loop.
 //
 // Per tick:
-//  1. Advisory-lock guard (pg_try_advisory_lock) skips ticks when another
+//  1. Coordinator-guarded TrySchedulerTick skips ticks when another
 //     replica holds the lock. Best-effort — if lock acquisition errors we
 //     fall through to an unlocked tick rather than dropping work.
 //  2. ProcessSchedules — fire due cron schedules, emit invalidate per target.
@@ -33,54 +33,38 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/fallguy/rimsky/core/frame"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/queue"
+	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/storage"
-	"github.com/fallguy/rimsky/core/store"
 )
-
-// RimskySchedulerTickLockKey is a fixed 64-bit advisory-lock key used to
-// serialize scheduler ticks across replicas. Each tick attempts
-// pg_try_advisory_lock(key); if another replica holds it we skip this tick
-// and try again next interval.
-//
-// @blessed-invariant "advisory lock prevents double-emit of
-// heartbeat_lost / orphaned_claim_released / lock_orphan_reaped across
-// replicas"
-//
-// Without this guard, two live schedulers during a deployment overlap would
-// both execute the stale-heartbeat / dispatch-claim / lock-holder sweeps on
-// the same rows, producing duplicate events (and, pre-claimant-guard, a
-// risk of releasing a fresh supervisor's live claim or lock holder). Any
-// refactor that removes the lock guard must preserve equivalent
-// replica-exclusive sweep semantics.
-const RimskySchedulerTickLockKey int64 = 4853127298010834892
 
 // Config bundles everything the scheduler loop needs.
 //
-// LockHolders and Pool are required for the orphan-reap sweep. When
-// either is nil the corresponding sweep is skipped — this keeps tests
-// that exercise only the dispatch-claim / heartbeat / ready sweeps
-// from being forced into store wiring.
+// LockHolders is required for the orphan-reap sweep. When nil the
+// corresponding sweep is skipped — this keeps tests that exercise only
+// the dispatch-claim / heartbeat / ready sweeps from being forced into
+// store wiring.
 //
 // In v3 the scheduler does not consult any store-side state — the v2
 // visibility-timeout sweep is gone, and the orphan reaper no longer
 // fires Store.Abandon per spec §7.5. There is no StoreRegistry on
 // this Config.
 type Config struct {
-	Storage              storage.StorageBackend
-	Queue                queue.DispatchQueue
+	// Persist is the unified persistence.Store handle (rimsky_* tables).
+	// Required.
+	Persist persistence.Store
+	// Queue is the dispatch-queue accessor. Required.
+	Queue persistence.Queue
+	// Coordinator carries the cross-process synchronization primitives
+	// (scheduler-tick exclusion, etc.). Required for the per-tick guard.
+	Coordinator          persistence.Coordinator
 	Clock                shared.Clock
 	Logger               shared.Logger
 	TickInterval         time.Duration
 	HeartbeatTimeout     time.Duration
 	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
-	Pool                 *pgxpool.Pool // required for advisory-lock guard + orphan reap
-	LockHolders          *store.LockHoldersClient
+	LockHolders          persistence.LockHoldersStore
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -109,7 +93,15 @@ func (h *Handle) Shutdown(ctx context.Context) error {
 
 // Start launches the scheduler tick loop. Errors inside a tick are logged;
 // the loop never returns on its own unless Handle.Shutdown is invoked.
+//
+// Panics if cfg.Persist is nil — every code path that emits an invalidate
+// (cron fire, pure-cascade) calls frame.EnqueueOrCoalesce on cfg.Persist,
+// so a nil here is a wiring bug that surfaces as an unhelpful NPE deep in
+// the tick loop. Fail loudly at Start() instead.
 func Start(cfg Config) *Handle {
+	if cfg.Persist == nil {
+		panic("scheduler.Start: Config.Persist is required (frame engine, invalidate path, schedule firing all dereference it)")
+	}
 	if cfg.TickInterval == 0 {
 		cfg.TickInterval = 1500 * time.Millisecond
 	}
@@ -166,51 +158,34 @@ func runLoop(cfg Config, h *Handle) {
 	}
 }
 
-// tick runs a single sweep under the advisory-lock guard. Exported so tests
-// can invoke it synchronously against a real Postgres pool.
+// tick runs a single sweep under the scheduler-tick exclusion. Exported
+// so tests can invoke it synchronously against a real Postgres-backed
+// driver.
 func tick(ctx context.Context, cfg Config) error {
 	log := cfg.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
 
-	// 1. Advisory-lock guard (skipped when no pool provided).
-	if cfg.Pool != nil {
-		conn, err := cfg.Pool.Acquire(ctx)
+	// 1. Scheduler-tick exclusion (skipped when no coordinator wired).
+	if cfg.Coordinator != nil {
+		held, release, err := cfg.Coordinator.TrySchedulerTick(ctx)
 		if err != nil {
-			log.Warn("tick: advisory lock acquire failed; running unlocked",
+			log.Warn("tick: TrySchedulerTick failed; running unlocked",
 				"error", err.Error())
+		} else if !held {
+			log.Debug("tick: another replica holds the lock, skipping")
+			return nil
 		} else {
-			var locked bool
-			row := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", RimskySchedulerTickLockKey)
-			if scanErr := row.Scan(&locked); scanErr != nil {
-				log.Warn("tick: advisory lock query failed; running unlocked",
-					"error", scanErr.Error())
-				conn.Release()
-			} else if !locked {
-				// Another replica holds the tick lock. Skip this tick.
-				log.Debug("tick: another replica holds the lock, skipping")
-				conn.Release()
-				return nil
-			} else {
-				// Lock acquired — release on tick exit.
-				defer func() {
-					// Best-effort unlock; connection release below drops any
-					// held session locks anyway.
-					_, _ = conn.Exec(context.Background(),
-						"SELECT pg_advisory_unlock($1)",
-						RimskySchedulerTickLockKey)
-					conn.Release()
-				}()
-			}
+			defer release()
 		}
 	}
 
 	// 2. ProcessSchedules (cron fire → invalidate).
 	if _, err := ProcessSchedules(ctx,
-		cfg.Storage,
+		cfg.Persist,
 		scheduleDispatcherAdapter{
-			Storage: cfg.Storage, Queue: cfg.Queue,
+			Persist: cfg.Persist, Queue: cfg.Queue,
 			Clock: cfg.Clock, Logger: log,
 		},
 		cfg.Clock, log,
@@ -220,7 +195,7 @@ func tick(ctx context.Context, cfg Config) error {
 
 	// 3. Pure-cascade sweep.
 	if _, err := ProcessPureCascade(ctx, PureCascadeArgs{
-		Storage: cfg.Storage, Queue: cfg.Queue,
+		Persist: cfg.Persist, Queue: cfg.Queue,
 		Clock: cfg.Clock, Logger: log,
 	}); err != nil {
 		log.Warn("tick: ProcessPureCascade failed", "error", err.Error())
@@ -239,7 +214,7 @@ func tick(ctx context.Context, cfg Config) error {
 	// 6. Lock-holder sweep. Skipped when wiring is incomplete. No
 	// store verb fired — store's own TTL handles internal state
 	// (per v3 spec §7.5).
-	if cfg.LockHolders != nil && cfg.Pool != nil {
+	if cfg.LockHolders != nil {
 		if err := sweepLockHolders(ctx, cfg, log); err != nil {
 			return err
 		}
@@ -260,9 +235,8 @@ func tick(ctx context.Context, cfg Config) error {
 
 	// 10. Frame engine tick (frame-end detection, queue advancement,
 	// stuck-frame reaper, orphan-frame-dispatch reap).
-	// Skipped when the pool isn't wired (test harnesses without a pool).
-	if cfg.Pool != nil {
-		if err := frame.RunTick(ctx, cfg.Pool, log); err != nil {
+	if cfg.Persist != nil && cfg.Queue != nil {
+		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
 		}
 	}
@@ -271,7 +245,7 @@ func tick(ctx context.Context, cfg Config) error {
 
 func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) error {
 	cutoff := cfg.Clock.Now().Add(-cfg.HeartbeatTimeout)
-	stale, err := cfg.Storage.Nodes().ListWithStaleHeartbeat(ctx, cutoff, nil)
+	stale, err := cfg.Persist.Nodes().ListWithStaleHeartbeat(ctx, cutoff, nil)
 	if err != nil {
 		return err
 	}
@@ -282,7 +256,7 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 			"supervisor_id":     n.AssignedSupervisorID,
 			"last_heartbeat_at": n.LastHeartbeatAt,
 		}
-		if err := cfg.Storage.Events().Append(ctx, storage.EventAppendInput{
+		if err := cfg.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &nodeID, InstanceID: &instanceID,
 			Kind:    "heartbeat_lost",
 			Payload: payload,
@@ -292,7 +266,7 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 		}
 		// running → stale (also clears assigned_supervisor_id + heartbeat
 		// as part of the state transition; no separate clear call needed).
-		if err := cfg.Storage.Nodes().UpdateState(ctx, n.ID,
+		if err := cfg.Persist.Nodes().UpdateState(ctx, n.ID,
 			shared.NodeStateStale, node.ReasonHeartbeatLost, nil); err != nil {
 			log.Warn("tick: heartbeat_lost state transition failed",
 				"node_id", n.ID.String(), "error", err.Error())
@@ -312,7 +286,7 @@ func sweepStaleHeartbeats(ctx context.Context, cfg Config, log shared.Logger) er
 				"node_id", n.ID.String())
 			continue
 		}
-		if err := cfg.Queue.Enqueue(ctx, queue.DispatchRequest{
+		if err := cfg.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:         n.ID,
 			ExecutorName:   n.Executor,
 			RequiredStores: []string{},
@@ -356,7 +330,7 @@ func sweepOrphanedClaims(ctx context.Context, cfg Config, log shared.Logger) err
 		if o.LastHeartbeatAt != nil {
 			hb = *o.LastHeartbeatAt
 		}
-		if err := cfg.Storage.Events().Append(ctx, storage.EventAppendInput{
+		if err := cfg.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &nodeID,
 			Kind:   "orphaned_claim_released",
 			Payload: map[string]any{
@@ -373,7 +347,7 @@ func sweepOrphanedClaims(ctx context.Context, cfg Config, log shared.Logger) err
 }
 
 func sweepReady(ctx context.Context, cfg Config, log shared.Logger) error {
-	ready, err := cfg.Storage.Nodes().ListReadyForDispatch(ctx, nil)
+	ready, err := cfg.Persist.Nodes().ListReadyForDispatch(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -389,7 +363,7 @@ func sweepReady(ctx context.Context, cfg Config, log shared.Logger) error {
 				"node_id", n.ID.String())
 			continue
 		}
-		if err := cfg.Queue.Enqueue(ctx, queue.DispatchRequest{
+		if err := cfg.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:         n.ID,
 			ExecutorName:   n.Executor,
 			RequiredStores: []string{},
@@ -406,17 +380,17 @@ func sweepReady(ctx context.Context, cfg Config, log shared.Logger) error {
 // --- Adapter bridging InvalidateNode to MessageDispatcher. --------------
 
 // scheduleDispatcherAdapter implements MessageDispatcher by calling
-// InvalidateNode with the scheduler's storage + queue + clock.
+// InvalidateNode with the scheduler's persistence + queue + clock.
 type scheduleDispatcherAdapter struct {
-	Storage storage.StorageBackend
-	Queue   queue.DispatchQueue
+	Persist persistence.Store
+	Queue   persistence.Queue
 	Clock   shared.Clock
 	Logger  shared.Logger
 }
 
 func (a scheduleDispatcherAdapter) EmitInvalidate(ctx context.Context, req InvalidateRequest) error {
 	return InvalidateNode(ctx, InvalidateArgs{
-		Storage:      a.Storage,
+		Persist:      a.Persist,
 		Queue:        a.Queue,
 		Clock:        a.Clock,
 		Logger:       a.Logger,
