@@ -19,6 +19,8 @@ export type {
   CliSpawnRequest,
   CliToolConfig,
 } from "./cli-runner.js";
+export { buildCliEnv } from "./cli-env.js";
+export type { CliAuthConfig, CliEnvResult } from "./cli-env.js";
 export {
   ATTRIBUTES_TOOL_DEFINITIONS,
   AttributesReadInput,

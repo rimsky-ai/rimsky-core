@@ -7,6 +7,8 @@ const pino: PinoFn = (((pinoNs as unknown) as { default?: PinoFn }).default ??
 import { startGrpcServer } from "./server.js";
 import { startHttpBridge } from "./http-bridge.js";
 import { startInternalMcpServer } from "./internal-mcp-server.js";
+import type { CliAuthConfig } from "./cli-env.js";
+import { stubModeEnabled } from "./agent-run.js";
 
 /**
  * Executable entry point for the claude-agent executor.
@@ -34,6 +36,32 @@ async function main(): Promise<void> {
     10,
   );
 
+  const cliAuth: CliAuthConfig = {
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+    claudeCodeOauthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "",
+  };
+  if (
+    !stubModeEnabled() &&
+    !cliAuth.anthropicApiKey &&
+    !cliAuth.claudeCodeOauthToken
+  ) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "fatal: at least one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN must be set",
+    );
+    process.exit(1);
+  }
+  logger.info(
+    {
+      auth_mode: cliAuth.anthropicApiKey
+        ? "api_key"
+        : cliAuth.claudeCodeOauthToken
+        ? "oauth"
+        : "stub",
+    },
+    "cli auth resolved",
+  );
+
   const callback = await startInternalMcpServer({
     host: callbackHost,
     port: 0,
@@ -45,6 +73,7 @@ async function main(): Promise<void> {
     host,
     port: grpcPort,
     callback,
+    cliAuth,
     silenceTimeoutMs,
     logger,
   });
@@ -53,6 +82,7 @@ async function main(): Promise<void> {
     host,
     port: httpPort,
     callback,
+    cliAuth,
     silenceTimeoutMs,
     logger,
   });

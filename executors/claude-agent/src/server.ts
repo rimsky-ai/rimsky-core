@@ -6,6 +6,7 @@ import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
+import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 
 /**
@@ -20,6 +21,12 @@ export interface GrpcServerConfig {
   port: number;
   callback: CallbackServerHandle;
   cliRunner?: CliRunner;
+  /**
+   * Auth config used when constructing the default CLI runner. Required
+   * unless `cliRunner` is supplied (tests inject a fake runner that
+   * doesn't spawn `claude`).
+   */
+  cliAuth?: CliAuthConfig;
   silenceTimeoutMs: number;
   logger: Logger;
   /**
@@ -90,7 +97,9 @@ export async function startGrpcServer(
   const pkg = loadNodeExecutorProto();
   const server = new grpc.Server();
   const post = config.postCallback ?? defaultPostCallback;
-  const cliRunner = config.cliRunner ?? createClaudeCliRunner();
+  const cliRunner = config.cliRunner ?? createClaudeCliRunner({
+    auth: requireAuth(config.cliAuth),
+  });
 
   server.addService(pkg.rimsky.v1.NodeExecutor.service, {
     Execute: (call: GrpcCall) => handleExecute(call, config, cliRunner, post),
@@ -187,6 +196,9 @@ async function runAndCallback(
         userdata,
         attributes,
       },
+      stores: req.stores ?? {},
+      cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
+      cwdOverride: stringOrUndefined(userdata.cwd),
       callbackUrl: req.callback_url ?? "",
       cancelToken: req.cancel_token ?? "",
       cliRunner,
@@ -265,6 +277,19 @@ function toRecord(v: unknown): Record<string, unknown> {
 
 function stringOr(v: unknown, fallback: string): string {
   return typeof v === "string" ? v : fallback;
+}
+
+function stringOrUndefined(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
+  if (!auth) {
+    throw new Error(
+      "claude-agent: cliAuth is required when no cliRunner is supplied — pass auth from main.ts",
+    );
+  }
+  return auth;
 }
 
 /**

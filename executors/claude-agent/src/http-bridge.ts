@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { CliRunner } from "./cli-runner.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
+import type { CliAuthConfig } from "./cli-env.js";
 import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { PostCallbackFn } from "./server.js";
 import { defaultPostCallback } from "./server.js";
@@ -26,6 +27,11 @@ export interface HttpBridgeConfig {
   port: number;
   callback: CallbackServerHandle;
   cliRunner?: CliRunner;
+  /**
+   * Auth config used when constructing the default CLI runner. Required
+   * unless `cliRunner` is supplied (tests inject a fake runner).
+   */
+  cliAuth?: CliAuthConfig;
   silenceTimeoutMs: number;
   logger: Logger;
   postCallback?: PostCallbackFn;
@@ -59,7 +65,9 @@ export async function startHttpBridge(
     logger: false,
   });
   const post = config.postCallback ?? defaultPostCallback;
-  const cliRunner = config.cliRunner ?? createClaudeCliRunner();
+  const cliRunner = config.cliRunner ?? createClaudeCliRunner({
+    auth: requireAuth(config.cliAuth),
+  });
 
   app.get("/healthz", async () => ({ ok: true }));
 
@@ -109,6 +117,9 @@ async function runAndCallback(
         userdata,
         attributes,
       },
+      stores: body.stores ?? {},
+      cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
+      cwdOverride: stringOrUndefined(userdata.cwd),
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
       cliRunner,
@@ -171,6 +182,15 @@ function outcomeToCallbackBody(
   };
 }
 
+function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
+  if (!auth) {
+    throw new Error(
+      "claude-agent: cliAuth is required when no cliRunner is supplied — pass auth from main.ts",
+    );
+  }
+  return auth;
+}
+
 function toRecord(v: unknown): Record<string, unknown> {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     return v as Record<string, unknown>;
@@ -180,4 +200,8 @@ function toRecord(v: unknown): Record<string, unknown> {
 
 function stringOr(v: unknown, fallback: string): string {
   return typeof v === "string" ? v : fallback;
+}
+
+function stringOrUndefined(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
 }

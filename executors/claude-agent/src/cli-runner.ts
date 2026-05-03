@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { writeFile, unlink, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildCliEnv, type CliAuthConfig } from "./cli-env.js";
 
 /**
  * CLI runner abstraction — launches an agentic CLI subprocess (e.g. the
@@ -49,10 +50,22 @@ export interface CliRunner {
   spawn(req: CliSpawnRequest): Promise<CliHandle>;
 }
 
-export function createClaudeCliRunner(opts?: {
+/**
+ * Production CLI runner. Spawns the real `claude` binary in a hermetic
+ * environment built by {@link buildCliEnv}: API-key mode uses an
+ * apiKeyHelper so the key never enters the child env; OAuth mode passes
+ * `CLAUDE_CODE_OAUTH_TOKEN` through. The parent `process.env` is NOT
+ * inherited — only the auth env, plus the per-run env passed in
+ * `CliSpawnRequest.env` (e.g. `RIMSKY_CALLBACK_URL`,
+ * `RIMSKY_CALLBACK_TOKEN`), reaches the subprocess. This keeps unrelated
+ * pod env (DB DSNs, internal callback secrets) out of the CLI.
+ */
+export function createClaudeCliRunner(opts: {
+  auth: CliAuthConfig;
   binaryPath?: string;
 }): CliRunner {
-  const binary = opts?.binaryPath ?? "claude";
+  const binary = opts.binaryPath ?? "claude";
+  const auth = opts.auth;
   return {
     async spawn(req: CliSpawnRequest): Promise<CliHandle> {
       const tmp = await mkdtemp(join(tmpdir(), "rimsky-cli-"));
@@ -68,6 +81,7 @@ export function createClaudeCliRunner(opts?: {
       }
       await writeFile(mcpConfigPath, JSON.stringify({ mcpServers }));
 
+      const { env: authEnv, cleanup: cleanupAuthEnv } = buildCliEnv(auth);
       const child: ChildProcess = spawn(
         binary,
         [
@@ -80,7 +94,7 @@ export function createClaudeCliRunner(opts?: {
         ],
         {
           cwd: req.cwd,
-          env: { ...process.env, ...req.env },
+          env: { ...authEnv, ...req.env },
           stdio: ["pipe", "pipe", "pipe"],
         },
       );
@@ -116,6 +130,7 @@ export function createClaudeCliRunner(opts?: {
         void unlink(systemPromptPath).catch(() => {});
         void unlink(mcpConfigPath).catch(() => {});
         void rm(tmp, { recursive: true, force: true }).catch(() => {});
+        try { cleanupAuthEnv(); } catch { /* ignore */ }
       };
 
       child.on("exit", (code, signal) => {

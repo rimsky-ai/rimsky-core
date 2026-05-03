@@ -31,6 +31,32 @@ Setting `RIMSKY_EXECUTOR_STUB_MODE=1` short-circuits the agent runtime: no
 Claude CLI spawn, no network calls, no internal MCP server. Returns a canned
 `Complete { stub: true }` after ~50ms. All tests run under stub mode.
 
+## Userdata fields
+
+The executor reads these keys out of `userdata` per dispatch (rimsky never
+inspects them — they're opaque to the orchestrator per blessed invariant
+11):
+
+| key | type | purpose |
+| --- | --- | --- |
+| `model` | string | Claude model passed to the CLI's `--model` flag |
+| `system_prompt` | string | system prompt template, rendered with `{{userdata.x}}` / `{{attributes.x}}` |
+| `user_prompt_template` | string | user prompt template, same rendering |
+| `cwd_from_store` | string | name of a store from `ExecuteRequest.stores` whose handle `address` (the filesystem store fills this with an absolute path) is used as the CLI's working directory. Validated as an existing directory before spawn; mismatches error as `invalid_cwd_from_store`. |
+| `cwd` | string | raw working-directory override. Lower priority than `cwd_from_store`. Same existing-directory validation. |
+
+`cwd_from_store` is the recommended way to bind a CLI run to a workspace
+the supervisor has already serialized via a filesystem-store directory
+claim — the store's lock primitive (two claims on the same path
+conflict) ensures only one agent is in the directory at a time.
+
+**Operator note:** for `cwd_from_store` to resolve, the executor pod
+must mount the store-service's root volume **at the same absolute path
+the store-service uses**. The address bytes returned by the filesystem
+store are a path on the store-service's filesystem; if the executor pod
+mounts the same volume elsewhere the path won't exist and the spawn
+will error.
+
 ## Entry points
 
 - `src/main.ts` — Node binary: `rimsky-executor-claude-agent`
@@ -49,6 +75,28 @@ Claude CLI spawn, no network calls, no internal MCP server. Returns a canned
 | `RIMSKY_EXECUTOR_CLAUDE_BINARY`  | `claude`      | path to Claude CLI                                                   |
 | `RIMSKY_EXECUTOR_SILENCE_MS`     | `120000`      | silence-detection timeout                                            |
 | `RIMSKY_EXECUTOR_CALLBACK_HOST`  | `127.0.0.1`   | host for the internal MCP callback URL advertised to the subprocess |
+| `ANTHROPIC_API_KEY`              | unset         | Anthropic API key (production). See auth precedence below.          |
+| `CLAUDE_CODE_OAUTH_TOKEN`        | unset         | Claude Code OAuth token (dev). See auth precedence below.           |
+
+### CLI auth precedence
+
+At least one of `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` must be set
+in non-stub mode; the executor exits with a fatal error at startup
+otherwise. Resolution order:
+
+1. **`ANTHROPIC_API_KEY` (production)** — wins if set. The executor writes
+   the key to a 0600 temp file, points a temp `$HOME/.claude/settings.json`
+   at an `apiKeyHelper` shell wrapper, and passes only `HOME` + `PATH` to
+   the subprocess. The API key never enters the child env.
+2. **`CLAUDE_CODE_OAUTH_TOKEN` (dev)** — fallback. Passed through as
+   `CLAUDE_CODE_OAUTH_TOKEN` on the child env, with the executor's real
+   `$HOME` retained.
+
+The executor's own `process.env` is **not** inherited into the spawned
+`claude` subprocess — only the auth env, `PATH`, and the per-run
+`RIMSKY_CALLBACK_URL` / `RIMSKY_CALLBACK_TOKEN` reach it. This keeps
+unrelated pod env (DB DSNs, internal callback secrets, etc.) out of the
+CLI. Pattern ported from `skillprompting/brain/src/cli-env.ts`.
 
 ## Commands
 

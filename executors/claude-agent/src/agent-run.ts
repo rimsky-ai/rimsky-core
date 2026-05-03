@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import type { Logger } from "pino";
 // ajv ships CJS — under ESM+NodeNext we reach the constructor through the
 // interop namespace; the `.default` arm handles the nested form.
@@ -74,6 +75,27 @@ export interface AgentRunOptions {
     attributes: Record<string, unknown>;
   };
   /**
+   * Per-store handles delivered in `ExecuteRequest.stores` (spec §19.1).
+   * Keyed by store-config name; each entry is the unwrapped
+   * `{kind, handle: {address, payload, alias, intent}}` shape. Opaque
+   * to rimsky; the executor unwraps per its store-specific knowledge.
+   */
+  stores?: Record<string, unknown>;
+  /**
+   * Optional store-config name from `userdata.cwd_from_store`. When set,
+   * the executor reads `stores[<name>].handle.address` (which the
+   * filesystem store fills with an absolute path) and uses it as the
+   * spawned CLI's cwd. Validated as an existing directory before spawn;
+   * any mismatch errors as `invalid_cwd_from_store`.
+   */
+  cwdFromStore?: string;
+  /**
+   * Optional raw cwd from `userdata.cwd`. Override-of-last-resort for
+   * deployments that pin a static workdir without going through a store.
+   * Lower priority than `cwdFromStore`.
+   */
+  cwdOverride?: string;
+  /**
    * Supervisor-issued URLs / tokens that flow through to the incremental
    * writeback path and the async-handoff callback.
    */
@@ -123,6 +145,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     attributesSchema,
     attributes,
     templateVars,
+    stores,
+    cwdFromStore,
+    cwdOverride,
     callbackUrl,
     cancelToken,
     cliRunner,
@@ -131,6 +156,20 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     logger,
     postAttributes,
   } = opts;
+
+  const cwdResolution = resolveCwd({
+    stores: stores ?? {},
+    cwdFromStore,
+    cwdOverride,
+  });
+  if (cwdResolution.kind === "error") {
+    return {
+      kind: "errored",
+      errorClass: "invalid_cwd_from_store",
+      payload: { error: cwdResolution.message },
+    };
+  }
+  const cwd = cwdResolution.cwd;
 
   const renderedSystem = renderTemplate(systemPrompt, templateVars);
   const renderedUser = renderTemplate(userPromptTemplate, templateVars);
@@ -324,6 +363,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         RIMSKY_CALLBACK_URL: callback.url,
         RIMSKY_CALLBACK_TOKEN: callbackToken,
       },
+      cwd,
     });
   } catch (e) {
     callback.registry.release(callbackToken);
@@ -414,6 +454,82 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     await silenceLoop.catch(() => {});
     callback.registry.release(callbackToken);
   }
+}
+
+type CwdResolution =
+  | { kind: "ok"; cwd: string | undefined }
+  | { kind: "error"; message: string };
+
+/**
+ * Resolve the spawn cwd from store handles + userdata hints.
+ *
+ * Precedence:
+ *   1. `cwdFromStore` — look up `stores[<name>].handle.address`. The
+ *      filesystem store sets this to an absolute path. Must be a string,
+ *      and must point to an existing directory at spawn time.
+ *   2. `cwdOverride` — raw path from `userdata.cwd`. Validated the same
+ *      way (must exist, must be a directory).
+ *   3. Neither set → undefined; the subprocess inherits the executor
+ *      process's cwd.
+ *
+ * Validation deliberately stat-checks the path: a typo'd selector or a
+ * volume-mount mismatch between the store-service and the executor pod
+ * would otherwise fail opaquely deep inside `claude` after the spawn.
+ *
+ * Exported for tests; not part of the agent-contract surface.
+ */
+export function resolveCwd(args: {
+  stores: Record<string, unknown>;
+  cwdFromStore: string | undefined;
+  cwdOverride: string | undefined;
+}): CwdResolution {
+  const { stores, cwdFromStore, cwdOverride } = args;
+  if (cwdFromStore && cwdFromStore.length > 0) {
+    const handleEntry = stores[cwdFromStore];
+    if (!handleEntry || typeof handleEntry !== "object") {
+      return {
+        kind: "error",
+        message: `cwd_from_store: no store handle named ${JSON.stringify(cwdFromStore)} in ExecuteRequest.stores`,
+      };
+    }
+    const handle = (handleEntry as { handle?: unknown }).handle;
+    if (!handle || typeof handle !== "object") {
+      return {
+        kind: "error",
+        message: `cwd_from_store: store ${JSON.stringify(cwdFromStore)} has no handle struct`,
+      };
+    }
+    const address = (handle as { address?: unknown }).address;
+    if (typeof address !== "string" || address.length === 0) {
+      return {
+        kind: "error",
+        message: `cwd_from_store: store ${JSON.stringify(cwdFromStore)} address is not a non-empty string (got ${typeof address})`,
+      };
+    }
+    return validateDirectory(address, `cwd_from_store(${cwdFromStore})`);
+  }
+  if (cwdOverride && cwdOverride.length > 0) {
+    return validateDirectory(cwdOverride, "cwd");
+  }
+  return { kind: "ok", cwd: undefined };
+}
+
+function validateDirectory(path: string, source: string): CwdResolution {
+  try {
+    const st = statSync(path);
+    if (!st.isDirectory()) {
+      return {
+        kind: "error",
+        message: `${source}: path ${JSON.stringify(path)} exists but is not a directory`,
+      };
+    }
+  } catch (e) {
+    return {
+      kind: "error",
+      message: `${source}: stat ${JSON.stringify(path)} failed: ${String(e)}`,
+    };
+  }
+  return { kind: "ok", cwd: path };
 }
 
 /**
