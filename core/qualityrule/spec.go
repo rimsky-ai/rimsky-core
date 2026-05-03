@@ -10,9 +10,9 @@ import (
 // "custom"), a free-form config payload consumed by the evaluator, and a
 // severity classifying whether a failure should block a commit or merely warn.
 type Spec struct {
-	Type     string
-	Config   map[string]any
-	Severity shared.Severity // default "error"
+	Type     string          `yaml:"type" json:"type"`
+	Config   map[string]any  `yaml:"config,omitempty" json:"config,omitempty"`
+	Severity shared.Severity `yaml:"severity,omitempty" json:"severity,omitempty"` // default "error"
 }
 
 // Failure is the outcome of a single Spec that did not pass, carrying enough

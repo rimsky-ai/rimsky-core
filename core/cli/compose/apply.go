@@ -31,34 +31,21 @@ type ApplyOpts struct {
 // ApplyPlan executes plan.Steps serially against c. Returns immediately
 // on the first step error, wrapping the failed step.
 //
-// The CLI's plan-time hashes (from compose/resolver.go::ResolveTemplate)
-// are a heuristic for "is this template already registered?". The
-// server's POST /templates response is the authoritative hash for the
-// template it actually stored. If the two diverge — e.g. because of
-// JSON-tag asymmetries between the CLI's typed TemplateSpec and the
-// server's templateDeployRequest shadow tree (see
-// docs/2026-05-02-template-spec-json-tags-design.md) — subsequent
-// steps that reference the same content via TemplateHash must rewrite
-// to the server's hash, or downstream FK checks fail. ApplyPlan tracks
-// the pre-computed → server-stored mapping per ActionRegister and
-// rewrites later steps in the same plan.
+// Pre-2026-05-02 the CLI computed plan-time hashes against the typed
+// TemplateSpec while the control-api stored hashes computed against the
+// shadow-tree-decoded view; those two could diverge when capital-N
+// capital keys leaked into one side's JSON marshal but not the other.
+// The 2026-05-02 json-tags cleanup unified them — both sides now hash
+// the same lowercase-snake-case bytes — so ApplyPlan no longer needs
+// the hash-rewrite defense it carried during the rimsky-cli rollout.
 func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) error {
 	w := opts.Logger
 	if w == nil {
 		w = os.Stdout
 	}
-	hashRewrite := map[string]string{}
-	for i, step := range plan.Steps {
-		if mapped, ok := hashRewrite[step.TemplateHash]; ok {
-			plan.Steps[i].TemplateHash = mapped
-			step = plan.Steps[i]
-		}
-		serverHash, err := applyStep(ctx, c, step, w)
-		if err != nil {
+	for _, step := range plan.Steps {
+		if err := applyStep(ctx, c, step, w); err != nil {
 			return fmt.Errorf("step %s %s: %w", step.Action, stepTarget(step), err)
-		}
-		if step.Action == ActionRegister && serverHash != "" && serverHash != step.TemplateHash {
-			hashRewrite[step.TemplateHash] = serverHash
 		}
 	}
 	return nil
@@ -75,36 +62,37 @@ func stepTarget(s Step) string {
 	}
 }
 
-// applyStep returns the server-stored hash for ActionRegister (so the
-// caller can rewrite divergent plan-time hashes); empty string for
-// other actions.
-func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) (string, error) {
+// applyStep executes one plan step against the control-api and logs the
+// outcome. Returns the control-api error, if any.
+func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) error {
 	logf := func(verb, target, status string) {
 		fmt.Fprintf(w, "  %s %s %s\n", verb, target, status)
 	}
 	switch step.Action {
 	case ActionRegister:
-		body := cli.RegisterTemplateRequest{Spec: step.SpecBody, Source: step.Source}
+		if step.SpecBody == nil {
+			return fmt.Errorf("register step missing spec body")
+		}
+		body := cli.RegisterTemplateRequest{Spec: *step.SpecBody, Source: step.Source}
 		resp, err := c.RegisterTemplate(ctx, body)
 		if err != nil {
-			return "", err
+			return err
 		}
-		serverHash := resp.Hash()
-		logf("register", cli.TruncHash(serverHash), "ok")
-		return serverHash, nil
+		logf("register", cli.TruncHash(resp.Hash()), "ok")
+		return nil
 	case ActionTagCreate:
 		if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: step.Tag, Template: step.TemplateHash}); err != nil {
 			// Conflict: tag already exists pointing at the same hash → ignore.
 			if cli.IsConflict(err) {
 				logf("tag", step.Tag, "skipped (already exists)")
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		logf("tag", step.Tag, "ok")
 	case ActionTagMove:
 		if _, err := c.MoveTag(ctx, step.Tag, cli.MoveTagRequest{Template: step.TemplateHash}); err != nil {
-			return "", err
+			return err
 		}
 		logf("tag-move", step.Tag, "ok")
 	case ActionDeploy:
@@ -113,34 +101,34 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) (stri
 			ref = step.Tag
 		}
 		if _, err := c.DeployTemplate(ctx, ref); err != nil {
-			return "", err
+			return err
 		}
 		logf("deploy", ref, "ok")
 	case ActionInstanceDelete:
 		if err := c.DeleteInstance(ctx, step.InstanceID); err != nil {
 			if cli.IsNotFound(err) {
 				logf("instance-delete", step.InstanceKey, "skipped (already gone)")
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		logf("instance-delete", step.InstanceKey, "ok")
 	case ActionUndeploy:
 		if _, err := c.UndeployTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) {
 				logf("undeploy", cli.TruncHash(step.TemplateHash), "skipped (still has active instances or already undeployed)")
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		logf("undeploy", cli.TruncHash(step.TemplateHash), "ok")
 	case ActionTagDelete:
 		if err := c.DeleteTag(ctx, step.Tag); err != nil {
 			if cli.IsNotFound(err) {
 				logf("tag-rm", step.Tag, "skipped (already gone)")
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		logf("tag-rm", step.Tag, "ok")
 	case ActionInstanceCreate:
@@ -151,22 +139,22 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) (stri
 			Params:      step.Params,
 		}
 		if _, err := c.CreateInstance(ctx, body); err != nil {
-			return "", err
+			return err
 		}
 		logf("create", step.InstanceKey, "ok")
 	case ActionTemplateDelete:
 		if err := c.DeleteTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) || cli.IsNotFound(err) {
 				logf("template-delete", cli.TruncHash(step.TemplateHash), "skipped (still referenced)")
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		logf("template-delete", cli.TruncHash(step.TemplateHash), "ok")
 	default:
-		return "", fmt.Errorf("unknown action %s", step.Action)
+		return fmt.Errorf("unknown action %s", step.Action)
 	}
-	return "", nil
+	return nil
 }
 
 // EmitPlan prints plan in human or JSON form per spec §3.2.

@@ -32,13 +32,10 @@ func TestResolveTemplate_HashMatchesCanonical(t *testing.T) {
 	if gotHash == "" {
 		t.Error("hash empty")
 	}
-	if _, ok := gotSpec["nodes"]; !ok {
-		t.Errorf("specMap missing nodes: %+v", gotSpec)
+	if len(gotSpec.Nodes) == 0 {
+		t.Errorf("spec missing nodes: %+v", gotSpec)
 	}
 	// Cross-check against direct canonical hash.
-	var spec node.TemplateSpec
-	_ = spec
-	// Build the same spec the way ResolveTemplate does and compare.
 	var domainSpec node.TemplateSpec
 	if err := yaml.Unmarshal([]byte(exampleSpec), &domainSpec); err != nil {
 		t.Fatal(err)

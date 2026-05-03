@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/fallguy/rimsky/core/cli"
+	"github.com/fallguy/rimsky/core/node"
 )
 
 // Action is the verb a plan step performs against the control-api.
@@ -81,9 +82,9 @@ type Step struct {
 	// authoritative signal.
 	Destructive bool `json:"destructive,omitempty"`
 
-	// SpecBody is the JSON-shaped spec body for register steps. Not
-	// emitted to the JSON output to keep plans concise.
-	SpecBody map[string]any `json:"-"`
+	// SpecBody is the typed spec body for register steps. Not emitted
+	// to the JSON output to keep plans concise.
+	SpecBody *node.TemplateSpec `json:"-"`
 }
 
 // Summary annotates a plan with high-level counts.
@@ -154,14 +155,14 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 
 	// Resolve template paths → hashes upfront.
 	resolved := map[string]string{} // prefixedTag → newHash
-	specBodies := map[string]map[string]any{}
+	specBodies := map[string]node.TemplateSpec{}
 	for _, t := range m.Templates {
-		hash, body, err := ResolveTemplate(t.Path)
+		hash, spec, err := ResolveTemplate(t.Path)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", t.Path, err)
 		}
 		resolved[m.PrefixedTag(t.Tag)] = hash
-		specBodies[hash] = body
+		specBodies[hash] = spec
 	}
 
 	// Step 1: registers (one per unique new hash).
@@ -179,13 +180,14 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			continue
 		}
 		registered[hash] = true
+		specCopy := specBodies[hash]
 		registers = append(registers, Step{
 			Action:       ActionRegister,
 			Kind:         KindTemplate,
 			TemplateHash: hash,
 			FromPath:     t.Path,
 			Source:       fmt.Sprintf("manifest:%s:%s", m.Project, t.Tag),
-			SpecBody:     specBodies[hash],
+			SpecBody:     &specCopy,
 		})
 	}
 

@@ -322,7 +322,7 @@ Concrete file list for the cleanup PR:
 **Documentation:**
 - `CHANGELOG.md` — Unreleased bullet flagging the hash-bytes change and dev-DB nuke.
 - `CLAUDE.md` — update the "Templates are content-addressed" gotcha to note that v1's hash bytes are not pinned across this change.
-- This design doc — `docs/2026-05-02-template-spec-json-tags-design.md` — moved to `docs/history/` once the work lands.
+- This design doc — `docs/history/2026-05-02-template-spec-json-tags-design.md` — moved here from `docs/` at completion.
 
 ---
 

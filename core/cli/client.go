@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fallguy/rimsky/core/node"
 )
 
 // Client issues requests against a single control-api endpoint. Safe for
@@ -102,11 +104,11 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 
 // RegisterTemplateRequest is the wrapped POST /templates body shape per
 // control-plane v1 spec §1.5: `{spec: {...}, tag, source}`. Spec is the
-// raw template spec (object); tag and source are optional.
+// typed template spec; tag and source are optional.
 type RegisterTemplateRequest struct {
-	Spec   map[string]any `json:"spec"`
-	Tag    string         `json:"tag,omitempty"`
-	Source string         `json:"source,omitempty"`
+	Spec   node.TemplateSpec `json:"spec"`
+	Tag    string            `json:"tag,omitempty"`
+	Source string            `json:"source,omitempty"`
 }
 
 // Template is the response shape returned by POST /templates and

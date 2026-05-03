@@ -1,14 +1,15 @@
 // templates.go — POST /templates, GET /templates, GET /templates/:id,
 // DELETE /templates/:id.
 //
-// The deploy handler converts the JSON request shape into node.TemplateSpec
-// (the in-memory representation) and runs node.ValidateTemplate against the
-// per-process store registry (AppDeps.Stores). Concurrency-tag /
-// owns-resources / reads-resources fields were retired in the stores
-// redesign (spec §11.3); the JSON shape mirrors the current template
-// shape: stores, locks, attributes, quality_rules. Per the 2026-04-30
-// stores cleanup, claim_resolutions is gone — store disposition is
-// governed by per-store config, not by the template.
+// The deploy handler decodes JSON request bodies straight into
+// node.TemplateSpec (the in-memory representation, json-tagged) and
+// runs node.ValidateTemplate against the per-process store registry
+// (AppDeps.Stores). Concurrency-tag / owns-resources / reads-resources
+// fields were retired in the stores redesign (spec §11.3); the JSON
+// shape mirrors the current template shape: stores, locks, attributes,
+// quality_rules. Per the 2026-04-30 stores cleanup, claim_resolutions
+// is gone — store disposition is governed by per-store config, not by
+// the template.
 package controlapi
 
 import (
@@ -25,7 +26,6 @@ import (
 
 	"github.com/fallguy/rimsky/core/canonical"
 	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/qualityrule"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/storage"
 )
@@ -39,152 +39,14 @@ func readAllBody(req *http.Request) ([]byte, error) {
 // bytesReader wraps body bytes in a *bytes.Reader for json.NewDecoder.
 func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 
-// templateDeployRequest matches the JSON form of node.TemplateSpec. Fields use
-// JSON-lower-snake-case names by convention.
-type templateDeployRequest struct {
-	Name            string                `json:"name"`
-	Version         string                `json:"version"`
-	Description     string                `json:"description,omitempty"`
-	FrameResolution string                `json:"frame_resolution"`
-	FrameTimeoutMs  int64                 `json:"frame_timeout_ms,omitempty"`
-	Nodes           []templateNodeDefJSON `json:"nodes"`
-	ParamsSchema    map[string]any        `json:"params_schema,omitempty"`
-	ParamsRedact    []string              `json:"params_redact,omitempty"`
-}
-
-type templateNodeDefJSON struct {
-	Type         string                         `json:"type"`
-	Description  string                         `json:"description,omitempty"`
-	Executor     string                         `json:"executor,omitempty"`
-	Userdata     map[string]any                 `json:"userdata,omitempty"`
-	Schedule     string                         `json:"schedule,omitempty"`
-	Dependencies []string                       `json:"dependencies,omitempty"`
-	Stores       []nodeStoreRefJSON             `json:"stores,omitempty"`
-	Locks        []nodeLockRefJSON              `json:"locks,omitempty"`
-	Inherits     []inheritEntryJSON             `json:"inherits,omitempty"`
-	Attributes   *nodeAttributesDefJSON         `json:"attributes,omitempty"`
-	QualityRules []qualityRuleJSON              `json:"quality_rules,omitempty"`
-	ErrorTypes   map[string]errorTypePolicyJSON `json:"error_types,omitempty"`
-}
-
-type nodeStoreRefJSON struct {
-	Name     string `json:"name"`
-	Selector string `json:"selector"`
-	Intent   string `json:"intent"`
-	Alias    string `json:"alias,omitempty"`
-}
-
-type nodeLockRefJSON struct {
-	Name string `json:"name"`
-}
-
-type inheritEntryJSON struct {
-	Claim string `json:"claim"`
-}
-
-type nodeAttributesDefJSON struct {
-	Schema map[string]any `json:"schema,omitempty"`
-}
-
-type qualityRuleJSON struct {
-	Type     string         `json:"type"`
-	Config   map[string]any `json:"config,omitempty"`
-	Severity string         `json:"severity,omitempty"`
-}
-
-type errorTypePolicyJSON struct {
-	Policy []policyActionJSON `json:"policy"`
-}
-
-type policyActionJSON struct {
-	Action         string   `json:"action"`
-	Count          int      `json:"count,omitempty"`
-	Backoff        string   `json:"backoff,omitempty"`
-	Jitter         string   `json:"jitter,omitempty"`
-	BaseDelayMs    int      `json:"base_delay_ms,omitempty"`
-	MaxDelayMs     int      `json:"max_delay_ms,omitempty"`
-	Targets        []string `json:"targets,omitempty"`
-	ReasonTemplate string   `json:"reason_template,omitempty"`
-}
-
-// toTemplateSpec converts the JSON form to the domain node.TemplateSpec.
-// Pure mapping; no validation here — the deploy handler runs
-// node.ValidateTemplate after this returns.
-func (r *templateDeployRequest) toTemplateSpec() node.TemplateSpec {
-	spec := node.TemplateSpec{
-		Name:            r.Name,
-		Version:         r.Version,
-		Description:     r.Description,
-		FrameResolution: r.FrameResolution,
-		FrameTimeoutMs:  r.FrameTimeoutMs,
-		ParamsSchema:    r.ParamsSchema,
-		ParamsRedact:    r.ParamsRedact,
-	}
-	for _, n := range r.Nodes {
-		def := node.TemplateNodeDef{
-			Type:         n.Type,
-			Description:  n.Description,
-			Executor:     n.Executor,
-			Userdata:     n.Userdata,
-			Schedule:     n.Schedule,
-			Dependencies: n.Dependencies,
-		}
-		for _, s := range n.Stores {
-			def.Stores = append(def.Stores, node.NodeStoreRef{
-				Name:     s.Name,
-				Selector: s.Selector,
-				Intent:   s.Intent,
-				Alias:    s.Alias,
-			})
-		}
-		for _, l := range n.Locks {
-			def.Locks = append(def.Locks, node.NodeLockRef{Name: l.Name})
-		}
-		for _, ie := range n.Inherits {
-			def.Inherits = append(def.Inherits, node.InheritEntry{Claim: ie.Claim})
-		}
-		if n.Attributes != nil {
-			def.Attributes = node.NodeAttributesDef{Schema: n.Attributes.Schema}
-		}
-		for _, qr := range n.QualityRules {
-			def.QualityRules = append(def.QualityRules, qualityrule.Spec{
-				Type:     qr.Type,
-				Config:   qr.Config,
-				Severity: shared.Severity(qr.Severity),
-			})
-		}
-		if len(n.ErrorTypes) > 0 {
-			def.ErrorTypes = map[string]node.ErrorTypePolicy{}
-			for cls, etp := range n.ErrorTypes {
-				policy := node.ErrorTypePolicy{}
-				for _, a := range etp.Policy {
-					policy.Policy = append(policy.Policy, node.PolicyAction{
-						Action:         a.Action,
-						Count:          a.Count,
-						Backoff:        shared.BackoffKind(a.Backoff),
-						Jitter:         shared.JitterKind(a.Jitter),
-						BaseDelayMs:    a.BaseDelayMs,
-						MaxDelayMs:     a.MaxDelayMs,
-						Targets:        a.Targets,
-						ReasonTemplate: a.ReasonTemplate,
-					})
-				}
-				def.ErrorTypes[cls] = policy
-			}
-		}
-		spec.Nodes = append(spec.Nodes, def)
-	}
-	return spec
-}
-
 // templateRegisterRequest is the per-spec §1.5 register-template body.
 // The wrapped shape `{spec: {...}, tag, source}` is the only accepted
 // form; the legacy bare-spec body was retired alongside the control-
 // plane v1 cutover.
 type templateRegisterRequest struct {
-	Spec   *templateDeployRequest `json:"spec,omitempty"`
-	Tag    string                 `json:"tag,omitempty"`
-	Source string                 `json:"source,omitempty"`
+	Spec   *node.TemplateSpec `json:"spec,omitempty"`
+	Tag    string             `json:"tag,omitempty"`
+	Source string             `json:"source,omitempty"`
 }
 
 type templateRegisterResponse struct {
@@ -273,7 +135,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		spec := specBody.toTemplateSpec()
+		spec := *specBody
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps))
 		if !res.Ok() {
 			errs := make([]map[string]string, 0, len(res.Errors))
@@ -705,7 +567,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 // `{spec: {...}, tag, source}`. The legacy bare-spec shape was removed
 // alongside the control-plane v1 cutover; bodies missing the "spec" key
 // are rejected.
-func decodeRegisterRequest(body []byte) (specOut *templateDeployRequest, tag, source string, err error) {
+func decodeRegisterRequest(body []byte) (specOut *node.TemplateSpec, tag, source string, err error) {
 	var wrap templateRegisterRequest
 	dec := json.NewDecoder(bytesReader(body))
 	dec.DisallowUnknownFields()

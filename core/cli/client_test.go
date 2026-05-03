@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/fallguy/rimsky/core/node"
 )
 
 // helperServer stands up a one-shot httptest server that asserts the
@@ -58,7 +60,7 @@ func TestClient_RegisterTemplate(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	got, err := c.RegisterTemplate(context.Background(), RegisterTemplateRequest{
-		Spec: map[string]any{"name": "x", "version": "1"},
+		Spec: node.TemplateSpec{Name: "x", Version: "1"},
 		Tag:  "ingest@1.0",
 	})
 	if err != nil {

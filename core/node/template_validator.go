@@ -347,7 +347,7 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 // via inherits: declarations (the latter is checked alongside the
 // holding-subgraph computation in ValidateInheritance).
 func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
-	if len(n.Attributes.Schema) == 0 {
+	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
 		return
 	}
 	sbase := fmt.Sprintf("%s.attributes.schema", base)

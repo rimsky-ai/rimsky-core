@@ -7,14 +7,17 @@ import (
 
 	"github.com/fallguy/rimsky/core/cli"
 	"github.com/fallguy/rimsky/core/cli/internal/clitest"
+	"github.com/fallguy/rimsky/core/node"
 )
 
-func minimalSpec() map[string]any {
-	return map[string]any{
-		"name":             "x",
-		"version":          "1.0",
-		"frame_resolution": "coalesce",
-		"nodes":            []any{map[string]any{"type": "a", "executor": "http-node"}},
+func minimalSpecTyped() node.TemplateSpec {
+	return node.TemplateSpec{
+		Name:            "x",
+		Version:         "1.0",
+		FrameResolution: "coalesce",
+		Nodes: []node.TemplateNodeDef{
+			{Type: "a", Executor: "http-node"},
+		},
 	}
 }
 
@@ -24,7 +27,7 @@ func TestServer_RegisterAndDeploy(t *testing.T) {
 	c := cli.NewClient(srv.URL)
 
 	tpl, err := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{
-		Spec: minimalSpec(),
+		Spec: minimalSpecTyped(),
 		Tag:  "ingest@1.0",
 	})
 	if err != nil {
@@ -49,7 +52,7 @@ func TestServer_DeleteDeployedRefused(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpec()})
+	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpecTyped()})
 	_, _ = c.DeployTemplate(context.Background(), tpl.Hash())
 	err := c.DeleteTemplate(context.Background(), tpl.Hash())
 	if !cli.IsConflict(err) {
@@ -61,7 +64,7 @@ func TestServer_InstanceLifecycle(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpec(), Tag: "t1"})
+	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpecTyped(), Tag: "t1"})
 	_, _ = c.DeployTemplate(context.Background(), "t1")
 	key := "compose:p:n"
 	inst, err := c.CreateInstance(context.Background(), cli.CreateInstanceRequest{Template: "t1", InstanceKey: &key})
@@ -107,7 +110,7 @@ func TestServer_TagCRUD(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpec()})
+	tpl, _ := c.RegisterTemplate(context.Background(), cli.RegisterTemplateRequest{Spec: minimalSpecTyped()})
 	_, err := c.CreateTag(context.Background(), cli.CreateTagRequest{Tag: "v1", Template: tpl.Hash()})
 	if err != nil {
 		t.Fatal(err)

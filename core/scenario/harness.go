@@ -516,7 +516,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["locks"] = locks
 	}
-	if len(n.Attributes.Schema) > 0 {
+	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nd["attributes"] = map[string]any{"schema": n.Attributes.Schema}
 	}
 	if len(n.QualityRules) > 0 {
@@ -604,7 +604,7 @@ func withLocks(refs ...node.NodeLockRef) func(*node.TemplateNodeDef) {
 
 func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
-		n.Attributes = node.NodeAttributesDef{Schema: schema}
+		n.Attributes = &node.NodeAttributesDef{Schema: schema}
 	}
 }
 

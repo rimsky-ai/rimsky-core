@@ -9,7 +9,7 @@ import (
 // ErrorTypePolicy and PolicyAction describe the per-error-class repair
 // chains declared in a node's error_types template block.
 type ErrorTypePolicy struct {
-	Policy []PolicyAction
+	Policy []PolicyAction `yaml:"policy" json:"policy"`
 }
 
 // PolicyAction is one entry in a node's per-error-class repair chain.
@@ -38,14 +38,14 @@ type ErrorTypePolicy struct {
 //   - "give_up"            — terminal failure; per-claim release
 //     fires Abandon on the store.
 type PolicyAction struct {
-	Action         string
-	Count          int
-	Backoff        shared.BackoffKind
-	Jitter         shared.JitterKind
-	BaseDelayMs    int
-	MaxDelayMs     int
-	Targets        []string
-	ReasonTemplate string
+	Action         string             `yaml:"action" json:"action"`
+	Count          int                `yaml:"count,omitempty" json:"count,omitempty"`
+	Backoff        shared.BackoffKind `yaml:"backoff,omitempty" json:"backoff,omitempty"`
+	Jitter         shared.JitterKind  `yaml:"jitter,omitempty" json:"jitter,omitempty"`
+	BaseDelayMs    int                `yaml:"base_delay_ms,omitempty" json:"base_delay_ms,omitempty"`
+	MaxDelayMs     int                `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
+	Targets        []string           `yaml:"targets,omitempty" json:"targets,omitempty"`
+	ReasonTemplate string             `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
 }
 
 // EvaluatorState is the persisted per-node, per-error-class policy chain

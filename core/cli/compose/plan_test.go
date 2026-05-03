@@ -2,6 +2,7 @@ package compose_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -13,7 +14,27 @@ import (
 	"github.com/fallguy/rimsky/core/cli"
 	"github.com/fallguy/rimsky/core/cli/compose"
 	"github.com/fallguy/rimsky/core/cli/internal/clitest"
+	"github.com/fallguy/rimsky/core/node"
 )
+
+// specToMap round-trips a typed spec through json into the map shape
+// the fake server's storage API accepts. The fake's storage layer is
+// map-typed by design (it stores opaque specs); only the wire body
+// type is typed, so tests that pre-seed state via srv.State.RegisterTemplate
+// need this conversion when they reuse the spec returned by
+// compose.ResolveTemplate.
+func specToMap(t *testing.T, spec node.TemplateSpec) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
 
 const planSpec = `name: x
 version: "1.0"
@@ -172,7 +193,7 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(body, "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
@@ -251,7 +272,7 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(body, "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
@@ -297,7 +318,7 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(body, "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}
@@ -374,7 +395,7 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotHash, _ := srv.State.RegisterTemplate(body, "compose:p:a@1.0", "")
+	gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")
 	if gotHash != hash {
 		t.Fatalf("fake hash %q != canonical %q", gotHash, hash)
 	}

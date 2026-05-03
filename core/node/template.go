@@ -25,14 +25,14 @@ import "github.com/fallguy/rimsky/core/qualityrule"
 // TemplateSpec is the top-level template structure, parsed from YAML
 // or JSON.
 type TemplateSpec struct {
-	Name            string
-	Version         string
-	Description     string
-	FrameResolution string `yaml:"frame_resolution" json:"frame_resolution"`
-	FrameTimeoutMs  int64  `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
-	Nodes           []TemplateNodeDef
-	ParamsSchema    map[string]any // JSON Schema
-	ParamsRedact    []string
+	Name            string            `yaml:"name" json:"name"`
+	Version         string            `yaml:"version" json:"version"`
+	Description     string            `yaml:"description,omitempty" json:"description,omitempty"`
+	FrameResolution string            `yaml:"frame_resolution" json:"frame_resolution"`
+	FrameTimeoutMs  int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
+	Nodes           []TemplateNodeDef `yaml:"nodes" json:"nodes"`
+	ParamsSchema    map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
+	ParamsRedact    []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 }
 
 // Frame-resolution constants (per docs/specs/2026-04-26-frame-resolution-design.md).
@@ -48,18 +48,18 @@ const (
 // handler and is only used to express dependency fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
-	Type         string
-	Description  string
-	Executor     string // optional; empty = no executor
-	Userdata     map[string]any
-	Schedule     string // cron expr; optional
-	Dependencies []string
-	Stores       []NodeStoreRef
-	Locks        []NodeLockRef
-	Attributes   NodeAttributesDef
-	QualityRules []qualityrule.Spec
-	Inherits     []InheritEntry `yaml:"inherits,omitempty"`
-	ErrorTypes   map[string]ErrorTypePolicy
+	Type         string                     `yaml:"type" json:"type"`
+	Description  string                     `yaml:"description,omitempty" json:"description,omitempty"`
+	Executor     string                     `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
+	Userdata     map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
+	Schedule     string                     `yaml:"schedule,omitempty" json:"schedule,omitempty"` // cron expr; optional
+	Dependencies []string                   `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
+	Stores       []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
+	Locks        []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
+	Attributes   *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	QualityRules []qualityrule.Spec         `yaml:"quality_rules,omitempty" json:"quality_rules,omitempty"`
+	Inherits     []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
+	ErrorTypes   map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 }
 
 // NodeStoreRef declares this node's claim against a registered store.
@@ -70,10 +70,10 @@ type TemplateNodeDef struct {
 // paths and in inheritance references; defaults to StoreName when not
 // set.
 type NodeStoreRef struct {
-	Name     string `yaml:"name"`
-	Selector string `yaml:"selector"`
-	Intent   string `yaml:"intent"` // "r" | "rw"
-	Alias    string `yaml:"alias,omitempty"`
+	Name     string `yaml:"name" json:"name"`
+	Selector string `yaml:"selector" json:"selector"`
+	Intent   string `yaml:"intent" json:"intent"` // "r" | "rw"
+	Alias    string `yaml:"alias,omitempty" json:"alias,omitempty"`
 }
 
 // NodeLockRef declares a named lock the node must hold for the
@@ -81,7 +81,7 @@ type NodeStoreRef struct {
 // block per spec §6.1), so the template only references the lock by
 // name.
 type NodeLockRef struct {
-	Name string `yaml:"name"`
+	Name string `yaml:"name" json:"name"`
 }
 
 // NodeAttributesDef declares the per-run typed attributes contract
@@ -89,7 +89,7 @@ type NodeLockRef struct {
 // `properties[*].source` directives are substituted at dispatch
 // (claim payload, deps, params).
 type NodeAttributesDef struct {
-	Schema map[string]any `yaml:"schema,omitempty"`
+	Schema map[string]any `yaml:"schema,omitempty" json:"schema,omitempty"`
 }
 
 // InheritEntry declares that this node inherits a held claim from an
@@ -103,7 +103,7 @@ type NodeAttributesDef struct {
 // stores: entry. Validation at template deploy resolves the alias to
 // a specific acquirer reachable via deps.
 type InheritEntry struct {
-	Claim string `yaml:"claim"`
+	Claim string `yaml:"claim" json:"claim"`
 }
 
 // AliasOf returns the claim alias for this store ref — defaults to

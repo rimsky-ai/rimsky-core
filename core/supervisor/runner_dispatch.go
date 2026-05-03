@@ -211,7 +211,7 @@ func readExecutorStream(
 // pass. Returns the populated attribute object and the schema (so
 // the terminal handler can re-validate at commit time).
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	if acq.NodeDef == nil {
+	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
 		return map[string]any{}, nil, nil
 	}
 	schema := acq.NodeDef.Attributes.Schema

@@ -74,6 +74,34 @@
     `truncHash`) consolidated to `strings.HasPrefix` and a single
     exported `cli.TruncHash`.
 
+- **Template-spec JSON tags.** Add `json:` struct tags to every wire-relevant
+  field of `core/node/template.go`, `core/node/policy.go`, and
+  `core/qualityrule/spec.go`, then delete the JSON shadow-type tree and
+  `toTemplateSpec` mapper from `core/controlapi/templates.go`, the
+  `toJSONShape` helper from `core/cli/templates.go`, the `yamlToJSON` helper
+  and YAML→generic-map round-trip from `core/cli/compose/resolver.go`, and the
+  `hashRewrite` defense from `core/cli/compose/apply.go::ApplyPlan` (which
+  existed only to absorb the JSON-tag asymmetry that this change fixes).
+
+  **Hash-bytes change.** `canonical.CanonicalSpecHash` now marshals
+  `TemplateSpec` with lowercase-snake-case JSON keys (`name`, `nodes`,
+  `params_schema`, …) instead of the old capital-cased Go-field-name keys
+  (`Name`, `Nodes`, …) that came from the missing tags. As a follow-up,
+  `TemplateNodeDef.Attributes` is now `*NodeAttributesDef` (pointer)
+  rather than a value, restoring the deleted shadow-tree's `omitempty`
+  behaviour so nodes without an `attributes:` block no longer emit a
+  bloated `"attributes":{}` into the canonicalized bytes — this shifts
+  hashes a second time within the same Unreleased window. Every existing
+  template's content hash changes. There are no production templates;
+  dev-DB users must drop and recreate the postgres volume:
+
+  ```
+  docker compose -f deploy/docker-compose.yml down -v
+  docker compose -f deploy/docker-compose.yml up -d
+  ```
+
+  Per `docs/history/2026-05-02-template-spec-json-tags-design.md`.
+
 - **Control-plane v1 + store lifecycle protocol.** Templates are now
   content-addressed (`rimsky_templates.id` is `sha256-<64-hex>` over RFC 8785
   JCS-canonicalized spec); tags are movable aliases in `rimsky_template_tags`.

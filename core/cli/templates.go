@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/fallguy/rimsky/core/node"
 )
 
 // runWithCommon is a small helper that initializes a flag set, registers
@@ -59,71 +61,20 @@ func reportError(err error) int {
 	return 1
 }
 
-// readSpecFile reads <path> as YAML and converts it to a JSON-shaped map.
+// readSpecFile reads <path> as YAML and decodes it into node.TemplateSpec.
 // The control-api accepts JSON-shaped bodies; YAML is the on-disk form.
-func readSpecFile(path string) (map[string]any, error) {
+// yaml.v3 honors the json: tags' lowercase-snake-case keys via its own
+// yaml: tags (already declared on the spec types).
+func readSpecFile(path string) (node.TemplateSpec, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return node.TemplateSpec{}, err
 	}
-	var doc any
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	var spec node.TemplateSpec
+	if err := yaml.Unmarshal(raw, &spec); err != nil {
+		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	// Convert YAML's map[interface{}]interface{} to JSON-shaped
-	// map[string]any. yaml.v3 already returns string keys for top-level
-	// maps; recurse for safety.
-	jsonShaped, err := toJSONShape(doc)
-	if err != nil {
-		return nil, err
-	}
-	m, ok := jsonShaped.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("%s: spec must be a YAML object", path)
-	}
-	return m, nil
-}
-
-// toJSONShape converts arbitrary YAML-decoded structures (including
-// map[interface{}]interface{}) into JSON-marshallable equivalents.
-func toJSONShape(v any) (any, error) {
-	switch x := v.(type) {
-	case map[any]any:
-		out := make(map[string]any, len(x))
-		for k, val := range x {
-			ks, ok := k.(string)
-			if !ok {
-				return nil, fmt.Errorf("non-string map key %v", k)
-			}
-			conv, err := toJSONShape(val)
-			if err != nil {
-				return nil, err
-			}
-			out[ks] = conv
-		}
-		return out, nil
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, val := range x {
-			conv, err := toJSONShape(val)
-			if err != nil {
-				return nil, err
-			}
-			out[k] = conv
-		}
-		return out, nil
-	case []any:
-		out := make([]any, len(x))
-		for i, val := range x {
-			conv, err := toJSONShape(val)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = conv
-		}
-		return out, nil
-	}
-	return v, nil
+	return spec, nil
 }
 
 // ReservedTagPrefix is the prefix that compose owns. CLI verbs that
