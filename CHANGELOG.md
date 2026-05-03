@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+- **`rimsky-cli` and `rimsky-compose.yml`.** Add an operator-facing CLI
+  (`core/cmd/rimsky-cli/`) plus a `rimsky-compose.yml` declarative
+  manifest format (`core/cli/compose/`). The CLI is a thin client over
+  the existing control-api: ergonomic top-level verbs (`run`, `register`,
+  `deploy`, `instantiate`, `ls`, `logs`), literal API subgroups
+  (`template`, `tag`, `instance`, `node`, `admin`), kubectl-style
+  contexts (`ctx list/use/add/rm/current`), and compose-style
+  reconciliation (`compose up/down/plan/status`, `dev up/down/status`).
+  Compose owns project-prefixed names (`compose:<project>:<tag>`,
+  `compose:<project>:<name>`); manual API calls outside that prefix are
+  invisible to compose. Apply-once-and-exit, fail-fast with resumable
+  retry, exit code 3 on `compose plan` drift (mirrors `terraform plan
+  -detailed-exitcode`). Distribution: GitHub Releases, install script,
+  Homebrew tap, `go install`, distroless `rimsky/cli` Docker image. Per
+  `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md`.
+
+  Post-implementation review fixes:
+  - Embedded `deploy/docker-compose.yml` v1 scaffold trimmed to the
+    minimal init-supported services (no `store-postgres` / `init-items`)
+    and remounts `./.rimsky/rimsky.yml` to match the materialization
+    target so `dev up` against a fresh `init` directory does not
+    block on missing files. `cli-sync-embedded` Makefile target rewrites
+    the same transforms when re-syncing from `deploy/`.
+  - Endpoint resolution split into `ResolveEndpoint` (non-compose:
+    flag > env > config) and `ResolveEndpointForCompose` (compose:
+    manifest-pin > flag > env > config), matching spec §4.1's
+    compose-verb override clause and unblocking the manifest's role
+    as a deployment pin.
+  - `instance events --follow` now tracks a watermark across poll
+    cycles instead of relying on `next_cursor` (which the live
+    control-api only sets on full pages); the clitest fake mirrors
+    that contract.
+  - `tag mv` and `tag rm` reject the `compose:` prefix, matching the
+    existing `tag create` / `template register --tag` guard.
+  - Stateful clitest fixture's `GetTemplate`, `ListTemplates`,
+    `GetNode`, `ListNodes` now return value copies, eliminating a
+    latent race when concurrent tests mutate state.
+  - Plan steps carry an explicit `Destructive bool` set at plan time;
+    `destructive()` is a one-line check on the bool plus the live
+    undeploy-active-bindings precheck (computed once per apply, not
+    once per step).
+  - `dev up` / `dev down` forward `--no-color` and `-o` onto the
+    delegated compose verb.
+  - `--no-color` is consumed by `EmitTable` (bold ANSI headers when
+    color is on) and by `formatStep` (green/red `+`/`-` markers).
+  - `dev down` loads the manifest once and threads it through the
+    optional `infra.down` hook.
+  - Compose-up `Source` field sent to the control-api is now
+    `manifest:<project>:<tag>` rather than the operator's absolute
+    filesystem path.
+  - Embedded scaffold's `example.yml` is validated against the same
+    executors / stores declared in the embedded `rimsky-compose.yml.tmpl`
+    so a misspelled executor in the example would fail the embedded
+    test rather than at first `dev up`.
+  - Cycle-3 review: `compose plan` now exits 3 when params drift on a
+    non-terminal compose-owned instance is detected (mirrors `terraform
+    plan -detailed-exitcode`), driven by a new `Plan.HasDriftWarnings`
+    field set by `ComputePlan` when it emits the stderr warning;
+    embedded `docker-compose.yml` no longer ships the unused
+    `claude-agent` executor (it isn't declared by the init scaffold's
+    inline `rimsky_config:` and would block the supervisor's
+    `depends_on`); `cli-sync-embedded` Makefile target gained a
+    matching trim for `claude-agent` plus a buffered-comment pass so
+    orphan comments above stripped service blocks no longer leak;
+    `RunHealth` and `RunCtxList` now propagate `--no-color` via
+    `SetActiveCommonFlags`; smoke test cleanup falls back to a direct
+    `docker compose down -v` when the CLI invocation can't reach the
+    control-api; dead `ApplyOpts.Yes` field, dead helper functions
+    (`hasReservedPrefix` / `hasComposePrefix` / `truncShort` /
+    `truncHash`) consolidated to `strings.HasPrefix` and a single
+    exported `cli.TruncHash`.
+
 - **Control-plane v1 + store lifecycle protocol.** Templates are now
   content-addressed (`rimsky_templates.id` is `sha256-<64-hex>` over RFC 8785
   JCS-canonicalized spec); tags are movable aliases in `rimsky_template_tags`.

@@ -1,0 +1,110 @@
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: rimsky
+      POSTGRES_PASSWORD: rimsky
+      POSTGRES_DB: rimsky
+    ports:
+      - "5544:5432"
+    volumes:
+      - rimsky-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rimsky -d rimsky"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  migrate:
+    image: rimsky/migrate:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    restart: "no"
+
+  store-filesystem:
+    image: rimsky/store-filesystem:latest
+    environment:
+      STORE_FILESYSTEM_CONFIG: "/etc/store/config.yml"
+    volumes:
+      - ./store-filesystem.yml:/etc/store/config.yml:ro
+      - rimsky-content:/workspace/content
+    expose:
+      - "9100"
+      - "9110"
+
+  scheduler:
+    image: rimsky/scheduler:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      store-filesystem:
+        condition: service_started
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_SCHEDULER_TICK_MS: "1500"
+      RIMSKY_HEARTBEAT_TIMEOUT_MS: "15000"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
+    volumes:
+      - ../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro
+
+  supervisor:
+    image: rimsky/supervisor:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      store-filesystem:
+        condition: service_started
+      http-node:
+        condition: service_started
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_SUPERVISOR_CONFIG: "/etc/rimsky/supervisor-config.yml"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
+      RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "supervisor"
+    volumes:
+      - ./supervisor-config.yml:/etc/rimsky/supervisor-config.yml:ro
+      - ../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro
+      - rimsky-content:/workspace/content
+
+  control-api:
+    image: rimsky/control-api:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      store-filesystem:
+        condition: service_started
+    environment:
+      RIMSKY_DB_URL: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+      RIMSKY_CONTROL_API_HOST: "0.0.0.0"
+      RIMSKY_CONTROL_API_PORT: "8080"
+      RIMSKY_CONFIG: "/etc/rimsky/rimsky.yml"
+    volumes:
+      - ../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro
+    ports:
+      - "8080:8080"
+
+  # ----- Executors -----
+
+  http-node:
+    image: rimsky/executor-http-node:latest
+    environment:
+      RIMSKY_EXECUTOR_HTTP_NODE_HOST: "0.0.0.0"
+      RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
+      RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT: "9092"
+      RIMSKY_EXECUTOR_STUB_MODE: "1"
+    volumes:
+      - rimsky-content:/workspace/content
+    ports:
+      - "9091:9091"
+      - "9092:9092"
+
+volumes:
+  rimsky-pg: {}
+  # Shared filesystem-store root mounted on the filesystem store-service
+  # (which serves it via the 4-verb protocol) and on both executors
+  # (which read/write region paths handed to them by the supervisor).
+  rimsky-content: {}

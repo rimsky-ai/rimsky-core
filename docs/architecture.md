@@ -92,7 +92,13 @@ rimsky-go/                          # repo root (becomes "/" on OSS extraction)
 │   ├── shared/                     # cross-package types, errors, clock, logger
 │   ├── scenario/                   # scenario-test harness
 │   ├── internal/                   # unexported helpers (pgtest, etc.)
+│   ├── cli/                        # `rimsky-cli` library: HTTP client + verb handlers + compose/
+│   │   ├── client.go              # one method per control-api endpoint
+│   │   ├── compose/                # rimsky-compose.yml plan-and-apply
+│   │   ├── clitest/                # httptest-backed fake control-api for tests
+│   │   └── embedded/               # //go:embed boundary for `init` scaffold assets
 │   └── cmd/                        # reference binaries (Docker entrypoints)
+│       ├── rimsky-cli/             # operator-facing CLI (rimsky-compose.yml plan-and-apply)
 │       ├── rimsky-scheduler/
 │       ├── rimsky-supervisor/
 │       ├── rimsky-control-api/
@@ -140,6 +146,7 @@ The core module's internal package graph is enforced by `go vet` plus a custom l
 - `shared/` — depends on nothing except stdlib.
 - `migrations/` — embeds SQL files via `embed.FS`; imports `shared/` only.
 - `config/` — library entry points (§6). Imports the subsystem it starts (scheduler, supervisor, controlapi), `store/`, `attributes/`, and `shared/`.
+- `cli/` — operator-facing CLI library. Pure HTTP client over the control-api; no orchestration logic of its own. Imports `shared/`, `node/`, `canonical/`, and stdlib. **Allowed importers:** `cmd/rimsky-cli/` only. The compose subpackage (`cli/compose/`) implements the `rimsky-compose.yml` plan-and-apply orchestration; its only knowledge of rimsky internals is through the public HTTP surface. See `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md`.
 - `cmd/*` — the only packages allowed to import everything needed to wire up a binary.
 
 ### 3.2 Why these rules matter

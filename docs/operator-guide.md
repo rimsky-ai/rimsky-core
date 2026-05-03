@@ -130,7 +130,7 @@ environment and customize:
 1. `postgres.image` — pin to your preferred Postgres tag; rimsky supports 13+.
 2. `postgres.volumes` — replace the named volume with a bind-mount or managed
    block device for durability.
-3. `supervisor.volumes` — point at your own `supervisor-config.yml` (see §3).
+3. `supervisor.volumes` — point at your own `supervisor-config.yml` (see §8).
 4. `claude-agent.environment.CLAUDE_STUB_MODE` — set to `0` and provide
    `ANTHROPIC_API_KEY` to enable real agent execution.
 
@@ -194,12 +194,188 @@ create tables prefixed `rimsky_*` (`rimsky_templates`, `rimsky_instances`,
 in your database should be named `rimsky_*`.
 
 Postgres-store pick-policy **items tables** are caller-owned (you declare
-their names in `rimsky.yml` per §3.4.3 and create them out-of-band). Rimsky
+their names in `rimsky.yml` per §8.4.3 and create them out-of-band). Rimsky
 never creates those tables.
 
 ---
 
-## 3. Supervisor configuration
+## 3. Installing the CLI
+
+Rimsky ships an operator-facing CLI, `rimsky-cli`. It is a thin client over
+the control-api: every verb either maps to one endpoint or composes several
+into a higher-level workflow (`compose up`, `run`, `init`).
+
+Distribution channels (per spec §6.1):
+
+- **GitHub Releases.** Per-platform tarballs at
+  `https://github.com/.../releases` (linux/amd64, linux/arm64,
+  darwin/amd64, darwin/arm64, windows/amd64). Source of truth for all
+  channels.
+- **Install script.** `curl -sSL https://rimsky.io/install.sh | sh`
+  detects OS/arch, downloads the matching artifact, verifies SHA-256,
+  installs to `/usr/local/bin/rimsky-cli`. (URL is a placeholder —
+  publication is operator-responsibility outside the spec.)
+- **Homebrew tap.** `brew install fallguy/rimsky/rimsky` once the tap is
+  published.
+- **`go install`.** `go install github.com/fallguy/rimsky/core/cmd/rimsky-cli@latest`
+  works because the CLI is part of this module.
+- **Docker image.** `rimsky/cli:<version>` and `rimsky/cli:latest`,
+  distroless-based; for CI use.
+
+`rimsky-cli version` prints the build-stamped version.
+
+## 4. Using the CLI (dev loop)
+
+Walkthrough on a fresh workstation:
+
+```sh
+mkdir myproject && cd myproject
+rimsky-cli init .
+rimsky-cli dev up                 # docker compose up + compose reconcile
+rimsky-cli ls                     # list instances
+rimsky-cli logs <instance-id>     # poll-stream events
+rimsky-cli compose down --infra --yes
+```
+
+`rimsky-cli init [<dir>]` scaffolds a starter project: a
+`rimsky-compose.yml` with the project name pre-filled, a
+`deploy/docker-compose.yml` (copied from the rimsky module's reference at
+the CLI version's build time), `deploy/store-filesystem.yml`,
+`deploy/supervisor-config.yml`, `graphs/example.yml`, and an empty
+`.rimsky/` (which `dev up` populates with the rendered `rimsky.yml`).
+`.gitignore` is created or appended with `/.rimsky/`.
+
+`rimsky-cli dev up` materializes inline `rimsky_config:` from the
+manifest to `./.rimsky/rimsky.yml`, runs `infra.up.command`, polls
+`infra.up.wait_for` until 2xx (default timeout 60s), then runs the same
+plan-and-apply that `compose up` would.
+
+## 5. Compose manifests
+
+`rimsky-compose.yml` is application-layer: it describes templates,
+tags, and persistent instances — what should exist inside an
+already-running rimsky deployment. Compose owns project-prefixed names
+(`compose:<project>:<...>`) and reconciles only against those.
+
+Example:
+
+```yaml
+project: ingest-pipeline
+context: dev
+
+infra:
+  up:
+    command: ["docker", "compose", "-f", "deploy/docker-compose.yml", "up", "-d"]
+    wait_for: "http://localhost:8080/health"
+    timeout: 60s
+  down:
+    command: ["docker", "compose", "-f", "deploy/docker-compose.yml", "down", "-v"]
+
+rimsky_config:
+  inline:
+    stores:
+      content:
+        endpoint: "grpc://store-filesystem:9100"
+        capabilities: { write_semantics: direct }
+    named_locks:
+      model-budget: { limit: 50 }
+    executors:
+      claude-agent:
+        transport: grpc
+        endpoint: "claude-agent:9090"
+        tls: off
+
+templates:
+  - path: ./graphs/ingest.yml
+    tag: ingest@1.0
+    state: deployed
+
+instances:
+  - template: ingest@1.0
+    name: daily-ingest
+    params:
+      window: "24h"
+    restart: on_failure
+```
+
+`compose up` is apply-once-and-exit: parse manifest → query control-api
+state for resources prefixed with `compose:<project>:` → diff → execute
+serially in dependency order → exit. Steps are sequenced as registers
+→ tag creates/moves → deploys → instance deletes → undeploys → tag
+deletes → instance creates → best-effort template deletes.
+
+`compose plan` prints the diff and exits. Exit codes: `0` (no drift),
+`3` (drift detected), `1` (control-api error), `2` (manifest validation).
+Mirrors `terraform plan -detailed-exitcode`.
+
+`compose down` reverses the application-state side of the manifest.
+Adding `--infra` runs `infra.down.command` last (e.g. `docker compose
+down -v`). Compose refuses to abort running instances — wait for
+terminal state.
+
+Restart policies (`never` (default), `on_failure`, `always`) apply on
+the next `compose up` after an instance reaches terminal state. The
+control-api has no in-flight kill: terminal-then-recreate is the only
+self-healing path.
+
+## 6. Contexts
+
+The CLI's endpoint is resolved by precedence (highest first):
+
+For non-compose verbs (`template`, `instance`, `tag`, `node`, `health`,
+`run`, `register`, `deploy`, `logs`, etc.):
+
+1. `--endpoint <url>` flag.
+2. `RIMSKY_CONTROL_API` environment variable.
+3. The current context's endpoint from `~/.rimsky/config.yml`
+   (`rimsky-cli ctx use <name>` sets it; `RIMSKY_CONTEXT` env var
+   overrides for one invocation).
+
+For compose verbs (`compose up/down/plan/status`, `dev up/down/status`),
+the manifest's `context:` field, when set, pins the deployment and
+overrides flag and env. This is intentional: the manifest pin protects
+against cross-environment misfires (e.g. running `compose up` against
+prod when your shell is configured for dev). The remaining tiers
+fall through in the same order as above when the manifest does not
+declare a `context:`.
+
+`~/.rimsky/config.yml`:
+
+```yaml
+current_context: dev
+
+contexts:
+  dev:
+    endpoint: http://localhost:8080
+  staging:
+    endpoint: https://rimsky.staging.example.com
+```
+
+Verbs: `ctx list`, `ctx use <name>`, `ctx add <name> --endpoint <url>`,
+`ctx rm <name>`, `ctx current`. The file is per-user (not per-project)
+and is created on first `ctx add` if missing.
+
+## 7. Cloud deployment workflows
+
+Use your own IaC (Terraform, Helm, ECS, Pulumi, …) to deploy rimsky to
+a managed environment, then run the CLI from an operator workstation
+or CI runner with a context pointing at the deployed control-api:
+
+```sh
+rimsky-cli ctx add prod --endpoint https://rimsky.prod.example.com
+rimsky-cli ctx use prod
+rimsky-cli compose up -f rimsky-compose.yml --yes
+```
+
+Cloud manifests typically omit `infra:` (the operator's IaC is what
+brings rimsky up; compose only manages templates / tags / instances) or
+have `infra.up.command` invoke `terraform apply` / `kubectl apply` /
+`helm upgrade --install`. `dev up` is a convenience for local
+development; production reconciliation runs `compose up` directly.
+
+---
+
+## 8. Supervisor configuration
 
 The supervisor reads two YAML files:
 
@@ -226,9 +402,9 @@ The supervisor reads two YAML files:
   `executors:` block declared here is the source of truth for executor
   endpoints; templates that reference an executor not declared here fail at
   registration with `unknown executor`. The `stores:` and `named_locks:`
-  blocks are documented in §3.4.
+  blocks are documented in §8.4.
 
-### 3.1 Supervisor-tuning fields
+### 8.1 Supervisor-tuning fields
 
 | field | purpose |
 | --- | --- |
@@ -240,7 +416,7 @@ The supervisor reads two YAML files:
 | `callback.host` / `callback.port` | bind address for the HTTP+JSON callback endpoint async executors POST to |
 | `callback.advertise_host` / `callback.advertise_port` | peer-reachable host:port embedded in the `callback_url` handed to executors (override via `RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_{HOST,PORT}`) |
 
-### 3.2 Executors in `rimsky.yml`
+### 8.2 Executors in `rimsky.yml`
 
 Every executor the supervisor is willing to dispatch must appear in the
 `executors:` block of `rimsky.yml`. A template that references an executor
@@ -258,7 +434,7 @@ The reference example is `deploy/rimsky.yml`. Control-api validates
 `executors[<n>]` references at template registration; supervisors dispatch
 through `core/executor`'s static resolver wired against the same map.
 
-### 3.4 Stores and named-locks configuration (`rimsky.yml`)
+### 8.4 Stores and named-locks configuration (`rimsky.yml`)
 
 In v3 each standard store implementation runs as a **separate process**
 (a "store-service") and rimsky talks to it over the 4-verb (plus
@@ -282,7 +458,7 @@ process that loads it; supervisor pool specialization is achieved by
 giving each pool a different file. The canonical example is
 `deploy/rimsky.yml` — read it alongside this section.
 
-#### 3.4.1 Schema
+#### 8.4.1 Schema
 
 ```yaml
 stores:
@@ -308,7 +484,7 @@ capabilities, and the actual capabilities.
 — `http://` / `https://` / `tcp://` / `unix://` are rejected). Auth
 between rimsky and the store-service is deployment-layer concern (mTLS,
 service mesh, IAM); rimsky uses insecure credentials by default and is
-auth-blind by design (see §3.4.4 below).
+auth-blind by design (see §8.4.4 below).
 
 `named_locks:` is unchanged from v2. Each entry declares a `limit` (the
 maximum simultaneous holders; `limit: 1` is conventionally a "mutex",
@@ -341,7 +517,7 @@ Kubernetes). The compose file at `deploy/docker-compose.yml` brings up
 `store-filesystem` and `store-postgres` as services that the rimsky
 processes dial via service-name DNS.
 
-#### 3.4.2 Store-service configuration (store-internal)
+#### 8.4.2 Store-service configuration (store-internal)
 
 Each store-service binary owns its own config schema and loads it from
 its own env var. The schema is store-specific and out of rimsky's view.
@@ -388,12 +564,12 @@ For the standard stores shipped under `stores/`:
   store-recognised selector form (convention: `@policy-name`); each
   entry configures the items-table backing, default actions, and the
   visibility-timeout sweep period. The store-service's own admin
-  endpoint at `:admin_port` is documented in §5.5 below.
+  endpoint at `:admin_port` is documented in §10.5 below.
 
 Read each store-author's documentation for its supported config schema.
 Rimsky neither defines nor validates these schemas.
 
-#### 3.4.3 Pick-policy timing constraint (postgres reference store-service)
+#### 8.4.3 Pick-policy timing constraint (postgres reference store-service)
 
 This subsection is guidance for operators of *the postgres reference
 store-service* specifically, not a rimsky-level constraint. The
@@ -420,7 +596,7 @@ must tune `visibility_timeout_seconds` upward in the store-service
 config to match. Rimsky has no way to validate this constraint at
 startup — the two configs live in two different processes.
 
-#### 3.4.4 Auth-blind philosophy
+#### 8.4.4 Auth-blind philosophy
 
 Rimsky has **no protocol surface for credentials**. No verbs, fields, or
 types in the executor or store interfaces mention auth. Substrate
@@ -449,7 +625,7 @@ store. Rimsky transports ciphertext as opaque bytes; the consuming
 executor decrypts at point of use. Rimsky ships no helper library;
 implementers handle the crypto end-to-end.
 
-#### 3.4.5 Deploy-time validation surface
+#### 8.4.5 Deploy-time validation surface
 
 When a template is uploaded to control-api, the validator (using the
 loaded operator config) checks:
@@ -486,14 +662,14 @@ What deploy-time validation does **not** check:
 
 ---
 
-## 4. Template authoring
+## 9. Template authoring
 
 A template is a YAML (or JSON) document describing the node graph. It is
 submitted once via `POST /templates`; each `POST /instances` against that
 template creates a fresh copy of the graph with concrete IDs and
 consumer-specific params resolved into placeholders.
 
-### 4.1 Schema walkthrough
+### 9.1 Schema walkthrough
 
 ```yaml
 name: ingest-source                 # stable identifier, unique per version
@@ -551,7 +727,7 @@ nodes:                              # the graph. order is irrelevant; dependenci
     dependencies: [transform]
 ```
 
-### 4.2 Common patterns
+### 9.2 Common patterns
 
 **Pure-cascade fan-out.** A node with no `executor` and no `schedule` is a
 pure-cascade node: it contributes to dependency wiring but never dispatches.
@@ -587,7 +763,7 @@ ordered list of actions the scheduler walks on repeated failures.
 Actions: `retry`, `invalidate(targets)`, `give_up`. Always end chains with
 `give_up` so failures eventually reach a terminal state.
 
-### 4.3 Validation
+### 9.3 Validation
 
 Before a template is accepted, the control API validates:
 
@@ -619,12 +795,12 @@ Validation errors come back as HTTP 400 with a `validation_errors` array.
 
 ---
 
-## 5. Control API operations
+## 10. Control API operations
 
 All endpoints accept and return `application/json`. Paginated reads support
 `?limit=N&cursor=<opaque>`.
 
-### 5.1 Templates
+### 10.1 Templates
 
 **Deploy a template:**
 ```bash
@@ -650,7 +826,7 @@ curl -s -X DELETE "http://localhost:8080/templates/$TPL"
 
 Returns 409 `ErrTemplateInUse` if any instance still references it.
 
-### 5.2 Instances
+### 10.2 Instances
 
 **Create an instance:**
 ```bash
@@ -683,7 +859,7 @@ curl -s "http://localhost:8080/instances/alpha/nodes" | jq '.nodes[] | {node_typ
 curl -s -X DELETE "http://localhost:8080/instances/alpha"
 ```
 
-### 5.3 Operator overrides
+### 10.3 Operator overrides
 
 Overrides are emergency levers. Every override emits an `operator_override`
 event so audits can reconstruct who moved the state machine.
@@ -713,7 +889,7 @@ curl -s -X POST http://localhost:8080/nodes/$NODE/reset
 Clears the error counters and moves the node to `stale` so it becomes eligible
 for dispatch again.
 
-### 5.3.1 Frame resolution and templates
+### 10.3.1 Frame resolution and templates
 
 Templates declare a required `frame_resolution` field (`coalesce` or
 `serial_queue`) and an optional `frame_timeout_ms` (default 600000 = 10 min;
@@ -731,7 +907,7 @@ At most one frame is in `running` state per instance at any time. Frames in
 ends. Frames that exceed `frame_timeout_ms` with no live executor work are
 reaped to `failed` by the scheduler.
 
-### 5.4 Event log
+### 10.4 Event log
 
 The event log is append-only and the authoritative audit trail. Filter by any
 combination of `instance_id`, `node_id`, `kind`, `since`, `until` (RFC3339).
@@ -755,7 +931,7 @@ Common kinds:
 | `operator_override` | invalidate / reset |
 | `heartbeat_timeout` | in-flight node exceeded heartbeat cutoff |
 
-### 5.5 Admin endpoints
+### 10.5 Admin endpoints
 
 All routes under `/admin/...` are gated by the global authenticator wired
 into the control-api process. Operators that want admin-only access wire an
@@ -792,7 +968,7 @@ curl -s -X POST 'http://localhost:9121/admin/items/@review-queue' \
 
 URL shape: `POST <admin_endpoint>/admin/items/<selector>`. The
 `<selector>` is the store-recognized form configured under the
-store-service's own `pick_policies:` block (see §3.4.2). Percent-encoded
+store-service's own `pick_policies:` block (see §8.4.2). Percent-encoded
 selectors are accepted (`%40review-queue` decodes to `@review-queue`);
 double-encoding is a footgun the store-service surfaces as a `400` with
 a "no pick policy at selector" error.
@@ -831,9 +1007,9 @@ path (e.g. you want `last_fire_at` to update).
 
 ---
 
-## 6. Monitoring
+## 11. Monitoring
 
-### 6.1 Health
+### 11.1 Health
 
 Every long-running process exposes `/health`:
 
@@ -846,7 +1022,7 @@ Every long-running process exposes `/health`:
 A healthy cluster has at least one supervisor row with
 `last_heartbeat_at` within 2× `heartbeat_interval_ms` of now.
 
-### 6.2 Postgres queries
+### 11.2 Postgres queries
 
 When the API is unavailable or diagnosis needs raw data, these queries cut
 straight to Postgres:
@@ -905,9 +1081,9 @@ SELECT i.instance_key,
 
 ---
 
-## 7. Common failure modes
+## 12. Common failure modes
 
-### 7.1 Node stuck `running`
+### 12.1 Node stuck `running`
 
 **Symptom:** `state='running'` but `last_heartbeat_at` is older than a few
 minutes; event log shows no terminal event.
@@ -931,7 +1107,7 @@ If the sweep runs but the node immediately re-claims and re-stalls, the
 root cause is in the executor — stop dispatch and diagnose the executor
 directly.
 
-### 7.2 Supervisor unreachable
+### 12.2 Supervisor unreachable
 
 **Symptom:** `GET /health` lists no supervisors, or the supervisor row is
 stale (`last_heartbeat_at` > 30s old).
@@ -949,7 +1125,7 @@ claims the dead supervisor was holding within the sweep interval. No
 operator action is required to recover in-flight work beyond bringing a
 supervisor back up.
 
-### 7.3 Orphaned claims
+### 12.3 Orphaned claims
 
 **Symptom:** event log shows `orphaned_claim_released` entries; nodes
 that had been running for a while are back in `stale`.
@@ -966,7 +1142,7 @@ If you see *continuous* orphaned-claim-released events against the same
 supervisor, that supervisor is failing its heartbeat writes — check its
 Postgres connectivity and logs.
 
-### 7.4 Template validation rejects a field that looks right
+### 12.4 Template validation rejects a field that looks right
 
 **Symptom:** `POST /templates` returns 400 with
 `validation_errors: [{path, msg}]`.
@@ -984,17 +1160,17 @@ causes:
 - `inherits.claim "X" not acquired by any dep` — `inherits:` reference
   doesn't resolve to a real upstream claim alias
 
-### 7.5 Postgres pick-policy items table missing
+### 12.5 Postgres pick-policy items table missing
 
 **Symptom:** scheduler / supervisor / control-api fails to start with
 `postgres store "X": pick policy "@Y": items_table "Z" missing or malformed`.
 
 **Diagnosis:** the postgres store's factory verifies every items-table
 referenced by a configured pick policy at `Build` time. Create the table
-out-of-band per §3.4.3 before bringing up the processes; the compose stack
+out-of-band per §8.4.3 before bringing up the processes; the compose stack
 ships a `init-items` one-shot for the reference `topics_items` table.
 
-### 7.6 `claude-agent` appears to hang on every dispatch
+### 12.6 `claude-agent` appears to hang on every dispatch
 
 **Symptom:** nodes using `claude-agent` sit `running` for a long time.
 
@@ -1005,7 +1181,7 @@ metrics endpoint for rate-limit errors.
 
 ---
 
-## 8. Upgrade procedure
+## 13. Upgrade procedure
 
 1. Back up Postgres.
 2. Apply new migrations in a maintenance window:
@@ -1022,7 +1198,7 @@ metrics endpoint for rate-limit errors.
    curl -s http://localhost:8080/health | jq .
    ```
 
-### 8.1 Adopting the stores redesign (pre-v1, dev-only)
+### 13.1 Adopting the stores redesign (pre-v1, dev-only)
 
 Rimsky is pre-v1: there is no production data preservation guarantee. The
 stores-redesign-v2 rewrite changes `rimsky_lock_holders` (drops `claim_id`,
@@ -1050,16 +1226,16 @@ new end-state schema.
 
 After bringing the stack up:
 
-1. Create any operator-owned items tables per §3.4.3 (the compose
+1. Create any operator-owned items tables per §8.4.3 (the compose
    `init-items` service handles `topics_items` automatically).
 2. Verify `RIMSKY_CONFIG` resolves to a readable `rimsky.yml` on
    scheduler / supervisor / control-api (default `/etc/rimsky/rimsky.yml`)
    — the bundle carries `stores:`, `named_locks:`, and `executors:`
-   top-level blocks per §3.4.1.
+   top-level blocks per §8.4.1.
 3. `curl -s http://localhost:8080/health` to confirm at least one supervisor
    has registered.
 
-## 9. Appendix — useful one-liners
+## 14. Appendix — useful one-liners
 
 **Watch node state changes for an instance in near-real-time:**
 ```bash

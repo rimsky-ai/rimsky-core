@@ -1,0 +1,16 @@
+name: example
+version: "1.0"
+frame_resolution: coalesce
+params_schema:
+  type: object
+  additionalProperties: true
+nodes:
+  - type: hello
+    executor: http-node
+    userdata:
+      url: "http://example.invalid/hello"
+      method: GET
+    attributes:
+      schema:
+        type: object
+        additionalProperties: true

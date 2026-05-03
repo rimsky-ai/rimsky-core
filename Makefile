@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -18,6 +18,74 @@ lint:
 
 tidy:
 	go mod tidy
+
+# ── rimsky-cli targets ──
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+cli:
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky-cli ./core/cmd/rimsky-cli/
+
+cli-release:
+	@mkdir -p bin/release
+	@for os in linux darwin; do \
+	  for arch in amd64 arm64; do \
+	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_$${os}_$${arch} ./core/cmd/rimsky-cli/; \
+	  done; \
+	done; \
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_windows_amd64.exe ./core/cmd/rimsky-cli/
+
+# cli-sync-embedded copies the canonical deploy assets into the embedded
+# CLI tree, applying the v1 init-scaffold transforms required by the
+# CLI's `dev up` workflow (spec §2.5):
+#
+#  - Drop the `store-postgres` service block. The postgres store is
+#    optional under v1 and its config file (`store-postgres.yml`) is
+#    intentionally NOT shipped with `init`.
+#  - Drop the `init-items` one-shot service that exists solely to
+#    create `topics_items` for `store-postgres`.
+#  - Drop the `claude-agent` executor service. The init scaffold's
+#    inline rimsky_config: declares only `http-node`; shipping a
+#    claude-agent container that the rimsky processes never dial leaks
+#    a service into the stack.
+#  - Remove `store-postgres` and `claude-agent` references from
+#    `depends_on` blocks of scheduler / supervisor / control-api.
+#  - Rewrite the `./rimsky.yml:/etc/rimsky/rimsky.yml:ro` mounts to
+#    `../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro`. `dev up`
+#    materializes inline rimsky_config to `<manifest-dir>/.rimsky/`,
+#    which sits one level up from the embedded compose file's location
+#    in the scaffold (`./deploy/docker-compose.yml`).
+#
+# The transforms are implemented in awk so that fixing them in one place
+# (here) keeps the embedded copy and the live deploy in lockstep.
+cli-sync-embedded:
+	awk '\
+	BEGIN { skip = 0; bufN = 0 } \
+	function flush_buf(  i) { for (i = 0; i < bufN; i++) print buf[i]; bufN = 0 } \
+	function drop_buf() { bufN = 0 } \
+	/^  init-items:/ { skip = 1; drop_buf(); next } \
+	/^  store-postgres:/ { skip = 1; drop_buf(); next } \
+	/^  claude-agent:/ { skip = 1; drop_buf(); next } \
+	skip && /^  [a-zA-Z]/ { skip = 0 } \
+	skip && /^[a-zA-Z]/ { skip = 0 } \
+	skip { next } \
+	/^      init-items:$$/ { skip_dep = 1; next } \
+	/^      store-postgres:$$/ { skip_dep = 1; next } \
+	/^      claude-agent:$$/ { skip_dep = 1; next } \
+	skip_dep && /^        condition:/ { skip_dep = 0; next } \
+	{ \
+	  gsub(/\.\/rimsky\.yml:\/etc\/rimsky\/rimsky\.yml:ro/, "../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro"); \
+	} \
+	/^  #/ { buf[bufN++] = $$0; next } \
+	{ flush_buf(); print }' deploy/docker-compose.yml > core/cli/embedded/deploy/docker-compose.yml
+	cp deploy/store-filesystem.yml core/cli/embedded/deploy/store-filesystem.yml
+	cp deploy/supervisor-config.yml core/cli/embedded/deploy/supervisor-config.yml
+
+cli-image:
+	docker build -f Dockerfile.cli --build-arg VERSION=$(VERSION) -t rimsky/cli:latest .
+
+smoke-cli: cli
+	go test -tags smoke -count=1 -timeout 5m ./test/smoke/cli/...
 
 # ── Docker-wrapped variants for contributors without a host Go toolchain ──
 #

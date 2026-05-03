@@ -1,0 +1,34 @@
+project: {{.Project}}
+
+infra:
+  up:
+    command: ["docker", "compose", "-f", "deploy/docker-compose.yml", "up", "-d"]
+    wait_for: "http://localhost:8080/health"
+    timeout: 60s
+  down:
+    command: ["docker", "compose", "-f", "deploy/docker-compose.yml", "down", "-v"]
+
+rimsky_config:
+  inline:
+    stores:
+      content:
+        endpoint: "grpc://store-filesystem:9100"
+        capabilities:
+          write_semantics: direct
+    named_locks: {}
+    executors:
+      http-node:
+        transport: grpc
+        endpoint: "http-node:9091"
+        tls: off
+
+templates:
+  - path: ./graphs/example.yml
+    tag: example@1.0
+    state: deployed
+
+instances:
+  - template: example@1.0
+    name: hello
+    params: {}
+    restart: never

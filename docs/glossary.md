@@ -242,3 +242,25 @@ following terms supersede or refine the entries elsewhere in this glossary.
   in the registry. Two semantically-identical specs (regardless of map
   ordering, whitespace, or non-essential string-escape variations) produce
   identical hashes.
+
+## CLI & compose vocabulary
+
+- **Compose project**: the ownership scope declared in `rimsky-compose.yml`'s
+  `project:` field. Format: `^[a-z][a-z0-9-]{0,62}$`. Used as a prefix on
+  every compose-managed resource (`compose:<project>:<tag>`,
+  `compose:<project>:<name>`); `compose up` reconciles only against
+  resources with that prefix.
+- **Compose manifest**: `rimsky-compose.yml`. Application-layer YAML
+  declaring templates, tags, and persistent instances that should exist
+  inside an already-running rimsky deployment. Apply-once-and-exit.
+- **Context**: a named entry in `~/.rimsky/config.yml` mapping a friendly
+  name to a control-api endpoint URL. Selected via `rimsky-cli ctx use
+  <name>` or pinned per-manifest via the manifest's `context:` field.
+  Forward-compatible fields (`auth_token`, `tls_skip_verify`) are reserved
+  for the auth doc's later landing.
+- **Infra (operator-supplied)**: the deployment-host commands declared in
+  the manifest's `infra:` block. Rimsky-invisible: `rimsky-cli dev up`
+  shells out to `infra.up.command` with no introspection of what it does.
+  Examples: `docker compose up -d`, `terraform apply`, `kubectl apply`.
+  This is intentionally distinct from anything inside rimsky's own
+  process model.
