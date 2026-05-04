@@ -8,7 +8,17 @@
 //
 //	root: /var/lib/rimsky-store/content
 //	grpc_port: 9100
-//	http_port: 9101
+//	http_port: 9110
+//	admin_port: 9120            # required when pick_policies is non-empty
+//	sweep_interval_seconds: 60  # default 60
+//	pick_policies:
+//	  "@docs-ring":
+//	    root: documents
+//	    folder_pattern: "^[a-z][a-z0-9-]*$"
+//	    on_commit_default: release_to_back
+//	    on_give_up_default: release_to_back
+//	    visibility_timeout_seconds: 1800
+//	    sync_strategy: on_open
 package main
 
 import (
@@ -18,20 +28,35 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/fallguy/rimsky/stores/filesystem/server"
+	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 )
 
 const defaultConfigEnv = "STORE_FILESYSTEM_CONFIG"
 
 type yamlConfig struct {
-	Root     string `yaml:"root"`
-	Host     string `yaml:"host"`
-	GRPCPort int    `yaml:"grpc_port"`
-	HTTPPort int    `yaml:"http_port"`
+	Root                 string                    `yaml:"root"`
+	Host                 string                    `yaml:"host"`
+	GRPCPort             int                       `yaml:"grpc_port"`
+	HTTPPort             int                       `yaml:"http_port"`
+	AdminPort            int                       `yaml:"admin_port"`
+	PickPolicies         map[string]yamlPickPolicy `yaml:"pick_policies"`
+	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
+}
+
+type yamlPickPolicy struct {
+	Root                     string `yaml:"root"`
+	FolderPattern            string `yaml:"folder_pattern"`
+	OnCommitDefault          string `yaml:"on_commit_default"`
+	OnGiveUpDefault          string `yaml:"on_give_up_default"`
+	VisibilityTimeoutSeconds int    `yaml:"visibility_timeout_seconds"`
+	SyncStrategy             string `yaml:"sync_strategy"`
 }
 
 func main() {
@@ -56,6 +81,36 @@ func main() {
 		host = "0.0.0.0"
 	}
 
+	policies := make(map[string]*fsstore.PickPolicy, len(cfg.PickPolicies))
+	for selector, pp := range cfg.PickPolicies {
+		var pat *regexp.Regexp
+		if pp.FolderPattern != "" {
+			p, err := regexp.Compile(pp.FolderPattern)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "store-filesystem: pick_policies[%q].folder_pattern: %v\n", selector, err)
+				os.Exit(1)
+			}
+			pat = p
+		}
+		policies[selector] = &fsstore.PickPolicy{
+			Root:              pp.Root,
+			FolderPattern:     pat,
+			OnCommitDefault:   pp.OnCommitDefault,
+			OnGiveUpDefault:   pp.OnGiveUpDefault,
+			VisibilityTimeout: time.Duration(pp.VisibilityTimeoutSeconds) * time.Second,
+			SyncStrategy:      pp.SyncStrategy,
+		}
+	}
+	sweepInterval := time.Duration(cfg.SweepIntervalSeconds) * time.Second
+	if sweepInterval == 0 {
+		sweepInterval = 60 * time.Second
+	}
+
+	if len(policies) > 0 && cfg.AdminPort == 0 {
+		fmt.Fprintf(os.Stderr, "store-filesystem: admin_port is required when pick_policies is configured\n")
+		os.Exit(1)
+	}
+
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, cfg.GRPCPort))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "store-filesystem: grpc listen: %v\n", err)
@@ -66,14 +121,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "store-filesystem: http listen: %v\n", err)
 		os.Exit(1)
 	}
+	var adminLis net.Listener
+	if cfg.AdminPort > 0 {
+		adminLis, err = net.Listen("tcp", fmt.Sprintf("%s:%d", host, cfg.AdminPort))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "store-filesystem: admin listen: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	adminAddr := ""
+	if adminLis != nil {
+		adminAddr = adminLis.Addr().String()
+	}
 	slog.Info("store-filesystem started",
 		"root", cfg.Root,
 		"grpc_addr", grpcLis.Addr().String(),
-		"http_addr", httpLis.Addr().String())
+		"http_addr", httpLis.Addr().String(),
+		"admin_addr", adminAddr,
+		"pick_policies", len(policies))
 
 	ctx, cancel := signalContext()
 	defer cancel()
-	if err := server.Run(ctx, server.Config{Root: cfg.Root}, grpcLis, httpLis); err != nil {
+	if err := server.Run(ctx, server.Config{
+		Root:          cfg.Root,
+		PickPolicies:  policies,
+		SweepInterval: sweepInterval,
+	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-filesystem: server.Run: %v\n", err)
 		os.Exit(1)
 	}

@@ -83,7 +83,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	contentRoot := t.TempDir()
 
 	// Loopback filesystem store-service.
-	fsEndpoint, fsTeardown := fsfixture.Start(t, contentRoot)
+	fsEndpoint, _, fsTeardown := fsfixture.Start(t, fsfixture.Config{Root: contentRoot})
 	t.Cleanup(fsTeardown)
 
 	// Loopback postgres store-service. Owns its own pgx pool against

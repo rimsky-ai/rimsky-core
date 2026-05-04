@@ -33,23 +33,13 @@
 
 ---
 
-This guide is for Go developers writing a new rimsky store implementation.
+This guide is for developers writing a new rimsky store implementation.
+The v3 contract summarised in the Status banner above is authoritative;
+the rest of this file is v2 reference material kept for context only.
 
-In v1, store implementations are Go-only. Stores are tightly coupled to
-rimsky's lock acquisition path — they share a transaction context with the
-supervisor's atomic-acquisition transaction (spec §13.3 / blessed invariant
-15) and need typed access to `pgxpool.Pool` for postgres-backed kinds.
-Other languages are out of scope for v1; out-of-process implementations are
-deferred to a follow-up cycle.
-
-If you want to add a non-Go data-store adapter, the preferred path is a
-small Go store wrapper that talks to your external system over its native
-protocol. Ask in the rimsky discussion forum before starting.
-
-For operator context, see `operator-guide.md`. For the concept model, see
-`node-graph-design.md`. The authoritative spec is
-`docs/specs/2026-04-27-stores-redesign-v2-design.md` (sections referenced
-inline below). The vocabulary lives in `docs/glossary.md` — read it first.
+For operator context, see `operator-guide.md`. For the concept model,
+see `node-graph-design.md`. The vocabulary lives in `docs/glossary.md`
+— read it first.
 
 ---
 

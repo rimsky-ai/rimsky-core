@@ -152,7 +152,7 @@ Named locks have no mode dimension; their coexistence rule is purely numeric (co
 ## Store-internal vocabulary (not part of rimsky's protocol surface)
 
 The terms below are used by some store-service implementations
-(e.g. the postgres reference store-service) but do not appear in the
+(the postgres and filesystem reference store-services) but do not appear in the
 rimsky↔store wire protocol or the rimsky-side template grammar. They
 appear only in store-service-specific documentation and config. Per
 the 2026-04-30 stores cleanup
@@ -162,10 +162,13 @@ the 2026-04-30 stores cleanup
   implement. The store recognizes special-form selectors
   (recommended convention: `@policy-name`) and picks an item per its
   configured logic (FIFO queue, ring buffer, LIFO scratchpad, etc.).
-  The postgres reference store-service exposes per-policy
-  `on_commit_default` / `on_give_up_default` config in its own
-  `config.yml`. See `docs/store-author-guide.md` and
-  `deploy/store-postgres.yml`.
+  The postgres and filesystem reference store-services both expose per-policy
+  `on_commit_default` / `on_give_up_default` config in their own
+  `config.yml`. The filesystem store-service additionally auto-discovers
+  folder items by reading the configured sub-root, so `mkdir`/`rm -rf`
+  is the insertion/removal mechanism (no items-insertion admin endpoint).
+  See `docs/store-author-guide.md`, `deploy/store-postgres.yml`, and
+  `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
 
 - **`pick_policies`** — A store-service's own config block listing
   named pick policies it implements. Each entry is keyed by the
@@ -175,8 +178,12 @@ the 2026-04-30 stores cleanup
   rimsky's `rimsky.yml`.
 
 - **`release_to_back` / `release_to_head`** — Per-policy disposition
-  actions in pick-policy store-services' configs (e.g. the postgres
-  reference store-service). Store-internal; not visible to rimsky.
+  actions in pick-policy store-services' configs (the postgres and
+  filesystem reference store-services). Store-internal; not visible to
+  rimsky. The filesystem store implements `release_to_head` as an
+  absolute mtime-zero bump (strictly stronger than pg's relative
+  priority increment); see
+  `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
 
 - **Items-table `delete` (action)** — A per-policy disposition action
   in pick-policy store-services that removes the row from the items

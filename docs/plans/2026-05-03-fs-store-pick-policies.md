@@ -1395,7 +1395,7 @@ Expect: PASS.
    }
    ```
 
-   Add `time` to the imports.
+   `time` is already imported by the existing `server.go` (used by `gracefulStopBudget`); no new imports needed for this rewrite.
 
 3. Update `stores/filesystem/cmd/main.go` from Task 2 to call `server.Run(ctx, server.Config{Root, PickPolicies, SweepInterval}, grpcLis, httpLis, adminLis)`.
 

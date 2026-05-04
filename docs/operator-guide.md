@@ -658,6 +658,32 @@ For the standard stores shipped under `stores/`:
   visibility-timeout sweep period. The store-service's own admin
   endpoint at `:admin_port` is documented in §10.5 below.
 
+- **`stores/filesystem` with pick policies** loads the same `STORE_FILESYSTEM_CONFIG`
+  and grows a `pick_policies:` block when configured for queue/ring workloads:
+  ```yaml
+  root: /workspace
+  pick_policies:
+    "@docs-ring":
+      root: documents
+      folder_pattern: "^[a-z][a-z0-9-]*$"
+      on_commit_default: release_to_back
+      on_give_up_default: release_to_back
+      visibility_timeout_seconds: 1800
+      sync_strategy: on_open
+  host: 0.0.0.0
+  grpc_port: 9100
+  http_port: 9110
+  admin_port: 9120
+  sweep_interval_seconds: 60
+  ```
+  Folders under `<root>/<pick_policies.<sel>.root>/` are auto-discovered as
+  queue items. Adding/removing a folder is `mkdir`/`rm -rf` under the sub-root;
+  the next `Open` (or sweep tick under `sync_strategy: on_sweep`) reconciles.
+  Actions: `release_to_back` cycles to the tail; `release_to_head` (mtime
+  epoch) sorts strictly to the head — note this is *stronger* than pg's
+  priority-bump `release_to_head`; `delete` runs `os.RemoveAll` on the
+  underlying folder. Per `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+
 Read each store-author's documentation for its supported config schema.
 Rimsky neither defines nor validates these schemas.
 
@@ -1071,6 +1097,60 @@ Authentication, TLS, and access control on this endpoint are operator-
 deployment concern (mTLS, service mesh, IAM); the reference store-service
 runs unauthenticated by default and is intended to live on an internal
 network.
+
+**Bump a folder to the head of the queue (filesystem reference store-service):**
+
+The reference filesystem store-service (under `stores/filesystem/`) ships
+a single admin endpoint at `POST /admin/bump-to-head/{selector}` on its
+configured `admin_port` (separate from the `grpc_port` and `http_port`
+that carry the 4-verb store protocol). Example config in §8.4.2 binds
+`admin_port: 9120`; expose that port in your deployment topology
+alongside the grpc/http ports:
+
+```bash
+curl -s -X POST 'http://store-filesystem:9120/admin/bump-to-head/%40docs-ring' \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"area-a"}'
+```
+
+URL shape: `POST <admin_endpoint>/admin/bump-to-head/<selector>`. The
+`<selector>` is the store-recognised form configured under the
+store-service's `pick_policies:` block (see §8.4.2). Percent-encoded
+selectors are accepted (`%40docs-ring` decodes to `@docs-ring`).
+
+Body: `{"folder":"<folder-name>"}`. The folder name must be a single
+path component — embedded `/` or `\`, leading `.`, and `..` segments
+are rejected with `400`.
+
+Responses:
+
+- `204 No Content` — sentinel mtime set to epoch; folder will sort to
+  the head of the queue on the next `Open`.
+- `400 Bad Request` — unknown selector, malformed body, folder name
+  rejected (separators / leading-dot / pattern mismatch / not a single
+  component).
+- `404 Not Found` — folder does not exist on disk under the policy
+  root, or the folder exists but is not currently enqueued (sync may
+  not have observed it yet — operators can wait for the next sweep).
+- `409 Conflict` — folder is currently held in `in_progress` by a live
+  claim; bumping it would race the visibility timeout. Wait for the
+  claim to complete (or reach the visibility cutoff) and retry.
+- `500 Internal Server Error` — unexpected I/O failure.
+
+Authentication, TLS, and access control on this endpoint are operator-
+deployment concerns (mTLS, service mesh, IAM); the reference store-service
+runs unauthenticated by default and is intended to live on an internal
+network (mirrors the postgres store-service stance above).
+
+Operator constraint — store root must not contain symlinks pointing
+outside itself: the filesystem store-service follows symlinks at
+runtime (per `os.Stat` / `os.Rename` semantics), so a symlink in the
+store root that escapes it would let runtime operations escape too.
+The lexical containment check at startup catches direct `..` escapes
+in the YAML config but not symlink-mediated ones. Per the spec's
+"POSIX local filesystems" assumption this is an operator-fault concern,
+not enforced by the store-service. Mount the policy root from a
+trusted source and avoid placing operator-controlled symlinks under it.
 
 Custom store-services that support pick policies expose their own admin
 surface (HTTP, gRPC, direct SQL — the store-author's choice). Read the

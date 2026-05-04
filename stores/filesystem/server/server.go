@@ -25,14 +25,20 @@ const gracefulStopBudget = 5 * time.Second
 
 // Config is the operator-facing config for the filesystem store-service.
 type Config struct {
-	Root string
+	Root          string
+	PickPolicies  map[string]*fsstore.PickPolicy
+	SweepInterval time.Duration
 }
 
 // Run starts the gRPC and HTTP+JSON listeners and serves until ctx is
 // cancelled. cmd/main.go and testfixture/ both call this; main loads
-// cfg from YAML, testfixture builds it programmatically.
-func Run(ctx context.Context, cfg Config, grpcLis, httpLis net.Listener) error {
-	st, err := fsstore.New(cfg.Root)
+// cfg from YAML, testfixture builds it programmatically. adminLis may
+// be nil — when nil, the admin handler is not exposed.
+func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listener) error {
+	st, err := fsstore.New(fsstore.Config{
+		Root:         cfg.Root,
+		PickPolicies: cfg.PickPolicies,
+	})
 	if err != nil {
 		return err
 	}
@@ -55,6 +61,18 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis net.Listener) error {
 		}
 	}()
 
+	var adminSrv *http.Server
+	if adminLis != nil {
+		adminSrv = &http.Server{Handler: st.AdminHandler()}
+		go func() {
+			if err := adminSrv.Serve(adminLis); err != nil && err != http.ErrServerClosed {
+				slog.Warn("filesystem store: admin serve", "error", err.Error())
+			}
+		}()
+	}
+
+	go st.RunSweep(ctx, cfg.SweepInterval)
+
 	<-ctx.Done()
 	// Bound GracefulStop with a timer so a hung RPC doesn't keep the
 	// server up indefinitely after ctx cancellation.
@@ -62,6 +80,9 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis net.Listener) error {
 	grpcSrv.GracefulStop()
 	stopTimer.Stop()
 	_ = httpSrv.Close()
+	if adminSrv != nil {
+		_ = adminSrv.Close()
+	}
 	return nil
 }
 

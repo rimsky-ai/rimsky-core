@@ -10,13 +10,13 @@ import (
 )
 
 func TestNewRejectsEmptyRoot(t *testing.T) {
-	if _, err := New(""); err == nil {
+	if _, err := New(Config{Root: ""}); err == nil {
 		t.Fatal("New(\"\") should error; got nil")
 	}
 }
 
 func TestOpenRejectsGlobMetacharacters(t *testing.T) {
-	st, err := New(t.TempDir())
+	st, err := New(Config{Root: t.TempDir()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestOpenRejectsGlobMetacharacters(t *testing.T) {
 }
 
 func TestOpenRejectsEmptySelector(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	if _, err := st.Open(context.Background(), "claim-1", "   "); err == nil {
 		t.Fatal("Open(empty): expected error")
 	}
@@ -47,7 +47,7 @@ func TestOpenRejectsEmptySelector(t *testing.T) {
 
 func TestOpenEchoesPathUnderRoot(t *testing.T) {
 	root := t.TempDir()
-	st, _ := New(root)
+	st, _ := New(Config{Root: root})
 	outcome, err := st.Open(context.Background(), "claim-1", "alpha/beta.txt")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -77,7 +77,7 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 }
 
 func TestRegionByteEqualForSamePath(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	o1, _ := st.Open(context.Background(), "c1", "x/y.txt")
 	o2, _ := st.Open(context.Background(), "c2", "x/y.txt")
 	if string(o1.Result.Region) != string(o2.Result.Region) {
@@ -95,7 +95,7 @@ func TestRegionByteEqualForSamePath(t *testing.T) {
 // produce byte-different regions and the rimsky-side region-conflict
 // check would fail to detect the collision.
 func TestRegionCanonicalizationCollapsesEquivalentForms(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	equivalents := []string{"foo", "./foo", "foo/.", "./foo/.", "foo/"}
 	first, err := st.Open(context.Background(), "c0", equivalents[0])
 	if err != nil {
@@ -118,7 +118,7 @@ func TestRegionCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 // resolution happens. Without this guard a selector like
 // "../../etc/passwd" would resolve to a path outside s.root.
 func TestOpenRejectsPathTraversal(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	cases := []string{
 		"../etc/passwd",
 		"../../etc/passwd",
@@ -139,14 +139,14 @@ func TestOpenRejectsPathTraversal(t *testing.T) {
 // absolute paths are rejected — selectors must be relative paths
 // under the configured root.
 func TestOpenRejectsAbsolutePath(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	if _, err := st.Open(context.Background(), "c1", "/etc/passwd"); err == nil {
 		t.Fatal("Open(absolute): expected error")
 	}
 }
 
 func TestCommitAbandonReleaseAreNoops(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	o, _ := st.Open(context.Background(), "claim-1", "x.txt")
 
 	if err := st.Commit(context.Background(), "claim-1", o.Result.Region, o.Result.Address); err != nil {
@@ -161,7 +161,7 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 }
 
 func TestCapabilitiesIsDirect(t *testing.T) {
-	st, _ := New(t.TempDir())
+	st, _ := New(Config{Root: t.TempDir()})
 	caps := st.Capabilities()
 	if caps.WriteSemantics != "direct" {
 		t.Fatalf("expected direct write_semantics, got %q", caps.WriteSemantics)

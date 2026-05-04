@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Filesystem store: pick-policy support.** The standard `stores/filesystem/`
+  store-service grows a `pick_policies` config block paralleling the pg
+  store's. Auto-discovery: folders under each policy's configured sub-root
+  are queue items; `mkdir`/`rm -rf` is the insertion/removal mechanism
+  (no admin items endpoint). Three actions ship: `release_to_back`,
+  `release_to_head` (absolute mtime-zero bump — stronger than pg's relative
+  priority increment), and `delete` (`os.RemoveAll`). Atomic claim is
+  `rename(2)` between `<root>/.fs-store/<policy>/{available,in_progress}/`.
+  Bump-to-head admin endpoint at `POST /admin/bump-to-head/{selector}`.
+  `sync_strategy: on_open` (default) or `on_sweep` per policy.
+  Per `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+
 - **Conformance coverage for per-feature interface methods + tighter
   pgx-isolation depguard.** Added four cross-driver conformance areas
   exercising the methods landed during the Tasks 23-28 pgx-removal
