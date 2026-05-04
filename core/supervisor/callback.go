@@ -15,7 +15,7 @@
 // The dispatch row's frame_id is preserved across async handoff; the
 // callback resolution path commits cascade message-passes that inherit
 // the parent's frame_id (see core/supervisor/runner_terminal.go and
-// docs/specs/2026-04-26-frame-resolution-design.md §9).
+// docs/history/2026-04-26-frame-resolution-design.md §9).
 package supervisor
 
 import (

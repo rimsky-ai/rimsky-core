@@ -1,6 +1,6 @@
 # Rimsky Glossary
 
-Vocabulary for the stores-redesign / lock-primitive refinement. Compiled from the brainstorm working document at `docs/history/2026-04-26-stores-spec-scope.md` and consolidated here as the spec's authoritative naming reference. Stores-redesign-v3 (`docs/specs/2026-04-27-stores-redesign-v3-design.md`) introduces additional terms for the out-of-process world; they're listed in §V3 below.
+Vocabulary for the stores-redesign / lock-primitive refinement. Compiled from the brainstorm working document at `docs/history/2026-04-26-stores-spec-scope.md` and consolidated here as the spec's authoritative naming reference. Stores-redesign-v3 (`docs/history/2026-04-27-stores-redesign-v3-design.md`) introduces additional terms for the out-of-process world; they're listed in §V3 below.
 
 When this glossary contradicts older docs, the glossary wins. Spec text and code comments should align here.
 
@@ -100,7 +100,7 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 | Term | Definition |
 |---|---|
-| **Frame** | The unit of cascade resolution per `docs/specs/2026-04-26-frame-resolution-design.md`. Every `rimsky_dispatch` row carries a non-null `frame_id`. At most one frame is `running` per instance under serial_queue / coalesce; multiple may run concurrently under post-v1 parallel_buffered. |
+| **Frame** | The unit of cascade resolution per `docs/history/2026-04-26-frame-resolution-design.md`. Every `rimsky_dispatch` row carries a non-null `frame_id`. At most one frame is `running` per instance under serial_queue / coalesce; multiple may run concurrently under post-v1 parallel_buffered. |
 | **Holding-subgraph completion** | All nodes in a holding subgraph have terminated (committed or failed). Trigger for auto-terminal. |
 | **`frame_id` (on lock-holder rows)** | Observability-only. Not consulted at acquisition, eligibility, orphan-reap, or held-claim resolution. Used for "which frame held this?" debugging queries. |
 
@@ -156,7 +156,7 @@ The terms below are used by some store-service implementations
 rimsky↔store wire protocol or the rimsky-side template grammar. They
 appear only in store-service-specific documentation and config. Per
 the 2026-04-30 stores cleanup
-(`docs/specs/2026-04-30-stores-protocol-cleanup-design.md`).
+(`docs/history/2026-04-30-stores-protocol-cleanup-design.md`).
 
 - **Pick policy** — An items-table queue convention some store-services
   implement. The store recognizes special-form selectors
@@ -168,7 +168,7 @@ the 2026-04-30 stores cleanup
   folder items by reading the configured sub-root, so `mkdir`/`rm -rf`
   is the insertion/removal mechanism (no items-insertion admin endpoint).
   See `docs/store-author-guide.md`, `deploy/store-postgres.yml`, and
-  `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+  `docs/history/2026-05-03-fs-store-pick-policies-design.md`.
 
 - **`pick_policies`** — A store-service's own config block listing
   named pick policies it implements. Each entry is keyed by the
@@ -183,7 +183,7 @@ the 2026-04-30 stores cleanup
   rimsky. The filesystem store implements `release_to_head` as an
   absolute mtime-zero bump (strictly stronger than pg's relative
   priority increment); see
-  `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+  `docs/history/2026-05-03-fs-store-pick-policies-design.md`.
 
 - **Items-table `delete` (action)** — A per-policy disposition action
   in pick-policy store-services that removes the row from the items
@@ -196,7 +196,7 @@ the 2026-04-30 stores cleanup
 
 ## Control-plane v1 vocabulary
 
-Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
+Per `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
 following terms supersede or refine the entries elsewhere in this glossary.
 
 - **Template**: a content-addressed bundle of node-defs, attribute schemas,

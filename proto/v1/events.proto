@@ -10,7 +10,7 @@ option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
 // who want type-checked event streams may use this shape; rimsky's own
 // internals use map[string]any + JSONB and do not marshal through this proto.
 //
-// See spec §9.8 of docs/specs/2026-04-25-stores-redesign-design.md for the
+// See spec §9.8 of docs/history/2026-04-25-stores-redesign-design.md for the
 // full event-kind catalogue. When new kinds are added to the log, they should
 // be declared here.
 message Event {

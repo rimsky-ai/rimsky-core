@@ -11,6 +11,6 @@
 // This file keeps the package buildable. New scenarios for pick
 // policies + auto-terminal resolution belong in this directory but
 // must be designed against the new shape (see
-// docs/specs/2026-04-27-stores-redesign-v3-design.md).
+// docs/history/2026-04-27-stores-redesign-v3-design.md).
 
 package claim_stores

@@ -1,6 +1,6 @@
 // Package store defines the rimsky-side store contract. Per spec
-// docs/specs/2026-04-27-stores-redesign-v3-design.md as amended by
-// docs/specs/2026-04-30-stores-protocol-cleanup-design.md (store-
+// docs/history/2026-04-27-stores-redesign-v3-design.md as amended by
+// docs/history/2026-04-30-stores-protocol-cleanup-design.md (store-
 // internal-vocabulary excision).
 //
 // In v3 the standard store implementations live in standalone binaries

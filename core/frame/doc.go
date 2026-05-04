@@ -1,5 +1,5 @@
 // Package frame implements the frame-resolution engine per
-// docs/specs/2026-04-26-frame-resolution-design.md.
+// docs/history/2026-04-26-frame-resolution-design.md.
 //
 // The producer helper (EnqueueOrCoalesce) is called by schedule_ticker,
 // controlapi/nodes invalidate route, and any other source of an

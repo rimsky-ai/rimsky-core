@@ -10,7 +10,7 @@ data:
 {{ .Values.rimsky.config | indent 4 }}
 {{- else }}
     # Mirrors deploy/rimsky.yml from the reference compose stack. Per
-    # docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+    # docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
     # §3.1: stores + named_locks + executors in a single config.
     # Override by setting `rimsky.config` in values.yaml to a literal
     # YAML body.

@@ -858,7 +858,7 @@ Rimsky enforces the invariant at the graph level via a **frame**: a complete pas
 - **`serial_queue`** — every invalidation produces a distinct frame; the queue runs FIFO. Suited to event-driven workloads where each invalidation is a discrete unit of work.
 - **`coalesce`** — invalidations during an in-flight render collapse into a single trailing frame whose source set is the union of all coalesced sources. Suited to data-freshness pipelines where rate of state-change >> rate of meaningful recomputation.
 
-`frame_resolution` is a required template field; control-api rejects template uploads without it. The full spec is at `docs/specs/2026-04-26-frame-resolution-design.md`.
+`frame_resolution` is a required template field; control-api rejects template uploads without it. The full spec is at `docs/history/2026-04-26-frame-resolution-design.md`.
 
 Operator invalidates and scheduled fires are both frame-producing events: they call into `frame.EnqueueOrCoalesce` and either queue or coalesce per the template's mode. There is no preemption of running work — the `kill_requested` mechanism that existed pre-frame-resolution was removed.
 

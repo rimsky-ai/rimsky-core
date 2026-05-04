@@ -4,7 +4,7 @@
 
 - Design notes, 2026-04-26.
 - Companion to:
-  - `docs/specs/2026-04-25-stores-redesign-design.md` — the landed stores redesign (foundation; templates, attributes, locks, claim stores, the `core/store/` interface).
+  - `docs/history/2026-04-25-stores-redesign-design.md` — the landed stores redesign (foundation; templates, attributes, locks, claim stores, the `core/store/` interface).
   - `docs/2026-04-25-store-redesign.md` — store ecosystem and lock primitive refinement (provides context on store-services, the auth-blind philosophy, and multi-tenant stores).
 - Captures the package manager design as worked through in conversation.
 - **Sub-graph composability is deliberately deferred** to a separate session. Local graph composition (within a single deployment) should be designed first; package-level graph composition is an add-on after that.

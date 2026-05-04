@@ -2,7 +2,7 @@
 // The Driver interface (driver.go) aggregates Queue, Store, and Coordinator
 // sub-interfaces. Two impls live under postgres/ and sqlite/.
 //
-// Spec: docs/specs/2026-05-02-persistence-pluggable-and-unified-image-design.md
+// Spec: docs/history/2026-05-02-persistence-pluggable-and-unified-image-design.md
 package persistence
 
 import (

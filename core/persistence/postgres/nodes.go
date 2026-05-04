@@ -29,7 +29,7 @@ const nodeCols = `
 `
 
 // Create inserts a new node row with state='fresh'. Under the frame
-// resolution model (docs/specs/2026-04-26-frame-resolution-design.md
+// resolution model (docs/history/2026-04-26-frame-resolution-design.md
 // §3.1), nodes transition fresh→stale only via frame-start (or via
 // cascade message-pass during a running frame). Pre-frame-resolution
 // the default was 'stale' because the scheduler's ready sweep was the

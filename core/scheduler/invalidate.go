@@ -30,7 +30,7 @@ type InvalidateArgs struct {
 }
 
 // InvalidateNode routes an invalidate event to TargetNodeID per the
-// frame-resolution design (docs/specs/2026-04-26-frame-resolution-design.md
+// frame-resolution design (docs/history/2026-04-26-frame-resolution-design.md
 // §3.1, §3.2). Under the frame model, "invalidate this node" is a frame
 // source event: producers enqueue (or coalesce into) a rimsky_frames row
 // rather than mutating rimsky_nodes.state directly. The scheduler tick's

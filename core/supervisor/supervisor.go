@@ -11,7 +11,7 @@
 //     by this supervisor whose holder_node_id is currently `running` (per
 //     spec §7.5). Operator invalidates do not preempt running work — they
 //     enqueue/coalesce a frame (per
-//     docs/specs/2026-04-26-frame-resolution-design.md §3.3 / §5.4).
+//     docs/history/2026-04-26-frame-resolution-design.md §3.3 / §5.4).
 //   - Claim tick (ClaimPollInterval): while active < concurrency, try to
 //     claim one dispatch row via queue.Claim; on success, dispatch RunNode
 //     in a goroutine.

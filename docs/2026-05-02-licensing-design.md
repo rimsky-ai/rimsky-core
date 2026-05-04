@@ -6,8 +6,8 @@
 - Outcome of a 2026-05-02 conversation about how to license Rimsky for the first time. The repo currently has no `LICENSE` file at the root and no per-file copyright headers; this is a first-time license declaration, not a relicense.
 - No prior design doc on licensing. References:
   - `CLAUDE.md` — package import rules and module layout (load-bearing for §4 boundary mapping).
-  - `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md` — the CLI surface and embeddability story.
-  - `docs/specs/2026-04-27-stores-redesign-v3-design.md` — peer-service architecture (executors, stores) that the boundary mapping leans on.
+  - `docs/history/2026-05-02-rimsky-cli-and-compose-design.md` — the CLI surface and embeddability story.
+  - `docs/history/2026-04-27-stores-redesign-v3-design.md` — peer-service architecture (executors, stores) that the boundary mapping leans on.
   - The pre-v1 / break-freely posture in `.claude/rules/rules.md` — no backwards-compat constraints to satisfy.
 
 ## Context
@@ -65,7 +65,7 @@ Code that consumers must read, link against, fork, or implement against to integ
 - **Wire IDL and generated bindings.** Anyone writing an executor or store implements against `proto/v1/*.proto`. AGPL on this would make every conforming executor a derivative work, which contradicts the project-agnostic thesis.
 - **Executor SDK** — the TypeScript `@fallguy/claude-agent` npm package, the Go `executors/http-node/` and `executors/stub/` reference binaries. Authors fork these as starting points for their own executors.
 - **Reference store binaries** — `stores/filesystem/`, `stores/postgres/`, `stores/stub/`. Operators run these as-is or fork them to build internal stores. They speak the Rimsky wire protocol but are independent processes.
-- **CLI** (`rimsky-cli`, planned in `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md`). Operator-facing; consumers script against it.
+- **CLI** (`rimsky-cli`, planned in `docs/history/2026-05-02-rimsky-cli-and-compose-design.md`). Operator-facing; consumers script against it.
 - **Conformance suites** (`rimsky-conformance`, `rimsky-store-conformance`, `rimsky-conformance-probe`). Authors run these against their own implementations to verify protocol conformance and fork them into their own CI.
 - **Reference deployment artifacts** under `deploy/`. Forked freely.
 - **Documentation, README, CHANGELOG, cold-read style guide.** Apache 2.0 covers documentation; this is conventional for the rest of the CNCF graph.

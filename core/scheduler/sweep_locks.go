@@ -1,6 +1,6 @@
 // Package scheduler — orphan-reap sweep.
 //
-// Per spec docs/specs/2026-04-27-stores-redesign-v3-design.md §7.5: the
+// Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §7.5: the
 // orphan reaper deletes the lock-holder row claimant-guarded WITHOUT
 // calling Store.Abandon — the store's own TTL/sweep handles cleanup of
 // its internal state. This is a deliberate decoupling from v2, which

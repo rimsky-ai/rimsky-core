@@ -15,8 +15,8 @@
 
 Rimsky's runtime — the scheduler tick + supervisor dispatch + executor protocol path — is well-defined by:
 
-- `docs/specs/2026-04-25-stores-redesign-design.md` (workload stores, claim/lock model, attributes substitution, dispatch atomicity).
-- `docs/specs/2026-04-26-frame-resolution-design.md` (frame as a first-class cascade primitive, per-template resolution mode).
+- `docs/history/2026-04-25-stores-redesign-design.md` (workload stores, claim/lock model, attributes substitution, dispatch atomicity).
+- `docs/history/2026-04-26-frame-resolution-design.md` (frame as a first-class cascade primitive, per-template resolution mode).
 - `docs/2026-04-25-store-redesign.md` §§4–19 (verb set refinement, capability struct cleanup, version elimination, empty-selector unification — soon-to-be-formalized as a third major rewrite of the workload-store contract).
 
 The control-api's runtime-orchestration responsibilities — template deployment, instance creation, operator invalidates, admin endpoints — are part of those specs.
@@ -245,10 +245,10 @@ These earn their own focused sessions when prioritized. Listed here so the contr
 
 ## 4. Out of scope for this doc
 
-- **Runtime orchestration.** See `docs/specs/2026-04-25-stores-redesign-design.md` and `docs/specs/2026-04-26-frame-resolution-design.md`.
+- **Runtime orchestration.** See `docs/history/2026-04-25-stores-redesign-design.md` and `docs/history/2026-04-26-frame-resolution-design.md`.
 - **The workload-store + lock-primitive design.** See `docs/2026-04-25-store-redesign.md` (especially §19 for the post-implementation resolutions).
 - **Package install / distribution.** See `docs/2026-04-26-package-manager.md`. Package install is a separate concern from instance creation; this doc treats instance creation as the provisioning trigger.
-- **Frame resolution.** See `docs/2026-04-26-frame-resolution.md` and `docs/specs/2026-04-26-frame-resolution-design.md`. Frames are a runtime primitive; control-layer concerns are orthogonal.
+- **Frame resolution.** See `docs/2026-04-26-frame-resolution.md` and `docs/history/2026-04-26-frame-resolution-design.md`. Frames are a runtime primitive; control-layer concerns are orthogonal.
 - **Auth and multi-tenancy.** See `docs/2026-05-01-auth-and-multitenancy.md`. v1 stance: per-project deployment, no rimsky-side auth; principal/tenant fields are forward-compat hooks not features.
 
 ---

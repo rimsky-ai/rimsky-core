@@ -1,7 +1,7 @@
 // Store-service wire protocol.
 //
-// Per spec docs/specs/2026-04-27-stores-redesign-v3-design.md §4.1, §5.1
-// (as amended by docs/specs/2026-04-30-stores-protocol-cleanup-design.md).
+// Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §4.1, §5.1
+// (as amended by docs/history/2026-04-30-stores-protocol-cleanup-design.md).
 // Four runtime verbs (Open / Commit / Abandon / Release) plus one
 // startup-handshake verb (Capabilities). HTTP+JSON bridge handlers (per
 // spec §5.2) decode JSON to these messages and call the same internal

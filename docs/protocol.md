@@ -7,7 +7,7 @@ executors, and the **store-service protocol**
 store-services running out-of-process per stores-redesign-v3.
 
 This document covers the executor side in detail. The store side is
-specified in `docs/specs/2026-04-27-stores-redesign-v3-design.md` §4
+specified in `docs/history/2026-04-27-stores-redesign-v3-design.md` §4
 and §5, as amended by the 2026-04-30 stores-protocol cleanup; in
 summary it ships 4 runtime verbs (`Open` / `Commit` / `Abandon` /
 `Release`) plus a startup `Capabilities()` handshake, with the same
@@ -732,13 +732,13 @@ A conformant executor:
 
 ### 12.4 Supervisor-internal: `frame_id`
 
-The supervisor associates each dispatch with a `frame_id` per the frame-resolution design (`docs/specs/2026-04-26-frame-resolution-design.md`). This identifier is supervisor-internal — it is not transmitted in the executor protocol. Executors do not need to be aware of frames; the wire contract above is unchanged by the frame-resolution spec.
+The supervisor associates each dispatch with a `frame_id` per the frame-resolution design (`docs/history/2026-04-26-frame-resolution-design.md`). This identifier is supervisor-internal — it is not transmitted in the executor protocol. Executors do not need to be aware of frames; the wire contract above is unchanged by the frame-resolution spec.
 
 ---
 
 ## 13. Store-service lifecycle protocol (control-plane v1)
 
-Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
+Per `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`. The
 store-service protocol (`proto/v1/store_service.proto`) gains six lifecycle
 event RPCs alongside the existing 4 runtime verbs (`Open` / `Commit` /
 `Abandon` / `Release`) and the `Capabilities` startup handshake. Every

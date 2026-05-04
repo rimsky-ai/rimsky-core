@@ -153,7 +153,7 @@ The §2 principal field and the §3.2 tenant_id additions are independent and ad
 
 ## 4. Out of scope for this doc
 
-- **Runtime orchestration.** See `docs/specs/2026-04-25-stores-redesign-design.md` and the v3 update (`docs/specs/2026-04-27-stores-redesign-v3-design.md`). The runtime is auth-blind.
+- **Runtime orchestration.** See `docs/history/2026-04-25-stores-redesign-design.md` and the v3 update (`docs/history/2026-04-27-stores-redesign-v3-design.md`). The runtime is auth-blind.
 - **Provisioning lifecycle.** See `docs/2026-04-26-control-layer.md` §1.
 - **Template registry shape.** See `docs/2026-04-26-control-layer.md` §2.
 - **Package distribution.** See `docs/2026-04-26-package-manager.md`. Package signing and trust live there; they're orthogonal to control-api auth.

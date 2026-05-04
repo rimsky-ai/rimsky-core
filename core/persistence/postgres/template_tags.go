@@ -1,5 +1,5 @@
 // TemplateTagsStore — Postgres-backed persistence.TemplateTagsStore. Per
-// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md §1.1:
+// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md §1.1:
 // rimsky_template_tags is the movable-alias table mapping a tag string
 // to a template hash (with FK ON DELETE RESTRICT).
 package postgres

@@ -1,5 +1,5 @@
 // tags.go — POST /tags, GET /tags, PUT /tags/{tag}, DELETE /tags/{tag}.
-// Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+// Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
 // §1.5: tags are movable aliases pointing at template content hashes.
 package controlapi
 

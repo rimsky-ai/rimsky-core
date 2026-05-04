@@ -1,5 +1,5 @@
 # Example config for the standard direct-mode filesystem store-service.
-# Per spec docs/specs/2026-04-27-stores-redesign-v3-design.md §6.3 each
+# Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §6.3 each
 # store-service owns its own config schema; rimsky neither defines nor
 # validates this file.
 #

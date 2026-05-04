@@ -8,7 +8,7 @@
 //     overrides from claim entries and added a `claim_resolutions`
 //     map on the acquiring node.
 //   - The 2026-04-30 stores cleanup
-//     (`docs/specs/2026-04-30-stores-protocol-cleanup-design.md`)
+//     (`docs/history/2026-04-30-stores-protocol-cleanup-design.md`)
 //     removes `claim_resolutions` entirely. Store disposition
 //     (what Commit / Abandon mean for the store's own state) is
 //     governed entirely by per-store config; rimsky carries only
@@ -35,7 +35,7 @@ type TemplateSpec struct {
 	ParamsRedact    []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 }
 
-// Frame-resolution constants (per docs/specs/2026-04-26-frame-resolution-design.md).
+// Frame-resolution constants (per docs/history/2026-04-26-frame-resolution-design.md).
 const (
 	FrameResolutionCoalesce    = "coalesce"
 	FrameResolutionSerialQueue = "serial_queue"

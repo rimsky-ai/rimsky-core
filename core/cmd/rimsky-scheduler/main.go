@@ -2,7 +2,7 @@
 // scheduler process. Builds a typed config.SchedulerConfig from
 // environment variables, loads the unified deployment-shape config
 // from RIMSKY_CONFIG (persistence + stores + named_locks + executors per
-// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
 // §3.1 and 2026-05-02-persistence-pluggable-and-unified-image-design.md
 // §8), and calls config.StartScheduler.
 //

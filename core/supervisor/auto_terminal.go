@@ -1,5 +1,5 @@
 // Auto-terminal mechanism (spec §4.10 invariant 13, as amended by
-// docs/specs/2026-04-30-stores-protocol-cleanup-design.md).
+// docs/history/2026-04-30-stores-protocol-cleanup-design.md).
 //
 // At a held claim's holding-subgraph completion, the supervisor fires
 // exactly one store verb based on aggregate outcome — Commit if

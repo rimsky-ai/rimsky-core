@@ -3,7 +3,7 @@
 // Updates rimsky_schedules.next_fire_at = now() for the named node so the
 // next scheduler tick picks it up (spec §16.1, §10). The schedule_ticker
 // then calls frame.EnqueueOrCoalesce per the template's frame_resolution
-// mode (see docs/specs/2026-04-26-frame-resolution-design.md §7.5); this
+// mode (see docs/history/2026-04-26-frame-resolution-design.md §7.5); this
 // handler does not call into the frame engine directly. Returns 204 the
 // moment the row is updated; the handler does not wait for the cascade.
 // Callers that need to observe the fire (e.g. the §10 smoke fixture)
