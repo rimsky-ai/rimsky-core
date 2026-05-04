@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/integration/remote"
+	"github.com/fallguy/rimsky/foundation/locks"
 )
 
 // Synthetic IDs used by every check. The 64-char-`a` template hash is
@@ -39,12 +40,30 @@ func runLifecycleCheck(parent context.Context, endpoint string, timeout time.Dur
 		fn   func() error
 	}
 	checks := []check{
-		{"OnTemplateRegistered", func() error { return client.OnTemplateRegistered(ctx, syntheticTemplateID) }},
-		{"OnTemplateDeployed", func() error { return client.OnTemplateDeployed(ctx, syntheticTemplateID) }},
-		{"OnTemplateUndeployed", func() error { return client.OnTemplateUndeployed(ctx, syntheticTemplateID) }},
-		{"OnTemplateDeregistered", func() error { return client.OnTemplateDeregistered(ctx, syntheticTemplateID) }},
-		{"OnInstanceCreated", func() error { return client.OnInstanceCreated(ctx, syntheticTemplateID, syntheticInstanceID) }},
-		{"OnInstanceTerminated", func() error { return client.OnInstanceTerminated(ctx, syntheticTemplateID, syntheticInstanceID) }},
+		{"OnTemplateRegistered", func() error {
+			return client.OnTemplateRegistered(ctx, locks.OnTemplateRegisteredRequest{TemplateHash: syntheticTemplateID})
+		}},
+		{"OnTemplateDeployed", func() error {
+			return client.OnTemplateDeployed(ctx, locks.OnTemplateDeployedRequest{TemplateHash: syntheticTemplateID})
+		}},
+		{"OnTemplateUndeployed", func() error {
+			return client.OnTemplateUndeployed(ctx, locks.OnTemplateUndeployedRequest{TemplateHash: syntheticTemplateID})
+		}},
+		{"OnTemplateDeregistered", func() error {
+			return client.OnTemplateDeregistered(ctx, locks.OnTemplateDeregisteredRequest{TemplateHash: syntheticTemplateID})
+		}},
+		{"OnInstanceCreated", func() error {
+			return client.OnInstanceCreated(ctx, locks.OnInstanceCreatedRequest{
+				TemplateHash: syntheticTemplateID,
+				InstanceID:   syntheticInstanceID,
+			})
+		}},
+		{"OnInstanceTerminated", func() error {
+			return client.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
+				TemplateHash: syntheticTemplateID,
+				InstanceID:   syntheticInstanceID,
+			})
+		}},
 	}
 	for _, c := range checks {
 		if err := c.fn(); err != nil {

@@ -39,6 +39,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/frame"
 	nodepkg "github.com/fallguy/rimsky/modeling/node"
@@ -184,8 +185,18 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// progress-preserving (skip-if-already-at-target via the
 		// rimsky_lifecycle_idempotency bookkeeping), so a partial-failure on
 		// the original creation will be resumed here.
+		paramsBytes, err := json.Marshal(params)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		instanceKey := ""
+		if respOut.InstanceKey != nil {
+			instanceKey = *respOut.InstanceKey
+		}
 		if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
-			EventInstanceCreated, hash, respOut.InstanceID, tplSpec); err != nil {
+			EventInstanceCreated, hash, respOut.InstanceID, tplSpec,
+			InstancePayload{InstanceKey: instanceKey, Params: paramsBytes}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "instance lifecycle fan-out failed",
 				"details": perStore,
@@ -297,8 +308,13 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if tpl != nil {
+			var terminatedAtMs int64
+			if inst.TerminatedAt != nil {
+				terminatedAtMs = inst.TerminatedAt.UnixMilli()
+			}
 			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
-				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec); err != nil {
+				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
+				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
 					"error":   "instance lifecycle fan-out failed",
 					"details": perStore,
@@ -309,8 +325,12 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			// Template gone (e.g. force-deleted): fall back to fanning
 			// out via the recorded lifecycle rows so any per-instance
 			// state in stores is still settled before we drop the row.
+			var terminatedAtMs int64
+			if inst.TerminatedAt != nil {
+				terminatedAtMs = inst.TerminatedAt.UnixMilli()
+			}
 			if err := fanOutInstanceTerminatedFromLifecycleRows(req.Context(), deps,
-				inst.TemplateHash, inst.ID.String()); err != nil {
+				inst.TemplateHash, inst.ID.String(), terminatedAtMs); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
 					"error": err.Error(),
 				})
@@ -348,6 +368,7 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 	ctx context.Context,
 	deps AppDeps,
 	templateHash, instanceID string,
+	terminatedAtUnixMs int64,
 ) error {
 	rows, err := deps.Persist.LifecycleIdempotency().ListByScope(ctx,
 		persistence.LifecycleIdempotencyScopeInstance, instanceID, nil)
@@ -372,7 +393,11 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 			}
 			continue
 		}
-		if err := s.OnInstanceTerminated(ctx, templateHash, instanceID); err != nil {
+		if err := s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
+			InstanceID:         instanceID,
+			TemplateHash:       templateHash,
+			TerminatedAtUnixMs: terminatedAtUnixMs,
+		}); err != nil {
 			return fmt.Errorf("peer %q OnInstanceTerminated: %w", r.StoreRegistrationName, err)
 		}
 		if err := deps.Persist.LifecycleIdempotency().Delete(ctx,

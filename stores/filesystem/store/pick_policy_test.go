@@ -150,16 +150,16 @@ func TestOpenPickPolicy_Basic(t *testing.T) {
 	if !outcome.Available {
 		t.Fatal("expected Available, got Unavailable")
 	}
-	var addr, region string
+	var addr, scope string
 	must(t, json.Unmarshal(outcome.Result.Address, &addr))
-	must(t, json.Unmarshal(outcome.Result.Scope, &region))
+	must(t, json.Unmarshal(outcome.Result.Scope, &scope))
 	wantAddr := filepath.Join(root, sub, "alpha")
-	wantRegion := filepath.Join(sub, "alpha")
+	wantScope := filepath.Join(sub, "alpha")
 	if addr != wantAddr {
 		t.Errorf("address = %q, want %q", addr, wantAddr)
 	}
-	if region != wantRegion {
-		t.Errorf("region = %q, want %q", region, wantRegion)
+	if scope != wantScope {
+		t.Errorf("scope = %q, want %q", scope, wantScope)
 	}
 }
 
@@ -194,14 +194,14 @@ func TestOpenSelectorDispatch(t *testing.T) {
 	if !o1.Available {
 		t.Fatal("pick-policy selector should be Available")
 	}
-	// Regional path
+	// Scope path
 	o2, _ := st.Open(context.Background(), "c2", "docs/alpha")
 	if !o2.Available {
-		t.Fatal("regional selector should be Available")
+		t.Fatal("scope selector should be Available")
 	}
-	// Region bytes must be byte-equal.
+	// Scope bytes must be byte-equal.
 	if string(o1.Result.Scope) != string(o2.Result.Scope) {
-		t.Errorf("pick-policy region (%s) != regional region (%s) for same logical folder",
+		t.Errorf("pick-policy scope (%s) != scope (%s) for same logical folder",
 			o1.Result.Scope, o2.Result.Scope)
 	}
 }
@@ -340,7 +340,7 @@ func TestAbandon_ReleaseToHead(t *testing.T) {
 	// Only release_to_head's epoch-stamp puts it at the head.
 	o4, _ := st.Open(context.Background(), "c4", "@r")
 	if string(o4.Result.Scope) != string(o3.Result.Scope) {
-		t.Errorf("expected re-pick of head-bumped folder 3; got region %s vs %s",
+		t.Errorf("expected re-pick of head-bumped folder 3; got scope %s vs %s",
 			o4.Result.Scope, o3.Result.Scope)
 	}
 }

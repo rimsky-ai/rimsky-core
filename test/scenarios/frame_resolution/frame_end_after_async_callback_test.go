@@ -53,7 +53,7 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	// exists — supervisor may clean up dispatches at terminal commit).
 	var dispatchFrameID uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
-		`SELECT frame_id FROM rimsky_dispatch WHERE node_id = $1 LIMIT 1`,
+		`SELECT frame_id FROM rimsky_worker_request WHERE node_id = $1 LIMIT 1`,
 		uuid.UUID(n.ID)).Scan(&dispatchFrameID)
 	require.NoError(t, err, "expected live dispatch row while node is in async-handoff")
 

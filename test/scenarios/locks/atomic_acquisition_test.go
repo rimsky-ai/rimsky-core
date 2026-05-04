@@ -1,14 +1,14 @@
 // Atomic-acquisition scenario coverage — invariants 10 and 15.
 //
 // Invariant 10 (rimsky-side, v3 §4.10): the §7.3 acquisition transaction
-// either claims dispatch AND inserts every required `rimsky_lock_holders`
+// either claims dispatch AND inserts every required `rimsky_claim_handle`
 // row AND records the `Store.Open`-returned address, or none of these.
 // The store's own state mutations run in a decoupled tx; rimsky-side
 // atomicity is independent.
 //
 // Invariant 15 (revised v3): `Open` fires inside the rimsky-side
 // acquisition transaction. When `Open` errors, the rimsky-side INSERTs
-// must roll back so single-writer-per-region (4b) is not violated by an
+// must roll back so single-writer-per-scope (4b) is not violated by an
 // orphan lock-holder row.
 //
 // Two tests:
@@ -19,7 +19,7 @@
 //     coverage of invariant 10's all-or-nothing INSERT semantics.
 //   - TestLockHolderRowDeletedAfterTerminal complements the loopback wire
 //     coverage in stores/regional_claim_test.go by also asserting the
-//     post-terminal `rimsky_lock_holders` row count is zero — invariant
+//     post-terminal `rimsky_claim_handle` row count is zero — invariant
 //     4 (claimant-guarded release) end-to-end.
 package locks
 
@@ -139,15 +139,15 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Invariant 10 (rimsky-side): zero lock-holder rows for the node.
 	var lhCount int
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_lock_holders WHERE holder_node_id = $1`, n.ID,
+		`SELECT count(*) FROM rimsky_claim_handle WHERE holder_node_id = $1`, n.ID,
 	).Scan(&lhCount)
 	require.NoError(t, err)
-	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_lock_holders rows")
+	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_claim_handle rows")
 
 	// Invariant 10 (rimsky-side): dispatch row's claimed_by is NULL again.
 	var claimedBy *string
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT claimed_by FROM rimsky_dispatch WHERE node_id = $1`, n.ID,
+		`SELECT claimed_by FROM rimsky_worker_request WHERE node_id = $1`, n.ID,
 	).Scan(&claimedBy)
 	require.NoError(t, err)
 	require.Nil(t, claimedBy, "rollback must release the dispatch claim")
@@ -171,9 +171,9 @@ type errOpenInjected struct{}
 
 func (errOpenInjected) Error() string { return "injected open error" }
 
-// TestLockHolderRowDeletedAfterTerminal drives one regional claim
+// TestLockHolderRowDeletedAfterTerminal drives one scope claim
 // through the loopback gRPC fixture and asserts that after the worker
-// reaches `fresh`, zero `rimsky_lock_holders` rows remain for the node.
+// reaches `fresh`, zero `rimsky_claim_handle` rows remain for the node.
 // Complements stores/regional_claim_test.go by adding the post-terminal
 // row-count assertion — invariant 4 (claimant-guarded release) end to
 // end through the §7.3 atomic path.
@@ -219,7 +219,7 @@ func TestLockHolderRowDeletedAfterTerminal(t *testing.T) {
 	var lhCount int
 	for time.Now().Before(deadline) {
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_lock_holders WHERE holder_node_id = $1`, n.ID,
+			`SELECT count(*) FROM rimsky_claim_handle WHERE holder_node_id = $1`, n.ID,
 		).Scan(&lhCount)
 		require.NoError(t, err)
 		if lhCount == 0 {

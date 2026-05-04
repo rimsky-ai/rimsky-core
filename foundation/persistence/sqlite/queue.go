@@ -58,15 +58,16 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	now := nowUTC()
 	_, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, enqueued_at, frame_id)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?)
 		 ON CONFLICT(node_id) DO UPDATE
 		   SET enqueued_at = excluded.enqueued_at,
 		       executor_name = excluded.executor_name,
 		       required_stores = excluded.required_stores,
 		       frame_id = excluded.frame_id
-		   WHERE rimsky_dispatch.claimed_by IS NULL
-		     AND rimsky_dispatch.enqueued_at <= ?`,
+		   WHERE rimsky_worker_request.claimed_by IS NULL
+		     AND rimsky_worker_request.phase = 'pending'
+		     AND rimsky_worker_request.enqueued_at <= ?`,
 		uuid.New().String(), req.NodeID.String(),
 		nullableString(req.ExecutorName), marshalStringArray(stores),
 		formatTime(req.EnqueuedAt), req.FrameID.String(),
@@ -106,7 +107,7 @@ func (q *queueImpl) SelectCandidates(
 	// required_stores subset are easier in Go.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
-		   FROM rimsky_dispatch d
+		   FROM rimsky_worker_request d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
 		    AND d.enqueued_at <= ?
@@ -206,8 +207,8 @@ func (q *queueImpl) ClaimDispatchRow(
 	}
 	now := nowUTC()
 	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_dispatch
-		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?
+		`UPDATE rimsky_worker_request
+		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?, phase = 'active'
 		  WHERE id = ? AND claimed_by IS NULL`,
 		supervisorID, now, now, dispatchID.String(),
 	)
@@ -224,13 +225,13 @@ func (q *queueImpl) ClaimDispatchRow(
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
-			`DELETE FROM rimsky_dispatch WHERE id = ? AND claimed_by = ?`,
+			`DELETE FROM rimsky_worker_request WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
-		`DELETE FROM rimsky_dispatch WHERE id = ?`, dispatchID.String(),
+		`DELETE FROM rimsky_worker_request WHERE id = ?`, dispatchID.String(),
 	)
 	return err
 }
@@ -242,13 +243,13 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).ExecContext(ctx,
-			`DELETE FROM rimsky_dispatch WHERE node_id = ? AND claimed_by = ?`,
+			`DELETE FROM rimsky_worker_request WHERE node_id = ? AND claimed_by = ?`,
 			nodeID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_dispatch WHERE node_id = ?`, nodeID.String(),
+		`DELETE FROM rimsky_worker_request WHERE node_id = ?`, nodeID.String(),
 	)
 	return err
 }
@@ -259,7 +260,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, last_heartbeat_at, frame_id
-		   FROM rimsky_dispatch
+		   FROM rimsky_worker_request
 		  WHERE claimed_by IS NOT NULL
 		    AND last_heartbeat_at < ?`,
 		formatTime(cutoff),
@@ -337,20 +338,22 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 	return out, rows.Err()
 }
 
-// ReleaseClaim — @blessed-invariant 4.
+// ReleaseClaim — @blessed-invariant 4. Reverts phase to 'pending'
+// alongside nulling the claim fields so the orphan reaper's repointed
+// row becomes claim-eligible again on the next scheduler tick.
 func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
-			`UPDATE rimsky_dispatch
-			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
+			`UPDATE rimsky_worker_request
+			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 			  WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_dispatch
-		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL
+		`UPDATE rimsky_worker_request
+		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 		  WHERE id = ?`,
 		dispatchID.String(),
 	)
@@ -363,7 +366,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 		claimedBy sql.NullString
 	)
 	err := q.db.QueryRowContext(ctx,
-		`SELECT node_id, claimed_by FROM rimsky_dispatch WHERE id = ?`,
+		`SELECT node_id, claimed_by FROM rimsky_worker_request WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&nodeIDStr, &claimedBy)
 	if err != nil {
@@ -386,7 +389,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
 	var claimedBy sql.NullString
 	err := q.db.QueryRowContext(ctx,
-		`SELECT claimed_by FROM rimsky_dispatch WHERE id = ?`,
+		`SELECT claimed_by FROM rimsky_worker_request WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&claimedBy)
 	if err != nil {
@@ -403,7 +406,7 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 
 func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
 	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_dispatch SET last_heartbeat_at = ? WHERE claimed_by = ?`,
+		`UPDATE rimsky_worker_request SET last_heartbeat_at = ? WHERE claimed_by = ?`,
 		nowUTC(), supervisorID,
 	)
 	if err != nil {
@@ -435,7 +438,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	args = append(args, limit)
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-	   FROM rimsky_dispatch d
+	   FROM rimsky_worker_request d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE 1=1` +
 		stateClause +
@@ -472,7 +475,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchListFilter) (int, error) {
 	stateClause, executor, instanceID := buildLiveDispatchFilters(filter)
 	q1 := `SELECT COUNT(*)
-	   FROM rimsky_dispatch d
+	   FROM rimsky_worker_request d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE 1=1` +
 		stateClause +
@@ -493,7 +496,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.Dispat
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-		   FROM rimsky_dispatch d
+		   FROM rimsky_worker_request d
 		  WHERE d.id = ?`, id.String(),
 	)
 	var (

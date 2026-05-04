@@ -7,7 +7,7 @@
 - Foundational dependencies:
   - `docs/history/2026-04-27-stores-redesign-v3-design.md` — store contract and blessed invariants this spec must respect (especially invariant 20: claim content inert in Rimsky core).
   - `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md` — control-plane v1 and the existing `rimsky.yml` handshake this spec extends.
-  - `docs/2026-05-01-auth-and-multitenancy.md` — auth-blind v1 stance the dashboard inherits.
+  - `docs/history/2026-05-01-auth-and-multitenancy.md` — auth-blind v1 stance the dashboard inherits.
 - Pre-v1; per `.claude/rules/rules.md`, no backwards-compat constraints on protocols, schema, or config shape.
 - Companion follow-on: when "command-center" capabilities (auth, write-action UX, server-side preferences) land, they will be specified in a separate doc. v1 is read-only.
 
@@ -32,7 +32,7 @@ The work is positioned so that other dashboards can be built against the same pr
 
 ## Non-goals
 
-- Auth on the observability API or the dashboard in v1. Inherits the per-project deployment / network-perimeter model from `docs/2026-05-01-auth-and-multitenancy.md`.
+- Auth on the observability API or the dashboard in v1. Inherits the per-project deployment / network-perimeter model from `docs/history/2026-05-01-auth-and-multitenancy.md`.
 - Multi-tenancy in the dashboard. Per-project deployment per tenant.
 - Replacing operational tooling (logs/metrics/traces backends like Grafana, Datadog). The dashboard composes the three Rimsky-collection observability surfaces; OTel/log forwarding stays the operator's choice and is independent of this spec.
 - Server-side persistence in the dashboard (server-side preferences, saved views, custom dashboards) in v1. localStorage only.
@@ -49,7 +49,7 @@ The work is positioned so that other dashboards can be built against the same pr
 What this spec does not cover (see §11 for the explicit list):
 
 - CLI surface, write-action UX, dashboard-side auth, alerting, server-side preferences.
-- Tenant scoping in the dashboard (depends on `docs/2026-05-01-auth-and-multitenancy.md` §3.2).
+- Tenant scoping in the dashboard (depends on `docs/history/2026-05-01-auth-and-multitenancy.md` §3.2).
 - OTel / metrics / log forwarding (operator concern, orthogonal to this spec).
 
 ---
@@ -599,7 +599,7 @@ Extend existing tooling additively; do not fork.
 
 ## 7. Auth
 
-V1 inherits the per-project deployment / network-perimeter model from `docs/2026-05-01-auth-and-multitenancy.md`. The dashboard runs behind the same perimeter as control-api; observability endpoints are unauthenticated; no principal field; no tenant scoping.
+V1 inherits the per-project deployment / network-perimeter model from `docs/history/2026-05-01-auth-and-multitenancy.md`. The dashboard runs behind the same perimeter as control-api; observability endpoints are unauthenticated; no principal field; no tenant scoping.
 
 The Node server in §5.3 is the natural future seat for richer auth, because it is the user-facing surface. When the §2 forward path in the auth doc is taken (principal field on control-api requests), the dashboard's Node server can front-end-authenticate users and pass the resulting principal through to control-api calls. Control-api stays auth-blind in v1; the dashboard's Node server is where session and identity concerns will land. None of that is v1 work.
 
@@ -706,7 +706,7 @@ Out of scope for this spec (operator/deploy concerns): the `deploy/docker-compos
 
 ## 11. Out of v1 / future scope
 
-- **Dashboard-side auth + sessions.** Front-end auth on the Node server; pass-through to a future control-api principal field. Depends on `docs/2026-05-01-auth-and-multitenancy.md` §2.
+- **Dashboard-side auth + sessions.** Front-end auth on the Node server; pass-through to a future control-api principal field. Depends on `docs/history/2026-05-01-auth-and-multitenancy.md` §2.
 - **Server-side preferences** (saved filters, dashboards, annotations, theme sync across devices) backed by SQLite in the dashboard's Node server.
 - **Derived / cached aggregations** (top-N failing nodes by hour; flake-frequency by template; etc.) computed by the dashboard's Node server.
 - **Write-action UX** (force-fire schedule, invalidate node, register/deploy template, undeploy, instance terminate) wrapping existing control-api admin endpoints.
@@ -715,7 +715,7 @@ Out of scope for this spec (operator/deploy concerns): the `deploy/docker-compos
 - **Multi-deployment views** — one dashboard, many Rimsky deployments.
 - **Custom user-defined dashboards** — operator-built layouts saved server-side.
 - **Replay / time-travel** of past frames (depends on retention being increased and an event-sourced view layer).
-- **Tenant-aware views** (depends on `docs/2026-05-01-auth-and-multitenancy.md` §3.2 — rimsky-enforced multi-tenancy).
+- **Tenant-aware views** (depends on `docs/history/2026-05-01-auth-and-multitenancy.md` §3.2 — rimsky-enforced multi-tenancy).
 - **OTel / metrics / log forwarding integration.** Dashboard composes the three observability protocols; OTel/Datadog/Grafana integration stays the operator's choice and is independent of this spec.
 - **Queryable lifecycle-event timeline.** v1 surfaces per-store lifecycle delivery state from `rimsky_store_lifecycle` via the per-store endpoint (§1.2.1), but does not expose a unified `template_registered` / `template_deployed` / `instance_terminated` timeline. A future addition to control-api could write a `rimsky_events` row alongside firing each lifecycle RPC; the dashboard would then surface it via the existing `/v1/observability/events` endpoint with no further protocol change.
 

@@ -1506,7 +1506,7 @@ type LockAcquiredPayload struct {
 	ScopeData     *structpb.Struct       `protobuf:"bytes,4,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`          // populated for kind="scope"
 	ClaimId       string                 `protobuf:"bytes,5,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`                // populated for kind="claim"
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"` // holder_supervisor_id
-	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`             // rimsky_lock_holders.id (UUID as text)
+	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`             // rimsky_claim_handle.id (UUID as text; renamed from rimsky_lock_holders post-Phase-5)
 	Resumed       bool                   `protobuf:"varint,8,opt,name=resumed,proto3" json:"resumed,omitempty"`                              // true when this acquisition rebound a preserve-for-resume row
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -67,7 +67,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	// seconds in the past (so any clock skew between test host and the
 	// Postgres container can't push it past NOW()).
 	_, err = h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_dispatch
+		`UPDATE rimsky_worker_request
 		    SET executor_name = 'stub',
 		        required_stores = '{}',
 		        claimed_by = NULL,

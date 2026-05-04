@@ -15,18 +15,18 @@
 //
 // @blessed-invariant 3: Multi-lock acquisition uses deterministic
 // sorted order. (Spec §4.10 invariant 3.) For each candidate dispatch
-// all per-spec lock acquisitions (named, region) are performed in
+// all per-spec lock acquisitions (named, scope) are performed in
 // `(lock_kind, sort_key)` order to prevent deadlock under concurrent
 // contention on overlapping lock sets. The sort happens in
 // runner_locks.go's `sortLockSpecs`; the per-named-lock advisory
-// locks, the region re-evaluation, and the per-spec Store.Open +
+// locks, the scope re-evaluation, and the per-spec Store.Open +
 // lock-holder INSERT loop all walk the same sorted slice. Removing
 // the sort or walking it in a different order in any of those steps
 // reintroduces the deadlock the invariant guards against.
 //
 // @blessed-invariant 5: Verify-before-run. (Spec §4.10 invariant 5.)
 // After the acquisition tx commits, the runner does a separate read
-// of `rimsky_dispatch.claimed_by` and bails to the orphan-claim-lost-
+// of `rimsky_worker_request.claimed_by` and bails to the orphan-claim-lost-
 // race handler if ownership has moved. The read happens in
 // runner_acquire.go's `verifyBeforeRun` and is intentionally outside
 // the acquisition tx — running the check inside the tx would race
@@ -37,13 +37,13 @@
 // @blessed-invariant 10: Lock acquisition is atomic with dispatch
 // claim (rimsky-side). Per spec §4.10 (revised in v3): the §7.3
 // atomic acquisition transaction either claims the dispatch row AND
-// inserts every required `rimsky_lock_holders` row AND records the
+// inserts every required `rimsky_claim_handle` row AND records the
 // `Store.Open`-returned address, or none of these. The store's own
 // state mutations run in a store-internal transaction decoupled
 // from rimsky's — the v2 tx-sharing mechanism (`locks.WithTx`) is
-// gone. Single-writer-per-region (invariant 4b) holds because
+// gone. Single-writer-per-scope (invariant 4b) holds because
 // rimsky's conflict predicate gates lock-holder INSERTs against
-// `rimsky_lock_holders` only — store orphan state is invisible to
+// `rimsky_claim_handle` only — store orphan state is invisible to
 // the predicate.
 package integration
 
@@ -95,10 +95,10 @@ type RunArgs struct {
 	// §7.3 acquisition tx.
 	Queue persistence.Queue
 	// AdvisoryLocker carries the cross-process synchronization primitives
-	// (per-named-lock advisory locks, per-region advisory locks, etc.)
+	// (per-named-lock advisory locks, per-scope advisory locks, etc.)
 	// the acquisition tx threads through.
 	AdvisoryLocker persistence.AdvisoryLocker
-	// LockHolders is the rimsky_lock_holders accessor. Reachable via
+	// LockHolders is the rimsky_claim_handle accessor. Reachable via
 	// Persist.LockHolders(); kept as an explicit field so call sites
 	// don't have to thread Persist + LockHolders separately.
 	LockHolders persistence.LockHoldersStore
@@ -197,7 +197,7 @@ type AsyncContext struct {
 type AcquiredLock struct {
 	// Spec is one of locks.NamedLockSpec or locks.ClaimSpec.
 	Spec any
-	// LockHolderID is the rimsky_lock_holders row id created at
+	// LockHolderID is the rimsky_claim_handle row id created at
 	// acquisition. Drives all subsequent claimant-guarded mutations.
 	LockHolderID shared.UUID
 	// ClaimResult is populated by Open for ClaimSpec acquisitions;
@@ -363,7 +363,7 @@ func upsertAttributesPreDispatch(
 
 // emitTemplateResolutionFailedEvent appends the typed event for a
 // dispatch-time substitution miss. Used by both the attribute-resolve
-// path and the lock/region pre-substitution path.
+// path and the lock/scope pre-substitution path.
 func emitTemplateResolutionFailedEvent(
 	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
 ) {

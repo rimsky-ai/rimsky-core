@@ -18,32 +18,36 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 // CheckAndFireResolution implements the spec §4.10 invariant 13 algorithm: lock
-// the rimsky_lock_holders row, check whether all rimsky_claim_holders
+// the rimsky_claim_handle row, check whether all rimsky_claim_holders
 // rows for the lock-holder are non-active, compute aggregate outcome
-// (any 'failed' → Abandon; else → Commit), fire that store verb,
-// and delete the lock-holder row claimant-guarded.
+// (any 'failed' → Abandon; else → Commit), and delegate to the unified
+// terminal-decision engine in terminal_decision.go.
 //
-// Runs inside the caller's tx so the store verb + the lock-holder
+// Runs inside the caller's tx so the producer verb + the claim_handle
 // delete + the cascade-cleared claim-holder rows commit atomically
 // with whatever else the caller is mutating.
 //
 // Returns nil when the subgraph is not yet complete (some active
 // rows remain) — the next terminating member will re-check.
 //
-// Store-verb / commit-failure leak path: the store verb fires
+// Producer-verb / commit-failure leak path: the producer verb fires
 // over the wire BEFORE the surrounding rimsky tx commits. If the
-// store verb succeeds but the rimsky tx then fails to commit
-// (rare — Postgres connection drop between verb-return and Commit),
-// the next sibling-node terminal re-enters this function with the
-// lock-holder row still present and will fire the verb a second time.
-// This is safe because of v3 spec §7.8 obligation #3: terminal verbs
-// MUST be idempotent in `claim_id`. The second call is a no-op.
+// verb succeeds but the rimsky tx then fails to commit (rare — Postgres
+// connection drop between verb-return and Commit), the next sibling-
+// node terminal re-enters this function with the claim_handle row
+// still present and will fire the verb a second time. This is safe
+// because of foundation contract §4.4 / spec §7.8 obligation #3:
+// terminal verbs MUST be idempotent in `claim_id`. The second call
+// is a no-op.
+//
+// Phase-6 unification: the body of this function is the held-terminal
+// detection logic; the actual verb-fire + row-delete sequence
+// delegates to ResolveClaimHandleTerminal.
 func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	lockHolderID shared.UUID,
@@ -88,29 +92,28 @@ func CheckAndFireResolution(
 		return nil
 	}
 
-	scope := []byte(row.ScopeData)
-	address := []byte(row.Address)
 	storeName := ""
 	if row.StoreName != nil {
 		storeName = *row.StoreName
 	}
-	s, ok := args.StoreRegistry.Get(storeName)
+	producer, ok := args.StoreRegistry.Get(storeName)
 	if !ok {
 		return fmt.Errorf("CheckAndFireResolution: unknown store %q", storeName)
 	}
-	claimID := locks.ClaimID(lockHolderID.String())
-	var verbErr error
+	outcome := AggregateCommit
 	if anyFailed {
-		verbErr = s.Abandon(ctx, claimID, scope, address)
-	} else {
-		verbErr = s.Commit(ctx, claimID, scope, address)
+		outcome = AggregateAbandon
 	}
-	if verbErr != nil {
-		return fmt.Errorf("CheckAndFireResolution: store verb: %w", verbErr)
-	}
-
-	if err := args.LockHolders.Delete(ctx, lockHolderID, args.SupervisorID, tx); err != nil {
-		return fmt.Errorf("CheckAndFireResolution: Delete: %w", err)
+	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		ClaimHandleID: lockHolderID,
+		SupervisorID:  args.SupervisorID,
+		Source:        HeldTerminal,
+		Outcome:       outcome,
+		Producer:      producer,
+		Scope:         []byte(row.ScopeData),
+		Address:       []byte(row.Address),
+	}); err != nil {
+		return fmt.Errorf("CheckAndFireResolution: %w", err)
 	}
 	return nil
 }

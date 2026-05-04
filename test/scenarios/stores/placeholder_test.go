@@ -1,7 +1,7 @@
 // Stores scenario suite under the stores redesign.
 //
 // Pre-redesign tests in this directory used scenario.RegionRef and
-// node.NodeStoreRef.{Write, Read} — both removed. Under v3 region
+// node.NodeStoreRef.{Write, Read} — both removed. Under v3 scope
 // conflict is byte-equal (Store.RegionsConflict / Store.UnmarshalRegion
 // retired per spec §11.1, §7.7); coexistence is governed by
 // locks.ModeCoexists, the store's WriteSemantics, and the

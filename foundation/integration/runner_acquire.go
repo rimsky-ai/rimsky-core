@@ -3,7 +3,7 @@
 // Per-candidate try tx (rimsky-side bookkeeping only):
 //   - candidate selection (FOR UPDATE SKIP LOCKED) in a short read tx;
 //   - per-candidate try tx: in-Go eligibility, advisory locks for
-//     named locks, claimant-guarded UPDATE on rimsky_dispatch, scope
+//     named locks, claimant-guarded UPDATE on rimsky_worker_request, scope
 //     re-evaluation per store via byte-equal + ModeCoexists, per-spec
 //     lock acquisition (Insert + remote Open + UpdateAddress for
 //     ClaimSpec; Insert only for NamedLockSpec), held-claim
@@ -286,15 +286,20 @@ func acquireNamedLock(
 	}
 	rowID := uuid.New()
 	frameID := cand.FrameID
+	dispatchID := cand.DispatchID
 	nameCopy := spec.Name
 	in := persistence.LockHolderInsertInput{
 		ID:                 rowID,
+		WorkerRequestID:    &dispatchID,
 		LockKind:           persistence.LockKindNamed,
 		LockName:           &nameCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
 		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
+		// Named locks are never held past active terminal; they release
+		// at the worker-request's active-phase terminal.
+		IsHeld: false,
 	}
 	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)
@@ -352,10 +357,18 @@ func acquireClaim(
 
 	rowID := uuid.New()
 	frameID := cand.FrameID
+	dispatchID := cand.DispatchID
 	storeNameCopy := spec.StoreName
 	intentCopy := string(spec.Intent)
+	// is_held is determined by the holding-subgraph membership for this
+	// (acquirerType, alias). When the alias declares a held subgraph of
+	// size > 1, the claim_handle persists past active terminal until
+	// auto-terminal resolution.
+	subgraph, hasSubgraph := findHoldingSubgraphForAcquirer(heldSubgraphs, cand.NodeType, spec.Alias)
+	isHeld := hasSubgraph && subgraph.IsHeld()
 	in := persistence.LockHolderInsertInput{
 		ID:                 rowID,
+		WorkerRequestID:    &dispatchID,
 		LockKind:           persistence.LockKindScope,
 		StoreName:          &storeNameCopy,
 		ScopeData:          scopeInitial,
@@ -364,6 +377,7 @@ func acquireClaim(
 		HolderNodeID:       cand.NodeID,
 		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
+		IsHeld:             isHeld,
 	}
 	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Insert: %w", err)

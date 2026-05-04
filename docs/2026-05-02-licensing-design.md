@@ -203,7 +203,7 @@ Rimsky is multi-licensed:
   1. Source files in the embedder layer are licensed under the Apache License,
      Version 2.0 (see LICENSE.apache). The embedder layer is identified
      per-file by an "Apache License, Version 2.0" header and is documented in
-     docs/specs/2026-05-02-licensing-design.md §4.1.
+     docs/2026-05-02-licensing-design.md §4.1.
 
   2. Source files in the orchestrator layer are dual-licensed:
 
@@ -219,7 +219,7 @@ Rimsky is multi-licensed:
 
      The orchestrator layer is identified per-file by a "Dual-licensed under
      AGPL-3.0-or-later or a Fall Guy Consulting commercial license" header
-     and is documented in docs/specs/2026-05-02-licensing-design.md §4.2.
+     and is documented in docs/2026-05-02-licensing-design.md §4.2.
 
 Contributions are accepted under the terms of the Contributor License
 Agreement at CLA.md, which grants Fall Guy Consulting the rights necessary

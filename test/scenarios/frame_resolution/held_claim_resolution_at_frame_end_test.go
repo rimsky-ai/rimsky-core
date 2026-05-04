@@ -1,5 +1,5 @@
 // Verifies the stores redesign ClaimHolderInsertInput shape round-
-// trips through the storage interface and the (lock_holder_id,
+// trips through the storage interface and the (claim_handle_id,
 // holder_node_id) uniqueness constraint holds.
 //
 // The pre-redesign test in this position exercised ClaimID/StoreName/
@@ -38,8 +38,8 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Seed a region-kind lock-holder anchored to worker; needed to
-	// satisfy the FK on rimsky_claim_holders.lock_holder_id. Both
+	// Seed a scope-kind lock-holder anchored to worker; needed to
+	// satisfy the FK on rimsky_claim_holders.claim_handle_id. Both
 	// inserts run inside a single Tx — required by Insert per §7.3.
 	storeName := "scenario-store"
 	intent := "rw"
@@ -72,7 +72,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	require.Equal(t, worker.ID, row.HolderNodeID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
-	// Second insert on same (lock_holder_id, holder_node_id) must fail
+	// Second insert on same (claim_handle_id, holder_node_id) must fail
 	// per the §12.11 unique index.
 	err = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{

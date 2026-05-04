@@ -2,6 +2,100 @@
 
 ## Unreleased
 
+### Refactor — Layer crystallization Phase 7: documentation refresh complete
+
+The seven doc rewrites deferred from the dispatch-7 partial completion are now landed.
+
+- **`docs/architecture.md` rewritten** to present the four-layer model (foundation, modeling, service protocols, bundled services + examples) with the layer-crystallization architectural diagram. Documents the three Go modules (`foundation/`, `protocols/`, root) and their dependencies. References the three contracts in `docs/specs/` as authoritative for each layer. Removes references to historical specs (`docs/history/2026-04-*`) — those are now archived for context only.
+- **`docs/operator-guide.md` rewritten** for the post-Phase-6 vocabulary and Option II YAML shape. The unified `rimsky.yml` now declares peers under `claim_producers:` and `executors:` with a per-peer `protocols:` field and `write_semantics_envelope:` for producers (legacy `stores:` block alias still parsed). Phase 3's deferred `region`→`scope` doc updates are folded in throughout. Schema queries updated to post-Phase-5 table names (`rimsky_worker_request`, `rimsky_claim_handle`).
+- **`docs/glossary.md` rewritten.** New entries: `scope`, `claim producer`, `worker request`, `active phase`, `held phase`, `realized write semantics`, `write semantics envelope`, `lifecycle subscriber`, byte-equal-scope uniformity. Deprecated terms marked: `region` (now `scope`), `Store` at the protocol level (now `ClaimProducer`). Four-layer-model summary added at the top. Producer-internal vocabulary (`pick_policies`, `release_to_back`, etc.) explicitly documented as out-of-Rimsky-protocol.
+- **`docs/protocol.md` retired** in favor of a one-page pointer to `docs/specs/2026-05-04-service-protocol-contract.md`. Updated `README.md` and `.claude/rules/rules.md` to point at the contract directly.
+- **`docs/executor-author-guide.md` rewritten** for the new module layout (external Go authors import `github.com/fallguy/rimsky/protocols/executor`). References the service-protocol contract. YAML examples updated to Option II shape. Async-callback path documented (POST `${callback_url}/v1/callback/{async_ack_id}` body keyed `type` — not `kind`). Phase 3's region→scope deferral folded in.
+- **`docs/store-author-guide.md` renamed** (via `git mv`) to `docs/claim-producer-author-guide.md` and rewritten as "Writing a Claim Producer". External Go authors import `github.com/fallguy/rimsky/protocols/claimproducer` (and `protocols/lifecycle` if implementing both). YAML config: `claim_producers:` block with per-peer `protocols:` and `write_semantics_envelope:`. Conformance: `rimsky-claim-producer-conformance --endpoint <yourservice>:7000`. Note clarifies that "store" is the colloquial term for data-backed producers; the protocol-level term is "claim producer". CLAUDE.md and other docs updated to the new path.
+- **`docs/node-graph-design.md` updated** to reflect the foundation/modeling vocabulary distinction. New §3.7 "Under the hood — foundation primitives" maps the 4-state vocabulary to the foundation's `(has_value, has_outstanding_request, auto_recovers)` space and the 3 error actions to the foundation's parameterized failure-terminal `(auto_recovers, cascade_targets)`. Vocabulary updated throughout: `region` → `scope` (conflict-predicate-sense); `store` (protocol-level) → `claim producer`; legacy table names (`rimsky_dispatch`, `rimsky_lock_holders`) → post-Phase-5 (`rimsky_worker_request`, `rimsky_claim_handle`); `Store.Open/Commit/Abandon` → `ClaimProducer.Open/Commit/Abandon`. Three-collections architecture replaced with four-layer model.
+- **Cross-doc references repaired.** `docs/specs/2026-05-02-dashboard-and-observability-design.md` references corrected (was incorrectly pointed at `docs/history/`); `docs/store-author-guide.md` references in CLAUDE.md and `.claude/rules/rules.md` updated to the new claim-producer-author-guide path.
+
+### Refactor — Layer crystallization Phase 6: reaper + terminal-decision unification
+
+- **Single conceptual orphan-reaper boundary.** The two existing
+  reapers — `SweepOrphanedClaims` (worker-request rows with stale
+  heartbeat) and `SweepLockHolders` (claim-handle rows past
+  expires_at) — keep their separate implementations because they
+  reap different table entities, but the documentation in
+  `foundation/integration/orphan_reaper.go` now ties them together
+  as one mechanism with two halves. Held-phase worker-request rows
+  are NEVER reaped at the worker-request level (the SQL predicate
+  excludes them via `claimed_by IS NOT NULL`); auto-terminal
+  resolves them. Held-phase claim-handle rows orphaned by parent
+  deletion are reaped by the claim-handle reaper once their
+  `expires_at` lapses.
+- **Single terminal-decision engine.** New
+  `foundation/integration/terminal_decision.go::ResolveClaimHandleTerminal`
+  packages the three-step "fire producer verb (Commit on success;
+  Abandon on failure) + claimant-guarded delete of claim_handle row"
+  sequence as a unified primitive. Both `auto_terminal.go::CheckAndFireResolution`
+  (held-terminal source) and `runner_terminal.go::releaseClaim`
+  (active-terminal source) now delegate to it. The two source paths
+  retain their distinct context (held-subgraph completion check vs
+  acquisition-context release) but share a single audited
+  verb-fire-and-delete implementation. Foundation invariants 4
+  (claimant-guarded), 13 (single auto-terminal), 20 (claim content
+  inert) preserved.
+- **`TerminalSource` and `AggregateOutcome` types** distinguish
+  active vs held terminations and Commit vs Abandon outcomes for
+  logging / metrics. The engine signature accepts a `TerminalDecision`
+  struct that bundles the claim_handle id, supervisor id, source,
+  outcome, producer client, and scope/address bytes.
+
+### Refactor — Layer crystallization Phase 5: worker-request consolidation
+
+- **`rimsky_dispatch` and `rimsky_lock_holders` consolidated** into
+  `rimsky_worker_request` and `rimsky_claim_handle`. Worker-request
+  lifecycle has up to two phases tracked via a new `phase` column
+  (`'pending' | 'active' | 'held' | 'completed'`); active rows carry
+  `claimed_by` and a heartbeat timestamp, the orphan reaper covers
+  `phase='active'` rows. `rimsky_claim_handle.is_held BOOLEAN`
+  column marks claims that persist past the active terminal until
+  the holding subgraph completes. `rimsky_claim_handle.worker_request_id`
+  is an observability FK with `ON DELETE SET NULL` (held claim
+  handles outlive the worker-request's active-phase terminal until
+  auto-terminal resolution fires the producer verb and explicitly
+  deletes them — cascade would race against held-claim resolution).
+  `rimsky_claim_holders.lock_holder_id` renamed `claim_handle_id`.
+  Pre-v1 dev-DB-nuke applies (postgres + sqlite migrations rewritten
+  in place rather than as successors).
+- **Active-phase column wired** in the Postgres + SQLite Queue
+  implementations. `Enqueue` writes `phase='pending'`; `ClaimDispatchRow`
+  advances to `phase='active'`; `ReleaseClaim` (orphan reaper path)
+  reverts to `phase='pending'`. The dispatch DELETE at terminal is
+  preserved as the worker-request's final state under the minimal-
+  rename approach (the schema accepts `phase='completed'` for forward
+  compatibility but no current code path emits it; the row is deleted
+  outright at active terminal).
+- **`is_held` populated at acquisition.** `runner_acquire.go::acquireClaim`
+  computes the held flag from the holding-subgraph membership of
+  `(acquirerType, alias)` and persists it on the claim_handle row
+  via the new `LockHolderInsertInput.IsHeld` field. Named locks
+  always carry `is_held=false`. Existing held-vs-non-held branching
+  in `runner_terminal.go::releaseClaim` is unchanged (it still
+  consults the in-memory `HeldSubgraphs` slice via `isAliasHeld`);
+  the persisted column is for observability and forward-compatibility
+  with the Phase-6 unified terminal-decision engine.
+- **`LockHolderRow` gains observability fields:** `WorkerRequestID
+  *shared.UUID` and `IsHeld bool`, surfaced through both Postgres and
+  SQLite scanners.
+- **Foundation invariants 3, 4, 5, 6, 10, 13, 15 preserved.** The
+  acquisition tx, claimant-guarded release, verify-before-run, 5×
+  heartbeat orphan cutoff, atomic acquisition, single auto-terminal,
+  and Open-inside-acquisition-tx semantics all hold across the
+  schema rename.
+- **`test/scenarios/locks/worker_request_phase_test.go`** added:
+  `TestWorkerRequestPhaseAdvancesOnClaim` exercises the row's
+  lifecycle through `phase='pending' → 'active' → deleted`;
+  `TestClaimHandleIsHeldColumnPopulated` asserts the column is
+  populated at acquisition time. Both run cleanly under
+  `-race -count=3`.
+
 ### Refactor — Layer crystallization Phase 4: ClaimProducer rename + LifecycleSubscriber split + write-semantics envelope
 
 - **`Store` interface renamed to `ClaimProducer`** at the protocol layer.

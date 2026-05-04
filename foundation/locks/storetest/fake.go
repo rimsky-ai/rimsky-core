@@ -232,28 +232,28 @@ func (f *Fake) Reset() {
 // Lifecycle event methods. Each records a FakeCall and returns nil
 // unless ErrorFunc is set for the matching verb.
 
-func (f *Fake) OnTemplateRegistered(_ context.Context, templateID string) error {
-	return f.recordLifecycle("on_template_registered", templateID, "")
+func (f *Fake) OnTemplateRegistered(_ context.Context, req locks.OnTemplateRegisteredRequest) error {
+	return f.recordLifecycle("on_template_registered", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateDeployed(_ context.Context, templateID string) error {
-	return f.recordLifecycle("on_template_deployed", templateID, "")
+func (f *Fake) OnTemplateDeployed(_ context.Context, req locks.OnTemplateDeployedRequest) error {
+	return f.recordLifecycle("on_template_deployed", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateUndeployed(_ context.Context, templateID string) error {
-	return f.recordLifecycle("on_template_undeployed", templateID, "")
+func (f *Fake) OnTemplateUndeployed(_ context.Context, req locks.OnTemplateUndeployedRequest) error {
+	return f.recordLifecycle("on_template_undeployed", req.TemplateHash, "")
 }
 
-func (f *Fake) OnTemplateDeregistered(_ context.Context, templateID string) error {
-	return f.recordLifecycle("on_template_deregistered", templateID, "")
+func (f *Fake) OnTemplateDeregistered(_ context.Context, req locks.OnTemplateDeregisteredRequest) error {
+	return f.recordLifecycle("on_template_deregistered", req.TemplateHash, "")
 }
 
-func (f *Fake) OnInstanceCreated(_ context.Context, templateID, instanceID string) error {
-	return f.recordLifecycle("on_instance_created", templateID, instanceID)
+func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedRequest) error {
+	return f.recordLifecycle("on_instance_created", req.TemplateHash, req.InstanceID)
 }
 
-func (f *Fake) OnInstanceTerminated(_ context.Context, templateID, instanceID string) error {
-	return f.recordLifecycle("on_instance_terminated", templateID, instanceID)
+func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
+	return f.recordLifecycle("on_instance_terminated", req.TemplateHash, req.InstanceID)
 }
 
 func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {

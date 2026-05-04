@@ -120,9 +120,9 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 // older than now - OrphanedClaimTimeout, claimant-guarded so a fresh
 // supervisor can pick them up.
 //
-// Per spec §7.4: the predicate column is `rimsky_dispatch.last_heartbeat_at`.
+// Per spec §7.4: the predicate column is `rimsky_worker_request.last_heartbeat_at`.
 // Distinct from the §7.5 lock-holder orphan reaper in orphan_reaper.go
-// which keys on `rimsky_lock_holders.expires_at`.
+// which keys on `rimsky_claim_handle.expires_at`.
 func SweepOrphanedClaims(ctx context.Context, args ConductorArgs) error {
 	log := args.Logger
 	if log == nil {

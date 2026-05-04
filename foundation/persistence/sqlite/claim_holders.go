@@ -13,11 +13,11 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
-const claimHolderCols = `id, lock_holder_id, holder_node_id, state, completed_at`
+const claimHolderCols = `id, claim_handle_id, holder_node_id, state, completed_at`
 
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_claim_holders (id, lock_holder_id, holder_node_id, state, frame_id)
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_node_id, state, frame_id)
 		 VALUES (?, ?, ?, 'active', ?)`,
 		in.ID.String(), in.LockHolderID.String(), in.HolderNodeID.String(), nullableUUID(in.FrameID),
 	)
@@ -44,7 +44,7 @@ func (s *claimHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persisten
 func (s *claimHoldersImpl) ListByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE lock_holder_id = ?
+		 WHERE claim_handle_id = ?
 		 ORDER BY id ASC`, lockHolderID.String(),
 	)
 	if err != nil {
@@ -70,7 +70,7 @@ func (s *claimHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 func (s *claimHoldersImpl) ListActiveByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE lock_holder_id = ? AND state = 'active'
+		 WHERE claim_handle_id = ? AND state = 'active'
 		 ORDER BY id ASC`, lockHolderID.String(),
 	)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
 		`UPDATE rimsky_claim_holders
 		    SET state = ?,
 		        completed_at = ?
-		  WHERE lock_holder_id = ?
+		  WHERE claim_handle_id = ?
 		    AND holder_node_id = ?
 		    AND state = 'active'`,
 		string(state), nowUTC(), lockHolderID.String(), holderNodeID.String(),

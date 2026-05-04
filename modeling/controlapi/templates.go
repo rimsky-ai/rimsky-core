@@ -186,8 +186,14 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// Fire OnTemplateRegistered to every store referenced by the spec.
 		// Per spec §5.4 the fan-out runs synchronously before the row is
 		// inserted; on partial failure we surface a 5xx and leave the
-		// caller to retry.
-		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateRegistered, hash, spec); err != nil {
+		// caller to retry. Carry the JCS-canonical spec bytes so
+		// subscribers see exactly what rimsky hashed.
+		canonBytes, err := canonical.CanonicalSpecBytes(spec)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "template lifecycle fan-out failed",
 				"details": perStore,
@@ -350,7 +356,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec); err != nil {
+		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "template lifecycle fan-out failed",
 				"details": perStore,
@@ -431,7 +437,15 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
-			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec); ferr != nil {
+			tagRows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
+			if err != nil {
+				return err
+			}
+			tags := make([]string, 0, len(tagRows))
+			for _, t := range tagRows {
+				tags = append(tags, t.Tag)
+			}
+			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}); ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
 				return ferr
@@ -521,7 +535,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template has active instances",
 					map[string]any{"template_hash": hash, "active_count": active})
 			}
-			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec); ferr != nil {
+			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}); ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
 				return ferr

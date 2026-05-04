@@ -10,29 +10,32 @@ data:
 {{ .Values.rimsky.config | indent 4 }}
 {{- else }}
     # Mirrors deploy/rimsky.yml from the reference compose stack. Per
-    # docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
-    # §3.1: stores + named_locks + executors in a single config.
-    # Override by setting `rimsky.config` in values.yaml to a literal
-    # YAML body.
-    stores:
-      content:
+    # docs/specs/2026-05-04-modeling-layer-contract.md §10 (Option II
+    # YAML): claim_producers + named_locks + executors in a single config,
+    # each peer carrying a `protocols:` list and (for claim_producers) a
+    # `write_semantics_envelope:` set. Override by setting `rimsky.config`
+    # in values.yaml to a literal YAML body.
+    claim_producers:
+      - name: content
         endpoint: "grpc://{{ include "rimsky.fullname" . }}-store-filesystem:9100"
-        capabilities:
-          write_semantics: direct
-      topics-ring:
+        protocols: [claim_producer]
+        write_semantics_envelope: [sync]
+      - name: topics-ring
         endpoint: "grpc://{{ include "rimsky.fullname" . }}-store-postgres:9101"
-        capabilities:
-          write_semantics: direct
+        protocols: [claim_producer]
+        write_semantics_envelope: [sync]
     named_locks:
-      "topics-ring:concurrent-claims": { limit: 5 }
-      model-budget:                    { limit: 50 }
+      - name: "topics-ring:concurrent-claims"
+        mode: counting
+        capacity: 5
+      - name: model-budget
+        mode: counting
+        capacity: 50
     executors:
-      claude-agent:
-        transport: grpc
-        endpoint: "{{ include "rimsky.fullname" . }}-claude-agent:9090"
-        tls: off
-      http-node:
-        transport: grpc
-        endpoint: "{{ include "rimsky.fullname" . }}-http-node:9091"
-        tls: off
+      - name: claude-agent
+        endpoint: "grpc://{{ include "rimsky.fullname" . }}-claude-agent:9090"
+        protocols: [executor]
+      - name: http-node
+        endpoint: "grpc://{{ include "rimsky.fullname" . }}-http-node:9091"
+        protocols: [executor]
 {{- end }}

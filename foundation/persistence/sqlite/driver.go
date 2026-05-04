@@ -89,7 +89,7 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Driver
 	// params. Repeat the param for each PRAGMA. _txlock=immediate runs
 	// each tx as BEGIN IMMEDIATE so the writer slot is held for the
 	// whole tx (the SQLite analogue of a shared exclusive lock — used by
-	// the coordinator's no-op named/region locks).
+	// the coordinator's no-op named/scope locks).
 	q := url.Values{}
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "synchronous(NORMAL)")

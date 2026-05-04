@@ -192,7 +192,7 @@ func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
 	// Dispatch row exists for the target.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_dispatch WHERE node_id = $1`,
+		`SELECT COUNT(*) FROM rimsky_worker_request WHERE node_id = $1`,
 		[]any{target.ID}, &count)
 	assert.Equal(t, 1, count, "expected a dispatch row for the ready node")
 }
@@ -224,7 +224,7 @@ func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
 	// Dispatch row was re-enqueued.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_dispatch WHERE node_id = $1`,
+		`SELECT COUNT(*) FROM rimsky_worker_request WHERE node_id = $1`,
 		[]any{n.ID}, &count)
 	assert.Equal(t, 1, count, "expected a re-enqueued dispatch row")
 }
@@ -268,7 +268,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 
 	// Backdate last_heartbeat_at so it's past 75s (5 × 15s) cutoff.
 	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_dispatch SET last_heartbeat_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
+		`UPDATE rimsky_worker_request SET last_heartbeat_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
 		dispatchID,
 	)
 
@@ -327,7 +327,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	// Skipped tick means the ready-sweep did NOT run → no dispatch row.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_dispatch WHERE node_id = $1`,
+		`SELECT COUNT(*) FROM rimsky_worker_request WHERE node_id = $1`,
 		[]any{target.ID}, &count)
 	assert.Equal(t, 0, count, "tick should have skipped under advisory-lock contention")
 }

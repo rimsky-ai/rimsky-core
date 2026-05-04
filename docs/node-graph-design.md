@@ -1,8 +1,10 @@
 # Node Graph Design
 
-Conceptual reference for rimsky v1 (Go). Rimsky is a project-agnostic reactive node-graph orchestration platform: a graph of nodes that communicate via two message types (`invalidate`, `recalculate`), operate on operator-configured stores via two primitives (claim, named lock) and a 4-verb protocol (`Open` / `Commit` / `Abandon` / `Release`), and execute work through external executors speaking a well-defined protocol.
+Conceptual reference for rimsky (Go). Rimsky is a project-agnostic reactive node-graph orchestration platform: a graph of nodes that communicate via two message types (`invalidate`, `recalculate`), acquire claim handles against operator-configured claim producers via two primitives (claim, named lock) and a 4-verb protocol (`Open` / `Commit` / `Abandon` / `Release`), and execute work through external executors speaking a well-defined protocol.
 
-This document is a design reference, not a spec or plan. It captures the conceptual model, the contracts, and the reasoning. Implementation shape (package layout, process model, storage) lives in `architecture.md`; wire-level contract details live in `protocol.md`. **The authoritative vocabulary lives in `docs/glossary.md`** — when this document and the glossary disagree, the glossary wins.
+This document is a design reference; the modeling layer's authoritative contract is `docs/specs/2026-05-04-modeling-layer-contract.md` and the foundation layer's authoritative contract is `docs/specs/2026-05-04-foundation-contract.md`. Implementation shape (package layout, process model, storage) lives in `architecture.md`; wire-protocol details live in `docs/specs/2026-05-04-service-protocol-contract.md`. **The authoritative vocabulary lives in `docs/glossary.md`** — when this document and the glossary disagree, the glossary wins.
+
+A note on terminology: at the protocol level the service that produces claim handles is a **claim producer**. The colloquial term **store** survives at the bundled-services layer for data-backed reference impls (filesystem store, postgres store, stub store). This document uses both depending on context.
 
 An appendix at the end (§13) notes the relationship to rimsky's TypeScript predecessor — the rename there was mechanical, the concept did not change.
 
@@ -33,22 +35,23 @@ This vocabulary is enough to model declarative pipelines, reactive cascades, age
 
 ## 2. Core model
 
-The system is a **graph of nodes** that communicate by **messages**, operating on **stores**, executing work through **executors**.
+The system is a **graph of nodes** that communicate by **messages**, acquiring claim handles from **claim producers**, executing work through **executors**.
 
-- **Node** — a graph-vertex declaration. State + declared dependencies + message handlers + per-error-class repair policies + the stores it touches (and the regions it reads/writes on each) + the locks it acquires + the attributes shape it produces and consumes + (if executor-backed) the executor it dispatches to.
+- **Node** — a graph-vertex declaration. State + declared dependencies + message handlers + per-error-class repair policies + the claims it acquires (and their scopes) + the named locks it holds + the attributes shape it produces and consumes + (if executor-backed) the executor it dispatches to.
 - **Message** — `invalidate` or `recalculate`. The only two types.
-- **Store** — an operator-configured data backend (filesystem, claim-store, future database/S3/git). Has regions, locks, and commit semantics. Templates reference stores by name; resolution mirrors executor name resolution.
-- **Lock** — a node's exclusivity claim on a named scope, a region of a store, or a claimed item. Held for the duration of one execution.
+- **Claim producer** (colloquially "store") — an operator-configured peer service implementing the `ClaimProducer` protocol (4 verbs + Capabilities). Templates reference producers by name; resolution mirrors executor name resolution.
+- **Lock** — a node's exclusivity claim against a named lock or a claim handle on a producer scope. Held for the duration of one execution.
 - **Attributes** — a node's per-run typed data: source-driven properties pre-populated at dispatch (from upstream attributes, claim payloads, or instance params) plus executor-populated properties written during the run.
-- **Executor** — a peer service that speaks the node-executor protocol. The orchestrator dispatches node work to an executor; the executor returns a result, reports blocked, errors, or hands off asynchronously.
+- **Executor** — a peer service that speaks the executor protocol. The orchestrator dispatches node work to an executor; the executor returns a result, reports blocked, errors, or hands off asynchronously.
 
-Rimsky is built from three architectural collections (each developed, versioned, and deployed independently once separated):
+Rimsky is structured as four conceptual layers (per `docs/architecture.md`):
 
-- **Orchestrator.** The node-graph runtime: state machine, scheduler, supervisor, control API, dispatch queue, lock-holder table, attributes table, storage. Knows nothing about LLMs, HTTP, or any specific work domain.
-- **Store library.** Implementations of the `Store` interface. Each implementation decides what its regions look like, how locks are acquired, how data is committed, and which capabilities it advertises.
-- **Executor library.** Reference executor services that speak the protocol. Executors run as peer services; the orchestrator calls them over the wire.
+- **Foundation.** Cascade engine + lock manager + integration. State machine, scheduler primitives, supervisor runner, atomic acquisition, auto-terminal mechanism, claim-handle persistence.
+- **Modeling layer.** Templates, instances, frames, schedules, attributes, control-plane API. The thing humans learn.
+- **Service protocols.** `ClaimProducer`, `Executor`, `LifecycleSubscriber`. Wire contracts external services implement.
+- **Bundled services + examples.** Reference impls under `stores/` and `executors/`; reference dashboards.
 
-The orchestrator consumes stores through an in-process Go interface and executors through the wire protocol. Swapping either is a configuration or code-at-main boundary concern, not an orchestrator change.
+The foundation calls a subset of the service protocols (claim verbs at acquisition/terminal; executor dispatch at worker-request issue); the modeling layer calls a different subset (lifecycle hooks at control-plane state transitions). Higher layers depend on lower layers; lower layers MUST NOT reach into higher layers.
 
 ---
 
@@ -66,7 +69,7 @@ The properties are:
 - `dependencies` — list of sibling node types. Gates execution order; the default `recalculate` handler requires all listed dependencies `fresh` before the node runs.
 - `stores` — list of claims this node acquires. Each entry is `{name, selector, intent, alias}`: `name` resolves to an operator-configured store; `selector` is opaque text the store parses (with `{{...}}` substitution at dispatch); `intent` is `r` or `rw`; `alias` defaults to the store name.
 - `locks` — named-lock references. Each entry is `{name}`; the limit lives in operator config (`named_locks:` block).
-- `inherits` — list of upstream-claim aliases this node inherits. Each entry is `{claim: <alias>}`. The supervisor extends the claim's lifetime to cover this node's run, and the node may substitute via `{{claim.<alias>.address | payload.<f> | region}}`.
+- `inherits` — list of upstream-claim aliases this node inherits. Each entry is `{claim: <alias>}`. The supervisor extends the claim's lifetime to cover this node's run, and the node may substitute via `{{claim.<alias>.address | payload.<f> | scope}}`.
 - `attributes` — per-run typed data shape (JSON Schema). Source-driven properties draw from upstream attributes, claim content, or instance params at dispatch; sourceless properties are populated by the executor (§7, §8).
 - `error_types` — per-node error taxonomy with ordered policy chains.
 
@@ -74,17 +77,17 @@ Every combination of these is valid (modulo one constraint, §3.3). In practice,
 
 ### 3.2 Node shapes in practice
 
-- **Executor node.** Has `executor` and probably `userdata`. Runs when dispatched; commits attributes (and any store-side writes through write-region locks) on success.
+- **Executor node.** Has `executor` and probably `userdata`. Runs when dispatched; commits attributes (and any producer-side writes through write-scope claim handles) on success.
 - **Pure-cascade node.** No `executor`. When invalidated and dependencies are fresh, the scheduler instantly transitions `stale → fresh` inline and emits `recalculate` to dependents. Its purpose is to propagate cascade without doing work itself — a join point, a debounce, a graph-shape device.
 - **Scheduled node.** Any node with a `schedule`. The scheduler emits `invalidate` to it when the cron fires. Otherwise indistinguishable from any other node; scheduled executor nodes, scheduled pure-cascade nodes, and scheduled nodes with dependencies all compose naturally.
 - **Fan-out.** A pure-cascade node with a `schedule`, no dependencies, and many downstream dependents. When the cron fires, the invalidate ripples to every dependent. This is how periodic full-graph refresh is expressed.
 - **Agentic node.** A node whose executor happens to run an LLM. "Agentic" is a description of the executor's behavior, not a distinct node property.
 
-The distinction that matters at the contract level is whether the node holds write-region locks on a store. Nodes that write have quality rules and commit-or-reject semantics on those writes; nodes that don't write emit messages (and may still commit attributes) and nothing else.
+The distinction that matters at the contract level is whether the node holds write-scope claim handles on a producer. Nodes that write have quality rules and commit-or-reject semantics on those writes; nodes that don't write emit messages (and may still commit attributes) and nothing else.
 
 ### 3.3 Constraints
 
-Only one property-combination is invalid: a pure-cascade node (no `executor`) cannot declare claims with `intent: rw`. Pure-cascade nodes emit no data; declaring write authority on a region without a mechanism to produce content for it is ambiguous. Template validation rejects the combination at `POST /templates`.
+Only one property-combination is invalid: a pure-cascade node (no `executor`) cannot declare claims with `intent: rw`. Pure-cascade nodes emit no data; declaring write authority on a scope without a mechanism to produce content for it is ambiguous. Template validation rejects the combination at `POST /templates`.
 
 `userdata` on a node with no `executor` produces a warning, not an error, at template deploy. Opaque fields are not inherently wrong; the warning flags likely authoring mistakes.
 
@@ -117,88 +120,124 @@ Transitions:
 - `running → failed` — error policy action `give_up`.
 - `failed → stale` — operator `reset` or `invalidate`.
 
-There is no `restore_version` transition. Versions are eliminated entirely (§4.9 / spec §10).
+There is no `restore_version` transition. Versions are eliminated entirely (§4.9).
 
 **"Finished" is not terminal.** A node that has completed successfully is `fresh`. It can return to `stale` on invalidation. The only truly terminal state is `failed`, exited only by external intervention.
 
 **The state machine rejects illegal transitions.** In particular, `running → running` under reason `dispatch_claimed` is not silently idempotent — it raises an error. This is the load-bearing invariant against double-execute (see §11.1); any implementation that adds an idempotency short-circuit "for ergonomics" breaks the property.
 
-### 3.6 Probes are write-region-holding nodes, not guards
+### 3.6 Probes are write-scope-holding nodes, not guards
 
-A probe is a node whose work exercises upstream regions in a realistic scenario. Examples: a `test-adapter` probe uses a config to fetch samples and produces a report; a `probe-ingestion` node exercises a full pipeline at small N before full ingestion commits.
+A probe is a node whose work exercises upstream scopes in a realistic scenario. Examples: a `test-adapter` probe uses a config to fetch samples and produces a report; a `probe-ingestion` node exercises a full pipeline at small N before full ingestion commits.
 
-Probes write their own regions — the probe's report is a write the probe declares via `stores: [{name: X, selector: ..., intent: rw, alias: ...}]`, consumed downstream by dependents that hold a corresponding `intent: r` claim on the same region (or that read captured fields via value-pass). A probe does work that produces data; that work happens to validate upstream along the way. Its failure path uses the normal error-class → policy chain.
+Probes write their own scopes — the probe's report is a write the probe declares via `stores: [{name: X, selector: ..., intent: rw, alias: ...}]`, consumed downstream by dependents that hold a corresponding `intent: r` claim on the same scope (or that read captured fields via value-pass). A probe does work that produces data; that work happens to validate upstream along the way. Its failure path uses the normal error-class → policy chain.
 
 Convention: probe error classes should describe observable facts (`fetch_non_json`, `zero_records_returned`), not interpretations of upstream (`config_is_broken`). Observable facts compose — the same symptom can have multiple upstream causes, and the policy decides how to react.
 
+### 3.7 Under the hood — foundation primitives
+
+The vocabulary in §3.5 (`fresh` / `stale` / `running` / `failed`) and §6 (`retry` / `invalidate(targets)` / `give_up`) is the **modeling layer's** chosen presentation of a smaller foundation-layer state space. The mapping (per `docs/specs/2026-05-04-foundation-contract.md` §3, §3.3):
+
+The foundation tracks each node by two bits plus one annotation:
+
+- `has_value` — whether the node currently has a produced value.
+- `has_outstanding_request` — whether there is an outstanding worker request.
+- `auto_recovers` — whether the absence of a value should auto-trigger a worker request when conditions allow.
+
+The four user-facing states project from this space:
+
+| has_value | has_outstanding_request | auto_recovers | name |
+|-----------|------------------------|---------------|------|
+| true | false | n/a | `fresh` |
+| false | false | true | `stale` |
+| false | true | n/a | `running` |
+| false | false | false | `failed` |
+
+The three error actions map to a single parameterized **failure-terminal primitive** in the foundation. The foundation's failure-terminal admits any `(auto_recovers, cascade_targets)` pair; the modeling layer's three actions are each a specific pair:
+
+| Action | auto_recovers | cascade_targets |
+|---|---|---|
+| `retry` | true | {} |
+| `invalidate(targets)` | true | targets |
+| `give_up` | false | {} |
+
+The foundation thus has one cascade signal (`invalidate(node, [targets])`) and one parameterized failure-terminal — not two messages and three actions. The richer modeling-layer surface is convenience; everything in the modeling layer is realized by the modeling code translating to the foundation primitives before invoking them.
+
+You don't need to think about this distinction when authoring templates or running rimsky; the modeling-layer vocabulary in §3.5 and §6 is what users see. It matters when reading the foundation's source, when debugging at the SQL level, or when reasoning about why the runtime owns the state machine the way it does.
+
 ---
 
-## 4. Stores
+## 4. Claim producers (colloquially "stores")
 
-Stores are the data layer. A **store** is a deployment-level data backend, configured once by operators in YAML and loaded by control-api and each supervisor at startup. There is no `rimsky_stores` database table — stores are pure runtime objects built from process YAML config; each process has its own `Registry`. Templates reference stores by name; resolution mirrors today's executor name resolution. A supervisor pool's config lists the stores it has access to; dispatch eligibility filters out nodes whose required stores aren't in the local pool, analogous to executor `accepted_executors` filtering.
+Claim producers are the data layer. A **claim producer** is a deployment-level peer service, configured once by operators in YAML's `claim_producers:` block and loaded by control-api / supervisor / scheduler at startup. There is no `rimsky_stores` database table — producers are pure runtime objects built from process YAML config; each process has its own `Registry`. Templates reference producers by name; resolution mirrors executor name resolution. A supervisor pool's config lists the producers it has access to; dispatch eligibility filters out nodes whose required producers aren't in the local pool.
 
-A store has:
+The colloquial term **store** survives at the bundled-services layer for data-backed reference impls (filesystem store, postgres store, stub store). This document uses both depending on context.
+
+A claim producer has:
 
 - A name — operator-assigned, used by templates.
-- A kind — `filesystem`, `postgres`, future `s3` / `git` / etc.
-- A `write_semantics` — `direct`, `staged_blocking`, or `staged_async` (operator-configured, bounded above by the kind's max capability).
-- Optionally, a `pick_policies` block — store-defined named policies recognized via special-form selectors (recommended convention `@policy-name`).
+- A kind — `filesystem`, `postgres`, future `s3` / `git` / etc. (Implicit; not declared in `rimsky.yml` — each peer endpoint is just a peer, identified by its `Capabilities()` envelope.)
+- A `write_semantics_envelope` — the set of `WriteSemantics` values it may return per claim. Operator declares a subset envelope per peer in `rimsky.yml`; capability handshake validates operator ⊆ producer.
+- Optionally, a `pick_policies` block — producer-defined named policies recognized via special-form selectors (recommended convention `@policy-name`). Producer-internal config; not part of `rimsky.yml`.
 
-The store presents a uniform 4-verb protocol — `Open` / `Commit` / `Abandon` / `Release` — described in `protocol.md` and spec §6. There is no separate "claim store" kind; pick policies are store-side.
+The claim producer presents a uniform 4-verb protocol — `Open` / `Commit` / `Abandon` / `Release` — defined authoritatively in `docs/specs/2026-05-04-service-protocol-contract.md` §2. There is no separate "claim store" kind; pick policies are producer-side.
 
-A node's template declares the claims it acquires (each is `{store, selector, intent, alias}`) and the named locks it holds. The supervisor's atomic acquisition transaction inserts the corresponding `rimsky_lock_holders` rows and calls `Store.Open` per claim before dispatching the executor.
+A node's template declares the claims it acquires (each is `{store, selector, intent, alias}` — `store` here is the operator's claim-producer name) and the named locks it holds. The supervisor's atomic acquisition transaction inserts the corresponding `rimsky_claim_handle` rows and calls `ClaimProducer.Open` per claim before dispatching the executor.
 
 ### 4.1 Two primitives: claim and named lock
 
-Rimsky's lock-shaped concurrency control is built from two primitives — different shapes, different identities, different lifecycle verbs, but sharing one operational table (`rimsky_lock_holders`):
+Rimsky's lock-shaped concurrency control is built from two primitives — different shapes, different identities, different lifecycle verbs, but sharing one operational table (`rimsky_claim_handle`):
 
-- **Claim** — a row in `rimsky_lock_holders` keyed by `(store_name, region_data, intent)`. Store-bound. Halts node dispatch when conflicting claims are held on overlapping regions. Mode is derived per claim from `(intent, store.write_semantics)` at conflict-check time, not stored on the row.
-- **Named lock** — a row in `rimsky_lock_holders` keyed by `lock_name`. Store-independent. Halts node dispatch when the count of holders for the same name equals the configured limit. The limit lives in operator config (`named_locks:` block); templates reference by name only. There is no `mode` discriminator: a "mutex" is operator-configured as `limit: 1`; a "counting semaphore" is `limit: N>1`. The supervisor's conflict predicate is uniformly `count(holders) >= limit`.
+- **Claim** — a row in `rimsky_claim_handle` keyed by `(producer_name, scope_data, intent)`. Producer-bound. Halts node dispatch when conflicting claims are held on overlapping scopes. Mode is derived per claim from the per-claim `realized_write_semantics` returned by `Open` (recorded on the row), not from a producer-level config setting.
+- **Named lock** — a row in `rimsky_claim_handle` (with `lock_kind='named'`) keyed by `lock_name`. Producer-independent. Halts node dispatch when the count of holders for the same name equals the configured capacity. The capacity lives in operator config (`named_locks:` block); templates reference by name only. There is no `mode` discriminator: a "mutex" is `mode: mutex` (capacity 1); a "counting semaphore" is `mode: counting` with capacity > 1. The supervisor's conflict predicate is uniformly `count(holders) >= capacity`.
 
-Lock state lives **only** in postgres. Stores never persist lock state. Stores may persist *data* state (e.g. the postgres store flips an items-table row to `'in_progress'` at `Open` for pick-policy claims), but that is store data, not lock state.
+Lock state lives **only** in the foundation persistence layer. Claim producers never persist lock state (blessed invariant 9a). Producers may persist *data* state (e.g. the postgres store flips an items-table row to `'in_progress'` at `Open` for pick-policy claims), but that is producer data, not lock state.
 
 ### 4.2 Pluggable kinds
 
-Rimsky does not specify a single storage model. Each store declares its **kind** by name (`filesystem`, `postgres`, future `s3` / `git`). A kind is a Go struct satisfying the universal 4-verb `Store` interface; it decides what its regions look like, what its addresses look like, how data is committed, and what its store-side state machinery does.
+Rimsky does not specify a single storage model. Each claim producer is an out-of-process peer service implementing the universal 4-verb `ClaimProducer` interface; it decides what its scopes look like, what its addresses look like, how data is committed, and what its producer-side state machinery does.
 
-Kinds register at process startup (the orchestrator deployer's `main()` wires them in). A `rimsky.yml` file referenced by `RIMSKY_CONFIG` lists each operator-named store with its kind and kind-specific config (plus an optional `pick_policies` block). Templates reference stores by name; the store parses selectors.
+Each producer's binary owns its own config schema (DSN, root path, pick policies, etc.); `rimsky.yml`'s `claim_producers:` block carries only the wire endpoint plus `protocols:` and `write_semantics_envelope:`. Templates reference producers by name; the producer parses selectors.
 
-v1 ships two reference kinds:
+v1 ships three bundled reference producers (under `stores/`):
 
-- `filesystem` — bytes on a configured root directory; regions are path globs (`section-a/**`, `shared/glossary.md`); the address `Open` returns is path-shaped.
-- `postgres` — postgres-backed; supports regional access AND store-configured pick policies (via `pick_policies` config block, recommended convention `@policy-name`). Multiple pick policies per store are supported.
+- `filesystem` — concrete-paths-only filesystem producer. The address `Open` returns is path-shaped. Optional pick-policy folder discovery.
+- `postgres` — postgres-backed; supports per-claim addresses AND producer-configured pick policies (via `pick_policies` config block, recommended convention `@policy-name`). Multiple pick policies per producer are supported.
+- `stub` — in-memory stub for scenario tests; configurable scope table + selector handlers.
 
-S3, git, and append-log kinds are deferred to post-v1. Versioned mode is permanently eliminated (spec §10); sidecar mode is post-v1.
+S3, git, and append-log kinds are deferred to post-v1. Versioned mode is permanently eliminated; sidecar mode is post-v1.
 
-### 4.3 Address, payload, region: the three outputs of `Open`
+### 4.3 Address, payload, scope: the three outputs of `Open`
 
-Each `Open(ClaimSpec)` call returns three store-supplied bytes (all `json.RawMessage`, opaque to Rimsky per blessed invariant 20):
+Each `Open(claim_id, spec)` call returns four producer-supplied values (the bytes-typed three are all `json.RawMessage`, opaque to Rimsky per blessed invariant 20):
 
-- **Address** — store-supplied pointer the executor uses to access claimed state. Filesystem stores typically return a path-shaped address; postgres stores typically return a row or item locator. Substitutable via `{{claim.<alias>.address}}` in inheriting nodes.
-- **Payload** — store-supplied data captured at acquisition (e.g., a picked queue item's user data). Substitutable via `{{claim.<alias>.payload.<field>}}`.
-- **Region** — the store's identifier (resolved selector text or pick-policy-chosen item identifier; stored in the `region_data` column for historical reasons). Substitutable via `{{claim.<alias>.region}}`.
+- **Address** — producer-supplied pointer the executor uses to access claimed state. Filesystem producers typically return a path-shaped address; postgres producers typically return a row or item locator. Substitutable via `{{claim.<alias>.address}}` in inheriting nodes.
+- **Payload** — producer-supplied data captured at acquisition (e.g., a picked queue item's user data). Substitutable via `{{claim.<alias>.payload.<field>}}`.
+- **Scope** — the producer's identifier (resolved selector text or pick-policy-chosen item identifier; stored in the `scope_data` column). Substitutable via `{{claim.<alias>.scope}}`. (Renamed from `region` in Phase 3 of the layer-crystallization refactor.) Two `Open` calls returning byte-equal `scope` MUST return the same `realized_write_semantics` (the byte-equal-scope uniformity invariant; producers enforce).
+- **`realized_write_semantics`** — the per-claim verdict from `Open` (`sync` / `staged_async` / `blocking_async` / `read_only`). Recorded on the claim_handle row. Used as the conflict-predicate input. MUST be a member of the producer's declared `write_semantics_envelope`.
 
-The executor receives the **Address** bytes opaquely in `ExecuteRequest.stores[<alias>].handle`. Payload and Region are not in the executor envelope by default — they reach the executor (if needed) via attribute-substitution paths declared in the node's schema.
+The executor receives the **Address** bytes opaquely in `ExecuteRequest.claims[<alias>].address`. Payload and Scope are not in the executor envelope by default — they reach the executor (if needed) via attribute-substitution paths declared in the node's schema.
 
 ### 4.4 `write_semantics`: how writes coordinate with readers
 
-A store's `write_semantics` declares (a) whether reads can dispatch concurrently with writes on the same region, and (b) whether the supervisor calls the staging-related verbs:
+A claim producer declares its `write_semantics_envelope` (the set of values it may return as `realized_write_semantics` per claim). Each value declares (a) whether reads can dispatch concurrently with writes on the same scope, and (b) whether the supervisor calls the staging-related verbs:
 
-- **`direct`** — Writes hit live data. r×rw on overlapping regions blocks. `Commit` is a store no-op; `Abandon` is degenerate (direct writes can't be undone). v1 ships only direct mode in the reference implementations.
-- **`staged_blocking`** — Writes go to a store-private staging area; `Commit` does an atomic swap into live. r×rw on overlapping regions still blocks. (Sidecar mode for post-v1.)
-- **`staged_async`** — Writes go to a staging area; reads see a stable view of live state during writes (store-native MVCC or snapshot delegation). r×rw on overlapping regions does NOT block. **Honest support requires snapshot delegation or native MVCC pass-through**; the store may NOT fake `staged_async` by serializing on lock-shaped predicates internally (blessed invariant 9b).
+- **`sync`** (formerly `direct`) — Writes hit live data. r×rw on overlapping scopes blocks. `Commit` is a producer no-op; `Abandon` is degenerate (sync writes can't be undone). The bundled filesystem and stub producers ship `sync`.
+- **`blocking_async`** (formerly `staged_blocking`) — Writes go to a producer-private staging area; `Commit` does an atomic swap into live. r×rw on overlapping scopes still blocks.
+- **`staged_async`** — Writes go to a staging area; reads see a stable view of live state during writes (producer-native MVCC or snapshot delegation). r×rw on overlapping scopes does NOT block. **Honest support requires snapshot delegation or native MVCC pass-through**; the producer may NOT fake `staged_async` by serializing on lock-shaped predicates internally (blessed invariant 9b). The bundled postgres producer's items-table queue mode is `staged_async`.
+- **`read_only`** — Read-only access; no writes possible.
 
-The mode coexistence matrix (claim vs claim, on overlapping regions) is in `glossary.md`; the structural single-writer-per-region rule is blessed invariant 4b.
+The mode coexistence matrix (claim vs claim, on overlapping scopes) is in `glossary.md`; the structural single-writer-per-scope rule is folded into the `w×w ❌` cells of that matrix.
 
-### 4.5 Pick policies (store-side)
+### 4.5 Pick policies (producer-side)
 
-A store implementation may recognize **special-form selectors** as triggers for configured pick policies. Recommended convention: `@policy-name` (e.g. `@review-queue`, `@docs-ring`, `@scratchpad`). The store's `pick_policies` config block lists each named policy and its store-specific configuration (item path, ordering, `on_commit_default`, `on_give_up_default`, visibility timeout, etc.).
+A claim producer may recognize **special-form selectors** as triggers for configured pick policies. Recommended convention: `@policy-name` (e.g. `@review-queue`, `@docs-ring`, `@scratchpad`). The producer's `pick_policies` config block lists each named policy and its producer-specific configuration (item path, ordering, `on_commit_default`, `on_give_up_default`, visibility timeout, etc.).
 
-Multiple pick policies per store are supported. A single postgres store can configure `@review-queue` (FIFO) alongside `@audit-ring` (ring buffer). All access goes through the same 4-verb interface; the store dispatches internally based on the resolved selector text.
+Multiple pick policies per producer are supported. A single postgres producer can configure `@review-queue` (FIFO) alongside `@audit-ring` (ring buffer). All access goes through the same 4-verb interface; the producer dispatches internally based on the resolved selector text.
 
 Because pick policies are store-side, there is no "claim store" kind anymore. Item-claim semantics — pick from a backlog, hold, ack on success, requeue on failure — are expressed by selector convention alone. The rimsky-side surface carries no per-alias action vocabulary: the supervisor's terminal verb is the success/failure binary (success → `Commit`; failure → `Abandon`). What those verbs mean for the store's own state — publish staging, release a queue item to the back, release to the head, delete an items-table row, etc. — is governed entirely by per-store config. The postgres reference store-service, for example, declares per-pick-policy `on_commit_default` / `on_give_up_default` in its own `config.yml`; those names are store-internal and do not appear in rimsky's template grammar.
 
-Enqueue / item-creation are **not** in rimsky's vocabulary either. They are store-external — operators populate via direct SQL or via each store-service's own admin surface (e.g. the postgres reference store-service's HTTP admin port; not part of rimsky's control API).
+Enqueue / item-creation are **not** in rimsky's vocabulary either. They are producer-external — operators populate via direct SQL or via each producer's own admin surface (e.g. the postgres reference producer's HTTP admin port; not part of rimsky's control API).
 
 ### 4.6 Held claims via inheritance
 
@@ -212,23 +251,23 @@ There is **no `held: true` flag**. Held is implicit from the presence of `inheri
 
 #### Auto-terminal at holding-subgraph completion
 
-At each node's terminal in a held subgraph, the supervisor updates the node's `rimsky_claim_holders` row to `'completed'` or `'failed'`. When all members of the holding subgraph have terminated, the supervisor fires the **auto-terminal**: exactly one store verb per held claim, computed from aggregate outcome:
+At each node's terminal in a held subgraph, the supervisor updates the node's `rimsky_claim_holders` row to `'completed'` or `'failed'`. When all members of the holding subgraph have terminated, the supervisor fires the **auto-terminal**: exactly one producer verb per held claim, computed from aggregate outcome:
 
-- All members in `'completed'` state → call `Store.Commit` for the held claim.
-- Any member in `'failed'` state → call `Store.Abandon` for the held claim.
+- All members in `'completed'` state → call `ClaimProducer.Commit` for the held claim.
+- Any member in `'failed'` state → call `ClaimProducer.Abandon` for the held claim.
 
-There is no rimsky-side per-alias action vocabulary; the verb is the success/failure binary. What `Commit` / `Abandon` mean for the store's own state is governed entirely by per-store config (e.g. the postgres reference store-service's per-pick-policy `on_commit_default` / `on_give_up_default`). The store-internal action vocabulary (release-to-back, release-to-head, items-table delete, etc.) lives in store-service config and is invisible to rimsky.
+There is no rimsky-side per-alias action vocabulary; the verb is the success/failure binary. What `Commit` / `Abandon` mean for the producer's own state is governed entirely by per-producer config (e.g. the postgres reference producer's per-pick-policy `on_commit_default` / `on_give_up_default`). The producer-internal action vocabulary (release-to-back, release-to-head, items-table delete, etc.) lives in producer config and is invisible to rimsky.
 
-The store verb shares the same rimsky-side SQL transaction as the lock-holder row deletion and the claim-holder row finalisation (cascade FK cleans up). Race-safe via SQL row-locking on the lock-holder row plus the `state='active'` filter on claim-holders.
+The verb-fire and claim_handle-row delete are unified by the foundation's `ResolveClaimHandleTerminal` engine (`foundation/integration/terminal_decision.go`); both auto-terminal and active-terminal paths route through it. Race-safe via SQL row-locking on the claim_handle row plus the `state='active'` filter on claim-holders.
 
 This **replaces** the prior first-delete-wins / last-released-wins reconciliation: there is exactly one resolution per held claim, no per-terminal-leaf reconciliation, no `actual_action` column on `rimsky_claim_holders`. Failure propagation is closed: if any node in the holding subgraph fails, the auto-terminal fires `Abandon` once the subgraph completes — failures cannot strand held claims.
 
 ### 4.7 Two propagation modes (value-pass vs claim-pass)
 
-A node's claim payload can reach a downstream node via either of two distinct mechanisms (spec §14.7):
+A node's claim payload can reach a downstream node via either of two distinct mechanisms:
 
-- **Value-pass.** The source extracts captured fields into its own attributes via `source: "{{claim.<alias>.payload.<f>}}"` (or `.region` / `.address`); downstream nodes consume captured values via `{{deps.<source>.<field>}}`. **Lifetime-independent** — works after the source's claim has closed. The downstream sees only the bytes the source captured.
-- **Claim-pass.** The downstream node inherits the live claim via `inherits:` and substitutes via `{{claim.<alias>.address | payload.<f> | region}}`. **Requires the claim to remain open** — the inheriting node's existence holds it. The downstream has live access to the store.
+- **Value-pass.** The source extracts captured fields into its own attributes via `source: "{{claim.<alias>.payload.<f>}}"` (or `.scope` / `.address`); downstream nodes consume captured values via `{{deps.<source>.<field>}}`. **Lifetime-independent** — works after the source's claim has closed. The downstream sees only the bytes the source captured.
+- **Claim-pass.** The downstream node inherits the live claim via `inherits:` and substitutes via `{{claim.<alias>.address | payload.<f> | scope}}`. **Requires the claim to remain open** — the inheriting node's existence holds it. The downstream has live access to the producer.
 
 The two modes give the graph author finer control than a single switch could. Use value-pass when the downstream only needs the data; use claim-pass when it needs live store access. The "no hold + pass address" combination is structurally impossible: `{{claim.<alias>.address}}` requires the alias to be acquired or inherited, and inheritance extends the claim's lifetime.
 
@@ -236,10 +275,10 @@ The two modes give the graph author finer control than a single switch could. Us
 
 When an executor returns `Complete`, it declares `changed: bool`:
 
-- `changed: true` → the supervisor commits attributes to `rimsky_node_attributes`, applies any store-side commit (e.g. sidecar swap, future), emits `recalculate` to dependents.
+- `changed: true` → the supervisor commits attributes to `rimsky_node_attributes`, applies any producer-side commit (e.g. sidecar swap, future), emits `recalculate` to dependents.
 - `changed: false` → attributes are persisted but no `recalculate` fans out. Dependents are not awakened.
 
-A hash of output content would be fragile — agent output differs on cosmetic whitespace, database-backed regions differ on row order or timestamps. Instead, the producer declares whether its output differs meaningfully:
+A hash of output content would be fragile — agent output differs on cosmetic whitespace, database-backed scopes differ on row order or timestamps. Instead, the producer declares whether its output differs meaningfully:
 
 - **Deterministic executors** compute `changed` however is right for their domain.
 - **Agentic executors** report the verdict via the protocol's `Complete` event with an optional `change_summary` string ("3 new zone codes added; 1 boundary refined").
@@ -250,20 +289,20 @@ The runtime does not hash content. Invalidation still cascades; `changed` govern
 
 ### 4.9 No version concept (versions eliminated)
 
-Rimsky has **no version concept**. No version tracking, no change-signal per region, no GC pin, no `RestoreVersion` verb, no `versioned` mode. The cascade trigger is "node committed with `changed=true`" via existing node-state transitions; GC is the store's responsibility entirely (out-of-band, ambient, store-internal); restore / replay / time-travel are store-specific extension verbs that Rimsky never sees.
+Rimsky has **no version concept**. No version tracking, no change-signal per scope, no GC pin, no `RestoreVersion` verb, no `versioned` mode. The cascade trigger is "node committed with `changed=true`" via existing node-state transitions; GC is the producer's responsibility entirely (out-of-band, ambient, producer-internal); restore / replay / time-travel are producer-specific extension verbs that Rimsky never sees.
 
-Stores backed by history-retaining storage (git, S3 with versioning) may expose store-service-specific admin operations for replay outside the workload-store protocol; not part of Rimsky's surface.
+Producers backed by history-retaining storage (git, S3 with versioning) may expose producer-specific admin operations for replay outside the claim-producer protocol; not part of Rimsky's surface.
 
-Implicit rollback on failure is the steady-state property: when a node fails, its claim is `Abandon`'d and the store's pre-write state remains visible. (Whether the store then deletes an items-table row, releases a queue item to the back of its policy, or simply drops a staging area is its own per-policy disposition concern, not rimsky's.) There is no separate "rollback" operation in v1.
+Implicit rollback on failure is the steady-state property: when a node fails, its claim is `Abandon`'d and the producer's pre-write state remains visible. (Whether the producer then deletes an items-table row, releases a queue item to the back of its policy, or simply drops a staging area is its own per-policy disposition concern, not rimsky's.) There is no separate "rollback" operation in v1.
 
-### 4.10 Dependencies vs. cross-region reads
+### 4.10 Dependencies vs. cross-scope reads
 
-Dependencies and store reads are related but distinct:
+Dependencies and producer-side reads are related but distinct:
 
 - **Dependency.** "Don't run me until this node is fresh." Gates execution order. The default `recalculate` handler waits for all listed dependencies to be `fresh` before the node can run.
-- **Store read.** "I can read this region of this store." Does not gate execution. A node can declare `stores: [{name: X, selector: ..., intent: r}]` without depending on the node that writes that region — useful when the read is opportunistic.
+- **Claim read.** "I can read this scope of this producer." Does not gate execution. A node can declare `stores: [{name: X, selector: ..., intent: r}]` without depending on the node that writes that scope — useful when the read is opportunistic.
 
-Most nodes both depend on and read from their upstreams. The distinction matters for the few cases where a node needs to consult a region without being schedule-coupled to it.
+Most nodes both depend on and read from their upstreams. The distinction matters for the few cases where a node needs to consult a scope without being schedule-coupled to it.
 
 ---
 
@@ -295,7 +334,7 @@ Failures are **not** cross-node messages. A node that fails logs a state transit
 
 Completion is not a message type either. When a node finishes successfully, it emits `recalculate` to its dependents. "Completion" is the internal state change that precedes the outbound message.
 
-Store reads are not messages. A node (or external service) that reads a region does so on demand; stores do not emit change notifications. Nodes that want to react to region updates should declare a dependency on the node that writes that region.
+Producer reads are not messages. A node (or external service) that reads a scope does so on demand; producers do not emit change notifications. Nodes that want to react to scope updates should declare a dependency on the node that writes that scope.
 
 ### 5.4 Message shape
 
@@ -327,7 +366,7 @@ Errors are node-local. Each node defines its own error-class taxonomy and maps e
 - **`invalidate(targets)`** — emit `invalidate` messages to one or more nodes. The node itself stays `stale`, awaiting re-execution after upstream refreshes.
 - **`give_up`** — transition to `failed`. Optional `reason_template` for the event log.
 
-Resume is universal — the store handles resumed-vs-fresh internally per spec §11.5. There are no protocol-level retry variants for resume / discard semantics; the store decides what its own resumed state means.
+Resume is universal — the producer handles resumed-vs-fresh internally by lookup against its own state, keyed by `claim_id`. There are no protocol-level retry variants for resume / discard semantics; the producer decides what its own resumed state means.
 
 ### 6.2 Policy chains
 
@@ -372,7 +411,7 @@ There is no shared enum of error classes across the system. Each node names its 
 
 Two built-in error classes are raised by the orchestrator on attributes-resolution failures (see §7). They route through the node's policy chain like any other class; templates may override the default.
 
-- **`template_resolution_failed`** — raised at dispatch when substitution into an `attributes.schema.properties.*.source` directive, a `stores[*].read` / `stores[*].write` region pattern, or a `locks[*].name` cannot resolve a required component (or resolves to an empty string for a region pattern). Default policy: `[ {give_up} ]`.
+- **`template_resolution_failed`** — raised at dispatch when substitution into an `attributes.schema.properties.*.source` directive, a `stores[*].selector`, or a `locks[*].name` cannot resolve a required component (or resolves to an empty string for a selector). Default policy: `[ {give_up} ]`.
 - **`attributes_schema_failed`** — raised at commit, when the populated attributes object fails JSON Schema validation against the node's declared schema after the executor's writes are merged. Default policy: `[ {give_up} ]`.
 
 Both are recorded in the event log with full context (offending field path, schema-validation message). Templates can declare them in `error_types` to route through retry / invalidate chains where appropriate.
@@ -401,7 +440,7 @@ Rimsky owns all `{...}` and `{{...}}` substitution. Executors do no substitution
 Where rimsky parses and substitutes:
 
 - `attributes.schema.properties.*.source` directives.
-- `stores[*].read` and `stores[*].write` region declarations (each entry in the array).
+- `stores[*].selector` claim selectors (each entry in the array).
 - `locks[*].name`.
 - Any field with `{params.<key>}` (single brace) — at instantiation.
 
@@ -414,8 +453,8 @@ Substitution rules:
 - Single pass; no recursion. A substitution result containing `{{...}}` is treated as literal text.
 - Required attribute schema fields (per JSON Schema `required`) whose `source` fails to resolve raise `template_resolution_failed` (§6.5).
 - Optional attribute fields whose `source` fails to resolve are **omitted** from `data`; they remain absent unless the executor writes them.
-- Region or lock-name substitution failure on any required component raises `template_resolution_failed`.
-- An empty resolved value (`""` or `null`) for a region pattern is **rejected** with `template_resolution_failed` to avoid grant-everything globs by accident.
+- Selector or lock-name substitution failure on any required component raises `template_resolution_failed`.
+- An empty resolved value (`""` or `null`) for a selector is **rejected** with `template_resolution_failed`.
 
 Unresolved single-brace placeholders at instantiation return a 400 from `POST /instances` with the offending field path; nothing is committed.
 
@@ -502,7 +541,7 @@ attributes:                        # Per-run typed data shape. Optional but reco
                                    #   "{{deps.<n>.<f>}}" |
                                    #   "{{claim.<alias>.address}}" |
                                    #   "{{claim.<alias>.payload.<f>}}" |
-                                   #   "{{claim.<alias>.region}}" |
+                                   #   "{{claim.<alias>.scope}}" |
                                    #   "{{params.<key>}}".
                                    # No source = executor-populated.
     required: [string]             # JSON Schema required list.
@@ -560,7 +599,7 @@ Each node instance carries runtime state, not declared in the template:
 - `action_index` — position in the current error class's policy chain.
 - `run_attempt` — incremented on every retry; exposed to executors in `ExecuteRequest`.
 
-Per-run attributes data lives in `rimsky_node_attributes` keyed by node id; lock state lives in `rimsky_lock_holders`. Held-claim bookkeeping (one row per held-claim × terminal-leaf) lives in `rimsky_claim_holders`. None of these are properties of the node template; they are runtime tables managed by the orchestrator.
+Per-run attributes data lives in `rimsky_node_attributes` keyed by node id; claim-handle state lives in `rimsky_claim_handle`. Worker-request lifecycle (the dispatch claim brackets) lives in `rimsky_worker_request`. Held-claim bookkeeping (one row per held-claim × terminal-leaf) lives in `rimsky_claim_holders`. None of these are properties of the node template; they are runtime tables managed by the foundation persistence layer.
 
 ### 8.2 Default handlers
 
@@ -601,7 +640,7 @@ Nodes do not declare message handlers; they inherit system defaults.
    - `schedule` (if present) is a valid cron expression.
    - Pure-cascade nodes do not declare `stores[*].write` regions.
    - `userdata` on a node without `executor` warns.
-   - All `stores[*].name` references resolve against a registered store kind in the local registry; the store kind accepts the declared `read` / `write` region grammar.
+   - All `stores[*].name` references resolve against a configured `claim_producers:` entry; the producer accepts the declared selector grammar.
    - `attributes.schema` is a valid JSON Schema (draft-07).
    - All single-brace `{params.<key>}` placeholders reference keys present in `params_schema`.
    - All `{{deps.<n>.<f>}}` source directives reference declared upstream nodes and fields present in those nodes' attribute schemas.
@@ -615,7 +654,7 @@ Nodes do not declare message handlers; they inherit system defaults.
 1. Validate `instance_key` (when supplied) is unique within the resolved template hash.
 2. Validate `params` against the template's `params_schema`.
 3. Allocate instance UUID.
-4. For each node: allocate node UUID; resolve `dependencies` to sibling node UUIDs; substitute single-brace `{params.<key>}` placeholders into any field that takes them (region patterns, lock names, attributes-schema source directives — all baked into per-instance node config so dispatch-time substitution operates on the resolved values).
+4. For each node: allocate node UUID; resolve `dependencies` to sibling node UUIDs; substitute single-brace `{params.<key>}` placeholders into any field that takes them (selectors, lock names, attributes-schema source directives — all baked into per-instance node config so dispatch-time substitution operates on the resolved values).
 5. For nodes with `schedule`: compute `next_fire_at` from cron and current clock; write to schedule table.
 6. Log `state_transition` events for all nodes (initial state `stale`).
 7. Enqueue dispatch rows for root executor nodes (no dependencies, has `executor`).
@@ -628,13 +667,13 @@ For each node the scheduler picks up:
 1. **Pure-cascade nodes** (no `executor`): the scheduler transitions `stale → fresh` inline on its sweep, emits `recalculate` to dependents, and logs a `state_transition` event with cause `pure_cascade`. No dispatch row, no supervisor, no executor RPC.
 2. **Executor nodes**: a dispatch row sits in the queue. A supervisor whose config accepts the node's executor name claims the row under `FOR UPDATE SKIP LOCKED`.
 3. After claim, the supervisor **re-reads `claimed_by`** (the verify-before-run invariant — see §11.1) before doing any work. If the claim has been released or re-claimed, the supervisor bails and the system cleans up.
-4. The supervisor acquires all declared locks (named, region, claim) atomically per the per-tag-sorted lock-acquisition invariant (§11.3 / spec §13.3). Region globs and lock names are substituted at this point against upstream attributes, claim payloads, and instance params; failure raises `template_resolution_failed` and unwinds the lock acquisition.
-5. The supervisor builds the dispatch's `attributes` object: source-driven properties resolved from upstream attributes / claim content / params; sourceless properties left empty for the executor to populate. Executor invocation: `Execute(node_id, instance_id, node_type, userdata, attributes, attributes_schema, stores, callback_url, cancel_token, run_attempt)`. Each `StoreHandle` carries the store-supplied `Address` bytes returned by `Store.Open`, opaque to Rimsky and decoded by the executor per its store knowledge.
+4. The supervisor acquires all declared locks (named, scope) atomically per the deterministic-sort lock-acquisition invariant (blessed invariant 3). Scope selectors and lock names are substituted at this point against upstream attributes, claim payloads, and instance params; failure raises `template_resolution_failed` and unwinds the lock acquisition.
+5. The supervisor builds the dispatch's `attributes` object: source-driven properties resolved from upstream attributes / claim content / params; sourceless properties left empty for the executor to populate. Executor invocation: `Execute(node_id, instance_id, node_type, userdata, attributes, attributes_schema, claims, callback_url, cancel_token, run_attempt)`. Each `ClaimHandle` carries the producer-supplied `Address` bytes returned by `ClaimProducer.Open`, opaque to Rimsky and decoded by the executor per its producer knowledge.
 6. The executor returns a stream of zero or more `Heartbeat` events followed by exactly one terminal event: `Complete` (with optional `attributes_delta`, `changed`, `change_summary`), `Blocked`, `Errored`, or `AsyncAccepted` (async handoff). For incremental writeback, the executor calls `POST {callback_url}/v1/attributes/{node_id}` per field-write; the supervisor merges and persists each call.
-7. For `Complete`: the supervisor merges any final `attributes_delta`, validates against the schema (failure → `attributes_schema_failed`), then commits attributes; for each non-held claim acquired by this node, fires the per-claim store verb (`Commit` on success, `Abandon` on failure — store disposition is governed by per-store config); for each held claim, updates the corresponding `rimsky_claim_holders` row to `'completed'` (the auto-terminal mechanism — §4.6 — fires `Commit` or `Abandon` at holding-subgraph completion based on aggregate outcome). All in the same transaction that releases the lock-holder rows. Success → log `attributes_committed`, emit `recalculate` if `changed: true`.
+7. For `Complete`: the supervisor merges any final `attributes_delta`, validates against the schema (failure → `attributes_schema_failed`), then commits attributes; for each non-held claim acquired by this node, fires the per-claim producer verb (`Commit` on success, `Abandon` on failure — producer disposition is governed by per-producer config); for each held claim, updates the corresponding `rimsky_claim_holders` row to `'completed'` (the auto-terminal mechanism — §4.6 — fires `Commit` or `Abandon` at holding-subgraph completion based on aggregate outcome). The verb-fire and claim_handle-row delete are unified by `ResolveClaimHandleTerminal`. Success → log `attributes_committed`, emit `recalculate` if `changed: true`.
 8. For `Blocked`: route through `on_error(executor_blocked)` unless the template declares a more specific class.
 9. For `Errored`: route through `on_error(error_class)` with the executor-supplied class.
-10. For `AsyncAccepted`: the supervisor holds the dispatch claim and keeps the node `running`; a callback POST from the executor (carrying the eventual `Complete` / `Blocked` / `Errored`) completes the dispatch later. See `protocol.md` for the callback contract.
+10. For `AsyncAccepted`: the supervisor holds the dispatch claim and keeps the node `running`; a callback POST from the executor (carrying the eventual `Complete` / `Blocked` / `Errored`) completes the dispatch later. See `docs/specs/2026-05-04-service-protocol-contract.md` §4.4 for the callback contract.
 11. On any failure path: the policy chain consults `error_types`; actions are taken; the node's state advances accordingly.
 
 ### 9.4 Pure-cascade execution
@@ -673,11 +712,11 @@ Every unit of work, including any maintenance or cross-instance reasoning, is a 
 
 ### 10.3 Work and data are separate
 
-Nodes are actors; stores are backends; regions and items are artifacts (§4). Node logic evolves independently from store kind and region grammar. This makes data independently consumable — by other nodes, external services, agentic discovery — without coupling consumers to producers' internals.
+Nodes are actors; claim producers (colloquially "stores") are backends; scopes and items are artifacts (§4). Node logic evolves independently from producer kind and scope grammar. This makes data independently consumable — by other nodes, external services, agentic discovery — without coupling consumers to producers' internals.
 
 ### 10.4 Implicit rollback on failure
 
-A node that fails releases its locks without committing (§4.2, §4.7). The previous live region (or claimed item state) is untouched; consumers continue reading what was last good. Sidecar and versioned modes (post-v1) extend this with explicit restore; in v1 direct mode, "rollback" is what happens by default when commit doesn't.
+A node that fails releases its locks without committing (§4.2, §4.7). The previous live state (or claimed item state) is untouched; consumers continue reading what was last good. Sidecar and versioned modes (post-v1) extend this with explicit restore; in v1 sync mode, "rollback" is what happens by default when commit doesn't.
 
 ### 10.5 Errors are node-local
 
@@ -693,7 +732,7 @@ The event log is the system's truth, not a derived artifact (§9.5). Every state
 
 ### 10.8 Structured completion over inferred
 
-Executors report completion through a typed protocol event, not through file artifacts or exit-code inference (see `protocol.md`). This localizes structure to the interface (the event's schema) rather than to a serialization convention, allows in-conversation correction when output is malformed (by executors that host their own in-process correction loops), and makes "I am done" an explicit act rather than an emergent property of a process ending.
+Executors report completion through a typed protocol event, not through file artifacts or exit-code inference (see `docs/specs/2026-05-04-service-protocol-contract.md` §4). This localizes structure to the interface (the event's schema) rather than to a serialization convention, allows in-conversation correction when output is malformed (by executors that host their own in-process correction loops), and makes "I am done" an explicit act rather than an emergent property of a process ending.
 
 ### 10.9 Monitor, don't deadline
 
@@ -705,13 +744,13 @@ A content-hash over node output would be fragile (§4.6). Each producer declares
 
 ### 10.11 Executors are peers, not subsystems
 
-An executor is a separate service the orchestrator calls over the wire (see `protocol.md`). It does not run inside the orchestrator process; it does not register runtime state with the orchestrator; it is not a plugin loaded into the orchestrator's memory. This is deliberate: executors in different languages, with different runtime needs (GPU, subprocess spawning, long-lived internal state), are operationally peers. The orchestrator sees one interface — the protocol — and knows nothing of how the executor is implemented.
+An executor is a separate service the orchestrator calls over the wire (see `docs/specs/2026-05-04-service-protocol-contract.md` §4). It does not run inside the orchestrator process; it does not register runtime state with the orchestrator; it is not a plugin loaded into the orchestrator's memory. This is deliberate: executors in different languages, with different runtime needs (GPU, subprocess spawning, long-lived internal state), are operationally peers. The orchestrator sees one interface — the protocol — and knows nothing of how the executor is implemented.
 
 The practical consequence: authoring a new executor requires no orchestrator changes, no recompilation, no redeployment of the orchestrator. An executor can fail, upgrade, or restart independently of the orchestrator. This is the architecture property that makes rimsky domain-agnostic.
 
 ### 10.12 Versions are eliminated
 
-Rimsky has no version concept (§4.9 / spec §10). No version tracking, no `RestoreVersion` verb, no `versioned` mode. Cascade-on-change is producer-declared via `changed: bool` on each commit (§4.8); GC is the store's responsibility entirely; replay / time-travel are store-specific extension verbs that Rimsky never sees. Stores that retain history (git, S3 with versioning) may expose admin operations for restore outside the workload-store protocol.
+Rimsky has no version concept (§4.9). No version tracking, no `RestoreVersion` verb, no `versioned` mode. Cascade-on-change is producer-declared via `changed: bool` on each commit (§4.8); GC is the producer's responsibility entirely; replay / time-travel are producer-specific extension verbs that Rimsky never sees. Producers that retain history (git, S3 with versioning) may expose admin operations for restore outside the claim-producer protocol.
 
 ---
 
@@ -723,13 +762,13 @@ Load-bearing properties the implementation must preserve. Each is annotated `@bl
 
 `UpdateState(node, to, reason)` never short-circuits when `to == from`. In particular `running → running` under reason `dispatch_claimed` raises an error. Double-execute detection depends on it: a slow supervisor that got as far as `UpdateState(node, "running", dispatch_claimed)` while another supervisor was already running the same node would otherwise silently succeed, bypassing the claim-ownership re-check.
 
-### 11.2 Dispatch claim brackets run
+### 11.2 Worker-request claim brackets the running window
 
-Tag-limit counts come from `rimsky_dispatch.claimed_by IS NOT NULL`, not from node state. The claim window exactly brackets the node's `running` window. Refactoring the claim/complete flow must preserve this property; counts drawn from any other source can diverge under races.
+Counting-named-lock counts come from `rimsky_worker_request.claimed_by IS NOT NULL` joined against `rimsky_claim_handle`, not from node state. The claim window exactly brackets the node's `running` window. Refactoring the claim/complete flow must preserve this property; counts drawn from any other source can diverge under races.
 
-### 11.3 Per-tag locks acquired in sorted order
+### 11.3 Multi-handle acquisition uses deterministic sorted order
 
-When multiple concurrency tags apply to one dispatch, advisory-lock acquisition sorts the tag names lexicographically. This prevents deadlocks between concurrent claims sharing a tag subset.
+When a node requires multiple claim handles, acquisition sorts the specs in a deterministic order shared by all runners (current implementation: by `(kind, scope-bytes, purpose)`) before claiming. This prevents deadlocks between concurrent acquisitions sharing a lock subset.
 
 ### 11.4 Claimant-guarded release
 
@@ -801,9 +840,9 @@ Any hash-based change detection is deliberately absent. Cost of fragility outwei
 
 Coordinated migration of a node's attribute schema (new shape published, readers updated, old deprecated) is unspecified. To be designed before any consumed attribute shape has many external consumers.
 
-### 12.12 Region-level subscriptions
+### 12.12 Scope-level subscriptions
 
-Readers of a region currently do not receive change notifications; they read on demand. A future enhancement could allow a node to subscribe to region changes rather than to a specific writer node (decoupling reader from writer identity). Adds machinery; defer until a concrete use case demands it.
+Readers of a scope currently do not receive change notifications; they read on demand. A future enhancement could allow a node to subscribe to scope changes rather than to a specific writer node (decoupling reader from writer identity). Adds machinery; defer until a concrete use case demands it.
 
 ### 12.13 Dynamic dependencies
 
@@ -829,7 +868,7 @@ Python-shaped rimsky client libraries / executor helpers published to pypi. Defe
 
 ## 13. Glossary
 
-The authoritative vocabulary is **`docs/glossary.md`** — read it for full definitions of claim, named lock, region, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, value-pass, claim-pass, write_semantics, pick policy, and the related terms.
+The authoritative vocabulary is **`docs/glossary.md`** — read it for full definitions of claim, named lock, scope, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, value-pass, claim-pass, write_semantics, pick policy, and the related terms.
 
 A short reference for terms specific to this design doc that the glossary doesn't cover (because they're conceptual / discursive rather than load-bearing protocol vocabulary):
 
@@ -838,8 +877,8 @@ A short reference for terms specific to this design doc that the glossary doesn'
 - **Executor node** — A node with an `executor`. Dispatched via the protocol; work is done externally.
 - **Scheduled node** — Any node with a `schedule`. Scheduler emits `invalidate` when the cron fires.
 - **Fan-out node** — A pure-cascade node with a `schedule` and many dependents; invalidate wave fans out on cron fire.
-- **Probe** — A node whose work writes its own region while exercising upstream regions realistically. Not a guard; its output is consumed downstream.
-- **Three collections** — The architectural separation of orchestrator, store library, and executor library. Versioned together in v1, separable indefinitely.
+- **Probe** — A node whose work writes its own scope while exercising upstream scopes realistically. Not a guard; its output is consumed downstream.
+- **Four-layer model** — The architectural separation of foundation, modeling, service protocols, and bundled services. See `docs/architecture.md` §1.
 - **Async handoff** — Protocol pattern where an executor returns `AsyncAccepted` immediately and later posts the terminal outcome to a callback URL. Lets executors with long-running internal work avoid holding the `Execute` stream open.
 - **Conformance suite** — The `rimsky-conformance` binary that validates a given executor endpoint against the protocol contract.
 - **`@blessed-invariant`** — A source annotation marking a load-bearing property that implementation changes must preserve.

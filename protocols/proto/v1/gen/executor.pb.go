@@ -52,11 +52,15 @@ type ExecuteRequest struct {
 	CancelToken string `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
 	// Increments on every retry. Exposed for executor visibility / idempotency.
 	RunAttempt int32 `protobuf:"varint,11,opt,name=run_attempt,json=runAttempt,proto3" json:"run_attempt,omitempty"`
-	// The supervisor-side rimsky_dispatch.id for this dispatch. Exposed
-	// so executors can key per-dispatch traces/state (the executor
-	// observability protocol, spec §2, identifies dispatches by this
-	// id). May be empty when the supervisor invokes Execute outside the
-	// dispatch-row path (e.g. unit tests or stub-mode probes).
+	// The supervisor-side rimsky_worker_request.id for this dispatch.
+	// Exposed so executors can key per-dispatch traces/state (the
+	// executor observability protocol, spec §2, identifies dispatches by
+	// this id). The wire field name `dispatch_id` is preserved for
+	// compatibility with the executor observability protocol; the
+	// underlying table is `rimsky_worker_request` post-Phase-5
+	// consolidation. May be empty when the supervisor invokes Execute
+	// outside the worker-request-row path (e.g. unit tests or stub-mode
+	// probes).
 	DispatchId    string `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -220,7 +220,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
         WHERE f.state = 'running'
           AND f.started_at IS NOT NULL
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_dispatch d
+              SELECT 1 FROM rimsky_worker_request d
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
           )
           AND EXISTS (
@@ -279,7 +279,7 @@ func (s *framesImpl) FailAllPendingNodes(ctx context.Context, instanceID shared.
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT d.id, d.claimed_by, d.frame_id
-        FROM rimsky_dispatch d
+        FROM rimsky_worker_request d
         JOIN rimsky_frames f ON f.frame_id = d.frame_id
         WHERE d.claimed_by IS NOT NULL
           AND f.state IN ('completed','failed')

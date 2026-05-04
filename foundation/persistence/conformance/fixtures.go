@@ -15,8 +15,8 @@ import (
 )
 
 // seedFixtureSet creates the minimum chain of rows needed to satisfy
-// the FK chain rimsky_dispatch -> rimsky_nodes -> rimsky_instances ->
-// rimsky_templates AND rimsky_dispatch -> rimsky_frames. Returns the
+// the FK chain rimsky_worker_request -> rimsky_nodes -> rimsky_instances ->
+// rimsky_templates AND rimsky_worker_request -> rimsky_frames. Returns the
 // (nodeID, frameID) pair for tests to enqueue against.
 //
 // The template carries frame_resolution = "serial_queue" + a node-typed

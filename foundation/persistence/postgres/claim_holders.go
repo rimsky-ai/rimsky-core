@@ -1,8 +1,8 @@
 // ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`.
 // One row per (lock_holder, holder_node) pair from the §18.4 holding
 // subgraph. Rows transition `'active'` → `'completed'` (success) or
-// `'failed'` (give-up/failure) per §4.10 invariant 13. The lock_holder_id FK cascades
-// deletes when the parent rimsky_lock_holders row is removed at
+// `'failed'` (give-up/failure) per §4.10 invariant 13. The claim_handle_id FK cascades
+// deletes when the parent rimsky_claim_handle row is removed at
 // auto-terminal.
 package postgres
 
@@ -20,14 +20,14 @@ import (
 
 // ClaimHoldersStore is the postgres ClaimHoldersStore implementation.
 
-const claimHolderCols = `id, lock_holder_id, holder_node_id, state, completed_at`
+const claimHolderCols = `id, claim_handle_id, holder_node_id, state, completed_at`
 
 // Insert satisfies persistence.ClaimHoldersStore. Rows are inserted in
 // 'active' state.
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
-		`INSERT INTO rimsky_claim_holders (id, lock_holder_id, holder_node_id, state, frame_id)
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_node_id, state, frame_id)
 		 VALUES ($1, $2, $3, 'active', $4)`,
 		in.ID, in.LockHolderID, in.HolderNodeID, in.FrameID,
 	)
@@ -58,7 +58,7 @@ func (s *claimHoldersImpl) ListByLockHolderID(ctx context.Context, lockHolderID 
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE lock_holder_id = $1
+		 WHERE claim_handle_id = $1
 		 ORDER BY id ASC`, lockHolderID,
 	)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *claimHoldersImpl) ListActiveByLockHolderID(ctx context.Context, lockHol
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE lock_holder_id = $1 AND state = 'active'
+		 WHERE claim_handle_id = $1 AND state = 'active'
 		 ORDER BY id ASC`, lockHolderID,
 	)
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 }
 
 // CompleteByLockHolderAndNode satisfies persistence.ClaimHoldersStore. Single
-// targeted UPDATE on the unique (lock_holder_id, holder_node_id) pair —
+// targeted UPDATE on the unique (claim_handle_id, holder_node_id) pair —
 // avoids the read-then-write round-trip the supervisor's terminal-release
 // path would otherwise pay per held alias.
 func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
@@ -127,7 +127,7 @@ func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
 		`UPDATE rimsky_claim_holders
 		    SET state = $3,
 		        completed_at = now()
-		  WHERE lock_holder_id = $1
+		  WHERE claim_handle_id = $1
 		    AND holder_node_id = $2
 		    AND state = 'active'`,
 		lockHolderID, holderNodeID, string(state),

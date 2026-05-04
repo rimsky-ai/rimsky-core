@@ -422,19 +422,21 @@ func releaseClaim(
 		scope = []byte(row.ScopeData)
 		address = []byte(row.Address)
 	}
-	claimID := locks.ClaimID(lk.LockHolderID.String())
 	verbAction := releaseActionString(success)
-	var verbErr error
-	if success {
-		verbErr = lk.Store.Commit(ctx, claimID, scope, address)
-	} else {
-		verbErr = lk.Store.Abandon(ctx, claimID, scope, address)
+	outcome := AggregateCommit
+	if !success {
+		outcome = AggregateAbandon
 	}
-	if verbErr != nil {
-		return fmt.Errorf("releaseClaim: store verb (%s): %w", verbAction, verbErr)
-	}
-	if err := args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx); err != nil {
-		return fmt.Errorf("releaseClaim: Delete: %w", err)
+	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+		ClaimHandleID: lk.LockHolderID,
+		SupervisorID:  args.SupervisorID,
+		Source:        ActiveTerminal,
+		Outcome:       outcome,
+		Producer:      lk.Store,
+		Scope:         scope,
+		Address:       address,
+	}); err != nil {
+		return fmt.Errorf("releaseClaim: %w", err)
 	}
 	emitLockReleased(ctx, args, acq, lk, verbAction)
 	return nil

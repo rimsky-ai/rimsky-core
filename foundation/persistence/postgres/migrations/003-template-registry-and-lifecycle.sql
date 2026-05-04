@@ -4,15 +4,15 @@
 --
 -- Pre-v1: drop and recreate templates/instances. Existing dev databases
 -- are nuked. CASCADE drops dependent rows in rimsky_nodes,
--- rimsky_dispatch, rimsky_lock_holders, rimsky_claim_holders, rimsky_frames,
--- rimsky_node_attributes, rimsky_schedules, rimsky_events.
+-- rimsky_worker_request, rimsky_claim_handle, rimsky_claim_holders,
+-- rimsky_frames, rimsky_node_attributes, rimsky_schedules, rimsky_events.
 --
 -- FK accounting (audit trail for the post-DROP CASCADE re-add list).
 --
 -- The DROP TABLE … CASCADE on rimsky_templates / rimsky_instances drops
 -- ONLY the FK constraints whose REFERENCED side was rimsky_templates or
 -- rimsky_instances. Constraints whose REFERENCED side is some OTHER
--- table (rimsky_nodes, rimsky_lock_holders, rimsky_frames) survive the
+-- table (rimsky_nodes, rimsky_claim_handle, rimsky_frames) survive the
 -- DROP and do NOT need to be re-added.
 --
 -- Constraints to re-add (REFERENCED side = rimsky_templates or
@@ -28,15 +28,16 @@
 --
 -- Constraints that survive (REFERENCED side ≠ rimsky_templates /
 -- rimsky_instances; not re-added here):
---   rimsky_dispatch.node_id         → rimsky_nodes(id)
+--   rimsky_worker_request.node_id   → rimsky_nodes(id)
 --   rimsky_node_attributes.node_id  → rimsky_nodes(id)
 --   rimsky_schedules.node_id        → rimsky_nodes(id)
---   rimsky_lock_holders.holder_node_id → rimsky_nodes(id)
+--   rimsky_claim_handle.holder_node_id → rimsky_nodes(id)
 --   rimsky_claim_holders.holder_node_id → rimsky_nodes(id)
 --   rimsky_events.node_id           → rimsky_nodes(id)
---   rimsky_dispatch.frame_id        → rimsky_frames(frame_id)
+--   rimsky_worker_request.frame_id  → rimsky_frames(frame_id)
 --   rimsky_nodes.frame_id           → rimsky_frames(frame_id)
---   rimsky_claim_holders.lock_holder_id → rimsky_lock_holders(id)
+--   rimsky_claim_handle.worker_request_id → rimsky_worker_request(id)
+--   rimsky_claim_holders.claim_handle_id  → rimsky_claim_handle(id)
 
 DROP TABLE IF EXISTS rimsky_instances CASCADE;
 DROP TABLE IF EXISTS rimsky_templates CASCADE;
@@ -98,11 +99,11 @@ CREATE INDEX idx_rimsky_lifecycle_idempotency_scope
 -- order (so we don't have to maintain an ordered DELETE list as the
 -- schema grows).
 TRUNCATE TABLE rimsky_events,
-               rimsky_dispatch,
+               rimsky_worker_request,
                rimsky_node_attributes,
                rimsky_schedules,
                rimsky_claim_holders,
-               rimsky_lock_holders,
+               rimsky_claim_handle,
                rimsky_frames,
                rimsky_nodes
     RESTART IDENTITY CASCADE;

@@ -15,7 +15,7 @@ import (
 )
 
 // TestSQLiteForeignKeysEnabled confirms the FK-enforcement PRAGMA is
-// active on driver-issued connections. Without it, the rimsky_lock_holders
+// active on driver-issued connections. Without it, the rimsky_claim_handle
 // → rimsky_claim_holders ON DELETE CASCADE wouldn't fire, which would
 // silently break auto-terminal cleanup.
 //

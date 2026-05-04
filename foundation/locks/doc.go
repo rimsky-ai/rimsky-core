@@ -1,19 +1,22 @@
-// Package store defines the rimsky-side store contract. Per spec
+// Package locks defines the rimsky-side claim-producer contract. Per spec
 // docs/history/2026-04-27-stores-redesign-v3-design.md as amended by
 // docs/history/2026-04-30-stores-protocol-cleanup-design.md (store-
-// internal-vocabulary excision).
+// internal-vocabulary excision) and the layer-crystallization Phase 2
+// rename, the Go interface is `ClaimProducer`. The legacy alias
+// `Store = ClaimProducer` is kept temporarily for source-level
+// compatibility; new code should use `ClaimProducer`.
 //
-// In v3 the standard store implementations live in standalone binaries
+// Standard claim-producer implementations live in standalone binaries
 // under stores/ and rimsky talks to them via the gRPC client in
-// core/store/remote/. This package owns:
+// foundation/integration/remote/. This package owns:
 //
-//   - The Store interface (interface.go) — four runtime verbs plus
+//   - The ClaimProducer interface (interface.go) — four runtime verbs plus
 //     Capabilities, every verb keyed on a rimsky-generated claim_id.
 //   - Value types (types.go) — ClaimID, ClaimSpec, ClaimResult,
 //     OpenOutcome, NamedLockSpec, Capabilities, WriteSemantics.
-//   - Registry (registry.go) — a simple name→Store map populated
+//   - Registry (registry.go) — a simple name→ClaimProducer map populated
 //     externally by the rimsky cmd binaries at startup.
-//   - rimsky_lock_holders postgres helpers (lockholders.go) — the
+//   - rimsky_claim_handle postgres helpers (lockholders.go) — the
 //     bookkeeping table that backs invariant 9a.
 //   - Pure rimsky-side comparators (conflict.go) — ModeCoexists for
 //     the C3.1 mode-coexistence matrix; ScopesByteEqual for v3's
@@ -21,23 +24,24 @@
 //
 // Concrete implementations:
 //
-//   - core/store/remote/    — the gRPC client; the only concrete Store
-//     in the rimsky module.
-//   - core/store/storetest/ — an in-Go fake for unit tests where the
-//     wire isn't relevant.
-//   - stores/<kind>/        — standalone store-service binaries
-//     (filesystem, postgres, stub) that implement the wire protocol.
+//   - foundation/integration/remote/ — the gRPC client; the only
+//     concrete ClaimProducer in the rimsky module.
+//   - foundation/locks/storetest/    — an in-Go fake for unit tests
+//     where the wire isn't relevant.
+//   - stores/<kind>/                 — standalone claim-producer
+//     binaries (filesystem, postgres, stub) that implement the wire
+//     protocol.
 //
 // # Two primitives
 //
-//   - Claim — store-bound. ClaimSpec carries (StoreName, Selector,
-//     Intent, Alias). The store parses Selector and decides what it
+//   - Claim — producer-bound. ClaimSpec carries (StoreName, Selector,
+//     Intent, Alias). The producer parses Selector and decides what it
 //     means (scoped access vs. an items-table queue convention).
 //
-//   - Named lock — store-independent. NamedLockSpec carries (Name) only.
+//   - Named lock — producer-independent. NamedLockSpec carries (Name) only.
 //     Limit lives in operator config.
 //
-// Both are persisted as rows in rimsky_lock_holders but the two specs
+// Both are persisted as rows in rimsky_claim_handle but the two specs
 // are distinct types with no common interface.
 //
 // # Four protocol verbs (spec §4.1)
@@ -47,14 +51,14 @@
 //   - Abandon(ctx, claim_id, scope, address)
 //   - Release(ctx, claim_id, scope, address)
 //
-// Plus Capabilities(ctx) for the startup handshake. Store
-// disposition (what Commit / Abandon mean for the store's own
-// state) is governed by per-store config; rimsky carries only
+// Plus Capabilities(ctx) for the startup handshake. Producer
+// disposition (what Commit / Abandon mean for the producer's own
+// state) is governed by per-producer config; rimsky carries only
 // the success/failure binary.
 //
 // # write_semantics (spec §4.8)
 //
-// Per-store-service: direct | staged_blocking | staged_async. Baked
-// into the store-service's own config; rimsky validates strict equality
+// Per-producer: direct | staged_blocking | staged_async. Baked
+// into the producer's own config; rimsky validates strict equality
 // against the operator-declared block in rimsky.yml.
 package locks

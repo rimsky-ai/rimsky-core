@@ -1,14 +1,33 @@
-// Foundation orphan reaper. Per spec
-// docs/history/2026-04-27-stores-redesign-v3-design.md §7.5: the orphan
-// reaper deletes the lock-holder row claimant-guarded WITHOUT calling
-// Store.Abandon — the store's own TTL/sweep handles cleanup of its
-// internal state. This is a deliberate decoupling from v2, which fired
-// Abandon as part of the reap.
+// Foundation orphan reaper — unified worker-request + claim-handle
+// reaping per the Phase-6 layer-crystallization design.
 //
-// The visibility-timeout sweep that v2 did against operator-owned items
-// tables is gone — under v3 each store-service runs its own sweep
-// internally (per spec §7.8 obligation #1). Rimsky has no visibility
-// into store items tables.
+// Two complementary primitives, both invoked off the conductor's tick:
+//
+//   - SweepOrphanedClaims (in conductor.go): stale `phase='active'`
+//     rimsky_worker_request rows. Releases the claim claimant-guarded,
+//     reverts the row to phase='pending' so a fresh supervisor can
+//     pick it up. Held-phase rows are NEVER reaped here — they have
+//     `claimed_by IS NULL` so the SQL predicate excludes them, and
+//     auto-terminal handles their resolution.
+//
+//   - SweepLockHolders (this file): stale rimsky_claim_handle rows
+//     whose `expires_at < now()`. Hard-deletes the row claimant-
+//     guarded. Held claim handles whose owning worker-request was
+//     already deleted (worker_request_id NULL via the FK SET NULL)
+//     are reaped here too once their expires_at lapses, completing
+//     the cleanup that auto-terminal couldn't (e.g. when the held
+//     subgraph's nodes were themselves orphaned). No producer verb
+//     fires; the producer's own TTL/sweep handles cleanup of its
+//     internal state per foundation contract §4.5.
+//
+// Distinct from the dispatch-row reaper SweepOrphanedClaims, which
+// keys on heartbeat staleness (dynamic). The claim-handle reaper
+// keys on expires_at (acquisition-time + 5×heartbeat_interval).
+//
+// The visibility-timeout sweep that v2 did against operator-owned
+// items tables is gone — each store-service runs its own sweep
+// internally (foundation contract §4.5). Rimsky has no visibility
+// into producer items tables.
 
 package integration
 
@@ -28,7 +47,7 @@ type OrphanReaperArgs struct {
 }
 
 // SweepLockHolders implements the v3 orphan-reap. For each
-// rimsky_lock_holders row whose expires_at < now(), open a tx, DELETE
+// rimsky_claim_handle row whose expires_at < now(), open a tx, DELETE
 // the row claimant-guarded on holder_supervisor_id, emit a
 // `lock_orphan_reaped` event, COMMIT. Cascade FK on
 // rimsky_claim_holders cleans up held-claim rows.
@@ -48,7 +67,7 @@ func SweepLockHolders(ctx context.Context, args OrphanReaperArgs) error {
 	for _, lh := range expired {
 		if err := reapOneLockHolder(ctx, args, lh, log); err != nil {
 			log.Warn("tick: reap lock-holder failed",
-				"lock_holder_id", lh.ID.String(),
+				"claim_handle_id", lh.ID.String(),
 				"kind", string(lh.LockKind),
 				"error", err.Error())
 		}
@@ -91,7 +110,7 @@ func reapOneLockHolder(ctx context.Context, args OrphanReaperArgs, lh persistenc
 			Payload:    lockReapPayload(lh),
 		}, tx); err != nil {
 			log.Warn("tick: append lock_orphan_reaped failed",
-				"lock_holder_id", lh.ID.String(), "error", err.Error())
+				"claim_handle_id", lh.ID.String(), "error", err.Error())
 		}
 		return nil
 	})
@@ -105,7 +124,7 @@ func reapOneLockHolder(ctx context.Context, args OrphanReaperArgs, lh persistenc
 // identifiers.
 func lockReapPayload(lh persistence.LockHolderRow) map[string]any {
 	payload := map[string]any{
-		"lock_holder_id": lh.ID.String(),
+		"claim_handle_id": lh.ID.String(),
 		"lock_kind":      string(lh.LockKind),
 		"supervisor_id":  lh.HolderSupervisorID,
 		"holder_node_id": lh.HolderNodeID.String(),

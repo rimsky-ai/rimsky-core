@@ -1,7 +1,7 @@
 // Verifies spec §4.4: when a parent node commits with changed=false,
 // downstream cascade message-passes are skipped. The downstream nodes
 // remain fresh and never enter stale; the frame ends without them.
-// Pruning audit trail: rimsky_dispatch has no rows for the pruned
+// Pruning audit trail: rimsky_worker_request has no rows for the pruned
 // nodes for this frame_id.
 package frame_resolution
 
@@ -67,7 +67,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.Len(t, frames, 1)
 	var leafDispatchCount int
 	err = h.Pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM rimsky_dispatch
+		SELECT count(*) FROM rimsky_worker_request
 		WHERE frame_id = $1 AND node_id = $2
 	`, frames[0].FrameID, uuid.UUID(leaf.ID)).Scan(&leafDispatchCount)
 	require.NoError(t, err)

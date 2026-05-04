@@ -147,13 +147,13 @@ func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	if !o.Available {
-		t.Fatalf("regional Open should be Available; got Unavailable")
+		t.Fatalf("scope Open should be Available; got Unavailable")
 	}
-	var addr, region string
+	var addr, scope string
 	_ = json.Unmarshal(o.Result.Address, &addr)
-	_ = json.Unmarshal(o.Result.Scope, &region)
-	if addr != "concrete/path" || region != "concrete/path" {
-		t.Fatalf("regional selector should echo; got addr=%q region=%q", addr, region)
+	_ = json.Unmarshal(o.Result.Scope, &scope)
+	if addr != "concrete/path" || scope != "concrete/path" {
+		t.Fatalf("scope selector should echo; got addr=%q scope=%q", addr, scope)
 	}
 }
 

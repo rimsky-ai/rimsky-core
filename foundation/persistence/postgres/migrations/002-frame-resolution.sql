@@ -34,16 +34,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_rimsky_frames_coalesce_queued
 
 -- Abandon any in-flight cascade rows BEFORE the schema change so frame_id NOT NULL is satisfiable.
 UPDATE rimsky_nodes SET state = 'failed' WHERE state IN ('stale','running');
-DELETE FROM rimsky_dispatch;  -- best-effort; no frame_id retroactively assignable
+DELETE FROM rimsky_worker_request;  -- best-effort; no frame_id retroactively assignable
 
--- rimsky_dispatch: add frame_id (NOT NULL after the DELETE above means the table is empty post-step-7).
-ALTER TABLE rimsky_dispatch
+-- rimsky_worker_request: add frame_id (NOT NULL after the DELETE above means the table is empty post-step-7).
+ALTER TABLE rimsky_worker_request
     ADD COLUMN frame_id UUID NOT NULL REFERENCES rimsky_frames(frame_id) ON DELETE CASCADE;
 
-CREATE INDEX IF NOT EXISTS idx_rimsky_dispatch_frame
-    ON rimsky_dispatch (frame_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_dispatch_frame_claimed
-    ON rimsky_dispatch (frame_id) WHERE claimed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rimsky_worker_request_frame
+    ON rimsky_worker_request (frame_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_worker_request_frame_claimed
+    ON rimsky_worker_request (frame_id) WHERE claimed_by IS NOT NULL;
 
 -- rimsky_nodes: add frame_id (kill_requested was removed from 001-initial.sql
 -- directly under the pre-v1 rules; no DROP needed here).
@@ -54,8 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_rimsky_nodes_frame_state
     ON rimsky_nodes (frame_id, state)
     WHERE state IN ('stale','running');
 
--- rimsky_lock_holders: observability frame_id.
-ALTER TABLE rimsky_lock_holders ADD COLUMN frame_id UUID;
+-- rimsky_claim_handle: observability frame_id.
+ALTER TABLE rimsky_claim_handle ADD COLUMN frame_id UUID;
 
 -- rimsky_claim_holders: observability frame_id.
 ALTER TABLE rimsky_claim_holders ADD COLUMN frame_id UUID;

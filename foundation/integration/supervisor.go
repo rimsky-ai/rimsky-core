@@ -7,7 +7,7 @@
 //     terminal outcomes (see callback.go).
 //   - Loops:
 //   - Heartbeat tick (HeartbeatInterval): update own supervisor row, update
-//     per-active-node heartbeats, refresh `rimsky_lock_holders` rows owned
+//     per-active-node heartbeats, refresh `rimsky_claim_handle` rows owned
 //     by this supervisor whose holder_node_id is currently `running` (per
 //     spec §7.5). Operator invalidates do not preempt running work — they
 //     enqueue/coalesce a frame (per
@@ -20,8 +20,8 @@
 //
 // @blessed-invariant 4: Claimant-guarded release. (Spec §4.10 invariant 4.)
 //
-//	Every DELETE FROM rimsky_lock_holders and every UPDATE
-//	rimsky_dispatch SET claimed_by = NULL is gated on
+//	Every DELETE FROM rimsky_claim_handle and every UPDATE
+//	rimsky_worker_request SET claimed_by = NULL is gated on
 //	`AND … = supervisor_id`. The §7.5 heartbeat refresh below is a
 //	WRITE (not a release), but it inherits the same claimant guard:
 //	the WHERE clause is `holder_supervisor_id = $1`, so a stale
@@ -37,12 +37,12 @@
 // claim (rimsky-side). Per v3 spec §4.10:
 //
 //	The §7.3 acquisition transaction either claims the dispatch row
-//	AND inserts every required `rimsky_lock_holders` row AND records
+//	AND inserts every required `rimsky_claim_handle` row AND records
 //	the `Store.Open`-returned address, or none of these. The store's
 //	own state mutations run in a store-internal transaction
-//	decoupled from rimsky's. Single-writer-per-region (invariant 4b)
+//	decoupled from rimsky's. Single-writer-per-scope (invariant 4b)
 //	holds because rimsky's conflict predicate gates lock-holder
-//	INSERTs against `rimsky_lock_holders` only. The acquisition tx
+//	INSERTs against `rimsky_claim_handle` only. The acquisition tx
 //	lives in `core/supervisor/runner_acquire.go`; this file's
 //	contribution is structural — the heartbeat refresh below MUST
 //	NOT extend rows for nodes that have transitioned out of

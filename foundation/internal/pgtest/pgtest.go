@@ -73,7 +73,7 @@ func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
 // pool of a persistence.Driver. Test-only escape hatch for tests that
 // need to seed or mutate state through SQL paths the persistence
 // interface does not surface (e.g. directly inserting into
-// rimsky_dispatch.last_heartbeat_at). Fatals on driver-mismatch or
+// rimsky_worker_request.last_heartbeat_at). Fatals on driver-mismatch or
 // SQL error.
 //
 // Lives here (not in a per-test package) so callers can stay outside

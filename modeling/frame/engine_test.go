@@ -57,7 +57,7 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Driver,
 	return id
 }
 
-// seedDispatch inserts a rimsky_dispatch row directly. Bypasses
+// seedDispatch inserts a rimsky_worker_request row directly. Bypasses
 // Queue.Enqueue+ClaimDispatchRow because the test fixes a static id and
 // pre-claims the row in one shot.
 func seedDispatch(t *testing.T, ctx context.Context, d persistence.Driver,
@@ -68,7 +68,7 @@ func seedDispatch(t *testing.T, ctx context.Context, d persistence.Driver,
 		claimedByPtr = nil
 	}
 	pgtest.ExecForTest(ctx, t, d, `
-        INSERT INTO rimsky_dispatch
+        INSERT INTO rimsky_worker_request
             (id, node_id, executor_name, required_stores, claimed_by, frame_id)
         VALUES ($1, $2, NULL, '{}', $3, $4)
     `, uuid.New(), nodeID, claimedByPtr, frameID)
@@ -268,7 +268,7 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 
 	var claimedBy *string
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT claimed_by FROM rimsky_dispatch WHERE node_id = $1`, []any{src}, &claimedBy)
+		`SELECT claimed_by FROM rimsky_worker_request WHERE node_id = $1`, []any{src}, &claimedBy)
 	require.Nil(t, claimedBy)
 }
 

@@ -360,15 +360,19 @@ func dialRemoteStores(ctx context.Context, cfg RemoteStoresConfig) (*locks.Regis
 
 // dialLifecycleSubscribers walks the union of claim_producers and
 // executors and dials a LifecycleClient for any peer whose protocols
-// list includes "lifecycle_subscriber". Returns a non-nil
-// *LifecycleRegistry even on the empty path.
-func dialLifecycleSubscribers(_ context.Context, stores RemoteStoresConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
+// list includes "lifecycle_subscriber". Each per-peer dial is bounded
+// by capabilitiesHandshakeTimeout (same envelope as dialRemoteStores)
+// so a wedged peer at startup cannot block the rimsky process forever.
+// Returns a non-nil *LifecycleRegistry even on the empty path.
+func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
 	reg := locks.NewLifecycleRegistry()
 	for name, entry := range stores.Stores {
 		if !entry.HasProtocol(ProtocolLifecycleSubscriber) {
 			continue
 		}
-		client, err := remote.DialLifecycle(context.Background(), name, entry.Endpoint)
+		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+		client, err := remote.DialLifecycle(dialCtx, name, entry.Endpoint)
+		cancel()
 		if err != nil {
 			reg.Close()
 			return nil, fmt.Errorf("dialLifecycleSubscribers: producer %q: %w", name, err)
@@ -379,7 +383,9 @@ func dialLifecycleSubscribers(_ context.Context, stores RemoteStoresConfig, exec
 		if !entry.HasProtocol(ProtocolLifecycleSubscriber) {
 			continue
 		}
-		client, err := remote.DialLifecycle(context.Background(), name, entry.Endpoint)
+		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+		client, err := remote.DialLifecycle(dialCtx, name, entry.Endpoint)
+		cancel()
 		if err != nil {
 			reg.Close()
 			return nil, fmt.Errorf("dialLifecycleSubscribers: executor %q: %w", name, err)

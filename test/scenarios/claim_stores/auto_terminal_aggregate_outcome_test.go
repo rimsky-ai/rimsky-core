@@ -6,7 +6,7 @@
 // stub fixture and asserts that:
 //   - exactly one store `commit` verb fires for the held claim
 //     (aggregate-completed → Commit per spec §4.10 invariant 13).
-//   - zero `rimsky_lock_holders` rows remain for the instance after
+//   - zero `rimsky_claim_handle` rows remain for the instance after
 //     both nodes reach `fresh`.
 //   - zero `rimsky_claim_holders` rows remain (cascade FK cleans them
 //     when the lock-holder row is deleted).
@@ -113,7 +113,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	// Lock-holder + claim-holder rows are gone.
 	var lhCount, chCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_lock_holders lh
+		`SELECT count(*) FROM rimsky_claim_handle lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1`, iid,
 	).Scan(&lhCount))

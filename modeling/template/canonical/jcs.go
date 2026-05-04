@@ -22,17 +22,30 @@ import (
 	"github.com/fallguy/rimsky/modeling/node"
 )
 
+// CanonicalSpecBytes returns the JCS-canonicalized bytes of a
+// TemplateSpec — the same bytes that feed CanonicalSpecHash. Lifecycle
+// fan-out (controlapi/lifecycle.go) carries these bytes verbatim into
+// OnTemplateRegistered.Spec so subscribers see the exact canonical form
+// rimsky hashed.
+func CanonicalSpecBytes(spec node.TemplateSpec) ([]byte, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal spec: %w", err)
+	}
+	canon, err := jsoncanonicalizer.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize spec: %w", err)
+	}
+	return canon, nil
+}
+
 // CanonicalSpecHash returns the rimsky-side content hash of a TemplateSpec
 // in the form "sha256-<64-hex>". The spec is JSON-marshalled via
 // encoding/json, JCS-canonicalized, then SHA-256-hashed.
 func CanonicalSpecHash(spec node.TemplateSpec) (string, error) {
-	raw, err := json.Marshal(spec)
+	canon, err := CanonicalSpecBytes(spec)
 	if err != nil {
-		return "", fmt.Errorf("marshal spec: %w", err)
-	}
-	canon, err := jsoncanonicalizer.Transform(raw)
-	if err != nil {
-		return "", fmt.Errorf("canonicalize spec: %w", err)
+		return "", err
 	}
 	sum := sha256.Sum256(canon)
 	return "sha256-" + hex.EncodeToString(sum[:]), nil

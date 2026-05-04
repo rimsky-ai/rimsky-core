@@ -43,7 +43,7 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 
 	// CreateInstance auto-enqueues a frame for the root. Clear it so the
 	// test's own inserts have full control.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	require.NoError(t, err)

@@ -333,7 +333,7 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
 	for time.Now().Before(deadline) {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx, `
-            SELECT count(*) FROM rimsky_dispatch d
+            SELECT count(*) FROM rimsky_worker_request d
             JOIN rimsky_nodes n ON n.id = d.node_id
             WHERE n.instance_id = $1
         `, instanceID).Scan(&count)
@@ -415,7 +415,7 @@ func (h *Harness) WaitForEventKind(nodeID shared.UUID, kind string, timeout time
 	return false
 }
 
-// WaitForDispatch polls until a rimsky_dispatch row exists for the
+// WaitForDispatch polls until a rimsky_worker_request row exists for the
 // given node.
 func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) bool {
 	h.T.Helper()
@@ -423,7 +423,7 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 	for time.Now().Before(deadline) {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_dispatch WHERE node_id = $1`, nodeID,
+			`SELECT count(*) FROM rimsky_worker_request WHERE node_id = $1`, nodeID,
 		).Scan(&count)
 		if err == nil && count > 0 {
 			return true

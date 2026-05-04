@@ -24,7 +24,7 @@ type DispatchRequest struct {
 	EnqueuedAt     time.Time // may be future-dated for backoff
 	// FrameID is the frame this dispatch belongs to (per
 	// docs/history/2026-04-26-frame-resolution-design.md §10.2). Required:
-	// rimsky_dispatch.frame_id is NOT NULL. Sourced from
+	// rimsky_worker_request.frame_id is NOT NULL. Sourced from
 	// rimsky_nodes.frame_id at enqueue time.
 	//
 	// @blessed-invariant 19: dispatch rows always carry a non-zero frame id.
@@ -78,9 +78,9 @@ type ClaimOwnership struct {
 }
 
 // DispatchListFilter is the observability browse filter for live
-// rimsky_dispatch rows. State is one of "" (any) / "pending"
+// rimsky_worker_request rows. State is one of "" (any) / "pending"
 // (claimed_by IS NULL) / "claimed" (claimed_by IS NOT NULL).
-// ExecutorName matches rimsky_dispatch.executor_name exactly when set.
+// ExecutorName matches rimsky_worker_request.executor_name exactly when set.
 // InstanceID joins via node_id → rimsky_nodes when set.
 type DispatchListFilter struct {
 	State        string
@@ -117,7 +117,7 @@ type Queue interface {
 	SelectCandidates(ctx context.Context, tx Tx, req SelectCandidatesRequest) ([]Candidate, error)
 
 	// ClaimDispatchRow performs the claimant-guarded UPDATE of
-	// rimsky_dispatch.claimed_by from NULL to supervisorID for the
+	// rimsky_worker_request.claimed_by from NULL to supervisorID for the
 	// given dispatch row, inside the caller's tx. Sets claimed_at and
 	// last_heartbeat_at to now(). Returns claimed=true when exactly one
 	// row was updated; false when the row was already claimed by someone
@@ -156,7 +156,7 @@ type Queue interface {
 	// "not_found"} when the dispatch row does not exist.
 	GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, ClaimOwnership, error)
 
-	// RefreshHeartbeat extends rimsky_dispatch.last_heartbeat_at to now()
+	// RefreshHeartbeat extends rimsky_worker_request.last_heartbeat_at to now()
 	// for every row claimed by supervisorID.
 	RefreshHeartbeat(ctx context.Context, supervisorID string) error
 

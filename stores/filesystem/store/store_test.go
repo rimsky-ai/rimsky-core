@@ -56,13 +56,13 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 		t.Fatalf("filesystem store should always return Available; got Unavailable")
 	}
 
-	// Region is a JSON-encoded path string identical to the selector.
-	var region string
-	if err := json.Unmarshal(outcome.Result.Scope, &region); err != nil {
-		t.Fatalf("unmarshal region: %v", err)
+	// Scope is a JSON-encoded path string identical to the selector.
+	var scope string
+	if err := json.Unmarshal(outcome.Result.Scope, &scope); err != nil {
+		t.Fatalf("unmarshal scope: %v", err)
 	}
-	if region != "alpha/beta.txt" {
-		t.Fatalf("region = %q, want %q", region, "alpha/beta.txt")
+	if scope != "alpha/beta.txt" {
+		t.Fatalf("scope = %q, want %q", scope, "alpha/beta.txt")
 	}
 
 	// Address is the joined path under the root.
@@ -91,8 +91,8 @@ func TestScopeByteEqualForSamePath(t *testing.T) {
 
 // TestScopeCanonicalizationCollapsesEquivalentForms verifies that
 // selectors that resolve to the same on-disk path produce byte-equal
-// region bytes. Without canonicalization "foo" and "./foo" would
-// produce byte-different regions and the rimsky-side region-conflict
+// scope bytes. Without canonicalization "foo" and "./foo" would
+// produce byte-different regions and the rimsky-side scope-conflict
 // check would fail to detect the collision.
 func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
@@ -107,7 +107,7 @@ func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 			t.Fatalf("Open(%q): %v", sel, err)
 		}
 		if string(o.Result.Scope) != string(first.Result.Scope) {
-			t.Fatalf("region for %q differs from %q: %q vs %q",
+			t.Fatalf("scope for %q differs from %q: %q vs %q",
 				sel, equivalents[0], o.Result.Scope, first.Result.Scope)
 		}
 	}

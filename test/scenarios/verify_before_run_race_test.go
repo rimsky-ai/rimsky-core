@@ -53,13 +53,13 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// a different integration. ClaimDispatchRow is claimant-guarded and
 	// SelectCandidates filters claimed_by IS NULL — neither path will
 	// admit our runner.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE node_id = $1`, n.ID)
+	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_worker_request WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	// Reuse the frame_id from the node row (seeded by frame.RunTick).
 	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
 	dispatchID := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id)
+		`INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), NOW(), $3)`,
 		dispatchID, n.ID, *n.FrameID,
 	)

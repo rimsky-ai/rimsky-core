@@ -42,7 +42,7 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 
 	var claimedBy *string
 	h.QueryRowSQL(
-		`SELECT claimed_by FROM rimsky_dispatch WHERE id = $1`,
+		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`,
 		[]any{dispatchID}, &claimedBy)
 	require.Nil(t, claimedBy,
 		"orphan reaper should release dispatch claim when joined frame is terminal")
@@ -106,7 +106,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, frameID, instanceID, nodeID, now)
 	dispatchID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_dispatch (id, node_id, executor_name, required_stores, claimed_by, frame_id)
+		INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, claimed_by, frame_id)
 		VALUES ($1, $2, NULL, '{}', $3, $4)
 	`, dispatchID, nodeID, claimedBy, frameID)
 	return dispatchID

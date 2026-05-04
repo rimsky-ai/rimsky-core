@@ -80,7 +80,7 @@ func TestSubstitute(t *testing.T) {
 		{name: "claim non-payload short", raw: "{{claim.topics-ring.payload}}", wantMissing: true,
 			missingSubstr: "payload directive needs payload.<field>"},
 		{name: "claim invalid second segment", raw: "{{claim.topics-ring.metadata.x}}", wantMissing: true,
-			missingSubstr: "second segment must be address|region|payload"},
+			missingSubstr: "second segment must be address|scope|payload"},
 		{name: "claim empty payload", raw: "{{claim.empty-payload.payload.area}}", wantMissing: true,
 			missingSubstr: "claim payload is empty"},
 

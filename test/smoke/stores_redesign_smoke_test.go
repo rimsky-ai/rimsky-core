@@ -216,8 +216,8 @@ func fireOnceAndWait(
 // are simultaneously true:
 //
 //  1. count(rimsky_events kind='work_completed' payload->>'node_type'='review') >= 100
-//  2. count(rimsky_dispatch claimed_by IS NOT NULL) = 0
-//  3. count(rimsky_lock_holders) = 0
+//  2. count(rimsky_worker_request claimed_by IS NOT NULL) = 0
+//  3. count(rimsky_claim_handle) = 0
 //  4. count(rimsky_claim_holders state='active') = 0
 func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) bool {
 	t.Helper()
@@ -234,7 +234,7 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 
 	var inflightDispatch int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_dispatch WHERE claimed_by IS NOT NULL`,
+		`SELECT count(*) FROM rimsky_worker_request WHERE claimed_by IS NOT NULL`,
 	).Scan(&inflightDispatch); err != nil {
 		t.Fatalf("cascadeAtSteadyState: in-flight dispatch: %v", err)
 	}
@@ -244,7 +244,7 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 
 	var lockHolders int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_lock_holders`,
+		`SELECT count(*) FROM rimsky_claim_handle`,
 	).Scan(&lockHolders); err != nil {
 		t.Fatalf("cascadeAtSteadyState: lock holders: %v", err)
 	}
@@ -284,20 +284,20 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	rows, err = stack.Pool.Query(ctx,
 		`SELECT count(*) FILTER (WHERE claimed_by IS NULL),
 		        count(*) FILTER (WHERE claimed_by IS NOT NULL)
-		   FROM rimsky_dispatch`)
+		   FROM rimsky_worker_request`)
 	if err == nil && rows.Next() {
 		var unclaimed, claimed int
 		_ = rows.Scan(&unclaimed, &claimed)
-		t.Logf("rimsky_dispatch: unclaimed=%d claimed=%d", unclaimed, claimed)
+		t.Logf("rimsky_worker_request: unclaimed=%d claimed=%d", unclaimed, claimed)
 		rows.Close()
 	}
 
 	rows, err = stack.Pool.Query(ctx,
-		`SELECT count(*) FROM rimsky_lock_holders`)
+		`SELECT count(*) FROM rimsky_claim_handle`)
 	if err == nil && rows.Next() {
 		var n int
 		_ = rows.Scan(&n)
-		t.Logf("rimsky_lock_holders: %d", n)
+		t.Logf("rimsky_claim_handle: %d", n)
 		rows.Close()
 	}
 
@@ -446,15 +446,15 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 
 		// Per-item: every rimsky_claim_holders row whose lock-holder
 		// row points at this item via scope_data. Under v2 the
-		// claim-holders rows key on lock_holder_id (FK to
-		// rimsky_lock_holders); we join both so the dump shows the
+		// claim-holders rows key on claim_handle_id (FK to
+		// rimsky_claim_handle); we join both so the dump shows the
 		// full ledger for items still held by some node's claim.
 		hrows, herr := stack.Pool.Query(ctx,
-			`SELECT ch.id, ch.lock_holder_id, ch.holder_node_id,
+			`SELECT ch.id, ch.claim_handle_id, ch.holder_node_id,
 			        ch.state, ch.completed_at,
 			        lh.store_name, lh.scope_data
 			   FROM rimsky_claim_holders ch
-			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
+			   JOIN rimsky_claim_handle lh ON lh.id = ch.claim_handle_id
 			  WHERE lh.scope_data::text = $1
 			  ORDER BY ch.id`,
 			fmt.Sprintf("%q", s.ItemID),
@@ -493,9 +493,9 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		// the holder nodes for this claim.
 		drows, derr := stack.Pool.Query(ctx,
 			`SELECT d.id, d.node_id, d.claimed_by, d.enqueued_at, d.frame_id
-			   FROM rimsky_dispatch d
+			   FROM rimsky_worker_request d
 			   JOIN rimsky_claim_holders ch ON ch.holder_node_id = d.node_id
-			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
+			   JOIN rimsky_claim_handle lh ON lh.id = ch.claim_handle_id
 			  WHERE lh.scope_data::text = $1`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
@@ -527,7 +527,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		}
 		drows.Close()
 		if !anyDispatch {
-			t.Logf("  (no rimsky_dispatch rows referencing this claim's holders)")
+			t.Logf("  (no rimsky_worker_request rows referencing this claim's holders)")
 		}
 	}
 
@@ -641,7 +641,7 @@ func scopeNode() map[string]any {
 	}
 }
 
-// draftNode depends on claim-topic + scope; declares a write region into
+// draftNode depends on claim-topic + scope; declares a write scope into
 // the `content` filesystem store substituted from upstream attributes.
 // Stub returns an empty attributes_delta.
 //
@@ -688,7 +688,7 @@ func draftNode() map[string]any {
 // store (success) or Abandon (failure); the postgres reference
 // store-service's per-policy `on_commit_default` /
 // `on_give_up_default` config governs disposition. This node just
-// reads the draft's output region.
+// reads the draft's output scope.
 func reviewNode() map[string]any {
 	return map[string]any{
 		"type":         "review",

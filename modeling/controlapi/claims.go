@@ -1,4 +1,4 @@
-// claims.go — GET /lock-holders/{lock_holder_id}/claim-holders.
+// claims.go — GET /lock-holders/{claim_handle_id}/claim-holders.
 //
 // Returns the held-claim ledger rows for a given lock-holder. Under
 // the stores redesign each row simply records subgraph membership and
@@ -23,7 +23,7 @@ import (
 
 type claimHolderResponse struct {
 	ID           string     `json:"id"`
-	LockHolderID string     `json:"lock_holder_id"`
+	LockHolderID string     `json:"claim_handle_id"`
 	HolderNodeID string     `json:"holder_node_id"`
 	State        string     `json:"state"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
@@ -39,23 +39,23 @@ func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 	}
 }
 
-// registerClaimsRoutes wires GET /lock-holders/{lock_holder_id}/claim-holders.
+// registerClaimsRoutes wires GET /lock-holders/{claim_handle_id}/claim-holders.
 // (Renamed from /claims/{claim_id}/holders per spec §12.11 — the
 // row's identity is by lock-holder FK, not by a free-form claim_id.)
 func registerClaimsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/lock-holders/{lock_holder_id}/claim-holders", handleListClaimHolders(deps))
+	r.Get("/lock-holders/{claim_handle_id}/claim-holders", handleListClaimHolders(deps))
 }
 
 func handleListClaimHolders(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		raw := chi.URLParam(req, "lock_holder_id")
+		raw := chi.URLParam(req, "claim_handle_id")
 		if raw == "" {
-			badRequest(w, "lock_holder_id is required")
+			badRequest(w, "claim_handle_id is required")
 			return
 		}
 		id, err := uuid.Parse(raw)
 		if err != nil {
-			badRequest(w, "lock_holder_id must be a UUID")
+			badRequest(w, "claim_handle_id must be a UUID")
 			return
 		}
 		rows, err := deps.Persist.ClaimHolders().ListByLockHolderID(req.Context(), id, nil)

@@ -61,7 +61,7 @@ const (
 // ExecutorName is nullable: native (claim-only) nodes have no executor and
 // are run by the supervisor's omnibus runner directly (spec §7.3). The
 // concurrency_tags field is gone — per-node concurrency now lives in the
-// template's `locks: [...]` declarations enforced via rimsky_lock_holders.
+// template's `locks: [...]` declarations enforced via rimsky_claim_handle.
 //
 // RequiredStores is denormalised from the template at enqueue time and
 // drives the §6.2 supervisor-pool specialisation predicate. LastHeartbeatAt

@@ -5,7 +5,7 @@
 //   - {{deps.<node>.<field>}} — upstream node's persisted attributes
 //   - {{claim.<alias>.address}} — live claim's address bytes
 //   - {{claim.<alias>.payload.<field>}} — live claim's payload at named path
-//   - {{claim.<alias>.region}} — live claim's region bytes
+//   - {{claim.<alias>.scope}} — live claim's scope bytes
 //   - {{params.<key>}} — instance-level config params
 //
 // @blessed-invariant 11 — Userdata is opaque to rimsky.
@@ -21,7 +21,7 @@
 //	lazy-unmarshals into a transient map[string]any only inside the
 //	leaf-extraction call and discards it after extraction. The
 //	stringifyRaw helper (below) is the sanctioned shape-flattening
-//	site for top-level address/region directives — it unwraps a
+//	site for top-level address/scope directives — it unwraps a
 //	JSON-string value, otherwise returns the raw bytes verbatim, and
 //	performs no logging, normalization, or transformation. All other
 //	code paths must treat ClaimResult fields as opaque bytes (no
@@ -224,7 +224,7 @@ func resolveClaim(directive string, rest []string, claims map[string]locks.Claim
 		}
 		return stringify(val), nil
 	default:
-		return "", &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|region|payload"}
+		return "", &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|scope|payload"}
 	}
 }
 
@@ -253,7 +253,7 @@ func resolveParams(directive string, rest []string, params json.RawMessage) (str
 //
 // @blessed-invariant 20: this is the sanctioned introspection site for
 //
-//	payload field-walks. The companion sanctioned sites (address/region
+//	payload field-walks. The companion sanctioned sites (address/scope
 //	shape-flattening and the wire-encoding projection) are documented
 //	at the top of this file.
 //
@@ -304,10 +304,10 @@ func stringify(v any) string {
 }
 
 // stringifyRaw extracts a sensible string from raw JSON bytes for
-// substitution at top-level claim address/region directives. Strings
+// substitution at top-level claim address/scope directives. Strings
 // unwrap (drop the surrounding quotes); other shapes pass through
 // verbatim. Per invariant 20, this is the sanctioned shape-flattening
-// site for address/region leaves (walkPath is the sanctioned site for
+// site for address/scope leaves (walkPath is the sanctioned site for
 // payload field-walks); the function does not log, hash, or
 // transform — it returns bytes the caller embeds in a downstream
 // substitution string. Keep these two sites in lock-step with the

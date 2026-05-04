@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
@@ -144,8 +145,13 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			}
 			continue
 		}
+		var terminatedAtMs int64
+		if inst.TerminatedAt != nil {
+			terminatedAtMs = inst.TerminatedAt.UnixMilli()
+		}
 		_, perStoreErr, err := FanOutInstanceEvent(tickCtx, t.deps,
-			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec)
+			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
+			InstancePayload{TerminatedAtUnixMs: terminatedAtMs})
 		if err != nil {
 			// Per-store failure: log and try again next tick. The
 			// FanOut helper has already deleted lifecycle rows for the
@@ -181,7 +187,15 @@ func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst p
 				"peer_name", r.StoreRegistrationName)
 			continue
 		}
-		if err := s.OnInstanceTerminated(ctx, inst.TemplateHash, inst.ID.String()); err != nil {
+		var terminatedAtMs int64
+		if inst.TerminatedAt != nil {
+			terminatedAtMs = inst.TerminatedAt.UnixMilli()
+		}
+		if err := s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
+			InstanceID:         inst.ID.String(),
+			TemplateHash:       inst.TemplateHash,
+			TerminatedAtUnixMs: terminatedAtMs,
+		}); err != nil {
 			return err
 		}
 		if err := t.deps.Persist.LifecycleIdempotency().Delete(ctx,

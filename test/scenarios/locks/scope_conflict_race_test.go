@@ -1,12 +1,12 @@
-// Regional-conflict race scenario coverage — invariant 4b (single-
-// writer-per-region), with explicit regression cover for the cycle-4
-// fix at `core/queue/postgres/queue.go::TakeRegionAdvisory`
-// (called from `core/supervisor/runner_acquire.go::acquireClaim`).
+// Scope-conflict race scenario coverage — invariant 4b (single-
+// writer-per-scope), with explicit regression cover for the cycle-4
+// fix at `foundation/persistence/postgres/advisory_locker.go::TakeScopeLockInTx`
+// (called from `foundation/integration/runner_acquire.go::acquireClaim`).
 //
 // Setup:
 //   - One harness with a loopback stub fixture under a single store name.
 //   - One template with two nodes (worker-A, worker-B), both holding
-//     a regional rw claim against the same selector. NoSupervisor so we
+//     a scope rw claim against the same selector. NoSupervisor so we
 //     drive RunNode manually with two SupervisorIDs.
 //   - Two goroutines: each calls integration.RunNode with a distinct
 //     SupervisorID. A sync.WaitGroup releases both at the same instant;
@@ -14,16 +14,17 @@
 //     ownership.
 //
 // The load-bearing assertion: at no point during acquisition do TWO
-// `rimsky_lock_holders` rows for the contended region exist
-// simultaneously. The advisory lock on `(store, region)` serializes
+// `rimsky_claim_handle` rows for the contended scope exist
+// simultaneously. The advisory lock on `(store, scope)` serializes
 // the two acquisition transactions; only one can pass
-// `evaluateRegionConflict` at a time. After the first commits, the
+// `evaluateScopeConflict` at a time. After the first commits, the
 // second's predicate sees the holder row and returns conflict=true.
 //
-// SQL-primitive coverage of `TakeRegionAdvisory` itself lives in
-// `core/queue/postgres/queue_test.go::TestTakeRegionAdvisory_*`. This
-// scenario test exercises it through the real supervisor acquisition
-// flow.
+// SQL-primitive coverage of `TakeScopeLockInTx` itself lives in
+// `foundation/persistence/conformance/sort_order.go` (the scope-lock
+// branch of the sort-order conformance test, which both postgres and
+// sqlite drivers run). This scenario test exercises it through the real
+// supervisor acquisition flow.
 package locks
 
 import (
@@ -46,11 +47,11 @@ import (
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
-// TestRegionalClaimRace_OneAcquirerWins exercises the single-writer-per-
-// region invariant by racing two supervisors against the same selector.
-// Exactly one wins; the other backs off with Ran=false (region conflict
+// TestScopeClaimRace_OneAcquirerWins exercises the single-writer-per-
+// scope invariant by racing two supervisors against the same selector.
+// Exactly one wins; the other backs off with Ran=false (scope conflict
 // is a soft skip, not an error).
-func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
+func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -73,10 +74,10 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	// One template (single root node holding the contended claim), two
 	// instances. Each instance gets its own root frame, dispatch row,
 	// and node row — so two independent supervisors can race against
-	// the same region without frame-engine starvation issues that arise
+	// the same scope without frame-engine starvation issues that arise
 	// when two root nodes share an instance under serial_queue/coalesce.
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "regional-race", Version: "1",
+		Name: "scope-race", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -84,8 +85,8 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 			),
 		},
 	})
-	iidA := h.CreateInstance(tid, "ck-regional-race-A", map[string]any{})
-	iidB := h.CreateInstance(tid, "ck-regional-race-B", map[string]any{})
+	iidA := h.CreateInstance(tid, "ck-scope-race-A", map[string]any{})
+	iidB := h.CreateInstance(tid, "ck-scope-race-B", map[string]any{})
 
 	wA := h.FindNode(iidA, "worker")
 	wB := h.FindNode(iidB, "worker")
@@ -163,7 +164,7 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	}
 
 	// Allowed shapes per supervisor: (Ran=true, err=nil) — won the race;
-	// (Ran=false, err=nil) — lost the race (region conflict; soft skip).
+	// (Ran=false, err=nil) — lost the race (scope conflict; soft skip).
 	// Open-error / RPC-error shapes are not expected in this scenario;
 	// surface them clearly if they happen.
 	require.NoError(t, rA.err, "sup-A unexpected error")
@@ -190,9 +191,9 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, wins, 1, "at least one supervisor must successfully acquire")
 
-	// Invariant 4b: single-writer-per-region. After both goroutines
-	// returned, the count of region-kind rimsky_lock_holders rows for
-	// the contended (store, region) must be ≤ 1. (≤ rather than == because
+	// Invariant 4b: single-writer-per-scope. After both goroutines
+	// returned, the count of scope-kind rimsky_claim_handle rows for
+	// the contended (store, scope) must be ≤ 1. (≤ rather than == because
 	// the winning runner's terminal handler may have already deleted the
 	// row before we sample.) The 0-case is the common observation (both
 	// terminals fired and released their rows); the 1-case is the rare
@@ -200,12 +201,12 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	// claimant-released yet at sample time.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_lock_holders
-		  WHERE store_name = $1 AND lock_kind = 'region'`,
+		`SELECT count(*) FROM rimsky_claim_handle
+		  WHERE store_name = $1 AND lock_kind = 'scope'`,
 		"content",
 	).Scan(&lhCount))
 	require.LessOrEqual(t, lhCount, 1,
-		"invariant 4b: at most one writer-region lock-holder row per (store, region)")
+		"invariant 4b: at most one writer-scope lock-holder row per (store, scope)")
 
 	_ = iidA
 	_ = iidB

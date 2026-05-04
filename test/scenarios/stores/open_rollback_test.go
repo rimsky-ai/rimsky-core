@@ -8,7 +8,7 @@
 // which exercises the identical property end-to-end through the
 // `core/store/storetest.Fake` error-injection knob: it deploys a
 // claim-bearing template, drives RunNode with a Fake whose ErrorFunc
-// returns on `open`, and asserts (a) zero rimsky_lock_holders rows for
+// returns on `open`, and asserts (a) zero rimsky_claim_handle rows for
 // the node, (b) the dispatch row's claimed_by reverts to NULL, (c)
 // exactly one open call was observed.
 //

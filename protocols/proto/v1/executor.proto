@@ -66,11 +66,15 @@ message ExecuteRequest {
   // Increments on every retry. Exposed for executor visibility / idempotency.
   int32 run_attempt = 11;
 
-  // The supervisor-side rimsky_dispatch.id for this dispatch. Exposed
-  // so executors can key per-dispatch traces/state (the executor
-  // observability protocol, spec §2, identifies dispatches by this
-  // id). May be empty when the supervisor invokes Execute outside the
-  // dispatch-row path (e.g. unit tests or stub-mode probes).
+  // The supervisor-side rimsky_worker_request.id for this dispatch.
+  // Exposed so executors can key per-dispatch traces/state (the
+  // executor observability protocol, spec §2, identifies dispatches by
+  // this id). The wire field name `dispatch_id` is preserved for
+  // compatibility with the executor observability protocol; the
+  // underlying table is `rimsky_worker_request` post-Phase-5
+  // consolidation. May be empty when the supervisor invokes Execute
+  // outside the worker-request-row path (e.g. unit tests or stub-mode
+  // probes).
   string dispatch_id = 12;
 }
 

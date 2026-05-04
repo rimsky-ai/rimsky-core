@@ -6,6 +6,11 @@ import "context"
 // service protocol. Implementations return nil from methods they
 // don't react to.
 type LifecycleSubscriber interface {
+	// Name returns the operator-configured peer name (matches the
+	// peer's name in rimsky.yml under claim_producers: or executors:).
+	// Rimsky-side identifier; not transported over the wire.
+	Name() string
+
 	OnTemplateRegistered(ctx context.Context, req OnTemplateRegisteredRequest) error
 	OnTemplateDeployed(ctx context.Context, req OnTemplateDeployedRequest) error
 	OnTemplateUndeployed(ctx context.Context, req OnTemplateUndeployedRequest) error

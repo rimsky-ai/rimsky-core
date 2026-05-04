@@ -12,31 +12,58 @@
 // rimsky_lifecycle_idempotency; subscribers can assume each (peer,
 // event) pair fires exactly once on the rimsky side. Subscribers SHOULD
 // also be idempotent against duplicate calls in case of network retries.
+//
+// Per the layer-crystallization design (2026-05-04), the canonical Go
+// interface and request types live in
+// github.com/fallguy/rimsky/protocols/lifecycle; the symbols declared
+// here are Go type aliases so rimsky-internal callers and external
+// implementers share one nominal type.
 
 package locks
 
-import "context"
+import (
+	"github.com/fallguy/rimsky/protocols/lifecycle"
+)
+
+// OnTemplateRegisteredRequest fires when a template is first registered
+// (its content-hashed spec is persisted but not yet deployed under any
+// movable tag).
+type OnTemplateRegisteredRequest = lifecycle.OnTemplateRegisteredRequest
+
+// OnTemplateDeployedRequest fires when one or more tags are pointed at a
+// template hash. Tags is the set of tags newly attached.
+type OnTemplateDeployedRequest = lifecycle.OnTemplateDeployedRequest
+
+// OnTemplateUndeployedRequest fires when the last tag is removed from a
+// template hash (the template is no longer reachable by tag, but its
+// hashed spec persists).
+type OnTemplateUndeployedRequest = lifecycle.OnTemplateUndeployedRequest
+
+// OnTemplateDeregisteredRequest fires when a template hash is fully
+// deleted (no tags, no instances).
+type OnTemplateDeregisteredRequest = lifecycle.OnTemplateDeregisteredRequest
+
+// OnInstanceCreatedRequest fires when a new instance is created from a
+// template hash.
+type OnInstanceCreatedRequest = lifecycle.OnInstanceCreatedRequest
+
+// OnInstanceTerminatedRequest fires when an instance reaches the
+// terminated state (rimsky_instances.terminated_at is set).
+type OnInstanceTerminatedRequest = lifecycle.OnInstanceTerminatedRequest
 
 // LifecycleSubscriber is the universal interface every lifecycle
 // subscriber implementation satisfies.
-type LifecycleSubscriber interface {
-	// Name returns the operator-configured peer name (matches the
-	// peer's name in rimsky.yml under claim_producers: or executors:).
-	Name() string
-
-	OnTemplateRegistered(ctx context.Context, templateID string) error
-	OnTemplateDeployed(ctx context.Context, templateID string) error
-	OnTemplateUndeployed(ctx context.Context, templateID string) error
-	OnTemplateDeregistered(ctx context.Context, templateID string) error
-	OnInstanceCreated(ctx context.Context, templateID, instanceID string) error
-	OnInstanceTerminated(ctx context.Context, templateID, instanceID string) error
-}
+type LifecycleSubscriber = lifecycle.LifecycleSubscriber
 
 // LifecycleRegistry holds the per-process name→LifecycleSubscriber map.
 // Populated externally by each rimsky cmd binary's startup wiring;
 // consumed by control-api's lifecycle fan-out. Subscribers are dialed
 // from peers (claim_producers or executors) whose protocols list
 // contains "lifecycle_subscriber".
+//
+// LifecycleRegistry is rimsky-internal; not aliased into the protocols
+// package because the registry is an in-process collection, not a wire
+// concept.
 type LifecycleRegistry struct {
 	subs map[string]LifecycleSubscriber
 }

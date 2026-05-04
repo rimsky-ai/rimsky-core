@@ -23,7 +23,8 @@ const lockHolderCols = `
   id, lock_kind, lock_name, store_name, scope_data, address, intent,
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
-  claimed_at, last_heartbeat_at, expires_at, frame_id
+  claimed_at, last_heartbeat_at, expires_at, frame_id,
+  worker_request_id, is_held
 `
 
 func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderInsertInput, tx persistence.Tx) error {
@@ -36,13 +37,18 @@ func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderI
 		v := in.RealizedWriteSemantics
 		rws = &v
 	}
+	isHeldInt := 0
+	if in.IsHeld {
+		isHeldInt = 1
+	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_lock_holders (
+		`INSERT INTO rimsky_claim_handle (
 		   id, lock_kind, lock_name, store_name, scope_data, address, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
-		   claimed_at, last_heartbeat_at, expires_at, frame_id
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   claimed_at, last_heartbeat_at, expires_at, frame_id,
+		   worker_request_id, is_held
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), string(in.LockKind),
 		in.LockName, in.StoreName,
 		nullableJSONB(in.ScopeData), nullableJSONB(in.Address),
@@ -50,6 +56,7 @@ func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderI
 		rws,
 		in.HolderSupervisorID, in.HolderNodeID.String(),
 		now, now, formatTime(in.ExpiresAt), nullableUUID(in.FrameID),
+		nullableUUID(in.WorkerRequestID), isHeldInt,
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.Insert: %w", err)
@@ -69,7 +76,7 @@ func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
 		v = &s
 	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_claim_handle
 		    SET realized_write_semantics = ?
 		  WHERE id = ? AND holder_supervisor_id = ?`,
 		v, id.String(), supervisorID,
@@ -87,7 +94,7 @@ func (s *lockHoldersImpl) UpdateAddress(
 		return errors.New("lockholders.UpdateAddress: persistence.Tx required")
 	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_claim_handle
 		    SET address = ?
 		  WHERE id = ? AND holder_supervisor_id = ?`,
 		nullableJSONB(address), id.String(), supervisorID,
@@ -105,7 +112,7 @@ func (s *lockHoldersImpl) UpdateScope(
 		return errors.New("lockholders.UpdateScope: persistence.Tx required")
 	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_claim_handle
 		    SET scope_data = ?
 		  WHERE id = ? AND holder_supervisor_id = ?`,
 		nullableJSONB(scope), id.String(), supervisorID,
@@ -118,7 +125,7 @@ func (s *lockHoldersImpl) UpdateScope(
 
 func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders WHERE id = ?`, id.String(),
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = ?`, id.String(),
 	)
 	out, err := scanLockHolder(row)
 	if err != nil {
@@ -137,7 +144,7 @@ func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx 
 		return nil, errors.New("lockholders.LockForUpdate: persistence.Tx required")
 	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders WHERE id = ?`, id.String(),
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = ?`, id.String(),
 	)
 	out, err := scanLockHolder(row)
 	if err != nil {
@@ -151,7 +158,7 @@ func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx 
 
 func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = ?
 		 ORDER BY claimed_at ASC`, holderNodeID.String(),
 	)
@@ -166,7 +173,7 @@ func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sha
 // or (nil, nil) when no matching row exists.
 func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = ? AND frame_id = ?
 		 LIMIT 1`,
 		nodeID.String(), frameID.String(),
@@ -183,7 +190,7 @@ func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.U
 
 func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_supervisor_id = ?
 		 ORDER BY claimed_at ASC`, supervisorID,
 	)
@@ -199,7 +206,7 @@ func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID str
 func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_lock_holders
+		`UPDATE rimsky_claim_handle
 		   SET last_heartbeat_at = ?,
 		       expires_at = ?
 		 WHERE holder_supervisor_id = ?
@@ -211,7 +218,7 @@ func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID stri
 		        OR EXISTS (
 		            SELECT 1 FROM rimsky_claim_holders ch
 		              JOIN rimsky_nodes n ON n.id = ch.holder_node_id
-		             WHERE ch.lock_holder_id = rimsky_lock_holders.id
+		             WHERE ch.claim_handle_id = rimsky_claim_handle.id
 		               AND ch.state = 'active'
 		               AND n.state = 'running'
 		        )
@@ -226,7 +233,7 @@ func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID stri
 
 func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE expires_at < ?
 		 ORDER BY expires_at ASC`, nowUTC(),
 	)
@@ -242,7 +249,7 @@ func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSu
 		return errors.New("lockholders.Delete: persistence.Tx required")
 	}
 	_, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_lock_holders
+		`DELETE FROM rimsky_claim_handle
 		 WHERE id = ? AND holder_supervisor_id = ?`,
 		id.String(), expectedSupervisorID,
 	)
@@ -258,7 +265,7 @@ func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string,
 	}
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
-		`SELECT count(*) FROM rimsky_lock_holders
+		`SELECT count(*) FROM rimsky_claim_handle
 		 WHERE lock_kind = 'named' AND lock_name = ?
 		   AND expires_at > ?`,
 		lockName, nowUTC(),
@@ -274,7 +281,7 @@ func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string
 		return nil, errors.New("lockholders.ListByStoreScope: persistence.Tx required")
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE lock_kind = 'scope' AND store_name = ?
 		   AND expires_at > ?
 		 ORDER BY claimed_at ASC`,
@@ -292,7 +299,7 @@ func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, s
 		return false, errors.New("lockholders.DeleteIfExpired: persistence.Tx required")
 	}
 	res, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_lock_holders
+		`DELETE FROM rimsky_claim_handle
 		 WHERE id = ?
 		   AND holder_supervisor_id = ?
 		   AND expires_at < ?`,
@@ -343,7 +350,7 @@ func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persi
 	}
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+`
-		   FROM rimsky_lock_holders lh
+		   FROM rimsky_claim_handle lh
 		  WHERE (? IS NULL OR lh.store_name = ?)
 		    AND (? IS NULL OR lh.holder_supervisor_id = ?)
 		    AND (? IS NULL OR lh.holder_node_id = ?)
@@ -421,6 +428,8 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 		lastHeartbeatAtStr string
 		expiresAtStr       string
 		frameIDStr         sql.NullString
+		workerRequestIDStr sql.NullString
+		isHeldInt          int
 	)
 	if err := sc.Scan(
 		&idStr, &kind,
@@ -428,6 +437,7 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 		&rws,
 		&holderSupervisorID, &holderNodeIDStr,
 		&claimedAtStr, &lastHeartbeatAtStr, &expiresAtStr, &frameIDStr,
+		&workerRequestIDStr, &isHeldInt,
 	); err != nil {
 		return persistence.LockHolderRow{}, err
 	}
@@ -469,6 +479,12 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 		return persistence.LockHolderRow{}, err
 	}
 	r.FrameID = frameID
+	workerRequestID, err := scanNullableUUID(workerRequestIDStr)
+	if err != nil {
+		return persistence.LockHolderRow{}, err
+	}
+	r.WorkerRequestID = workerRequestID
+	r.IsHeld = isHeldInt != 0
 	if r.ClaimedAt, err = parseTime(claimedAtStr); err != nil {
 		return persistence.LockHolderRow{}, err
 	}

@@ -132,7 +132,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		     WHERE d.state <> 'fresh'
 		   )
 		   AND NOT EXISTS (
-		     SELECT 1 FROM rimsky_dispatch x WHERE x.node_id = n.id
+		     SELECT 1 FROM rimsky_worker_request x WHERE x.node_id = n.id
 		   )
 		 ORDER BY n.created_at ASC`,
 	)

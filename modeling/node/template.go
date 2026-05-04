@@ -64,7 +64,7 @@ type TemplateNodeDef struct {
 
 // NodeStoreRef declares this node's claim against a registered store.
 // Selector is opaque text post-substitution; the store parses and
-// decides what it means (regional access vs. configured pick policy).
+// decides what it means (scope access vs. configured pick policy).
 // Intent is "r" (read) or "rw" (read-write). Alias is the per-claim
 // name within the node, used in {{claim.<alias>.<...>}} substitution
 // paths and in inheritance references; defaults to StoreName when not
@@ -118,7 +118,7 @@ func (s NodeStoreRef) AliasOf() string {
 
 // RequiredStores returns the distinct store names referenced by
 // node.Stores, preserving first-seen order. Used by enqueue logic to
-// populate rimsky_dispatch.required_stores.
+// populate rimsky_worker_request.required_stores.
 func RequiredStores(node TemplateNodeDef) []string {
 	if len(node.Stores) == 0 {
 		return nil

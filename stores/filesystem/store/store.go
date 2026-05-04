@@ -168,7 +168,7 @@ func (s *Store) openScoped(claimID, selector string) (corestore.OpenOutcome, err
 			"filesystem store: Open: selector %q contains glob metacharacters; v3 standard filesystem supports concrete paths only",
 			raw)
 	}
-	// Canonicalize first so "foo" and "./foo" produce identical region
+	// Canonicalize first so "foo" and "./foo" produce identical scope
 	// bytes. Strip a single leading "./" before Clean because Clean
 	// preserves "." as the result of "./" only when the input is "./"
 	// alone — for "./foo" Clean returns "foo". The TrimPrefix is

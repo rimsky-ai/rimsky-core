@@ -31,32 +31,57 @@ Five methods, each defined in `protocols/proto/v1/claim_producer.proto`:
 
 ```protobuf
 service ClaimProducer {
-  rpc Open(OpenRequest) returns (ClaimResult);
-  rpc Commit(ClaimVerbRequest) returns (ClaimVerbAck);
-  rpc Abandon(ClaimVerbRequest) returns (ClaimVerbAck);
-  rpc Release(ClaimVerbRequest) returns (ClaimVerbAck);
-  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResult);
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+  rpc Open(OpenRequest) returns (OpenResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Abandon(AbandonRequest) returns (AbandonResponse);
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
 }
 
+message CapabilitiesRequest {}
+message CapabilitiesResponse {
+  repeated WriteSemantics write_semantics_envelope = 1;
+}
+
+// OpenRequest carries the rimsky-generated claim_id plus the resolved
+// claim spec. selector is post-substitution; the producer parses it.
+// template_id and instance_id form the per-spec scope envelope: opaque
+// to rimsky, available to the producer for namespace routing.
 message OpenRequest {
   string claim_id = 1;
-  bytes spec = 2;                     // opaque to Rimsky
+  string store_name = 2;
+  string selector = 3;
+  string intent = 4;          // "r" | "rw"
+  string alias = 5;
+  string template_id = 6;     // content hash; opaque to rimsky.
+  string instance_id = 7;     // instance UUID; opaque to rimsky.
 }
 
-message ClaimResult {
+// OpenResponse signals acquisition outcome via a oneof. Producers that
+// always have a claim to give return Acquired. Producers that may have
+// nothing right now (e.g. an empty items-table queue) return Unavailable.
+message OpenResponse {
+  oneof result {
+    Acquired    acquired    = 1;
+    Unavailable unavailable = 2;
+  }
+}
+
+message Acquired {
   bytes address = 1;
   bytes payload = 2;
-  bytes scope = 3;                    // canonicalized scope bytes
+  bytes scope   = 3;          // canonicalized scope bytes
   WriteSemantics realized_write_semantics = 4;
 }
 
-message ClaimVerbRequest { string claim_id = 1; }
-message ClaimVerbAck {}
+message Unavailable {}
 
-message CapabilitiesRequest {}
-message CapabilitiesResult {
-  repeated WriteSemantics write_semantics_envelope = 1;
-}
+message CommitRequest  { string claim_id = 1; bytes scope = 2; bytes address = 3; }
+message CommitResponse {}
+message AbandonRequest { string claim_id = 1; bytes scope = 2; bytes address = 3; }
+message AbandonResponse {}
+message ReleaseRequest { string claim_id = 1; bytes scope = 2; bytes address = 3; }
+message ReleaseResponse {}
 
 enum WriteSemantics {
   WRITE_SEMANTICS_UNKNOWN = 0;
@@ -69,34 +94,49 @@ enum WriteSemantics {
 
 ### 2.3 Go interface
 
+The rimsky-side and external-author Go surface mirror the wire
+shape: structured `ClaimSpec`, `OpenOutcome` discriminator for the
+oneof, and per-verb `(claimID, scope, address)` for the terminal
+verbs. The canonical Go interface lives at
+`protocols/claimproducer.ClaimProducer`. `foundation/locks.ClaimProducer`
+is a Go type alias of that interface (`type ClaimProducer =
+claimproducer.ClaimProducer`); the same applies to every supporting
+type (`ClaimID`, `ClaimSpec`, `ClaimResult`, `OpenOutcome`,
+`Capabilities`, `WriteSemantics`, `Intent`). External authors should
+import `protocols/claimproducer`; rimsky-internal code may use either.
+The two import paths refer to the same nominal types — a value
+satisfying one interface satisfies the other.
+
 ```go
 package claimproducer
 
 type ClaimProducer interface {
-    Open(ctx context.Context, req OpenRequest) (ClaimResult, error)
-    Commit(ctx context.Context, claimID uuid.UUID) error
-    Abandon(ctx context.Context, claimID uuid.UUID) error
-    Release(ctx context.Context, claimID uuid.UUID) error
-    Capabilities(ctx context.Context) (CapabilitiesResult, error)
+    Name() string
+    Capabilities(ctx context.Context) (Capabilities, error)
+    Open(ctx context.Context, claimID ClaimID, spec ClaimSpec) (OpenOutcome, error)
+    Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+    Abandon(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+    Release(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
 }
 ```
 
 ### 2.4 Types
 
 ```go
-type WriteSemantics int
-
+type ClaimID string
+type Intent string
 const (
-    WriteSemanticsUnknown WriteSemantics = iota
-    WriteSemanticsSync
-    WriteSemanticsStagedAsync
-    WriteSemanticsBlockingAsync
-    WriteSemanticsReadOnly
+    IntentRead      Intent = "r"
+    IntentReadWrite Intent = "rw"
 )
 
-type OpenRequest struct {
-    ClaimID uuid.UUID
-    Spec    json.RawMessage   // opaque to Rimsky except scope substitution-leaf paths
+type ClaimSpec struct {
+    StoreName  string
+    Selector   string
+    Intent     Intent
+    Alias      string
+    TemplateID string
+    InstanceID string
 }
 
 type ClaimResult struct {
@@ -106,8 +146,23 @@ type ClaimResult struct {
     RealizedWriteSemantics WriteSemantics    // per-claim
 }
 
-type CapabilitiesResult struct {
-    WriteSemanticsEnvelope []WriteSemantics  // permissible values
+// OpenOutcome mirrors the OpenResponse oneof on the wire.
+type OpenOutcome struct {
+    Available bool        // false → Unavailable{}
+    Result    ClaimResult // populated only when Available is true
+}
+
+type WriteSemantics string
+const (
+    WriteSemanticsUnknown       WriteSemantics = ""
+    WriteSemanticsSync          WriteSemantics = "sync"
+    WriteSemanticsStagedAsync   WriteSemantics = "staged_async"
+    WriteSemanticsBlockingAsync WriteSemantics = "blocking_async"
+    WriteSemanticsReadOnly      WriteSemantics = "read_only"
+)
+
+type Capabilities struct {
+    WriteSemanticsEnvelope []WriteSemantics
 }
 ```
 
@@ -165,6 +220,8 @@ service LifecycleSubscriber {
 package lifecycle
 
 type LifecycleSubscriber interface {
+    Name() string // operator-configured peer name (rimsky-internal)
+
     OnTemplateRegistered(ctx context.Context, req OnTemplateRegisteredRequest) error
     OnTemplateDeployed(ctx context.Context, req OnTemplateDeployedRequest) error
     OnTemplateUndeployed(ctx context.Context, req OnTemplateUndeployedRequest) error
@@ -172,7 +229,40 @@ type LifecycleSubscriber interface {
     OnInstanceCreated(ctx context.Context, req OnInstanceCreatedRequest) error
     OnInstanceTerminated(ctx context.Context, req OnInstanceTerminatedRequest) error
 }
+
+type OnTemplateRegisteredRequest struct {
+    TemplateHash string
+    Spec         json.RawMessage // canonical JCS-canonicalized bytes
+}
+type OnTemplateDeployedRequest struct {
+    TemplateHash string
+    Tags         []string
+}
+type OnTemplateUndeployedRequest    struct { TemplateHash string }
+type OnTemplateDeregisteredRequest  struct { TemplateHash string }
+type OnInstanceCreatedRequest struct {
+    InstanceID   string
+    TemplateHash string
+    InstanceKey  string          // may be empty
+    Params       json.RawMessage
+}
+type OnInstanceTerminatedRequest struct {
+    InstanceID         string
+    TemplateHash       string
+    TerminatedAtUnixMs int64
+}
 ```
+
+Subscribers receive the full per-event payload that the wire-side
+proto messages carry. The canonical Go interface and request types
+live in `protocols/lifecycle`. `foundation/locks.LifecycleSubscriber`
+and the `On…Request` types in `foundation/locks` are Go type aliases
+of the corresponding `protocols/lifecycle` symbols, so external
+authors importing `protocols/lifecycle` and rimsky-internal callers
+importing `foundation/locks` share one nominal type. The interface
+includes `Name() string` (operator-configured peer name; rimsky-side
+identifier; not transported over the wire) plus the six event
+methods.
 
 ### 3.4 Implementation pattern
 
@@ -199,27 +289,49 @@ An Executor runs nodes given inputs. Foundation calls into the executor at dispa
 
 ### 4.2 Wire surface
 
-Defined in `protocols/proto/v1/executor.proto`:
+Defined in `protocols/proto/v1/executor.proto` (the service is named
+`NodeExecutor` for backwards compatibility with the v2-era client
+helpers; the protocol is identical):
 
 ```protobuf
-service Executor {
-  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
-  rpc StreamTrace(TraceRequest) returns (stream TraceEvent);
-  rpc GetTrace(TraceRequest) returns (TraceBundle);
-  rpc GetCapabilities(CapabilitiesRequest) returns (ExecutorCapabilities);
+service NodeExecutor {
+  // Execute returns a stream of zero or more Heartbeat events
+  // followed by EXACTLY ONE terminal event (Complete | Blocked |
+  // Errored | AsyncAccepted).
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
 }
 ```
 
+Trace endpoints (StreamTrace / GetTrace / GetCapabilities) live in
+the executor-observability protocol — see the dashboard /
+observability spec — and are not part of the runtime executor wire
+surface.
+
 ### 4.3 Go interface
+
+The Go-level interface mirrors the streaming wire shape: `Execute`
+returns a transport-agnostic `Stream` that the supervisor drains.
 
 ```go
 package executor
 
 type Executor interface {
-    Execute(ctx context.Context, req ExecuteRequest) (ExecuteResponse, error)
-    StreamTrace(ctx context.Context, req TraceRequest, send func(TraceEvent) error) error
-    GetTrace(ctx context.Context, req TraceRequest) (TraceBundle, error)
-    GetCapabilities(ctx context.Context) (ExecutorCapabilities, error)
+    Execute(ctx context.Context, req ExecuteRequest) (Stream, error)
+}
+
+type Stream interface {
+    Recv() (ExecuteEvent, error) // io.EOF after the terminal event
+    Close() error
+}
+
+// ExecuteEvent is the union of streamed events; exactly one terminal
+// closes the stream.
+type ExecuteEvent struct {
+    Heartbeat     *Heartbeat
+    Complete      *Complete
+    Blocked       *Blocked
+    Errored       *Errored
+    AsyncAccepted *AsyncAccepted
 }
 ```
 

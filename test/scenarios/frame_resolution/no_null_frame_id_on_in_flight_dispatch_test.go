@@ -1,5 +1,5 @@
 // Verifies blessed invariant 19 (spec §18): "frame_id flows with
-// cascade. No rimsky_dispatch row has frame_id IS NULL. No rimsky_nodes
+// cascade. No rimsky_worker_request row has frame_id IS NULL. No rimsky_nodes
 // row in state stale or running has frame_id IS NULL."
 //
 // Runs a multi-node cascade (source → middle → leaf) to a mid-flight
@@ -48,13 +48,13 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.True(t, h.WaitForNodeState(leaf.ID, shared.NodeStateFresh, 15*time.Second),
 		"leaf did not reach fresh")
 
-	// Invariant: no NULL frame_id on any rimsky_dispatch row anywhere.
+	// Invariant: no NULL frame_id on any rimsky_worker_request row anywhere.
 	var nullDispatches int
 	err := h.Pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM rimsky_dispatch WHERE frame_id IS NULL`).Scan(&nullDispatches)
+		`SELECT count(*) FROM rimsky_worker_request WHERE frame_id IS NULL`).Scan(&nullDispatches)
 	require.NoError(t, err)
 	require.Equal(t, 0, nullDispatches,
-		"invariant 19 violated: %d rimsky_dispatch rows have NULL frame_id", nullDispatches)
+		"invariant 19 violated: %d rimsky_worker_request rows have NULL frame_id", nullDispatches)
 
 	// Invariant: no non-fresh rimsky_nodes row with NULL frame_id.
 	var nullNodes int
@@ -84,7 +84,7 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 
 	// Dispatch rows: every one (terminal or otherwise) carries a non-NULL frame_id.
 	rows, err := h.Pool.Query(context.Background(),
-		`SELECT id, frame_id FROM rimsky_dispatch`)
+		`SELECT id, frame_id FROM rimsky_worker_request`)
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {

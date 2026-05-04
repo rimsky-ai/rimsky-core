@@ -6,7 +6,7 @@
 // attributes.ResolveContext shape that consumed them. Under the
 // redesign stores carry (Selector, Intent, Alias) and the
 // substitution paths gained claim.<alias>.address /
-// claim.<alias>.region alongside claim.<alias>.payload.<f>. New
+// claim.<alias>.scope alongside claim.<alias>.payload.<f>. New
 // scenarios for substitution + commit-time validation + resumable-
 // preserve behaviour belong here but must reflect the new
 // substitution shape (see core/attributes/substitution.go).

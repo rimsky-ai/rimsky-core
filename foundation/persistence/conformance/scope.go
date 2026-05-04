@@ -95,7 +95,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 	}
 
 	// Two byte-equal scopes: both rows land successfully (the
-	// rimsky_lock_holders table doesn't unique-constrain scope; the
+	// rimsky_claim_handle table doesn't unique-constrain scope; the
 	// supervisor's in-go conflict predicate is what catches the conflict).
 	// We verify that ListByStoreScope returns both, and that the rows'
 	// scope_data bytes round-trip equal.

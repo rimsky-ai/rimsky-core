@@ -1,36 +1,36 @@
--- Rimsky initial schema (v2-defined; preserved at v3).
+-- Rimsky initial schema (post-Phase-5 layer-crystallization).
 --
--- Source: stores-redesign v2 (preserved unchanged at v3 — see
--- docs/specs/2026-04-27-stores-redesign-v3-design.md §14). The schema
--- itself did not change at v3; the v3 cycle moved stores out-of-process
--- but kept rimsky_lock_holders / rimsky_claim_holders / dispatch /
--- nodes / templates exactly as v2 left them.
+-- Source: layer-crystallization design 2026-05-04 §8.4. Phase 5 of
+-- the layer-crystallization plan consolidated the legacy split tables
+-- into rimsky_worker_request and rimsky_claim_handle. Pre-v1
+-- break-freely: this migration was rewritten in place rather than as
+-- a successor; dev DB is nuked on adoption (see
+-- .claude/rules/rules.md).
 --
--- This file defines the full v1 schema in a single migration. The
--- stores-redesign v2 (docs/specs/2026-04-27-stores-redesign-v2-design.md)
--- collapsed claim/region into a single store-bound primitive and split
--- named locks out as a non-store primitive. Pre-v1: rewrite in place;
--- dev DB is nuked on adoption (see .claude/rules/rules.md).
---
--- Key shape vs. the v1-prior-rewrite schema:
---   * lock_kind enum reduced from ('named','scope','claim') to
---     ('named','scope'). The 'claim' kind dissolved — pick-policy claims
---     are just scope claims with store-chosen scope_data.
---   * rimsky_lock_holders.claim_id column dropped. The store's identifier
---     lives in scope_data.
---   * rimsky_lock_holders.address column added — store-supplied
---     address from Open, needed by terminal verbs and the orphan reaper.
---   * rimsky_lock_holders.intent column added ('r' | 'rw' | NULL for
---     named locks).
---   * rimsky_claim_holders.lock_holder_id FK added (ON DELETE CASCADE)
---     so claim-holder rows clean up when the lock-holder row is deleted
---     at auto-terminal.
---   * rimsky_claim_holders: claim_id, store_name, on_commit, on_give_up,
---     actual_action columns dropped. Per the 2026-04-30 stores-protocol
---     cleanup, rimsky carries only a success/failure binary across the
---     wire (success → Commit; failure → Abandon); store disposition
---     lives in each store-service's own config, not in template metadata.
---     state enum gains 'failed'.
+-- Schema shape:
+--   * rimsky_worker_request — the parent run-bookkeeping row. One per
+--     dispatched run. phase column drives the active+held lifecycle
+--     ('pending', 'active', 'held', 'completed'). claimed_by carries
+--     the supervisor id while phase='active'; cleared on entry to
+--     'held' or 'pending'. heartbeat_at refreshed each tick by the
+--     owning supervisor; the orphan reaper uses it to find stale
+--     'active' rows. frame_id is the modeling-side frame this run
+--     belongs to.
+--   * rimsky_claim_handle — observability child of
+--     rimsky_worker_request (ON DELETE SET NULL: held claim handles
+--     outlive their parent's active-phase terminal until auto-
+--     terminal resolution fires the producer verb and explicitly
+--     deletes the row). One row per (worker_request, lock-or-claim
+--     acquired). Carries the producer-supplied address + the
+--     realized write semantics. is_held=true marks claims that
+--     persist past the active terminal (until the holding subgraph
+--     completes). Named locks: lock_kind='named'/lock_name set,
+--     store_name and scope_data NULL; intent NULL. Scope claims:
+--     lock_kind='scope', store_name + scope_data + intent set.
+--   * rimsky_claim_holders — held-claim subgraph state tracker. Rows
+--     are inserted at acquisition for nodes in the holding subgraph
+--     and tracked through their terminal state. Auto-terminal fires
+--     when all rows for a claim_handle are non-active.
 --
 -- Idempotent: CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
 -- throughout. Belt-and-suspenders with the migration runner's advisory
@@ -95,21 +95,25 @@ CREATE TABLE IF NOT EXISTS rimsky_supervisors (
 );
 CREATE INDEX IF NOT EXISTS rimsky_supervisors_last_heartbeat_at_idx ON rimsky_supervisors (last_heartbeat_at);
 
--- Dispatch queue (nodes ready to run).
-CREATE TABLE IF NOT EXISTS rimsky_dispatch (
+-- Worker-request queue (nodes ready to run; consolidated parent of claim handles).
+CREATE TABLE IF NOT EXISTS rimsky_worker_request (
     id                UUID PRIMARY KEY,
     node_id           UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
     executor_name     TEXT,                              -- nullable for native nodes
     required_stores   TEXT[] NOT NULL DEFAULT '{}',      -- denormalized at enqueue time
     enqueued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- may be future-dated for backoff
-    claimed_by        TEXT,                              -- supervisor id; null until claimed
+    claimed_by        TEXT,                              -- supervisor id; null when phase ∉ {'active'}
     claimed_at        TIMESTAMPTZ,
     last_heartbeat_at TIMESTAMPTZ,                       -- updated by supervisor heartbeat tick
-    UNIQUE (node_id)                                     -- at most one pending dispatch per node
+    phase             TEXT NOT NULL DEFAULT 'pending'    -- 'pending' | 'active' | 'held' | 'completed'
+                      CHECK (phase IN ('pending','active','held','completed')),
+    active_terminal_at TIMESTAMPTZ,                      -- when active phase ended (entry to 'held' or 'completed')
+    UNIQUE (node_id)                                     -- at most one live worker-request per node
 );
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_pending_idx   ON rimsky_dispatch (enqueued_at) WHERE claimed_by IS NULL;
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_claimed_idx   ON rimsky_dispatch (claimed_by, claimed_at) WHERE claimed_by IS NOT NULL;
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_heartbeat_idx ON rimsky_dispatch (last_heartbeat_at) WHERE claimed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_pending_idx   ON rimsky_worker_request (enqueued_at) WHERE phase = 'pending';
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_claimed_idx   ON rimsky_worker_request (claimed_by, claimed_at) WHERE claimed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_heartbeat_idx ON rimsky_worker_request (last_heartbeat_at) WHERE phase = 'active';
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_phase_idx     ON rimsky_worker_request (phase);
 
 -- Schedule registry (one row per scheduled node).
 CREATE TABLE IF NOT EXISTS rimsky_schedules (
@@ -141,16 +145,32 @@ CREATE TABLE IF NOT EXISTS rimsky_node_attributes (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Lock ledger. One row per held lock across two kinds:
+-- Claim handles. One row per held lock or scope-claim across two kinds:
 --   * 'named' — named-lock predicate (lock_name set)
 --   * 'scope' — store scope claim (store_name + scope_data + intent set;
---               address populated by Open within the same acquisition tx)
--- Inserted atomically with the dispatch claim (v3 spec §7.3). last_heartbeat_at
--- and expires_at extended on each supervisor heartbeat tick. Removed at
--- node terminal (claimant-guarded) or auto-terminal for held claims.
--- Orphan-reaped at 5x heartbeat_interval.
-CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
+--               address populated by ClaimProducer.Open within the same
+--               acquisition tx)
+--
+-- worker_request_id is the FK-cascade child of rimsky_worker_request
+-- (per the layer-crystallization Phase-5 consolidation): when the
+-- worker-request is deleted, every claim handle of that worker-request
+-- is removed. is_held=true marks claims that persist past the active
+-- terminal (until the holding-subgraph completes — see auto-terminal).
+-- holder_node_id is preserved for observability and the named-lock
+-- counting predicate. Inserted atomically with the worker-request's
+-- transition into 'active' (foundation contract §5.4 / spec §7.3).
+-- last_heartbeat_at and expires_at extended on each supervisor
+-- heartbeat tick. Removed at terminal (claimant-guarded) or
+-- auto-terminal for held claims. Orphan-reaped at 5x heartbeat_interval
+-- through the worker-request parent.
+CREATE TABLE IF NOT EXISTS rimsky_claim_handle (
     id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- ON DELETE SET NULL (NOT cascade) so held claim handles outlive
+    -- their owning worker-request's active-phase terminal until auto-
+    -- terminal resolution fires the producer verb and explicitly
+    -- deletes the row. Cascade would race against held-claim
+    -- resolution.
+    worker_request_id           UUID REFERENCES rimsky_worker_request(id) ON DELETE SET NULL,
     lock_kind                   TEXT NOT NULL CHECK (lock_kind IN ('named', 'scope')),
     lock_name                   TEXT,                    -- non-null for kind='named'
     store_name                  TEXT,                    -- non-null for kind='scope'
@@ -161,6 +181,7 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
                                                          -- inert in Rimsky per invariant 20.
     intent                      TEXT,                    -- 'r' | 'rw' for kind='scope'; null for kind='named'
     realized_write_semantics    TEXT,                    -- per-claim ClaimProducer.Open verdict; null for named-lock rows
+    is_held                     BOOLEAN NOT NULL DEFAULT FALSE,  -- true when claim persists past active terminal
     holder_supervisor_id        TEXT NOT NULL,           -- TEXT, matches rimsky_supervisors.id
     holder_node_id              UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
     claimed_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -169,36 +190,39 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
     -- Note: address and realized_write_semantics may be NULL even for
     -- scope rows, because Open writes them only after a successful
     -- return (within the same acquisition tx). The supervisor inserts
-    -- the row with NULL address and updates it after Open returns (per
-    -- v3 spec §7.3).
-    CONSTRAINT lock_kind_fields CHECK (
+    -- the row with NULL address and updates it after Open returns.
+    CONSTRAINT claim_handle_kind_fields CHECK (
         (lock_kind = 'named' AND lock_name IS NOT NULL AND store_name IS NULL     AND scope_data IS NULL     AND intent IS NULL    AND realized_write_semantics IS NULL) OR
         (lock_kind = 'scope' AND lock_name IS NULL     AND store_name IS NOT NULL AND scope_data IS NOT NULL AND intent IN ('r', 'rw'))
     )
 );
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_supervisor ON rimsky_lock_holders (holder_supervisor_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_node       ON rimsky_lock_holders (holder_node_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_named      ON rimsky_lock_holders (lock_name)  WHERE lock_kind = 'named';
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_scope      ON rimsky_lock_holders (store_name) WHERE lock_kind = 'scope';
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_expires    ON rimsky_lock_holders (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_supervisor    ON rimsky_claim_handle (holder_supervisor_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_node          ON rimsky_claim_handle (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_named         ON rimsky_claim_handle (lock_name)  WHERE lock_kind = 'named';
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_scope         ON rimsky_claim_handle (store_name) WHERE lock_kind = 'scope';
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_expires       ON rimsky_claim_handle (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_worker_req    ON rimsky_claim_handle (worker_request_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_held          ON rimsky_claim_handle (worker_request_id) WHERE is_held = TRUE;
 
--- Held-claim ledger. One row per (lock_holder, holder_node) pair from the
--- holding subgraph (acquirer + transitive inheritors), inserted at the acquirer's Open call when the
--- claim is held (subgraph size > 1). state flips 'active' -> 'completed'
--- (success) or 'failed' (give-up/failure) per v3 spec §4.10 invariant 13.
--- When all rows for a lock_holder reach a non-active state, auto-terminal
--- fires the aggregate-outcome resolution (v3 spec §4.10 invariant 13) and
--- the lock_holder row is deleted;
--- ON DELETE CASCADE cleans up these rows.
+-- Held-claim subgraph state ledger. One row per
+-- (claim_handle, holder_node) pair from the holding subgraph (acquirer
+-- + transitive inheritors), inserted at the acquirer's Open call when
+-- the claim is held (claim_handle.is_held=TRUE; subgraph size > 1).
+-- state flips 'active' -> 'completed' (success) or 'failed'
+-- (give-up/failure) per the held-claim resolution mechanism (foundation
+-- contract §5.5 / spec §4.10 invariant 13). When all rows for a
+-- claim_handle reach a non-active state, auto-terminal fires the
+-- aggregate-outcome resolution and the worker-request row is deleted;
+-- ON DELETE CASCADE through claim_handle cleans up these rows.
 CREATE TABLE IF NOT EXISTS rimsky_claim_holders (
-    id              UUID PRIMARY KEY,
-    lock_holder_id  UUID NOT NULL REFERENCES rimsky_lock_holders(id) ON DELETE CASCADE,
-    holder_node_id  UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
-    state           TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed')),
-    completed_at    TIMESTAMPTZ,
-    UNIQUE (lock_holder_id, holder_node_id)
+    id               UUID PRIMARY KEY,
+    claim_handle_id  UUID NOT NULL REFERENCES rimsky_claim_handle(id) ON DELETE CASCADE,
+    holder_node_id   UUID NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
+    state            TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed')),
+    completed_at     TIMESTAMPTZ,
+    UNIQUE (claim_handle_id, holder_node_id)
 );
-CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_lock_holder    ON rimsky_claim_holders (lock_holder_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_node           ON rimsky_claim_holders (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_claim_handle  ON rimsky_claim_holders (claim_handle_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_node          ON rimsky_claim_holders (holder_node_id);
 CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_active_subgraph
-    ON rimsky_claim_holders (lock_holder_id) WHERE state = 'active';
+    ON rimsky_claim_holders (claim_handle_id) WHERE state = 'active';

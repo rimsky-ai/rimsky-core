@@ -124,26 +124,33 @@ CREATE TABLE IF NOT EXISTS rimsky_supervisors (
 );
 CREATE INDEX IF NOT EXISTS rimsky_supervisors_last_heartbeat_at_idx ON rimsky_supervisors (last_heartbeat_at);
 
--- Dispatch queue.
-CREATE TABLE IF NOT EXISTS rimsky_dispatch (
-    id                  TEXT PRIMARY KEY,
-    node_id             TEXT NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
-    executor_name       TEXT,
-    required_stores     TEXT NOT NULL DEFAULT '[]',         -- JSON array of strings
-    enqueued_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    claimed_by          TEXT,
-    claimed_at          TEXT,
-    last_heartbeat_at   TEXT,
-    frame_id            TEXT NOT NULL REFERENCES rimsky_frames(frame_id) ON DELETE CASCADE,
+-- Worker-request queue (parent of claim handles; consolidated under
+-- the layer-crystallization Phase-5 design). phase column drives the
+-- active+held lifecycle; claimed_by carries the supervisor id while
+-- phase='active'.
+CREATE TABLE IF NOT EXISTS rimsky_worker_request (
+    id                   TEXT PRIMARY KEY,
+    node_id              TEXT NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
+    executor_name        TEXT,
+    required_stores      TEXT NOT NULL DEFAULT '[]',          -- JSON array of strings
+    enqueued_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    claimed_by           TEXT,
+    claimed_at           TEXT,
+    last_heartbeat_at    TEXT,
+    phase                TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (phase IN ('pending','active','held','completed')),
+    active_terminal_at   TEXT,
+    frame_id             TEXT NOT NULL REFERENCES rimsky_frames(frame_id) ON DELETE CASCADE,
     UNIQUE (node_id)
 );
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_pending_idx   ON rimsky_dispatch (enqueued_at) WHERE claimed_by IS NULL;
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_claimed_idx   ON rimsky_dispatch (claimed_by, claimed_at) WHERE claimed_by IS NOT NULL;
-CREATE INDEX IF NOT EXISTS rimsky_dispatch_heartbeat_idx ON rimsky_dispatch (last_heartbeat_at) WHERE claimed_by IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_rimsky_dispatch_frame
-    ON rimsky_dispatch (frame_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_dispatch_frame_claimed
-    ON rimsky_dispatch (frame_id) WHERE claimed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_pending_idx   ON rimsky_worker_request (enqueued_at) WHERE phase = 'pending';
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_claimed_idx   ON rimsky_worker_request (claimed_by, claimed_at) WHERE claimed_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_heartbeat_idx ON rimsky_worker_request (last_heartbeat_at) WHERE phase = 'active';
+CREATE INDEX IF NOT EXISTS rimsky_worker_request_phase_idx     ON rimsky_worker_request (phase);
+CREATE INDEX IF NOT EXISTS idx_rimsky_worker_request_frame
+    ON rimsky_worker_request (frame_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_worker_request_frame_claimed
+    ON rimsky_worker_request (frame_id) WHERE claimed_by IS NOT NULL;
 
 -- Schedules.
 CREATE TABLE IF NOT EXISTS rimsky_schedules (
@@ -175,9 +182,15 @@ CREATE TABLE IF NOT EXISTS rimsky_node_attributes (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Lock ledger (named + scope kinds).
-CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
+-- Claim handles (named + scope kinds; FK-cascade child of worker_request).
+CREATE TABLE IF NOT EXISTS rimsky_claim_handle (
     id                          TEXT PRIMARY KEY,
+    -- ON DELETE SET NULL (NOT cascade) so held claim handles outlive
+    -- their owning worker-request's active-phase terminal until auto-
+    -- terminal resolution fires the producer verb and explicitly
+    -- deletes the row. Cascade would race against held-claim
+    -- resolution.
+    worker_request_id           TEXT REFERENCES rimsky_worker_request(id) ON DELETE SET NULL,
     lock_kind                   TEXT NOT NULL CHECK (lock_kind IN ('named','scope')),
     lock_name                   TEXT,
     store_name                  TEXT,
@@ -185,6 +198,7 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
     address                     TEXT,
     intent                      TEXT,
     realized_write_semantics    TEXT,    -- per-claim ClaimProducer.Open verdict; null for named-lock rows
+    is_held                     INTEGER NOT NULL DEFAULT 0,    -- 0/1; true when claim persists past active terminal
     holder_supervisor_id        TEXT NOT NULL,
     holder_node_id              TEXT NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
     claimed_at                  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -196,26 +210,28 @@ CREATE TABLE IF NOT EXISTS rimsky_lock_holders (
         (lock_kind = 'scope' AND lock_name IS NULL     AND store_name IS NOT NULL AND scope_data IS NOT NULL AND intent IN ('r','rw'))
     )
 );
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_supervisor ON rimsky_lock_holders (holder_supervisor_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_node       ON rimsky_lock_holders (holder_node_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_named      ON rimsky_lock_holders (lock_name)  WHERE lock_kind = 'named';
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_scope      ON rimsky_lock_holders (store_name) WHERE lock_kind = 'scope';
-CREATE INDEX IF NOT EXISTS idx_rimsky_lock_holders_expires    ON rimsky_lock_holders (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_supervisor    ON rimsky_claim_handle (holder_supervisor_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_node          ON rimsky_claim_handle (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_named         ON rimsky_claim_handle (lock_name)  WHERE lock_kind = 'named';
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_scope         ON rimsky_claim_handle (store_name) WHERE lock_kind = 'scope';
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_expires       ON rimsky_claim_handle (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_worker_req    ON rimsky_claim_handle (worker_request_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_handle_held          ON rimsky_claim_handle (worker_request_id) WHERE is_held = 1;
 
--- Held-claim ledger.
+-- Held-claim subgraph state ledger.
 CREATE TABLE IF NOT EXISTS rimsky_claim_holders (
-    id              TEXT PRIMARY KEY,
-    lock_holder_id  TEXT NOT NULL REFERENCES rimsky_lock_holders(id) ON DELETE CASCADE,
-    holder_node_id  TEXT NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
-    state           TEXT NOT NULL CHECK (state IN ('active','completed','failed')),
-    completed_at    TEXT,
-    frame_id        TEXT,
-    UNIQUE (lock_holder_id, holder_node_id)
+    id               TEXT PRIMARY KEY,
+    claim_handle_id  TEXT NOT NULL REFERENCES rimsky_claim_handle(id) ON DELETE CASCADE,
+    holder_node_id   TEXT NOT NULL REFERENCES rimsky_nodes(id) ON DELETE CASCADE,
+    state            TEXT NOT NULL CHECK (state IN ('active','completed','failed')),
+    completed_at     TEXT,
+    frame_id         TEXT,
+    UNIQUE (claim_handle_id, holder_node_id)
 );
-CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_lock_holder    ON rimsky_claim_holders (lock_holder_id);
-CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_node           ON rimsky_claim_holders (holder_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_claim_handle  ON rimsky_claim_holders (claim_handle_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_node          ON rimsky_claim_holders (holder_node_id);
 CREATE INDEX IF NOT EXISTS idx_rimsky_claim_holders_active_subgraph
-    ON rimsky_claim_holders (lock_holder_id) WHERE state = 'active';
+    ON rimsky_claim_holders (claim_handle_id) WHERE state = 'active';
 
 -- Store lifecycle bookkeeping.
 CREATE TABLE IF NOT EXISTS rimsky_lifecycle_idempotency (

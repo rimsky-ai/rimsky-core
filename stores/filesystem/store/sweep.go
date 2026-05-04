@@ -15,7 +15,7 @@ import (
 //
 // Per spec §7.5 / 2026-05-03-fs-store-pick-policies-design.md
 // "Sweep loop": purely store-internal; does not consult
-// rimsky_lock_holders.
+// rimsky_claim_handle.
 func (s *Store) RunSweep(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 60 * time.Second

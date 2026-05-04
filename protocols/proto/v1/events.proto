@@ -182,7 +182,7 @@ message LockAcquiredPayload {
   google.protobuf.Struct scope_data = 4;   // populated for kind="scope"
   string claim_id = 5;                     // populated for kind="claim"
   string supervisor_id = 6;                // holder_supervisor_id
-  string holder_id = 7;                    // rimsky_lock_holders.id (UUID as text)
+  string holder_id = 7;                    // rimsky_claim_handle.id (UUID as text; renamed from rimsky_lock_holders post-Phase-5)
   bool resumed = 8;                        // true when this acquisition rebound a preserve-for-resume row
 }
 

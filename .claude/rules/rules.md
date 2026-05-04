@@ -24,10 +24,10 @@ Run **every** check that could be affected by the change. This is mandatory, not
 
 ### Update documentation
 1. **`docs/architecture.md`** — update when package structure, blessed invariants, or the three-collections boundary changes.
-2. **`docs/protocol.md`** — update when the wire contract changes. Authoritative source is `proto/v1/node_executor.proto`; the doc must stay in sync.
+2. **`docs/specs/2026-05-04-service-protocol-contract.md`** — update when the wire contract changes. Authoritative source for all three service protocols. The proto sources at `protocols/proto/v1/*.proto` and the contract doc must stay in sync. (`docs/protocol.md` is now a one-page pointer to this contract.)
 3. **`docs/node-graph-design.md`** — update when the conceptual model (states, messages, error actions, resource semantics) changes.
 4. **`docs/operator-guide.md`** — update when env vars, YAML config, or deployment topology changes.
-5. **`docs/executor-author-guide.md` / `docs/resource-author-guide.md`** — update when the corresponding interface contract changes.
+5. **`docs/executor-author-guide.md` / `docs/claim-producer-author-guide.md`** — update when the corresponding interface contract changes.
 6. **Cold-read annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
 7. **`CHANGELOG.md`** — append a bullet under `## Unreleased` describing the change and its rationale.
 8. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.

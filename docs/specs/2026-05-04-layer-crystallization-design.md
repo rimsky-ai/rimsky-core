@@ -158,7 +158,7 @@ The `core/store/` directory dissolves: `Store` interface becomes `ClaimProducer`
 
 ## 5. Foundation contract — required content
 
-The foundation contract draft at `docs/specs/2026-05-03-foundation-contract-design.md` is the starting point. Phase 1 finalizes it with the following deltas:
+The foundation contract draft at `docs/history/2026-05-03-foundation-contract-design.md` (archived after Phase 1 landed; finalized as `docs/specs/2026-05-04-foundation-contract.md`) is the starting point. Phase 1 finalizes it with the following deltas:
 
 1. **Vocabulary update.** All references to `region` → `scope`. Specifically: §4.1 (claim handle field rename), §4.2 (region conflict → scope conflict), §4.3 (acquisition-time predicate), §6.1 (`region_data` SQL column → `scope_data`), all invariant references.
 2. **Subsystem package names settled.** §11.4 open question resolved: `cascade`, `locks`, `integration`. Sections 3, 4, 5 reference these as the canonical package names.
@@ -296,7 +296,7 @@ CREATE TABLE rimsky_worker_request (
 
 CREATE TABLE rimsky_claim_handle (
   id UUID PRIMARY KEY,
-  worker_request_id UUID NOT NULL REFERENCES rimsky_worker_request(id) ON DELETE CASCADE,
+  worker_request_id UUID REFERENCES rimsky_worker_request(id) ON DELETE SET NULL,
   holder TEXT NOT NULL,                   -- supervisor_id
   scope_data BYTEA NOT NULL,              -- canonicalized scope bytes (renamed from region_data)
   address JSONB,
@@ -308,7 +308,9 @@ CREATE TABLE rimsky_claim_handle (
 );
 ```
 
-Worker-request stays in `held` phase while any of its `is_held=true` claim handles still exist. Auto-terminal advances `phase` to `completed` and deletes the worker-request row, cascading deletion of the claim handles.
+Note on FK semantics: `worker_request_id` is `ON DELETE SET NULL`, **not** CASCADE. An earlier draft of this spec used CASCADE; smoke-test debugging during Phase 5 implementation surfaced a bug where held claim handles were cascade-deleted at active terminal before auto-terminal could fire the producer's Commit verb (items left stuck `in_progress` in the producer's own state). SET NULL lets held claim handles outlive the worker-request's active terminal until auto-terminal explicitly resolves and deletes them. The held-claim resolution path (`foundation/integration/auto_terminal.go::CheckAndFireResolution`) keys off claim-holder rows, not worker-request lifetime.
+
+Worker-request is deleted at executor terminal (active terminal) by the supervisor's `Queue.Complete`. At that moment, any held claim handles have their `worker_request_id` SET NULL but persist; auto-terminal later fires the producer verb on each and deletes the row.
 
 **Option II: Separate worker-request and held-claim-set rows.**
 
@@ -493,7 +495,7 @@ Phases describe *what* gets built in what order. Each phase has defined delivera
 - `docs/operator-guide.md` rewritten: uses new YAML key shape; references new contracts.
 - `docs/glossary.md` rewritten: uses new vocabulary (scope, claim producer, etc.); preserves modeling-layer vocabulary mapping.
 - `docs/protocol.md` rewritten or retired in favor of the service-protocol contract.
-- `docs/executor-author-guide.md` and `docs/store-author-guide.md` (the latter renamed to `docs/claim-producer-author-guide.md`) updated.
+- `docs/executor-author-guide.md` and `docs/claim-producer-author-guide.md` (the latter renamed from the historical `store-author-guide.md` filename, also under `docs/`, during Phase 4) updated.
 - `docs/node-graph-design.md` updated to reflect the foundation/modeling vocabulary distinction.
 - Helm chart in `deploy/kubernetes/rimsky-chart/` updated (current chart is known-stale per the v3 CHANGELOG entry).
 
@@ -534,13 +536,13 @@ In summary, the spec produces or rewrites:
 | `docs/specs/2026-05-04-foundation-contract.md` | New (supersedes 2026-05-03 draft) | 1 |
 | `docs/specs/2026-05-04-modeling-layer-contract.md` | New (comprehensive) | 1 |
 | `docs/specs/2026-05-04-service-protocol-contract.md` | New (supersedes archived stores docs + control-plane lifecycle doc) | 1 |
-| `docs/specs/2026-05-03-foundation-contract-design.md` | Move to `docs/history/` after Phase 1 | 1 |
+| `docs/history/2026-05-03-foundation-contract-design.md` | Moved here from `docs/specs/` after Phase 1 landed | 1 |
 | `docs/architecture.md` | Rewrite | 7 |
 | `docs/glossary.md` | Rewrite (scope, claim producer, layer model) | 7 |
 | `docs/operator-guide.md` | Rewrite (new YAML, new vocab) | 7 |
 | `docs/protocol.md` | Retire or rewrite as pointer to service-protocol contract | 7 |
 | `docs/executor-author-guide.md` | Rewrite | 7 |
-| `docs/store-author-guide.md` | Rename to `docs/claim-producer-author-guide.md`; rewrite | 7 |
+| `docs/claim-producer-author-guide.md` | Renamed from the historical `store-author-guide.md` filename (same directory) and rewritten | 7 |
 | `docs/node-graph-design.md` | Update with foundation/modeling vocabulary | 7 |
 | `CLAUDE.md` | Rewrite | 7 |
 | `CHANGELOG.md` | Bullets per phase under `## Unreleased` | each phase |

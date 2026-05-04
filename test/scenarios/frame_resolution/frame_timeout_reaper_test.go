@@ -41,7 +41,7 @@ func TestFrameTimeoutReaper(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frame for this instance so we have full control.
-	h.ExecSQL(`DELETE FROM rimsky_dispatch WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 

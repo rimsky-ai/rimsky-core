@@ -153,7 +153,7 @@ deploy/rimsky.yml                                       # example observability_
 deploy/docker-compose.yml                               # add rimsky-dashboard service (dev profile on by default)
 docs/operator-guide.md                                  # new "Observability & dashboard" section
 docs/executor-author-guide.md                           # new "Observability protocol" section
-docs/store-author-guide.md                              # new "Observability protocol" section
+docs/claim-producer-author-guide.md                     # new "Observability protocol" section
 CHANGELOG.md                                            # Unreleased entry
 ```
 
@@ -2031,9 +2031,9 @@ grep -q "observability" docs/operator-guide.md && echo OK
 grep -q "ExecutorObservability" docs/executor-author-guide.md && echo OK
 ```
 
-### Task K4 — `docs/store-author-guide.md` — Observability section
+### Task K4 — `docs/claim-producer-author-guide.md` — Observability section
 
-**Files:** `docs/store-author-guide.md`
+**Files:** `docs/claim-producer-author-guide.md`
 
 **Steps:**
 
@@ -2043,7 +2043,7 @@ grep -q "ExecutorObservability" docs/executor-author-guide.md && echo OK
 **Verify:**
 
 ```sh
-grep -q "StoreObservability" docs/store-author-guide.md && echo OK
+grep -q "StoreObservability" docs/claim-producer-author-guide.md && echo OK
 ```
 
 ### Task K5 — CHANGELOG

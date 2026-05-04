@@ -124,7 +124,7 @@ func TestNoOpCommit(t *testing.T) {
 	// state unchanged since first cascade.
 	var depDispatchCount int
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_dispatch WHERE node_id = $1`, dep.ID,
+		`SELECT count(*) FROM rimsky_worker_request WHERE node_id = $1`, dep.ID,
 	).Scan(&depDispatchCount)
 	require.NoError(t, err)
 	require.Equal(t, 0, depDispatchCount,

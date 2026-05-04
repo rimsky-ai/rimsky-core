@@ -31,8 +31,8 @@ func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) b
 }
 
 // markClaimHolderForNode flips this node's rimsky_claim_holders row
-// (for the given lock_holder_id) to 'completed' or 'failed' via a single
-// targeted UPDATE keyed on the unique (lock_holder_id, holder_node_id)
+// (for the given claim_handle_id) to 'completed' or 'failed' via a single
+// targeted UPDATE keyed on the unique (claim_handle_id, holder_node_id)
 // pair. Used by the terminal release path for both acquirer-of-held and
 // inheritor-of-held branches.
 func markClaimHolderForNode(

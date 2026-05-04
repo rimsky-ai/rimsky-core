@@ -9,6 +9,7 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -50,6 +51,33 @@ func (e LifecycleEvent) String() string {
 	return fmt.Sprintf("LifecycleEvent(%d)", int(e))
 }
 
+// TemplatePayload carries the per-event payload data the fan-out helper
+// passes through to subscribers. Fields are populated by the caller per
+// event type; unused fields stay at zero-value.
+type TemplatePayload struct {
+	// Spec is the canonical JCS-canonicalized template spec bytes.
+	// Populated for OnTemplateRegistered.
+	Spec json.RawMessage
+	// Tags is the set of tags newly attached to the template hash.
+	// Populated for OnTemplateDeployed (the bag of tags now pointing
+	// at this hash on this state transition).
+	Tags []string
+}
+
+// InstancePayload carries the per-event payload data for instance-scope
+// events.
+type InstancePayload struct {
+	// InstanceKey is rimsky_instances.instance_key (may be empty).
+	// Populated for OnInstanceCreated.
+	InstanceKey string
+	// Params is rimsky_instances.params (canonical JSON bytes).
+	// Populated for OnInstanceCreated.
+	Params json.RawMessage
+	// TerminatedAtUnixMs is rimsky_instances.terminated_at expressed
+	// as Unix milliseconds. Populated for OnInstanceTerminated.
+	TerminatedAtUnixMs int64
+}
+
 // FanOutTemplateEvent fires `event` to every LifecycleSubscriber peer
 // declared in rimsky.yml. Filters by the set of subscribers referenced
 // by the template's nodes (a peer that doesn't appear in any node's
@@ -68,6 +96,7 @@ func FanOutTemplateEvent(
 	event LifecycleEvent,
 	templateHash string,
 	spec node.TemplateSpec,
+	payload TemplatePayload,
 ) ([]string, map[string]error, error) {
 	switch event {
 	case EventTemplateRegistered, EventTemplateDeployed, EventTemplateUndeployed, EventTemplateDeregistered:
@@ -102,7 +131,7 @@ func FanOutTemplateEvent(
 			// to lifecycle events; skip silently.
 			continue
 		}
-		if err := dispatchTemplateEvent(ctx, s, event, templateHash); err != nil {
+		if err := dispatchTemplateEvent(ctx, s, event, templateHash, payload); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: peer %q: %w", name, err)
 		}
@@ -134,6 +163,7 @@ func FanOutInstanceEvent(
 	event LifecycleEvent,
 	templateHash, instanceID string,
 	spec node.TemplateSpec,
+	payload InstancePayload,
 ) ([]string, map[string]error, error) {
 	switch event {
 	case EventInstanceCreated, EventInstanceTerminated:
@@ -166,7 +196,7 @@ func FanOutInstanceEvent(
 		if !ok {
 			continue
 		}
-		if err := dispatchInstanceEvent(ctx, s, event, templateHash, instanceID); err != nil {
+		if err := dispatchInstanceEvent(ctx, s, event, templateHash, instanceID, payload); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutInstanceEvent: peer %q: %w", name, err)
 		}
@@ -190,37 +220,60 @@ func FanOutInstanceEvent(
 	return peerNames, nil, nil
 }
 
-func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string) error {
+func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {
 	switch event {
 	case EventTemplateRegistered:
-		return s.OnTemplateRegistered(ctx, templateID)
+		return s.OnTemplateRegistered(ctx, locks.OnTemplateRegisteredRequest{
+			TemplateHash: templateID,
+			Spec:         payload.Spec,
+		})
 	case EventTemplateDeployed:
-		return s.OnTemplateDeployed(ctx, templateID)
+		return s.OnTemplateDeployed(ctx, locks.OnTemplateDeployedRequest{
+			TemplateHash: templateID,
+			Tags:         payload.Tags,
+		})
 	case EventTemplateUndeployed:
-		return s.OnTemplateUndeployed(ctx, templateID)
+		return s.OnTemplateUndeployed(ctx, locks.OnTemplateUndeployedRequest{
+			TemplateHash: templateID,
+		})
 	case EventTemplateDeregistered:
-		return s.OnTemplateDeregistered(ctx, templateID)
+		return s.OnTemplateDeregistered(ctx, locks.OnTemplateDeregisteredRequest{
+			TemplateHash: templateID,
+		})
 	}
 	return fmt.Errorf("dispatchTemplateEvent: %v is not template-scope", event)
 }
 
-func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID, instanceID string) error {
+func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID, instanceID string, payload InstancePayload) error {
 	switch event {
 	case EventInstanceCreated:
-		return s.OnInstanceCreated(ctx, templateID, instanceID)
+		return s.OnInstanceCreated(ctx, locks.OnInstanceCreatedRequest{
+			InstanceID:   instanceID,
+			TemplateHash: templateID,
+			InstanceKey:  payload.InstanceKey,
+			Params:       payload.Params,
+		})
 	case EventInstanceTerminated:
-		return s.OnInstanceTerminated(ctx, templateID, instanceID)
+		return s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
+			InstanceID:         instanceID,
+			TemplateHash:       templateID,
+			TerminatedAtUnixMs: payload.TerminatedAtUnixMs,
+		})
 	}
 	return fmt.Errorf("dispatchInstanceEvent: %v is not instance-scope", event)
 }
 
 // lifecyclePeersForSpec returns the deduped, lex-sorted set of peer
-// names referenced by the template (currently: the union of the
-// store-aliases on each node). A peer that's referenced but does not
-// appear in deps.LifecycleSubs is fanned-out-skipped at dispatch time
-// (no error, no bookkeeping).
+// names referenced by the template — the union of (a) every store-alias
+// declared on each node and (b) every executor declared on each node.
+// Per service-protocol-contract.md §3, a peer's `protocols:` list is the
+// only declaration mechanism for lifecycle subscription; peers that
+// declare lifecycle_subscriber but are referenced via the executor field
+// must still receive events on templates that reference them. A peer
+// that's referenced but does not appear in deps.LifecycleSubs is
+// fanned-out-skipped at dispatch time (no error, no bookkeeping).
 func lifecyclePeersForSpec(_ AppDeps, spec node.TemplateSpec) []string {
-	return storesReferencedBySpec(spec)
+	return peersReferencedBySpec(spec)
 }
 
 func targetStateFor(event LifecycleEvent) persistence.LifecycleIdempotencyState {
@@ -237,10 +290,13 @@ func targetStateFor(event LifecycleEvent) persistence.LifecycleIdempotencyState 
 	return ""
 }
 
-// storesReferencedBySpec returns the deduped store-name set referenced
-// by the template's nodes' Stores entries, sorted lexicographically per
-// spec §5.6 for deterministic call order.
-func storesReferencedBySpec(spec node.TemplateSpec) []string {
+// peersReferencedBySpec returns the deduped peer-name set referenced by
+// the template's nodes — every store name on every node's Stores entry
+// PLUS every non-empty Executor name on each node — sorted
+// lexicographically per spec §5.6 for deterministic call order. Both
+// classes participate in lifecycle fan-out because either may declare
+// the lifecycle_subscriber protocol on its rimsky.yml peer block.
+func peersReferencedBySpec(spec node.TemplateSpec) []string {
 	seen := map[string]struct{}{}
 	for _, n := range spec.Nodes {
 		for _, s := range n.Stores {
@@ -248,6 +304,9 @@ func storesReferencedBySpec(spec node.TemplateSpec) []string {
 				continue
 			}
 			seen[s.Name] = struct{}{}
+		}
+		if n.Executor != "" {
+			seen[n.Executor] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))

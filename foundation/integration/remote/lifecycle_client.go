@@ -25,42 +25,54 @@ var _ locks.LifecycleSubscriber = (*LifecycleClient)(nil)
 // Name returns the operator-configured peer name.
 func (c *LifecycleClient) Name() string { return c.name }
 
-func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, templateID string) error {
-	_, err := c.rpc.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{TemplateHash: templateID})
+func (c *LifecycleClient) OnTemplateRegistered(ctx context.Context, req locks.OnTemplateRegisteredRequest) error {
+	_, err := c.rpc.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{
+		TemplateHash: req.TemplateHash,
+		Spec:         req.Spec,
+	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnTemplateRegistered: %w", c.name, err)
 	}
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateDeployed(ctx context.Context, templateID string) error {
-	_, err := c.rpc.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{TemplateHash: templateID})
+func (c *LifecycleClient) OnTemplateDeployed(ctx context.Context, req locks.OnTemplateDeployedRequest) error {
+	_, err := c.rpc.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{
+		TemplateHash: req.TemplateHash,
+		Tags:         req.Tags,
+	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnTemplateDeployed: %w", c.name, err)
 	}
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateUndeployed(ctx context.Context, templateID string) error {
-	_, err := c.rpc.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{TemplateHash: templateID})
+func (c *LifecycleClient) OnTemplateUndeployed(ctx context.Context, req locks.OnTemplateUndeployedRequest) error {
+	_, err := c.rpc.OnTemplateUndeployed(ctx, &genv1.OnTemplateUndeployedRequest{
+		TemplateHash: req.TemplateHash,
+	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnTemplateUndeployed: %w", c.name, err)
 	}
 	return nil
 }
 
-func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, templateID string) error {
-	_, err := c.rpc.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{TemplateHash: templateID})
+func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req locks.OnTemplateDeregisteredRequest) error {
+	_, err := c.rpc.OnTemplateDeregistered(ctx, &genv1.OnTemplateDeregisteredRequest{
+		TemplateHash: req.TemplateHash,
+	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnTemplateDeregistered: %w", c.name, err)
 	}
 	return nil
 }
 
-func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, templateID, instanceID string) error {
+func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req locks.OnInstanceCreatedRequest) error {
 	_, err := c.rpc.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-		InstanceId:   instanceID,
-		TemplateHash: templateID,
+		InstanceId:   req.InstanceID,
+		TemplateHash: req.TemplateHash,
+		InstanceKey:  req.InstanceKey,
+		Params:       req.Params,
 	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnInstanceCreated: %w", c.name, err)
@@ -68,10 +80,11 @@ func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, templateID, ins
 	return nil
 }
 
-func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, templateID, instanceID string) error {
+func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, req locks.OnInstanceTerminatedRequest) error {
 	_, err := c.rpc.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
-		InstanceId:   instanceID,
-		TemplateHash: templateID,
+		InstanceId:         req.InstanceID,
+		TemplateHash:       req.TemplateHash,
+		TerminatedAtUnixMs: req.TerminatedAtUnixMs,
 	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnInstanceTerminated: %w", c.name, err)

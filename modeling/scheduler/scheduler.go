@@ -21,11 +21,11 @@
 //  5. integration.SweepOrphanedClaims — dispatch rows whose
 //     `last_heartbeat_at` is older than the cutoff are released
 //     claimant-guarded so a fresh supervisor can pick them up.
-//  6. integration.SweepLockHolders — `rimsky_lock_holders` rows whose
+//  6. integration.SweepLockHolders — `rimsky_claim_handle` rows whose
 //     `expires_at < now()` are deleted claimant-guarded. Per v3 spec
 //     §7.5, Store.Abandon is NOT called — the store's own TTL/sweep
 //     handles its internal state. Cascade FK on
-//     `rimsky_claim_holders.lock_holder_id` cleans up held-claim rows.
+//     `rimsky_claim_holders.claim_handle_id` cleans up held-claim rows.
 //  7. integration.SweepReady — executor-backed stale nodes whose deps
 //     are all fresh get enqueued for the next claim cycle.
 //  8. frame.RunTick — frame-end detection, queue advancement,
@@ -237,7 +237,7 @@ func tick(ctx context.Context, cfg Config) error {
 	}
 
 	// 7. Claim-holder GC is no longer needed:
-	// rimsky_claim_holders.lock_holder_id has ON DELETE CASCADE, so when
+	// rimsky_claim_holders.claim_handle_id has ON DELETE CASCADE, so when
 	// the lock-holder row is deleted (at terminal or by orphan reap), the
 	// claim-holder rows are cleaned up automatically.
 

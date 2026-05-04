@@ -11,27 +11,43 @@
 //
 // Two types, no common interface: ClaimSpec and NamedLockSpec are
 // distinct. Callers dispatch by type.
+//
+// Per the layer-crystallization design (2026-05-04), the canonical Go
+// surface for the ClaimProducer protocol lives in
+// github.com/fallguy/rimsky/protocols/claimproducer. The types declared
+// here are Go type aliases (not duplicate declarations) so a value
+// satisfying protocols/claimproducer.X is interchangeable with
+// foundation/locks.X. External authors should import
+// protocols/claimproducer; rimsky-internal code may use either.
+//
+// Constants cannot be aliased in Go, so the const block re-declares the
+// WriteSemantics and Intent values using the aliased types. The values
+// equal their protocols/claimproducer counterparts by string value;
+// (==) comparisons across the two packages work naturally.
 
 package locks
 
-import "encoding/json"
+import (
+	"github.com/fallguy/rimsky/protocols/claimproducer"
+)
 
 // ClaimID is the rimsky-generated UUID (textual form) that identifies a
 // single claim across every protocol verb in its lifecycle. Generated
 // client-side immediately before Open; persisted in
-// rimsky_lock_holders.id; passed unchanged to Commit / Abandon /
+// rimsky_claim_handle.id; passed unchanged to Commit / Abandon /
 // Release.
-type ClaimID string
+type ClaimID = claimproducer.ClaimID
 
 // Intent is the graph author's declaration of what the executor will do
 // with the claim. Stored on each scope-kind lock-holder row and consumed
 // by the supervisor's mode-coexistence check.
-type Intent string
+type Intent = claimproducer.Intent
 
-// Intent values.
+// Intent values — re-declared here because Go does not allow constant
+// aliasing. Values equal the protocols/claimproducer counterparts.
 const (
-	IntentRead      Intent = "r"
-	IntentReadWrite Intent = "rw"
+	IntentRead      = claimproducer.IntentRead
+	IntentReadWrite = claimproducer.IntentReadWrite
 )
 
 // ClaimSpec is the producer-bound claim primitive.
@@ -48,18 +64,14 @@ const (
 // strings rimsky never inspects, populated from the dispatch row's
 // instance → template lookup, sent to the producer on Open for namespace
 // routing or trace correlation.
-type ClaimSpec struct {
-	StoreName  string // operator-configured producer name
-	Selector   string // opaque text (post-substitution); producer parses
-	Intent     Intent // "r" | "rw"
-	Alias      string // per-claim name within node; defaults to StoreName
-	TemplateID string // content hash (template-scope envelope)
-	InstanceID string // instance UUID (instance-scope envelope)
-}
+type ClaimSpec = claimproducer.ClaimSpec
 
 // NamedLockSpec is the producer-independent named-lock primitive.
 // Templates reference named locks by name only; the limit (mutex vs.
 // counting) lives in the operator's named_locks: config block.
+//
+// NamedLockSpec is rimsky-internal — it has no protocol-layer
+// equivalent because named locks never cross the wire to a producer.
 type NamedLockSpec struct {
 	Name string
 }
@@ -83,70 +95,56 @@ type NamedLockSpec struct {
 //	pattern-match, attach to traces, include in errors, or otherwise
 //	act on the content. Distinct from store-config bytes (operator-
 //	managed; not under invariant 20).
-type ClaimResult struct {
-	Address                json.RawMessage // producer-supplied pointer the executor uses
-	Payload                json.RawMessage // producer-supplied data captured at acquisition
-	Scope                  json.RawMessage // the producer's identifier for the claimed scope
-	RealizedWriteSemantics WriteSemantics  // per-claim semantics; must be in envelope
-}
+type ClaimResult = claimproducer.ClaimResult
 
 // OpenOutcome is the rimsky-side discriminator that mirrors the
 // OpenResponse oneof on the wire. Available == true means the
 // producer returned Acquired{...}; Available == false means
 // Unavailable{}. Result is populated only when Available is true; its
 // fields remain opaque json.RawMessage bytes per blessed invariant 20.
-type OpenOutcome struct {
-	Available bool
-	Result    ClaimResult
-}
+type OpenOutcome = claimproducer.OpenOutcome
 
 // WriteSemantics declares how a claim's writes coexist with concurrent
 // claims on byte-equal scopes. Per Phase 4 of the layer-crystallization
 // design (2026-05-04) the previously single-valued capability is replaced
 // by an envelope: a ClaimProducer advertises a SET of permissible values
 // via Capabilities, and Open returns the realized value per claim.
-type WriteSemantics string
+type WriteSemantics = claimproducer.WriteSemantics
 
-// WriteSemantics values.
+// WriteSemantics values — re-declared here because Go does not allow
+// constant aliasing. Values equal the protocols/claimproducer
+// counterparts (compared by string).
 const (
 	// WriteSemanticsUnknown is the proto-default zero value; producers
 	// that return Unknown are malformed and the supervisor must reject
 	// the claim result.
-	WriteSemanticsUnknown WriteSemantics = ""
+	WriteSemanticsUnknown = claimproducer.WriteSemanticsUnknown
 
 	// WriteSemanticsSync — synchronous in-place writes; r×rw on
 	// byte-equal scopes block.
-	WriteSemanticsSync WriteSemantics = "sync"
+	WriteSemanticsSync = claimproducer.WriteSemanticsSync
 
 	// WriteSemanticsStagedAsync — writes go to a staging area; reads
 	// see a stable snapshot during writes; r×rw on byte-equal scopes
 	// does NOT block.
-	WriteSemanticsStagedAsync WriteSemantics = "staged_async"
+	WriteSemanticsStagedAsync = claimproducer.WriteSemanticsStagedAsync
 
 	// WriteSemanticsBlockingAsync — writes go to a staging area;
 	// r×rw on byte-equal scopes block until commit/abandon.
-	WriteSemanticsBlockingAsync WriteSemantics = "blocking_async"
+	WriteSemanticsBlockingAsync = claimproducer.WriteSemanticsBlockingAsync
 
 	// WriteSemanticsReadOnly — claim cannot mutate; useful for pure-read
 	// producers.
-	WriteSemanticsReadOnly WriteSemantics = "read_only"
+	WriteSemanticsReadOnly = claimproducer.WriteSemanticsReadOnly
 )
 
 // ParseWriteSemantics maps the YAML/JSON spelling back to the constant.
 // Unknown spellings return WriteSemanticsUnknown and ok=false.
+//
+// Delegates to claimproducer.ParseWriteSemantics so both packages stay
+// in lockstep.
 func ParseWriteSemantics(s string) (WriteSemantics, bool) {
-	switch s {
-	case string(WriteSemanticsSync):
-		return WriteSemanticsSync, true
-	case string(WriteSemanticsStagedAsync):
-		return WriteSemanticsStagedAsync, true
-	case string(WriteSemanticsBlockingAsync):
-		return WriteSemanticsBlockingAsync, true
-	case string(WriteSemanticsReadOnly):
-		return WriteSemanticsReadOnly, true
-	default:
-		return WriteSemanticsUnknown, false
-	}
+	return claimproducer.ParseWriteSemantics(s)
 }
 
 // Capabilities describes what a ClaimProducer advertises.
@@ -156,17 +154,4 @@ func ParseWriteSemantics(s string) (WriteSemantics, bool) {
 // claim_producers[*].write_semantics_envelope) declares an envelope that
 // MUST be a subset of the advertised set; rimsky validates strict subset
 // at startup.
-type Capabilities struct {
-	WriteSemanticsEnvelope []WriteSemantics
-}
-
-// Contains reports whether the Capabilities advertised envelope includes
-// the given WriteSemantics value.
-func (c Capabilities) Contains(w WriteSemantics) bool {
-	for _, v := range c.WriteSemanticsEnvelope {
-		if v == w {
-			return true
-		}
-	}
-	return false
-}
+type Capabilities = claimproducer.Capabilities

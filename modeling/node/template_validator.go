@@ -466,18 +466,18 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 			})
 		}
 	case "claim":
-		// Valid forms: claim.<alias>.address, claim.<alias>.region,
+		// Valid forms: claim.<alias>.address, claim.<alias>.scope,
 		// claim.<alias>.payload.<field-path>.
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|region|payload.<field>}", body),
+				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|scope|payload.<field>}", body),
 			})
 			return
 		}
 		alias := parts[0]
 		switch parts[1] {
-		case "address", "region":
+		case "address", "scope":
 			if len(parts) != 2 {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -494,7 +494,7 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q second segment must be address|region|payload", body),
+				Msg:  fmt.Sprintf("claim directive %q second segment must be address|scope|payload", body),
 			})
 		}
 		// Alias must be acquired here OR inherited.
@@ -558,7 +558,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|region|payload.<f>}, or params.<k>)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|scope|payload.<f>}, or params.<k>)", body),
 			})
 		}
 	}

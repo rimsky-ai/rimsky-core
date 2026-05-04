@@ -56,10 +56,10 @@ CREATE TABLE rimsky_templates (
 );
 CREATE TABLE rimsky_template_tags (
   tag             TEXT        PRIMARY KEY,
-  template_hash   TEXT        NOT NULL REFERENCES rimsky_templates(id),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  template_id     TEXT        NOT NULL REFERENCES rimsky_templates(id) ON DELETE RESTRICT,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_rimsky_template_tags_hash ON rimsky_template_tags(template_hash);
+CREATE INDEX idx_rimsky_template_tags_template_id ON rimsky_template_tags(template_id);
 ```
 
 ### 3.6 Invariants
@@ -92,19 +92,23 @@ An **instance** is a concrete invocation of a template, bound at creation to a s
 ```sql
 CREATE TABLE rimsky_instances (
   id              UUID        PRIMARY KEY,
-  template_hash   TEXT        NOT NULL REFERENCES rimsky_templates(id),
+  template_hash   TEXT        NOT NULL REFERENCES rimsky_templates(id) ON DELETE RESTRICT,
   instance_key    TEXT,
-  params          JSONB,
+  params          JSONB       NOT NULL DEFAULT '{}',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  terminated_at   TIMESTAMPTZ
+  terminated_at   TIMESTAMPTZ,
+  UNIQUE (template_hash, instance_key)
 );
-CREATE UNIQUE INDEX uq_rimsky_instances_key ON rimsky_instances(template_hash, instance_key) WHERE instance_key IS NOT NULL;
+
+CREATE INDEX idx_rimsky_instances_terminated
+    ON rimsky_instances (terminated_at)
+    WHERE terminated_at IS NOT NULL;
 ```
 
 ### 4.5 Invariants
 
 1. **Bind-at-creation.** `template_hash` is fixed at creation; cannot be live-rebound.
-2. **Instance-key uniqueness within a template.** Enforced via partial unique index.
+2. **Instance-key uniqueness within a template.** Enforced via the `UNIQUE (template_hash, instance_key)` constraint. Postgres treats `NULL` as distinct under UNIQUE, so multiple key-less instances per template coexist; rows with non-NULL `instance_key` collide on duplicate `(template_hash, instance_key)` pairs.
 3. **Terminator fires exactly once.** Background goroutine guarantees single-fire on the NULL → timestamp transition.
 
 ### 4.6 Out of scope

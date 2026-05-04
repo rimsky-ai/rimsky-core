@@ -1,7 +1,7 @@
 // admin_routes_test.go — handler tests for the admin routes under the
 // stores-redesign-v3 surface:
 //
-//   - GET  /lock-holders/{lock_holder_id}/claim-holders
+//   - GET  /lock-holders/{claim_handle_id}/claim-holders
 //   - POST /admin/scheduled-nodes/{node_id}/force-fire
 //
 // (The pick-policy items endpoint was removed in v3; item seeding is
@@ -92,7 +92,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 
 	// Insert a lock-holder + claim-holder pair, then re-fetch.
 	holderNodeID := seedThrowawayNode(t, h)
-	lockHolderID := seedRegionLockHolder(ctx, t, h, holderNodeID)
+	lockHolderID := seedScopeLockHolder(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 		ID:           claimHolderID,
@@ -108,7 +108,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &resp))
 	require.Len(t, resp.Holders, 1)
 	require.Equal(t, claimHolderID.String(), resp.Holders[0]["id"])
-	require.Equal(t, lockHolderID.String(), resp.Holders[0]["lock_holder_id"])
+	require.Equal(t, lockHolderID.String(), resp.Holders[0]["claim_handle_id"])
 	require.Equal(t, holderNodeID.String(), resp.Holders[0]["holder_node_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
 }
@@ -190,10 +190,10 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	return nodeID
 }
 
-// seedRegionLockHolder inserts a region-kind lock-holder row anchored to
+// seedScopeLockHolder inserts a scope-kind lock-holder row anchored to
 // the given node and returns its ID. Used by claim-holders route tests
-// to satisfy the FK on rimsky_claim_holders.lock_holder_id.
-func seedRegionLockHolder(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
+// to satisfy the FK on rimsky_claim_holders.claim_handle_id.
+func seedScopeLockHolder(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	storeName := "test-store"
 	intent := "rw"

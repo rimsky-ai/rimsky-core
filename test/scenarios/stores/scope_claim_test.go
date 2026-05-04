@@ -1,9 +1,9 @@
-// Regional-claim scenario coverage — invariant 4b (single-writer-per-
-// region) and invariant 10 (atomic acquisition).
+// Scope-claim scenario coverage — invariant 4b (single-writer-per-
+// scope) and invariant 10 (atomic acquisition).
 //
 // The test starts a stub store-service via the loopback gRPC fixture
 // (stores/stub/testfixture.Start), deploys a template whose worker
-// node holds an `rw` claim against `selector: "/region-A"`, and
+// node holds an `rw` claim against `selector: "/scope-A"`, and
 // confirms that:
 //   - the worker node reaches `fresh` (acquisition + dispatch +
 //     terminal succeed end-to-end through the wire).
@@ -13,7 +13,7 @@
 // This exercises the §7.3 atomic acquisition path through the gRPC
 // bridge — the v3 replacement for the deleted v2 in-process Factory
 // pattern. A future variant can introduce a second contending acquirer
-// to specifically pin the byte-equal region-conflict predicate.
+// to specifically pin the byte-equal scope-conflict predicate.
 package stores
 
 import (
@@ -31,10 +31,10 @@ import (
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
-// TestRegionalClaimEndToEnd drives one regional-claim acquisition
+// TestScopeClaimEndToEnd drives one scope-claim acquisition
 // through the loopback gRPC fixture and asserts the store saw the
 // expected verb sequence.
-func TestRegionalClaimEndToEnd(t *testing.T) {
+func TestScopeClaimEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
@@ -55,15 +55,15 @@ func TestRegionalClaimEndToEnd(t *testing.T) {
 	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "regional-claim", Version: "1",
+		Name: "scope-claim", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
-				scenario.WithStores(scenario.WriteClaimRef("content", "/region-A")),
+				scenario.WithStores(scenario.WriteClaimRef("content", "/scope-A")),
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-regional-claim", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-scope-claim", map[string]any{})
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)

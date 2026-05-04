@@ -170,13 +170,19 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 		if err := decodeOptional(body, &req); err != nil {
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
-		return srv.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{TemplateHash: req.TemplateHash})
+		return srv.OnTemplateRegistered(ctx, &genv1.OnTemplateRegisteredRequest{
+			TemplateHash: req.TemplateHash,
+			Spec:         req.Spec,
+		})
 	case "on_template_deployed":
 		var req templateScopeBody
 		if err := decodeOptional(body, &req); err != nil {
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
-		return srv.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{TemplateHash: req.TemplateHash})
+		return srv.OnTemplateDeployed(ctx, &genv1.OnTemplateDeployedRequest{
+			TemplateHash: req.TemplateHash,
+			Tags:         req.Tags,
+		})
 	case "on_template_undeployed":
 		var req templateScopeBody
 		if err := decodeOptional(body, &req); err != nil {
@@ -195,7 +201,10 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-			InstanceId: req.InstanceID, TemplateHash: req.TemplateHash,
+			InstanceId:   req.InstanceID,
+			TemplateHash: req.TemplateHash,
+			InstanceKey:  req.InstanceKey,
+			Params:       req.Params,
 		})
 	case "on_instance_terminated":
 		var req instanceScopeBody
@@ -203,7 +212,9 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.OnInstanceTerminated(ctx, &genv1.OnInstanceTerminatedRequest{
-			InstanceId: req.InstanceID, TemplateHash: req.TemplateHash,
+			InstanceId:         req.InstanceID,
+			TemplateHash:       req.TemplateHash,
+			TerminatedAtUnixMs: req.TerminatedAtUnixMs,
 		})
 	}
 	return nil, errUnknownVerb
@@ -229,16 +240,24 @@ type actionBody struct {
 }
 
 // templateScopeBody is the JSON shape decoded from the four template-
-// scope lifecycle event endpoints.
+// scope lifecycle event endpoints. Optional Spec / Tags fields carry
+// the per-event payload that the proto-side requests use; absent
+// fields decode to zero values, which is treated as "no payload".
 type templateScopeBody struct {
-	TemplateHash string `json:"template_hash"`
+	TemplateHash string   `json:"template_hash"`
+	Spec         []byte   `json:"spec,omitempty"` // populated for on_template_registered
+	Tags         []string `json:"tags,omitempty"` // populated for on_template_deployed
 }
 
 // instanceScopeBody is the JSON shape decoded from the two instance-
-// scope lifecycle event endpoints.
+// scope lifecycle event endpoints. Optional InstanceKey / Params /
+// TerminatedAtUnixMs carry the per-event payload.
 type instanceScopeBody struct {
-	TemplateHash string `json:"template_hash"`
-	InstanceID   string `json:"instance_id"`
+	TemplateHash       string `json:"template_hash"`
+	InstanceID         string `json:"instance_id"`
+	InstanceKey        string `json:"instance_key,omitempty"`          // populated for on_instance_created
+	Params             []byte `json:"params,omitempty"`                // populated for on_instance_created
+	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"` // populated for on_instance_terminated
 }
 
 // decodeOptional accepts either an empty body or a JSON object.

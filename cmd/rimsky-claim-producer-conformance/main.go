@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -146,6 +147,18 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 		// Some producers (pick-policy queues) drain after Open. Skip
 		// the uniformity check rather than fail.
 		results = append(results, CheckResult{Name: "OpenSecond"})
+		return results
+	}
+	results = append(results, CheckResult{Name: "OpenSecond"})
+
+	// Spec §2.5 uniformity: "byte-equal Scope MUST yield identical
+	// RealizedWriteSemantics". The check only applies when the two
+	// Open calls returned byte-equal Scope bytes — for pick-policy
+	// producers, two Open calls return DIFFERENT scope bytes
+	// (different items), and asserting uniformity across non-byte-
+	// equal scopes is stricter than the invariant requires.
+	if !bytes.Equal(out1.Result.Scope, out2.Result.Scope) {
+		fmt.Fprintln(os.Stdout, "uniformity-untested-this-run: producer returned non-byte-equal scopes across two Open calls (e.g. pick-policy producer); spec §2.5 uniformity invariant only applies to byte-equal scopes.")
 		return results
 	}
 	if out2.Result.RealizedWriteSemantics != out1.Result.RealizedWriteSemantics {

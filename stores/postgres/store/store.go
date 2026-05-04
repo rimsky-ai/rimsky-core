@@ -1,6 +1,6 @@
 // Package store is the store-internal logic for the standard
-// postgres store-service. Per spec §8.2: regional access via byte-equal
-// region match (selector echoed); pick-policy access via FOR UPDATE SKIP
+// postgres store-service. Per spec §8.2: scope-bytes access via byte-equal
+// scope match (selector echoed); pick-policy access via FOR UPDATE SKIP
 // LOCKED on operator-owned items tables.
 //
 // Store atomicity is the store's concern: every state mutation
@@ -42,7 +42,7 @@ var ItemsTableIdentRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 //
 // No in-process claim tracking: the items table's `claim_token`
 // column is the canonical record of in-flight pick-policy claims, and
-// regional claims have nothing to track. An earlier draft kept a
+// scope-bytes claims have nothing to track. An earlier draft kept a
 // claim_id → item_id map but no consumer ever read it; removed to
 // eliminate drift.
 type Store struct {
@@ -243,7 +243,7 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 }
 
 // Commit applies the configured on_commit_default action for pick-
-// policy claims; no-op for regional claims. address is accepted for
+// policy claims; no-op for scope-bytes claims. address is accepted for
 // signature uniformity across the three standard stores and
 // ignored — postgres looks up the in-flight pick-policy item by
 // claim_token (= rimsky claim_id) so that a duplicated terminal RPC
@@ -265,7 +265,7 @@ func (s *Store) Commit(ctx context.Context, claimID string, _ []byte, _ []byte) 
 }
 
 // Abandon applies the configured on_give_up_default action for pick-
-// policy claims; degenerate no-op for regional claims (cannot undo
+// policy claims; degenerate no-op for scope-bytes claims (cannot undo
 // direct writes). address is accepted for signature uniformity and
 // ignored. Lookup is claim_token-based (= rimsky claim_id) per §7.8
 // obligation #3. Ledger records terminal only on success; failures
@@ -280,7 +280,7 @@ func (s *Store) Abandon(ctx context.Context, claimID string, _ []byte, _ []byte)
 }
 
 // Release tears down store-side read state. v3 standard postgres
-// registers no read state at Open; always a no-op. region/address are
+// registers no read state at Open; always a no-op. scope/address are
 // accepted for signature uniformity and ignored.
 func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
 	s.ledger.RecordTerminal(claimID, "claim_released", nil)
@@ -308,8 +308,8 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 	pp, found := s.findPolicyForClaim(ctx, claimID)
 	if !found {
 		// Either the claim was already terminated (claim_token cleared)
-		// or it never belonged to any pick-policy items table (regional
-		// claim). Both are no-ops at this layer.
+		// or it never belonged to any pick-policy items table (scope-
+		// bytes claim). Both are no-ops at this layer.
 		return nil
 	}
 	var action string
