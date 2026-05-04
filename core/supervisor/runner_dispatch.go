@@ -427,6 +427,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
 		RunAttempt:       int32(runAttempt),
+		DispatchId:       acq.DispatchID.String(),
 	}, nil
 }
 

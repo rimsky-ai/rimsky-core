@@ -32,4 +32,8 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Driver) {
 	t.Run("LockHoldersUpdateRegion", func(t *testing.T) { testLockHoldersUpdateRegion(t, factory(t)) })
 	t.Run("NodesMarkStaleForCascade", func(t *testing.T) { testNodesMarkStaleForCascade(t, factory(t)) })
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
+	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
+	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
+	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
+	t.Run("SchedulesDenseSameTimestampPagination", func(t *testing.T) { testSchedulesDenseSameTimestampPagination(t, factory(t)) })
 }

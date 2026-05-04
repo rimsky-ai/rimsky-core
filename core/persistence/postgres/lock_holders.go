@@ -22,6 +22,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -299,6 +300,112 @@ func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, s
 		return false, fmt.Errorf("lockholders.DeleteIfExpired: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ListForObservability returns lock-holder rows matching filter,
+// cursor-paginated by claimed_at DESC. Used by the observability
+// /v1/observability/lock-holders endpoint (spec §1.2.4). The filter
+// supports the spec's documented surface plus the previously
+// per-method options (holder_node, holder_supervisor) so a single
+// generic browse endpoint can replace the prior per-anchor methods.
+func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.LockHolderRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var storeArg, supArg, nodeTypeArg any
+	var nodeArg, instArg any
+	if filter.StoreName != "" {
+		storeArg = filter.StoreName
+	}
+	if filter.HolderSupervisor != "" {
+		supArg = filter.HolderSupervisor
+	}
+	if filter.HolderNodeID != nil {
+		nodeArg = *filter.HolderNodeID
+	}
+	if filter.InstanceID != nil {
+		instArg = *filter.InstanceID
+	}
+	if filter.NodeType != "" {
+		nodeTypeArg = filter.NodeType
+	}
+	var cursorClaimed *time.Time
+	var cursorID *shared.UUID
+	if pag.Cursor != "" {
+		c, id, err := decodeLockHolderCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
+		}
+		cursorClaimed = &c
+		cursorID = &id
+	}
+	var cArg, cIDArg any
+	if cursorClaimed != nil {
+		cArg = *cursorClaimed
+		cIDArg = *cursorID
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT `+lockHolderCols+`
+		   FROM rimsky_lock_holders lh
+		  WHERE ($1::text IS NULL OR lh.store_name = $1)
+		    AND ($2::text IS NULL OR lh.holder_supervisor_id = $2)
+		    AND ($3::uuid IS NULL OR lh.holder_node_id = $3)
+		    AND (
+		         $4::uuid IS NULL OR EXISTS (
+		           SELECT 1 FROM rimsky_nodes n
+		            WHERE n.id = lh.holder_node_id
+		              AND n.instance_id = $4
+		         )
+		    )
+		    AND (
+		         $5::text IS NULL OR EXISTS (
+		           SELECT 1 FROM rimsky_nodes n
+		            WHERE n.id = lh.holder_node_id
+		              AND n.node_type = $5
+		         )
+		    )
+		    AND ($6::timestamptz IS NULL OR (lh.claimed_at, lh.id) < ($6, $7))
+		  ORDER BY lh.claimed_at DESC, lh.id DESC
+		  LIMIT $8`,
+		storeArg, supArg, nodeArg, instArg, nodeTypeArg, cArg, cIDArg, limit,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: %w", err)
+	}
+	defer rows.Close()
+	out, err := collectLockHolders(rows)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeLockHolderCursor(last.ClaimedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[persistence.LockHolderRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type lockHolderCursor struct {
+	C time.Time   `json:"c"`
+	I shared.UUID `json:"i"`
+}
+
+func encodeLockHolderCursor(claimed time.Time, id shared.UUID) string {
+	b, _ := json.Marshal(lockHolderCursor{C: claimed, I: id})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c lockHolderCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.C, c.I, nil
 }
 
 // ---- helpers ----

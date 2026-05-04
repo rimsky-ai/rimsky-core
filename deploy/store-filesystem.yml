@@ -4,3 +4,4 @@ root: /workspace/content
 host: 0.0.0.0
 grpc_port: 9100
 http_port: 9110
+http_bridge_url: "http://store-filesystem:9110"

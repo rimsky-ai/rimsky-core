@@ -68,19 +68,19 @@ const (
 // drives the §7.5 dispatch-claim sweep predicate (claim age tracks
 // heartbeat liveness rather than initial-claim time).
 type DispatchRow struct {
-	ID              UUID
-	NodeID          UUID
-	ExecutorName    *string
-	RequiredStores  []string
-	EnqueuedAt      time.Time
-	ClaimedBy       *string
-	ClaimedAt       *time.Time
-	LastHeartbeatAt *time.Time
+	ID              UUID       `json:"id"`
+	NodeID          UUID       `json:"node_id"`
+	ExecutorName    *string    `json:"executor_name,omitempty"`
+	RequiredStores  []string   `json:"required_stores,omitempty"`
+	EnqueuedAt      time.Time  `json:"enqueued_at"`
+	ClaimedBy       *string    `json:"claimed_by,omitempty"`
+	ClaimedAt       *time.Time `json:"claimed_at,omitempty"`
+	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
 	// FrameID is the frame this dispatch row belongs to (per
-	// docs/specs/2026-04-26-frame-resolution-design.md §10.2). NOT NULL
+	// docs/history/2026-04-26-frame-resolution-design.md §10.2). NOT NULL
 	// in storage; blessed-invariant 19 forbids in-flight dispatch rows
 	// without a frame_id.
-	FrameID UUID
+	FrameID UUID `json:"frame_id"`
 }
 
 // RenderResourcePath renders segments as "a:b:c" for display.

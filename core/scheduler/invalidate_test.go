@@ -80,6 +80,12 @@ func (f *invTestQueue) GetDispatchNode(_ context.Context, _ shared.UUID) (shared
 	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
 func (f *invTestQueue) RefreshHeartbeat(_ context.Context, _ string) error { return nil }
+func (f *invTestQueue) ListLive(_ context.Context, _ persistence.DispatchListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+	return persistence.PaginatedListResult[shared.DispatchRow]{}, nil
+}
+func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFilter) (int, error) {
+	return 0, nil
+}
 
 func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID) {
 	f.mu.Lock()
@@ -184,7 +190,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state shared.
 // --- InvalidateNode tests ---------------------------------------------
 //
 // Under the frame-resolution model
-// (docs/specs/2026-04-26-frame-resolution-design.md), InvalidateNode no
+// (docs/history/2026-04-26-frame-resolution-design.md), InvalidateNode no
 // longer mutates rimsky_nodes.state. It enqueues a rimsky_frames row
 // (or coalesces into a pending one), and the scheduler tick's frame
 // engine advances the frame to running, marking sources stale at that

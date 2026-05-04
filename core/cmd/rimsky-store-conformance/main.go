@@ -30,6 +30,7 @@ import (
 func main() {
 	endpoint := flag.String("endpoint", "", "store-service gRPC endpoint (e.g. grpc://localhost:9101)")
 	timeout := flag.Duration("timeout", 10*time.Second, "per-check timeout")
+	checkObs := flag.Bool("check-observability", false, "additionally probe StoreObservability per spec §6")
 	flag.Parse()
 
 	if *endpoint == "" {
@@ -60,6 +61,14 @@ func main() {
 	if failed > 0 {
 		fmt.Fprintf(os.Stderr, "rimsky-store-conformance: %d/%d checks failed\n", failed, len(results))
 		os.Exit(1)
+	}
+
+	if *checkObs {
+		if err := runObservabilityCheck(ctx, *endpoint); err != nil {
+			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "observability: ok")
 	}
 }
 

@@ -1,6 +1,6 @@
 # Rimsky Operator Guide
 
-> v3 spec at `docs/specs/2026-04-27-stores-redesign-v3-design.md` is the
+> v3 spec at `docs/history/2026-04-27-stores-redesign-v3-design.md` is the
 > authoritative contract; this guide is the operator-facing summary.
 
 ---
@@ -682,7 +682,7 @@ For the standard stores shipped under `stores/`:
   Actions: `release_to_back` cycles to the tail; `release_to_head` (mtime
   epoch) sorts strictly to the head — note this is *stronger* than pg's
   priority-bump `release_to_head`; `delete` runs `os.RemoveAll` on the
-  underlying folder. Per `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+  underlying folder. Per `docs/history/2026-05-03-fs-store-pick-policies-design.md`.
 
 Read each store-author's documentation for its supported config schema.
 Rimsky neither defines nor validates these schemas.
@@ -989,7 +989,7 @@ curl -s -X POST http://localhost:8080/nodes/$NODE/invalidate \
   -d '{"reason": "upstream data corrected"}'
 ```
 
-Under frame resolution (see `docs/specs/2026-04-26-frame-resolution-design.md`)
+Under frame resolution (see `docs/history/2026-04-26-frame-resolution-design.md`)
 operator invalidates do **not** preempt running work. Each invalidate goes
 through `frame.EnqueueOrCoalesce`: `serial_queue` templates queue a new frame
 that runs after the in-flight one completes; `coalesce` templates fold the
@@ -1441,7 +1441,7 @@ done
 
 ## Control-plane v1: `rimsky.yml` and template lifecycle
 
-Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+Per `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`.
 
 ### `RIMSKY_CONFIG`
 
@@ -1528,3 +1528,115 @@ no stale/running nodes), the scheduler sets
 `rimsky_instances.terminated_at = now()`. A control-api background worker
 polls for terminated instances with outstanding lifecycle bookkeeping and
 fires `OnInstanceTerminated` to the relevant stores.
+
+
+## Observability & dashboard
+
+Rimsky exposes three optional public observability protocols, one per
+existing collection. Per `docs/specs/2026-05-02-dashboard-and-observability-design.md`:
+
+- **Rimsky observability API** — read-only HTTP/JSON on
+  `rimsky-control-api`, mounted under `/v1/observability/*`. Backed by
+  the `rimsky_*` tables; no new schema. Resource-oriented browse +
+  detail endpoints for templates, instances, frames, nodes,
+  dispatches, lock-holders, schedules, events, plus per-peer topology
+  (declared executors and stores with their observability
+  capabilities).
+- **Executor observability protocol** — gRPC service + HTTP+JSON
+  bridge per executor (`proto/v1/executor_observability.proto`).
+  `GetCapabilities`, `GetTrace(dispatch_id)`, `StreamTrace`. Optional;
+  executors that don't implement it return `Unimplemented` for the
+  RPCs and false `supports_*` flags from `GetCapabilities`.
+- **Store observability protocol** — gRPC service + HTTP+JSON bridge
+  per store (`proto/v1/store_observability.proto`). `GetCapabilities`,
+  `GetClaim`, `StreamClaim`, `ListClaims`, `GetAdminView`. Optional in
+  the same way.
+
+### `observability_endpoint:` in `rimsky.yml`
+
+Each `executors:` and `stores:` block in `rimsky.yml` accepts an
+optional `observability_endpoint:` field. When omitted, control-api
+uses the dispatch `endpoint` for the observability handshake. Override
+when the observability surface lives on a different port or host than
+the dispatch surface (e.g., when a sidecar serves the observability
+protocol on its own listener).
+
+```yaml
+executors:
+  claude-agent:
+    transport: grpc
+    endpoint: claude-agent:9090
+    observability_endpoint: claude-agent:9091   # optional
+    tls: off
+
+stores:
+  topics-ring:
+    endpoint: grpc://store-postgres:9101
+    observability_endpoint: grpc://store-postgres:9103
+    capabilities:
+      write_semantics: direct
+```
+
+Per spec §4 the observability handshake is best-effort: unreachable
+peers or absent endpoints are recorded as `reachability_status:
+unreachable`; control-api startup is not aborted. A background
+re-prober (`RIMSKY_OBSERVABILITY_REFRESH_INTERVAL`, default `60s`)
+re-probes peers so transient unreachability heals.
+
+### `http_bridge_url:` per peer
+
+Separate from `observability_endpoint:` (which is the gRPC handshake
+target read by control-api at startup), each peer declares its own
+HTTP+JSON bridge URL via `http_bridge_url`. The bridge URL is
+returned in the peer's capabilities response and exposed on
+`/v1/observability/{stores,executors}/{name}` as `http_bridge_url`;
+the dashboard's reverse proxy uses it to dial the peer from the
+browser. When a peer's gRPC and HTTP-bridge ports differ (the case
+for every shipped executor and store), set this explicitly:
+
+- **Stores** declare it in their own YAML (`http_bridge_url:` at the
+  top level of `deploy/store-{filesystem,postgres}.yml`).
+- **Executors** declare it via env var
+  (`RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL` for `http-node`,
+  `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` for `claude-agent`).
+
+When empty, the peer exposes only the gRPC observability surface and
+the dashboard cannot proxy to it from the browser; the SystemPage
+will show the peer as reachable (gRPC handshake succeeded) but
+deep-links to its detail pages will surface a "no HTTP bridge"
+notice.
+
+### Reference dashboard
+
+`dashboards/rimsky-dashboard/` ships as a single Node + SPA process.
+Bundled with the dev `docker-compose.yml` and started by default:
+
+```sh
+docker compose -f deploy/docker-compose.yml up -d
+# open http://localhost:8090
+```
+
+The dashboard reads `RIMSKY_CONTROL_API_URL` (default
+`http://control-api:8080`) and `PORT` (default `8090`). It listens on
+a single port and exposes `/healthz` for compose / k8s liveness. The
+SPA composes the three observability protocols via reverse-proxy
+endpoints (`/api/control/*`, `/api/exec/{name}/*`,
+`/api/store/{name}/*`); CORS is collapsed to the dashboard's own
+origin so operators don't have to configure CORS on every executor or
+store.
+
+### Auth posture
+
+V1 inherits the per-project deployment / network-perimeter model. The
+observability API is unauthenticated; the dashboard is unauthenticated.
+Run them behind the same perimeter as control-api. Tenant scoping and
+front-end auth are forward-scope (spec §11).
+
+### Iframe security
+
+The dashboard renders peer-declared custom UIs in sandboxed iframes
+(`sandbox="allow-scripts allow-forms"`, `referrerpolicy="no-referrer"`,
+optional `allow-same-origin` only when the iframe origin matches the
+dashboard's own). Operators are responsible for the executors and
+stores they declare in `rimsky.yml`; the iframe sandbox is
+defense-in-depth, not the primary trust boundary. See spec §5.6.

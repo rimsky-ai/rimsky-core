@@ -68,7 +68,15 @@ type Store struct {
 	// store-side state per claim, so this is observability-only — the
 	// sweep responsibility is satisfied trivially.
 	claims map[string]string
+
+	// ledger is the per-claim history surfaced via the StoreObservability
+	// protocol. Bounded; nil when observability isn't wired up. Per
+	// spec §3.2: stores choose what to expose.
+	ledger *ClaimLedger
 }
+
+// Ledger returns the in-memory claim ledger. Nil-safe.
+func (s *Store) Ledger() *ClaimLedger { return s.ledger }
 
 // New returns a Store rooted at the given config.
 func New(cfg Config) (*Store, error) {
@@ -91,6 +99,7 @@ func New(cfg Config) (*Store, error) {
 		root:         cfg.Root,
 		pickPolicies: cfg.PickPolicies,
 		claims:       make(map[string]string),
+		ledger:       NewClaimLedger(1024),
 	}, nil
 }
 
@@ -195,6 +204,8 @@ func (s *Store) openRegional(claimID, selector string) (corestore.OpenOutcome, e
 	s.claims[claimID] = addrPath
 	s.mu.Unlock()
 
+	s.ledger.RecordOpen(claimID, raw, addrBytes, regionBytes)
+
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
@@ -209,26 +220,45 @@ func (s *Store) openRegional(claimID, selector string) (corestore.OpenOutcome, e
 // region/address are accepted to keep the signature uniform across the
 // three standard stores; the filesystem store ignores them on the
 // regional path.
+//
+// The ledger records the terminal event only after the store-side
+// action succeeds. Failures surface as non-terminal
+// `claim_commit_failed` events; the in-memory claim entry stays put so
+// the supervisor can retry without losing track. The s.claims delete
+// happens up-front because the per-claim path is needed only for
+// findByClaimID, and a failed action keeps the on-disk sentinel intact
+// for the next attempt.
 func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	pp, sel, entry, folder := s.findByClaimID(claimID)
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()
-	if pp, sel, entry, folder := s.findByClaimID(claimID); pp != nil {
-		return s.applyPickAction(pp, sel, entry, folder, pp.OnCommitDefault)
+	if pp != nil {
+		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnCommitDefault); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
 	}
+	s.ledger.RecordTerminal(claimID, "claim_committed", nil)
 	return nil
 }
 
 // Abandon delegates to the pick-policy action handler when the claim is
 // in pick-policy state; otherwise no-op (direct mode cannot undo
-// writes).
+// writes). Ledger records terminal only on success; failures surface
+// as a non-terminal `claim_abandon_failed` event.
 func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	pp, sel, entry, folder := s.findByClaimID(claimID)
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()
-	if pp, sel, entry, folder := s.findByClaimID(claimID); pp != nil {
-		return s.applyPickAction(pp, sel, entry, folder, pp.OnGiveUpDefault)
+	if pp != nil {
+		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnGiveUpDefault); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
 	}
+	s.ledger.RecordTerminal(claimID, "claim_abandoned", nil)
 	return nil
 }
 
@@ -239,6 +269,7 @@ func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) e
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()
+	s.ledger.RecordTerminal(claimID, "claim_released", nil)
 	return nil
 }
 

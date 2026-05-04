@@ -51,7 +51,13 @@ type ExecuteRequest struct {
 	// bearer token on incremental attribute and async terminal callbacks.
 	CancelToken string `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
 	// Increments on every retry. Exposed for executor visibility / idempotency.
-	RunAttempt    int32 `protobuf:"varint,11,opt,name=run_attempt,json=runAttempt,proto3" json:"run_attempt,omitempty"`
+	RunAttempt int32 `protobuf:"varint,11,opt,name=run_attempt,json=runAttempt,proto3" json:"run_attempt,omitempty"`
+	// The supervisor-side rimsky_dispatch.id for this dispatch. Exposed
+	// so executors can key per-dispatch traces/state (the executor
+	// observability protocol, spec §2, identifies dispatches by this
+	// id). May be empty when the supervisor invokes Execute outside the
+	// dispatch-row path (e.g. unit tests or stub-mode probes).
+	DispatchId    string `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -154,6 +160,13 @@ func (x *ExecuteRequest) GetRunAttempt() int32 {
 		return x.RunAttempt
 	}
 	return 0
+}
+
+func (x *ExecuteRequest) GetDispatchId() string {
+	if x != nil {
+		return x.DispatchId
+	}
+	return ""
 }
 
 // StoreHandle is the per-store reference handed to the executor at
@@ -644,7 +657,7 @@ var File_node_executor_proto protoreflect.FileDescriptor
 
 const file_node_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x13node_executor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xa3\x04\n" +
+	"\x13node_executor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc4\x04\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -659,7 +672,9 @@ const file_node_executor_proto_rawDesc = "" +
 	"\fcallback_url\x18\b \x01(\tR\vcallbackUrl\x12!\n" +
 	"\fcancel_token\x18\t \x01(\tR\vcancelToken\x12\x1f\n" +
 	"\vrun_attempt\x18\v \x01(\x05R\n" +
-	"runAttempt\x1aQ\n" +
+	"runAttempt\x12\x1f\n" +
+	"\vdispatch_id\x18\f \x01(\tR\n" +
+	"dispatchId\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\n" +

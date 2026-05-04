@@ -62,6 +62,26 @@ func (s *instancesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.
 	return &out, nil
 }
 
+// FindAnyByInstanceKey resolves an instance by instance_key alone.
+// Used by the control-api's idOrKey resolver where the template hash
+// is not part of the URL.
+func (s *instancesImpl) FindAnyByInstanceKey(ctx context.Context, instanceKey string, tx persistence.Tx) (*persistence.InstanceRow, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT `+instanceCols+` FROM rimsky_instances
+		 WHERE instance_key = ?
+		 ORDER BY created_at DESC
+		 LIMIT 1`, instanceKey,
+	)
+	out, err := scanInstance(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("instances.findAnyByInstanceKey: %w", err)
+	}
+	return &out, nil
+}
+
 func (s *instancesImpl) GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx persistence.Tx) (*persistence.InstanceRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+instanceCols+` FROM rimsky_instances
@@ -100,16 +120,26 @@ func (s *instancesImpl) List(
 	if filter.TemplateHash != "" {
 		tmplHash = filter.TemplateHash
 	}
-	var ikey any
-	if filter.InstanceKey != "" {
-		ikey = filter.InstanceKey
+	// Active filter: nil → no filter; true → terminated_at IS NULL;
+	// false → terminated_at IS NOT NULL.
+	var activeArg any
+	if filter.Active != nil {
+		if *filter.Active {
+			activeArg = 1
+		} else {
+			activeArg = 0
+		}
 	}
 
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+instanceCols+`
 		 FROM rimsky_instances
 		 WHERE (? IS NULL OR template_hash = ?)
-		   AND (? IS NULL OR instance_key = ?)
+		   AND (
+		     ? IS NULL
+		     OR (? = 1 AND terminated_at IS NULL)
+		     OR (? = 0 AND terminated_at IS NOT NULL)
+		   )
 		   AND (
 		     ? IS NULL
 		     OR (created_at, id) < (
@@ -119,7 +149,7 @@ func (s *instancesImpl) List(
 		   )
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT ?`,
-		tmplHash, tmplHash, ikey, ikey, cursor, cursor, cursor, limit,
+		tmplHash, tmplHash, activeArg, activeArg, activeArg, cursor, cursor, cursor, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: %w", err)
@@ -175,6 +205,21 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 		return 0, fmt.Errorf("instances.countActiveByTemplate: %w", err)
 	}
 	return n, nil
+}
+
+// CountByActive returns (active, terminated) instance counts.
+func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (int, int, error) {
+	var active, terminated int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT
+		   COUNT(CASE WHEN terminated_at IS NULL THEN 1 END),
+		   COUNT(CASE WHEN terminated_at IS NOT NULL THEN 1 END)
+		 FROM rimsky_instances`,
+	).Scan(&active, &terminated)
+	if err != nil {
+		return 0, 0, fmt.Errorf("instances.countByActive: %w", err)
+	}
+	return active, terminated, nil
 }
 
 func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx persistence.Tx) ([]persistence.InstanceRow, error) {

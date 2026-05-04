@@ -33,6 +33,11 @@ const capabilitiesHandshakeTimeout = 30 * time.Second
 type StoreEntry struct {
 	Endpoint     string
 	Capabilities store.Capabilities
+	// ObservabilityEndpoint is the optional observability endpoint
+	// override; when empty, Endpoint is reused for the observability
+	// handshake. Per docs/specs/2026-05-02-dashboard-and-observability-
+	// design.md §4.1.
+	ObservabilityEndpoint string
 }
 
 // RemoteStoresConfig is the parsed `stores:` block from rimsky.yml.
@@ -51,6 +56,11 @@ type ExecutorEntry struct {
 	Transport string // "grpc" | "http"
 	Endpoint  string // e.g. "claude-agent:9090"
 	TLS       string // "off" | "optional" | "required" (matches executor.Endpoint)
+	// ObservabilityEndpoint is the optional observability endpoint
+	// override; when empty, Endpoint is reused for the observability
+	// handshake. Per docs/specs/2026-05-02-dashboard-and-observability-
+	// design.md §4.1.
+	ObservabilityEndpoint string
 }
 
 // ExecutorsConfig is the parsed `executors:` block from rimsky.yml.
@@ -126,12 +136,14 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			Capabilities struct {
 				WriteSemantics string `yaml:"write_semantics"`
 			} `yaml:"capabilities"`
+			ObservabilityEndpoint string `yaml:"observability_endpoint"`
 		} `yaml:"stores"`
 		NamedLocks map[string]store.NamedLockConfig `yaml:"named_locks"`
 		Executors  map[string]struct {
-			Transport string `yaml:"transport"`
-			Endpoint  string `yaml:"endpoint"`
-			TLS       string `yaml:"tls"`
+			Transport             string `yaml:"transport"`
+			Endpoint              string `yaml:"endpoint"`
+			TLS                   string `yaml:"tls"`
+			ObservabilityEndpoint string `yaml:"observability_endpoint"`
 		} `yaml:"executors"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
@@ -144,14 +156,16 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			Capabilities: store.Capabilities{
 				WriteSemantics: store.WriteSemantics(e.Capabilities.WriteSemantics),
 			},
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
 	}
 	executors := ExecutorsConfig{Executors: make(map[string]ExecutorEntry, len(wrapper.Executors))}
 	for name, e := range wrapper.Executors {
 		executors.Executors[name] = ExecutorEntry{
-			Transport: e.Transport,
-			Endpoint:  e.Endpoint,
-			TLS:       e.TLS,
+			Transport:             e.Transport,
+			Endpoint:              e.Endpoint,
+			TLS:                   e.TLS,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
 	}
 	pcfg := persistence.Config{Driver: wrapper.Persistence.Driver}

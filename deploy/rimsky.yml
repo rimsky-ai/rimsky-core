@@ -2,7 +2,7 @@
 # by rimsky-scheduler / rimsky-supervisor / rimsky-control-api / rimsky-migrate
 # at startup via RIMSKY_CONFIG.
 #
-# Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+# Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
 # §3.1 this is the unified deployment-shape config: persistence + stores +
 # named_locks + executors in one file, replacing the prior split between
 # RIMSKY_DB_URL, RIMSKY_STORES_CONFIG and the supervisor's per-process
@@ -27,7 +27,13 @@ persistence:
 
 stores:
   content:
+    # gRPC dispatch endpoint. Used for the §3 4-verb store protocol.
     endpoint: "grpc://store-filesystem:9100"
+    # observability_endpoint defaults to `endpoint` when omitted. The
+    # peer's gRPC ExecutorObservability/StoreObservability service is
+    # probed at startup; the peer's response includes
+    # `http_bridge_url` (spec §2.2/§3.5) which the dashboard uses for
+    # browser-friendly fetch/SSE access.
     capabilities:
       write_semantics: direct
   topics-ring:
@@ -40,6 +46,13 @@ named_locks:
   model-budget:                    { limit: 50 }
 
 executors:
+  # For executors and stores whose HTTP+JSON bridge runs on a
+  # different port from gRPC (every peer in this repo), the operator
+  # configures the peer with a `http_bridge_url` and the dashboard
+  # auto-discovers it through the observability handshake. There is
+  # nothing to add here for that path. Use `observability_endpoint:`
+  # only when an executor/store splits its gRPC observability service
+  # onto a different port from the dispatch service.
   claude-agent:
     transport: grpc
     endpoint: "claude-agent:9090"

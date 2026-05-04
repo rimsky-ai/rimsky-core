@@ -4,11 +4,23 @@
 
 **Architecture:** Three new public protocols share a generic `Event`/`TraceEvent` envelope with a small standard vocabulary plus free-form fallback. Rimsky observability is HTTP/JSON on control-api at `/v1/observability/*`; executor and store observability are gRPC + HTTP+JSON bridges, dialed by control-api at startup via a best-effort handshake (separate from the existing fail-fast dispatch handshake). Reference dashboard is a separate React+Vite+TS SPA + Hono Node server in `dashboards/rimsky-dashboard/`, deliberately decoupled from `core/` (no Go imports, no DB credentials, no internal channels — pure HTTP client of the public APIs).
 
-**Tech Stack:** Go 1.21+ (existing), gRPC + protobuf, chi for HTTP routing, pgx for Postgres, testcontainers-go for integration tests, golangci-lint for linting; React 18 + Vite + TypeScript + Tailwind + shadcn/ui + TanStack Query + Hono on Node 22.6+ for the dashboard (22.6+ required for `--experimental-strip-types` and `import.meta.dirname`); vitest + Playwright for dashboard tests.
+**Tech Stack:** Go 1.21+ (existing), gRPC + protobuf, chi for HTTP routing, persistence via `core/persistence/` abstraction (backed by `pgx` for Postgres or `modernc.org/sqlite` for SQLite — the observability handlers are backend-agnostic), testcontainers-go for integration tests, golangci-lint for linting; React 18 + Vite + TypeScript + Tailwind + shadcn/ui + TanStack Query + Hono on Node 22.6+ for the dashboard (22.6+ required for `--experimental-strip-types` and `import.meta.dirname`); vitest + Playwright for dashboard tests.
 
 **Spec:** `docs/specs/2026-05-02-dashboard-and-observability-design.md` — read this in full before starting. The tasks below assume the spec is the source of truth for endpoint shapes, vocabulary, and contract semantics; this plan covers *how* to implement, not *what* to implement (the spec has that).
 
 **Pre-v1 stage:** Per `.claude/rules/rules.md`, this codebase is pre-v1. Migrations are not added in this plan (the spec is read-only over existing schema). No backwards-compat shims; if a refactor is cleaner, take the cleaner path.
+
+**Codebase reconciliation note (2026-05-03):** Since the original spec was drafted, the codebase landed two restructures the implementer must be aware of:
+
+1. **Persistence was unified** (commit 206a7b5 "Pluggable persistence + unified image"). `core/storage/` and `core/queue/` are gone. The new package is `core/persistence/` with two backends: `core/persistence/postgres/` and `core/persistence/sqlite/`. Migrations moved to `core/persistence/{postgres,sqlite}/migrations/`. The persistence layer exposes a `Driver` interface returning typed sub-stores (`Store.Events()`, `Store.LockHolders()`, `Store.Instances()`, `Store.Frames()`, `Store.Nodes()`, `Store.Schedules()`, `Store.Templates()`, `Store.TemplateTags()`, `Store.Supervisors()`, `Store.StoreLifecycle()`, `Store.NodeAttributes()`, `Store.ClaimHolders()`, plus `Driver.Queue()`). Each sub-store has a typed `List(ctx, filter, pagination, tx) (Result, error)` method already. **Use these** instead of writing raw SQL — keeps the observability handlers backend-agnostic. Type definitions are in `core/persistence/store.go`.
+
+2. **Filesystem store gained pick policies + an admin surface** (commit ddbe3fd "fs-store pick-policies"). The fs store now has `stores/filesystem/store/{pick_policy,sweep,admin}.go` and exposes `POST /admin/bump-to-head/{selector}`. Task E2 in this plan (originally drafted before this commit) is updated below to expose pick-policy admin views via the new store observability protocol, mirroring the postgres store's surface rather than treating fs as admin-light.
+
+3. **Schema additions:** `rimsky_lock_holders.frame_id` was added in `002-frame-resolution.sql` for observability — exposed in §1.2.4 lock-holder responses (the dashboard's "what frame does this claim belong to" query).
+
+4. **`controlapi` is wired via `config.StartControlAPI(config.ControlAPIConfig{Driver: drv, ...})` in `core/config/controlapi.go`.** That function is the seam where the observability handshake + handler must wire in. Task C5 below has been adjusted accordingly.
+
+5. **Spec is Postgres-leaning in places** (e.g., §10 testing strategy says "testcontainers-postgres harness"). The observability handlers reach state via `persistence.Driver` only, so the implementation is backend-agnostic. Tests should run against both backends — the existing `core/persistence/sqlite/integration_test.go` and `core/persistence/postgres/migrate_test.go` are reference patterns.
 
 ---
 
@@ -26,7 +38,8 @@ proto/v1/gen/store_observability.pb.go                  # generated
 proto/v1/gen/store_observability_grpc.pb.go             # generated
 
 core/observability/handler.go                           # HTTP handlers for /v1/observability/*
-core/observability/handler_test.go                      # integration tests against testcontainers postgres
+core/observability/handler_test.go                      # integration tests against both backends (postgres + sqlite)
+core/observability/handler_sqlite_test.go               # if split per backend; otherwise table-driven inside handler_test.go
 core/observability/handshake.go                         # observability handshake at control-api startup
 core/observability/handshake_test.go                    # unit tests for handshake (with mocked peers)
 core/observability/discovery.go                         # cache of peer observability endpoints + capabilities
@@ -40,10 +53,10 @@ executors/claude-agent/src/observability.test.ts
 
 stores/stub/observability.go                            # minimal capabilities-only impl
 stores/stub/observability_test.go
-stores/filesystem/observability.go
-stores/filesystem/observability_test.go
-stores/postgres/observability.go                        # includes admin views (items_queue, pick_policies)
-stores/postgres/observability_test.go
+stores/filesystem/store/observability.go                # NB: under store/ subpkg (matches current fs-store layout)
+stores/filesystem/store/observability_test.go
+stores/postgres/store/observability.go                  # NB: under store/ subpkg; admin views: pick_policies + items_queue
+stores/postgres/store/observability_test.go
 
 core/cmd/rimsky-conformance/observability_check.go      # invoked when --check-observability
 core/cmd/rimsky-store-conformance/observability_check.go
@@ -129,7 +142,11 @@ MODIFIED:
 Makefile                                                # proto-gen target gains the two new protos
 core/config/stores.go                                   # ExecutorEntry + StoreEntry gain ObservabilityEndpoint
 core/config/stores_test.go                              # extend YAML parser tests (NEW if absent)
-core/controlapi/app.go                                  # mount /v1/observability/* route group
+core/config/controlapi.go                               # StartControlAPI runs observability handshake + refresh loop
+core/controlapi/app.go                                  # mount /v1/observability/* route group; threads Discovery through
+core/persistence/store.go                               # additive: KindIn/Since on EventListFilter, InstanceID on dispatch list, Count() on sub-stores as needed
+core/persistence/postgres/events.go, queue.go, ...      # backend impls of any persistence-interface extensions
+core/persistence/sqlite/events.go, queue.go, ...        # parallel sqlite impls
 core/cmd/rimsky-conformance/main.go                     # add --check-observability flag wiring
 core/cmd/rimsky-store-conformance/main.go               # add --check-observability flag wiring
 deploy/rimsky.yml                                       # example observability_endpoint comment
@@ -568,7 +585,7 @@ grep "observability_endpoint" deploy/rimsky.yml | wc -l | grep -q "^[[:space:]]*
 2. Create `core/observability/handshake.go` with a `RunHandshake(ctx context.Context, cfg config.RimskyConfig) (*Discovery, error)` function (signature only) that probes each declared executor and store's observability endpoint at startup. Returns a `*Discovery` cache.
 3. Create `core/observability/discovery.go` with a `Discovery` type — a thread-safe cache mapping `name → ObservabilityCapabilities` with `reachability_status`. Provide getters used by handlers (`GetExecutorCapabilities(name)`, `GetStoreCapabilities(name)`) and a `Refresh(ctx)` method called by the background re-prober.
 
-The `Deps` struct should bundle: `*pgxpool.Pool` (for read queries against state tables), `*Discovery`, `*slog.Logger`. No other deps. This package may import `core/storage/` and `core/config/` and `core/store/` for shared types but MUST NOT import `core/scheduler/`, `core/supervisor/`, or `core/controlapi/`.
+The `Deps` struct should bundle: a `persistence.Store` (the read-side accessor returned by `persistence.Driver.Store()` — gives access to `Events`, `LockHolders`, `Instances`, `Frames`, `Nodes`, `Schedules`, `Templates`, `TemplateTags`, `Supervisors`, `StoreLifecycle`, `NodeAttributes`, `ClaimHolders`), the `persistence.Queue` (for currently-claimed dispatches), `*Discovery`, `*slog.Logger`. No other deps. This package may import `core/persistence/`, `core/config/`, and `core/store/` for shared types but MUST NOT import `core/persistence/postgres/`, `core/persistence/sqlite/`, `core/scheduler/`, `core/supervisor/`, or `core/controlapi/`. The driver-specific subpackages stay invisible — the handler is backend-agnostic.
 
 **Verify:**
 
@@ -584,26 +601,28 @@ go build ./core/observability/...
 
 1. Implement each endpoint listed in spec §1.2.1 through §1.2.6. For each:
    - Resolve path/query parameters.
-   - Issue the SQL query against `pgxpool.Pool` (or `core/storage/postgres/` helpers if a fitting helper already exists).
-   - Project the row(s) into the JSON shape documented in the spec.
-   - Honor cursor pagination (default limit 50, max 500). Cursors are base64-encoded `{last_pk, last_ts}` JSON; opaque to clients.
+   - **Call into `persistence.Store`** sub-stores via the typed `List(ctx, filter, pag, tx)` and singular `Get*` methods already declared in `core/persistence/store.go`. Do not write raw SQL in the observability package — it must stay backend-agnostic. Pass `tx = nil` to operate outside any transaction (the persistence layer handles single-statement reads cleanly without one).
+   - Project the typed row(s) into the JSON shape documented in the spec.
+   - Honor cursor pagination via `persistence.ListPagination{Limit, Cursor}`; the persistence layer already returns `next_cursor` opaquely. Default limit 50, max 500 (validated in the handler).
    - Return errors as `{ "error": { "code", "message", "details" } }` with the appropriate HTTP status.
-2. Endpoint inventory:
-   - `GET /v1/observability/stores`, `GET /v1/observability/stores/{name}` — read declared stores from `cfg.Stores` + `Discovery.GetStoreCapabilities(name)` + `cfg.Stores[name].ObservabilityEndpoint` reachability status. For per-store detail, also read recent `rimsky_store_lifecycle` rows for the per-store delivery state.
+2. Endpoint inventory (using persistence sub-stores):
+   - `GET /v1/observability/stores`, `GET /v1/observability/stores/{name}` — read declared stores from `cfg.Stores` + `Discovery.GetStoreCapabilities(name)` + reachability status. For per-store detail, also call `store.StoreLifecycle().List(...)` for recent per-store delivery state.
    - `GET /v1/observability/executors`, `GET /v1/observability/executors/{name}` — same shape over `cfg.Executors`.
-   - `GET /v1/observability/templates`, `GET /v1/observability/templates/{hash}` — query `rimsky_templates` + LEFT JOIN `rimsky_template_tags`. Detail includes deployed-instance summary (`SELECT id, instance_key, terminated_at FROM rimsky_instances WHERE template_hash = $1`).
-   - `GET /v1/observability/instances`, `GET /v1/observability/instances/{id}` — query `rimsky_instances`; detail includes the cascade graph per spec §1.4 (see Task C3).
-   - `GET /v1/observability/schedules` — query `rimsky_schedules` joined to `rimsky_nodes` for context.
-   - `GET /v1/observability/frames`, `GET /v1/observability/frames/{id}` — query `rimsky_frames`; detail joins `rimsky_dispatch` for constituent dispatches.
-   - `GET /v1/observability/nodes/{instance_id}/{node_type}` — query `rimsky_nodes WHERE instance_id = $1 AND node_type = $2`; include state, retry_counter, current_error_class, recent `rimsky_events` for the node, current `rimsky_dispatch` row if any, current `rimsky_lock_holders` rows the node holds (via `holder_node_id`).
-   - `GET /v1/observability/dispatches` — list of currently-live dispatches (per spec §1.2.3 list endpoint). Filters: `state` (`pending`/`claimed`, derived from `claimed_by IS NULL`), `executor_name`, `instance_id` (joined via `node_id` → `rimsky_nodes`). Cursor by `enqueued_at DESC, id DESC`.
-   - `GET /v1/observability/dispatches/{id}` — query `rimsky_dispatch WHERE id = $1`; honest 404 if the row was deleted (terminal).
-   - `GET /v1/observability/lock-holders`, `GET /v1/observability/lock-holders/{id}` — query `rimsky_lock_holders`; detail joins `rimsky_claim_holders` for held subgraph. **Do not return `address` bytes** (spec §1.3).
-   - `GET /v1/observability/events` — query `rimsky_events`; filters `instance_id`, `node_id`, `kind`, `kind_in` (comma-separated → `WHERE kind = ANY($n)`), `since` (timestamp). Cursor by descending `occurred_at`, tiebreaker `id DESC`.
-   - `GET /v1/observability/system/health` — control-api liveness (always true if the process is responding); supervisor heartbeat status (from `rimsky_supervisors`: report each row's `id`, `last_heartbeat_at`, `active_node_count`, and a derived `healthy: NOW() - last_heartbeat_at < 5 * heartbeat_interval` per blessed-invariant 6); store/executor reachability (from `Discovery`); postgres connectivity (`SELECT 1`).
-   - `GET /v1/observability/system/summary` — counts per spec §1.2.6: instances active vs. terminated, frames by `rimsky_frames.state`, currently-claimed dispatches (`COUNT(*) FROM rimsky_dispatch WHERE claimed_by IS NOT NULL`), terminal failures last hour (`COUNT(*) FROM rimsky_events WHERE kind = 'error' AND occurred_at > NOW() - INTERVAL '1 hour'`), active lock-holders.
+   - `GET /v1/observability/templates`, `GET /v1/observability/templates/{hash}` — `store.Templates().List(persistence.TemplateListFilter{...}, pag, nil)`; detail follows up with `store.TemplateTags().List(...)` and `store.Instances().List(persistence.InstanceListFilter{TemplateHash: &hash}, pag, nil)`.
+   - `GET /v1/observability/instances`, `GET /v1/observability/instances/{id}` — `store.Instances().List(...)` / `store.Instances().Get(id)`; detail composes the cascade graph (Task C3).
+   - `GET /v1/observability/schedules` — `store.Schedules().List(...)`; if richer node context is needed, fetch via `store.Nodes().Get(node_id)`.
+   - `GET /v1/observability/frames`, `GET /v1/observability/frames/{id}` — `store.Frames().List(...)`; detail follows up via `queue.ListByFrame(frame_id)` (or equivalent on `persistence.Queue`) for constituent dispatches.
+   - `GET /v1/observability/nodes/{instance_id}/{node_type}` — `store.Nodes().GetByType(instance_id, node_type)`; include state, retry_counter, current_error_class; follow with `store.Events().List(persistence.EventListFilter{NodeID: &node_id}, pag, nil)` for recent events; `queue.GetByNode(node_id)` for the active dispatch (if any); `store.LockHolders().List(persistence.LockHolderListFilter{HolderNodeID: &node_id}, pag, nil)` for current claim holdings.
+   - `GET /v1/observability/dispatches` — list of currently-live dispatches via `queue.List(persistence.DispatchListFilter{State, ExecutorName, InstanceID}, pag, nil)` (the Queue interface already exposes the filter; if the existing filter does not include `instance_id`, add it as a thin extension to the Queue interface — small backend-agnostic addition).
+   - `GET /v1/observability/dispatches/{id}` — `queue.Get(id)`; honest 404 if the row was deleted (terminal).
+   - `GET /v1/observability/lock-holders`, `GET /v1/observability/lock-holders/{id}` — `store.LockHolders().List(...)` / `store.LockHolders().Get(id)`. Include `frame_id` (added in `002-frame-resolution.sql` for observability — exposes "what frame does this claim belong to"). Detail also calls `store.ClaimHolders().List(persistence.ClaimHolderListFilter{LockHolderID: &id}, pag, nil)` for the held subgraph. **Do not return `address` bytes** (spec §1.3).
+   - `GET /v1/observability/events` — `store.Events().List(persistence.EventListFilter{InstanceID, NodeID, Kind, KindIn, Since}, pag, nil)`. The existing `EventListFilter` already supports `InstanceID`, `NodeID`, `Kind`; extend it with `KindIn []string` and `Since *time.Time` if not already present (small additive extension to the persistence interface, mirrored in both `postgres/events.go` and `sqlite/events.go`).
+   - `GET /v1/observability/system/health` — control-api liveness (always true if the process is responding); supervisor heartbeat status from `store.Supervisors().List(...)` (report each row's `id`, `last_heartbeat_at`, `active_node_count`, and a derived `healthy: NOW() - last_heartbeat_at < 5 * heartbeat_interval` per blessed-invariant 6); store/executor reachability (from `Discovery`); persistence connectivity via `driver.Ping()` if exposed, else a trivial `store.Templates().List(persistence.TemplateListFilter{}, persistence.ListPagination{Limit: 1}, nil)`.
+   - `GET /v1/observability/system/summary` — counts per spec §1.2.6 via persistence sub-stores. If the persistence layer doesn't expose count-only fast paths today, list with `Limit: 1` and a separate `Count(filter)` method added to each sub-store as needed (additive interface extension; implement in both backends).
 
 The cold-read guideline of ~500 lines per file applies. Split per-resource handlers into separate files (`handler_templates.go`, `handler_instances.go`, etc.) if needed.
+
+**Note on persistence-interface extensions.** Several endpoints above hint at small extensions to the persistence interfaces (`KindIn`/`Since` on `EventListFilter`; `InstanceID` on the dispatch list filter; per-substore `Count(filter)` methods for `system/summary`). These are additive, backend-agnostic, and live in `core/persistence/store.go` + parallel impl edits in `core/persistence/postgres/*.go` and `core/persistence/sqlite/*.go`. Add them as needed and add a unit test per backend.
 
 **Verify:**
 
@@ -649,37 +668,43 @@ go build ./core/observability/...
 go build ./core/observability/...
 ```
 
-### Task C5 — Wire `/v1/observability/*` into `core/controlapi/app.go`
+### Task C5 — Wire `/v1/observability/*` into `core/controlapi/app.go` and `core/config/controlapi.go`
 
-**Files:** `core/controlapi/app.go`
+**Files:** `core/controlapi/app.go`, `core/config/controlapi.go`
 
 **Steps:**
 
-1. Read `core/controlapi/app.go`. Locate where existing routes are mounted (likely a `chi.Router` setup with `r.Mount` or `r.Route` calls).
-2. Add a new route group:
+1. Read `core/controlapi/app.go`. Locate where existing routes are mounted on the chi router.
+2. Extend the `App` struct (or its existing `AppDeps`-equivalent) with `Discovery *observability.Discovery` and a `persistence.Store` accessor (the controlapi already holds the `Driver`; expose its `.Store()` and `.Queue()` to the observability handler).
+3. Add a new route group inside `app.go`'s router setup:
 
 ```go
 r.Route("/v1/observability", func(r chi.Router) {
     observability.Routes(r, observability.Deps{
-        Pool:      app.pool,
+        Store:     app.driver.Store(),
+        Queue:     app.driver.Queue(),
+        Cfg:       app.cfg,
         Discovery: app.discovery,
         Logger:    app.logger,
     })
 })
 ```
 
-3. Wire the discovery cache into the control-api startup: in the existing `controlapi.New(...)` or equivalent constructor, after the existing config load, call:
+4. Wire the observability handshake into `core/config/controlapi.go::StartControlAPI`. After the existing config load + driver init, before returning the `ControlAPIHandle`:
 
 ```go
 disc, err := observability.RunHandshake(ctx, cfg)
 if err != nil {
-    return nil, err
+    return nil, fmt.Errorf("StartControlAPI: observability handshake: %w", err)
 }
+refreshInterval := observabilityRefreshInterval()  // reads RIMSKY_OBSERVABILITY_REFRESH_INTERVAL, default 60s
 go disc.RefreshLoop(ctx, refreshInterval)
-app.discovery = disc
+// pass disc into the app constructor (app.discovery = disc)
 ```
 
-4. Add `discovery *observability.Discovery` to the `App` struct.
+   Per spec §4: `RunHandshake` is best-effort and never returns an error for unreachable peers — the wrapped error here only surfaces genuine programming faults (nil cfg, etc.).
+
+5. Add a tiny helper `observabilityRefreshInterval() time.Duration` in `core/config/controlapi.go` that reads `RIMSKY_OBSERVABILITY_REFRESH_INTERVAL` (default `60s`) per Task C4.
 
 **Verify:**
 
@@ -687,23 +712,26 @@ app.discovery = disc
 go build ./core/controlapi/...
 ```
 
-### Task C6 — Integration tests for observability handlers
+### Task C6 — Integration tests for observability handlers (both backends)
 
-**Files:** `core/observability/handler_test.go`
+**Files:** `core/observability/handler_test.go`, `core/observability/handler_sqlite_test.go`
 
 **Steps:**
 
-1. Use the existing `core/internal/pgtest` testcontainers harness. Look at `core/storage/postgres/*_test.go` for the pattern.
-2. For each endpoint, write a test that:
-   - Spins up a postgres container.
-   - Runs migrations (via the existing migration runner helper).
-   - Seeds fixtures for the resource (e.g. one template, two instances, three nodes, mix of frames in different states).
-   - Calls the handler via `httptest.NewRecorder` + the chi router.
+1. The handler tests are parameterized over `persistence.Driver` so they run against both backends. Use:
+   - `core/internal/pgtest` testcontainers harness for the Postgres path (reference: `core/persistence/postgres/migrate_test.go`).
+   - In-process file-backed SQLite for the SQLite path (reference: `core/persistence/sqlite/integration_test.go`).
+2. Define a `func driverCases(t *testing.T) []driverCase` helper that returns one `driverCase` per backend; each case wraps a `persistence.Driver` plus a teardown. Each test then loops `for _, dc := range driverCases(t) { t.Run(dc.name, func(t *testing.T) { ... }) }`.
+3. For each endpoint, write a test that:
+   - Opens the driver, runs `driver.Migrate(ctx, log)` (the embedded migrations live at `core/persistence/postgres/migrations/` and `core/persistence/sqlite/migrations/`; the migration runner walks them automatically).
+   - Seeds fixtures by calling the persistence sub-stores' `Insert`/`Create` methods directly (reference seeding patterns from existing per-package tests).
+   - Constructs the observability `Deps` against the driver.
+   - Calls the handler via `httptest.NewRecorder` + the chi router mounted under `/v1/observability/`.
    - Asserts the response shape matches the spec.
-3. Cover at minimum: empty-state (no rows), single-resource happy path, cursor pagination across two pages, filter combinations (e.g. `?template_hash=X`), 404 for missing IDs, malformed cursor returns 400.
-4. Use table-driven tests where the test grid is large.
+4. Cover at minimum: empty-state (no rows), single-resource happy path, cursor pagination across two pages, filter combinations (e.g. `?template_hash=X`), 404 for missing IDs, malformed cursor returns 400.
+5. Use table-driven tests where the test grid is large.
 
-The tests will be slow (each spins a container). That is acceptable per the project's existing testing posture.
+The Postgres path is slow (testcontainers); the SQLite path is fast. Running both keeps the backend-agnostic claim honest.
 
 **Verify:**
 
@@ -711,7 +739,7 @@ The tests will be slow (each spins a container). That is acceptable per the proj
 go test ./core/observability/... -count=1
 ```
 
-All tests pass.
+All tests pass against both backends.
 
 ### Task C7 — Unit tests for handshake
 
@@ -839,18 +867,24 @@ go test ./stores/stub/...
 
 ### Task E2 — filesystem store observability impl
 
-**Files:** `stores/filesystem/observability.go`, `stores/filesystem/observability_test.go`
+**Files:** `stores/filesystem/store/observability.go`, `stores/filesystem/store/observability_test.go` (the store's logic now lives at `stores/filesystem/store/`; the observability impl lives there too, and the gRPC server in `stores/filesystem/server/server.go` registers it)
+
+**Context:** The filesystem store gained pick-policies + an admin surface in commit ddbe3fd. It now has `pick_policies` configured (each with `available/`, `in_progress/` directories), a sweep loop, and a `POST /admin/bump-to-head/{selector}` endpoint. The observability impl mirrors what the postgres store exposes — pick-policy state is the most useful admin surface.
 
 **Steps:**
 
-1. Capabilities: `supports_claim_get: true`, `supports_claim_stream: true`, `supports_list_claims: true`, `retention_after_terminal_seconds: 3600`, `custom_ui: nil`, `admin_views: [{name: "mounts", title: "Mount roots", render_hint: "table"}]`.
-2. Track per-claim history in an in-memory `map[claim_id]ClaimDetail` updated on every Open/Commit/Abandon/Release call (extend the existing handlers or add a side-channel notifier).
-3. `GetClaim(claim_id)` → return the recorded `ClaimDetail`, including history events (`claim_opened`, `claim_committed`, etc.) and the store's view of address/payload/region (filesystem store can disclose the resolved path).
+1. Capabilities: `supports_claim_get: true`, `supports_claim_stream: true`, `supports_list_claims: true`, `retention_after_terminal_seconds: 3600`, `custom_ui: nil`, `admin_views`:
+   - `{name: "pick_policies", title: "Pick policies", description: "Configured policies and their queue depths", render_hint: "table"}` — no params; row per configured policy with columns `selector`, `root`, `available_count`, `in_progress_count`, `visibility_timeout_seconds`, `sync_strategy`.
+   - `{name: "policy_items", title: "Items in a policy", description: "Items currently available or in-progress for one selector", render_hint: "table", params: [{name: "selector", type: "string", required: true}, {name: "state", type: "string", required: false}]}` — row per item with columns `folder`, `state` (`available`/`in_progress`), `claim_id` (when in-progress), `claimed_at`.
+2. Track per-claim history in an in-memory `map[claim_id]*claimRecord` guarded by `sync.RWMutex`. Update on every Open/Commit/Abandon/Release call by hooking into the existing handlers in `stores/filesystem/store/store.go` (add a `notifyClaimEvent(claim_id, event)` side-channel).
+3. `GetClaim(claim_id)` → return the recorded `ClaimDetail`. The fs store can disclose its `address` (the resolved file path) and `region` (the canonical region bytes) to the dashboard; `payload` is the user-facing folder name when the claim came through a pick policy.
 4. `StreamClaim(claim_id)` → replay + live updates + `claim_terminal` marker.
 5. `ListClaims` → cursor-paginated over the in-memory map; filter by `state_filter`.
-6. `GetAdminView(name="mounts")` → return a table of declared mount roots from the store's config (columns: `mount_name`, `path`, `mode`).
-7. HTTP+JSON bridge.
-8. Tests cover each RPC.
+6. `GetAdminView(name="pick_policies")` → walk the configured `s.pickPolicies` map; for each policy, count `os.ReadDir(<store-root>/.fs-store/<policy>/available)` and `.../in_progress`. Return one row per policy.
+7. `GetAdminView(name="policy_items")` → require `selector` param; walk the policy's `available/` and `in_progress/` directories and return one row per item; respect optional `state` filter.
+8. HTTP+JSON bridge.
+9. Wire registration in `stores/filesystem/server/server.go::Run` alongside the existing gRPC service registration.
+10. Tests cover each RPC, including admin views with and without policies configured.
 
 **Verify:**
 

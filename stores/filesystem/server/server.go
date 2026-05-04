@@ -28,6 +28,11 @@ type Config struct {
 	Root          string
 	PickPolicies  map[string]*fsstore.PickPolicy
 	SweepInterval time.Duration
+	// HTTPBridgeURL is the externally-reachable HTTP base URL for
+	// dashboard clients. Surfaced through StoreObservabilityCapabilities.
+	// Empty when not declared; the dashboard then falls back to the
+	// dispatch endpoint and HTTP-only routes (claims/admin) won't work.
+	HTTPBridgeURL string
 }
 
 // Run starts the gRPC and HTTP+JSON listeners and serves until ctx is
@@ -46,6 +51,8 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterStoreServiceServer(grpcSrv, srv)
+	obsSrv := srv.RegisterObservability(grpcSrv, cfg.Root, cfg.PickPolicies)
+	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
 			slog.Warn("filesystem store: grpc serve", "error", err.Error())
@@ -54,6 +61,7 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	mux := http.NewServeMux()
 	bridge.Mount(mux, srv)
+	bridge.MountObservability(mux, obsSrv)
 	httpSrv := &http.Server{Handler: mux}
 	go func() {
 		if err := httpSrv.Serve(httpLis); err != nil && err != http.ErrServerClosed {
@@ -155,7 +163,7 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 
 // Lifecycle events: the filesystem store does not maintain template or
 // instance metadata; all six are no-ops returning success. Per
-// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
+// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
 
 func (s *Server) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.OnTemplateRegisteredResponse, error) {
 	return &genv1.OnTemplateRegisteredResponse{}, nil

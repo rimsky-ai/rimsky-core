@@ -10,6 +10,7 @@ import {
   type CallbackServerHandle,
 } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
+import { Observability } from "./observability.js";
 
 const logger = pino({ level: "silent" });
 
@@ -130,6 +131,95 @@ async function waitFor(
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+// gRPC Execute observability: dashboard fetches the trace via
+// dispatch_id, so the ledger must record step_started on receipt and
+// step_completed on outcome, then markComplete so the SSE/snapshot
+// surfaces close.
+describe("gRPC Execute observability ledger", () => {
+  let cb: CallbackServerHandle;
+  let srv: RunningServer;
+  let obs: Observability;
+  const fakeCli: CliRunner = {
+    spawn: async () => {
+      throw new Error("should not be called in stub mode");
+    },
+  };
+  const callbackPosts: Array<{ url: string; body: unknown }> = [];
+
+  beforeEach(async () => {
+    process.env.RIMSKY_EXECUTOR_STUB_MODE = "1";
+    callbackPosts.length = 0;
+    obs = new Observability();
+    cb = await startInternalMcpServer({ logger });
+    srv = await startGrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      callback: cb,
+      cliRunner: fakeCli,
+      silenceTimeoutMs: 5000,
+      logger,
+      observability: obs,
+      postCallback: async (url, body) => {
+        callbackPosts.push({ url, body });
+      },
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    await srv.shutdown();
+    await cb.close();
+  });
+
+  it("records step_started + step_completed and markComplete keyed by dispatch_id", async () => {
+    const pkg = loadNodeExecutorProto();
+    const Client = pkg.rimsky.v1.NodeExecutor as unknown as new (
+      addr: string,
+      creds: grpc.ChannelCredentials,
+    ) => grpc.Client;
+    const client = new Client(srv.address, grpc.credentials.createInsecure());
+    const dispatchId = "trace-d1";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const call = (client as any).Execute({
+      node_id: "n-obs",
+      instance_id: "i-obs",
+      node_type: "stub-agent",
+      dispatch_id: dispatchId,
+      userdata: {
+        fields: {
+          model: { string_value: "sonnet" },
+          system_prompt: { string_value: "sys" },
+          user_prompt_template: { string_value: "usr" },
+        },
+      },
+      attributes: { fields: {} },
+      attributes_schema: { fields: {} },
+      stores: {},
+      callback_url: "http://supervisor.invalid/cb",
+      cancel_token: "tok",
+    });
+    await new Promise<void>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      call.on("data", () => {});
+      call.on("error", reject);
+      call.on("end", resolve);
+    });
+    await waitFor(() => callbackPosts.length > 0, 2000);
+
+    const trace = obs.getTrace(dispatchId);
+    expect(trace.dispatch_id).toBe(dispatchId);
+    // Successful stub run records step_started + step_completed plus
+    // the synthetic trace_complete marker added by markComplete.
+    const cats = trace.events.map((e) => e.category);
+    expect(cats).toContain("step_started");
+    expect(cats).toContain("step_completed");
+    expect(cats).toContain("trace_complete");
+    expect(trace.complete).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).close?.();
+  });
+});
 
 // End-to-end coverage of the TS executor -> Go supervisor callback protocol.
 // Rather than spin up a full Go supervisor here (out of scope for TS tests),

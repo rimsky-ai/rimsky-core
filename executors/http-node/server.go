@@ -26,6 +26,10 @@ type Server struct {
 	cfg      Config
 	client   *http.Client
 	stubMode bool
+	// obs, when non-nil, receives per-dispatch trace events. Set by
+	// main.go after the gRPC server is constructed (the observability
+	// surface is registered on the same listener).
+	obs *ObservabilityServer
 }
 
 // NewServer builds a Server with a timeout-configured http.Client.
@@ -36,6 +40,11 @@ func NewServer(cfg Config) *Server {
 		stubMode: cfg.StubMode,
 	}
 }
+
+// SetObservability attaches an ObservabilityServer so executeCore can
+// emit per-dispatch trace events. Optional: when nil, dispatch runs
+// without trace emission.
+func (s *Server) SetObservability(obs *ObservabilityServer) { s.obs = obs }
 
 // Execute is the gRPC-facing entrypoint. Adapts the streaming server to the
 // sendFunc-based core logic.
@@ -64,6 +73,51 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		TimestampMs: time.Now().UnixMilli(),
 		Note:        "http-node starting",
 	}}})
+
+	// Emit a step_started trace event for the dashboard's tree view.
+	dispatchID := req.GetDispatchId()
+	stepID := "http-node:" + req.GetNodeType()
+	if s.obs != nil && dispatchID != "" {
+		s.obs.AppendEvent(dispatchID, MakeEvent(
+			"step-"+stepID, "", "step_started",
+			"http-node dispatch started",
+			genv1.Severity_INFO,
+			map[string]any{"step_id": stepID, "node_type": req.GetNodeType()},
+		))
+	}
+	// Wrap send so executeCore's Complete/Errored events also update
+	// the trace + mark the dispatch terminal.
+	origSend := send
+	send = func(ev *genv1.ExecuteEvent) error {
+		if s.obs != nil && dispatchID != "" {
+			switch t := ev.GetEvent().(type) {
+			case *genv1.ExecuteEvent_Complete:
+				_ = t
+				s.obs.AppendEvent(dispatchID, MakeEvent(
+					"step-complete-"+stepID, "step-"+stepID, "step_completed",
+					"http-node dispatch completed",
+					genv1.Severity_INFO,
+					map[string]any{"step_id": stepID},
+				))
+				s.obs.MarkTerminal(dispatchID)
+			case *genv1.ExecuteEvent_Errored:
+				s.obs.AppendEvent(dispatchID, MakeEvent(
+					"step-failed-"+stepID, "step-"+stepID, "step_failed",
+					"http-node dispatch failed",
+					genv1.Severity_ERROR,
+					map[string]any{"step_id": stepID, "error": ev.GetErrored().GetErrorClass()},
+				))
+				s.obs.AppendEvent(dispatchID, MakeEvent(
+					"error-"+stepID, "step-"+stepID, "error",
+					ev.GetErrored().GetErrorClass(),
+					genv1.Severity_ERROR,
+					map[string]any{"error": ev.GetErrored().GetErrorClass()},
+				))
+				s.obs.MarkTerminal(dispatchID)
+			}
+		}
+		return origSend(ev)
+	}
 
 	ud := req.GetUserdata().AsMap()
 

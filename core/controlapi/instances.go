@@ -205,7 +205,10 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 		q := req.URL.Query()
 		filter := persistence.InstanceListFilter{
 			TemplateHash: q.Get("template_hash"),
-			InstanceKey:  q.Get("instance_key"),
+		}
+		if v := q.Get("active"); v != "" {
+			b := v == "1" || v == "true"
+			filter.Active = &b
 		}
 		pag := persistence.ListPagination{
 			Limit:  parseLimit(req, 100),

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,20 @@ import (
 
 	corestore "github.com/fallguy/rimsky/core/store"
 )
+
+// ItemsTableIdentRegex is the strict identifier shape every layer must
+// enforce before an items_table value reaches a SQL literal. Lowercase
+// only because postgres folds unquoted identifiers to lowercase: a
+// mixed-case value would pass an early check then silently mismatch
+// the verifyItemsTable schema lookup at runtime.
+//
+// Shared by:
+//   - stores/postgres/cmd/main.go: rejects mixed-case at startup with
+//     the same message users see at the store boundary
+//   - stores/postgres/server/observability.go: defense-in-depth against
+//     items_queue admin-view interpolation
+//   - validIdent below: applied inside Store.New
+var ItemsTableIdentRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 // Store is the in-process store implementation. Owns its own pgxpool.Pool; lock
 // state lives on rimsky's side and is not consulted here.
@@ -34,6 +49,17 @@ type Store struct {
 	pool           *pgxpool.Pool
 	writeSemantics corestore.WriteSemantics
 	pickPolicies   map[string]*PickPolicy
+	ledger         *ClaimLedger
+}
+
+// Ledger returns the in-memory claim ledger.
+func (s *Store) Ledger() *ClaimLedger { return s.ledger }
+
+// NewForTest constructs a Store with no pgxpool and only the in-memory
+// ledger. Tests use this when they want to exercise the observability
+// surface without spinning up postgres.
+func NewForTest() *Store {
+	return &Store{ledger: NewClaimLedger(1024)}
 }
 
 // PickPolicy is one configured pick policy. Store-internal.
@@ -85,6 +111,7 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		pool:           pool,
 		writeSemantics: cfg.WriteSemantics,
 		pickPolicies:   cfg.PickPolicies,
+		ledger:         NewClaimLedger(1024),
 	}, nil
 }
 
@@ -135,12 +162,17 @@ func (s *Store) PickPolicies() map[string]PickPolicy {
 // give wrap their result in OpenOutcome{Available: true, Result: ...}.
 func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
 	if pp, ok := s.pickPolicies[selector]; ok {
-		return s.openPickPolicy(ctx, claimID, pp)
+		out, err := s.openPickPolicy(ctx, claimID, pp)
+		if err == nil && out.Available {
+			s.ledger.RecordOpen(claimID, selector, out.Result.Address, out.Result.Region)
+		}
+		return out, err
 	}
 	addr, err := json.Marshal(selector)
 	if err != nil {
 		return corestore.OpenOutcome{}, fmt.Errorf("postgres store: marshal selector: %w", err)
 	}
+	s.ledger.RecordOpen(claimID, selector, addr, addr)
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
@@ -206,23 +238,41 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 // claim_token (= rimsky claim_id) so that a duplicated terminal RPC
 // under a different claim_id is a no-op rather than a double-bump
 // (spec §7.8 obligation #3 — terminal verbs idempotent in claim_id).
+//
+// The ledger records the terminal event only after the store-side
+// action succeeds — recording on failure would mislead the dashboard
+// into showing a state the store never actually entered. Failures
+// surface as a non-terminal `claim_commit_failed` event, leaving the
+// claim's recorded state OPEN.
 func (s *Store) Commit(ctx context.Context, claimID string, _ []byte, _ []byte) error {
-	return s.applyPickAction(ctx, claimID, true)
+	if err := s.applyPickAction(ctx, claimID, true); err != nil {
+		s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
+		return err
+	}
+	s.ledger.RecordTerminal(claimID, "claim_committed", nil)
+	return nil
 }
 
 // Abandon applies the configured on_give_up_default action for pick-
 // policy claims; degenerate no-op for regional claims (cannot undo
 // direct writes). address is accepted for signature uniformity and
 // ignored. Lookup is claim_token-based (= rimsky claim_id) per §7.8
-// obligation #3.
+// obligation #3. Ledger records terminal only on success; failures
+// surface as a non-terminal `claim_abandon_failed` event.
 func (s *Store) Abandon(ctx context.Context, claimID string, _ []byte, _ []byte) error {
-	return s.applyPickAction(ctx, claimID, false)
+	if err := s.applyPickAction(ctx, claimID, false); err != nil {
+		s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
+		return err
+	}
+	s.ledger.RecordTerminal(claimID, "claim_abandoned", nil)
+	return nil
 }
 
 // Release tears down store-side read state. v3 standard postgres
 // registers no read state at Open; always a no-op. region/address are
 // accepted for signature uniformity and ignored.
-func (s *Store) Release(_ context.Context, _ string, _ []byte, _ []byte) error {
+func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	s.ledger.RecordTerminal(claimID, "claim_released", nil)
 	return nil
 }
 
@@ -359,23 +409,12 @@ func validPickAction(s string) bool {
 	return s == "delete" || s == "release_to_back" || s == "release_to_head"
 }
 
+// validIdent accepts a value that satisfies ItemsTableIdentRegex —
+// lowercase letters / digits / underscore, not starting with a digit.
+// All three layers (cmd/main.go, server/observability.go, here) share
+// the same regex so an items_table that passes one passes all three.
 func validIdent(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= '0' && r <= '9':
-			if i == 0 {
-				return false
-			}
-		case r == '_':
-		default:
-			return false
-		}
-	}
-	return true
+	return ItemsTableIdentRegex.MatchString(s)
 }
 
 // expectedColumns lists the store's items-table column requirements.

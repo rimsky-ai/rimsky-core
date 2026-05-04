@@ -36,6 +36,10 @@ func (d *driver) Coordinator() persistence.Coordinator { return d.c }
 // will plumb a real close error from sql.DB.Close()).
 func (d *driver) Close() error { d.pool.Close(); return nil }
 
+// Ping issues a trivial round-trip to the database to surface
+// connectivity problems.
+func (d *driver) Ping(ctx context.Context) error { return d.pool.Ping(ctx) }
+
 // Migrate runs the embedded SQL files under the coordinator's migration
 // lock. Idempotent — re-runs apply nothing.
 func (d *driver) Migrate(ctx context.Context, log shared.Logger) error {

@@ -3,11 +3,17 @@ package config
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/fallguy/rimsky/core/controlapi"
+	"github.com/fallguy/rimsky/core/observability"
 	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
 	"github.com/fallguy/rimsky/core/store"
@@ -43,11 +49,12 @@ type ControlAPIHandle interface {
 }
 
 type controlAPIHandle struct {
-	srv         *http.Server
-	addr        string
-	registry    *store.Registry
-	terminator  *controlapi.InstanceTerminator
-	cancelLoops context.CancelFunc
+	srv             *http.Server
+	addr            string
+	registry        *store.Registry
+	terminator      *controlapi.InstanceTerminator
+	cancelLoops     context.CancelFunc
+	cancelDiscovery context.CancelFunc
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
@@ -57,6 +64,9 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	}
 	if h.cancelLoops != nil {
 		h.cancelLoops()
+	}
+	if h.cancelDiscovery != nil {
+		h.cancelDiscovery()
 	}
 	// Close the store registry before waiting for the terminator: any
 	// in-flight RPCs surface gRPC "connection closed" errors, the
@@ -110,6 +120,26 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			TLS:       e.TLS,
 		}
 	}
+	execPeers := make([]observability.PeerSpec, 0, len(cfg.Executors.Executors))
+	for name, e := range cfg.Executors.Executors {
+		execPeers = append(execPeers, observability.PeerSpec{
+			Name:                  name,
+			Endpoint:              e.Endpoint,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		})
+	}
+	storePeers := make([]observability.PeerSpec, 0, len(cfg.Stores.Stores))
+	for name, e := range cfg.Stores.Stores {
+		storePeers = append(storePeers, observability.PeerSpec{
+			Name:                  name,
+			Endpoint:              e.Endpoint,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		})
+	}
+	obsLogger := slogLoggerFor(cfg.Logger)
+	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
+	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
+	go disc.RefreshLoop(discoveryCtx, observabilityRefreshInterval(), obsLogger)
 	deps := controlapi.AppDeps{
 		Persist:    persistStore,
 		Queue:      persistQueue,
@@ -119,10 +149,21 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Stores:     registry,
 		NamedLocks: cfg.NamedLocks,
 		Executors:  executorsByName,
+		Observability: func(r chi.Router) {
+			observability.Routes(r, observability.Deps{
+				Store:     persistStore,
+				Queue:     persistQueue,
+				Driver:    cfg.Driver,
+				Executors: execPeers,
+				Stores:    storePeers,
+				Discovery: disc,
+			})
+		},
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
 	if err != nil {
+		cancelDiscovery()
 		registry.Close()
 		return nil, fmt.Errorf("StartControlAPI: listen: %w", err)
 	}
@@ -130,11 +171,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	terminator := controlapi.NewInstanceTerminator(deps, 0)
 	loopCtx, cancelLoops := context.WithCancel(context.Background())
 	h := &controlAPIHandle{
-		srv:         srv,
-		addr:        listener.Addr().String(),
-		registry:    registry,
-		terminator:  terminator,
-		cancelLoops: cancelLoops,
+		srv:             srv,
+		addr:            listener.Addr().String(),
+		registry:        registry,
+		terminator:      terminator,
+		cancelLoops:     cancelLoops,
+		cancelDiscovery: cancelDiscovery,
 	}
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed && cfg.Logger != nil {
@@ -143,4 +185,65 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	}()
 	go terminator.Run(loopCtx)
 	return h, nil
+}
+
+// slogLoggerFor coerces the rimsky-style shared.Logger contract into a
+// stdlib *slog.Logger for the observability package. The bridge wraps
+// the supplied logger in a small slog.Handler adapter so observability
+// handshake/refresh log lines route through the configured logger
+// rather than the package default. When nil, slog.Default() is used.
+func slogLoggerFor(l shared.Logger) *slog.Logger {
+	if l == nil {
+		return slog.Default()
+	}
+	return slog.New(&sharedLoggerHandler{l: l})
+}
+
+// sharedLoggerHandler adapts shared.Logger to slog.Handler. Passes
+// through the level + message + flat key/value fields; ignores group
+// nesting and source-location attributes (not used by the
+// observability package).
+type sharedLoggerHandler struct{ l shared.Logger }
+
+func (h *sharedLoggerHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *sharedLoggerHandler) Handle(_ context.Context, r slog.Record) error {
+	fields := make([]any, 0, r.NumAttrs()*2)
+	r.Attrs(func(a slog.Attr) bool {
+		fields = append(fields, a.Key, a.Value.Any())
+		return true
+	})
+	switch r.Level {
+	case slog.LevelDebug:
+		h.l.Debug(r.Message, fields...)
+	case slog.LevelWarn:
+		h.l.Warn(r.Message, fields...)
+	case slog.LevelError:
+		h.l.Error(r.Message, fields...)
+	default:
+		h.l.Info(r.Message, fields...)
+	}
+	return nil
+}
+
+func (h *sharedLoggerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	fields := make([]any, 0, len(attrs)*2)
+	for _, a := range attrs {
+		fields = append(fields, a.Key, a.Value.Any())
+	}
+	return &sharedLoggerHandler{l: h.l.With(fields...)}
+}
+
+func (h *sharedLoggerHandler) WithGroup(_ string) slog.Handler { return h }
+
+// observabilityRefreshInterval returns the configured background re-
+// probe interval, parsed from RIMSKY_OBSERVABILITY_REFRESH_INTERVAL
+// (Go time.Duration syntax). Defaults to 60s per spec §4.
+func observabilityRefreshInterval() time.Duration {
+	if v := os.Getenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 60 * time.Second
 }

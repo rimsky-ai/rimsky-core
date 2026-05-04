@@ -69,6 +69,27 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		untilArg = formatTime(*filter.Until)
 	}
 
+	// Build a kind_in IN (...) clause dynamically because sqlite has no
+	// native array bind. Skipped when filter.KindIn is empty.
+	kindInClause := ""
+	args := []any{
+		nodeArg, nodeArg, instArg, instArg, kindArg, kindArg,
+		sinceArg, sinceArg, untilArg, untilArg,
+		cursorOccurred, cursorOccurred, cursorID,
+	}
+	if len(filter.KindIn) > 0 {
+		placeholders := ""
+		for i, k := range filter.KindIn {
+			if i > 0 {
+				placeholders += ","
+			}
+			placeholders += "?"
+			args = append(args, k)
+		}
+		kindInClause = " AND kind IN (" + placeholders + ")"
+	}
+	args = append(args, limit)
+
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT id, instance_id, node_id, kind, payload, occurred_at
 		 FROM rimsky_events
@@ -77,13 +98,10 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		   AND (? IS NULL OR kind = ?)
 		   AND (? IS NULL OR occurred_at >= ?)
 		   AND (? IS NULL OR occurred_at <= ?)
-		   AND (? IS NULL OR (occurred_at, id) > (?, ?))
-		 ORDER BY occurred_at ASC, id ASC
+		   AND (? IS NULL OR (occurred_at, id) < (?, ?))`+kindInClause+
+			` ORDER BY occurred_at DESC, id DESC
 		 LIMIT ?`,
-		nodeArg, nodeArg, instArg, instArg, kindArg, kindArg,
-		sinceArg, sinceArg, untilArg, untilArg,
-		cursorOccurred, cursorOccurred, cursorID,
-		limit,
+		args...,
 	)
 	if err != nil {
 		return persistence.EventListResult{}, err
@@ -143,10 +161,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		nextCursor = encodeEventCursor(last.OccurredAt, last.ID)
 	}
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
-}
-
-func (s *eventsImpl) Tail(ctx context.Context, cursor string, limit int, tx persistence.Tx) (persistence.EventListResult, error) {
-	return s.List(ctx, persistence.EventListFilter{}, persistence.ListPagination{Limit: limit, Cursor: cursor}, tx)
 }
 
 // ---- cursor encoding ----

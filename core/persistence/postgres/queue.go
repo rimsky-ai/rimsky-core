@@ -13,6 +13,8 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -320,4 +322,140 @@ func nullableText(s string) any {
 		return nil
 	}
 	return s
+}
+
+// ListLive returns currently-live dispatch rows for the observability
+// browse endpoint. Cursor pagination over (enqueued_at DESC, id DESC).
+func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var cursorEnq *time.Time
+	var cursorID *shared.UUID
+	if pag.Cursor != "" {
+		oc, id, err := decodeDispatchCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[shared.DispatchRow]{}, fmt.Errorf("postgres.ListLive: bad cursor: %w", err)
+		}
+		cursorEnq = &oc
+		cursorID = &id
+	}
+	var stateClaimed any
+	switch filter.State {
+	case "pending":
+		stateClaimed = false
+	case "claimed":
+		stateClaimed = true
+	}
+	executor := nullableText(filter.ExecutorName)
+	var instanceID any
+	if filter.InstanceID != nil {
+		instanceID = *filter.InstanceID
+	}
+	rows, err := q.pool.Query(ctx,
+		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		   FROM rimsky_dispatch d
+		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
+		    AND ($2::text IS NULL OR d.executor_name = $2)
+		    AND ($3::uuid IS NULL OR n.instance_id = $3)
+		    AND ($4::timestamptz IS NULL OR (d.enqueued_at, d.id) < ($4, $5))
+		  ORDER BY d.enqueued_at DESC, d.id DESC
+		  LIMIT $6`,
+		stateClaimed, executor, instanceID,
+		nullableTime(cursorEnq), nullableUUID(cursorID),
+		limit,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+	}
+	defer rows.Close()
+	var out []shared.DispatchRow
+	for rows.Next() {
+		var r shared.DispatchRow
+		if err := rows.Scan(
+			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
+		); err != nil {
+			return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		}
+		if r.RequiredStores == nil {
+			r.RequiredStores = []string{}
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeDispatchCursor(last.EnqueuedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[shared.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+// CountLive counts currently-live dispatch rows matching filter.
+func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchListFilter) (int, error) {
+	var stateClaimed any
+	switch filter.State {
+	case "pending":
+		stateClaimed = false
+	case "claimed":
+		stateClaimed = true
+	}
+	executor := nullableText(filter.ExecutorName)
+	var instanceID any
+	if filter.InstanceID != nil {
+		instanceID = *filter.InstanceID
+	}
+	var n int
+	err := q.pool.QueryRow(ctx,
+		`SELECT COUNT(*)
+		   FROM rimsky_dispatch d
+		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
+		    AND ($2::text IS NULL OR d.executor_name = $2)
+		    AND ($3::uuid IS NULL OR n.instance_id = $3)`,
+		stateClaimed, executor, instanceID,
+	).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// ---- dispatch cursor encoding ----
+
+func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {
+	c := struct {
+		E time.Time   `json:"e"`
+		I shared.UUID `json:"i"`
+	}{E: enqueued, I: id}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeDispatchCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c struct {
+		E time.Time   `json:"e"`
+		I shared.UUID `json:"i"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.E, c.I, nil
+}
+
+func nullableUUID(p *shared.UUID) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }

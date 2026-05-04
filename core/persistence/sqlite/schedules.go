@@ -4,11 +4,43 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/fallguy/rimsky/core/persistence"
 	"github.com/fallguy/rimsky/core/shared"
 )
+
+// scheduleCursor encodes (next_fire_at, node_id) so duplicate
+// next_fire_at values don't drop rows at page boundaries. ASC sort
+// pairs with a strict-tuple comparator: (next_fire_at, node_id) > ($1, $2).
+// Mirrors the postgres-side encoder so cursors round-trip across drivers.
+//
+//	@source: core/persistence/postgres/schedules.go:scheduleCursor
+type scheduleCursor struct {
+	N time.Time `json:"n"`
+	I string    `json:"i"`
+}
+
+func encodeScheduleCursor(nextFire time.Time, nodeID shared.UUID) string {
+	c := scheduleCursor{N: nextFire.UTC(), I: nodeID.String()}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeScheduleCursor(s string) (time.Time, string, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	var c scheduleCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, "", err
+	}
+	return c.N, c.I, nil
+}
 
 const scheduleCols = `node_id, cron_expr, next_fire_at, last_fired_at`
 
@@ -69,6 +101,54 @@ func (s *schedulesImpl) ListAll(ctx context.Context, tx persistence.Tx) ([]persi
 	}
 	defer rows.Close()
 	return collectSchedules(rows)
+}
+
+// ListForObservability returns schedules matching filter, cursor-paginated
+// by (next_fire_at ASC, node_id ASC). The cursor encodes both fields
+// so dense scheduling (multiple nodes sharing a next_fire_at) doesn't
+// drop rows at page boundaries; the predicate is the strict tuple
+// comparison (next_fire_at, node_id) > ($cursor_t, $cursor_id).
+func (s *schedulesImpl) ListForObservability(ctx context.Context, filter persistence.ScheduleListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ScheduleRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var nodeArg any
+	var cursorTimeArg, cursorIDArg any
+	if filter.NodeID != nil {
+		nodeArg = filter.NodeID.String()
+	}
+	if pag.Cursor != "" {
+		t, id, err := decodeScheduleCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.ScheduleRow]{}, fmt.Errorf("schedules.list: bad cursor: %w", err)
+		}
+		cursorTimeArg = formatTime(t)
+		cursorIDArg = id
+	}
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+scheduleCols+`
+		   FROM rimsky_schedules
+		  WHERE (? IS NULL OR node_id = ?)
+		    AND (? IS NULL OR (next_fire_at, node_id) > (?, ?))
+		  ORDER BY next_fire_at ASC, node_id ASC
+		  LIMIT ?`,
+		nodeArg, nodeArg, cursorTimeArg, cursorTimeArg, cursorIDArg, limit,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.ScheduleRow]{}, fmt.Errorf("schedules.list: %w", err)
+	}
+	defer rows.Close()
+	out, err := collectSchedules(rows)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.ScheduleRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeScheduleCursor(last.NextFireAt, last.NodeID)
+	}
+	return persistence.PaginatedListResult[persistence.ScheduleRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 func collectSchedules(rows *sql.Rows) ([]persistence.ScheduleRow, error) {

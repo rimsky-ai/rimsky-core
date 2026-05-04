@@ -8,6 +8,7 @@ import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
+import type { Observability } from "./observability.js";
 
 /**
  * gRPC NodeExecutor implementation. Always responds with the async-handoff
@@ -39,6 +40,16 @@ export interface GrpcServerConfig {
    * MCP tool. Threaded through to `runAgent`.
    */
   postAttributes?: PostAttributesFn;
+  /**
+   * Optional observability ledger. When provided, the gRPC Execute
+   * handler:
+   *   - records `step_started` on receipt, keyed by the supervisor's
+   *     `dispatch_id` (or the locally minted ackId when absent)
+   *   - records `step_completed` / `step_failed` from the outcome path
+   * The same ledger instance is normally shared with the HTTP bridge so
+   * dashboards can fetch traces via either transport.
+   */
+  observability?: Observability;
 }
 
 export type PostCallbackFn = (
@@ -74,6 +85,9 @@ interface ExecuteRequest {
   // stores-redesign-v2 (proto reserves both number and name). Resume is
   // universal; the substrate detects resumed-vs-fresh internally.
   run_attempt?: number;
+  // Supervisor-side rimsky_dispatch.id (proto field 12). Used by the
+  // executor observability ledger as the per-dispatch trace key.
+  dispatch_id?: string;
 }
 
 type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
@@ -146,11 +160,29 @@ function handleExecute(
   const req = call.request;
   const ackId = randomUUID();
   const runId = req.node_id ?? randomUUID();
+  // Trace ledger key: prefer the supervisor-supplied dispatch_id so
+  // dashboards can fetch traces by it (proto field 12). When absent
+  // (stub-mode probes, ad-hoc unit tests), fall back to the ackId.
+  const traceId = req.dispatch_id && req.dispatch_id.length > 0
+    ? req.dispatch_id
+    : ackId;
   const logger = config.logger.child({
     run_id: runId,
     node_id: req.node_id,
     node_type: req.node_type,
+    dispatch_id: req.dispatch_id,
   });
+
+  if (config.observability) {
+    config.observability.recordEvent(traceId, {
+      category: "step_started",
+      attributes: {
+        step_id: "dispatch",
+        node_id: req.node_id,
+        node_type: req.node_type,
+      },
+    });
+  }
 
   // 1) Heartbeat + AsyncAccepted terminal, then close the stream.
   call.write({
@@ -168,12 +200,13 @@ function handleExecute(
   call.end();
 
   // 2) Run the agent in the background; deliver final outcome via HTTP POST.
-  void runAndCallback(req, ackId, runId, config, cliRunner, post, logger);
+  void runAndCallback(req, ackId, traceId, runId, config, cliRunner, post, logger);
 }
 
 async function runAndCallback(
   req: ExecuteRequest,
   ackId: string,
+  traceId: string,
   runId: string,
   config: GrpcServerConfig,
   cliRunner: CliRunner,
@@ -208,6 +241,19 @@ async function runAndCallback(
       postAttributes: config.postAttributes,
     });
     const body = outcomeToCallbackBody(outcome);
+    if (config.observability) {
+      const cat = outcome.kind === "complete"
+        ? "step_completed"
+        : outcome.kind === "errored"
+        ? "step_failed"
+        : "step_completed";
+      const attrs: Record<string, unknown> = { step_id: "dispatch" };
+      if (outcome.kind === "errored") {
+        attrs.error = outcome.errorClass;
+      }
+      config.observability.recordEvent(traceId, { category: cat, attributes: attrs });
+      config.observability.markComplete(traceId);
+    }
     if (req.callback_url) {
       await post(buildCallbackUrl(req.callback_url, ackId), body, logger);
     } else {
@@ -215,6 +261,14 @@ async function runAndCallback(
     }
   } catch (e) {
     logger.error({ error: String(e) }, "agent run failed unexpectedly");
+    if (config.observability) {
+      config.observability.recordEvent(traceId, {
+        category: "error",
+        severity: "ERROR",
+        attributes: { error: String(e) },
+      });
+      config.observability.markComplete(traceId);
+    }
     if (req.callback_url) {
       await post(
         buildCallbackUrl(req.callback_url, ackId),

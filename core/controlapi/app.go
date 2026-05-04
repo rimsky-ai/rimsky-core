@@ -44,7 +44,19 @@ type AppDeps struct {
 	// that every node-referenced executor name is declared. Empty / nil
 	// → templates referencing any executor will fail validation.
 	Executors map[string]ExecutorEntry
+	// Observability is the optional read-only /v1/observability/* mount
+	// hook. Setter is core/config.StartControlAPI; per spec §1.1 the
+	// observability surface is wired in at startup alongside the
+	// existing admin/operator routes. Nil → /v1/observability/* is not
+	// mounted (used by tests that don't exercise observability).
+	Observability ObservabilityRouter
 }
+
+// ObservabilityRouter is the seam controlapi uses to mount the
+// observability handlers without importing core/observability/ (which
+// in turn would close a cycle). config.StartControlAPI passes a
+// concrete value populated from observability.Routes.
+type ObservabilityRouter func(r chi.Router)
 
 // ExecutorEntry mirrors core/config.ExecutorEntry but lives in the
 // controlapi package so the package compiles without the cyclic
@@ -76,24 +88,46 @@ func NewApp(deps AppDeps) http.Handler {
 		r.Use(authMiddleware(deps.Auth))
 	}
 
-	// Set common content-type + strict headers.
-	r.Use(chimiddleware.AllowContentType("application/json"))
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			next.ServeHTTP(w, req)
+	// Mount the observability subtree under its own chi.Group with a
+	// minimal middleware stack. Observability is read-only (GET-only)
+	// and intentionally exempt from the AllowContentType
+	// "application/json" gate that protects the write/admin surfaces;
+	// keeping the gate scoped to the write paths means future read-
+	// only additions on /v1/observability/* don't accidentally
+	// inherit the gate.
+	if deps.Observability != nil {
+		r.Group(func(rr chi.Router) {
+			rr.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					next.ServeHTTP(w, req)
+				})
+			})
+			rr.Route("/v1/observability", deps.Observability)
 		})
-	})
+	}
 
-	// Route groups — sibling files register each group.
-	registerTemplatesRoutes(r, deps)
-	registerTagsRoutes(r, deps)
-	registerInstancesRoutes(r, deps)
-	registerNodesRoutes(r, deps)
-	registerEventsRoutes(r, deps)
-	registerClaimsRoutes(r, deps)
-	registerAdminScheduleRoutes(r, deps)
-	registerHealthRoutes(r, deps)
+	// Set common content-type + strict headers on the write/admin
+	// surface only. AllowContentType applies to non-GET requests.
+	r.Group(func(rr chi.Router) {
+		rr.Use(chimiddleware.AllowContentType("application/json"))
+		rr.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				next.ServeHTTP(w, req)
+			})
+		})
+
+		// Route groups — sibling files register each group.
+		registerTemplatesRoutes(rr, deps)
+		registerTagsRoutes(rr, deps)
+		registerInstancesRoutes(rr, deps)
+		registerNodesRoutes(rr, deps)
+		registerEventsRoutes(rr, deps)
+		registerClaimsRoutes(rr, deps)
+		registerAdminScheduleRoutes(rr, deps)
+		registerHealthRoutes(rr, deps)
+	})
 
 	return r
 }

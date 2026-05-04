@@ -91,6 +91,33 @@ func (s *storeLifecycleImpl) ListByScope(ctx context.Context, scopeKind persiste
 	return out, rows.Err()
 }
 
+// ListByStore returns every lifecycle row for a given store
+// registration name, regardless of scope. Used by the observability
+// per-store detail endpoint.
+func (s *storeLifecycleImpl) ListByStore(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.StoreLifecycleRow, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+storeLifecycleCols+`
+		 FROM rimsky_store_lifecycle
+		 WHERE store_registration_name = ?
+		 ORDER BY scope_kind ASC, scope_id ASC`,
+		storeName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store_lifecycle.listByStore: %w", err)
+	}
+	defer rows.Close()
+
+	var out []persistence.StoreLifecycleRow
+	for rows.Next() {
+		r, err := scanStoreLifecycle(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func scanStoreLifecycle(sc scannable) (persistence.StoreLifecycleRow, error) {
 	var (
 		storeName      string

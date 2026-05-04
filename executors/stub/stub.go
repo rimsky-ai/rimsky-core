@@ -255,8 +255,9 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 }
 
 // Listen starts a gRPC server on an OS-assigned port and registers the Stub
-// as the NodeExecutor handler. Registers cleanup via t.Cleanup to stop the
-// server. Returns the server and its listening address.
+// as the NodeExecutor handler plus the capabilities-only ExecutorObservability
+// surface. Registers cleanup via t.Cleanup to stop the server. Returns the
+// server and its listening address.
 func (s *Stub) Listen(t testing.TB) (*grpc.Server, string) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -265,6 +266,7 @@ func (s *Stub) Listen(t testing.TB) (*grpc.Server, string) {
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterNodeExecutorServer(srv, s)
+	RegisterObservability(srv)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 	return srv, lis.Addr().String()

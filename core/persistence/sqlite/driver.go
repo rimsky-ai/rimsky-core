@@ -64,6 +64,9 @@ func (d *driver) Coordinator() persistence.Coordinator {
 
 func (d *driver) Close() error { return d.db.Close() }
 
+// Ping issues a trivial round-trip to surface connectivity problems.
+func (d *driver) Ping(ctx context.Context) error { return d.db.PingContext(ctx) }
+
 // Migrate runs all embedded SQL migrations under the coordinator's
 // migration lock.
 func (d *driver) Migrate(ctx context.Context, log shared.Logger) error {

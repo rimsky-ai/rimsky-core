@@ -11,5 +11,6 @@ pick_policies:
 host: 0.0.0.0
 grpc_port: 9101
 http_port: 9111
+http_bridge_url: "http://store-postgres:9111"
 admin_port: 9121
 sweep_interval_seconds: 30

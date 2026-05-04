@@ -1,0 +1,119 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+)
+
+// runObservabilityCheck implements Task F2: GetCapabilities, the per-
+// admin-view GetAdminView round-trips, the missing-claim probes for
+// GetClaim and StreamClaim (when supported), and a structural ListClaims
+// round-trip (when supported).
+func runObservabilityCheck(ctx context.Context, endpoint string) error {
+	conn, err := grpc.NewClient(stripScheme(endpoint),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer conn.Close()
+	client := genv1.NewStoreObservabilityClient(conn)
+	caps, err := client.GetCapabilities(ctx, &genv1.GetStoreCapabilitiesRequest{})
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.Unimplemented {
+			fmt.Println("observability: GetCapabilities Unimplemented (store declares no observability)")
+			return nil
+		}
+		return fmt.Errorf("GetCapabilities: %w", err)
+	}
+	fmt.Printf("observability: capabilities = supports_claim_get=%v supports_claim_stream=%v supports_list_claims=%v admin_views=%d http_bridge_url=%q\n",
+		caps.GetSupportsClaimGet(), caps.GetSupportsClaimStream(),
+		caps.GetSupportsListClaims(), len(caps.GetAdminViews()),
+		caps.GetHttpBridgeUrl())
+
+	const probeID = "conformance-probe-no-claim"
+
+	if caps.GetSupportsClaimGet() {
+		detail, err := client.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: probeID})
+		if err != nil {
+			return fmt.Errorf("GetClaim probe: %w", err)
+		}
+		// Spec §3.6: missing claims surface as ClaimDetail{state=UNKNOWN}.
+		if detail.GetState() != genv1.ClaimState_UNKNOWN {
+			return fmt.Errorf("GetClaim on missing claim returned state=%v, want UNKNOWN (spec §3.6)", detail.GetState())
+		}
+		fmt.Println("observability: GetClaim missing-claim shape OK")
+	}
+
+	if caps.GetSupportsClaimStream() {
+		streamCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		stream, err := client.StreamClaim(streamCtx, &genv1.StreamClaimRequest{ClaimId: probeID})
+		if err != nil {
+			return fmt.Errorf("StreamClaim open: %w", err)
+		}
+		count := 0
+		for {
+			_, rerr := stream.Recv()
+			if rerr != nil {
+				break
+			}
+			count++
+		}
+		fmt.Printf("observability: StreamClaim missing-claim received %d events\n", count)
+	}
+
+	if caps.GetSupportsListClaims() {
+		list, err := client.ListClaims(ctx, &genv1.ListClaimsRequest{Limit: 1})
+		if err != nil {
+			return fmt.Errorf("ListClaims probe: %w", err)
+		}
+		fmt.Printf("observability: ListClaims returned %d claim summaries (next_cursor=%q)\n",
+			len(list.GetClaims()), list.GetNextCursor())
+	}
+
+	for _, v := range caps.GetAdminViews() {
+		// Skip views that require parameters in v1 — this conformance
+		// probe is structural, not exhaustive. Views with required
+		// params are exercised by integration tests.
+		hasRequired := false
+		for _, p := range v.GetParams() {
+			if p.GetRequired() {
+				hasRequired = true
+				break
+			}
+		}
+		if hasRequired {
+			fmt.Printf("observability: admin view %q skipped (requires params)\n", v.GetName())
+			continue
+		}
+		empty, _ := structpb.NewStruct(map[string]any{})
+		view, err := client.GetAdminView(ctx, &genv1.GetAdminViewRequest{ViewName: v.GetName(), Params: empty})
+		if err != nil {
+			return fmt.Errorf("GetAdminView %q: %w", v.GetName(), err)
+		}
+		if view.GetRenderHint() == "" {
+			return fmt.Errorf("GetAdminView %q returned empty render_hint", v.GetName())
+		}
+	}
+	return nil
+}
+
+func stripScheme(s string) string {
+	for _, prefix := range []string{"grpc://", "http://", "https://"} {
+		if strings.HasPrefix(s, prefix) {
+			return s[len(prefix):]
+		}
+	}
+	return s
+}

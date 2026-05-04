@@ -7,8 +7,11 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -320,4 +323,123 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: %w", err)
 	}
 	return frameID, nil
+}
+
+// ListForObservability returns frames matching filter for the
+// /v1/observability/frames endpoint. Cursor pagination over (queued_at
+// DESC, frame_id DESC). Cursor is a base64-JSON encoding of the last
+// (queued_at, frame_id) pair on the previous page.
+func (s *framesImpl) ListForObservability(ctx context.Context, filter persistence.FrameListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var instArg any
+	if filter.InstanceID != nil {
+		instArg = *filter.InstanceID
+	}
+	var stateArg any
+	if filter.State != "" {
+		stateArg = string(filter.State)
+	}
+	var cursorQueued *time.Time
+	var cursorFrameID *shared.UUID
+	if pag.Cursor != "" {
+		q, fid, err := decodeFrameCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, fmt.Errorf("frames.list: bad cursor: %w", err)
+		}
+		cursorQueued = &q
+		cursorFrameID = &fid
+	}
+	var qArg, fArg any
+	if cursorQueued != nil {
+		qArg = *cursorQueued
+		fArg = *cursorFrameID
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT frame_id, instance_id, state, mode, started_at, ended_at,
+		        frame_timeout_ms, queued_at
+		   FROM rimsky_frames
+		  WHERE ($1::uuid IS NULL OR instance_id = $1)
+		    AND ($2::text IS NULL OR state = $2)
+		    AND ($3::timestamptz IS NULL OR (queued_at, frame_id) < ($3, $4))
+		  ORDER BY queued_at DESC, frame_id DESC
+		  LIMIT $5`,
+		instArg, stateArg, qArg, fArg, limit,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+	}
+	defer rows.Close()
+	var out []persistence.FrameRow
+	var lastQueued time.Time
+	for rows.Next() {
+		var (
+			r     persistence.FrameRow
+			state string
+			mode  string
+			qAt   time.Time
+		)
+		if err := rows.Scan(&r.FrameID, &r.InstanceID, &state, &mode, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs, &qAt); err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+		}
+		r.State = persistence.FrameState(state)
+		r.Mode = persistence.FrameMode(mode)
+		lastQueued = qAt
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		nextCursor = encodeFrameCursor(lastQueued, out[len(out)-1].FrameID)
+	}
+	return persistence.PaginatedListResult[persistence.FrameRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type frameCursor struct {
+	Q time.Time   `json:"q"`
+	F shared.UUID `json:"f"`
+}
+
+func encodeFrameCursor(queued time.Time, fid shared.UUID) string {
+	b, _ := json.Marshal(frameCursor{Q: queued, F: fid})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c frameCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.Q, c.F, nil
+}
+
+// GetForObservability returns one frame by id.
+func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRow, error) {
+	var (
+		r     persistence.FrameRow
+		state string
+		mode  string
+	)
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT frame_id, instance_id, state, mode, started_at, ended_at, frame_timeout_ms
+		   FROM rimsky_frames WHERE frame_id = $1`,
+		frameID,
+	).Scan(&r.FrameID, &r.InstanceID, &state, &mode, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.State = persistence.FrameState(state)
+	r.Mode = persistence.FrameMode(mode)
+	return &r, nil
 }

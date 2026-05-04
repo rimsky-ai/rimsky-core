@@ -23,7 +23,7 @@ type DispatchRequest struct {
 	RequiredStores []string
 	EnqueuedAt     time.Time // may be future-dated for backoff
 	// FrameID is the frame this dispatch belongs to (per
-	// docs/specs/2026-04-26-frame-resolution-design.md §10.2). Required:
+	// docs/history/2026-04-26-frame-resolution-design.md §10.2). Required:
 	// rimsky_dispatch.frame_id is NOT NULL. Sourced from
 	// rimsky_nodes.frame_id at enqueue time.
 	//
@@ -75,6 +75,17 @@ type Candidate struct {
 type ClaimOwnership struct {
 	Kind         string
 	SupervisorID string
+}
+
+// DispatchListFilter is the observability browse filter for live
+// rimsky_dispatch rows. State is one of "" (any) / "pending"
+// (claimed_by IS NULL) / "claimed" (claimed_by IS NOT NULL).
+// ExecutorName matches rimsky_dispatch.executor_name exactly when set.
+// InstanceID joins via node_id → rimsky_nodes when set.
+type DispatchListFilter struct {
+	State        string
+	ExecutorName string
+	InstanceID   *shared.UUID
 }
 
 // Queue is the claimable-work primitive. Implementations carry the
@@ -148,4 +159,13 @@ type Queue interface {
 	// RefreshHeartbeat extends rimsky_dispatch.last_heartbeat_at to now()
 	// for every row claimed by supervisorID.
 	RefreshHeartbeat(ctx context.Context, supervisorID string) error
+
+	// ListLive returns currently-live dispatch rows (the table holds only
+	// rows with no terminal yet — terminals delete the row). Used by the
+	// observability dispatches endpoint. Cursor pagination follows the
+	// (enqueued_at DESC, id DESC) ordering documented in the spec §1.2.3.
+	ListLive(ctx context.Context, filter DispatchListFilter, pag ListPagination) (PaginatedListResult[shared.DispatchRow], error)
+
+	// CountLive counts currently-live dispatch rows matching filter.
+	CountLive(ctx context.Context, filter DispatchListFilter) (int, error)
 }

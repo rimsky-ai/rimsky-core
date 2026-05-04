@@ -10,6 +10,8 @@ import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { PostCallbackFn } from "./server.js";
 import { defaultPostCallback } from "./server.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
+import type { Observability } from "./observability.js";
+import { mountObservability } from "./observability.js";
 
 /**
  * HTTP+JSON bridge. Callers that can't speak gRPC POST to `/execute` with an
@@ -36,6 +38,21 @@ export interface HttpBridgeConfig {
   logger: Logger;
   postCallback?: PostCallbackFn;
   postAttributes?: PostAttributesFn;
+  /**
+   * Optional observability ledger. When provided, the HTTP bridge:
+   *   - mounts /observability/v1/* routes from observability.ts
+   *   - emits step_started/step_completed/error events around each
+   *     /execute call so dashboards can fetch the trace via
+   *     GET /observability/v1/trace/{ack_id}.
+   */
+  observability?: Observability;
+  /**
+   * Externally-reachable HTTP base URL for the dashboard. Surfaced in
+   * the observability capabilities response so dashboards can dial
+   * the bridge directly. When empty, the dashboard falls back to its
+   * gRPC dispatch endpoint and HTTP-only routes will not work.
+   */
+  observabilityHttpBridgeUrl?: string;
 }
 
 export interface RunningHttpBridge {
@@ -47,6 +64,11 @@ interface ExecuteBody {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
+  // Supervisor-supplied dispatch identifier. When present, the bridge
+  // keys the trace ledger by this value so dashboards can fetch the
+  // trace via GET /observability/v1/trace/{dispatch_id}. Falls back to
+  // the freshly-minted ackId for non-rimsky callers.
+  dispatch_id?: string;
   userdata?: unknown;
   attributes?: unknown;
   attributes_schema?: unknown;
@@ -71,13 +93,39 @@ export async function startHttpBridge(
 
   app.get("/healthz", async () => ({ ok: true }));
 
+  if (config.observability) {
+    mountObservability(
+      app,
+      config.observability,
+      config.observabilityHttpBridgeUrl,
+    );
+  }
+
   app.post("/execute", async (req, reply) => {
     const body = (req.body ?? {}) as ExecuteBody;
     const ackId = randomUUID();
     const runId = body.node_id ?? randomUUID();
+    // The trace ledger is keyed by supervisor's dispatch_id when one
+    // arrives in the body (production path); otherwise by the locally
+    // minted ackId (debug / integration callers). This is what makes
+    // dashboard `getTrace(dispatch_id)` resolve.
+    const traceId = body.dispatch_id && body.dispatch_id.length > 0
+      ? body.dispatch_id
+      : ackId;
     const log = config.logger.child({ run_id: runId, node_id: body.node_id });
 
-    void runAndCallback(body, ackId, runId, config, cliRunner, post, log);
+    if (config.observability) {
+      config.observability.recordEvent(traceId, {
+        category: "step_started",
+        attributes: {
+          step_id: "dispatch",
+          node_id: body.node_id,
+          node_type: body.node_type,
+        },
+      });
+    }
+
+    void runAndCallback(body, ackId, traceId, runId, config, cliRunner, post, log);
 
     reply.code(202).send({ async_ack_id: ackId });
   });
@@ -95,6 +143,7 @@ export async function startHttpBridge(
 async function runAndCallback(
   body: ExecuteBody,
   ackId: string,
+  traceId: string,
   runId: string,
   config: HttpBridgeConfig,
   cliRunner: CliRunner,
@@ -129,6 +178,19 @@ async function runAndCallback(
       postAttributes: config.postAttributes,
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
+    if (config.observability) {
+      const cat = outcome.kind === "complete"
+        ? "step_completed"
+        : outcome.kind === "errored"
+        ? "step_failed"
+        : "step_completed";
+      const attrs: Record<string, unknown> = { step_id: "dispatch" };
+      if (outcome.kind === "errored") {
+        attrs.error = outcome.errorClass;
+      }
+      config.observability.recordEvent(traceId, { category: cat, attributes: attrs });
+      config.observability.markComplete(traceId);
+    }
     if (body.callback_url) {
       await post(body.callback_url, cb, logger);
     } else {
@@ -136,6 +198,14 @@ async function runAndCallback(
     }
   } catch (e) {
     logger.error({ error: String(e) }, "agent run failed unexpectedly");
+    if (config.observability) {
+      config.observability.recordEvent(traceId, {
+        category: "error",
+        severity: "ERROR",
+        attributes: { error: String(e) },
+      });
+      config.observability.markComplete(traceId);
+    }
     if (body.callback_url) {
       await post(
         body.callback_url,

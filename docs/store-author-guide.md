@@ -1,7 +1,7 @@
 # Store Author Guide
 
 > **Status:** This guide is **v2-shaped and pending a full v3 rewrite.**
-> Per `docs/specs/2026-04-27-stores-redesign-v3-design.md` §13.1, store
+> Per `docs/history/2026-04-27-stores-redesign-v3-design.md` §13.1, store
 > implementations are now standalone binaries that implement the
 > rimsky store-service gRPC protocol
 > (`proto/v1/store_service.proto`) — not in-process Go subpackages.
@@ -745,7 +745,7 @@ Before shipping your store implementation:
 
 ## Lifecycle events (control-plane v1)
 
-Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`. Every
+Per `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`. Every
 store-service implements six lifecycle methods alongside the four runtime
 verbs and `Capabilities`. Stores that don't react to lifecycle events
 just return `nil` from each method; the in-tree filesystem and stub
@@ -788,3 +788,83 @@ instance → template lookup:
 
 Stores can ignore these fields without affecting protocol conformance; they
 exist for stores that want per-template or per-instance namespacing.
+
+
+## Observability protocol (optional)
+
+Per `docs/specs/2026-05-02-dashboard-and-observability-design.md` §3,
+stores MAY implement `proto/v1/store_observability.proto` to expose
+per-claim views and optional admin views to dashboards. The dispatch
+protocol is unchanged.
+
+The service exposes five RPCs:
+
+- `GetCapabilities` — declares supported sub-features and admin views.
+- `GetClaim(claim_id)` — snapshot of one claim's state, history, and
+  store-chosen `address`/`payload`/`region`.
+- `StreamClaim(claim_id)` — replay-then-live stream, closes with a
+  `category: "claim_terminal"` marker.
+- `ListClaims` — optional paginated browse.
+- `GetAdminView(view_name, params)` — store-internal admin surface.
+
+### Capabilities-only "no observability" pattern
+
+Mirrors the executor pattern: return zero/false flags from
+`GetCapabilities`, return `Unimplemented` from the other RPCs. See
+`stores/stub/server/observability.go` for the reference Go impl.
+
+### Standard vocabulary
+
+Per spec §3.3: `claim_opened`, `claim_committed`, `claim_abandoned`,
+`claim_released`, `conflict_detected`, `log`, plus free-form strings.
+Required `attributes` keys per category are listed in spec §3.3.
+
+### `address` / `payload` / `region` exposure
+
+Distinct from the inert-claim invariant in Rimsky core: the store's
+own observability surface is free to expose whatever it wants in
+`ClaimDetail.address`/`payload`/`region` (it MAY be null, redacted,
+partial, or fully rendered). This is the store's call. Rimsky never
+asks the store for these fields and never reads them from a
+core-side code path; the inert-claim invariant in Rimsky core is
+preserved.
+
+### Retention + streaming semantics
+
+Mirror the executor protocol exactly. Eviction returns
+`ClaimDetail{state: UNKNOWN, ...}`.
+
+### Admin views
+
+Optional. Stores that want to expose store-internal admin surfaces
+(postgres pick-policy queue depth, items table contents; filesystem
+mount roots; etc.) declare them in
+`StoreObservabilityCapabilities.admin_views` and serve them via
+`GetAdminView`. v1 dashboard renders `render_hint` values `table` and
+`raw_json`; richer hints (`chart`, `tree`) can be added without
+breaking the contract — older dashboards fall back to `raw_json` for
+unknown hints.
+
+Reference admin-view implementations:
+
+- `stores/filesystem/server/observability.go` — `pick_policies`
+  (per-policy queue depth) + `policy_items` (one row per item).
+- `stores/postgres/server/observability.go` — `pick_policies` +
+  `items_queue` (queued vs in-progress count per items table).
+
+### Custom UI hook
+
+Same shape as the executor protocol. Marker enumeration for the store
+protocol: `{claim_id}`, `{store_name}`.
+
+### Capabilities probe (`--check-observability`)
+
+`rimsky-store-conformance --check-observability` calls
+`GetCapabilities`, validates the proto shape, and round-trips each
+declared `admin_views` entry that has no required parameters. See
+spec §6 for the full probe contract.
+
+Reference: `proto/v1/store_observability.proto`,
+`stores/filesystem/server/observability.go`,
+`stores/postgres/server/observability.go`,
+`stores/stub/server/observability.go`.

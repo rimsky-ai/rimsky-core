@@ -9,6 +9,7 @@ import { startHttpBridge } from "./http-bridge.js";
 import { startInternalMcpServer } from "./internal-mcp-server.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import { stubModeEnabled } from "./agent-run.js";
+import { Observability } from "./observability.js";
 
 /**
  * Executable entry point for the claude-agent executor.
@@ -69,6 +70,13 @@ async function main(): Promise<void> {
   });
   logger.info({ callback_url: callback.url }, "internal MCP listening");
 
+  // Single ledger shared between gRPC + HTTP transports so dashboards
+  // can fetch traces by supervisor's dispatch_id regardless of which
+  // path delivered the dispatch.
+  const observability = new Observability();
+  const observabilityHttpBridgeUrl =
+    process.env.RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL ?? "";
+
   const grpc = await startGrpcServer({
     host,
     port: grpcPort,
@@ -76,6 +84,7 @@ async function main(): Promise<void> {
     cliAuth,
     silenceTimeoutMs,
     logger,
+    observability,
   });
 
   const http = await startHttpBridge({
@@ -85,6 +94,8 @@ async function main(): Promise<void> {
     cliAuth,
     silenceTimeoutMs,
     logger,
+    observability,
+    observabilityHttpBridgeUrl,
   });
 
   const shutdown = async (): Promise<void> => {

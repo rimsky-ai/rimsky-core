@@ -5,8 +5,8 @@
 - Spec, 2026-05-02.
 - Outcome of the 2026-05-02 brainstorm covering observability surfaces and a reference dashboard implementation.
 - Foundational dependencies:
-  - `docs/specs/2026-04-27-stores-redesign-v3-design.md` — store contract and blessed invariants this spec must respect (especially invariant 20: claim content inert in Rimsky core).
-  - `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md` — control-plane v1 and the existing `rimsky.yml` handshake this spec extends.
+  - `docs/history/2026-04-27-stores-redesign-v3-design.md` — store contract and blessed invariants this spec must respect (especially invariant 20: claim content inert in Rimsky core).
+  - `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md` — control-plane v1 and the existing `rimsky.yml` handshake this spec extends.
   - `docs/2026-05-01-auth-and-multitenancy.md` — auth-blind v1 stance the dashboard inherits.
 - Pre-v1; per `.claude/rules/rules.md`, no backwards-compat constraints on protocols, schema, or config shape.
 - Companion follow-on: when "command-center" capabilities (auth, write-action UX, server-side preferences) land, they will be specified in a separate doc. v1 is read-only.
@@ -60,7 +60,7 @@ Lives on `rimsky-control-api`. Versioned namespace `/v1/observability/*`. Read-o
 
 ### 1.1 Versioning
 
-The observability API is versioned at `/v1/observability/*` from day one. This is a deliberate departure from the bare-path control-api admin endpoints (per `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md` §6.2): the audience is third-party dashboards rather than operator tooling, and the stability promise is stronger. Breaking changes ship under a new version namespace.
+The observability API is versioned at `/v1/observability/*` from day one. This is a deliberate departure from the bare-path control-api admin endpoints (per `docs/history/2026-05-02-rimsky-cli-and-compose-design.md` §6.2): the audience is third-party dashboards rather than operator tooling, and the stability promise is stronger. Breaking changes ship under a new version namespace.
 
 ### 1.2 Endpoint surface
 
@@ -197,6 +197,7 @@ message ObservabilityCapabilities {
   bool supports_trace_stream = 2;    // StreamTrace returns meaningful data
   uint64 retention_after_terminal_seconds = 3;  // 0 = no retention guarantee
   CustomUI custom_ui = 4;            // optional; nil/zero = no custom UI
+  string http_bridge_url = 5;        // optional; absolute base URL where the peer serves the HTTP+JSON observability bridge (e.g. "http://http-node:9092"). When empty, the peer exposes only the gRPC surface; the dashboard cannot proxy to it from the browser.
 }
 
 message CustomUI {
@@ -415,6 +416,7 @@ message StoreObservabilityCapabilities {
   uint64 retention_after_terminal_seconds = 4;
   CustomUI custom_ui = 5;
   repeated AdminViewDecl admin_views = 6;
+  string http_bridge_url = 7;        // optional; absolute base URL where the store serves the HTTP+JSON observability bridge (e.g. "http://store-postgres:9111"). When empty, the store exposes only the gRPC surface; the dashboard cannot proxy to it from the browser.
 }
 ```
 
@@ -454,7 +456,7 @@ Stores that don't support it return `Unimplemented`; the dashboard hides the "br
 
 ## 4. Discovery & handshake
 
-`rimsky-control-api` performs an **observability handshake** at startup, alongside the existing dispatch-protocol `Capabilities()` handshake from `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md` §3. The two handshakes have **different failure semantics** and must not be conflated:
+`rimsky-control-api` performs an **observability handshake** at startup, alongside the existing dispatch-protocol `Capabilities()` handshake from `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md` §3. The two handshakes have **different failure semantics** and must not be conflated:
 
 - **Dispatch handshake (existing, fail-fast):** unreachable peers or capability mismatches abort control-api startup. Required for correctness — Rimsky cannot dispatch without the dispatch contract.
 - **Observability handshake (new, best-effort):** unreachable peers or absent observability endpoints are recorded as `reachability_status: "unreachable"` and `observability_capabilities: null`. Control-api startup proceeds. Observability is optional; the dashboard degrades gracefully when peers don't expose it.
@@ -683,7 +685,7 @@ stores/
   stub/observability.go               # NEW: minimal capabilities response
 ```
 
-The `core/observability/` package depends on `core/storage/` and `core/queue/` for read access, follows the existing import rules (no scheduler/supervisor/controlapi imports across each other; this package is read-only and may be imported by `controlapi/` only), and exposes pure handler functions wired by `controlapi/`'s router.
+The `core/observability/` package depends on `core/persistence/` (the unified persistence abstraction backed by either Postgres or SQLite) for read access, follows the existing import rules (no scheduler/supervisor/controlapi imports across each other; this package is read-only and may be imported by `controlapi/` only; driver-specific subpackages `core/persistence/postgres/` and `core/persistence/sqlite/` are NOT imported), and exposes pure handler functions wired by `controlapi/`'s router. Backend-agnostic by construction.
 
 Out of scope for this spec (operator/deploy concerns): the `deploy/docker-compose.yml` and Helm chart updates that include the dashboard image. Those are deployment-shape changes that consume the §5.8 packaging contract.
 
@@ -691,7 +693,7 @@ Out of scope for this spec (operator/deploy concerns): the `deploy/docker-compos
 
 ## 10. Testing strategy
 
-- **Rimsky observability API**: integration tests in `core/observability/handler_test.go` using the existing testcontainers-postgres harness (`core/internal/pgtest`). Each endpoint verified against fixtures: empty state, single-instance happy path, multi-instance pagination, filter combinations, error responses.
+- **Rimsky observability API**: integration tests in `core/observability/handler_test.go`, parameterized over `persistence.Driver` so each test runs against both the Postgres backend (using the existing testcontainers-postgres harness at `core/internal/pgtest`) and the SQLite backend (in-process, file-backed; reference `core/persistence/sqlite/integration_test.go`). Each endpoint verified against fixtures: empty state, single-instance happy path, multi-instance pagination, filter combinations, error responses.
 - **Executor observability protocol**: unit tests for the proto handlers per executor. The shipped executors (`http-node`, `claude-agent`, `stub`) each gain a small test that exercises `GetCapabilities` + `GetTrace` + `StreamTrace`. Plus the additive `--check-observability` conformance probe.
 - **Store observability protocol**: same shape per store. Filesystem and postgres get a richer probe (admin views), stub gets the minimal capabilities-only probe.
 - **Dashboard reference implementation**:

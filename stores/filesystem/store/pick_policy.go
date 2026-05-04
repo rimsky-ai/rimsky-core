@@ -208,6 +208,7 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corest
 		s.mu.Lock()
 		s.claims[claimID] = absPath
 		s.mu.Unlock()
+		s.ledger.RecordOpen(claimID, selector, addr, region)
 		return corestore.OpenOutcome{
 			Available: true,
 			Result: corestore.ClaimResult{

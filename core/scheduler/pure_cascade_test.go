@@ -62,6 +62,12 @@ func (f *fakeQueue) GetDispatchNode(_ context.Context, _ shared.UUID) (shared.UU
 	return shared.UUID{}, persistence.ClaimOwnership{Kind: "not_found"}, nil
 }
 func (f *fakeQueue) RefreshHeartbeat(_ context.Context, _ string) error { return nil }
+func (f *fakeQueue) ListLive(_ context.Context, _ persistence.DispatchListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+	return persistence.PaginatedListResult[shared.DispatchRow]{}, nil
+}
+func (f *fakeQueue) CountLive(_ context.Context, _ persistence.DispatchListFilter) (int, error) {
+	return 0, nil
+}
 
 func (f *fakeQueue) snapshot() []persistence.DispatchRequest {
 	f.mu.Lock()

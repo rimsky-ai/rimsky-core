@@ -253,17 +253,8 @@ func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persis
 	if id, err := uuid.Parse(idOrKey); err == nil {
 		return deps.Persist.Instances().Get(ctx, id, nil)
 	}
-	// instance_key resolution: walk the instance list filtered by
-	// instance_key and return the first hit.
-	page, err := deps.Persist.Instances().List(ctx, persistence.InstanceListFilter{
-		InstanceKey: idOrKey,
-	}, persistence.ListPagination{Limit: 1}, nil)
-	if err != nil {
-		return nil, err
-	}
-	if len(page.Rows) == 0 {
-		return nil, nil
-	}
-	row := page.Rows[0]
-	return &row, nil
+	// instance_key resolution: dedicated dispatch — there's no
+	// (template_hash, instance_key) on this URL, so use the
+	// instance-key-only lookup.
+	return deps.Persist.Instances().FindAnyByInstanceKey(ctx, idOrKey, nil)
 }

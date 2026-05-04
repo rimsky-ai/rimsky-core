@@ -1,5 +1,5 @@
 // StoreLifecycleStore — Postgres-backed persistence.StoreLifecycleStore.
-// Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md
+// Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
 // §5.3: rimsky_store_lifecycle is the per-(store, scope) bookkeeping
 // table that drives idempotent fan-out of lifecycle events.
 package postgres
@@ -87,6 +87,34 @@ func (s *storeLifecycleImpl) ListByScope(ctx context.Context, scopeKind persiste
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store_lifecycle.listByScope: %w", err)
+	}
+	defer rows.Close()
+
+	var out []persistence.StoreLifecycleRow
+	for rows.Next() {
+		r, err := scanStoreLifecycle(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListByStore returns every lifecycle row for a given store
+// registration name, regardless of scope. Used by the observability
+// per-store detail endpoint.
+func (s *storeLifecycleImpl) ListByStore(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.StoreLifecycleRow, error) {
+	ex := s.q(tx)
+	rows, err := ex.Query(ctx,
+		`SELECT `+storeLifecycleCols+`
+		 FROM rimsky_store_lifecycle
+		 WHERE store_registration_name = $1
+		 ORDER BY scope_kind ASC, scope_id ASC`,
+		storeName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store_lifecycle.listByStore: %w", err)
 	}
 	defer rows.Close()
 

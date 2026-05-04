@@ -74,6 +74,29 @@ func (s *instancesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.
 	return &out, nil
 }
 
+// FindAnyByInstanceKey resolves an instance by instance_key alone. The
+// (template_hash, instance_key) uniqueness constraint guarantees at
+// most one row, but in case of multi-template overlap the most-recent
+// row by created_at wins.
+func (s *instancesImpl) FindAnyByInstanceKey(ctx context.Context, instanceKey string, tx persistence.Tx) (*persistence.InstanceRow, error) {
+	ex := s.q(tx)
+	row := ex.QueryRow(ctx,
+		`SELECT `+instanceCols+` FROM rimsky_instances
+		 WHERE instance_key = $1
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		instanceKey,
+	)
+	out, err := scanInstance(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("instances.findAnyByInstanceKey: %w", err)
+	}
+	return &out, nil
+}
+
 func (s *instancesImpl) GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx persistence.Tx) (*persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
@@ -115,17 +138,22 @@ func (s *instancesImpl) List(
 		v := filter.TemplateHash
 		tmplHash = &v
 	}
-	var ikey *string
-	if filter.InstanceKey != "" {
-		v := filter.InstanceKey
-		ikey = &v
+	// Active filter: nil → no filter; true → terminated_at IS NULL;
+	// false → terminated_at IS NOT NULL.
+	var activeArg any
+	if filter.Active != nil {
+		activeArg = *filter.Active
 	}
 
 	rows, err := ex.Query(ctx,
 		`SELECT `+instanceCols+`
 		 FROM rimsky_instances
 		 WHERE ($1::text IS NULL OR template_hash = $1)
-		   AND ($2::text IS NULL OR instance_key = $2)
+		   AND (
+		     $2::boolean IS NULL
+		     OR ($2::boolean = true AND terminated_at IS NULL)
+		     OR ($2::boolean = false AND terminated_at IS NOT NULL)
+		   )
 		   AND (
 		     $3::uuid IS NULL
 		     OR (created_at, id) < (
@@ -135,7 +163,7 @@ func (s *instancesImpl) List(
 		   )
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT $4`,
-		tmplHash, ikey, cursor, limit,
+		tmplHash, activeArg, cursor, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.InstanceRow]{}, fmt.Errorf("instances.list: %w", err)
@@ -198,6 +226,22 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 		return 0, fmt.Errorf("instances.countActiveByTemplate: %w", err)
 	}
 	return n, nil
+}
+
+// CountByActive returns (active, terminated) instance counts.
+func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (int, int, error) {
+	ex := s.q(tx)
+	var active, terminated int
+	err := ex.QueryRow(ctx,
+		`SELECT
+		   COUNT(*) FILTER (WHERE terminated_at IS NULL),
+		   COUNT(*) FILTER (WHERE terminated_at IS NOT NULL)
+		 FROM rimsky_instances`,
+	).Scan(&active, &terminated)
+	if err != nil {
+		return 0, 0, fmt.Errorf("instances.countByActive: %w", err)
+	}
+	return active, terminated, nil
 }
 
 // ListTerminatedWithLifecycleRows returns up to limit instances with

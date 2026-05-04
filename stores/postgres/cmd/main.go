@@ -38,6 +38,15 @@ import (
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 )
 
+// itemsTableIdentRe is the shared strict SQL identifier shape (see
+// pgsstore.ItemsTableIdentRegex). All three layers — this startup
+// check, server/observability.go, and Store.New — apply the same
+// regex so an items_table value that passes one layer passes all
+// three. Lowercase only: postgres folds unquoted identifiers to
+// lowercase, so a mixed-case match would silently mismatch
+// verifyItemsTable at runtime.
+var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
+
 const defaultConfigEnv = "STORE_POSTGRES_CONFIG"
 
 type yamlConfig struct {
@@ -47,6 +56,7 @@ type yamlConfig struct {
 	Host                 string                    `yaml:"host"`
 	GRPCPort             int                       `yaml:"grpc_port"`
 	HTTPPort             int                       `yaml:"http_port"`
+	HTTPBridgeURL        string                    `yaml:"http_bridge_url"`
 	AdminPort            int                       `yaml:"admin_port"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
 }
@@ -85,6 +95,12 @@ func main() {
 	}
 	policies := make(map[string]*pgsstore.PickPolicy, len(cfg.PickPolicies))
 	for selector, pp := range cfg.PickPolicies {
+		if !itemsTableIdentRe.MatchString(pp.ItemsTable) {
+			fmt.Fprintf(os.Stderr,
+				"store-postgres: pick_policies[%q]: items_table %q is not a valid SQL identifier (lowercase letters/digits/underscore; not starting with a digit)\n",
+				selector, pp.ItemsTable)
+			os.Exit(1)
+		}
 		policies[selector] = &pgsstore.PickPolicy{
 			ItemsTable:        pp.ItemsTable,
 			OnCommitDefault:   pp.OnCommitDefault,
@@ -132,6 +148,7 @@ func main() {
 		WriteSemantics: ws,
 		PickPolicies:   policies,
 		SweepInterval:  sweep,
+		HTTPBridgeURL:  cfg.HTTPBridgeURL,
 	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-postgres: server.Run: %v\n", err)
 		os.Exit(1)

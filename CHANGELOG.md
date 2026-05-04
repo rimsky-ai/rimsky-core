@@ -2,6 +2,201 @@
 
 ## Unreleased
 
+### Docs — Archive landed designs and plans
+
+- **Moved 9 implemented designs from `docs/specs/` to `docs/history/`,
+  along with their paired plans and notes.** Implementation verified
+  via spot-checks against current code (`core/frame/`,
+  `stores/{filesystem,postgres,stub}/`, `persistence.Open`,
+  `core/cmd/rimsky-cli`, `core/controlapi/lifecycle.go`,
+  `stores/filesystem/store/pick_policy.go`, `deploy/Dockerfile.all`,
+  `core/cli/compose`). Plans renamed with `-plan` suffix on archive
+  to disambiguate from older spec-format archives. The
+  dashboard/observability design (still in active implementation)
+  and the in-progress foundation-contract draft remain in
+  `docs/specs/`. Archived files will be superseded by the
+  comprehensive modeling-layer and service-protocol contracts coming
+  out of the foundation-contract crystallization work.
+
+### Fixed — Dashboard & observability v1 (round-3 review)
+
+- **http-node `StreamTrace` no longer drops events under concurrent
+  append.** Replaced the snapshot+gap+late-register pattern with a
+  per-subscriber wakeup-pump model: subscribers register under the
+  same lock that captures dispatch existence; `AppendEvent` appends +
+  non-blocking-wakes via a coalescing capacity-1 channel; subscribers
+  read directly from the per-dispatch slice at their own cursor on
+  each wake. `MarkTerminal` closes a `done` channel so subscribers
+  drain the tail and emit `trace_complete`. Applies to both gRPC
+  `StreamTrace` (`executors/http-node/observability.go`) and the SSE
+  bridge (`executors/http-node/observability_bridge.go`). Race-detector
+  test exercises 16 goroutines × 25 events with no drops.
+- **Schedules cursor pagination tested for dense same-timestamp
+  case.** Added a conformance test
+  (`testSchedulesDenseSameTimestampPagination`) that registers ≥3
+  schedules sharing `next_fire_at` and asserts every row surfaces
+  exactly once across pages with no duplicates and no drops.
+  Validates the round-2 tuple-cursor fix on both Postgres and SQLite.
+- **CustomUI panel relocated from ExecutorDetailPage to
+  DispatchDetailPage.** Per spec §2.2 the executor
+  `dispatch_url_template` substitution markers are `{dispatch_id,
+  instance_id, node_type}` — none of which are in scope on a
+  peer-detail page. The panel now renders on dispatch-detail pages
+  where those markers are known; `handleGetDispatch` was extended to
+  return `instance_id` and `node_type` (looked up via
+  `Store.Nodes().Get`). Store-side substitutions (`{store_name,
+  claim_id}`) on StoreDetailPage were already correct.
+- **Postgres `items_table` regex centralized.** All three layers
+  (`stores/postgres/cmd/main.go`, `stores/postgres/server/observability.go`,
+  `stores/postgres/store/store.go::validIdent`) now reference
+  `pgsstore.ItemsTableIdentRegex = ^[a-z_][a-z0-9_]*$`. Error
+  messages aligned. Stricter than the previous cmd/server regex
+  (which allowed uppercase) — Postgres folds unquoted identifiers to
+  lowercase anyway.
+- **Test coverage filled across the round-2 surface.** New tests:
+  claude-agent gRPC `Execute` and HTTP `/execute` observability
+  ledger assertions; store ledger non-terminal events
+  (`RecordEvent` cases for `claim_commit_failed` /
+  `claim_abandon_failed`); dashboard SSE proxy header forwarding +
+  non-200 status propagation; http-node `StreamTrace` race-detector
+  stress test.
+
+### Fixed — Dashboard & observability v1 (round-2 review)
+
+- **`claude-agent` traces now reach the dashboard from the gRPC dispatch
+  path.** The TS executor's gRPC `Execute` handler shares a single
+  `Observability` ledger with the HTTP+JSON bridge; both record events
+  keyed by the supervisor-supplied `dispatch_id` (proto field 12) so
+  `GET /observability/v1/trace/{dispatch_id}` resolves regardless of
+  transport. Previously only the HTTP bridge fired ledger events, and
+  even there it keyed by the freshly-minted `ackId` rather than
+  `dispatch_id` — silently breaking the dashboard's executor-trace pane
+  for the LLM executor in production.
+- **Dashboard SSE proxy propagates upstream headers.** The proxy now
+  sets `Content-Type: text/event-stream` (honoring the upstream value
+  when present), `Cache-Control: no-cache`, and `Connection: keep-alive`
+  before streaming the SSE body. Without these, browsers wouldn't run
+  EventSource and intermediate caches could buffer the stream.
+- **http-node observability replays without holding the writer lock.**
+  Both the gRPC `StreamTrace` and the HTTP+JSON SSE handler now snapshot
+  the events under the lock, release, and iterate lock-free. A slow SSE
+  client can no longer stall `AppendEvent` / `MarkTerminal` / parallel
+  streams across the executor.
+- **Postgres store admin view rejects unsafe items_table values.** The
+  `items_queue` admin view validates `pp.ItemsTable` against
+  `^[a-zA-Z_][a-zA-Z0-9_]*$` before interpolating it into the
+  `COUNT(*)` query, and the store-postgres binary applies the same
+  check at config load. Defense-in-depth on top of `Store.New`'s
+  existing identifier check.
+- **`Commit`/`Abandon` failures no longer record terminal ledger
+  events.** The postgres and filesystem stores now record a non-
+  terminal `claim_commit_failed` / `claim_abandon_failed` event (new
+  `ClaimLedger.RecordEvent` helper) when the store-side action errors;
+  `RecordTerminal` runs only on success. Previously the dashboard saw
+  the claim as committed even when the store rejected the transition.
+- **`EventStore.Tail` removed.** Dead method dropped from the interface
+  and both impls (no callers); after the recent List DESC ordering
+  change, leaving Tail in place would have surprised the first future
+  caller that expected oldest-first.
+- **Schedules cursor encodes `(next_fire_at, node_id)`.** Both drivers
+  now use a base64-JSON cursor of both fields with the strict tuple
+  comparator `(next_fire_at, node_id) > ($t, $id)`. Previously dense
+  scheduling (multiple schedules sharing a `next_fire_at`) silently
+  lost rows at page boundaries.
+- **Dashboard `useCursor` exposes `canGoBack`.** `ResourceTable` now
+  disables Prev based on in-memory history depth rather than
+  `cursor === ''`, prophylactically correcting the "first page after a
+  non-empty initial cursor" edge case.
+- **Custom UI templated URLs reach the dashboard.** Both store and
+  executor detail pages now pass
+  `template={caps.custom_ui.dispatch_url_template}` to `CustomUIPanel`,
+  enabling the spec §2.2 / §3.5 path-templating feature. The phantom
+  `claim_url_template` field is removed from the dashboard's
+  `CustomUI` type — the proto reuses one field name across both peer
+  kinds.
+- **CLI `ListInstancesQuery.InstanceKey` removed.** The control-api's
+  `/instances` endpoint never honored `instance_key`; the field is
+  gone from `cli.ListInstancesQuery`, the URL builder, and the
+  `clitest` fake server's `/instances` handler. Instance-key lookups
+  go through `/instances/{idOrKey}`.
+- **Schedules page paginates.** `SchedulesPage` rebuilt on
+  `ResourceTable` so deployments with more than ~50 schedules are
+  reachable.
+- **Dashboard proxy splits on the URL parameter.** `/api/exec/:name/*`
+  and `/api/store/:name/*` strip the prefix using `c.req.param('name')`
+  instead of the resolved peer's `.name`. Same string today, but no
+  longer relies on identity if discovery ever returns aliased peers.
+
+### Added — Dashboard & observability v1
+
+- **Three public observability protocols.** Per
+  `docs/specs/2026-05-02-dashboard-and-observability-design.md`:
+  - **Rimsky observability API** at `/v1/observability/*` on
+    `rimsky-control-api`. Read-only resource-oriented browse + detail
+    endpoints over `rimsky_*` tables (templates, instances, frames,
+    nodes, dispatches, lock-holders, schedules, events, system
+    health/summary). Backed by `core/observability/` — a new package
+    that imports `core/persistence/` for shared types but is forbidden
+    from importing `core/config/`, the per-driver subpackages, or any
+    of `core/scheduler/`/`core/supervisor/`/`core/controlapi/`.
+  - **Executor observability protocol** in
+    `proto/v1/executor_observability.proto`. `GetCapabilities`,
+    `GetTrace`, `StreamTrace`. Capabilities response includes a new
+    `http_bridge_url` field (spec §2.2) so dashboards can dial the
+    peer's HTTP+JSON bridge directly instead of guessing from the
+    dispatch endpoint. Reference impls landed for `executors/stub/`
+    (capabilities-only), `executors/http-node/` (in-memory trace
+    store with retention sweep + per-dispatch broadcaster + dispatch
+    hooks emitting `step_started`/`step_completed`/`step_failed`/
+    `error` events keyed by the new `dispatch_id` field on
+    `ExecuteRequest`), and `executors/claude-agent/` (HTTP+JSON
+    bridge mounting `/observability/v1/*` routes; bounded ledger;
+    spec-§2.6 evicted-shape semantics).
+  - **Store observability protocol** in
+    `proto/v1/store_observability.proto`. `GetCapabilities`,
+    `GetClaim`, `StreamClaim`, `ListClaims`, `GetAdminView`.
+    Capabilities response includes the same new `http_bridge_url`
+    field (spec §3.5). Reference impls landed for `stores/stub/`
+    (capabilities-only), `stores/filesystem/` (admin views:
+    `pick_policies`, `policy_items` + per-claim ledger), and
+    `stores/postgres/` (admin views: `pick_policies`, `items_queue`
+    + per-claim ledger). Both store impls expose the HTTP+JSON
+    bridge via the new `bridge.MountObservability` helper.
+- **Observability handshake on control-api.** `core/config/StartControlAPI`
+  now runs a best-effort `Capabilities()` probe against each declared
+  executor and store endpoint at startup, captures the peer's
+  `http_bridge_url`, exposes it on `PeerEntry.http_bridge_url`, and
+  starts a background re-prober (`RIMSKY_OBSERVABILITY_REFRESH_INTERVAL`,
+  default `60s`). Distinct from the existing fail-fast dispatch
+  handshake — observability is optional; unreachable peers do not
+  abort startup.
+- **`rimsky.yml` schema additions.** Each `executors:` and `stores:`
+  entry gains an optional `observability_endpoint:` field — used when
+  a peer splits its gRPC observability service onto a separate port
+  from dispatch. The HTTP+JSON bridge URL is per-peer-config (e.g.
+  `http_bridge_url:` in the filesystem/postgres store YAML, or
+  `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL`/
+  `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` env vars on the
+  executors), advertised through the capabilities handshake.
+- **`--check-observability` flag** on `rimsky-conformance` and
+  `rimsky-store-conformance`. Probes capabilities, validates the
+  spec-§2.6/§3.6 missing-dispatch / missing-claim shape via
+  `GetTrace`/`StreamTrace`/`GetClaim`/`StreamClaim`, exercises
+  `ListClaims` when supported, validates the spec §2.4 standard-
+  vocab attribute requirements on any returned events, and
+  round-trips every parameter-less admin view per spec §6.
+- **Reference dashboard** at `dashboards/rimsky-dashboard/`. React +
+  Vite + TypeScript SPA + Hono Node server; bundled with the dev
+  `docker-compose` stack and started by default. The Node server
+  exposes `/healthz` and reverse-proxies `/api/control/*`,
+  `/api/exec/{name}/*`, `/api/store/{name}/*` to the corresponding
+  observability endpoints (with SSE pass-through, using the
+  handshake-derived `http_bridge_url` per peer). 18 routes across
+  System, Templates, Instances, Frames, Nodes, Dispatches,
+  LockHolders, Schedules, Events, Stores, Executors. Tailwind v3 +
+  hand-rolled shadcn-style primitives; vitest + dashboard proxy
+  unit tests.
+
 - **Filesystem store: pick-policy support.** The standard `stores/filesystem/`
   store-service grows a `pick_policies` config block paralleling the pg
   store's. Auto-discovery: folders under each policy's configured sub-root
@@ -12,7 +207,7 @@
   `rename(2)` between `<root>/.fs-store/<policy>/{available,in_progress}/`.
   Bump-to-head admin endpoint at `POST /admin/bump-to-head/{selector}`.
   `sync_strategy: on_open` (default) or `on_sweep` per policy.
-  Per `docs/specs/2026-05-03-fs-store-pick-policies-design.md`.
+  Per `docs/history/2026-05-03-fs-store-pick-policies-design.md`.
 
 - **Conformance coverage for per-feature interface methods + tighter
   pgx-isolation depguard.** Added four cross-driver conformance areas
@@ -189,7 +384,7 @@
   retry, exit code 3 on `compose plan` drift (mirrors `terraform plan
   -detailed-exitcode`). Distribution: GitHub Releases, install script,
   Homebrew tap, `go install`, distroless `rimsky/cli` Docker image. Per
-  `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md`.
+  `docs/history/2026-05-02-rimsky-cli-and-compose-design.md`.
 
   Post-implementation review fixes:
   - Embedded `deploy/docker-compose.yml` v1 scaffold trimmed to the
@@ -288,7 +483,7 @@
   (`RIMSKY_CONFIG`) replaces `RIMSKY_STORES_CONFIG` and the supervisor's
   `executors:` block — declares stores, named_locks, and executors in one
   place. Control-api gains `ExecutorDeclared` validation hook. Per
-  `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+  `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`.
   Pre-v1: drop+recreate of `rimsky_templates`/`rimsky_instances`; existing
   dev DBs nuked.
 
@@ -307,7 +502,7 @@
   `on_give_up_default`). Bridge handler switches from
   `encoding/json` to `protojson` for response marshaling so the
   new oneof round-trips correctly. Spec:
-  `docs/specs/2026-04-30-stores-protocol-cleanup-design.md`.
+  `docs/history/2026-04-30-stores-protocol-cleanup-design.md`.
   Supersedes v3 §4.1 / §4.5 / §4.7 third-paragraph / §4.10
   invariant 13.1 / §5.1 / §5.2 / §7.8 obligation #3.
 
@@ -330,7 +525,7 @@
   via the new 5+1-verb gRPC protocol defined in
   `proto/v1/store_service.proto` (Open / Commit / Abandon / Delete /
   Release plus a startup Capabilities() handshake). Spec:
-  `docs/specs/2026-04-27-stores-redesign-v3-design.md`.
+  `docs/history/2026-04-27-stores-redesign-v3-design.md`.
 
   Headline changes:
   - **`Factory` / `Registry.BuildAll` / `StoresConfig` removed**
@@ -444,7 +639,7 @@
 - **`docs/architecture.md`** gains a new §4.1.1 "Frame engine" section describing `core/frame/` (producer + engine), how `frame.RunTick` runs under the existing scheduler advisory lock, and how `frame_id` propagates through the schema. Cross-references the frame-resolution design doc and the conceptual section in `docs/node-graph-design.md`.
 - **`runner_terminal.go` cascade-message comment** updated to describe what the SQL guard `(state = 'fresh' OR (state = 'stale' AND frame_id IS NULL))` actually defends against under the frame model — `Create()` defaults to `'fresh'`, so the `stale + no-frame_id` branch is a defensive backstop for orphan-reap recovery / future paths, not the initial-create case the prior comment named.
 
-- **Frame resolution** (single coherent change; see `docs/specs/2026-04-26-frame-resolution-design.md`). The cascade engine gains a first-class **frame** primitive — a complete pass over the reachable subgraph from one or more invalidation sources, executing serially per instance. Two modes: `frame_resolution: serial_queue` (each invalidate produces a distinct frame, FIFO) and `frame_resolution: coalesce` (mid-render invalidates collapse into one trailing frame). Required at the template level — control-api rejects template uploads without it. Default `frame_timeout_ms` is 600000 (10 min), hard floor 60000. Closes the smoke-test cascade-coalescing gap. **BREAKING:** dev DB must be nuked; templates must declare `frame_resolution`.
+- **Frame resolution** (single coherent change; see `docs/history/2026-04-26-frame-resolution-design.md`). The cascade engine gains a first-class **frame** primitive — a complete pass over the reachable subgraph from one or more invalidation sources, executing serially per instance. Two modes: `frame_resolution: serial_queue` (each invalidate produces a distinct frame, FIFO) and `frame_resolution: coalesce` (mid-render invalidates collapse into one trailing frame). Required at the template level — control-api rejects template uploads without it. Default `frame_timeout_ms` is 600000 (10 min), hard floor 60000. Closes the smoke-test cascade-coalescing gap. **BREAKING:** dev DB must be nuked; templates must declare `frame_resolution`.
   - **New schema:** `rimsky_frames` table (frame_id, instance_id, mode, state, source_node_ids, queued_at, started_at, ended_at, frame_timeout_ms) with `uq_rimsky_frames_running` (at most one running per instance) and `uq_rimsky_frames_coalesce_queued` (at most one pending coalesce row per instance). `frame_id` columns added to `rimsky_dispatch` (NOT NULL), `rimsky_nodes` (nullable, cleared at fresh, preserved at failed), `rimsky_lock_holders` (observability), `rimsky_claim_holders` (observability).
   - **New package:** `core/frame/` — `EnqueueOrCoalesce` producer helper (called from `core/scheduler/invalidate.go`'s `InvalidateNode`, schedule_ticker, and admin force-fire indirectly) and `RunTick` engine (frame-end detection, queued→running advancement, stuck-frame reaper, orphan-dispatch reaper). The scheduler tick invokes `frame.RunTick` under the existing `pg_try_advisory_lock(SCHEDULER_TICK_KEY)`.
   - **Removed:** `rimsky_nodes.kill_requested` column, `core/supervisor/runner_dispatch.go::isKillRequested`, the heartbeat-tick kill-poll path in `core/supervisor/supervisor.go`, the controlapi `POST /nodes/{id}/kill` route + `handleKillNode` handler, and the `KillRequested` field on storage's `NodeRow` + storage interface. Operator-originated invalidates now enqueue or coalesce a frame; in-flight work is never preempted.
@@ -453,7 +648,7 @@
   - **Smoke fixture** declares `frame_resolution: serial_queue`, restoring the §19.2 acceptance predicate (≥100 terminal commits per 100 force-fires).
   - **Migration 002** (`core/migrations/002-frame-resolution.sql`): creates `rimsky_frames`, adds `frame_id` columns, drops `kill_requested`. Pre-v1 destructive: in-flight cascades are abandoned (`rimsky_nodes.state` forced to `failed` for stale/running rows; `rimsky_dispatch` truncated).
 
-- **Stores redesign** (single coherent change; see `docs/specs/2026-04-25-stores-redesign-design.md`). The `Resource` abstraction and its surrounding template/dispatch/protocol vocabulary have been replaced end-to-end by a unified **store** abstraction with explicit **lock**, **claim**, **region**, and **attributes** vocabulary. **BREAKING:** dev DB must be nuked before adoption (no migrations from the old schema — `core/migrations/001-initial.sql` is rewritten in place to the §9 end-state schema; `core/migrations/002-data-ref-jsonb.sql` is deleted).
+- **Stores redesign** (single coherent change; see `docs/history/2026-04-25-stores-redesign-design.md`). The `Resource` abstraction and its surrounding template/dispatch/protocol vocabulary have been replaced end-to-end by a unified **store** abstraction with explicit **lock**, **claim**, **region**, and **attributes** vocabulary. **BREAKING:** dev DB must be nuked before adoption (no migrations from the old schema — `core/migrations/001-initial.sql` is rewritten in place to the §9 end-state schema; `core/migrations/002-data-ref-jsonb.sql` is deleted).
   - **Removed concepts:** the `core/resource/` package and its two impls (`inlinejsonb`, `externalsql`); template fields `owns_resources` / `reads_resources` / `instance_params` / `concurrency_tags` and the matching node columns; `Complete.result` and the `deps_data` / `reads_data` request fields on the wire and in storage; `RestoreVersion` everywhere (template grammar, `InvalidateArgs`, scheduler `invalidateRestorePath`, control-api `nodes.go` decode, `node.ReasonRestoreVersion`, related event payloads); `core/storage/postgres/resources.go` + `resource_data.go`; `core/controlapi/resources.go`; the legacy `concurrency_tags` predicate in the dispatch SQL; the two scenario tests `double_buffering_test.go` and `rollback_via_restore_version_test.go` (sidecar mode + versioned mode are post-v1); `docs/resource-author-guide.md`.
   - **Added concepts:** the `core/store/` package — `Store` / `LockSpec` / `LockHandle` / `Capabilities` / `ReleaseAction` / `ClaimResult` interfaces plus a `Registry` (`core/store/registry.go`), shared `rimsky_lock_holders` postgres helpers (`core/store/lockholders.go`), and three reference implementations: `core/store/filesystem/` (direct-mode, region-glob `RegionsConflict` purity, `SupportsRegionLock` + `SupportsResume`), `core/store/claimstorepg/` (postgres-backed claim store with FIFO acquire / on-commit release-actions / hold + reference-counted resolution per §5.6.4 in `holders.go`), and `core/store/stub/` (in-process test fixture used by the migrated scenarios). New template grammar: `stores: [{name, claim?, hold?, write?, read?}]`, `locks: [{name, mode, limit?}]`, `attributes: {schema}` with `properties[*].source: "{{deps.<n>.<f>}}" | "{{claim.<store>.payload.<f>}}" | "{{params.<k>}}"`, and `claim_resolutions: [{store, on_commit, on_give_up}]` (§11.4 holding-subgraph DAG walk validated at template-deploy). New `core/attributes/` package owns single-pass substitution (`substitution.go`), JSON-Schema validation at both dispatch and commit gates (`validate.go`), and the §12.5 incremental-writeback HTTP handler `POST /v1/attributes/{node_id}` (`callback.go`). New unified locks: `kind in ('named','region','claim')` rows in `rimsky_lock_holders`, atomic dispatch-claim + lock-insert + store `AcquireLock` per §13.3, deterministic sorted acquisition, and the `5 × heartbeat_interval` orphan reap. New error classes `template_resolution_failed` and `attributes_schema_failed` in the policy chain. New admin endpoints on control-api: `GET /claims/{claim_id}/holders`, `POST /admin/claim-stores/{name}/items`, and `POST /admin/scheduled-nodes/{node_id}/force-fire` (used by the smoke fixture; immediately updates `rimsky_schedules.next_fire_at = now()` and returns 204). New stores config plumbing: `RIMSKY_STORES_CONFIG` (loaded by `rimsky-supervisor`, `rimsky-control-api`, and `rimsky-scheduler`); reference `deploy/stores.yml` declaring `content` (filesystem direct) + `topics-ring` (claim-store-postgres). New protocol: `proto/v1/node_executor.proto` rewritten per §12 (`ExecuteRequest{NodeId, InstanceId, NodeType, Userdata, Attributes, Stores[], Locks[], CancelToken, CallbackUrl}`, `Complete.attributes_delta` replacing `result`, `userdata` opaque end-to-end). New scenario buckets `test/scenarios/{stores,locks,attributes,claim_stores}/` and the §19.2 smoke fixture at `test/smoke/`. New doc `docs/store-author-guide.md`.
   - **Blessed invariants** are now 14 (§18): the eight pre-existing invariants plus four new ones — (9) lock state lives only in postgres; (10) lock acquisition is atomic with dispatch claim; (11) userdata is opaque to rimsky; (12) attributes validate twice (dispatch + commit); (13) first-delete-wins, last-released-wins held-claim resolution; (14) `RegionsConflict` and `UnmarshalRegion` are pure. Invariants 3 and 4 are generalised: all locks (named, region, claim) acquired in deterministic sorted order, and every `rimsky_lock_holders` delete plus every `rimsky_dispatch.claimed_by = NULL` is claimant-guarded.

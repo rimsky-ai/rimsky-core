@@ -29,6 +29,7 @@ func main() {
 	only := flag.String("scenarios", "", "comma-list of scenario names to run (default: all)")
 	skip := flag.String("skip", "", "comma-list of scenario names to skip")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-scenario timeout")
+	checkObs := flag.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
 	flag.Parse()
 
 	if *endpoint == "" {
@@ -59,6 +60,14 @@ func main() {
 		if !r.Passed && !r.Skipped {
 			os.Exit(1)
 		}
+	}
+
+	if *checkObs {
+		if err := runObservabilityCheck(ctx, ep, *requireStub); err != nil {
+			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "observability: ok")
 	}
 }
 

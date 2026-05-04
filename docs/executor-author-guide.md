@@ -864,3 +864,88 @@ Before shipping your executor, verify:
 - [ ] Metrics/health endpoint exposed.
 - [ ] Docker image published at `rimsky/executor-<name>:<version>`.
 - [ ] README documents the userdata schema and error classes.
+
+
+## Observability protocol (optional)
+
+Per `docs/specs/2026-05-02-dashboard-and-observability-design.md` §2,
+executors MAY implement `proto/v1/executor_observability.proto` to
+expose per-dispatch traces to dashboards. The dispatch protocol is
+unchanged.
+
+The service exposes three RPCs:
+
+- `GetCapabilities` — declares which sub-features the executor supports.
+- `GetTrace(dispatch_id)` — snapshot of all retained events.
+- `StreamTrace(dispatch_id)` — replay-then-live stream, closes with a
+  synthetic `category: "trace_complete"` event when the dispatch
+  terminals.
+
+### Capabilities-only "no observability" pattern
+
+The simplest implementation declares no observability and rejects the
+RPCs:
+
+```go
+func (*MyExecObservability) GetCapabilities(_ context.Context, _ *genv1.GetCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+    return &genv1.ObservabilityCapabilities{}, nil // all flags false; retention 0
+}
+func (*MyExecObservability) GetTrace(_ context.Context, _ *genv1.GetTraceRequest) (*genv1.Trace, error) {
+    return nil, status.Error(codes.Unimplemented, "no trace surface")
+}
+```
+
+This satisfies the `--check-observability` conformance probe trivially.
+See `executors/stub/observability.go` for the reference Go impl and
+`executors/claude-agent/src/observability.ts` for the TS impl
+(planned).
+
+### Standard vocabulary
+
+The dashboard renders standard categories with bespoke widgets. Spec
+§2.4 enumerates the v1 set: `step_started`, `step_completed`,
+`step_failed`, `subcall_started`, `subcall_completed`, `tool_call`,
+`log`, `error`, `trace_complete`. Required `attributes` keys per
+category are listed in spec §2.4 — the conformance probe validates
+their presence. Free-form `category` strings are first-class; the
+dashboard renders them as plain log lines.
+
+### Retention semantics
+
+`retention_after_terminal_seconds` declares how long the executor
+retains a completed dispatch's trace. Eviction returns `Trace{evicted:
+true, complete: true, events: []}`. During the active window the
+executor MUST be able to serve the full event stream.
+
+### Streaming semantics
+
+`StreamTrace` replays history then streams new events. Executors MAY
+implement it as snapshot-then-hold (send the snapshot, hold connection
+until terminal or 5min timeout, send `trace_complete`, close). The
+conformance probe accepts that strategy.
+
+### Custom UI hook
+
+Optional. `CustomUI.ui_url` is opaque to Rimsky and the dashboard. It
+can point to the executor's embedded UI, a sidecar, or any external
+service. `dispatch_url_template` markers for executors are
+`{dispatch_id}`, `{instance_id}`, `{node_type}`. `embed_mode` chooses
+between `LINK`, `IFRAME`, or `BOTH`.
+
+### Inert-userdata invariant
+
+The executor's trace is not constrained by blessed invariant 11. The
+executor knows what its own `userdata` means; it MAY include
+`userdata`-derived information in trace event attributes if it wants
+to. Rimsky never sees the trace data — the dashboard fetches it from
+the executor directly, never proxied through Rimsky core.
+
+### Capabilities probe (`--check-observability`)
+
+`rimsky-conformance --check-observability` calls `GetCapabilities`,
+validates the proto shape, and (when retention ≤ 60s) probes the
+eviction sub-shape. See spec §6 for the full probe contract.
+
+Reference: `proto/v1/executor_observability.proto`,
+`executors/http-node/observability.go`,
+`executors/stub/observability.go`.

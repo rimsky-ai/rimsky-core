@@ -468,9 +468,13 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := r.URL.Query().Get("template_hash")
-	key := r.URL.Query().Get("instance_key")
+	// instance_key is intentionally NOT honored here: the real
+	// control-api's /instances endpoint filters only on template_hash
+	// and active. Keeping the fake aligned with the real surface
+	// avoids tests passing against the fake while breaking against the
+	// real server.
 	out := []map[string]any{}
-	for _, inst := range s.State.ListInstances(hash, key) {
+	for _, inst := range s.State.ListInstances(hash, "") {
 		out = append(out, instanceToWire(inst))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

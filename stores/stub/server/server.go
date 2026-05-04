@@ -46,6 +46,7 @@ func RunWithStore(ctx context.Context, st *stubstore.Store, grpcLis, httpLis net
 	srv := &Server{Store: st}
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterStoreServiceServer(grpcSrv, srv)
+	RegisterObservability(grpcSrv)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
 			slog.Warn("stub store: grpc serve", "error", err.Error())
@@ -134,7 +135,7 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 
 // Lifecycle events: the stub store does not maintain template or
 // instance metadata; all six are no-ops returning success. Per
-// docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
+// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
 
 func (s *Server) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.OnTemplateRegisteredResponse, error) {
 	return &genv1.OnTemplateRegisteredResponse{}, nil

@@ -6,7 +6,7 @@ import "google/protobuf/struct.proto";
 option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
 
 // NodeExecutor is the protocol rimsky supervisors use to dispatch work to
-// external executors. See docs/specs/2026-04-27-stores-redesign-v2-design.md §12
+// external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
 // for the full contract (transports, async handoff, attributes, stores,
 // versioning, auth).
 service NodeExecutor {
@@ -65,6 +65,13 @@ message ExecuteRequest {
 
   // Increments on every retry. Exposed for executor visibility / idempotency.
   int32 run_attempt = 11;
+
+  // The supervisor-side rimsky_dispatch.id for this dispatch. Exposed
+  // so executors can key per-dispatch traces/state (the executor
+  // observability protocol, spec §2, identifies dispatches by this
+  // id). May be empty when the supervisor invokes Execute outside the
+  // dispatch-row path (e.g. unit tests or stub-mode probes).
+  string dispatch_id = 12;
 }
 
 // StoreHandle is the per-store reference handed to the executor at

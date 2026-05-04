@@ -1,0 +1,91 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// TestExecutorEntry_ObservabilityEndpoint_Optional verifies that
+// rimsky.yml without `observability_endpoint:` parses successfully and
+// the field is empty (callers fall back to Endpoint).
+func TestExecutorEntry_ObservabilityEndpoint_Optional(t *testing.T) {
+	yamlBody := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+executors:
+  http-node:
+    transport: grpc
+    endpoint: http-node:9090
+    tls: off
+`
+	cfg := mustLoadCfg(t, yamlBody)
+	e, ok := cfg.Executors.Executors["http-node"]
+	if !ok {
+		t.Fatalf("expected http-node executor entry")
+	}
+	if e.ObservabilityEndpoint != "" {
+		t.Fatalf("ObservabilityEndpoint = %q, want empty", e.ObservabilityEndpoint)
+	}
+}
+
+// TestExecutorEntry_ObservabilityEndpoint_Honored verifies that the
+// optional `observability_endpoint:` field reaches the parsed
+// ExecutorEntry.
+func TestExecutorEntry_ObservabilityEndpoint_Honored(t *testing.T) {
+	yamlBody := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+executors:
+  claude-agent:
+    transport: grpc
+    endpoint: claude-agent:9090
+    observability_endpoint: claude-agent:9091
+    tls: off
+`
+	cfg := mustLoadCfg(t, yamlBody)
+	e := cfg.Executors.Executors["claude-agent"]
+	if e.ObservabilityEndpoint != "claude-agent:9091" {
+		t.Fatalf("ObservabilityEndpoint = %q, want claude-agent:9091", e.ObservabilityEndpoint)
+	}
+}
+
+// TestStoreEntry_ObservabilityEndpoint_Honored mirrors the executor case
+// for stores.
+func TestStoreEntry_ObservabilityEndpoint_Honored(t *testing.T) {
+	yamlBody := `
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /tmp/rimsky.db
+stores:
+  topics-ring:
+    endpoint: store-postgres:9101
+    observability_endpoint: store-postgres:9102
+    capabilities:
+      write_semantics: direct
+`
+	cfg := mustLoadCfg(t, yamlBody)
+	s := cfg.Stores.Stores["topics-ring"]
+	if s.ObservabilityEndpoint != "store-postgres:9102" {
+		t.Fatalf("ObservabilityEndpoint = %q, want store-postgres:9102", s.ObservabilityEndpoint)
+	}
+}
+
+func mustLoadCfg(t *testing.T, body string) RimskyConfig {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rimsky.yml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := LoadRimskyConfigYAML(path)
+	if err != nil {
+		t.Fatalf("LoadRimskyConfigYAML: %v", err)
+	}
+	return cfg
+}

@@ -14,6 +14,13 @@ type Config struct {
 	TimeoutMs    int
 	MaxBodyBytes int
 	StubMode     bool
+	// HTTPBridgeURL is the dashboard-visible HTTP base URL the
+	// executor advertises in ObservabilityCapabilities.http_bridge_url.
+	// Operators set this to the externally-reachable URL of the HTTP
+	// listener (e.g. "http://http-node:9092" in the compose stack).
+	// When empty, the dashboard's HTTP proxy falls back to the
+	// dispatch endpoint and observability streaming may be unreachable.
+	HTTPBridgeURL string
 }
 
 // LoadConfig reads the RIMSKY_EXECUTOR_HTTP_NODE_* env vars and returns a
@@ -25,6 +32,7 @@ func LoadConfig() Config {
 	cfg.TimeoutMs = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_TIMEOUT_MS", "60000"))
 	cfg.MaxBodyBytes = atoi(env("RIMSKY_EXECUTOR_HTTP_NODE_MAX_BODY_BYTES", "10485760"))
 	cfg.StubMode = env("RIMSKY_EXECUTOR_STUB_MODE", "0") == "1"
+	cfg.HTTPBridgeURL = env("RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL", "")
 	return cfg
 }
 

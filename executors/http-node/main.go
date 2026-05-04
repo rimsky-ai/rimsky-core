@@ -35,15 +35,22 @@ func main() {
 	}
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterNodeExecutorServer(grpcSrv, s)
+	obs := RegisterObservability(grpcSrv)
+	obs.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
+	s.SetObservability(obs)
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
 			slog.Error("grpc serve", "error", err.Error())
 		}
 	}()
 
-	// HTTP+JSON bridge on a separate port.
+	// HTTP+JSON bridge on a separate port. Hosts both the dispatch
+	// `/v1/Execute` endpoint and the observability `/observability/v1/*`
+	// endpoints — same listener, different path prefixes (per spec §2.1).
+	httpBridgeURL := cfg.HTTPBridgeURL
 	mux := http.NewServeMux()
 	mountBridge(mux, s)
+	mountObservabilityBridge(mux, obs, httpBridgeURL)
 	httpSrv := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.HTTPPort),
 		Handler: mux,
@@ -54,10 +61,28 @@ func main() {
 		}
 	}()
 
+	// Periodic SweepEvicted goroutine — bounds memory growth as the
+	// retention TTL passes for terminal-ed dispatches.
+	sweepCtx, cancelSweep := context.WithCancel(context.Background())
+	defer cancelSweep()
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-sweepCtx.Done():
+				return
+			case now := <-t.C:
+				obs.SweepEvicted(now)
+			}
+		}
+	}()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 	slog.Info("http-node stopping")
+	cancelSweep()
 	grpcSrv.GracefulStop()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

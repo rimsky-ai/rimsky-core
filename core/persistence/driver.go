@@ -20,6 +20,11 @@ type Driver interface {
 	// migration lock. log receives one Info per applied migration plus a
 	// final summary. Pass shared.SilentLogger{} to suppress.
 	Migrate(ctx context.Context, log shared.Logger) error
+	// Ping issues a trivial round-trip to the underlying database to
+	// surface connectivity problems. Returns nil when the driver can
+	// successfully execute a query. Used by the observability
+	// /v1/observability/system/health endpoint.
+	Ping(ctx context.Context) error
 	Close() error
 }
 

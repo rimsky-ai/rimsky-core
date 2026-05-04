@@ -69,6 +69,12 @@ Reference executor services that speak the node-executor protocol. Executors run
 
 Because executors are peer services, a new executor in Python (or Rust, or any language that can speak gRPC or HTTP+JSON) requires no orchestrator changes — only adding an entry to a supervisor's config.
 
+### 1.4 Dashboards
+
+Standalone reference dashboards composing the three observability protocols (Rimsky observability API on control-api, executor observability protocol per executor, store observability protocol per store). Per `docs/specs/2026-05-02-dashboard-and-observability-design.md`. v1 ships one dashboard at `dashboards/rimsky-dashboard/` (React + Vite + TypeScript SPA + Hono Node server) — a credible reference implementation, not a privileged consumer. Other dashboards may be built against the same protocols. The dashboard is a wire-protocol consumer only; like `executors/claude-agent/`, it is forbidden from importing `core/`. Bundled with the dev `docker-compose` stack on the `default` and `dashboard` profiles; opt-in for production.
+
+The `core/observability/` package mounts the public observability API at `/v1/observability/*` on `rimsky-control-api`. It depends on `core/persistence/` (the unified persistence abstraction), `core/store/` for shared types, and the proto bindings; it MUST NOT import `core/config/`, `core/persistence/postgres/`, `core/persistence/sqlite/`, `core/scheduler/`, `core/supervisor/`, or `core/controlapi/`. Wired into the controlapi router at startup by `core/config/StartControlAPI`, which also runs the best-effort observability handshake against each declared executor and store endpoint and starts the background re-prober. Per spec §1.3 the lock-holder responses expose only `claim_id` and `region_data` — payload/address bytes never traverse Rimsky-side endpoints; clients follow `claim_id` to the store's observability protocol when payload/address inspection is required.
+
 ---
 
 ## 2. Repository layout
@@ -147,7 +153,7 @@ The core module's internal package graph is enforced by `go vet` plus a custom l
 - `shared/` — depends on nothing except stdlib.
 - `migrations/` — embeds SQL files via `embed.FS`; imports `shared/` only.
 - `config/` — library entry points (§6). Imports the subsystem it starts (scheduler, supervisor, controlapi), `store/`, `attributes/`, and `shared/`.
-- `cli/` — operator-facing CLI library. Pure HTTP client over the control-api; no orchestration logic of its own. Imports `shared/`, `node/`, `canonical/`, and stdlib. **Allowed importers:** `cmd/rimsky-cli/` only. The compose subpackage (`cli/compose/`) implements the `rimsky-compose.yml` plan-and-apply orchestration; its only knowledge of rimsky internals is through the public HTTP surface. See `docs/specs/2026-05-02-rimsky-cli-and-compose-design.md`.
+- `cli/` — operator-facing CLI library. Pure HTTP client over the control-api; no orchestration logic of its own. Imports `shared/`, `node/`, `canonical/`, and stdlib. **Allowed importers:** `cmd/rimsky-cli/` only. The compose subpackage (`cli/compose/`) implements the `rimsky-compose.yml` plan-and-apply orchestration; its only knowledge of rimsky internals is through the public HTTP surface. See `docs/history/2026-05-02-rimsky-cli-and-compose-design.md`.
 - `cmd/*` — the only packages allowed to import everything needed to wire up a binary.
 
 ### 3.2 Why these rules matter
@@ -184,7 +190,7 @@ Code location: `core/scheduler/scheduler.go` is the tick loop; `core/scheduler/s
 
 #### 4.1.1 Frame engine
 
-The frame engine implements the per-instance resolution model defined in `docs/specs/2026-04-26-frame-resolution-design.md`. It owns the `rimsky_frames` queue and the `frame_id` propagation that brackets every cascade.
+The frame engine implements the per-instance resolution model defined in `docs/history/2026-04-26-frame-resolution-design.md`. It owns the `rimsky_frames` queue and the `frame_id` propagation that brackets every cascade.
 
 - **Producer** (`core/frame/producer.go::EnqueueOrCoalesce`) is called by every source of an invalidation event: `core/scheduler/schedule_ticker.go` (cron-driven schedule firing), `core/controlapi/nodes.go` (operator-originated invalidate), and the admin force-fire route. It inserts a `queued` row in `serial_queue` mode or upserts in `coalesce` mode, keyed by instance.
 - **Engine** (`core/frame/engine.go::RunTick`) is invoked by the scheduler tick (`core/scheduler/scheduler.go::tick` calls `frame.RunTick`) inside the existing `pg_try_advisory_lock(SCHEDULER_TICK_KEY)` so the engine is single-flight across replicas — there is no separate frame advisory lock and no separate frame goroutine. RunTick handles three things per tick:
@@ -192,7 +198,7 @@ The frame engine implements the per-instance resolution model defined in `docs/s
   2. **Queued→running promotion.** Picks the next `queued` frame for any instance with no `running` frame and stamps `frame_id` on the source nodes' dispatch rows, atomically with the state transition.
   3. **Stuck-frame reaper.** Closes frames whose `frame_timeout_ms` has elapsed in `running`; same predicate the spec calls out in §7.
 - **Schema.** `rimsky_frames` carries the queue + state machine; `rimsky_dispatch.frame_id` (NOT NULL) brackets every dispatched run; `rimsky_nodes.frame_id` is non-null for `stale` / `running` nodes inside an active frame and cleared on a successful return to `fresh` (the centralised clear lives in `core/persistence/postgres/nodes.go::enforceAndUpdate`). `rimsky_lock_holders.frame_id` and `rimsky_claim_holders.frame_id` are observability-only and forward-compat for the post-v1 Rule 3b parallel-buffered enhancement.
-- **Cross-references.** Conceptual model: `docs/node-graph-design.md` "Frames as the unit of resolution." Authoritative behavior: `docs/specs/2026-04-26-frame-resolution-design.md`.
+- **Cross-references.** Conceptual model: `docs/node-graph-design.md` "Frames as the unit of resolution." Authoritative behavior: `docs/history/2026-04-26-frame-resolution-design.md`.
 
 Frames are per-instance. Mode is per-template (`coalesce` | `serial_queue`). Under both modes at most one `rimsky_frames` row is in `running` state per instance, enforced by the partial unique index `uq_rimsky_frames_running`.
 
@@ -203,7 +209,7 @@ Binary: `cmd/rimsky-supervisor/`. Docker: `rimsky-supervisor`.
 Responsibilities:
 
 1. **Register.** On startup, upsert into `rimsky_supervisors` with `id`, accepted-executor list, concurrency limit, callback host/port (if hosting callbacks for async handoff).
-2. **Heartbeat tick.** Every `heartbeat_interval_ms`, update `last_heartbeat_at`, active-node count, and each active node's `last_heartbeat_at`. (Operator-originated invalidates no longer preempt — see frame-resolution spec at `docs/specs/2026-04-26-frame-resolution-design.md`. The kill-poll path was removed when `rimsky_nodes.kill_requested` was dropped.)
+2. **Heartbeat tick.** Every `heartbeat_interval_ms`, update `last_heartbeat_at`, active-node count, and each active node's `last_heartbeat_at`. (Operator-originated invalidates no longer preempt — see frame-resolution spec at `docs/history/2026-04-26-frame-resolution-design.md`. The kill-poll path was removed when `rimsky_nodes.kill_requested` was dropped.)
 3. **Claim.** While active < concurrency, query the dispatch queue for a claimable row matching this supervisor's accept list and respecting concurrency-tag limits. Claim via `SELECT ... FOR UPDATE SKIP LOCKED`.
 4. **Verify.** Re-read `claimed_by` on the dispatch row IMMEDIATELY before any expensive work. If the row has been released or re-claimed, log `orphaned_claim_lost_race` and bail. Hard backstop against double-execute.
 5. **Dispatch.** Resolve `node.executor` → endpoint + transport from static config. Construct `ExecuteRequest`. Call `Execute` on the executor client (gRPC or HTTP bridge, per config).
@@ -242,7 +248,7 @@ Code locations: `core/controlapi/app.go` is the route wiring; individual route h
 
 ## 5. Blessed invariants in source
 
-Each invariant is annotated `@blessed-invariant` in the Go source and exercised by a scenario test. The full list (with rationale and revision history) lives in `docs/specs/2026-04-27-stores-redesign-v3-design.md` §4.10 (v2 §21 retains the historical record for invariants 14 and 15 that v3 retired/revised). Pointers:
+Each invariant is annotated `@blessed-invariant` in the Go source and exercised by a scenario test. The full list (with rationale and revision history) lives in `docs/history/2026-04-27-stores-redesign-v3-design.md` §4.10 (v2 §21 retains the historical record for invariants 14 and 15 that v3 retired/revised). Pointers:
 
 ### 5.1 State machine rejects illegal transitions
 
@@ -590,7 +596,7 @@ Deliberate omissions: no Viper, no Cobra, no Zap, no Gin, no Echo. Lighter stack
 
 ## Control-plane v1 + store lifecycle protocol
 
-Per `docs/specs/2026-05-01-control-plane-and-store-lifecycle-design.md`.
+Per `docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`.
 
 **New packages:**
 

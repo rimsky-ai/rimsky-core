@@ -22,6 +22,14 @@ vendor/
 executors/*/node_modules/
 executors/*/dist/
 
+# Dashboard deps / build output
+dashboards/*/node_modules/
+dashboards/*/dist/
+dashboards/*/.vite/
+dashboards/*/coverage/
+dashboards/*/playwright-report/
+dashboards/*/test-results/
+
 # Local env / coverage
 .env
 *.env.local

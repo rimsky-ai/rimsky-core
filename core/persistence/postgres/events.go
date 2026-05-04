@@ -42,8 +42,8 @@ func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput
 	return err
 }
 
-// List returns events matching filter, ordered by (occurred_at ASC, id ASC).
-// Cursor is an opaque base64-JSON encoding of (occurred_at, id).
+// List returns events matching filter, ordered by (occurred_at DESC, id DESC)
+// per spec §1.2.5. Cursor is an opaque base64-JSON encoding of (occurred_at, id).
 func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.EventListResult, error) {
 	ex := s.q(tx)
 	limit := pag.Limit
@@ -61,19 +61,24 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		cursorID = &id
 	}
 
+	var kindInArg any
+	if len(filter.KindIn) > 0 {
+		kindInArg = filter.KindIn
+	}
 	rows, err := ex.Query(ctx,
 		`SELECT id, instance_id, node_id, kind, payload, occurred_at
 		 FROM rimsky_events
 		 WHERE ($1::uuid IS NULL OR node_id = $1)
 		   AND ($2::uuid IS NULL OR instance_id = $2)
 		   AND ($3::text IS NULL OR kind = $3)
-		   AND ($4::timestamptz IS NULL OR occurred_at >= $4)
-		   AND ($5::timestamptz IS NULL OR occurred_at <= $5)
-		   AND ($6::timestamptz IS NULL OR (occurred_at, id) > ($6, $7))
-		 ORDER BY occurred_at ASC, id ASC
-		 LIMIT $8`,
+		   AND ($4::text[] IS NULL OR kind = ANY($4::text[]))
+		   AND ($5::timestamptz IS NULL OR occurred_at >= $5)
+		   AND ($6::timestamptz IS NULL OR occurred_at <= $6)
+		   AND ($7::timestamptz IS NULL OR (occurred_at, id) < ($7, $8))
+		 ORDER BY occurred_at DESC, id DESC
+		 LIMIT $9`,
 		nodeIDArg(filter.NodeID), instanceIDArg(filter.InstanceID),
-		nullableString(filter.Kind),
+		nullableString(filter.Kind), kindInArg,
 		nullableTime(filter.Since), nullableTime(filter.Until),
 		nullableTime(cursorOccurred), nullableInt64(cursorID),
 		limit,
@@ -120,11 +125,6 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		nextCursor = encodeEventCursor(last.OccurredAt, last.ID)
 	}
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
-}
-
-// Tail is equivalent to List with no filters, just a cursor + limit.
-func (s *eventsImpl) Tail(ctx context.Context, cursor string, limit int, tx persistence.Tx) (persistence.EventListResult, error) {
-	return s.List(ctx, persistence.EventListFilter{}, persistence.ListPagination{Limit: limit, Cursor: cursor}, tx)
 }
 
 // ---- cursor encoding ----

@@ -1,5 +1,5 @@
 // store-filesystem is the standard direct-mode filesystem store-service.
-// Per spec docs/specs/2026-04-27-stores-redesign-v3-design.md §8.1.
+// Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §8.1.
 //
 // Loads its YAML config from STORE_FILESYSTEM_CONFIG, opens listeners
 // on configured gRPC + HTTP ports, and calls server.Run.
@@ -45,6 +45,7 @@ type yamlConfig struct {
 	Host                 string                    `yaml:"host"`
 	GRPCPort             int                       `yaml:"grpc_port"`
 	HTTPPort             int                       `yaml:"http_port"`
+	HTTPBridgeURL        string                    `yaml:"http_bridge_url"`
 	AdminPort            int                       `yaml:"admin_port"`
 	PickPolicies         map[string]yamlPickPolicy `yaml:"pick_policies"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
@@ -146,6 +147,7 @@ func main() {
 		Root:          cfg.Root,
 		PickPolicies:  policies,
 		SweepInterval: sweepInterval,
+		HTTPBridgeURL: cfg.HTTPBridgeURL,
 	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-filesystem: server.Run: %v\n", err)
 		os.Exit(1)

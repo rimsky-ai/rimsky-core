@@ -155,6 +155,7 @@ services:
       RIMSKY_EXECUTOR_HTTP_NODE_HOST: "0.0.0.0"
       RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
       RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT: "9092"
+      RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL: "http://http-node:9092"
       RIMSKY_EXECUTOR_STUB_MODE: "1"
     volumes:
       - rimsky-content:/workspace/content
@@ -168,12 +169,31 @@ services:
       RIMSKY_EXECUTOR_HOST: "0.0.0.0"
       RIMSKY_EXECUTOR_PORT_GRPC: "9090"
       RIMSKY_EXECUTOR_PORT_HTTP: "9190"
+      RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL: "http://claude-agent:9190"
       RIMSKY_EXECUTOR_STUB_MODE: "1"
     volumes:
       - rimsky-content:/workspace/content
     ports:
       - "9090:9090"
       - "9190:9190"
+
+  # ----- Reference dashboard -----
+
+  rimsky-dashboard:
+    build: ../dashboards/rimsky-dashboard
+    image: rimsky/rimsky-dashboard:latest
+    depends_on:
+      - control-api
+    environment:
+      RIMSKY_CONTROL_API_URL: "http://control-api:8080"
+      PORT: "8090"
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   rimsky-pg: {}

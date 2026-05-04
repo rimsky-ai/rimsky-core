@@ -8,6 +8,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -408,4 +410,187 @@ func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) e
 		return fmt.Errorf("sqlite.RefreshHeartbeat: %w", err)
 	}
 	return nil
+}
+
+// ListLive returns currently-live dispatch rows for the observability
+// browse endpoint. Cursor pagination over (enqueued_at DESC, id DESC).
+func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	stateClause, executor, instanceID := buildLiveDispatchFilters(filter)
+	args := []any{}
+	args = append(args, executor, executor)
+	args = append(args, instanceID, instanceID)
+	cursorClause := ""
+	if pag.Cursor != "" {
+		oc, id, err := decodeDispatchCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[shared.DispatchRow]{}, fmt.Errorf("sqlite.ListLive: bad cursor: %w", err)
+		}
+		cursorClause = " AND (d.enqueued_at, d.id) < (?, ?)"
+		args = append(args, formatTime(oc), id.String())
+	}
+	args = append(args, limit)
+	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+	   FROM rimsky_dispatch d
+	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+	  WHERE 1=1` +
+		stateClause +
+		` AND (? IS NULL OR d.executor_name = ?)
+	    AND (? IS NULL OR n.instance_id = ?)` +
+		cursorClause +
+		` ORDER BY d.enqueued_at DESC, d.id DESC
+	  LIMIT ?`
+	rows, err := q.db.QueryContext(ctx, q1, args...)
+	if err != nil {
+		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+	}
+	defer rows.Close()
+	var out []shared.DispatchRow
+	for rows.Next() {
+		row, err := scanDispatchRow(rows)
+		if err != nil {
+			return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		last := out[len(out)-1]
+		nextCursor = encodeDispatchCursor(last.EnqueuedAt, last.ID)
+	}
+	return persistence.PaginatedListResult[shared.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+// CountLive counts currently-live dispatch rows matching filter.
+func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchListFilter) (int, error) {
+	stateClause, executor, instanceID := buildLiveDispatchFilters(filter)
+	q1 := `SELECT COUNT(*)
+	   FROM rimsky_dispatch d
+	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+	  WHERE 1=1` +
+		stateClause +
+		` AND (? IS NULL OR d.executor_name = ?)
+	    AND (? IS NULL OR n.instance_id = ?)`
+	var n int
+	err := q.db.QueryRowContext(ctx, q1, executor, executor, instanceID, instanceID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClause string, executor any, instanceID any) {
+	switch filter.State {
+	case "pending":
+		stateClause = " AND d.claimed_by IS NULL"
+	case "claimed":
+		stateClause = " AND d.claimed_by IS NOT NULL"
+	}
+	if filter.ExecutorName != "" {
+		executor = filter.ExecutorName
+	}
+	if filter.InstanceID != nil {
+		instanceID = filter.InstanceID.String()
+	}
+	return stateClause, executor, instanceID
+}
+
+func scanDispatchRow(rows *sql.Rows) (shared.DispatchRow, error) {
+	var (
+		idStr             string
+		nodeIDStr         string
+		executorName      sql.NullString
+		requiredStoresStr string
+		enqueuedAtStr     string
+		claimedBy         sql.NullString
+		claimedAtStr      sql.NullString
+		lastHeartbeatStr  sql.NullString
+		frameIDStr        string
+		r                 shared.DispatchRow
+	)
+	if err := rows.Scan(
+		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
+		&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
+	); err != nil {
+		return shared.DispatchRow{}, err
+	}
+	var err error
+	if r.ID, err = uuid.Parse(idStr); err != nil {
+		return shared.DispatchRow{}, err
+	}
+	if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+		return shared.DispatchRow{}, err
+	}
+	if executorName.Valid {
+		v := executorName.String
+		r.ExecutorName = &v
+	}
+	stores, err := unmarshalStringArray(requiredStoresStr)
+	if err != nil {
+		return shared.DispatchRow{}, err
+	}
+	r.RequiredStores = stores
+	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
+		return shared.DispatchRow{}, err
+	}
+	if claimedBy.Valid {
+		v := claimedBy.String
+		r.ClaimedBy = &v
+	}
+	if claimedAtStr.Valid {
+		t, err := parseTime(claimedAtStr.String)
+		if err != nil {
+			return shared.DispatchRow{}, err
+		}
+		r.ClaimedAt = &t
+	}
+	if lastHeartbeatStr.Valid {
+		t, err := parseTime(lastHeartbeatStr.String)
+		if err != nil {
+			return shared.DispatchRow{}, err
+		}
+		r.LastHeartbeatAt = &t
+	}
+	if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+		return shared.DispatchRow{}, err
+	}
+	if r.RequiredStores == nil {
+		r.RequiredStores = []string{}
+	}
+	return r, nil
+}
+
+func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {
+	c := struct {
+		E time.Time `json:"e"`
+		I string    `json:"i"`
+	}{E: enqueued, I: id.String()}
+	b, _ := json.Marshal(c)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeDispatchCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c struct {
+		E time.Time `json:"e"`
+		I string    `json:"i"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	id, err := uuid.Parse(c.I)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.E, id, nil
 }

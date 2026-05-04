@@ -371,10 +371,11 @@ func (i *Instance) UUID() string {
 	return i.ID
 }
 
-// ListInstancesQuery is GET /instances query params.
+// ListInstancesQuery is GET /instances query params. The control-api
+// does not filter by instance_key on this endpoint — instance-key
+// lookups go through GET /instances/{idOrKey}.
 type ListInstancesQuery struct {
 	TemplateHash string
-	InstanceKey  string
 	Cursor       string
 	Limit        int
 }
@@ -409,9 +410,6 @@ func (c *Client) ListInstances(ctx context.Context, q ListInstancesQuery) (*List
 	v := url.Values{}
 	if q.TemplateHash != "" {
 		v.Set("template_hash", q.TemplateHash)
-	}
-	if q.InstanceKey != "" {
-		v.Set("instance_key", q.InstanceKey)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)

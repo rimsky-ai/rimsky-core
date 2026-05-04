@@ -5,7 +5,8 @@
 proto-gen:
 	cd proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
-	  node_executor.proto events.proto store_service.proto
+	  node_executor.proto events.proto store_service.proto \
+	  executor_observability.proto store_observability.proto
 
 test:
 	go test ./...

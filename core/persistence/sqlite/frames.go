@@ -10,6 +10,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -436,4 +438,168 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: insert: %w", err)
 	}
 	return frameID, nil
+}
+
+// ListForObservability returns frames matching filter for the
+// observability /v1/observability/frames endpoint. Cursor pagination
+// over (queued_at DESC, frame_id DESC).
+func (s *framesImpl) ListForObservability(ctx context.Context, filter persistence.FrameListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRow], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var instArg, stateArg any
+	if filter.InstanceID != nil {
+		instArg = filter.InstanceID.String()
+	}
+	if filter.State != "" {
+		stateArg = string(filter.State)
+	}
+	var cursorQAt, cursorFid any
+	if pag.Cursor != "" {
+		q, fid, err := decodeFrameCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, fmt.Errorf("frames.list: bad cursor: %w", err)
+		}
+		cursorQAt = formatTime(q)
+		cursorFid = fid.String()
+	}
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT frame_id, instance_id, state, mode, started_at, ended_at, frame_timeout_ms, queued_at
+		   FROM rimsky_frames
+		  WHERE (? IS NULL OR instance_id = ?)
+		    AND (? IS NULL OR state = ?)
+		    AND (? IS NULL OR (queued_at, frame_id) < (?, ?))
+		  ORDER BY queued_at DESC, frame_id DESC
+		  LIMIT ?`,
+		instArg, instArg, stateArg, stateArg, cursorQAt, cursorQAt, cursorFid, limit,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+	}
+	defer rows.Close()
+	var out []persistence.FrameRow
+	var lastQAt time.Time
+	for rows.Next() {
+		var (
+			r          persistence.FrameRow
+			frameID    string
+			instanceID string
+			state      string
+			mode       string
+			startedAt  sql.NullString
+			endedAt    sql.NullString
+			queuedAt   string
+		)
+		if err := rows.Scan(&frameID, &instanceID, &state, &mode, &startedAt, &endedAt, &r.FrameTimeoutMs, &queuedAt); err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+		}
+		fid, err := uuid.Parse(frameID)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+		}
+		iid, err := uuid.Parse(instanceID)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+		}
+		r.FrameID = fid
+		r.InstanceID = iid
+		r.State = persistence.FrameState(state)
+		r.Mode = persistence.FrameMode(mode)
+		if startedAt.Valid {
+			t, err := parseTime(startedAt.String)
+			if err == nil {
+				r.StartedAt = &t
+			}
+		}
+		if endedAt.Valid {
+			t, err := parseTime(endedAt.String)
+			if err == nil {
+				r.EndedAt = &t
+			}
+		}
+		if t, err := parseTime(queuedAt); err == nil {
+			lastQAt = t
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		nextCursor = encodeFrameCursor(lastQAt, out[len(out)-1].FrameID)
+	}
+	return persistence.PaginatedListResult[persistence.FrameRow]{Rows: out, NextCursor: nextCursor}, nil
+}
+
+type frameCursor struct {
+	Q time.Time   `json:"q"`
+	F shared.UUID `json:"f"`
+}
+
+func encodeFrameCursor(queued time.Time, fid shared.UUID) string {
+	b, _ := json.Marshal(frameCursor{Q: queued, F: fid})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	var c frameCursor
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, shared.UUID{}, err
+	}
+	return c.Q, c.F, nil
+}
+
+// GetForObservability returns one frame by id.
+func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRow, error) {
+	var (
+		r         persistence.FrameRow
+		fidStr    string
+		iidStr    string
+		state     string
+		mode      string
+		startedAt sql.NullString
+		endedAt   sql.NullString
+	)
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT frame_id, instance_id, state, mode, started_at, ended_at, frame_timeout_ms
+		   FROM rimsky_frames WHERE frame_id = ?`,
+		frameID.String(),
+	).Scan(&fidStr, &iidStr, &state, &mode, &startedAt, &endedAt, &r.FrameTimeoutMs)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	fid, err := uuid.Parse(fidStr)
+	if err != nil {
+		return nil, err
+	}
+	iid, err := uuid.Parse(iidStr)
+	if err != nil {
+		return nil, err
+	}
+	r.FrameID = fid
+	r.InstanceID = iid
+	r.State = persistence.FrameState(state)
+	r.Mode = persistence.FrameMode(mode)
+	if startedAt.Valid {
+		t, err := parseTime(startedAt.String)
+		if err == nil {
+			r.StartedAt = &t
+		}
+	}
+	if endedAt.Valid {
+		t, err := parseTime(endedAt.String)
+		if err == nil {
+			r.EndedAt = &t
+		}
+	}
+	return &r, nil
 }
