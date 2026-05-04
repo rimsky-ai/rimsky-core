@@ -29,12 +29,26 @@ type terminalEventView struct {
 // the template spec's node declarations with the live rimsky_nodes
 // rows for the instance. last_terminal_event is sourced from
 // rimsky_events filtered by node_id and kind in the dispatch-terminal
-// set.
+// set, fetched in a single batch lookup to avoid the per-node N+1.
 func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceRow, nodes []persistence.NodeRow, template *persistence.TemplateRow) []CascadeNode {
 	// Index live nodes by node_type for O(1) projection.
 	byType := make(map[string]persistence.NodeRow, len(nodes))
+	nodeIDs := make([]shared.UUID, 0, len(nodes))
 	for _, n := range nodes {
 		byType[n.NodeType] = n
+		nodeIDs = append(nodeIDs, n.ID)
+	}
+	// Single batch query for terminal events across every live node.
+	terminals, _ := deps.Store.Events().LastTerminalByNodes(ctx, nodeIDs, nil)
+	terminalView := func(id shared.UUID) *terminalEventView {
+		ev, ok := terminals[id]
+		if !ok {
+			return nil
+		}
+		return &terminalEventView{
+			Kind:       ev.Kind,
+			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
 	}
 	// Build edges_out per type from the template's dependency graph.
 	// dependencies[a] = list of types a depends on  → edges_in.
@@ -54,7 +68,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 		// No template available; project the live rows verbatim with
 		// empty edge lists.
 		for _, n := range nodes {
-			out = append(out, CascadeNode{
+			cn := CascadeNode{
 				NodeType:          n.NodeType,
 				NodeID:            n.ID,
 				State:             n.State,
@@ -62,7 +76,11 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 				RetryCounter:      n.RetryCounter,
 				EdgesIn:           []string{},
 				EdgesOut:          []string{},
-			})
+			}
+			if tev := terminalView(n.ID); tev != nil {
+				cn.LastTerminalEvent = tev
+			}
+			out = append(out, cn)
 		}
 		return out
 	}
@@ -84,32 +102,11 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			cn.State = row.State
 			cn.CurrentErrorClass = row.CurrentErrorClass
 			cn.RetryCounter = row.RetryCounter
-			tev := lookupLastTerminalEvent(ctx, deps, row.ID)
-			if tev != nil {
+			if tev := terminalView(row.ID); tev != nil {
 				cn.LastTerminalEvent = tev
 			}
 		}
 		out = append(out, cn)
 	}
 	return out
-}
-
-// lookupLastTerminalEvent fetches the most recent rimsky_events row
-// for nodeID whose kind is in the dispatch-terminal set
-// (work_completed | error). Returns nil when there is no such row.
-func lookupLastTerminalEvent(ctx context.Context, deps Deps, nodeID shared.UUID) *terminalEventView {
-	res, err := deps.Store.Events().List(ctx, persistence.EventListFilter{NodeID: &nodeID}, persistence.ListPagination{Limit: 25}, nil)
-	if err != nil {
-		return nil
-	}
-	for _, ev := range res.Events {
-		switch ev.Kind {
-		case "work_completed", "error":
-			return &terminalEventView{
-				Kind:       ev.Kind,
-				OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
-			}
-		}
-	}
-	return nil
 }

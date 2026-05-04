@@ -42,6 +42,7 @@ func TestObservability_GetTrace_Evicted_OnUnknown(t *testing.T) {
 
 func TestObservability_AppendAndGetTrace(t *testing.T) {
 	s := NewObservabilityServer()
+	s.RegisterDispatch("d1")
 	s.AppendEvent("d1", MakeEvent("e1", "", "step_started", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}))
 	s.AppendEvent("d1", MakeEvent("e2", "e1", "step_completed", "", genv1.Severity_INFO, map[string]any{"step_id": "s1"}))
 	s.MarkTerminal("d1")
@@ -104,6 +105,7 @@ func TestObservability_StreamTrace_NoDropUnderConcurrentAppend(t *testing.T) {
 	const goroutines = 16
 	const eventsPer = 25
 	s := NewObservabilityServer()
+	s.RegisterDispatch(dispatchID)
 	// Seed some events so the snapshot is non-empty at subscription
 	// time — this keeps the buggy code path exercising the gap window.
 	for i := 0; i < 5; i++ {
@@ -174,6 +176,7 @@ func TestObservability_StreamTrace_NoDropUnderConcurrentAppend(t *testing.T) {
 
 func TestObservability_SweepEvicted(t *testing.T) {
 	s := NewObservabilityServer()
+	s.RegisterDispatch("d1")
 	s.AppendEvent("d1", MakeEvent("e1", "", "log", "hello", genv1.Severity_INFO, nil))
 	s.MarkTerminal("d1")
 	// Force the terminal timestamp into the past beyond retention.

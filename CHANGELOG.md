@@ -20,6 +20,137 @@
 
 ### Fixed — Dashboard & observability v1 (round-3 review)
 
+#### Spec adherence
+
+- **Dashboard CSP wired both as a meta tag and a server response
+  header.** Forbids `script-src 'unsafe-inline'`, locks `connect-src`
+  to `'self'` (the proxy collapses CORS to single-origin), and allows
+  `frame-src 'self' *` so operator-declared CustomUI iframes still
+  render. (`dashboards/rimsky-dashboard/index.html`,
+  `dashboards/rimsky-dashboard/src/server/index.ts`.) The server now
+  also installs SIGTERM/SIGINT graceful-shutdown plus
+  `uncaughtException` / `unhandledRejection` logging.
+- **Dead `claim_url_template` field removed.** The proto reuses
+  `dispatch_url_template` across executor and store CustomUI; the
+  dashboard's TS type already reflected that, and the Go-side struct
+  is now consistent. (`core/observability/discovery.go`.)
+- **Templates list `?tag=` filter implemented end-to-end.** Added
+  `Tag` field to `persistence.TemplateListFilter`; postgres + sqlite
+  queries `EXISTS`-join `rimsky_template_tags`; control-api's
+  `/v1/observability/templates` accepts the query param.
+- **`StreamClaim` now streams live events** for both postgres and
+  filesystem stores. Added `Subscribe`/`SubscribeWithSnapshot` on
+  each ledger (the snapshot+subscribe pair runs under one lock so
+  events landing between the two surface in the live channel),
+  closed channels on terminal, broadcast non-blocking from each
+  Record* method. The store servers' `StreamClaim` now replays
+  history then pumps the live channel until terminal-or-disconnect-
+  or-idle-timeout (default 5min, `SetIdleTimeout` overridable).
+- **Conformance probes drive a canned dispatch and a retention
+  check.** `core/cmd/rimsky-conformance` `--retention-test-seconds=N`
+  fires an Execute, verifies `GetTrace` + `StreamTrace` surface the
+  events, then sleeps past the configured retention and verifies
+  `evicted: true`. The store-side equivalent verifies UNKNOWN
+  preservation post-retention.
+- **Idle-close timeouts on streams.** Spec §2.5/§3.5: the
+  http-node, both store servers, and the claude-agent SSE handler
+  all close idle streams cleanly with a final marker after a
+  configurable timeout (default 5 minutes, env-overridable on the
+  TS side via `RIMSKY_OBS_IDLE_TIMEOUT_MS`).
+
+#### Code quality
+
+- **`handleGetDispatch` is now a point lookup.** Added
+  `Queue.GetByID(ctx, dispatch_id)` to persistence (postgres + sqlite);
+  handler no longer paginates the live dispatch table. Same handler
+  also uses the new `LockHolders.GetByFrameAndNode(ctx, nodeID,
+  frameID)` instead of a `ListByHolderNode` + linear scan to resolve
+  the dispatch → claim_id link.
+- **Cascade-graph batch lookup eliminates the N+1.** Added
+  `EventStore.LastTerminalByNodes(ctx, []nodeIDs)` (postgres uses
+  `DISTINCT ON`; sqlite uses a correlated subquery). The handler
+  fetches every node's last terminal in one round-trip instead of
+  one per node.
+- **Handshake probes run in parallel.** `RunHandshake` and
+  `Discovery.refreshAll` fan out one goroutine per peer with the
+  per-probe `handshakeTimeout` enforced via `context.WithTimeout`.
+  Total wall-time is now bounded by the longest probe, not the sum.
+- **claude-agent SSE attach race fixed.** Added
+  `subscribeWithSnapshot` (atomic snapshot+listener attach in one
+  synchronous call) and switched the SSE handler to it. Mirror of
+  the round-3 Go fix on http-node.
+- **`SetHTTPBridgeURL` is now sync.Once-guarded** on both store
+  servers and the http-node executor. Documented as set-once-at-
+  startup; subsequent calls are no-ops.
+- **`AppendEvent` / `MarkTerminal` reject unregistered dispatch
+  IDs.** Added `RegisterDispatch(id)` that the executor's dispatch
+  flow calls at entry to formally claim a dispatch ID; later
+  appends to unknown IDs are silently dropped (forged IDs cannot
+  fill the in-memory ledger).
+- **Ledger cursors encode claim_id, not positional index.** Both
+  the postgres and filesystem ledgers' `List` cursor is now the
+  last-returned claim_id; the previous index-based cursor would
+  shift under concurrent eviction and skip records.
+- **Dashboard SSE applies exponential backoff (1s → 30s, max 10
+  attempts).** Successful re-connection resets the counter. After
+  the cap, the wrapper reports `SseStreamLostError` so the
+  consuming hook can render a "stream lost" badge.
+- **Dashboard proxy gains an upstream timeout** (default 30s,
+  `RIMSKY_DASHBOARD_PROXY_TIMEOUT_MS` overridable). Applied to both
+  the connect phase and (for non-SSE) the body read; SSE bodies
+  remain long-lived. Translates `AbortError` to 504 and other dial
+  failures to 502.
+- **Dashboard proxy now strips RFC 7230 hop-by-hop headers** on
+  both inbound and outbound flows (`Connection`, `Keep-Alive`,
+  `Transfer-Encoding`, `Upgrade`, `TE`, `Trailer`, `Proxy-*`,
+  `Host`, `Content-Length`).
+- **SSE write errors now break the pump loop** in the http-node
+  HTTP bridge and the store-side bridge, so disconnected clients
+  exit cleanly instead of looping. (`executors/http-node/
+  observability_bridge.go`, `stores/internal/bridge/observability.go`.)
+- **`MarkTerminal` is idempotent on `terminalAt`.** First call
+  records the timestamp; subsequent calls are no-ops, so
+  `trace_complete` timestamps stay stable across follow-on
+  GetTrace requests.
+
+#### Loose ends
+
+- **Discovery cache returns null when no http_bridge_url.** The
+  proxy translates that to 503 with a clear message
+  (`peer X does not expose an HTTP bridge for observability`)
+  instead of silently dialling a gRPC listener.
+- **Dead `contextWithTimeout` wrapper inlined.** The handler now
+  uses `context.WithTimeout` directly.
+- **`redact.go` deleted.** Its comment moved to a doc comment on
+  `LockHolderRow.Address` (where the `json:"-"` tag actually lives).
+- **`itemsQueueView` errors no longer swallowed.** Postgres count
+  failures are logged at WARN with selector + items_table before
+  the function returns the -1 sentinel.
+- **Discovery cache invalidation endpoint** at
+  `POST /api/admin/refresh-discovery`; the SystemPage now renders
+  cache age + a "Refresh discovery" button so operators don't have
+  to wait the full TTL after rolling a peer.
+- **CORS posture documented** in `docs/operator-guide.md`: the
+  proxy collapses to single-origin; bypassing the proxy needs a
+  CORS layer the operator owns.
+- **`@blessed-invariant 11` doc note** added to the executor
+  observability impls clarifying that the invariant scopes Rimsky
+  core's behaviour toward the wire-format `userdata`, not the
+  executor's introspection of its own trace data.
+- **Filesystem ↔ postgres ledger duplication tracked.** Both files
+  carry `@source` annotations now; the round-3 fixes (Subscribe,
+  cursor stability, broadcast on every Record*) landed in both.
+
+#### Smoke / test coverage
+
+- **Smoke test drives a real dispatch.**
+  `TestObservabilityDispatchEndToEnd` deploys the §11.5 template,
+  fires the source node once, then asserts `/v1/observability/
+  instances/{id}` returns a 4-node cascade-graph and `/events?
+  instance_id=…` returns at least one row.
+
+
+
 - **http-node `StreamTrace` no longer drops events under concurrent
   append.** Replaced the snapshot+gap+late-register pattern with a
   per-subscriber wakeup-pump model: subscribers register under the
@@ -60,6 +191,15 @@
   `claim_abandon_failed`); dashboard SSE proxy header forwarding +
   non-200 status propagation; http-node `StreamTrace` race-detector
   stress test.
+- **Dashboard tsconfig project references.** `dashboards/rimsky-dashboard/tsconfig.json`
+  now references `tsconfig.node.json`; the latter declares
+  `composite: true` and `types: ["node"]`. Editor LSPs were resolving
+  `src/server/*.ts` against the root config (which excludes `src/server`
+  and lacks node types) and reporting spurious "Cannot find name
+  'process'" / "Cannot find module './admin.js'" diagnostics on a
+  build that was actually clean. The references entry tells the LSP
+  which config governs server-side files; vite/tsc build behavior is
+  unchanged.
 
 ### Fixed — Dashboard & observability v1 (round-2 review)
 

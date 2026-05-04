@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -75,29 +77,44 @@ func handleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, obs *Observab
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
-	send := func(ev *genv1.TraceEvent) {
+	// errClientGone surfaces from send() when the client has
+	// disconnected; the caller breaks out of the pump loop.
+	errClientGone := errors.New("sse: client gone")
+	send := func(ev *genv1.TraceEvent) error {
 		b, _ := protojson.Marshal(ev)
-		fmt.Fprintf(w, "data: %s\n\n", b)
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			return errClientGone
+		}
 		if flusher != nil {
 			flusher.Flush()
 		}
+		return nil
 	}
 	sub, exists := obs.subscribe(dispatchID)
 	if !exists {
-		send(traceCompleteEvent())
+		_ = send(traceCompleteEvent())
 		return
 	}
 	defer obs.unsubscribe(dispatchID, sub)
 	cursor := 0
+	idle := defaultStreamIdleTimeout
 	for {
 		events, terminal := obs.drainFrom(dispatchID, cursor)
 		cursor += len(events)
 		for _, ev := range events {
-			send(ev)
+			if err := send(ev); err != nil {
+				return
+			}
 		}
 		if terminal {
-			send(traceCompleteEvent())
+			_ = send(traceCompleteEvent())
 			return
+		}
+		var idleC <-chan time.Time
+		if idle > 0 {
+			t := time.NewTimer(idle)
+			idleC = t.C
+			defer t.Stop()
 		}
 		select {
 		case <-r.Context().Done():
@@ -105,9 +122,14 @@ func handleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, obs *Observab
 		case <-sub.done:
 			tail, _ := obs.drainFrom(dispatchID, cursor)
 			for _, ev := range tail {
-				send(ev)
+				if err := send(ev); err != nil {
+					return
+				}
 			}
-			send(traceCompleteEvent())
+			_ = send(traceCompleteEvent())
+			return
+		case <-idleC:
+			_ = send(traceCompleteEvent())
 			return
 		case <-sub.wake:
 			// Loop back and drain.

@@ -31,7 +31,9 @@ func main() {
 	endpoint := flag.String("endpoint", "", "store-service gRPC endpoint (e.g. grpc://localhost:9101)")
 	timeout := flag.Duration("timeout", 10*time.Second, "per-check timeout")
 	checkObs := flag.Bool("check-observability", false, "additionally probe StoreObservability per spec §6")
+	retentionSec := flag.Int("retention-test-seconds", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted (spec §6 retention check)")
 	flag.Parse()
+	obsRetentionTestSeconds = *retentionSec
 
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky-store-conformance: --endpoint required")

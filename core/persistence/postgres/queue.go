@@ -427,6 +427,31 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	return n, nil
 }
 
+// GetByID returns the live dispatch row for id, or (nil, nil) when no
+// such row exists. Used by the observability dispatch-detail handler.
+func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error) {
+	row := q.pool.QueryRow(ctx,
+		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		   FROM rimsky_dispatch d
+		  WHERE d.id = $1`, id,
+	)
+	var r shared.DispatchRow
+	if err := row.Scan(
+		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if r.RequiredStores == nil {
+		r.RequiredStores = []string{}
+	}
+	return &r, nil
+}
+
 // ---- dispatch cursor encoding ----
 
 func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {

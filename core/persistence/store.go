@@ -65,6 +65,10 @@ type TemplateStore interface {
 }
 type TemplateListFilter struct {
 	State TemplateState // empty = no filter
+	// Tag, when non-empty, restricts to templates carrying the given
+	// tag in rimsky_template_tags. Used by the observability /v1/
+	// observability/templates?tag=… browse filter (spec §1.2.2).
+	Tag string
 }
 
 // -------- Template tags --------
@@ -224,11 +228,17 @@ const (
 )
 
 type LockHolderRow struct {
-	ID                 shared.UUID     `json:"claim_id"`
-	LockKind           LockKind        `json:"lock_kind"`
-	LockName           *string         `json:"lock_name,omitempty"`
-	StoreName          *string         `json:"store_name,omitempty"`
-	RegionData         json.RawMessage `json:"region_data,omitempty"`
+	ID         shared.UUID     `json:"claim_id"`
+	LockKind   LockKind        `json:"lock_kind"`
+	LockName   *string         `json:"lock_name,omitempty"`
+	StoreName  *string         `json:"store_name,omitempty"`
+	RegionData json.RawMessage `json:"region_data,omitempty"`
+	// Address carries `json:"-"` so the observability handlers can
+	// pass *LockHolderRow to writeJSON without leaking store-supplied
+	// claim address bytes (spec §1.3 / blessed-invariant 20). Region
+	// is exposed because operators legitimately need to see what
+	// region a claim covers; address is opaque to rimsky and meant
+	// for the store/executor only.
 	Address            json.RawMessage `json:"-"`
 	Intent             *string         `json:"intent,omitempty"`
 	HolderSupervisorID string          `json:"holder_supervisor_id"`
@@ -299,6 +309,13 @@ type LockHoldersStore interface {
 	// by claimed_at DESC. Used by the observability /v1/observability/
 	// lock-holders browse endpoint (spec §1.2.4).
 	ListForObservability(ctx context.Context, filter LockHolderListFilter, pag ListPagination, tx Tx) (PaginatedListResult[LockHolderRow], error)
+
+	// GetByFrameAndNode returns the lock-holder row whose holder_node_id
+	// equals nodeID and frame_id equals frameID. Used by the
+	// observability /v1/observability/dispatches/{id} endpoint to
+	// resolve dispatch → claim_id without a full per-node scan. Returns
+	// (nil, nil) when no matching row exists.
+	GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (*LockHolderRow, error)
 }
 
 // LockHolderListFilter is the observability browse filter for the
@@ -404,6 +421,11 @@ type EventListResult struct {
 type EventStore interface {
 	Append(ctx context.Context, in EventAppendInput, tx Tx) error
 	List(ctx context.Context, filter EventListFilter, pag ListPagination, tx Tx) (EventListResult, error)
+	// LastTerminalByNodes returns the most-recent dispatch-terminal event
+	// (kind in {work_completed, error}) per node id. Used by the
+	// observability cascade-graph projection to avoid an N+1 List per
+	// node. Nodes with no matching event are absent from the map.
+	LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]EventRow, error)
 }
 
 // -------- Schedules --------

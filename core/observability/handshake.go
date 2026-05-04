@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -152,66 +153,91 @@ type PeerSpec struct {
 // spec §4 this is best-effort: unreachable peers or absent endpoints
 // are recorded as Unreachable and never cause the function to return
 // an error.
+//
+// Probes run in parallel per peer (one goroutine each) so total wall
+// time is ~handshakeTimeout, not N*handshakeTimeout. Each goroutine
+// applies its own per-probe timeout via context.WithTimeout.
 func RunHandshake(ctx context.Context, prober Prober, executors, stores []PeerSpec, log *slog.Logger) *Discovery {
 	if log == nil {
 		log = slog.Default()
 	}
 	d := NewDiscovery(prober)
+	var wg sync.WaitGroup
 	for _, e := range executors {
-		probe := chooseObsEndpoint(e.ObservabilityEndpoint, e.Endpoint)
-		entry := PeerEntry{
-			Name:                  e.Name,
-			Endpoint:              e.Endpoint,
-			ObservabilityEndpoint: probe,
-			LastProbedAt:          time.Now(),
-		}
-		probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-		caps, err := prober.ProbeExecutor(probeCtx, probe)
-		cancel()
-		if err != nil {
-			entry.Reachability = ReachabilityUnreachable
-			entry.LastError = err.Error()
-			log.Info("observability.handshake.executor.unreachable",
-				slog.String("name", e.Name),
-				slog.String("endpoint", probe),
-				slog.String("error", err.Error()))
-		} else {
-			entry.Reachability = ReachabilityReachable
-			entry.Capabilities = caps
-			if caps != nil {
-				entry.HTTPBridgeURL = caps.HTTPBridgeURL
-			}
-		}
-		d.SetExecutor(entry)
+		wg.Add(1)
+		go func(e PeerSpec) {
+			defer wg.Done()
+			d.SetExecutor(probeExecutorEntry(ctx, prober, e, log))
+		}(e)
 	}
 	for _, s := range stores {
-		probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
-		entry := PeerEntry{
-			Name:                  s.Name,
-			Endpoint:              s.Endpoint,
-			ObservabilityEndpoint: probe,
-			LastProbedAt:          time.Now(),
-		}
-		probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-		caps, err := prober.ProbeStore(probeCtx, probe)
-		cancel()
-		if err != nil {
-			entry.Reachability = ReachabilityUnreachable
-			entry.LastError = err.Error()
-			log.Info("observability.handshake.store.unreachable",
-				slog.String("name", s.Name),
-				slog.String("endpoint", probe),
-				slog.String("error", err.Error()))
-		} else {
-			entry.Reachability = ReachabilityReachable
-			entry.Capabilities = caps
-			if caps != nil {
-				entry.HTTPBridgeURL = caps.HTTPBridgeURL
-			}
-		}
-		d.SetStore(entry)
+		wg.Add(1)
+		go func(s PeerSpec) {
+			defer wg.Done()
+			d.SetStore(probeStoreEntry(ctx, prober, s, log))
+		}(s)
 	}
+	wg.Wait()
 	return d
+}
+
+// probeExecutorEntry runs one executor's probe under its own timeout
+// and returns the resulting PeerEntry. Logs unreachable cases at INFO.
+func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slog.Logger) PeerEntry {
+	probe := chooseObsEndpoint(e.ObservabilityEndpoint, e.Endpoint)
+	entry := PeerEntry{
+		Name:                  e.Name,
+		Endpoint:              e.Endpoint,
+		ObservabilityEndpoint: probe,
+		LastProbedAt:          time.Now(),
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	caps, err := prober.ProbeExecutor(probeCtx, probe)
+	cancel()
+	if err != nil {
+		entry.Reachability = ReachabilityUnreachable
+		entry.LastError = err.Error()
+		log.Info("observability.handshake.executor.unreachable",
+			slog.String("name", e.Name),
+			slog.String("endpoint", probe),
+			slog.String("error", err.Error()))
+		return entry
+	}
+	entry.Reachability = ReachabilityReachable
+	entry.Capabilities = caps
+	if caps != nil {
+		entry.HTTPBridgeURL = caps.HTTPBridgeURL
+	}
+	return entry
+}
+
+// probeStoreEntry mirrors probeExecutorEntry for store peers.
+func probeStoreEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
+	probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
+	entry := PeerEntry{
+		Name:                  s.Name,
+		Endpoint:              s.Endpoint,
+		ObservabilityEndpoint: probe,
+		LastProbedAt:          time.Now(),
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	caps, err := prober.ProbeStore(probeCtx, probe)
+	cancel()
+	if err != nil {
+		entry.Reachability = ReachabilityUnreachable
+		entry.LastError = err.Error()
+		log.Info("observability.handshake.store.unreachable",
+			slog.String("name", s.Name),
+			slog.String("endpoint", probe),
+			slog.String("error", err.Error()))
+		return entry
+	}
+	entry.Reachability = ReachabilityReachable
+	entry.Capabilities = caps
+	if caps != nil {
+		entry.HTTPBridgeURL = caps.HTTPBridgeURL
+	}
+	return entry
 }
 
 // RefreshLoop re-probes every peer at the given interval. Heals
@@ -236,51 +262,63 @@ func (d *Discovery) RefreshLoop(ctx context.Context, interval time.Duration, log
 }
 
 func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
-	for _, e := range d.ListExecutors() {
-		probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-		caps, err := d.prober.ProbeExecutor(probeCtx, e.ObservabilityEndpoint)
-		cancel()
-		updated := e
-		updated.LastProbedAt = time.Now()
-		if err != nil {
-			updated.Reachability = ReachabilityUnreachable
-			updated.LastError = err.Error()
-			updated.Capabilities = nil
-			updated.HTTPBridgeURL = ""
-		} else {
-			updated.Reachability = ReachabilityReachable
-			updated.Capabilities = caps
-			updated.LastError = ""
-			if caps != nil {
-				updated.HTTPBridgeURL = caps.HTTPBridgeURL
+	executors := d.ListExecutors()
+	stores := d.ListStores()
+	var wg sync.WaitGroup
+	for _, e := range executors {
+		wg.Add(1)
+		go func(e PeerEntry) {
+			defer wg.Done()
+			probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+			caps, err := d.prober.ProbeExecutor(probeCtx, e.ObservabilityEndpoint)
+			cancel()
+			updated := e
+			updated.LastProbedAt = time.Now()
+			if err != nil {
+				updated.Reachability = ReachabilityUnreachable
+				updated.LastError = err.Error()
+				updated.Capabilities = nil
+				updated.HTTPBridgeURL = ""
+			} else {
+				updated.Reachability = ReachabilityReachable
+				updated.Capabilities = caps
+				updated.LastError = ""
+				if caps != nil {
+					updated.HTTPBridgeURL = caps.HTTPBridgeURL
+				}
 			}
-		}
-		d.SetExecutor(updated)
+			d.SetExecutor(updated)
+		}(e)
 	}
-	for _, e := range d.ListStores() {
-		probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-		caps, err := d.prober.ProbeStore(probeCtx, e.ObservabilityEndpoint)
-		cancel()
-		updated := e
-		updated.LastProbedAt = time.Now()
-		if err != nil {
-			updated.Reachability = ReachabilityUnreachable
-			updated.LastError = err.Error()
-			updated.Capabilities = nil
-			updated.HTTPBridgeURL = ""
-		} else {
-			updated.Reachability = ReachabilityReachable
-			updated.Capabilities = caps
-			updated.LastError = ""
-			if caps != nil {
-				updated.HTTPBridgeURL = caps.HTTPBridgeURL
+	for _, e := range stores {
+		wg.Add(1)
+		go func(e PeerEntry) {
+			defer wg.Done()
+			probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+			caps, err := d.prober.ProbeStore(probeCtx, e.ObservabilityEndpoint)
+			cancel()
+			updated := e
+			updated.LastProbedAt = time.Now()
+			if err != nil {
+				updated.Reachability = ReachabilityUnreachable
+				updated.LastError = err.Error()
+				updated.Capabilities = nil
+				updated.HTTPBridgeURL = ""
+			} else {
+				updated.Reachability = ReachabilityReachable
+				updated.Capabilities = caps
+				updated.LastError = ""
+				if caps != nil {
+					updated.HTTPBridgeURL = caps.HTTPBridgeURL
+				}
 			}
-		}
-		d.SetStore(updated)
+			d.SetStore(updated)
+		}(e)
 	}
+	wg.Wait()
 	log.Debug("observability.handshake.refresh",
-		slog.Int("executors", len(d.ListExecutors())),
-		slog.Int("stores", len(d.ListStores())))
+		slog.Int("executors", len(executors)),
+		slog.Int("stores", len(stores)))
 }
 
 func chooseObsEndpoint(observability, fallback string) string {

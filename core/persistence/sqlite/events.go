@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/core/persistence"
+	"github.com/fallguy/rimsky/core/shared"
 )
 
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {
@@ -161,6 +162,94 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		nextCursor = encodeEventCursor(last.OccurredAt, last.ID)
 	}
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
+}
+
+// LastTerminalByNodes returns the most-recent dispatch-terminal event
+// per node id. SQLite has no DISTINCT ON, so the implementation is a
+// correlated-subquery filter (sufficient for the cascade-graph use
+// case where node lists are bounded by template size).
+func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx persistence.Tx) (map[shared.UUID]persistence.EventRow, error) {
+	out := make(map[shared.UUID]persistence.EventRow, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	placeholders := ""
+	args := make([]any, 0, len(nodeIDs))
+	for i, id := range nodeIDs {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, id.String())
+	}
+	q := `SELECT e.id, e.instance_id, e.node_id, e.kind, e.payload, e.occurred_at
+		FROM rimsky_events e
+		WHERE e.node_id IN (` + placeholders + `)
+		  AND e.kind IN ('work_completed', 'error')
+		  AND e.id = (
+		    SELECT e2.id FROM rimsky_events e2
+		    WHERE e2.node_id = e.node_id
+		      AND e2.kind IN ('work_completed', 'error')
+		    ORDER BY e2.occurred_at DESC, e2.id DESC
+		    LIMIT 1
+		  )`
+	rows, err := s.q(tx).QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("events.lastTerminalByNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			r             persistence.EventRow
+			instanceIDStr sql.NullString
+			nodeIDStr     sql.NullString
+			payloadStr    string
+			occurredAtStr string
+			eventID       int64
+		)
+		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &r.Kind, &payloadStr, &occurredAtStr); err != nil {
+			return nil, err
+		}
+		r.ID = eventID
+		if instanceIDStr.Valid && instanceIDStr.String != "" {
+			u, err := uuid.Parse(instanceIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			r.InstanceID = &u
+		}
+		var nid uuid.UUID
+		if nodeIDStr.Valid && nodeIDStr.String != "" {
+			u, err := uuid.Parse(nodeIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			r.NodeID = &u
+			nid = u
+		}
+		occurredAt, err := parseTime(occurredAtStr)
+		if err != nil {
+			return nil, err
+		}
+		r.OccurredAt = occurredAt
+		if payloadStr != "" {
+			m := map[string]any{}
+			if err := json.Unmarshal([]byte(payloadStr), &m); err == nil {
+				r.Payload = m
+			} else {
+				r.Payload = map[string]any{}
+			}
+		} else {
+			r.Payload = map[string]any{}
+		}
+		if nid != (uuid.UUID{}) {
+			out[nid] = r
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ---- cursor encoding ----

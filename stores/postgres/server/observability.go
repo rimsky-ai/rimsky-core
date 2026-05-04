@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -32,19 +34,37 @@ var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 // queued vs in-progress count).
 type ObservabilityServer struct {
 	genv1.UnimplementedStoreObservabilityServer
-	store         *pgsstore.Store
-	httpBridgeURL string
+	store *pgsstore.Store
+	// httpBridgeURL is set once at startup before the gRPC server
+	// accepts traffic; sync.Once-style write means later reads can be
+	// lock-free. We use sync.Once explicitly to make the contract
+	// loud at the call site.
+	httpBridgeURLOnce sync.Once
+	httpBridgeURL     string
+	idleTimeout       time.Duration
 }
 
 // NewObservabilityServer pins the observability surface to a live
 // postgres store handle.
 func NewObservabilityServer(store *pgsstore.Store) *ObservabilityServer {
-	return &ObservabilityServer{store: store}
+	return &ObservabilityServer{store: store, idleTimeout: defaultObsIdleTimeout}
 }
 
 // SetHTTPBridgeURL records the URL the store advertises in
-// StoreObservabilityCapabilities.http_bridge_url. Empty disables.
-func (s *ObservabilityServer) SetHTTPBridgeURL(u string) { s.httpBridgeURL = u }
+// StoreObservabilityCapabilities.http_bridge_url. Set-once at startup;
+// subsequent calls are ignored. Empty value disables.
+func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
+	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
+}
+
+// SetIdleTimeout overrides the default StreamClaim idle timeout. Pass
+// zero for never-timeout behaviour. Must be set before any stream
+// starts (set-once-at-startup).
+func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = d }
+
+// defaultObsIdleTimeout is the spec §2.5 / §3.5 default close-idle
+// timeout for live observability streams.
+const defaultObsIdleTimeout = 5 * time.Minute
 
 // GetCapabilities reports the v1 surface: admin views plus per-claim
 // get/stream/list backed by an in-memory ledger.
@@ -72,10 +92,15 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 	return claimRecordToDetail(rec), nil
 }
 
-// StreamClaim replays the history once.
+// StreamClaim atomically replays the history then streams new events
+// until the claim hits a terminal (or the client disconnects, or the
+// idle timeout fires per spec §3.5). Subscribers register under the
+// ledger's lock so events appended between snapshot and subscribe are
+// not lost.
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.StoreObservability_StreamClaimServer) error {
-	rec, ok := s.store.Ledger().Get(req.GetClaimId())
-	if !ok {
+	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
+	defer unsub()
+	if rec == nil {
 		return stream.Send(&genv1.ClaimEvent{
 			EventId:   "evicted",
 			Timestamp: timestamppb.Now(),
@@ -83,7 +108,7 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			Category:  "claim_terminal",
 		})
 	}
-	for _, ev := range rec.History {
+	for _, ev := range history {
 		if err := stream.Send(claimEventToProto(ev)); err != nil {
 			return err
 		}
@@ -96,7 +121,41 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			Category:  "claim_terminal",
 		})
 	}
-	return nil
+	idle := s.idleTimeout
+	for {
+		var idleC <-chan time.Time
+		if idle > 0 {
+			t := time.NewTimer(idle)
+			defer t.Stop()
+			idleC = t.C
+		}
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case <-idleC:
+			// Spec §2.5/§3.5: close idle streams with a final marker,
+			// not an error.
+			return stream.Send(&genv1.ClaimEvent{
+				EventId:   "idle_timeout",
+				Timestamp: timestamppb.Now(),
+				Severity:  genv1.Severity_INFO,
+				Category:  "claim_terminal",
+			})
+		case ev, ok := <-ch:
+			if !ok {
+				// Channel closed → terminal arrived.
+				return stream.Send(&genv1.ClaimEvent{
+					EventId:   "terminal",
+					Timestamp: timestamppb.New(time.Now().UTC()),
+					Severity:  genv1.Severity_INFO,
+					Category:  "claim_terminal",
+				})
+			}
+			if err := stream.Send(claimEventToProto(ev)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // ListClaims returns a cursor-paginated view of the in-memory ledger.
@@ -287,9 +346,17 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 		queryQ := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE state = 'queued'", pp.ItemsTable)
 		queryIP := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE state = 'in_progress'", pp.ItemsTable)
 		if err := pool.QueryRow(ctx, queryQ).Scan(&queued); err != nil {
+			slog.Warn("postgres-store.itemsQueueView: queued count failed",
+				slog.String("selector", sel),
+				slog.String("items_table", pp.ItemsTable),
+				slog.String("error", err.Error()))
 			queued = -1
 		}
 		if err := pool.QueryRow(ctx, queryIP).Scan(&inProgress); err != nil {
+			slog.Warn("postgres-store.itemsQueueView: in-progress count failed",
+				slog.String("selector", sel),
+				slog.String("items_table", pp.ItemsTable),
+				slog.String("error", err.Error()))
 			inProgress = -1
 		}
 		rows = append(rows, map[string]any{

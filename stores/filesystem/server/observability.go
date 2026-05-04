@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -30,20 +31,33 @@ type ObservabilityServer struct {
 	store *fsstore.Store
 	// pickPolicies is indexed at construction time so the observability
 	// surface can iterate them without taking the store's mu.
-	pickPolicies  map[string]*fsstore.PickPolicy
-	root          string
-	httpBridgeURL string
+	pickPolicies map[string]*fsstore.PickPolicy
+	root         string
+	// httpBridgeURL is set once at startup; sync.Once-style write makes
+	// later reads lock-free.
+	httpBridgeURLOnce sync.Once
+	httpBridgeURL     string
+	idleTimeout       time.Duration
 }
 
 // NewObservabilityServer builds a server pinned to the given store
 // handle and the same pick-policy map the store was constructed with.
 func NewObservabilityServer(store *fsstore.Store, root string, pickPolicies map[string]*fsstore.PickPolicy) *ObservabilityServer {
-	return &ObservabilityServer{store: store, root: root, pickPolicies: pickPolicies}
+	return &ObservabilityServer{store: store, root: root, pickPolicies: pickPolicies, idleTimeout: defaultObsIdleTimeout}
 }
 
 // SetHTTPBridgeURL records the URL the store advertises in
-// StoreObservabilityCapabilities.http_bridge_url. Empty disables.
-func (s *ObservabilityServer) SetHTTPBridgeURL(u string) { s.httpBridgeURL = u }
+// StoreObservabilityCapabilities.http_bridge_url. Set-once at startup;
+// subsequent calls are ignored. Empty value disables.
+func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
+	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
+}
+
+// SetIdleTimeout overrides the default StreamClaim idle timeout.
+func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = d }
+
+// defaultObsIdleTimeout mirrors the postgres store's default per spec §3.5.
+const defaultObsIdleTimeout = 5 * time.Minute
 
 // GetCapabilities reports the v1 filesystem observability surface:
 // admin views for pick_policies and policy_items, plus per-claim get /
@@ -83,14 +97,16 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 	return claimRecordToDetail(rec), nil
 }
 
-// StreamClaim replays the history once; the v1 ledger is snapshot-only
-// (no live notifier), so we close immediately after replay with a
-// claim_terminal marker if the claim is terminal.
+// StreamClaim atomically replays the history then streams new events
+// until the claim hits a terminal (or the client disconnects, or the
+// idle timeout fires per spec §3.5). Mirrors the postgres store impl;
+// see stores/postgres/server/observability.go::StreamClaim.
+//
+//	@source: stores/postgres/server/observability.go:StreamClaim
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.StoreObservability_StreamClaimServer) error {
-	rec, ok := s.store.Ledger().Get(req.GetClaimId())
-	if !ok {
-		// No record — send a single claim_terminal marker so the client
-		// closes cleanly.
+	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
+	defer unsub()
+	if rec == nil {
 		return stream.Send(&genv1.ClaimEvent{
 			EventId:   "evicted",
 			Timestamp: timestamppb.Now(),
@@ -98,7 +114,7 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			Category:  "claim_terminal",
 		})
 	}
-	for _, ev := range rec.History {
+	for _, ev := range history {
 		if err := stream.Send(claimEventToProto(ev)); err != nil {
 			return err
 		}
@@ -111,7 +127,38 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			Category:  "claim_terminal",
 		})
 	}
-	return nil
+	idle := s.idleTimeout
+	for {
+		var idleC <-chan time.Time
+		if idle > 0 {
+			t := time.NewTimer(idle)
+			defer t.Stop()
+			idleC = t.C
+		}
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case <-idleC:
+			return stream.Send(&genv1.ClaimEvent{
+				EventId:   "idle_timeout",
+				Timestamp: timestamppb.Now(),
+				Severity:  genv1.Severity_INFO,
+				Category:  "claim_terminal",
+			})
+		case ev, ok := <-ch:
+			if !ok {
+				return stream.Send(&genv1.ClaimEvent{
+					EventId:   "terminal",
+					Timestamp: timestamppb.New(time.Now().UTC()),
+					Severity:  genv1.Severity_INFO,
+					Category:  "claim_terminal",
+				})
+			}
+			if err := stream.Send(claimEventToProto(ev)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // ListClaims returns a cursor-paginated view of the in-memory ledger.

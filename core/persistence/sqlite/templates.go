@@ -93,10 +93,14 @@ func (s *templatesImpl) List(
 	if pag.Cursor != "" {
 		cursor = pag.Cursor
 	}
+	var tagFilter any
+	if filter.Tag != "" {
+		tagFilter = filter.Tag
+	}
 
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+templateCols+`
-		 FROM rimsky_templates
+		 FROM rimsky_templates t
 		 WHERE (? IS NULL OR state = ?)
 		   AND (
 		     ? IS NULL
@@ -105,9 +109,16 @@ func (s *templatesImpl) List(
 		       ?
 		     )
 		   )
+		   AND (
+		     ? IS NULL
+		     OR EXISTS (
+		       SELECT 1 FROM rimsky_template_tags tt
+		       WHERE tt.template_id = t.id AND tt.tag = ?
+		     )
+		   )
 		 ORDER BY registered_at DESC, id DESC
 		 LIMIT ?`,
-		stateFilter, stateFilter, cursor, cursor, cursor, limit,
+		stateFilter, stateFilter, cursor, cursor, cursor, tagFilter, tagFilter, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.TemplateRow]{}, fmt.Errorf("templates.list: %w", err)

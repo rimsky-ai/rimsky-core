@@ -30,7 +30,9 @@ func main() {
 	skip := flag.String("skip", "", "comma-list of scenario names to skip")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-scenario timeout")
 	checkObs := flag.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
+	retentionSec := flag.Int("retention-test-seconds", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
 	flag.Parse()
+	obsRetentionTestSeconds = *retentionSec
 
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky-conformance: --endpoint required")

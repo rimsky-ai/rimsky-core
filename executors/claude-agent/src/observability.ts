@@ -133,12 +133,52 @@ export class Observability {
    * Subscribe to live events for a dispatch. Returns an unsubscribe
    * function. Replay is the caller's concern (the HTTP handler emits
    * the snapshot first, then attaches the listener).
+   *
+   * Note: prefer `subscribeWithSnapshot` for SSE handlers — it
+   * atomically returns the current snapshot + attaches the listener
+   * under one async tick, eliminating the gap window where new events
+   * could land between snapshot capture and listener registration
+   * (issue 11). Plain `subscribe` is kept for tests and for callers
+   * that don't need the snapshot.
    */
   subscribe(dispatchId: string, cb: (ev: TraceEvent) => void): () => void {
     const rec = this.getOrCreate(dispatchId);
     rec.listeners.add(cb);
     return () => {
       rec.listeners.delete(cb);
+    };
+  }
+
+  /**
+   * Atomic snapshot+subscribe. Returns the current event slice plus
+   * a teardown handle for the live listener. Because both reads/writes
+   * happen synchronously in JS's single-threaded event loop, no event
+   * appended elsewhere can land between the snapshot and the listener
+   * attach — this is the analog of the Go-side fix in issue 11.
+   */
+  subscribeWithSnapshot(
+    dispatchId: string,
+    cb: (ev: TraceEvent) => void,
+  ): { snapshot: Trace; unsubscribe: () => void } {
+    const rec = this.getOrCreate(dispatchId);
+    if (this.isEvicted(rec)) {
+      return {
+        snapshot: { dispatch_id: dispatchId, evicted: true, complete: true, events: [] },
+        unsubscribe: () => {},
+      };
+    }
+    const snapshot: Trace = {
+      dispatch_id: dispatchId,
+      evicted: false,
+      complete: rec.complete,
+      events: [...rec.events],
+    };
+    rec.listeners.add(cb);
+    return {
+      snapshot,
+      unsubscribe: () => {
+        rec.listeners.delete(cb);
+      },
     };
   }
 
@@ -216,21 +256,40 @@ export function mountObservability(
       const send = (ev: TraceEvent) => {
         reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
       };
-      const snapshot = obs.getTrace(dispatchId);
-      for (const ev of snapshot.events) send(ev);
-      if (snapshot.evicted || snapshot.complete) {
-        reply.raw.end();
-        return;
-      }
-      const unsub = obs.subscribe(dispatchId, (ev) => {
+      // Atomic snapshot+subscribe so events appended between the two
+      // can't escape the stream (issue 11).
+      const result = obs.subscribeWithSnapshot(dispatchId, (ev) => {
         send(ev);
         if (ev.category === "trace_complete") {
-          unsub();
+          result.unsubscribe();
           reply.raw.end();
         }
       });
+      for (const ev of result.snapshot.events) send(ev);
+      if (result.snapshot.evicted || result.snapshot.complete) {
+        result.unsubscribe();
+        reply.raw.end();
+        return;
+      }
+      // Spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
+      // 5 minutes). The listener resets the timer on every event;
+      // disconnect cancels both timer and subscription.
+      const idleMs = Number(process.env.RIMSKY_OBS_IDLE_TIMEOUT_MS ?? 5 * 60 * 1000);
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      const armIdle = () => {
+        if (idleMs <= 0) return;
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          // Final keepalive comment + close (not an error).
+          reply.raw.write(`: idle_timeout\n\n`);
+          result.unsubscribe();
+          reply.raw.end();
+        }, idleMs);
+      };
+      armIdle();
       req.raw.on("close", () => {
-        unsub();
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        result.unsubscribe();
       });
     },
   );

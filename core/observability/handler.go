@@ -16,12 +16,6 @@ import (
 	"github.com/fallguy/rimsky/core/shared"
 )
 
-// contextWithTimeout is a thin wrapper around context.WithTimeout
-// shared by health probes inside this package.
-func contextWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, d)
-}
-
 // Deps bundles the dependencies the observability HTTP handlers need.
 // The persistence layer is consumed via the typed Store/Queue
 // interfaces; no driver-specific subpackages are imported here. The
@@ -217,6 +211,9 @@ func handleListTemplates(deps Deps) http.HandlerFunc {
 		filter := persistence.TemplateListFilter{}
 		if s := r.URL.Query().Get("state"); s != "" {
 			filter.State = persistence.TemplateState(s)
+		}
+		if t := r.URL.Query().Get("tag"); t != "" {
+			filter.Tag = t
 		}
 		res, err := deps.Store.Templates().List(r.Context(), filter, pag, nil)
 		if err != nil {
@@ -492,21 +489,11 @@ func handleGetDispatch(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid dispatch id")
 			return
 		}
-		// Look up the live dispatch row directly via ListLive with an
-		// id-narrowing predicate; this returns the full DispatchRow
-		// shape per spec §1.2.3 (executor_name, claimed_by,
-		// claimed_at, last_heartbeat_at, enqueued_at, frame_id).
-		res, err := deps.Queue.ListLive(r.Context(), persistence.DispatchListFilter{}, persistence.ListPagination{Limit: maxLimit})
+		// Direct point-lookup; avoids scanning the live dispatch table.
+		match, err := deps.Queue.GetByID(r.Context(), id)
 		if err != nil {
 			internalErr(w, err)
 			return
-		}
-		var match *shared.DispatchRow
-		for i := range res.Rows {
-			if res.Rows[i].ID == id {
-				match = &res.Rows[i]
-				break
-			}
 		}
 		if match == nil {
 			notFound(w, "dispatch not found (terminal-deleted)")
@@ -517,16 +504,11 @@ func handleGetDispatch(deps Deps) http.HandlerFunc {
 			state = "claimed"
 		}
 		// Look up matching lock-holder (if any) so the dashboard can
-		// follow the dispatch → claim_id link.
+		// follow the dispatch → claim_id link. Direct (frame_id, node_id)
+		// lookup avoids the full holder-list scan.
 		var claimID *shared.UUID
-		holdings, err := deps.Store.LockHolders().ListByHolderNode(r.Context(), match.NodeID, nil)
-		if err == nil {
-			for i := range holdings {
-				if holdings[i].FrameID != nil && *holdings[i].FrameID == match.FrameID {
-					claimID = &holdings[i].ID
-					break
-				}
-			}
+		if holder, err := deps.Store.LockHolders().GetByFrameAndNode(r.Context(), match.NodeID, match.FrameID, nil); err == nil && holder != nil {
+			claimID = &holder.ID
 		}
 		// Also surface instance_id and node_type so the dashboard can
 		// resolve the executor's `dispatch_url_template` substitution
@@ -694,7 +676,7 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 		// in some test fixtures — surface as "unknown" in that case.
 		pgStatus := "unknown"
 		if deps.Driver != nil {
-			pingCtx, cancel := contextWithTimeout(r.Context(), 2*time.Second)
+			pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			err := deps.Driver.Ping(pingCtx)
 			cancel()
 			if err == nil {

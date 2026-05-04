@@ -109,7 +109,10 @@ describe('proxy', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('text/event-stream');
     expect(res.headers.get('Cache-Control')).toBe('no-cache');
-    expect(res.headers.get('Connection')).toBe('keep-alive');
+    // Hop-by-hop headers (Connection, Transfer-Encoding, Keep-Alive,
+    // …) are stripped per RFC 7230 — the proxy no longer forwards
+    // them, since hop-by-hop headers are scoped to one TCP connection.
+    expect(res.headers.get('Connection')).toBeNull();
     const body = await res.text();
     expect(body).toBe(sseBody);
   });

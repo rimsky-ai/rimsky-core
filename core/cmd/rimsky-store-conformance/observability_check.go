@@ -106,8 +106,36 @@ func runObservabilityCheck(ctx context.Context, endpoint string) error {
 			return fmt.Errorf("GetAdminView %q returned empty render_hint", v.GetName())
 		}
 	}
+
+	// Retention probe (spec §6): the rimsky-store-conformance binary
+	// has no path to drive a real Open/Commit against the store
+	// (that's the supervisor's job), so the retention probe here is
+	// limited to verifying that GetClaim on a long-evicted claim ID
+	// continues to return UNKNOWN after waiting. Operators wire a
+	// full retention probe by running the smoke fixture.
+	if obsRetentionTestSeconds > 0 && caps.GetSupportsClaimGet() {
+		wait := time.Duration(obsRetentionTestSeconds+1) * time.Second
+		fmt.Printf("observability: retention probe — sleeping %v before re-querying\n", wait)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		detail, err := client.GetClaim(ctx, &genv1.GetClaimRequest{ClaimId: probeID})
+		if err != nil {
+			return fmt.Errorf("GetClaim post-retention: %w", err)
+		}
+		if detail.GetState() != genv1.ClaimState_UNKNOWN {
+			return fmt.Errorf("GetClaim post-retention state=%v, want UNKNOWN", detail.GetState())
+		}
+		fmt.Println("observability: retention probe ok (UNKNOWN preserved)")
+	}
 	return nil
 }
+
+// obsRetentionTestSeconds is set from the --retention-test-seconds
+// flag; zero disables the retention probe.
+var obsRetentionTestSeconds int
 
 func stripScheme(s string) string {
 	for _, prefix := range []string{"grpc://", "http://", "https://"} {

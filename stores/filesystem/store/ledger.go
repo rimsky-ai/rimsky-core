@@ -4,10 +4,14 @@
 // govern stores' *own* observability — the store decides what to expose
 // (spec §3.2). The ledger is bounded by a max claim count per state
 // bucket so a long-running deployment doesn't grow unbounded.
+//
+// This is the canonical implementation; the postgres store carries a
+// near-identical copy.
+//
+//	@source: stores/postgres/store/ledger.go
 package store
 
 import (
-	"strconv"
 	"sync"
 	"time"
 
@@ -48,6 +52,13 @@ type ClaimRecord struct {
 	History  []ClaimEvent
 }
 
+// subscriber is a per-claim live-event listener.
+//
+//	@source: stores/postgres/store/ledger.go:subscriber
+type subscriber struct {
+	ch chan ClaimEvent
+}
+
 // ClaimLedger is a bounded in-memory ledger of claim lifecycle events.
 // Thread-safe.
 type ClaimLedger struct {
@@ -55,6 +66,7 @@ type ClaimLedger struct {
 	records map[string]*ClaimRecord
 	max     int
 	order   []string // insertion order of claim_ids for bounded eviction
+	subs    map[string]map[*subscriber]struct{}
 }
 
 // NewClaimLedger returns a ledger that retains at most max claims (after
@@ -67,6 +79,7 @@ func NewClaimLedger(max int) *ClaimLedger {
 	return &ClaimLedger{
 		records: make(map[string]*ClaimRecord),
 		max:     max,
+		subs:    make(map[string]map[*subscriber]struct{}),
 	}
 }
 
@@ -78,6 +91,15 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, region []byt
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now().UTC()
+	openEvent := ClaimEvent{
+		EventID:   uuid.New().String(),
+		Timestamp: now,
+		Severity:  "INFO",
+		Category:  "claim_opened",
+		Attributes: map[string]any{
+			"selector": selector,
+		},
+	}
 	rec := &ClaimRecord{
 		ClaimID:  claimID,
 		State:    ClaimStateOpen,
@@ -85,18 +107,11 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, region []byt
 		Region:   region,
 		Selector: selector,
 		OpenedAt: now,
-		History: []ClaimEvent{{
-			EventID:   uuid.New().String(),
-			Timestamp: now,
-			Severity:  "INFO",
-			Category:  "claim_opened",
-			Attributes: map[string]any{
-				"selector": selector,
-			},
-		}},
+		History:  []ClaimEvent{openEvent},
 	}
 	l.records[claimID] = rec
 	l.order = append(l.order, claimID)
+	l.broadcast(claimID, openEvent)
 	l.evictIfNeeded()
 }
 
@@ -120,13 +135,15 @@ func (l *ClaimLedger) RecordEvent(claimID, category, severity string, attrs map[
 	if severity == "" {
 		severity = "INFO"
 	}
-	rec.History = append(rec.History, ClaimEvent{
+	ev := ClaimEvent{
 		EventID:    uuid.New().String(),
 		Timestamp:  now,
 		Severity:   severity,
 		Category:   category,
 		Attributes: attrs,
-	})
+	}
+	rec.History = append(rec.History, ev)
+	l.broadcast(claimID, ev)
 	l.evictIfNeeded()
 }
 
@@ -156,14 +173,72 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 	case "claim_released":
 		rec.State = ClaimStateReleased
 	}
-	rec.History = append(rec.History, ClaimEvent{
+	ev := ClaimEvent{
 		EventID:    uuid.New().String(),
 		Timestamp:  now,
 		Severity:   "INFO",
 		Category:   category,
 		Attributes: attrs,
-	})
+	}
+	rec.History = append(rec.History, ev)
+	l.broadcast(claimID, ev)
+	for sub := range l.subs[claimID] {
+		close(sub.ch)
+	}
+	delete(l.subs, claimID)
 	l.evictIfNeeded()
+}
+
+// SubscribeWithSnapshot atomically returns the current history plus a
+// channel of new events. Eliminates the snapshot/subscribe race.
+//
+//	@source: stores/postgres/store/ledger.go:SubscribeWithSnapshot
+func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *ClaimRecord, <-chan ClaimEvent, func()) {
+	if l == nil {
+		ch := make(chan ClaimEvent)
+		close(ch)
+		return nil, nil, ch, func() {}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	rec, ok := l.records[claimID]
+	if !ok {
+		ch := make(chan ClaimEvent)
+		close(ch)
+		return nil, nil, ch, func() {}
+	}
+	cp := *rec
+	cp.History = append([]ClaimEvent(nil), rec.History...)
+	if rec.State != ClaimStateOpen {
+		ch := make(chan ClaimEvent)
+		close(ch)
+		return cp.History, &cp, ch, func() {}
+	}
+	sub := &subscriber{ch: make(chan ClaimEvent, 32)}
+	if l.subs[claimID] == nil {
+		l.subs[claimID] = map[*subscriber]struct{}{}
+	}
+	l.subs[claimID][sub] = struct{}{}
+	unsub := func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if subs, ok := l.subs[claimID]; ok {
+			delete(subs, sub)
+		}
+	}
+	return cp.History, &cp, sub.ch, unsub
+}
+
+// broadcast pushes ev to each live subscriber. Caller MUST hold l.mu.
+//
+//	@source: stores/postgres/store/ledger.go:broadcast
+func (l *ClaimLedger) broadcast(claimID string, ev ClaimEvent) {
+	for sub := range l.subs[claimID] {
+		select {
+		case sub.ch <- ev:
+		default:
+		}
+	}
 }
 
 // Get returns the claim record for claimID, or (nil, false).
@@ -184,7 +259,10 @@ func (l *ClaimLedger) Get(claimID string) (*ClaimRecord, bool) {
 }
 
 // List returns up to limit records, optionally filtered by state.
-// Pagination is by insertion order (cursor is the next index, base10).
+// Cursor encodes the last-returned claim_id (stable across concurrent
+// eviction).
+//
+//	@source: stores/postgres/store/ledger.go:List
 func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*ClaimRecord, string) {
 	if l == nil {
 		return nil, ""
@@ -194,17 +272,16 @@ func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*Cla
 	if limit <= 0 {
 		limit = 50
 	}
-	start := 0
-	if cursor != "" {
-		if n, err := strconv.Atoi(cursor); err == nil {
-			start = n
-		}
-	}
+	skip := cursor != ""
 	out := make([]*ClaimRecord, 0, limit)
-	i := start
-	for i < len(l.order) && len(out) < limit {
-		id := l.order[i]
-		i++
+	lastID := ""
+	for _, id := range l.order {
+		if skip {
+			if id == cursor {
+				skip = false
+			}
+			continue
+		}
 		rec, ok := l.records[id]
 		if !ok {
 			continue
@@ -215,10 +292,14 @@ func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*Cla
 		cp := *rec
 		cp.History = append([]ClaimEvent(nil), rec.History...)
 		out = append(out, &cp)
+		lastID = id
+		if len(out) >= limit {
+			break
+		}
 	}
 	next := ""
-	if i < len(l.order) {
-		next = strconv.Itoa(i)
+	if len(out) >= limit && lastID != "" {
+		next = lastID
 	}
 	return out, next
 }

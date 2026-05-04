@@ -86,6 +86,9 @@ func (f *invTestQueue) ListLive(_ context.Context, _ persistence.DispatchListFil
 func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFilter) (int, error) {
 	return 0, nil
 }
+func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*shared.DispatchRow, error) {
+	return nil, nil
+}
 
 func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID) {
 	f.mu.Lock()

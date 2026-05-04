@@ -131,6 +131,25 @@ func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sha
 	return collectLockHolders(rows)
 }
 
+// GetByFrameAndNode returns the lock-holder row for (nodeID, frameID),
+// or (nil, nil) when no matching row exists.
+func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders
+		 WHERE holder_node_id = ? AND frame_id = ?
+		 LIMIT 1`,
+		nodeID.String(), frameID.String(),
+	)
+	out, err := scanLockHolder(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lockholders.GetByFrameAndNode: %w", err)
+	}
+	return &out, nil
+}
+
 func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_lock_holders

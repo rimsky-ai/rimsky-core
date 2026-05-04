@@ -1640,3 +1640,46 @@ optional `allow-same-origin` only when the iframe origin matches the
 dashboard's own). Operators are responsible for the executors and
 stores they declare in `rimsky.yml`; the iframe sandbox is
 defense-in-depth, not the primary trust boundary. See spec §5.6.
+
+### CORS posture
+
+The dashboard does not require CORS configuration for its own
+endpoints. Its server collapses every executor and store call into a
+single same-origin proxy (`/api/exec/{name}/...`, `/api/store/{name}/...`,
+`/api/control/...`); the browser only ever sees the dashboard's own
+origin. The dashboard's CSP locks `connect-src` to `'self'` for the
+same reason — direct cross-origin fetches from the browser to a peer
+are not part of the supported topology.
+
+If you bypass the dashboard proxy and dial executor or store HTTP
+bridges directly from a browser at a different origin, CORS will
+block the request: peer HTTP bridges do not emit
+`Access-Control-Allow-Origin`. There are two supported workarounds:
+
+1. Run the dashboard at the same origin as your peer endpoints (a
+   reverse proxy in front of both works fine).
+2. Add a small CORS layer in front of the peer endpoint that returns
+   the appropriate `Access-Control-Allow-Origin` header for your
+   dashboard's origin. The peer's own HTTP bridge intentionally
+   doesn't grow CORS knobs in v1; that's an operator-perimeter
+   concern.
+
+The simplest path stays "always go through the dashboard proxy" — that
+is the supported, tested topology and the one the smoke fixture
+exercises. The reference deploy/docker-compose.yml topology already
+uses the proxy.
+
+### Discovery cache refresh
+
+The dashboard server caches the executor/store list it gets from the
+control-api for 30 seconds (controlled by `TTL` in `discovery.ts`).
+Two operator-facing endpoints expose this cache:
+
+```
+GET  /api/admin/discovery               → cache age + counts
+POST /api/admin/refresh-discovery       → invalidate cache; next lookup re-fetches
+```
+
+The dashboard UI surfaces these via a status / refresh button so an
+operator who's just rolled a peer doesn't have to wait the full TTL
+to see the change.

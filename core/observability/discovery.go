@@ -26,12 +26,15 @@ const (
 	ReachabilityDegraded    Reachability = "degraded"
 )
 
-// CustomUI mirrors the proto message of the same name.
+// CustomUI mirrors the proto message of the same name. The proto
+// reuses one `dispatch_url_template` field name across both peer kinds
+// (executors substitute against {dispatch_id, instance_id, node_type};
+// stores substitute against {claim_id, store_name}), so there's no
+// separate claim_url_template — see spec §2.2 / §3.2.
 type CustomUI struct {
 	URL                 string `json:"ui_url"`
 	EmbedMode           string `json:"embed_mode"`
 	DispatchURLTemplate string `json:"dispatch_url_template,omitempty"`
-	ClaimURLTemplate    string `json:"claim_url_template,omitempty"`
 }
 
 // AdminViewParam mirrors the proto AdminViewParam.

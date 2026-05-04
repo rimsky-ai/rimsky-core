@@ -29,6 +29,7 @@ dashboards/*/.vite/
 dashboards/*/coverage/
 dashboards/*/playwright-report/
 dashboards/*/test-results/
+dashboards/*/*.tsbuildinfo
 
 # Local env / coverage
 .env

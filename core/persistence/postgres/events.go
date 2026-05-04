@@ -127,6 +127,65 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	return persistence.EventListResult{Events: out, NextCursor: nextCursor}, nil
 }
 
+// LastTerminalByNodes returns the most-recent dispatch-terminal event
+// (kind in {work_completed, error}) per node id. The DISTINCT ON
+// projection picks the latest row per node in a single SELECT,
+// avoiding the per-node N+1 the cascade-graph builder previously did.
+func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx persistence.Tx) (map[shared.UUID]persistence.EventRow, error) {
+	out := make(map[shared.UUID]persistence.EventRow, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	ex := s.q(tx)
+	rows, err := ex.Query(ctx,
+		`SELECT DISTINCT ON (node_id)
+		        id, instance_id, node_id, kind, payload, occurred_at
+		   FROM rimsky_events
+		  WHERE node_id = ANY($1)
+		    AND kind IN ('work_completed', 'error')
+		  ORDER BY node_id, occurred_at DESC, id DESC`,
+		nodeIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("events.lastTerminalByNodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			r          persistence.EventRow
+			instanceID *shared.UUID
+			nodeID     *shared.UUID
+			payload    []byte
+			occurredAt time.Time
+			eventID    int64
+		)
+		if err := rows.Scan(&eventID, &instanceID, &nodeID, &r.Kind, &payload, &occurredAt); err != nil {
+			return nil, err
+		}
+		r.ID = eventID
+		r.InstanceID = instanceID
+		r.NodeID = nodeID
+		r.OccurredAt = occurredAt
+		if len(payload) > 0 {
+			m := map[string]any{}
+			if err := json.Unmarshal(payload, &m); err == nil {
+				r.Payload = m
+			} else {
+				r.Payload = map[string]any{}
+			}
+		} else {
+			r.Payload = map[string]any{}
+		}
+		if nodeID != nil {
+			out[*nodeID] = r
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ---- cursor encoding ----
 
 type eventCursor struct {

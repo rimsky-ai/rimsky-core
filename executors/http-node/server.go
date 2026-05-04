@@ -78,6 +78,10 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	dispatchID := req.GetDispatchId()
 	stepID := "http-node:" + req.GetNodeType()
 	if s.obs != nil && dispatchID != "" {
+		// Register the dispatch with the in-memory ledger so subsequent
+		// AppendEvent / MarkTerminal calls succeed; forged dispatch
+		// IDs (issue 13) cannot create ledger records.
+		s.obs.RegisterDispatch(dispatchID)
 		s.obs.AppendEvent(dispatchID, MakeEvent(
 			"step-"+stepID, "", "step_started",
 			"http-node dispatch started",

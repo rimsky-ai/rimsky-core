@@ -19,11 +19,23 @@ import (
 // deletes traces older than this.
 const retentionSeconds uint64 = 3600
 
+// defaultStreamIdleTimeout is the spec §2.5 close-idle default for
+// StreamTrace listeners with no recent event traffic.
+const defaultStreamIdleTimeout = 5 * time.Minute
+
 // traceRecord holds the events for one dispatch plus terminal state.
+//
+// Note on @blessed-invariant 11: that invariant scopes Rimsky core's
+// behavior toward the userdata field on the wire. Executor-supplied
+// trace `attributes` are produced by the executor itself and are
+// fully introspectable by the executor — invariant 11 does NOT
+// restrict an executor's freedom to inspect, structure, or expose
+// its own trace data.
 type traceRecord struct {
 	events     []*genv1.TraceEvent
 	terminal   bool
 	terminalAt time.Time
+	registered bool // true when a dispatch hook has formally claimed this id
 }
 
 // subscriber represents one live StreamTrace listener for a dispatch.
@@ -47,28 +59,62 @@ type subscriber struct {
 type ObservabilityServer struct {
 	genv1.UnimplementedExecutorObservabilityServer
 
-	mu            sync.RWMutex
-	traces        map[string]*traceRecord
-	subs          map[string]map[*subscriber]struct{}
-	httpBridgeURL string
+	mu          sync.RWMutex
+	traces      map[string]*traceRecord
+	subs        map[string]map[*subscriber]struct{}
+	idleTimeout time.Duration
+	// httpBridgeURL is set once at startup before the gRPC server
+	// accepts traffic; using sync.Once makes that contract loud.
+	httpBridgeURLOnce sync.Once
+	httpBridgeURL     string
 }
 
 // NewObservabilityServer constructs an empty in-memory trace store
 // guarded by sync.RWMutex.
 func NewObservabilityServer() *ObservabilityServer {
 	return &ObservabilityServer{
-		traces: map[string]*traceRecord{},
-		subs:   map[string]map[*subscriber]struct{}{},
+		traces:      map[string]*traceRecord{},
+		subs:        map[string]map[*subscriber]struct{}{},
+		idleTimeout: defaultStreamIdleTimeout,
 	}
 }
 
 // SetHTTPBridgeURL records the URL the executor advertises in
-// ObservabilityCapabilities.http_bridge_url. Empty value disables the
-// hint.
+// ObservabilityCapabilities.http_bridge_url. Set-once at startup;
+// subsequent calls are ignored. Empty value disables the hint.
 func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
+	s.httpBridgeURLOnce.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.httpBridgeURL = u
+	})
+}
+
+// SetIdleTimeout overrides the default StreamTrace idle close timeout.
+// Pass zero to disable the timeout. Must be set before any stream
+// subscribes (set-once-at-startup).
+func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.httpBridgeURL = u
+	s.idleTimeout = d
+}
+
+// RegisterDispatch is the explicit dispatch-hook entry point. Creates
+// the per-dispatch trace record so subsequent AppendEvent / MarkTerminal
+// calls succeed without auto-creating records for forged ids.
+//
+// Per issue 13: AppendEvent and MarkTerminal now require the dispatch
+// to be registered, so a fabricated dispatch_id can no longer fill the
+// in-memory ledger.
+func (s *ObservabilityServer) RegisterDispatch(dispatchID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.traces[dispatchID]
+	if !ok {
+		rec = &traceRecord{}
+		s.traces[dispatchID] = rec
+	}
+	rec.registered = true
 }
 
 // GetCapabilities reports the http-node observability surface:
@@ -131,6 +177,9 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 	}
 	defer s.unsubscribe(dispatchID, sub)
 	cursor := 0
+	s.mu.RLock()
+	idle := s.idleTimeout
+	s.mu.RUnlock()
 	for {
 		events, terminal := s.drainFrom(dispatchID, cursor)
 		cursor += len(events)
@@ -141,6 +190,12 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 		}
 		if terminal {
 			return stream.Send(traceCompleteEvent())
+		}
+		var idleC <-chan time.Time
+		if idle > 0 {
+			t := time.NewTimer(idle)
+			idleC = t.C
+			defer t.Stop()
 		}
 		select {
 		case <-stream.Context().Done():
@@ -154,6 +209,10 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 					return err
 				}
 			}
+			return stream.Send(traceCompleteEvent())
+		case <-idleC:
+			// Spec §2.5: close idle streams cleanly with a final
+			// keepalive marker, not an error.
 			return stream.Send(traceCompleteEvent())
 		case <-sub.wake:
 			// Loop back and drain.
@@ -223,13 +282,16 @@ func (s *ObservabilityServer) drainFrom(dispatchID string, cursor int) ([]*genv1
 // are available. The wake channel is capacity-1, so a non-blocking
 // send is correct — multiple pending wakes coalesce into one drain
 // pass on the receiver side.
+//
+// Returns silently when the dispatch has not been formally registered
+// via RegisterDispatch: forged or unknown dispatch IDs cannot fill the
+// in-memory ledger via the executor's bridge surface.
 func (s *ObservabilityServer) AppendEvent(dispatchID string, ev *genv1.TraceEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.traces[dispatchID]
-	if !ok {
-		rec = &traceRecord{}
-		s.traces[dispatchID] = rec
+	if !ok || !rec.registered {
+		return
 	}
 	rec.events = append(rec.events, ev)
 	for sub := range s.subs[dispatchID] {
@@ -242,13 +304,23 @@ func (s *ObservabilityServer) AppendEvent(dispatchID string, ev *genv1.TraceEven
 
 // MarkTerminal stamps a dispatch as terminal and signals every live
 // subscriber. Subscribers will drain the final tail of events out of
-// rec.events and then emit trace_complete.
+// rec.events and then emit trace_complete. Returns silently for
+// unregistered dispatch IDs (no auto-creation; see issue 13).
+//
+// terminalAt is captured exactly once on the first MarkTerminal call;
+// subsequent calls are no-ops, so trace_complete timestamps stay
+// stable across follow-on GetTrace requests.
 func (s *ObservabilityServer) MarkTerminal(dispatchID string) {
 	s.mu.Lock()
 	rec, ok := s.traces[dispatchID]
-	if !ok {
-		rec = &traceRecord{}
-		s.traces[dispatchID] = rec
+	if !ok || !rec.registered {
+		s.mu.Unlock()
+		return
+	}
+	if rec.terminal {
+		// Already terminal — keep the original terminalAt; no-op.
+		s.mu.Unlock()
+		return
 	}
 	rec.terminal = true
 	rec.terminalAt = time.Now()

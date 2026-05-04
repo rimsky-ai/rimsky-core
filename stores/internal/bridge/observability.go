@@ -143,7 +143,8 @@ func obsAdminHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
 
 // handleClaimStreamHTTP serves the SSE form of StreamClaim. The bridge
 // calls the gRPC server's StreamClaim with a synthetic stream that
-// writes events out as `data:` SSE frames.
+// writes events out as `data:` SSE frames. Per spec §3.5 the bridge
+// honors the underlying server's idle close behavior.
 func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.StoreObservabilityServer, claimID string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -151,17 +152,21 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Sto
 	flusher, _ := w.(http.Flusher)
 	stream := &sseClaimStream{w: w, ctx: r.Context(), flusher: flusher}
 	if err := srv.StreamClaim(&genv1.StreamClaimRequest{ClaimId: claimID}, stream); err != nil {
-		// best-effort: write a final error frame
-		fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error())
-		if flusher != nil {
-			flusher.Flush()
+		// Best-effort final error frame; ignore the write error since
+		// the client is already gone if Send failed.
+		if _, werr := fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error()); werr == nil {
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 }
 
 // sseClaimStream adapts an http.ResponseWriter to the
 // StoreObservability_StreamClaimServer interface so we can call the
-// gRPC server in-process.
+// gRPC server in-process. Send returns the wrapped fmt.Fprintf error
+// so disconnected clients propagate the error up to the SSE handler
+// loop and exit cleanly.
 type sseClaimStream struct {
 	w       http.ResponseWriter
 	ctx     context.Context
@@ -174,7 +179,7 @@ func (s *sseClaimStream) Send(ev *genv1.ClaimEvent) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(s.w, "data: %s\n\n", b); err != nil {
-		return err
+		return fmt.Errorf("sseClaimStream.Send: %w", err)
 	}
 	if s.flusher != nil {
 		s.flusher.Flush()

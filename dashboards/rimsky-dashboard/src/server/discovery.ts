@@ -1,7 +1,10 @@
 import { config } from './config.js';
 
 // PeerEndpoint mirrors the per-peer fields the dashboard server cares
-// about — name plus a derived HTTP base URL.
+// about — name plus a derived HTTP base URL. observabilityHttpUrl is
+// "" when the peer didn't advertise an http_bridge_url; callers MUST
+// treat that as "no HTTP proxy available" and 503 with a clear message
+// (issue 21) rather than silently dialling the gRPC listener.
 type PeerEndpoint = { name: string; observabilityHttpUrl: string };
 
 let executors = new Map<string, PeerEndpoint>();
@@ -11,16 +14,58 @@ const TTL = 30_000;
 
 export async function getExecutorEndpoint(name: string): Promise<PeerEndpoint | null> {
   await refreshIfStale();
-  if (executors.has(name)) return executors.get(name)!;
+  if (executors.has(name)) {
+    const ep = executors.get(name)!;
+    return ep.observabilityHttpUrl ? ep : null;
+  }
   await refresh();
-  return executors.get(name) ?? null;
+  const ep = executors.get(name);
+  return ep && ep.observabilityHttpUrl ? ep : null;
 }
 
 export async function getStoreEndpoint(name: string): Promise<PeerEndpoint | null> {
   await refreshIfStale();
-  if (stores.has(name)) return stores.get(name)!;
+  if (stores.has(name)) {
+    const ep = stores.get(name)!;
+    return ep.observabilityHttpUrl ? ep : null;
+  }
   await refresh();
-  return stores.get(name) ?? null;
+  const ep = stores.get(name);
+  return ep && ep.observabilityHttpUrl ? ep : null;
+}
+
+// peerHasBridge returns true when the peer is known but lacks an
+// http_bridge_url. The proxy uses this to choose between 404 (unknown)
+// and 503 (known but no bridge — the dashboard can't proxy to it).
+export async function peerHasNoBridge(kind: 'executor' | 'store', name: string): Promise<boolean> {
+  await refreshIfStale();
+  const map = kind === 'executor' ? executors : stores;
+  const ep = map.get(name);
+  return Boolean(ep && !ep.observabilityHttpUrl);
+}
+
+// invalidate clears the cache so the next lookup re-fetches. Used by
+// the admin refresh-discovery endpoint (issue 25).
+export function invalidateDiscoveryCache(): void {
+  lastRefresh = 0;
+}
+
+// status reports the current cache age so the dashboard can render a
+// "discovery is stale" banner / refresh button (issue 31).
+export function discoveryCacheStatus(): {
+  last_refresh_ms: number | null;
+  age_ms: number | null;
+  ttl_ms: number;
+  executor_count: number;
+  store_count: number;
+} {
+  return {
+    last_refresh_ms: lastRefresh > 0 ? lastRefresh : null,
+    age_ms: lastRefresh > 0 ? Date.now() - lastRefresh : null,
+    ttl_ms: TTL,
+    executor_count: executors.size,
+    store_count: stores.size,
+  };
 }
 
 async function refreshIfStale() {
@@ -52,12 +97,12 @@ async function refresh() {
   }
 }
 
+// deriveObsUrl reads the peer's advertised http_bridge_url. Returns
+// "" when none is set — callers translate that to a 503 with a clear
+// "peer X does not expose an HTTP bridge" message (issue 21). The old
+// fallback-to-dispatch-endpoint behaviour silently routed proxy traffic
+// to a gRPC listener and produced confusing failures.
 function deriveObsUrl(peer: Record<string, any>): string {
-  // Preferred: peer's advertised HTTP bridge URL from the observability
-  // capabilities handshake. Falls back to the operator-declared
-  // observability_endpoint or dispatch endpoint when the peer didn't
-  // declare an HTTP bridge — but in that case the dashboard's HTTP
-  // proxy can't dial a gRPC listener and routes will fail.
   const httpBridge =
     typeof peer.http_bridge_url === 'string' ? peer.http_bridge_url : '';
   if (httpBridge) {
@@ -69,7 +114,5 @@ function deriveObsUrl(peer: Record<string, any>): string {
       ? caps.http_bridge_url
       : `http://${caps.http_bridge_url}`;
   }
-  const ep = peer.observability_endpoint || peer.endpoint;
-  if (!ep || typeof ep !== 'string') return '';
-  return ep.startsWith('http') ? ep : `http://${ep}`;
+  return '';
 }

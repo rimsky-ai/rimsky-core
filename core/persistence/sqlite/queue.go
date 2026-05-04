@@ -486,6 +486,83 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	return n, nil
 }
 
+// GetByID returns the live dispatch row for id, or (nil, nil) when no
+// such row exists. Mirrors the postgres impl for the observability
+// dispatch-detail handler.
+func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error) {
+	row := q.db.QueryRowContext(ctx,
+		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
+		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		   FROM rimsky_dispatch d
+		  WHERE d.id = ?`, id.String(),
+	)
+	var (
+		idStr             string
+		nodeIDStr         string
+		executorName      sql.NullString
+		requiredStoresStr string
+		enqueuedAtStr     string
+		claimedBy         sql.NullString
+		claimedAtStr      sql.NullString
+		lastHeartbeatStr  sql.NullString
+		frameIDStr        string
+	)
+	if err := row.Scan(
+		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
+		&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var r shared.DispatchRow
+	var err error
+	if r.ID, err = uuid.Parse(idStr); err != nil {
+		return nil, err
+	}
+	if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
+		return nil, err
+	}
+	if executorName.Valid {
+		v := executorName.String
+		r.ExecutorName = &v
+	}
+	stores, err := unmarshalStringArray(requiredStoresStr)
+	if err != nil {
+		return nil, err
+	}
+	r.RequiredStores = stores
+	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
+		return nil, err
+	}
+	if claimedBy.Valid {
+		v := claimedBy.String
+		r.ClaimedBy = &v
+	}
+	if claimedAtStr.Valid {
+		t, err := parseTime(claimedAtStr.String)
+		if err != nil {
+			return nil, err
+		}
+		r.ClaimedAt = &t
+	}
+	if lastHeartbeatStr.Valid {
+		t, err := parseTime(lastHeartbeatStr.String)
+		if err != nil {
+			return nil, err
+		}
+		r.LastHeartbeatAt = &t
+	}
+	if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
+		return nil, err
+	}
+	if r.RequiredStores == nil {
+		r.RequiredStores = []string{}
+	}
+	return &r, nil
+}
+
 func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClause string, executor any, instanceID any) {
 	switch filter.State {
 	case "pending":

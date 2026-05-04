@@ -168,4 +168,10 @@ type Queue interface {
 
 	// CountLive counts currently-live dispatch rows matching filter.
 	CountLive(ctx context.Context, filter DispatchListFilter) (int, error)
+
+	// GetByID returns the live dispatch row for id, or nil when no such
+	// row exists (e.g. terminal-deleted). Used by the observability
+	// /v1/observability/dispatches/{id} endpoint to avoid a full O(N)
+	// ListLive scan.
+	GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error)
 }
