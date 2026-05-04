@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 )
 
 // ItemsTableIdentRegex is the strict identifier shape every layer must
@@ -93,7 +93,7 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("postgres store: open pool: %w", err)
 	}
 	if cfg.WriteSemantics == "" {
-		cfg.WriteSemantics = corestore.WriteSemanticsDirect
+		cfg.WriteSemantics = corestore.WriteSemanticsStagedAsync
 	}
 	for selector, pp := range cfg.PickPolicies {
 		if !validIdent(pp.ItemsTable) {
@@ -137,8 +137,17 @@ func (s *Store) Close() {
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 // Capabilities reports the store's advertised capability struct.
+//
+// The postgres store declares a singleton envelope containing its
+// configured write_semantics. Items-table queue semantics are typically
+// staged_async (writes go to a working table, commit publishes the
+// effect, abandon discards it without blocking concurrent reads). A
+// scoped postgres store running in sync mode declares
+// [sync] instead — operator's call.
 func (s *Store) Capabilities() corestore.Capabilities {
-	return corestore.Capabilities{WriteSemantics: s.writeSemantics}
+	return corestore.Capabilities{
+		WriteSemanticsEnvelope: []corestore.WriteSemantics{s.writeSemantics},
+	}
 }
 
 // PickPolicies returns a snapshot of every configured policy. Used by
@@ -153,8 +162,8 @@ func (s *Store) PickPolicies() map[string]PickPolicy {
 
 // Open performs the store's claim acquisition. For pick-policy
 // selectors, runs FOR UPDATE SKIP LOCKED on the items table. For
-// regional selectors (no pick policy match), echoes the selector as
-// address + region.
+// scoped selectors (no pick policy match), echoes the selector as
+// address + scope.
 //
 // Runs inside the store's own pgx tx; rimsky's tx is decoupled.
 // Returns OpenOutcome{Available: false} when a configured pick policy
@@ -164,7 +173,7 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.O
 	if pp, ok := s.pickPolicies[selector]; ok {
 		out, err := s.openPickPolicy(ctx, claimID, pp)
 		if err == nil && out.Available {
-			s.ledger.RecordOpen(claimID, selector, out.Result.Address, out.Result.Region)
+			s.ledger.RecordOpen(claimID, selector, out.Result.Address, out.Result.Scope)
 		}
 		return out, err
 	}
@@ -176,8 +185,9 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.O
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
-			Address: json.RawMessage(addr),
-			Region:  json.RawMessage(addr),
+			Address:                json.RawMessage(addr),
+			Scope:                  json.RawMessage(addr),
+			RealizedWriteSemantics: s.writeSemantics,
 		},
 	}, nil
 }
@@ -219,14 +229,15 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 	}
 
 	addrBytes, _ := json.Marshal(itemID)
-	regionBytes, _ := json.Marshal(itemID)
+	scopeBytes, _ := json.Marshal(itemID)
 
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
-			Address: json.RawMessage(addrBytes),
-			Payload: rawJSON,
-			Region:  json.RawMessage(regionBytes),
+			Address:                json.RawMessage(addrBytes),
+			Payload:                rawJSON,
+			Scope:                  json.RawMessage(scopeBytes),
+			RealizedWriteSemantics: s.writeSemantics,
 		},
 	}, nil
 }

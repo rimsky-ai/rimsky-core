@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 )
 
 // parseFromRight splits an in-progress sentinel filename into
@@ -197,7 +197,7 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corest
 		if err != nil {
 			return corestore.OpenOutcome{}, err
 		}
-		region, err := json.Marshal(subPath)
+		scope, err := json.Marshal(subPath)
 		if err != nil {
 			return corestore.OpenOutcome{}, err
 		}
@@ -208,13 +208,14 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corest
 		s.mu.Lock()
 		s.claims[claimID] = absPath
 		s.mu.Unlock()
-		s.ledger.RecordOpen(claimID, selector, addr, region)
+		s.ledger.RecordOpen(claimID, selector, addr, scope)
 		return corestore.OpenOutcome{
 			Available: true,
 			Result: corestore.ClaimResult{
-				Address: json.RawMessage(addr),
-				Payload: json.RawMessage(payload),
-				Region:  json.RawMessage(region),
+				Address:                json.RawMessage(addr),
+				Payload:                json.RawMessage(payload),
+				Scope:                  json.RawMessage(scope),
+				RealizedWriteSemantics: corestore.WriteSemanticsSync,
 			},
 		}, nil
 	}

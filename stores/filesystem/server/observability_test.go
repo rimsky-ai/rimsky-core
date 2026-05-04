@@ -8,7 +8,7 @@ import (
 
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 func TestObservability_GetCapabilities(t *testing.T) {

@@ -11,15 +11,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-scheduler   ./core/cmd/rimsky-scheduler && \
+      -o /out/rimsky-scheduler   ./cmd/rimsky-scheduler && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-supervisor  ./core/cmd/rimsky-supervisor && \
+      -o /out/rimsky-supervisor  ./cmd/rimsky-supervisor && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-control-api ./core/cmd/rimsky-control-api && \
+      -o /out/rimsky-control-api ./cmd/rimsky-control-api && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-migrate     ./core/cmd/rimsky-migrate && \
+      -o /out/rimsky-migrate     ./cmd/rimsky-migrate && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-entrypoint  ./core/cmd/rimsky-entrypoint
+      -o /out/rimsky-entrypoint  ./cmd/rimsky-entrypoint
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rimsky/all"

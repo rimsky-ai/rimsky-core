@@ -4,7 +4,7 @@
 // node.NodeStoreRef.{Write, Read} — both removed. Under v3 region
 // conflict is byte-equal (Store.RegionsConflict / Store.UnmarshalRegion
 // retired per spec §11.1, §7.7); coexistence is governed by
-// store.ModeCoexists, the store's WriteSemantics, and the
+// locks.ModeCoexists, the store's WriteSemantics, and the
 // claim's intent. Tests that recreate the prior coverage
 // (overlapping write blocks, disjoint regions concurrent, read+write
 // concurrent only on staged_async) drive the loopback gRPC fixture

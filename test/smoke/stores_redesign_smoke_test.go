@@ -445,17 +445,17 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			s.ItemID, s.State, ct, ca)
 
 		// Per-item: every rimsky_claim_holders row whose lock-holder
-		// row points at this item via region_data. Under v2 the
+		// row points at this item via scope_data. Under v2 the
 		// claim-holders rows key on lock_holder_id (FK to
 		// rimsky_lock_holders); we join both so the dump shows the
 		// full ledger for items still held by some node's claim.
 		hrows, herr := stack.Pool.Query(ctx,
 			`SELECT ch.id, ch.lock_holder_id, ch.holder_node_id,
 			        ch.state, ch.completed_at,
-			        lh.store_name, lh.region_data
+			        lh.store_name, lh.scope_data
 			   FROM rimsky_claim_holders ch
 			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
-			  WHERE lh.region_data::text = $1
+			  WHERE lh.scope_data::text = $1
 			  ORDER BY ch.id`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
@@ -473,16 +473,16 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 				state        string
 				completedAt  *time.Time
 				storeName    string
-				regionData   []byte
+				scopeData    []byte
 			)
 			_ = hrows.Scan(&hid, &lockHolderID, &holderNodeID,
-				&state, &completedAt, &storeName, &regionData)
+				&state, &completedAt, &storeName, &scopeData)
 			cAt := "<nil>"
 			if completedAt != nil {
 				cAt = completedAt.Format(time.RFC3339Nano)
 			}
-			t.Logf("  claim_holder id=%s lock_holder=%s store=%s holder_node=%s state=%s completed_at=%s region=%s",
-				hid, lockHolderID, storeName, holderNodeID, state, cAt, string(regionData))
+			t.Logf("  claim_holder id=%s lock_holder=%s store=%s holder_node=%s state=%s completed_at=%s scope=%s",
+				hid, lockHolderID, storeName, holderNodeID, state, cAt, string(scopeData))
 		}
 		hrows.Close()
 		if !anyHolders {
@@ -496,7 +496,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			   FROM rimsky_dispatch d
 			   JOIN rimsky_claim_holders ch ON ch.holder_node_id = d.node_id
 			   JOIN rimsky_lock_holders lh ON lh.id = ch.lock_holder_id
-			  WHERE lh.region_data::text = $1`,
+			  WHERE lh.scope_data::text = $1`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
 		if derr != nil {

@@ -1,5 +1,5 @@
 // Package server adapts the store-internal postgres Store to the
-// rimsky StoreService gRPC + HTTP+JSON bridge.
+// rimsky ClaimProducer + LifecycleSubscriber gRPC + HTTP+JSON bridge.
 package server
 
 import (
@@ -12,11 +12,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/stores/internal/bridge"
+	"github.com/fallguy/rimsky/stores/postgres/lifecycle"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 // gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight
@@ -32,6 +33,9 @@ type Config struct {
 	// HTTPBridgeURL is the externally-reachable HTTP base URL for
 	// dashboard clients. Surfaced via StoreObservabilityCapabilities.
 	HTTPBridgeURL string
+	// EnableLifecycle, when true, registers the LifecycleSubscriber
+	// service alongside ClaimProducer.
+	EnableLifecycle bool
 }
 
 // Run starts the gRPC + HTTP + admin listeners and the store's
@@ -48,7 +52,10 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	srv := &Server{store: st}
 	grpcSrv := grpc.NewServer()
-	genv1.RegisterStoreServiceServer(grpcSrv, srv)
+	genv1.RegisterClaimProducerServer(grpcSrv, srv)
+	if cfg.EnableLifecycle {
+		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
+	}
 	obsSrv := srv.RegisterObservability(grpcSrv)
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
 	go func() {
@@ -59,6 +66,9 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 
 	httpMux := http.NewServeMux()
 	bridge.Mount(httpMux, srv)
+	if cfg.EnableLifecycle {
+		bridge.MountLifecycle(httpMux, lifecycle.NewServer())
+	}
 	bridge.MountObservability(httpMux, obsSrv)
 	httpSrv := &http.Server{Handler: httpMux}
 	go func() {
@@ -80,10 +90,6 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	go st.RunSweep(ctx, cfg.SweepInterval)
 
 	<-ctx.Done()
-	// Bound GracefulStop with a timer so a hung RPC doesn't keep the
-	// store's pool open indefinitely. After the budget elapses,
-	// drop to the hard Stop. This also lets defer st.Close() at the
-	// end of Run actually run in bounded time.
 	stopTimer := time.AfterFunc(gracefulStopBudget, grpcSrv.Stop)
 	grpcSrv.GracefulStop()
 	stopTimer.Stop()
@@ -95,23 +101,25 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	return nil
 }
 
-// Server implements genv1.StoreServiceServer.
+// Server implements genv1.ClaimProducerServer.
 type Server struct {
-	genv1.UnimplementedStoreServiceServer
+	genv1.UnimplementedClaimProducerServer
 	store *pgsstore.Store
 }
 
 // Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
-	return &genv1.CapabilitiesResponse{
-		Capabilities: &genv1.CapabilityStruct{WriteSemantics: string(c.WriteSemantics)},
-	}, nil
+	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsEnvelope))
+	for _, ws := range c.WriteSemanticsEnvelope {
+		out = append(out, bridge.WriteSemanticsToProto(string(ws)))
+	}
+	return &genv1.CapabilitiesResponse{WriteSemanticsEnvelope: out}, nil
 }
 
-// Open delegates. Validates `intent` against the wire schema (per
-// spec §4.2: only "r" or "rw") before dispatching, mirroring the HTTP
-// bridge's gate so direct-gRPC callers can't bypass the check.
+// Open delegates. Validates `intent` against the wire schema (only
+// "r" or "rw") before dispatching, mirroring the HTTP bridge's gate
+// so direct-gRPC callers can't bypass the check.
 func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	if intent := req.GetIntent(); intent != "r" && intent != "rw" {
 		return nil, fmt.Errorf("postgres.Open: intent must be \"r\" or \"rw\", got %q", intent)
@@ -127,16 +135,17 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}
 	return &genv1.OpenResponse{
 		Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
-			Address: outcome.Result.Address,
-			Payload: outcome.Result.Payload,
-			Region:  outcome.Result.Region,
+			Address:                outcome.Result.Address,
+			Payload:                outcome.Result.Payload,
+			Scope:                  outcome.Result.Scope,
+			RealizedWriteSemantics: bridge.WriteSemanticsToProto(string(outcome.Result.RealizedWriteSemantics)),
 		}},
 	}, nil
 }
 
 // Commit delegates.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
-	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetRegion(), req.GetAddress()); err != nil {
+	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.CommitResponse{}, nil
@@ -144,7 +153,7 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 
 // Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
-	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetRegion(), req.GetAddress()); err != nil {
+	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.AbandonResponse{}, nil
@@ -152,36 +161,8 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 
 // Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
-	if err := s.store.Release(ctx, req.GetClaimId(), req.GetRegion(), req.GetAddress()); err != nil {
+	if err := s.store.Release(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.ReleaseResponse{}, nil
-}
-
-// Lifecycle events: the postgres store does not maintain template or
-// instance metadata; all six are no-ops returning success. Per
-// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md §4.3.
-
-func (s *Server) OnTemplateRegistered(_ context.Context, _ *genv1.OnTemplateRegisteredRequest) (*genv1.OnTemplateRegisteredResponse, error) {
-	return &genv1.OnTemplateRegisteredResponse{}, nil
-}
-
-func (s *Server) OnTemplateDeployed(_ context.Context, _ *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
-	return &genv1.OnTemplateDeployedResponse{}, nil
-}
-
-func (s *Server) OnTemplateUndeployed(_ context.Context, _ *genv1.OnTemplateUndeployedRequest) (*genv1.OnTemplateUndeployedResponse, error) {
-	return &genv1.OnTemplateUndeployedResponse{}, nil
-}
-
-func (s *Server) OnTemplateDeregistered(_ context.Context, _ *genv1.OnTemplateDeregisteredRequest) (*genv1.OnTemplateDeregisteredResponse, error) {
-	return &genv1.OnTemplateDeregisteredResponse{}, nil
-}
-
-func (s *Server) OnInstanceCreated(_ context.Context, _ *genv1.OnInstanceCreatedRequest) (*genv1.OnInstanceCreatedResponse, error) {
-	return &genv1.OnInstanceCreatedResponse{}, nil
-}
-
-func (s *Server) OnInstanceTerminated(_ context.Context, _ *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
-	return &genv1.OnInstanceTerminatedResponse{}, nil
 }

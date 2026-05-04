@@ -11,7 +11,7 @@
 // `action_taken=dispatch_impossible` shape is gone — the redesign routes
 // every error class (including unresolved_executor) through the same
 // policy-chain path (§7.3 / §11.6). The test runs the harness with
-// NoSupervisor and drives `supervisor.RunNode` directly so the dispatch
+// NoSupervisor and drives `integration.RunNode` directly so the dispatch
 // row's executor_name lives in the supervisor's accept-list while the
 // resolver has no entry for it (the §7.3 step 4a resolver-miss branch).
 package scenarios
@@ -22,13 +22,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/persistence"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/supervisor"
+	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 func TestUnresolvedExecutor(t *testing.T) {
@@ -82,12 +82,12 @@ func TestUnresolvedExecutor(t *testing.T) {
 	// Resolver has no entry for "does_not_exist_unknown" → §7.3 step 4a
 	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
 	// admits the candidate.
-	args := supervisor.RunArgs{
+	args := integration.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		LockHolders:       h.Persist.LockHolders(),
-		Coordinator:       h.Driver.Coordinator(),
-		StoreRegistry:     store.NewRegistry(),
+		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
+		StoreRegistry:     locks.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		SupervisorID:      "scenario-runner",
@@ -97,7 +97,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
 
-	out, err := supervisor.RunNode(h.Ctx, args, nil)
+	out, err := integration.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
 

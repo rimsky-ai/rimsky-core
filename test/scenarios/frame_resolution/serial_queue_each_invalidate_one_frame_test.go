@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
 )
 
 func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {

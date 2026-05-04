@@ -152,7 +152,7 @@ func TestOpenPickPolicy_Basic(t *testing.T) {
 	}
 	var addr, region string
 	must(t, json.Unmarshal(outcome.Result.Address, &addr))
-	must(t, json.Unmarshal(outcome.Result.Region, &region))
+	must(t, json.Unmarshal(outcome.Result.Scope, &region))
 	wantAddr := filepath.Join(root, sub, "alpha")
 	wantRegion := filepath.Join(sub, "alpha")
 	if addr != wantAddr {
@@ -200,9 +200,9 @@ func TestOpenSelectorDispatch(t *testing.T) {
 		t.Fatal("regional selector should be Available")
 	}
 	// Region bytes must be byte-equal.
-	if string(o1.Result.Region) != string(o2.Result.Region) {
+	if string(o1.Result.Scope) != string(o2.Result.Scope) {
 		t.Errorf("pick-policy region (%s) != regional region (%s) for same logical folder",
-			o1.Result.Region, o2.Result.Region)
+			o1.Result.Scope, o2.Result.Scope)
 	}
 }
 
@@ -273,7 +273,7 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	}
 	var first struct{ Folder string }
 	must(t, json.Unmarshal(o.Result.Payload, &first))
-	must(t, st.Commit(context.Background(), "c-1", o.Result.Region, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c-1", o.Result.Scope, o.Result.Address))
 	// After release_to_back, the first folder sits at the tail; the
 	// other folder must be picked next.
 	o2, _ := st.Open(context.Background(), "c-2", "@r")
@@ -291,7 +291,7 @@ func TestCommit_Delete_RemovesFolder(t *testing.T) {
 	if !o.Available {
 		t.Fatal("pick should be Available")
 	}
-	must(t, st.Commit(context.Background(), "c", o.Result.Region, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("folder should be removed after delete commit; stat err = %v", err)
 	}
@@ -324,24 +324,24 @@ func TestAbandon_ReleaseToHead(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
 	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))
 	o1, _ := st.Open(context.Background(), "c1", "@r")
-	must(t, st.Commit(context.Background(), "c1", o1.Result.Region, o1.Result.Address))
+	must(t, st.Commit(context.Background(), "c1", o1.Result.Scope, o1.Result.Address))
 	// Sleep briefly so folder 2's release_to_back mtime is strictly
 	// later than folder 1's; mtime resolution on some filesystems is
 	// only 1ms (or coarser) so identical timestamps would otherwise
 	// fall through to lexical tiebreaker.
 	time.Sleep(10 * time.Millisecond)
 	o2, _ := st.Open(context.Background(), "c2", "@r")
-	must(t, st.Commit(context.Background(), "c2", o2.Result.Region, o2.Result.Address))
+	must(t, st.Commit(context.Background(), "c2", o2.Result.Scope, o2.Result.Address))
 	time.Sleep(10 * time.Millisecond)
 	o3, _ := st.Open(context.Background(), "c3", "@r")
-	must(t, st.Abandon(context.Background(), "c3", o3.Result.Region, o3.Result.Address))
+	must(t, st.Abandon(context.Background(), "c3", o3.Result.Scope, o3.Result.Address))
 	// Without release_to_head, folder 3's claim-time mtime is newer
 	// than folder 1's commit-time mtime, so folder 3 would sort last.
 	// Only release_to_head's epoch-stamp puts it at the head.
 	o4, _ := st.Open(context.Background(), "c4", "@r")
-	if string(o4.Result.Region) != string(o3.Result.Region) {
+	if string(o4.Result.Scope) != string(o3.Result.Scope) {
 		t.Errorf("expected re-pick of head-bumped folder 3; got region %s vs %s",
-			o4.Result.Region, o3.Result.Region)
+			o4.Result.Scope, o3.Result.Scope)
 	}
 }
 
@@ -349,9 +349,9 @@ func TestCommit_Idempotent(t *testing.T) {
 	st, root, sub := newRingStore(t, "release_to_back", "release_to_back")
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	o, _ := st.Open(context.Background(), "c", "@r")
-	must(t, st.Commit(context.Background(), "c", o.Result.Region, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
 	// Second commit must be a no-op (no error).
-	must(t, st.Commit(context.Background(), "c", o.Result.Region, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
 }
 
 func TestSweep_ReclaimsExpired(t *testing.T) {

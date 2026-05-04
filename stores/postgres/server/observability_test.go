@@ -8,7 +8,7 @@ import (
 
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 // newLedgerOnlyServer builds an ObservabilityServer whose underlying

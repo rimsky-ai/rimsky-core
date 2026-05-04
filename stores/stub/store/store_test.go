@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 )
 
 func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp string) *Store {
 	t.Helper()
 	cfg := Config{
-		Capabilities: corestore.Capabilities{WriteSemantics: corestore.WriteSemanticsDirect},
+		Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}},
 		PickPolicies: map[string]PickPolicyConfig{
 			selector: {
 				OnCommitDefault: onCommit,
@@ -45,8 +45,8 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 	if !o2.Available {
 		t.Fatalf("Open c2 should be Available; got Unavailable")
 	}
-	if string(o1.Result.Region) == string(o2.Result.Region) {
-		t.Fatalf("different items should have different regions; got %s twice", o1.Result.Region)
+	if string(o1.Result.Scope) == string(o2.Result.Scope) {
+		t.Fatalf("different items should have different regions; got %s twice", o1.Result.Scope)
 	}
 	// Third Open should signal Unavailable (queue drained).
 	o3, err := st.Open(ctx, "c3", "@queue")
@@ -70,7 +70,7 @@ func TestApplyPickActionDelete(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, "delete", "delete")
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
-	if err := st.Commit(ctx, "c1", o.Result.Region, o.Result.Address); err != nil {
+	if err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if got := len(st.InFlight("@queue")); got != 0 {
@@ -90,7 +90,7 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 	ctx := context.Background()
 
 	o, _ := st.Open(ctx, "c1", "@queue")
-	if err := st.Commit(ctx, "c1", o.Result.Region, o.Result.Address); err != nil {
+	if err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if got := st.QueueLen("@queue"); got != 2 {
@@ -112,16 +112,16 @@ func TestApplyPickActionReleaseToHead(t *testing.T) {
 	o, _ := st.Open(ctx, "c1", "@queue")
 	// Decode the picked item id so we can verify it lands at the head.
 	var pickedID string
-	_ = json.Unmarshal(o.Result.Region, &pickedID)
+	_ = json.Unmarshal(o.Result.Scope, &pickedID)
 
-	if err := st.Abandon(ctx, "c1", o.Result.Region, o.Result.Address); err != nil {
+	if err := st.Abandon(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
 	// After Abandon with release_to_head default, the next Open should
 	// receive the same item back.
 	o2, _ := st.Open(ctx, "c2", "@queue")
 	var nextID string
-	_ = json.Unmarshal(o2.Result.Region, &nextID)
+	_ = json.Unmarshal(o2.Result.Scope, &nextID)
 	if pickedID == "" || pickedID != nextID {
 		t.Fatalf("release_to_head should return same item to head; got picked=%q, next=%q", pickedID, nextID)
 	}
@@ -133,14 +133,14 @@ func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, "what-is-this", "what-is-this")
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
-	err := st.Commit(ctx, "c1", o.Result.Region, o.Result.Address)
+	err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address)
 	if err == nil {
 		t.Fatal("expected error for unknown configured action; got nil")
 	}
 }
 
 func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
-	st := New(Config{Capabilities: corestore.Capabilities{WriteSemantics: corestore.WriteSemanticsDirect}})
+	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
 	ctx := context.Background()
 	o, err := st.Open(ctx, "c1", "concrete/path")
 	if err != nil {
@@ -151,7 +151,7 @@ func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
 	}
 	var addr, region string
 	_ = json.Unmarshal(o.Result.Address, &addr)
-	_ = json.Unmarshal(o.Result.Region, &region)
+	_ = json.Unmarshal(o.Result.Scope, &region)
 	if addr != "concrete/path" || region != "concrete/path" {
 		t.Fatalf("regional selector should echo; got addr=%q region=%q", addr, region)
 	}
@@ -179,7 +179,7 @@ func TestSeedPickPolicyItemUnknownSelector(t *testing.T) {
 }
 
 func TestCallsRecorded(t *testing.T) {
-	st := New(Config{Capabilities: corestore.Capabilities{WriteSemantics: corestore.WriteSemanticsDirect}})
+	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
 	ctx := context.Background()
 	_, _ = st.Open(ctx, "c1", "x")
 	_ = st.Commit(ctx, "c1", []byte(`"x"`), []byte(`"x"`))
@@ -192,9 +192,10 @@ func TestCallsRecorded(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesDefaultsToDirect(t *testing.T) {
+func TestCapabilitiesDefaultsToSyncEnvelope(t *testing.T) {
 	st := New(Config{})
-	if got := st.Capabilities().WriteSemantics; got != corestore.WriteSemanticsDirect {
-		t.Fatalf("default WriteSemantics = %q, want %q", got, corestore.WriteSemanticsDirect)
+	caps := st.Capabilities()
+	if len(caps.WriteSemanticsEnvelope) != 1 || caps.WriteSemanticsEnvelope[0] != corestore.WriteSemanticsSync {
+		t.Fatalf("default envelope = %v, want [%q]", caps.WriteSemanticsEnvelope, corestore.WriteSemanticsSync)
 	}
 }

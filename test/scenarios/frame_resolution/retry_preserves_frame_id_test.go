@@ -17,8 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
 )
 
 // TestRetryDoesNotPrematurelyEndFrame is a targeted check: while the
@@ -88,7 +89,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		uuid.UUID(worker.ID))
 	require.NoError(t, err)
 	require.NoError(t, h.Persist.Nodes().UpdateState(h.Ctx,
-		worker.ID, "stale", node.ReasonPolicyRetry, nil))
+		worker.ID, "stale", cascade.ReasonPolicyRetry, nil))
 
 	// Re-read frame_id; it must still be set.
 	var preservedFrameID *uuid.UUID

@@ -2,62 +2,55 @@
 # by rimsky-scheduler / rimsky-supervisor / rimsky-control-api / rimsky-migrate
 # at startup via RIMSKY_CONFIG.
 #
-# Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
-# §3.1 this is the unified deployment-shape config: persistence + stores +
-# named_locks + executors in one file, replacing the prior split between
-# RIMSKY_DB_URL, RIMSKY_STORES_CONFIG and the supervisor's per-process
-# executors block.
+# Layer-crystallization Phase 4 changes (2026-05-04):
+#   - block `stores:` renamed `claim_producers:`.
+#   - per-peer `protocols: [...]` list (defaults: [claim_producer] /
+#     [executor]; add `lifecycle_subscriber` for peers that opt in).
+#   - per-producer `write_semantics_envelope: [...]` set (operator-
+#     declared subset of the producer-advertised envelope).
 #
 # Reference stack ships:
-#   - content       : filesystem direct-mode store-service.
-#   - topics-ring   : postgres store-service hosting the @review-queue
-#                     pick policy. Name matches the smoke fixture
-#                     (test/smoke/fixtures/template.yml) so docker-
-#                     compose runs and in-process smoke runs declare the
-#                     same lock surface.
-#   - topics-ring:concurrent-claims: counting-semaphore (limit 5)
-#                                    paired with the topics-ring store.
-#   - model-budget: counting-semaphore (limit 50) for model-call
-#                   throttling.
+#   - content        : filesystem store-service (sync).
+#   - topics-ring    : postgres store-service hosting the @review-queue
+#                      pick policy.
+#   - topics-ring:concurrent-claims: counting-semaphore (limit 5).
+#   - model-budget   : counting-semaphore (limit 50).
 
 persistence:
   driver: postgres
   postgres:
     dsn: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
 
-stores:
+claim_producers:
   content:
-    # gRPC dispatch endpoint. Used for the §3 4-verb store protocol.
+    # gRPC dispatch endpoint. Used for the ClaimProducer 4-verb runtime
+    # protocol plus the Capabilities startup handshake.
     endpoint: "grpc://store-filesystem:9100"
-    # observability_endpoint defaults to `endpoint` when omitted. The
-    # peer's gRPC ExecutorObservability/StoreObservability service is
-    # probed at startup; the peer's response includes
-    # `http_bridge_url` (spec §2.2/§3.5) which the dashboard uses for
-    # browser-friendly fetch/SSE access.
-    capabilities:
-      write_semantics: direct
+    protocols: [claim_producer]
+    write_semantics_envelope: [sync]
   topics-ring:
     endpoint: "grpc://store-postgres:9101"
-    capabilities:
-      write_semantics: direct
+    protocols: [claim_producer]
+    write_semantics_envelope: [sync]
 
 named_locks:
   "topics-ring:concurrent-claims": { limit: 5 }
   model-budget:                    { limit: 50 }
 
 executors:
-  # For executors and stores whose HTTP+JSON bridge runs on a
-  # different port from gRPC (every peer in this repo), the operator
-  # configures the peer with a `http_bridge_url` and the dashboard
-  # auto-discovers it through the observability handshake. There is
-  # nothing to add here for that path. Use `observability_endpoint:`
-  # only when an executor/store splits its gRPC observability service
-  # onto a different port from the dispatch service.
+  # For executors whose HTTP+JSON bridge runs on a different port from
+  # gRPC (every peer in this repo), the operator configures the peer
+  # with an `http_bridge_url` and the dashboard auto-discovers it
+  # through the observability handshake. Use `observability_endpoint:`
+  # only when an executor splits its gRPC observability service onto a
+  # different port from the dispatch service.
   claude-agent:
     transport: grpc
     endpoint: "claude-agent:9090"
     tls: off
+    protocols: [executor]
   http-node:
     transport: grpc
     endpoint: "http-node:9091"
     tls: off
+    protocols: [executor]

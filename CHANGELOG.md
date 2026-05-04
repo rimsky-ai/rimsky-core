@@ -2,6 +2,158 @@
 
 ## Unreleased
 
+### Refactor — Layer crystallization Phase 4: ClaimProducer rename + LifecycleSubscriber split + write-semantics envelope
+
+- **`Store` interface renamed to `ClaimProducer`** at the protocol layer.
+  `protocols/claimproducer/` carries the Go interface and value types;
+  `service Store` in proto becomes `service ClaimProducer`. The
+  rimsky-side `foundation/locks.Store` is now an alias for
+  `foundation/locks.ClaimProducer`. Bundled-services-layer term "store"
+  survives for data-backed colloquial use (filesystem store, postgres
+  store, stub store).
+- **`LifecycleSubscriber` extracted as its own service** in
+  `protocols/lifecycle/` (new `lifecycle.proto`). The six methods
+  (`OnTemplateRegistered/Deployed/Undeployed/Deregistered`,
+  `OnInstanceCreated/Terminated`) move out of the bundled-into-Store
+  pattern. Implementers return success from methods they don't react
+  to; binaries that don't react to any event simply don't implement the
+  service. Binaries declare which protocols they implement via a new
+  `protocols:` field per peer in `rimsky.yml`. Field names on the wire
+  switch from `template_id` → `template_hash` for the lifecycle events
+  (the lifecycle-protocol payload was always template-content-hash; the
+  rename clarifies intent).
+- **Write-semantics envelope.** `Capabilities()` now returns
+  `WriteSemanticsEnvelope` (a SET of permissible values); `Open` returns
+  `RealizedWriteSemantics` per claim. Operator declares
+  `write_semantics_envelope: [...]` per producer in YAML; startup
+  validation enforces operator envelope ⊆ producer envelope. New value
+  vocabulary: `sync` (was `direct`), `staged_async`, `blocking_async`
+  (was `staged_blocking`), `read_only`. Uniformity invariant: two
+  `Open` calls returning byte-equal `Scope` MUST return identical
+  `RealizedWriteSemantics`. The persistence layer gains
+  `rimsky_lock_holders.realized_write_semantics` so the in-Go scope-
+  conflict check can apply `ModeCoexists` without re-dialing the
+  producer.
+- **Conformance suites split.** `cmd/rimsky-store-conformance` renamed
+  `cmd/rimsky-claim-producer-conformance` and rewritten to cover
+  Capabilities envelope + uniformity-per-(producer,scope) +
+  Open/Release verbs. `cmd/rimsky-conformance` covers executor
+  scenarios (default) plus a new `--check-lifecycle` mode that drives
+  the six LifecycleSubscriber RPCs against a peer.
+- **YAML config shape Option II.** `stores:` block renamed
+  `claim_producers:`; entries gain optional `protocols:` list (defaults
+  `[claim_producer]`); singular `write_semantics:` field replaced by
+  required `write_semantics_envelope:` set (legacy single-value form is
+  still accepted as a single-element envelope shortcut). `executors:`
+  entries gain the same optional `protocols:` field. The deprecated
+  `stores:` block is still parsed and treated as `claim_producers:` as
+  a transitional convenience; new configs SHOULD use `claim_producers:`.
+  `deploy/rimsky.yml` and `deploy/rimsky-all.yml` updated to the new
+  shape; `deploy/store-postgres.yml` switched its default
+  `write_semantics:` from `direct` → `sync`.
+- **`rimsky_store_lifecycle` table renamed `rimsky_lifecycle_idempotency`.**
+  SQL migrations rewritten in place under pre-v1 break-freely; Go
+  symbols `StoreLifecycle*` renamed `LifecycleIdempotency*`. The
+  rename better reflects the table's role (per-peer event-idempotency
+  bookkeeping) post-LifecycleSubscriber-split. Pre-v1 dev-DB-nuke
+  applies.
+- **Control-api wires LifecycleSubscribers.** `StartControlAPI` now
+  dials a separate `LifecycleClient` for any peer (under
+  `claim_producers:` or `executors:`) whose `protocols:` list contains
+  `lifecycle_subscriber`. Lifecycle events fan out via the new
+  `AppDeps.LifecycleSubs` registry. A peer referenced by a template but
+  not subscribed silently skips fan-out; explicit subscription is
+  required to record idempotency rows.
+
+### Refactor — Layer crystallization Phase 3: region → scope rename
+
+- **`region` → `scope` everywhere on the wire and in foundation
+  internals.** Proto field `bytes region` → `bytes scope`; SQL column
+  `region_data` → `scope_data`; Go struct field `RegionData` →
+  `ScopeData`; helper `RegionsByteEqual` → `ScopesByteEqual`;
+  `LockKindRegion` → `LockKindScope`; `LockHoldersStore.UpdateRegion` →
+  `UpdateScope`; `LockHoldersStore.ListByStoreRegion` →
+  `ListByStoreScope`; `AdvisoryLocker.TakeRegionLockInTx` →
+  `TakeScopeLockInTx`; `ClaimResult.Region` → `Scope`;
+  `evaluateRegionConflict` → `evaluateScopeConflict`;
+  `claimRegion` → `claimScope`; `matchesRegion` → `matchesScope`;
+  `checkRegionDirectives` → `checkScopeDirectives`;
+  `openRegional` → `openScoped` (filesystem store).
+  The §7.7 byte-equal-region invariant is now byte-equal-scope.
+  Substitution path `{{claim.<alias>.region}}` → `{{claim.<alias>.scope}}`.
+  `lock_kind` enum value `'region'` → `'scope'`. Foundation contract,
+  modeling-layer contract, and service-protocol contract all use the
+  new vocabulary. Pre-v1 dev-DB-nuke applies; no data migration shim.
+
+### Refactor — Layer crystallization Phase 2: module split (γ)
+
+- **Three Go modules established.** `github.com/fallguy/rimsky/foundation`,
+  `github.com/fallguy/rimsky/protocols`, and the root `github.com/fallguy/rimsky`.
+  Coordinated by `go.work`. The `foundation` module owns cascade + locks +
+  integration + foundation persistence; the `protocols` module owns the
+  three service-protocol Go interfaces and protobuf bindings (stdlib +
+  grpc/protobuf only deps); the root owns modeling + cmd binaries +
+  bundled service reference impls.
+- **`core/` directory dissolved.** Contents migrated to `foundation/`,
+  `modeling/`, `cmd/`, or stayed at the repo root per the four-layer model.
+  `core/store/` → `foundation/locks/` (with `Registry` kept next to the
+  `Store` interface for now); `core/persistence/` → `foundation/persistence/`
+  (postgres/sqlite drivers consolidated together); `core/supervisor/` and
+  `core/scheduler/` (foundation-relevant sweeps + the supervisor runner)
+  → `foundation/integration/`; `core/scheduler/` (modeling-side ProcessSchedules,
+  ProcessPureCascade, schedule_ticker, scheduler.go) → `modeling/scheduler/`;
+  the rest of modeling under `modeling/{attribute,canonical→template/canonical,
+  controlapi,frame,observability,qualityrule,executor,cli,config,scheduler,
+  shared,node,scenario,internal}/`; binaries flattened from `core/cmd/` to `cmd/`.
+- **`proto/v1/` migrated to `protocols/proto/v1/`.** `option go_package`
+  updated; bindings regenerated. Two proto files renamed:
+  `node_executor.proto` → `executor.proto`; `store_service.proto` →
+  `claim_producer.proto`. TS proto-loader path updated; `Dockerfile.claude-agent`
+  COPY paths updated.
+- **`persistence.Coordinator` renamed `persistence.AdvisoryLocker`.**
+  Frees the `Coordinator` name space for `foundation/integration/Conductor`.
+  Field name `Coordinator` on integration `Config`/`RunArgs` structs
+  renamed to `AdvisoryLocker`.
+- **Foundation `state.go` (state machine + transition reasons) extracted
+  into `foundation/cascade/`** as the blessed-invariant-1 home.
+- **Foundation tick sweeps extracted into `foundation/integration/conductor.go`**
+  (`SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepReady`) and
+  `foundation/integration/orphan_reaper.go` (`SweepLockHolders`). The modeling-
+  side `core/scheduler/scheduler.go` (now `modeling/scheduler/scheduler.go`)
+  composes these foundation sweeps with the modeling-side ProcessSchedules /
+  ProcessPureCascade / frame.RunTick.
+- **`InvalidateNode` and `RecalculateNode` moved to `foundation/integration/`**
+  as cascade dispatchers. The modeling-side scheduler still wires them via
+  the schedule-dispatcher adapter.
+- **`.golangci.yml` depguard rules updated** for new paths; new
+  `foundation-internal-isolation` rule prevents modeling/services from
+  reaching into `foundation/internal/`.
+- **No semantic code changes.** Renames, moves, depguard updates only.
+  `go build ./...`, `go test ./... -count=1`, `make lint` all clean
+  on every Phase 2 buildable gate (Tasks 12, 13e, 15).
+
+### Docs — Layer crystallization Phase 1: contracts
+
+- **Foundation contract finalized.** New `docs/specs/2026-05-04-foundation-contract.md`
+  supersedes the 2026-05-03 draft (moved to `docs/history/`). Vocabulary
+  updated (region → scope); subsystem package names settled (`cascade`,
+  `locks`, `integration`); driver interface set collapsed
+  (`Cascade`, `WorkerRequests`, `AdvisoryLocker`); module split commitment
+  locked in.
+- **Modeling-layer comprehensive contract.** New
+  `docs/specs/2026-05-04-modeling-layer-contract.md`. Single source of
+  truth for templates, instances, frames, schedules, attributes,
+  control-plane API, public vocabularies, YAML config shape, modeling
+  persistence contract, and CLI shape. Supersedes content from the
+  archived per-subsystem design docs in `docs/history/`.
+- **Service-protocol contract.** New
+  `docs/specs/2026-05-04-service-protocol-contract.md`. Defines
+  `ClaimProducer` (renamed from `Store`), `Executor`, and
+  `LifecycleSubscriber`. Adds `RealizedWriteSemantics` per claim and
+  `WriteSemanticsEnvelope` at handshake. Supersedes service-protocol
+  content from the archived stores-redesign-v3 + cleanup overlay +
+  control-plane-and-store-lifecycle docs.
+
 ### Docs — Archive landed designs and plans
 
 - **Moved 9 implemented designs from `docs/specs/` to `docs/history/`,

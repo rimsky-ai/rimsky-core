@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 type terminalKind int

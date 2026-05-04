@@ -25,13 +25,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/core/config"
-	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/persistence"
-	pgpersist "github.com/fallguy/rimsky/core/persistence/postgres"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/shared"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 	pgsfixture "github.com/fallguy/rimsky/stores/postgres/testfixture"
@@ -91,7 +91,7 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	dsn := pool.Config().ConnString()
 	pgsEndpoint, pgsAdminEndpoint, pgsTeardown := pgsfixture.Start(t, pgsfixture.Config{
 		Connection:     dsn,
-		WriteSemantics: store.WriteSemanticsDirect,
+		WriteSemantics: locks.WriteSemanticsSync,
 		PickPolicies: map[string]*pgsstore.PickPolicy{
 			"@review-queue": {
 				ItemsTable:        itemsTable,
@@ -109,11 +109,13 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		Stores: map[string]config.StoreEntry{
 			"content": {
 				Endpoint:     "grpc://" + fsEndpoint,
-				Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+				Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				Protocols:    []string{config.ProtocolClaimProducer},
 			},
 			"topics-ring": {
 				Endpoint:     "grpc://" + pgsEndpoint,
-				Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+				Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				Protocols:    []string{config.ProtocolClaimProducer},
 			},
 		},
 	}
@@ -122,8 +124,8 @@ func BringUpStack(t *testing.T) *SmokeStack {
 	// enforces the per-name limit at acquire time (counter-semaphore
 	// semantics under the per-name advisory lock); empty config →
 	// templates referencing any name fail validation at deploy.
-	namedLocksCfg := store.NamedLocksConfig{
-		Locks: map[string]store.NamedLockConfig{
+	namedLocksCfg := locks.NamedLocksConfig{
+		Locks: map[string]locks.NamedLockConfig{
 			"topics-ring:concurrent-claims": {Limit: 5},
 			"model-budget":                  {Limit: 50},
 		},

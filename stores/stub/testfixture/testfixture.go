@@ -31,7 +31,7 @@ func Start(t *testing.T, cfg stubstore.Config) (endpoint string, store *stubstor
 	go func() {
 		// t.Logf is unsafe to call after the test has returned; teardown
 		// blocks on `done` so we just discard the return value here.
-		_ = server.RunWithStore(ctx, st, grpcLis, httpLis)
+		_ = server.RunWithStore(ctx, server.Config{Substrate: cfg, EnableLifecycle: true}, st, grpcLis, httpLis)
 		close(done)
 	}()
 	return grpcLis.Addr().String(), st, func() {

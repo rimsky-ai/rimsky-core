@@ -15,10 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/frame"
-	"github.com/fallguy/rimsky/core/persistence"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/frame"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 type frameRow struct {

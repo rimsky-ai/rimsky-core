@@ -4,11 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Rimsky is a project-agnostic reactive node-graph orchestration platform. Three architectural collections, all currently in this repo but designed to separate cleanly:
+Rimsky is a project-agnostic reactive node-graph orchestration platform. Per the layer-crystallization design (`docs/specs/2026-05-04-layer-crystallization-design.md`), the codebase is now organized into three Go modules plus a root modeling layer:
 
-1. **Orchestrator** — `core/`. One Go module: `github.com/fallguy/rimsky`. Ships as three independent long-running processes (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`) plus `rimsky-migrate`, `rimsky-conformance`, `rimsky-conformance-probe`. The three runtime processes communicate **only through Postgres** — they cannot import each other (enforced by package rules below).
-2. **Stores** — `stores/`. **Out-of-process** under v3: standalone binaries that implement the 4+1-verb gRPC protocol (`Open / Commit / Abandon / Release` plus `Capabilities()`). v3 ships `filesystem` (direct mode, concrete-paths only), `postgres` (regional access + items-table queue semantics implemented store-internally), and `stub` (in-memory test fixture). Rimsky talks to them via `core/store/remote/` — the only concrete `store.Store` implementation in the rimsky module. Auto-terminal at holding-subgraph completion drives held-claim resolution: success → `Commit`; failure → `Abandon`; store disposition (commit-vs-release-vs-delete on the store's own state) is governed by per-store config. See `docs/glossary.md` for the authoritative vocabulary.
-3. **Executors** — `executors/`. Peer services that speak the node-executor protocol (gRPC + HTTP+JSON bridge). v1 ships `http-node` (Go), `claude-agent` (TypeScript / npm), and `stub` (Go test fixture). Executors do **not** run in-process; supervisors dispatch to them over the wire.
+1. **Foundation** — `foundation/` (own Go module: `github.com/fallguy/rimsky/foundation`). Cascade engine, lock manager, integration layer, and foundation persistence. The state machine, scope-byte conflict primitive, atomic acquisition transaction, and worker-request lifecycle live here.
+2. **Protocols** — `protocols/` (own Go module: `github.com/fallguy/rimsky/protocols`). The service-protocol Go interfaces (`ClaimProducer`, `Executor`, `LifecycleSubscriber` — Phase 4 will rename) plus the `.proto` sources and generated bindings.
+3. **Modeling layer + bundled services** — root module (`github.com/fallguy/rimsky`). Templates, instances, frame-resolution, scheduling, control-api, attributes, quality rules, the rimsky binaries under `cmd/`, the bundled store-service reference impls under `stores/`, and the bundled executor reference impls under `executors/`.
+
+Rimsky still ships as three independent long-running processes (`rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`) plus `rimsky-migrate`, `rimsky-conformance`, `rimsky-conformance-probe`. The three runtime processes communicate **only through Postgres** — they cannot import each other (enforced by depguard).
+
+**Stores** are out-of-process standalone binaries that implement the 4+1-verb gRPC protocol (`Open / Commit / Abandon / Release` plus `Capabilities()`). v3 ships `filesystem` (direct mode, concrete-paths only), `postgres` (regional access + items-table queue semantics implemented store-internally), and `stub` (in-memory test fixture). Rimsky talks to them via `foundation/integration/remote/` — the only concrete `Store` implementation in the rimsky module. Auto-terminal at holding-subgraph completion drives held-claim resolution: success → `Commit`; failure → `Abandon`; store disposition (commit-vs-release-vs-delete on the store's own state) is governed by per-store config. See `docs/glossary.md` for the authoritative vocabulary.
+
+**Executors** are peer services that speak the node-executor protocol (gRPC + HTTP+JSON bridge). v1 ships `http-node` (Go), `claude-agent` (TypeScript / npm), and `stub` (Go test fixture). Executors do **not** run in-process; supervisors dispatch to them over the wire.
 
 Vocabulary: 2 message types (`invalidate`, `recalculate`), 4 node states (`fresh`, `stale`, `running`, `failed`), 3 error actions (`retry`, `invalidate(targets)`, `give_up`). Read `docs/node-graph-design.md` for the conceptual model and `docs/architecture.md` for the implementation shape before making non-trivial changes.
 
@@ -16,18 +22,24 @@ The stores-redesign-v3 spec at `docs/history/2026-04-27-stores-redesign-v3-desig
 
 ## Package import rules (enforced; violations break the build)
 
-These are non-negotiable and matter because the runtime subsystems are independent processes:
+These are non-negotiable. The repo is organized as **three Go modules** plus the modeling layer at the root:
 
-- `core/shared/` — depends on stdlib only.
-- `core/node/`, `core/message/` — pure logic, import `shared/` only.
-- `core/persistence/` — driver protocol (`Driver`, `Coordinator`, `Queue`, `Store`, `FrameStore`, per-feature interfaces) plus per-driver impls. The protocol package itself depends on stdlib + `shared/` + `node/` only. Driver impls live in `postgres/` (uses `pgx/v5`, `modernc.org/sqlite` not allowed) and `sqlite/` (uses `modernc.org/sqlite`, `pgx` not allowed). SQLite is the dev-only driver per spec §1; multi-host deployments require Postgres.
-- `core/persistence/` owns all storage interfaces and impls; pgx is forbidden outside the postgres driver, the test infrastructure helpers in `core/internal/pgtest/`, `core/scenario/`, and `test/smoke/`, plus the per-process cmd binaries; enforced by golangci-lint depguard in `.golangci.yml`.
-- `core/store/` — declares the `Store` interface (4 verbs + `Capabilities`), `ClaimID` / `ClaimSpec` / `NamedLockSpec` / `Capabilities` (one field: `WriteSemantics`) / `ClaimResult` (Address/Payload/Region as opaque `json.RawMessage`), the pure `ModeCoexists` and `RegionsByteEqual` helpers, and the simple name → `Store` `Registry` (no factories, no per-kind dispatch). The only concrete impls in this module are `core/store/remote/` (gRPC client) and `core/store/storetest/` (unit-test fake). Store implementations live under `stores/<kind>/` as standalone binaries.
-- `core/scheduler/`, `core/supervisor/`, `core/controlapi/`, `core/frame/` — pure logic; depend on `persistence/` for state and on `shared/` / `node/` / `message/`. **No `pgx`, `pgxpool`, or `pgconn` imports allowed** (enforced by golangci-lint depguard). They share state only through `persistence.Store` / `persistence.Queue` / `persistence.Coordinator`.
-- `core/cmd/*` — the only packages permitted to import everything needed to wire a binary. Each binary opens a `persistence.Driver` via `persistence.Open` and passes it to the relevant `core/config/Start*` entry point.
-- `core/config/` — library entry points (`StartScheduler`, `StartSupervisor`, `StartControlAPI`); the binaries in `cmd/` are thin shells around these.
+- **`foundation/`** — own Go module (`github.com/fallguy/rimsky/foundation`). Cascade engine + lock manager + integration + foundation persistence. Depends on `protocols` + stdlib + minimal third-party (`pgx`, `uuid`).
+  - `foundation/cascade/` — node-state machine + cascade signal.
+  - `foundation/locks/` — `Store` interface (4 verbs + `Capabilities`), `ClaimID`/`ClaimSpec`/`NamedLockSpec`/`ClaimResult`/`Registry`/`NamedLocksConfig`, the `ModeCoexists` and `RegionsByteEqual` helpers, and the in-Go `storetest` fake.
+  - `foundation/integration/` — supervisor runner (atomic acquisition tx, verify-before-run, auto-terminal mechanism, callback server, terminal handler) and the foundation tick sweeps (`SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepReady`, `SweepLockHolders`). Plus `remote/` (the only concrete gRPC client to `Store` impls).
+  - `foundation/persistence/` — driver protocol (`Driver`, `AdvisoryLocker` (formerly `Coordinator`), `Queue`, `Store`, `FrameStore`, per-feature interfaces) plus the postgres + sqlite impls. SQLite is dev-only per spec §1; multi-host deployments require Postgres.
+  - `foundation/internal/` — private to foundation; modeling and bundled services CANNOT import (enforced by depguard `foundation-internal-isolation`).
+- **`protocols/`** — own Go module (`github.com/fallguy/rimsky/protocols`). Service-protocol Go interfaces + protobuf bindings. Stdlib + grpc + protobuf only. The proto sources live at `protocols/proto/v1/`; `node_executor.proto` was renamed `executor.proto` and `store_service.proto` was renamed `claim_producer.proto` in the layer-crystallization Phase 2 split. Generated bindings under `protocols/proto/v1/gen/`.
+- **Root module (`github.com/fallguy/rimsky`)** — modeling layer + cmd binaries + bundled service reference impls. Imports `foundation` + `protocols` + stdlib.
+  - `modeling/attribute/`, `modeling/canonical/` (under `modeling/template/canonical/`), `modeling/controlapi/`, `modeling/frame/`, `modeling/observability/`, `modeling/qualityrule/`, `modeling/executor/`, `modeling/cli/`, `modeling/config/`, `modeling/scheduler/`, `modeling/shared/`, `modeling/node/`, `modeling/scenario/`, `modeling/internal/pgtest/` — modeling-side packages.
+  - `cmd/` — every reference binary (rimsky-control-api, rimsky-supervisor, rimsky-scheduler, rimsky-migrate, rimsky-conformance, rimsky-conformance-probe, rimsky-cli, rimsky-store-conformance, rimsky-entrypoint).
+  - `stores/` — bundled store-service reference impls (filesystem, postgres, stub) packaged as standalone binaries.
+  - `executors/` — bundled executor reference impls (http-node, stub, claude-agent).
+- **`go.work`** ties the three modules together for development.
+- **`.golangci.yml` depguard** enforces (a) `pgx-isolation` — pgx allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, modeling/internal/pgtest/, modeling/scenario/, stores/, test/smoke/ — and (b) `foundation-internal-isolation` — only foundation/ may import foundation/internal/.
 
-If you need to share logic between scheduler and supervisor, it goes into `node/`, `message/`, `persistence/`, or `shared/` — not into one of them with the other importing it.
+If you need to share logic between modeling subsystems, it goes into `modeling/shared/` (or `foundation/cascade/`/`foundation/locks/` if it's strictly foundation-level). Foundation never imports modeling.
 
 ## Blessed invariants (annotated `@blessed-invariant` in source)
 

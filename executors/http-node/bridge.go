@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 // mountBridge adds the HTTP+JSON bridge under /v1/Execute on the provided

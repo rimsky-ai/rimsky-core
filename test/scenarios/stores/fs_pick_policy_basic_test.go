@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 )
@@ -48,7 +48,7 @@ func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 		t.Fatalf("grpc dial: %v", err)
 	}
 	defer conn.Close()
-	client := genv1.NewStoreServiceClient(conn)
+	client := genv1.NewClaimProducerClient(conn)
 
 	picked := make([]string, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -69,7 +69,7 @@ func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 		}
 		picked = append(picked, p.Folder)
 		if _, err := client.Commit(context.Background(), &genv1.CommitRequest{
-			ClaimId: claimID, Region: acq.Region, Address: acq.Address,
+			ClaimId: claimID, Scope: acq.Scope, Address: acq.Address,
 		}); err != nil {
 			t.Fatalf("Commit[%d]: %v", i, err)
 		}

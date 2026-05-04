@@ -1,0 +1,62 @@
+// LifecycleSubscriber wire protocol.
+//
+// Per spec docs/specs/2026-05-04-service-protocol-contract.md §3
+// (extracted from claim_producer.proto under the layer-crystallization
+// plan, Phase 4). Implementer pattern: return success from any method
+// the binary doesn't react to. Binaries that don't react to any event
+// simply don't implement the service.
+//
+// Idempotency: rimsky tracks per-peer idempotency in the
+// rimsky_lifecycle_idempotency table; subscribers can assume each
+// (peer, event) pair fires exactly once on the rimsky side. Subscribers
+// SHOULD also be idempotent against duplicate calls in case of network
+// retries.
+
+syntax = "proto3";
+package rimsky.v1;
+
+option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+
+service LifecycleSubscriber {
+  rpc OnTemplateRegistered(OnTemplateRegisteredRequest) returns (LifecycleAck);
+  rpc OnTemplateDeployed(OnTemplateDeployedRequest) returns (LifecycleAck);
+  rpc OnTemplateUndeployed(OnTemplateUndeployedRequest) returns (LifecycleAck);
+  rpc OnTemplateDeregistered(OnTemplateDeregisteredRequest) returns (LifecycleAck);
+  rpc OnInstanceCreated(OnInstanceCreatedRequest) returns (LifecycleAck);
+  rpc OnInstanceTerminated(OnInstanceTerminatedRequest) returns (LifecycleAck);
+}
+
+message OnTemplateRegisteredRequest {
+  string template_hash = 1;
+  bytes spec = 2;  // canonical JCS-canonicalized template spec (may be empty)
+}
+
+message OnTemplateDeployedRequest {
+  string template_hash = 1;
+  repeated string tags = 2;
+}
+
+message OnTemplateUndeployedRequest {
+  string template_hash = 1;
+}
+
+message OnTemplateDeregisteredRequest {
+  string template_hash = 1;
+}
+
+message OnInstanceCreatedRequest {
+  string instance_id = 1;
+  string template_hash = 2;
+  string instance_key = 3;  // may be empty
+  bytes params = 4;
+}
+
+message OnInstanceTerminatedRequest {
+  string instance_id = 1;
+  string template_hash = 2;
+  int64 terminated_at_unix_ms = 3;
+}
+
+message LifecycleAck {
+  // empty; reserved for future use
+}

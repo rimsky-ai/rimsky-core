@@ -15,7 +15,7 @@
 // gates execution end to end.
 //
 // Migrated to the stores-redesign template grammar (spec §11): no
-// resource wiring; the runner is driven through `core/supervisor.RunNode`
+// resource wiring; the runner is driven through `core/integration.RunNode`
 // directly with a stub-store registry from the harness.
 package scenarios
 
@@ -26,12 +26,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/supervisor"
+	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 func TestVerifyBeforeRunRace(t *testing.T) {
@@ -50,7 +50,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	require.NotNil(t, n)
 
 	// Replace the auto-enqueued dispatch row with one already claimed by
-	// a different supervisor. ClaimDispatchRow is claimant-guarded and
+	// a different integration. ClaimDispatchRow is claimant-guarded and
 	// SelectCandidates filters claimed_by IS NULL — neither path will
 	// admit our runner.
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_dispatch WHERE node_id = $1`, n.ID)
@@ -71,12 +71,12 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// RunNode with our SupervisorID should find no eligible candidate
 	// (the row's claimed_by is set), return Ran=false, and leave the
 	// node unchanged.
-	args := supervisor.RunArgs{
+	args := integration.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		LockHolders:       h.Persist.LockHolders(),
-		Coordinator:       h.Driver.Coordinator(),
-		StoreRegistry:     store.NewRegistry(),
+		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
+		StoreRegistry:     locks.NewRegistry(),
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		SupervisorID:      "scenario-runner",
@@ -87,7 +87,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
-	out, err := supervisor.RunNode(h.Ctx, args, nil)
+	out, err := integration.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.False(t, out.Ran,
 		"runner should not execute when another supervisor holds the claim")

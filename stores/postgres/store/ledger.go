@@ -48,7 +48,7 @@ type ClaimRecord struct {
 	ClaimID  string
 	State    ClaimState
 	Address  []byte
-	Region   []byte
+	Scope    []byte
 	Selector string
 	OpenedAt time.Time
 	ClosedAt *time.Time
@@ -88,7 +88,7 @@ func NewClaimLedger(max int) *ClaimLedger {
 }
 
 // RecordOpen records a new claim_opened event.
-func (l *ClaimLedger) RecordOpen(claimID, selector string, address, region []byte) {
+func (l *ClaimLedger) RecordOpen(claimID, selector string, address, scope []byte) {
 	if l == nil {
 		return
 	}
@@ -106,7 +106,7 @@ func (l *ClaimLedger) RecordOpen(claimID, selector string, address, region []byt
 		ClaimID:  claimID,
 		State:    ClaimStateOpen,
 		Address:  address,
-		Region:   region,
+		Scope:    scope,
 		Selector: selector,
 		OpenedAt: now,
 		History:  []ClaimEvent{openEvent},

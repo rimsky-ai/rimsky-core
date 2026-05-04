@@ -17,7 +17,7 @@ import (
 
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 // itemsTableIdentRe is the shared strict SQL-identifier regex
@@ -206,11 +206,11 @@ func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 			}
 		}
 	}
-	if len(rec.Region) > 0 {
+	if len(rec.Scope) > 0 {
 		var v any
-		if err := json.Unmarshal(rec.Region, &v); err == nil {
+		if err := json.Unmarshal(rec.Scope, &v); err == nil {
 			if st, err := structpb.NewStruct(map[string]any{"value": v}); err == nil {
-				d.Region = st
+				d.Scope = st
 			}
 		}
 	}

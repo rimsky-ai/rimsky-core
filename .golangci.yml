@@ -20,16 +20,25 @@ linters-settings:
         list-mode: lax
         files:
           - "$all"
-          - "!**/core/persistence/postgres/**"
-          - "!**/core/cmd/**"
-          - "!**/core/internal/pgtest/**"
-          - "!**/core/scenario/**"
+          - "!**/foundation/persistence/postgres/**"
+          - "!**/foundation/internal/pgtest/**"
+          - "!**/cmd/**"
+          - "!**/modeling/internal/pgtest/**"
+          - "!**/modeling/scenario/**"
           - "!**/stores/**"
           - "!**/test/smoke/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in core/persistence/postgres/, core/cmd/, core/internal/pgtest/, core/scenario/, stores/, and test/smoke/. Use the persistence interface."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, modeling/internal/pgtest/, modeling/scenario/, stores/, and test/smoke/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"
             desc: "see pgx isolation rule above"
+      foundation-internal-isolation:
+        list-mode: lax
+        files:
+          - "$all"
+          - "!**/foundation/**"
+        deny:
+          - pkg: "github.com/fallguy/rimsky/foundation/internal"
+            desc: "foundation/internal/ is private to the foundation module. Use the public foundation packages."

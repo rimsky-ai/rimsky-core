@@ -8,7 +8,7 @@
 //   - One template with two nodes (worker-A, worker-B), both holding
 //     a regional rw claim against the same selector. NoSupervisor so we
 //     drive RunNode manually with two SupervisorIDs.
-//   - Two goroutines: each calls supervisor.RunNode with a distinct
+//   - Two goroutines: each calls integration.RunNode with a distinct
 //     SupervisorID. A sync.WaitGroup releases both at the same instant;
 //     a shared sync.Mutex + counter records concurrent in-acquisition
 //     ownership.
@@ -34,14 +34,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/config"
-	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/remote"
-	"github.com/fallguy/rimsky/core/supervisor"
+	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/integration/remote"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -54,7 +54,7 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -64,7 +64,7 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -105,15 +105,15 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	client, err := remote.Dial(dialCtx, "content", "grpc://"+endpoint)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
-	reg := store.NewRegistry()
+	reg := locks.NewRegistry()
 	reg.Add("content", client)
 
-	makeArgs := func(supID string) supervisor.RunArgs {
-		return supervisor.RunArgs{
+	makeArgs := func(supID string) integration.RunArgs {
+		return integration.RunArgs{
 			Persist:           h.Persist,
 			Queue:             h.Queue,
 			LockHolders:       h.Persist.LockHolders(),
-			Coordinator:       h.Driver.Coordinator(),
+			AdvisoryLocker:    h.Driver.AdvisoryLocker(),
 			StoreRegistry:     reg,
 			Clock:             shared.SystemClock{},
 			Logger:            shared.SilentLogger{},
@@ -130,7 +130,7 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 
 	type result struct {
 		supID string
-		out   supervisor.RunnerResult
+		out   integration.RunnerResult
 		err   error
 	}
 
@@ -142,10 +142,10 @@ func TestRegionalClaimRace_OneAcquirerWins(t *testing.T) {
 	for _, supID := range []string{"sup-A", "sup-B"} {
 		wg.Add(1)
 		args := makeArgs(supID)
-		go func(id string, a supervisor.RunArgs) {
+		go func(id string, a integration.RunArgs) {
 			defer wg.Done()
 			<-start
-			out, err := supervisor.RunNode(h.Ctx, a, nil)
+			out, err := integration.RunNode(h.Ctx, a, nil)
 			results <- result{supID: id, out: out, err: err}
 		}(supID, args)
 	}

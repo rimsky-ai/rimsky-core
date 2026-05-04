@@ -17,10 +17,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/persistence"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 func TestHeldClaimRowRoundTrip(t *testing.T) {
@@ -48,9 +48,9 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
 			ID:                 lockHolderID,
-			LockKind:           persistence.LockKindRegion,
+			LockKind:           persistence.LockKindScope,
 			StoreName:          &storeName,
-			RegionData:         []byte(`"r-1"`),
+			ScopeData:          []byte(`"r-1"`),
 			Intent:             &intent,
 			HolderSupervisorID: "scenario-supervisor",
 			HolderNodeID:       worker.ID,

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/stores/postgres/server"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 )

@@ -12,6 +12,6 @@ persistence:
   sqlite:
     path: /var/lib/rimsky/state.db
 
-stores: {}
+claim_producers: {}
 named_locks: {}
 executors: {}

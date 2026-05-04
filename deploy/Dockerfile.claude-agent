@@ -4,14 +4,14 @@ COPY executors/claude-agent/package.json executors/claude-agent/package-lock.jso
 RUN npm ci || npm install
 COPY executors/claude-agent/ ./
 RUN npm run build
-COPY proto/v1/ /build/proto/v1/
+COPY protocols/proto/v1/ /build/protocols/proto/v1/
 
 FROM node:20-alpine
 RUN apk add --no-cache tini
 WORKDIR /app
 COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/node_modules ./node_modules
-COPY --from=builder /build/proto ./proto
+COPY --from=builder /build/protocols ./protocols
 ENV NODE_ENV=production
 USER node
 EXPOSE 9090 9190

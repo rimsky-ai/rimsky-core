@@ -33,7 +33,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/stores/postgres/server"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 )
@@ -59,6 +59,7 @@ type yamlConfig struct {
 	HTTPBridgeURL        string                    `yaml:"http_bridge_url"`
 	AdminPort            int                       `yaml:"admin_port"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
+	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
 }
 
 type yamlPickPolicy struct {
@@ -91,7 +92,7 @@ func main() {
 	}
 	ws := corestore.WriteSemantics(cfg.WriteSemantics)
 	if ws == "" {
-		ws = corestore.WriteSemanticsDirect
+		ws = corestore.WriteSemanticsStagedAsync
 	}
 	policies := make(map[string]*pgsstore.PickPolicy, len(cfg.PickPolicies))
 	for selector, pp := range cfg.PickPolicies {
@@ -144,11 +145,12 @@ func main() {
 	defer cancel()
 
 	if err := server.Run(ctx, server.Config{
-		Connection:     cfg.Connection,
-		WriteSemantics: ws,
-		PickPolicies:   policies,
-		SweepInterval:  sweep,
-		HTTPBridgeURL:  cfg.HTTPBridgeURL,
+		Connection:      cfg.Connection,
+		WriteSemantics:  ws,
+		PickPolicies:    policies,
+		SweepInterval:   sweep,
+		HTTPBridgeURL:   cfg.HTTPBridgeURL,
+		EnableLifecycle: cfg.EnableLifecycle,
 	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-postgres: server.Run: %v\n", err)
 		os.Exit(1)

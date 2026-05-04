@@ -10,10 +10,10 @@ import (
 	"sort"
 	"sync"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 )
 
-// Store is the in-memory store implementation. Two operating modes: regional-direct
+// Store is the in-memory store implementation. Two operating modes: scoped-direct
 // (selectors echoed verbatim) and pick-policy (FIFO queue per
 // configured selector).
 type Store struct {
@@ -45,7 +45,7 @@ type Call struct {
 	Verb     string
 	ClaimID  string
 	Selector string
-	Region   []byte
+	Scope    []byte
 	Address  []byte
 }
 
@@ -62,11 +62,13 @@ type PickPolicyConfig struct {
 	InitialItems    []json.RawMessage
 }
 
-// New constructs a Store from cfg.
+// New constructs a Store from cfg. The stub store declares a singleton
+// envelope of [sync] by default — selectors are echoed verbatim and no
+// async staging is involved.
 func New(cfg Config) *Store {
 	caps := cfg.Capabilities
-	if caps.WriteSemantics == "" {
-		caps.WriteSemantics = corestore.WriteSemanticsDirect
+	if len(caps.WriteSemanticsEnvelope) == 0 {
+		caps.WriteSemanticsEnvelope = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
 	}
 	s := &Store{
 		caps:         caps,
@@ -97,10 +99,14 @@ func (s *Store) Capabilities() corestore.Capabilities { return s.caps }
 // Open performs the store's claim acquisition. ctx is accepted for
 // signature uniformity with the postgres / filesystem stores; the
 // stub store has no async work that consults it.
+//
+// The stub declares a singleton envelope, so RealizedWriteSemantics is
+// uniform across all claims (uniformity invariant trivially holds).
 func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, Call{Verb: "open", ClaimID: claimID, Selector: selector})
+	rws := s.realizedSemantics()
 	if pp, ok := s.pickPolicies[selector]; ok {
 		if len(pp.queue) == 0 {
 			return corestore.OpenOutcome{Available: false}, nil
@@ -110,60 +116,72 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 		pp.inFlight[head.id] = head
 		s.claims[claimID] = head.id
 		addrBytes, _ := json.Marshal(head.id)
-		regionBytes, _ := json.Marshal(head.id)
+		scopeBytes, _ := json.Marshal(head.id)
 		return corestore.OpenOutcome{
 			Available: true,
 			Result: corestore.ClaimResult{
-				Address: json.RawMessage(addrBytes),
-				Payload: head.payload,
-				Region:  json.RawMessage(regionBytes),
+				Address:                json.RawMessage(addrBytes),
+				Payload:                head.payload,
+				Scope:                  json.RawMessage(scopeBytes),
+				RealizedWriteSemantics: rws,
 			},
 		}, nil
 	}
 	addr, _ := json.Marshal(selector)
-	region, _ := json.Marshal(selector)
+	scope, _ := json.Marshal(selector)
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
-			Address: json.RawMessage(addr),
-			Region:  json.RawMessage(region),
+			Address:                json.RawMessage(addr),
+			Scope:                  json.RawMessage(scope),
+			RealizedWriteSemantics: rws,
 		},
 	}, nil
+}
+
+// realizedSemantics picks the realized value for an Open. The stub
+// declares a singleton envelope, so the returned value is fixed across
+// claims (satisfies the uniformity invariant trivially).
+func (s *Store) realizedSemantics() corestore.WriteSemantics {
+	if len(s.caps.WriteSemanticsEnvelope) == 0 {
+		return corestore.WriteSemanticsSync
+	}
+	return s.caps.WriteSemanticsEnvelope[0]
 }
 
 // Commit records the call and applies the on_commit action. Lookup is
 // claim_id-based (idempotent in claim_id per spec §7.8 obligation #3):
 // a duplicated terminal RPC after the claim was already terminated
 // finds no live state for the claim_id and is a no-op.
-func (s *Store) Commit(_ context.Context, claimID string, region, address []byte) error {
+func (s *Store) Commit(_ context.Context, claimID string, scope, address []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, Call{
 		Verb: "commit", ClaimID: claimID,
-		Region: cloneBytes(region), Address: cloneBytes(address),
+		Scope: cloneBytes(scope), Address: cloneBytes(address),
 	})
 	return s.applyPickActionByClaimID(claimID, true)
 }
 
 // Abandon records the call and applies the on_give_up action. Lookup
 // is claim_id-based (idempotent per §7.8 obligation #3).
-func (s *Store) Abandon(_ context.Context, claimID string, region, address []byte) error {
+func (s *Store) Abandon(_ context.Context, claimID string, scope, address []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, Call{
 		Verb: "abandon", ClaimID: claimID,
-		Region: cloneBytes(region), Address: cloneBytes(address),
+		Scope: cloneBytes(scope), Address: cloneBytes(address),
 	})
 	return s.applyPickActionByClaimID(claimID, false)
 }
 
 // Release records the call. No state to tear down for stub.
-func (s *Store) Release(_ context.Context, claimID string, region, address []byte) error {
+func (s *Store) Release(_ context.Context, claimID string, scope, address []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, Call{
 		Verb: "release", ClaimID: claimID,
-		Region: cloneBytes(region), Address: cloneBytes(address),
+		Scope: cloneBytes(scope), Address: cloneBytes(address),
 	})
 	delete(s.claims, claimID)
 	return nil

@@ -8,8 +8,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/core/executor"
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	"github.com/fallguy/rimsky/modeling/executor"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 // Result is the outcome of running a single Scenario.

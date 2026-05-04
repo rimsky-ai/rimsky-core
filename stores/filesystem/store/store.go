@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 )
 
 // PickPolicy is one configured pick policy. Store-internal.
@@ -113,13 +113,22 @@ func trimAtPrefix(selector string) string {
 }
 
 // Capabilities reports the store's advertised capabilities.
+//
+// The standard filesystem store declares a singleton envelope of
+// [sync] — concrete-path mode performs in-place writes (no staging).
+// A pick-policy claim with sync_strategy: "on_commit" still presents
+// sync semantics from the lock manager's perspective: the on-disk
+// staging is private to the producer; the conflict matrix uses the
+// envelope value.
 func (s *Store) Capabilities() corestore.Capabilities {
-	return corestore.Capabilities{WriteSemantics: corestore.WriteSemanticsDirect}
+	return corestore.Capabilities{
+		WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync},
+	}
 }
 
 // Open dispatches by selector: pick-policy keys (configured map keys —
 // conventionally `@policy-name`) hit openPickPolicy; everything else
-// falls through to openRegional.
+// falls through to openScoped.
 //
 // ctx is accepted to keep the signature uniform across the three
 // standard stores (filesystem, postgres, stub); the filesystem
@@ -127,29 +136,29 @@ func (s *Store) Capabilities() corestore.Capabilities {
 func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
 	if pp, ok := s.pickPolicies[selector]; ok {
 		// Pick-policy selectors are a configured map-key match — they
-		// intentionally bypass openRegional's glob-metacharacter
+		// intentionally bypass openScoped's glob-metacharacter
 		// rejection. Operators choose the selector key (convention:
 		// `@policy-name`); a key containing `*`/`?`/`[` is operator
 		// misconfiguration but doesn't violate v3's "concrete paths
 		// only" rule, which governs the selector-as-path
-		// interpretation that openRegional implements.
+		// interpretation that openScoped implements.
 		return s.openPickPolicy(claimID, selector, pp)
 	}
-	return s.openRegional(claimID, selector)
+	return s.openScoped(claimID, selector)
 }
 
-// openRegional resolves the selector as a concrete path under the
+// openScoped resolves the selector as a concrete path under the
 // configured root. Per §7.7 the standard filesystem store supports
 // concrete paths only — globs are rejected.
 //
 // Selectors are canonicalized via filepath.Clean before use so that
-// "foo", "./foo", "foo/.", and "foo/" all produce byte-equal regions
+// "foo", "./foo", "foo/.", and "foo/" all produce byte-equal scopes
 // (and resolve to the same on-disk path); the cleaned form is
 // rejected if it tries to escape the configured root via ".." or
 // becomes absolute. This is the load-bearing guard against path
 // traversal — without it a selector like "../../etc/passwd" would
 // resolve to a path outside s.root.
-func (s *Store) openRegional(claimID, selector string) (corestore.OpenOutcome, error) {
+func (s *Store) openScoped(claimID, selector string) (corestore.OpenOutcome, error) {
 	raw := strings.TrimSpace(selector)
 	if raw == "" {
 		return corestore.OpenOutcome{}, errors.New("filesystem store: Open: empty selector")
@@ -178,12 +187,12 @@ func (s *Store) openRegional(claimID, selector string) (corestore.OpenOutcome, e
 			"filesystem store: Open: selector %q resolves to the root itself; selectors must name a concrete entry", raw)
 	}
 
-	// Region bytes: canonical JSON-encoded cleaned path string. Two
+	// Scope bytes: canonical JSON-encoded cleaned path string. Two
 	// claims on the same logical path (e.g. "foo" and "./foo") produce
-	// byte-equal regions (§7.7 obligation #5).
-	regionBytes, err := json.Marshal(cleaned)
+	// byte-equal scopes (§7.7 obligation #5).
+	scopeBytes, err := json.Marshal(cleaned)
 	if err != nil {
-		return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: marshal region: %w", err)
+		return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: marshal scope: %w", err)
 	}
 	addrPath := filepath.Join(s.root, cleaned)
 	// Defense-in-depth: confirm the resolved path is still under the
@@ -204,22 +213,23 @@ func (s *Store) openRegional(claimID, selector string) (corestore.OpenOutcome, e
 	s.claims[claimID] = addrPath
 	s.mu.Unlock()
 
-	s.ledger.RecordOpen(claimID, raw, addrBytes, regionBytes)
+	s.ledger.RecordOpen(claimID, raw, addrBytes, scopeBytes)
 
 	return corestore.OpenOutcome{
 		Available: true,
 		Result: corestore.ClaimResult{
-			Address: json.RawMessage(addrBytes),
-			Region:  json.RawMessage(regionBytes),
+			Address:                json.RawMessage(addrBytes),
+			Scope:                  json.RawMessage(scopeBytes),
+			RealizedWriteSemantics: corestore.WriteSemanticsSync,
 		},
 	}, nil
 }
 
 // Commit delegates to the pick-policy action handler when the claim is
 // in pick-policy state; otherwise no-op (direct mode has no staging).
-// region/address are accepted to keep the signature uniform across the
+// scope/address are accepted to keep the signature uniform across the
 // three standard stores; the filesystem store ignores them on the
-// regional path.
+// scoped path.
 //
 // The ledger records the terminal event only after the store-side
 // action succeeds. Failures surface as non-terminal
@@ -263,7 +273,7 @@ func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) e
 }
 
 // Release is a no-op: direct mode never registers store-side read
-// state at Open. region/address are accepted for signature uniformity
+// state at Open. scope/address are accepted for signature uniformity
 // and ignored.
 func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
 	s.mu.Lock()
@@ -292,7 +302,7 @@ func hasGlobMeta(s string) bool {
 // it. Per the spec's "POSIX local filesystems" assumption (and the
 // operator-guide §8.4.2 deployment guidance) the store root must not
 // contain symlinks pointing outside itself; this is an operator-fault
-// constraint, not enforced here. Same posture as openRegional.
+// constraint, not enforced here. Same posture as openScoped.
 func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) error {
 	if pp == nil {
 		return errors.New("policy is nil")
@@ -310,7 +320,7 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) error {
 	absPath := filepath.Join(storeRoot, cleaned)
 	// Defense-in-depth containment check: ensure the joined path
 	// actually lives under storeRoot, catching symlink edge cases
-	// (mirrors openRegional's existing filepath.Rel check).
+	// (mirrors openScoped's existing filepath.Rel check).
 	rel, relErr := filepath.Rel(storeRoot, absPath)
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("root: %q resolves to %q which escapes the store root", pp.Root, absPath)

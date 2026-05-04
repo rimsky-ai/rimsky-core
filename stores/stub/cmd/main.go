@@ -17,7 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguy/rimsky/core/store"
+	corestore "github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/stores/stub/server"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 )
@@ -25,11 +25,17 @@ import (
 const defaultConfigEnv = "STORE_STUB_CONFIG"
 
 type yamlConfig struct {
-	WriteSemantics string                    `yaml:"write_semantics"`
-	PickPolicies   map[string]yamlPickPolicy `yaml:"pick_policies"`
-	Host           string                    `yaml:"host"`
-	GRPCPort       int                       `yaml:"grpc_port"`
-	HTTPPort       int                       `yaml:"http_port"`
+	// WriteSemanticsEnvelope is the producer-advertised set of permissible
+	// values reported via Capabilities. Defaults to ["sync"] when empty.
+	// Singular write_semantics: scalar (legacy) is also accepted as a
+	// shortcut for a single-element envelope.
+	WriteSemanticsEnvelope []string                  `yaml:"write_semantics_envelope"`
+	WriteSemantics         string                    `yaml:"write_semantics"`
+	PickPolicies           map[string]yamlPickPolicy `yaml:"pick_policies"`
+	Host                   string                    `yaml:"host"`
+	GRPCPort               int                       `yaml:"grpc_port"`
+	HTTPPort               int                       `yaml:"http_port"`
+	EnableLifecycle        bool                      `yaml:"enable_lifecycle"`
 }
 
 type yamlPickPolicy struct {
@@ -55,9 +61,15 @@ func main() {
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	ws := corestore.WriteSemantics(cfg.WriteSemantics)
-	if ws == "" {
-		ws = corestore.WriteSemanticsDirect
+	envelope := make([]corestore.WriteSemantics, 0, len(cfg.WriteSemanticsEnvelope)+1)
+	for _, ws := range cfg.WriteSemanticsEnvelope {
+		envelope = append(envelope, corestore.WriteSemantics(ws))
+	}
+	if cfg.WriteSemantics != "" && len(envelope) == 0 {
+		envelope = append(envelope, corestore.WriteSemantics(cfg.WriteSemantics))
+	}
+	if len(envelope) == 0 {
+		envelope = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
 	}
 	policies := make(map[string]stubstore.PickPolicyConfig, len(cfg.PickPolicies))
 	for selector, p := range cfg.PickPolicies {
@@ -85,15 +97,17 @@ func main() {
 	slog.Info("store-stub started",
 		"grpc_addr", grpcLis.Addr().String(),
 		"http_addr", httpLis.Addr().String(),
-		"write_semantics", ws)
+		"write_semantics_envelope", envelope,
+		"enable_lifecycle", cfg.EnableLifecycle)
 
 	ctx, cancel := signalContext()
 	defer cancel()
 	if err := server.Run(ctx, server.Config{
 		Substrate: stubstore.Config{
-			Capabilities: corestore.Capabilities{WriteSemantics: ws},
+			Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: envelope},
 			PickPolicies: policies,
 		},
+		EnableLifecycle: cfg.EnableLifecycle,
 	}, grpcLis, httpLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-stub: server.Run: %v\n", err)
 		os.Exit(1)

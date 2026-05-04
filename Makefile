@@ -1,11 +1,11 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
 proto-gen:
-	cd proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
+	cd protocols/proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
-	  node_executor.proto events.proto store_service.proto \
+	  executor.proto events.proto claim_producer.proto lifecycle.proto \
 	  executor_observability.proto store_observability.proto
 
 test:
@@ -20,21 +20,34 @@ lint:
 tidy:
 	go mod tidy
 
+# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols).
+# Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
+# inter-module references resolve via local replace.
+test-all:
+	go test ./...
+	cd foundation && go test ./...
+	cd protocols && go test ./...
+
+build-all:
+	go build ./...
+	cd foundation && go build ./...
+	cd protocols && go build ./...
+
 # ── rimsky-cli targets ──
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 cli:
-	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky-cli ./core/cmd/rimsky-cli/
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky-cli ./cmd/rimsky-cli/
 
 cli-release:
 	@mkdir -p bin/release
 	@for os in linux darwin; do \
 	  for arch in amd64 arm64; do \
-	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_$${os}_$${arch} ./core/cmd/rimsky-cli/; \
+	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_$${os}_$${arch} ./cmd/rimsky-cli/; \
 	  done; \
 	done; \
-	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_windows_amd64.exe ./core/cmd/rimsky-cli/
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_windows_amd64.exe ./cmd/rimsky-cli/
 
 # cli-sync-embedded copies the canonical deploy assets into the embedded
 # CLI tree, applying the v1 init-scaffold transforms required by the
@@ -78,9 +91,9 @@ cli-sync-embedded:
 	  gsub(/\.\/rimsky\.yml:\/etc\/rimsky\/rimsky\.yml:ro/, "../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro"); \
 	} \
 	/^  #/ { buf[bufN++] = $$0; next } \
-	{ flush_buf(); print }' deploy/docker-compose.yml > core/cli/embedded/deploy/docker-compose.yml
-	cp deploy/store-filesystem.yml core/cli/embedded/deploy/store-filesystem.yml
-	cp deploy/supervisor-config.yml core/cli/embedded/deploy/supervisor-config.yml
+	{ flush_buf(); print }' deploy/docker-compose.yml > modeling/cli/embedded/deploy/docker-compose.yml
+	cp deploy/store-filesystem.yml modeling/cli/embedded/deploy/store-filesystem.yml
+	cp deploy/supervisor-config.yml modeling/cli/embedded/deploy/supervisor-config.yml
 
 cli-image:
 	docker build -f Dockerfile.cli --build-arg VERSION=$(VERSION) -t rimsky/cli:latest .

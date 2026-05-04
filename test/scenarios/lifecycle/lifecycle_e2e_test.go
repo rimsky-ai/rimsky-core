@@ -4,7 +4,7 @@
 //
 // Sequence: register → deploy → instantiate → drive instance to terminal
 // → undeploy → deregister. After each control-api transition we assert
-// the rimsky_store_lifecycle row counts match the spec's expected
+// the rimsky_lifecycle_idempotency row counts match the spec's expected
 // invariants:
 //
 //   - registered:     one (template-scope) row at state='registered'.
@@ -28,23 +28,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/config"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/persistence"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/store"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
 // TestLifecycleE2E_FullSequence walks the full template/instance
-// lifecycle and asserts rimsky_store_lifecycle row deltas at every
+// lifecycle and asserts rimsky_lifecycle_idempotency row deltas at every
 // transition.
 func TestLifecycleE2E_FullSequence(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -58,7 +58,8 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"alpha": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Protocols:    []string{config.ProtocolClaimProducer, config.ProtocolLifecycleSubscriber},
 				},
 			},
 		},
@@ -82,15 +83,15 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 	// Post-DeployTemplate: register + deploy fired, so the
 	// template-scope lifecycle row should be at state='deployed'.
-	tplRow := getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash)
+	tplRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow, "template-scope lifecycle row must exist after deploy")
-	require.Equal(t, persistence.StoreLifecycleStateDeployed, tplRow.State)
+	require.Equal(t, persistence.LifecycleIdempotencyStateDeployed, tplRow.State)
 
 	// Instantiate: triggers OnInstanceCreated.
 	instanceID := h.CreateInstance(templateHash, "ck-1", nil)
-	instRow := getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeInstance, instanceID.String())
+	instRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String())
 	require.NotNil(t, instRow, "instance-scope lifecycle row must exist after create")
-	require.Equal(t, persistence.StoreLifecycleStateCreated, instRow.State)
+	require.Equal(t, persistence.LifecycleIdempotencyStateCreated, instRow.State)
 
 	// Drive instance terminal — manual SQL bypass; lifecycle test
 	// doesn't depend on the frame engine.
@@ -100,24 +101,24 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	// deletes the per-store lifecycle row before dropping the
 	// instance row. We verify both outcomes below.
 	deleteAndExpect(t, h, "/instances/"+instanceID.String(), http.StatusOK)
-	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeInstance, instanceID.String()),
+	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String()),
 		"instance-scope lifecycle row must be deleted by terminate fan-out")
 
 	// Undeploy: template-scope row state='undeployed'.
 	postAndExpect(t, h, "/templates/"+templateHash+"/undeploy", http.StatusOK)
-	tplRow = getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash)
+	tplRow = getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow)
-	require.Equal(t, persistence.StoreLifecycleStateUndeployed, tplRow.State)
+	require.Equal(t, persistence.LifecycleIdempotencyStateUndeployed, tplRow.State)
 
 	// Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
 	deleteAndExpect(t, h, "/templates/"+templateHash, http.StatusOK)
-	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.StoreLifecycleScopeTemplate, templateHash),
+	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash),
 		"template-scope lifecycle row must be deleted by deregister fan-out")
 }
 
-func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind persistence.StoreLifecycleScopeKind, scopeID string) *persistence.StoreLifecycleRow {
+func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind persistence.LifecycleIdempotencyScopeKind, scopeID string) *persistence.LifecycleIdempotencyRow {
 	t.Helper()
-	row, err := h.Persist.StoreLifecycle().Get(context.Background(), storeName, kind, scopeID, nil)
+	row, err := h.Persist.LifecycleIdempotency().Get(context.Background(), storeName, kind, scopeID, nil)
 	require.NoError(t, err)
 	return row
 }

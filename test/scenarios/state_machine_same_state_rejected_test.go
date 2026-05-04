@@ -13,9 +13,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 )
 
 func TestStateMachineSameStateRejected(t *testing.T) {
@@ -35,12 +36,12 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 
 	// Force the node into running first (stale→running via dispatch_claimed).
 	require.NoError(t, h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
-		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil))
+		shared.NodeStateRunning, cascade.ReasonDispatchClaimed, nil))
 
 	// Attempt running→running under dispatch_claimed. Should fail with
 	// ErrIllegalTransition (blessed-invariant §17).
 	err := h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
-		shared.NodeStateRunning, node.ReasonDispatchClaimed, nil)
+		shared.NodeStateRunning, cascade.ReasonDispatchClaimed, nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, shared.ErrIllegalTransition),
 		"expected ErrIllegalTransition, got %v", err)

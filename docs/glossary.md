@@ -27,9 +27,9 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 | **Store** | A named entity in operator config, with a kind, a `write_semantics`, and optional `pick_policies`. Rimsky's unit of interaction with persistent state. Operators configure stores; templates reference them by name. |
 | **Store implementation** | The code that fulfills the `Store` interface for a given kind. In-process Go impl in v1; possibly RPC-based post-v1. No special noun beyond "the store" or "the store's implementation." |
 | **Underlying storage** | Informal — the physical thing a store wraps (filesystem, postgres, S3, git, etc.). Not a Rimsky-side concept. Used only when context genuinely requires reference to the physical layer. |
-| **Claim** | A row in `rimsky_lock_holders` with `(store_name, region_data, intent)`. The store-anchored primitive. Halts node dispatch when conflicting claims are held on overlapping regions. |
+| **Claim** | A row in `rimsky_lock_holders` with `(store_name, scope_data, intent)`. The store-anchored primitive. Halts node dispatch when conflicting claims are held on overlapping scopes. |
 | **Named lock** | A row in `rimsky_lock_holders` with `(lock_name, limit)`. The non-store primitive. Halts node dispatch when the count of holders equals the limit. |
-| **Lock-holder row** | A row in `rimsky_lock_holders`. Common shape across both primitives; CHECK constraint enforces exactly-one-of (`lock_name`) or (`store_name` + `region_data`) populated. |
+| **Lock-holder row** | A row in `rimsky_lock_holders`. Common shape across both primitives; CHECK constraint enforces exactly-one-of (`lock_name`) or (`store_name` + `scope_data`) populated. |
 | **Lock state** | The set of all current lock-holder rows. Lives only in postgres (blessed invariant 9). No store implementation persists lock state. |
 
 ---
@@ -38,10 +38,10 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 | Verb | Signature | Purpose |
 |---|---|---|
-| **Open** | `Open(region, intent) → OpenOutcome` | Produce a store-supplied address for the executor and register whatever store-side state the `(intent × write_semantics)` combination requires. Returns `OpenOutcome{Available: true, Result: ...}` on a successful acquisition; returns `OpenOutcome{Available: false}` (`Unavailable{}` on the wire) when the store has no claim to give right now (e.g. an empty items-table queue). |
-| **Commit** | `Commit(region, address) → ()` | Signals that the consumer of the claim succeeded. The store decides what to do with its own state per its own configuration. |
-| **Abandon** | `Abandon(region, address) → ()` | Signals that the consumer of the claim failed. The store decides what to do with its own state per its own configuration. |
-| **Release** | `Release(region, address) → ()` | Tear down store-side read state (snapshot, MVCC transaction) for a read claim. Fires only when the store implementation registered such state. |
+| **Open** | `Open(scope, intent) → OpenOutcome` | Produce a store-supplied address for the executor and register whatever store-side state the `(intent × write_semantics)` combination requires. Returns `OpenOutcome{Available: true, Result: ...}` on a successful acquisition; returns `OpenOutcome{Available: false}` (`Unavailable{}` on the wire) when the store has no claim to give right now (e.g. an empty items-table queue). |
+| **Commit** | `Commit(scope, address) → ()` | Signals that the consumer of the claim succeeded. The store decides what to do with its own state per its own configuration. |
+| **Abandon** | `Abandon(scope, address) → ()` | Signals that the consumer of the claim failed. The store decides what to do with its own state per its own configuration. |
+| **Release** | `Release(scope, address) → ()` | Tear down store-side read state (snapshot, MVCC transaction) for a read claim. Fires only when the store implementation registered such state. |
 
 `intent ∈ {r, rw}`. Store disposition (commit-vs-release-vs-delete on the store's own state) is governed by per-store config. Per the 2026-04-30 stores cleanup, no store-internal vocabulary fields cross the rimsky↔store boundary; rimsky carries only the success/failure binary.
 
@@ -51,7 +51,7 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 | Term | Definition |
 |---|---|
-| **Region** | Both the conceptual `(store, selector)` pair and the concrete opaque bytes that identify it on the lock-holder row. The conceptual sense names the slice of a store's namespace under claim; the concrete sense is the resolved selector text or pick-policy-picked identifier (stored in the `region_data` column for historical reasons). Substitutable via `{{claim.<alias>.region}}`. |
+| **Scope** | Both the conceptual `(store, selector)` pair and the concrete opaque bytes that identify it on the lock-holder row. The conceptual sense names the slice of a store's namespace under claim; the concrete sense is the resolved selector text or pick-policy-picked identifier (stored in the `scope_data` column). Substitutable via `{{claim.<alias>.scope}}`. |
 | **Selector** | The opaque text the graph author supplies (post-substitution). The store parses; Rimsky doesn't classify or validate. May contain `{{...}}` substitution directives resolved at dispatch. |
 | **Address** | Store-supplied pointer the executor uses to access claimed state (path, table reference, snapshot handle, etc.). Returned by `Open`. Substitutable via `{{claim.<alias>.address}}` in inheriting nodes. |
 | **Payload** | Store-supplied data captured at acquisition (e.g., a picked queue item's user data). Substitutable via `{{claim.<alias>.payload.<field>}}`. |
@@ -70,7 +70,7 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 | **Holding subgraph** | The set of nodes a held claim's lifetime spans: acquirer + directly-declared inheritors. Computed at template deploy from explicit `inherits:` declarations. |
 | **Auto-terminal** | The mechanism by which a held claim's resolution fires automatically when the holding subgraph completes. Aggregate outcome (all-success → `Commit`; any-failure → `Abandon`) determines the store verb. No graph-author terminal designation required. |
 | **Value-pass** | Propagation mode: source extracts captured fields into its own attributes; downstream nodes consume via `{{deps.<source>.<field>}}`. Lifetime-independent — works after the source's claim has closed. |
-| **Claim-pass** | Propagation mode: downstream node inherits the live claim and uses `{{claim.<alias>.address \| payload.<f> \| region}}`. Requires the claim to remain open; the inheriting node's existence holds it. |
+| **Claim-pass** | Propagation mode: downstream node inherits the live claim and uses `{{claim.<alias>.address \| payload.<f> \| scope}}`. Requires the claim to remain open; the inheriting node's existence holds it. |
 
 ---
 
@@ -80,7 +80,7 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 |---|---|
 | **Staging area** | Informal — a store-internal private workspace where in-progress writes accumulate before atomic publication. Visible to Rimsky only as the address `Open` returned. |
 | **Atomic swap** | Informal — the store's native mechanism that publishes staging into live data atomically. Examples: filesystem rename, SQL `ALTER TABLE` swap, S3 manifest pointer flip, git merge. The moment of `Commit`. |
-| **`write_semantics`** | Per-store config field with values `direct \| staged_blocking \| staged_async`. Determines (a) whether reads can dispatch concurrently with writes on the same region, and (b) whether the supervisor calls the staging-related verbs. Operator-configured; bounded above by the store kind's max capability. |
+| **`write_semantics`** | Per-store config field with values `direct \| staged_blocking \| staged_async`. Determines (a) whether reads can dispatch concurrently with writes on the same scope, and (b) whether the supervisor calls the staging-related verbs. Operator-configured; bounded above by the store kind's max capability. |
 
 ---
 
@@ -88,11 +88,11 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 
 | Term | Definition |
 |---|---|
-| **Inertness (blessed invariant 20)** | Rimsky reads claim content (payload, address, region) by named-field path **only at substitution-leaf extraction**; does not log, validate, transform, normalize, decrypt, hash, index, pattern-match, attach to traces, include in errors, or otherwise act on claim content. Substitution-leaf extraction is the only sanctioned introspection site. Operationally: treat claim content as transit-only bytes; the only sanctioned read is substitution-leaf extraction. |
+| **Inertness (blessed invariant 20)** | Rimsky reads claim content (payload, address, scope) by named-field path **only at substitution-leaf extraction**; does not log, validate, transform, normalize, decrypt, hash, index, pattern-match, attach to traces, include in errors, or otherwise act on claim content. Substitution-leaf extraction is the only sanctioned introspection site. Operationally: treat claim content as transit-only bytes; the only sanctioned read is substitution-leaf extraction. |
 | **Substitution-leaf extraction** | The single sanctioned operation Rimsky performs on claim content under invariant 20: walk the named field path, return leaf bytes, pass through to the next destination (downstream attribute, executor envelope). Intermediate hops are bytes-only. |
-| **Encrypt-before-pass** | Operator-side practice: sensitive fields (any of payload / address / region) are encrypted before they enter Rimsky's address space; Rimsky transports ciphertext as opaque bytes; the consuming executor decrypts at point of use. Encryption can happen at any producer-side boundary (underlying storage, store implementation, control-layer admin verbs, or operator-managed pipeline) — Rimsky doesn't care which. Asymmetric is the recommended default (executor holds private key; producer holds public). Field-level, not whole-content. Rimsky-side awareness: zero. |
+| **Encrypt-before-pass** | Operator-side practice: sensitive fields (any of payload / address / scope) are encrypted before they enter Rimsky's address space; Rimsky transports ciphertext as opaque bytes; the consuming executor decrypts at point of use. Encryption can happen at any producer-side boundary (underlying storage, store implementation, control-layer admin verbs, or operator-managed pipeline) — Rimsky doesn't care which. Asymmetric is the recommended default (executor holds private key; producer holds public). Field-level, not whole-content. Rimsky-side awareness: zero. |
 | **Auth-blind** | Rimsky has no protocol surface for credentials. No verbs, fields, or types in the protocol mention auth. Credentials and other auth content flow as ordinary claim content (and via attribute substitution); Rimsky transports bytes without introspection. Service-to-service auth between Rimsky processes is operator-configured at the deployment layer (mTLS, IAM, service mesh). |
-| **Single-writer-per-region** | Structural invariant: at most one `rw` claim on overlapping regions at any time, regardless of mode. Enforced by the dispatch claim machinery as part of the conflict predicate. Folds into the `w×w ❌` cells of the coexistence matrix. |
+| **Single-writer-per-scope** | Structural invariant: at most one `rw` claim on overlapping scopes at any time, regardless of mode. Enforced by the dispatch claim machinery as part of the conflict predicate. Folds into the `w×w ❌` cells of the coexistence matrix. |
 
 ---
 
@@ -113,12 +113,12 @@ When this glossary contradicts older docs, the glossary wins. Spec text and code
 | **`{{deps.<node>.<field>}}`** | Upstream node's persisted attributes (captured values). | Independent of any claim's lifetime. |
 | **`{{claim.<alias>.address}}`** | The live claim's address. | Valid only in the acquirer's own node OR in nodes inheriting the alias. Implies inheritance — using this path in a non-acquirer node requires an `inherits:` declaration; deploy-time validation enforces. |
 | **`{{claim.<alias>.payload.<field>}}`** | The live claim's payload at a named field path. | Same validity rule as `address`. |
-| **`{{claim.<alias>.region}}`** | The live claim's region (resolved selector or picked identifier). | Same validity rule as `address`. |
+| **`{{claim.<alias>.scope}}`** | The live claim's scope (resolved selector or picked identifier). | Same validity rule as `address`. |
 | **`{{params.<key>}}`** | Instance-level config params (passed when the instance was created). | Independent of any claim. |
 
 ---
 
-## Coexistence matrix (claim vs claim, on overlapping regions)
+## Coexistence matrix (claim vs claim, on overlapping scopes)
 
 Mode is derived per claim from `(intent, store.write_semantics)` at conflict-check time — not stored on the lock-holder row.
 
@@ -132,7 +132,7 @@ Mode is derived per claim from `(intent, store.write_semantics)` at conflict-che
 - **Sync block** (store with `direct` or `staged_blocking`): r×r ✅; everything else ❌.
 - **Async block** (store with `staged_async`): r×r ✅, r×w ✅, w×w ❌.
 - Cross-quadrant cells are n/a — two claims on the same store share its `write_semantics`.
-- The `w×w ❌` cells in both blocks are the structural single-writer-per-region rule.
+- The `w×w ❌` cells in both blocks are the structural single-writer-per-scope rule.
 
 Named locks have no mode dimension; their coexistence rule is purely numeric (count vs. limit).
 

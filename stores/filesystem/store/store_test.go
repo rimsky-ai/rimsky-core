@@ -58,7 +58,7 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 
 	// Region is a JSON-encoded path string identical to the selector.
 	var region string
-	if err := json.Unmarshal(outcome.Result.Region, &region); err != nil {
+	if err := json.Unmarshal(outcome.Result.Scope, &region); err != nil {
 		t.Fatalf("unmarshal region: %v", err)
 	}
 	if region != "alpha/beta.txt" {
@@ -76,25 +76,25 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 	}
 }
 
-func TestRegionByteEqualForSamePath(t *testing.T) {
+func TestScopeByteEqualForSamePath(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	o1, _ := st.Open(context.Background(), "c1", "x/y.txt")
 	o2, _ := st.Open(context.Background(), "c2", "x/y.txt")
-	if string(o1.Result.Region) != string(o2.Result.Region) {
-		t.Fatalf("same-path regions must be byte-equal; got %s vs %s", o1.Result.Region, o2.Result.Region)
+	if string(o1.Result.Scope) != string(o2.Result.Scope) {
+		t.Fatalf("same-path regions must be byte-equal; got %s vs %s", o1.Result.Scope, o2.Result.Scope)
 	}
 	o3, _ := st.Open(context.Background(), "c3", "x/z.txt")
-	if string(o1.Result.Region) == string(o3.Result.Region) {
-		t.Fatalf("different-path regions must differ; got identical %s", o1.Result.Region)
+	if string(o1.Result.Scope) == string(o3.Result.Scope) {
+		t.Fatalf("different-path regions must differ; got identical %s", o1.Result.Scope)
 	}
 }
 
-// TestRegionCanonicalizationCollapsesEquivalentForms verifies that
+// TestScopeCanonicalizationCollapsesEquivalentForms verifies that
 // selectors that resolve to the same on-disk path produce byte-equal
 // region bytes. Without canonicalization "foo" and "./foo" would
 // produce byte-different regions and the rimsky-side region-conflict
 // check would fail to detect the collision.
-func TestRegionCanonicalizationCollapsesEquivalentForms(t *testing.T) {
+func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	equivalents := []string{"foo", "./foo", "foo/.", "./foo/.", "foo/"}
 	first, err := st.Open(context.Background(), "c0", equivalents[0])
@@ -106,9 +106,9 @@ func TestRegionCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open(%q): %v", sel, err)
 		}
-		if string(o.Result.Region) != string(first.Result.Region) {
+		if string(o.Result.Scope) != string(first.Result.Scope) {
 			t.Fatalf("region for %q differs from %q: %q vs %q",
-				sel, equivalents[0], o.Result.Region, first.Result.Region)
+				sel, equivalents[0], o.Result.Scope, first.Result.Scope)
 		}
 	}
 }
@@ -149,7 +149,7 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	o, _ := st.Open(context.Background(), "claim-1", "x.txt")
 
-	if err := st.Commit(context.Background(), "claim-1", o.Result.Region, o.Result.Address); err != nil {
+	if err := st.Commit(context.Background(), "claim-1", o.Result.Scope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if err := st.Abandon(context.Background(), "claim-2", nil, nil); err != nil {
@@ -160,10 +160,10 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesIsDirect(t *testing.T) {
+func TestCapabilitiesIsSyncEnvelope(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	caps := st.Capabilities()
-	if caps.WriteSemantics != "direct" {
-		t.Fatalf("expected direct write_semantics, got %q", caps.WriteSemantics)
+	if len(caps.WriteSemanticsEnvelope) != 1 || string(caps.WriteSemanticsEnvelope[0]) != "sync" {
+		t.Fatalf("expected envelope [sync], got %v", caps.WriteSemanticsEnvelope)
 	}
 }

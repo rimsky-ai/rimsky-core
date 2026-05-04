@@ -14,11 +14,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/config"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 )
@@ -49,7 +49,7 @@ func TestFsCrossQueueConcurrency(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"docs": {
 					Endpoint:     "grpc://" + grpcEndpoint,
-					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},

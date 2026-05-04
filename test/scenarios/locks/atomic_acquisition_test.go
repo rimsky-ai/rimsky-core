@@ -29,14 +29,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/core/config"
-	"github.com/fallguy/rimsky/core/executor"
-	"github.com/fallguy/rimsky/core/node"
-	"github.com/fallguy/rimsky/core/scenario"
-	"github.com/fallguy/rimsky/core/shared"
-	"github.com/fallguy/rimsky/core/store"
-	"github.com/fallguy/rimsky/core/store/storetest"
-	"github.com/fallguy/rimsky/core/supervisor"
+	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/locks/storetest"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -62,7 +62,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Loopback stub for control-api and scheduler startup. The Fake
 	// shadows it inside the runner-local registry built below.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -72,7 +72,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -100,22 +100,22 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Build a runner-local registry with the error-injecting Fake. This
 	// registry shadows the harness control-api's registry — the runner
 	// uses what we hand it via RunArgs.
-	fake := storetest.NewFake("content", store.Capabilities{WriteSemantics: store.WriteSemanticsDirect})
+	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}})
 	openErr := errOpenInjected{}
-	fake.ErrorFunc = func(verb string, _ store.ClaimID) error {
+	fake.ErrorFunc = func(verb string, _ locks.ClaimID) error {
 		if verb == "open" {
 			return openErr
 		}
 		return nil
 	}
-	reg := store.NewRegistry()
+	reg := locks.NewRegistry()
 	reg.Add("content", fake)
 
-	args := supervisor.RunArgs{
+	args := integration.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		LockHolders:       h.Persist.LockHolders(),
-		Coordinator:       h.Driver.Coordinator(),
+		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
 		StoreRegistry:     reg,
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
@@ -128,7 +128,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
-	out, err := supervisor.RunNode(h.Ctx, args, nil)
+	out, err := integration.RunNode(h.Ctx, args, nil)
 	// Open errors surface as the RunNode error (the per-candidate tx
 	// rolls back deferred-style). The load-bearing assertion is that
 	// the rollback actually happened — see the row-count checks below.
@@ -181,7 +181,7 @@ func TestLockHolderRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -190,7 +190,7 @@ func TestLockHolderRowDeletedAfterTerminal(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: store.Capabilities{WriteSemantics: store.WriteSemanticsDirect},
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},

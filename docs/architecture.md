@@ -1,6 +1,6 @@
 # Architecture
 
-Implementation shape of rimsky v1 (Go). This document covers how the code is organized, which processes run, how distribution works, and where the conceptual invariants are enforced in source. Conceptual model lives in `node-graph-design.md`; wire protocol lives in `protocol.md`. Vocabulary (claim, named lock, region, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, write_semantics, pick policy) lives in `glossary.md` — the authoritative naming reference.
+Implementation shape of rimsky v1 (Go). This document covers how the code is organized, which processes run, how distribution works, and where the conceptual invariants are enforced in source. Conceptual model lives in `node-graph-design.md`; wire protocol lives in `protocol.md`. Vocabulary (claim, named lock, scope, selector, address, payload, intent, alias, acquirer, inheritor, holding subgraph, auto-terminal, write_semantics, pick policy) lives in `glossary.md` — the authoritative naming reference.
 
 ---
 
@@ -20,7 +20,7 @@ Implementations of the store protocol (declared as the `Store`
 interface in `core/store/`, transported over the wire per
 `proto/v1/store_service.proto`). A store is a deployment-level data
 backend with two primitives — **claims** (store-bound, `(store,
-region, intent)` rows in `rimsky_lock_holders`) and **named locks**
+scope, intent)` rows in `rimsky_lock_holders`) and **named locks**
 (store-independent, `(name, limit)` rows). Per stores-redesign-v3, store
 implementations run as **separate processes** under `stores/<kind>/`;
 rimsky processes dial them at startup over gRPC and validate the
@@ -32,7 +32,7 @@ The `core/store/` package exports the rimsky-side `Store` interface
 `Capabilities`), `ClaimID` / `ClaimSpec` / `NamedLockSpec` /
 `Capabilities` / `ClaimResult` / `OpenOutcome` (the value types),
 `WriteSemantics` / `Intent`, the pure `ModeCoexists` and
-`RegionsByteEqual` helpers, and the simple `Registry`. The only
+`ScopesByteEqual` helpers, and the simple `Registry`. The only
 concrete `Store` impls in this module are `core/store/remote/`
 (gRPC client) and `core/store/storetest/` (unit-test fake). The
 `rimsky_lock_holders` postgres helpers used by supervisor and

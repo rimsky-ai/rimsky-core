@@ -21,14 +21,14 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	genv1 "github.com/fallguy/rimsky/proto/v1/gen"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// fakeServer is a minimal genv1.StoreServiceServer the bridge can
+// fakeServer is a minimal genv1.ClaimProducerServer the bridge can
 // dispatch to. Each verb returns a canned response or an error from the
 // corresponding `*Func` field, defaulting to an empty proto when unset.
 type fakeServer struct {
-	genv1.UnimplementedStoreServiceServer
+	genv1.UnimplementedClaimProducerServer
 
 	OpenFunc func(*genv1.OpenRequest) (*genv1.OpenResponse, error)
 }
@@ -84,14 +84,14 @@ func postOpen(t *testing.T, ts *httptest.Server) []byte {
 func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	addr := []byte(`{"path":"/items/x"}`)
 	payload := []byte(`{"data":"hello"}`)
-	region := []byte(`"items/x"`)
+	scope := []byte(`"items/x"`)
 	srv := &fakeServer{
 		OpenFunc: func(_ *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 			return &genv1.OpenResponse{
 				Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
 					Address: addr,
 					Payload: payload,
-					Region:  region,
+					Scope:   scope,
 				}},
 			}, nil
 		},
@@ -113,8 +113,8 @@ func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	if !bytes.Equal(acq.GetPayload(), payload) {
 		t.Errorf("payload mismatch: got %q want %q", acq.GetPayload(), payload)
 	}
-	if !bytes.Equal(acq.GetRegion(), region) {
-		t.Errorf("region mismatch: got %q want %q", acq.GetRegion(), region)
+	if !bytes.Equal(acq.GetScope(), scope) {
+		t.Errorf("scope mismatch: got %q want %q", acq.GetScope(), scope)
 	}
 }
 
@@ -190,17 +190,17 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 func TestLifecycleBridge_TemplateScopeRoundTrip(t *testing.T) {
 	var seen string
 	srv := &lifecycleFakeServer{
-		OnTemplateDeployedFunc: func(req *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
-			seen = req.GetTemplateId()
-			return &genv1.OnTemplateDeployedResponse{}, nil
+		OnTemplateDeployedFunc: func(req *genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error) {
+			seen = req.GetTemplateHash()
+			return &genv1.LifecycleAck{}, nil
 		},
 	}
 	mux := http.NewServeMux()
-	Mount(mux, srv)
+	MountLifecycle(mux, srv)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 
-	body := []byte(`{"template_id":"sha256-abc"}`)
+	body := []byte(`{"template_hash":"sha256-abc"}`)
 	resp, err := http.Post(ts.URL+"/v1/on_template_deployed", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -211,27 +211,27 @@ func TestLifecycleBridge_TemplateScopeRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", resp.StatusCode, raw)
 	}
 	if seen != "sha256-abc" {
-		t.Fatalf("template_id mismatch: got %q want sha256-abc", seen)
+		t.Fatalf("template_hash mismatch: got %q want sha256-abc", seen)
 	}
 }
 
 // TestLifecycleBridge_InstanceScopeRoundTrip verifies that a POST to
-// /v1/on_instance_terminated decodes both template_id and instance_id.
+// /v1/on_instance_terminated decodes both template_hash and instance_id.
 func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
 	var gotTemplate, gotInstance string
 	srv := &lifecycleFakeServer{
-		OnInstanceTerminatedFunc: func(req *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
-			gotTemplate = req.GetTemplateId()
+		OnInstanceTerminatedFunc: func(req *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
+			gotTemplate = req.GetTemplateHash()
 			gotInstance = req.GetInstanceId()
-			return &genv1.OnInstanceTerminatedResponse{}, nil
+			return &genv1.LifecycleAck{}, nil
 		},
 	}
 	mux := http.NewServeMux()
-	Mount(mux, srv)
+	MountLifecycle(mux, srv)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 
-	body := []byte(`{"template_id":"sha256-xyz","instance_id":"00000000-0000-0000-0000-000000000abc"}`)
+	body := []byte(`{"template_hash":"sha256-xyz","instance_id":"00000000-0000-0000-0000-000000000abc"}`)
 	resp, err := http.Post(ts.URL+"/v1/on_instance_terminated", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -242,32 +242,32 @@ func TestLifecycleBridge_InstanceScopeRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", resp.StatusCode, raw)
 	}
 	if gotTemplate != "sha256-xyz" {
-		t.Fatalf("template_id mismatch: got %q", gotTemplate)
+		t.Fatalf("template_hash mismatch: got %q", gotTemplate)
 	}
 	if gotInstance != "00000000-0000-0000-0000-000000000abc" {
 		t.Fatalf("instance_id mismatch: got %q", gotInstance)
 	}
 }
 
-// lifecycleFakeServer extends the bridge's test fakeServer pattern with
-// optional callbacks for the six lifecycle methods.
+// lifecycleFakeServer is a minimal LifecycleSubscriberServer the bridge
+// can dispatch to.
 type lifecycleFakeServer struct {
-	genv1.UnimplementedStoreServiceServer
+	genv1.UnimplementedLifecycleSubscriberServer
 
-	OnTemplateDeployedFunc   func(*genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error)
-	OnInstanceTerminatedFunc func(*genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error)
+	OnTemplateDeployedFunc   func(*genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error)
+	OnInstanceTerminatedFunc func(*genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error)
 }
 
-func (f *lifecycleFakeServer) OnTemplateDeployed(_ context.Context, req *genv1.OnTemplateDeployedRequest) (*genv1.OnTemplateDeployedResponse, error) {
+func (f *lifecycleFakeServer) OnTemplateDeployed(_ context.Context, req *genv1.OnTemplateDeployedRequest) (*genv1.LifecycleAck, error) {
 	if f.OnTemplateDeployedFunc != nil {
 		return f.OnTemplateDeployedFunc(req)
 	}
-	return &genv1.OnTemplateDeployedResponse{}, nil
+	return &genv1.LifecycleAck{}, nil
 }
 
-func (f *lifecycleFakeServer) OnInstanceTerminated(_ context.Context, req *genv1.OnInstanceTerminatedRequest) (*genv1.OnInstanceTerminatedResponse, error) {
+func (f *lifecycleFakeServer) OnInstanceTerminated(_ context.Context, req *genv1.OnInstanceTerminatedRequest) (*genv1.LifecycleAck, error) {
 	if f.OnInstanceTerminatedFunc != nil {
 		return f.OnInstanceTerminatedFunc(req)
 	}
-	return &genv1.OnInstanceTerminatedResponse{}, nil
+	return &genv1.LifecycleAck{}, nil
 }

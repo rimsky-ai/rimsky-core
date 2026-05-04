@@ -6,7 +6,7 @@ package conformance
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/core/executor"
+	"github.com/fallguy/rimsky/modeling/executor"
 )
 
 // Scenario describes one protocol conformance check.
