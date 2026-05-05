@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp docs-glossary docs-llms-full docs-lint docs-roots docs-build
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -31,6 +31,23 @@ license-stamp:
 
 tidy:
 	go mod tidy
+
+# ── Documentation tooling ──
+
+docs-glossary:
+	go run ./cmd/rimsky-docs-glossary
+
+docs-llms-full:
+	go run ./cmd/rimsky-docs-llms-full
+
+docs-lint:
+	go run ./cmd/rimsky-docs-lint all
+
+docs-roots: docs-llms-full docs-glossary
+	cp docs/agents/llms.txt llms.txt
+	cp docs/agents/llms-full.txt llms-full.txt
+
+docs-build: docs-roots
 
 # Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes

@@ -159,15 +159,26 @@ The Phase-5 cycle consolidated the legacy split tables:
 
 ## Where to look first
 
+For external-consumer-facing material (cite from agents and external docs):
+
+- Public concepts reference: `docs/concepts/` (canonical per-noun reference)
+- Protocol-implementation guides: `docs/protocols/` (custom claim-producer/executor/lifecycle-subscriber)
+- Agent-shaped indices: `docs/agents/llms.txt`, `docs/agents/llms-full.txt`
+- Human-shaped narrative onboarding: `docs/humans/landing.md`, `docs/humans/concepts.md`, `docs/humans/dashboard.md`
+- Public glossary (auto-generated): `docs/glossary.md`
+- Public vocabulary discipline / deprecated terms: `docs/vocabulary.md`
+
+For internal/working engineering material (do NOT cite from public surfaces):
+
 - Foundation contract: `docs/specs/2026-05-04-foundation-contract.md`
 - Modeling contract: `docs/specs/2026-05-04-modeling-layer-contract.md`
 - Service-protocol contract: `docs/specs/2026-05-04-service-protocol-contract.md`
-- Conceptual: `docs/node-graph-design.md`
-- Implementation: `docs/architecture.md`
-- Operating: `docs/operator-guide.md`
-- Glossary: `docs/glossary.md`
-- Writing a claim producer: `docs/claim-producer-author-guide.md`
-- Writing an executor: `docs/executor-author-guide.md`
+- Conceptual: `docs/internal/node-graph-design.md`
+- Implementation: `docs/internal/architecture.md`
+- Operating: `docs/internal/operator-guide.md`
+- Internal glossary (now superseded by `docs/glossary.md` for external use): `docs/internal/glossary.md`
+- Writing a claim producer (internal predecessor of `docs/protocols/claim-producer.md`): `docs/internal/claim-producer-author-guide.md`
+- Writing an executor (internal predecessor of `docs/protocols/executor.md`): `docs/internal/executor-author-guide.md`
 - Recent changes & rationale: `CHANGELOG.md` (long but informative)
 
 ## Code style

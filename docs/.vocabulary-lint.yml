@@ -1,0 +1,110 @@
+# Forbidden terms in the public-surface documentation.
+# Each entry has:
+#   term:        Go-flavored regex (RE2). The vocabulary lint compiles this as-is.
+#   replacement: free-text guidance shown in the lint failure message.
+#   scope:       list of single-level globs (filepath.Glob shapes). No `**`.
+#
+# The lint scope is the public surface only. Layered colloquialisms (e.g. the
+# bundled-services-layer "store") are disambiguated in concept-file prose, not
+# enforced via grep, so their patterns are NOT in this list.
+#
+# Per-line ignore convention: place `<!-- vocabulary-lint-ignore: <term> -->`
+# on the line *immediately preceding* the offending line. (A same-line trailing
+# comment also suppresses the hit on that line — see the lint's per-line logic.)
+
+forbidden:
+  # User-confirmed seed (spec §7.3).
+  - term: '\btemplate_id\b'
+    replacement: template_hash
+    scope: &public_surface_md
+      - docs/concepts/*.md
+      - docs/protocols/*.md
+      - docs/agents/*.md
+      - docs/agents/*.txt
+      - docs/agents/errors/*.md
+      - docs/agents/examples/*.md
+      - docs/humans/*.md
+      - docs/glossary.md
+      - docs/vocabulary.md
+      - docs/licensing.md
+      - docs/README.md
+      - llms.txt
+      - llms-full.txt
+      - README.md
+
+  - term: '\bconsumer_key\b'
+    replacement: instance_key
+    scope: *public_surface_md
+
+  - term: '\bsubstrate\b'
+    replacement: 'store (bundled-services-layer) or claim producer (protocol-layer) per context'
+    scope: *public_surface_md
+
+  # Spec §7.3 additions (obsolete table names — strict word-boundary match).
+  - term: '\brimsky_dispatch\b'
+    replacement: rimsky_worker_request
+    scope: *public_surface_md
+
+  - term: '\brimsky_lock_holders\b'
+    replacement: rimsky_claim_handle
+    scope: *public_surface_md
+
+  - term: '\brimsky_store_lifecycle\b'
+    replacement: rimsky_lifecycle_idempotency
+    scope: *public_surface_md
+
+  # Protocol-layer interface name `Store`. The pattern matches only the
+  # backticked form, which is the canonical way technical interface names are
+  # cited in markdown. Bare-prose "Store" or compound colloquial forms
+  # ("Filesystem Store", "Postgres Store") at the bundled-services layer are
+  # NOT matched. If a concept file actually needs to write the literal
+  # backticked `Store` (e.g. when calling out the deprecation), use the
+  # per-line ignore convention.
+  - term: '`Store`'
+    replacement: '`ClaimProducer`'
+    scope: *public_surface_md
+
+  # SQL table names are not part of the public surface (spec §1, §13).
+  # Public-surface prose names consumer-visible properties, not schema
+  # implementation. The deprecated table-name patterns above
+  # (rimsky_dispatch / rimsky_lock_holders / rimsky_store_lifecycle) are
+  # NOT matched here because they are pre-consolidation table names that
+  # were never themselves in the public surface; this rule catches the
+  # current-but-internal table names.
+  - term: '\brimsky_(claim_handle|worker_request|claim_holders|templates|nodes|template_tags|instances|schedules|lifecycle_idempotency|node_attributes|events)\b'
+    replacement: 'consumer-visible language (e.g. "the claim handle", "the per-run record", "the registered-template store")'
+    scope: *public_surface_md
+
+  # Pre-stores-redesign vocabulary — `region` was an early term for the
+  # producer-defined slice now called `scope`. The concept-file frontmatter
+  # for `scope.md` lists `region` in `deprecated_terms`; this lint catches
+  # in-prose drift back to the older word, including the `regional` /
+  # `regions` / `regionally` derivations. Producer-internal "region" terms
+  # in foundation source are not on the public surface.
+  - term: '\bregion(s|al|ally)?\b'
+    replacement: scope (or "scoped-access" for the access-shape sense)
+    scope: *public_surface_md
+
+  # SQL implementation language must not leak onto the public surface
+  # (spec §1, §4). The following patterns catch column-shape, type, and
+  # predicate vocabulary that betrays the persistence implementation.
+  # Public-surface prose names consumer-visible properties, not schema.
+  - term: '\b(BYTEA|BLOB)\b'
+    replacement: 'consumer-visible language ("opaque bytes", "byte sequence")'
+    scope: *public_surface_md
+
+  - term: '\bON DELETE\b'
+    replacement: 'consumer-visible language describing the lifetime guarantee'
+    scope: *public_surface_md
+
+  - term: '\bSQL predicate\b'
+    replacement: 'consumer-visible description of the check'
+    scope: *public_surface_md
+
+  - term: '\bscope_data\b'
+    replacement: 'scope bytes'
+    scope: *public_surface_md
+
+  - term: '\btemplate_hash TEXT\b'
+    replacement: 'template_hash (without SQL type)'
+    scope: *public_surface_md

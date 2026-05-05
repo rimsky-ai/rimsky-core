@@ -4,20 +4,23 @@ Project-agnostic reactive node-graph orchestration platform.
 
 ## Overview
 
-Rimsky orchestrates work as a graph of **nodes** that communicate via two messages (`invalidate`, `recalculate`) and that acquire **claim handles** against named scopes via the **claim-producer** protocol. Nodes execute work through external **executors** — peer services that speak the executor protocol (gRPC + HTTP+JSON bridge).
+Rimsky orchestrates work as a graph of **nodes**. When a node loses or replaces its value, an `invalidate` cascades to dependents, marking them `stale`; the scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their **executors**. Coordination across shared state goes through **claim handles** acquired against named scopes via the **claim-producer** protocol.
 
-Four conceptual layers (see `docs/architecture.md`):
+Internally, the codebase is organized into three Go modules plus a root modeling layer (see `docs/internal/architecture.md` for the layout):
 
-- **Foundation** (`foundation/` Go module) — cascade engine + lock manager + integration. Tables: `rimsky_worker_request`, `rimsky_claim_handle`, `rimsky_claim_holders`, `rimsky_nodes` (split-owned).
-- **Modeling** (root module) — templates, instances, frames, schedules, attributes, control-plane API. Tables: `rimsky_templates`, `rimsky_instances`, `rimsky_schedules`, `rimsky_frames`, `rimsky_events`, `rimsky_lifecycle_idempotency`.
+- **Foundation** (`foundation/` Go module) — cascade engine + lock manager + integration. Owns the per-run records, claim handles, and holding-subgraph state.
+- **Modeling** (root module) — templates, instances, frames, schedules, attributes, control-plane API.
 - **Service protocols** (`protocols/` Go module) — `ClaimProducer`, `Executor`, `LifecycleSubscriber`.
 - **Bundled services** — reference impls under `stores/` (filesystem, postgres, stub) and `executors/` (http-node, claude-agent, stub).
+
+This module organization is implementation detail — external users and agents read `docs/concepts/`, `docs/protocols/`, `docs/humans/`, and `docs/agents/llms.txt`, none of which require the layering to make sense.
 
 ## Quick start
 
     docker compose -f deploy/docker-compose.yml up -d
     curl http://localhost:8080/health
-    # Deploy a template, create an instance: see docs/operator-guide.md
+    # Deploy a template, create an instance: see docs/agents/examples/minimal-template-and-instance.md
+    # Operator-side install + tuning: see docs/internal/operator-guide.md
 
 ## Docs
 
@@ -27,15 +30,23 @@ Authoritative contracts:
 - `docs/specs/2026-05-04-modeling-layer-contract.md` — modeling layer.
 - `docs/specs/2026-05-04-service-protocol-contract.md` — service protocols.
 
-Operator + author guides:
+Public-surface guides (cite from these):
 
-- `docs/architecture.md` — implementation shape + blessed invariants.
-- `docs/node-graph-design.md` — conceptual reference.
-- `docs/operator-guide.md` — deployment + operation.
-- `docs/glossary.md` — vocabulary.
-- `docs/executor-author-guide.md` — write your own executor.
-- `docs/claim-producer-author-guide.md` — write your own claim producer.
-- `docs/protocol.md` — pointer to the service-protocol contract.
+- `docs/concepts/` — per-noun canonical reference.
+- `docs/protocols/` — write your own claim-producer / executor / lifecycle-subscriber.
+- `docs/humans/` — narrative onboarding for human readers.
+- `docs/agents/llms.txt` and `docs/agents/llms-full.txt` — LLM-shaped indices.
+- `docs/glossary.md` — public vocabulary (auto-generated from `docs/concepts/`).
+- `docs/vocabulary.md` — vocabulary discipline + deprecated-term policy.
+
+Internal engineering material (do not cite from public surfaces):
+
+- `docs/internal/architecture.md` — implementation shape + blessed invariants.
+- `docs/internal/node-graph-design.md` — conceptual reference (predecessor of `docs/concepts/`).
+- `docs/internal/operator-guide.md` — deployment + operation.
+- `docs/internal/glossary.md` — internal predecessor of `docs/glossary.md`.
+- `docs/internal/executor-author-guide.md`, `docs/internal/claim-producer-author-guide.md` — predecessors of `docs/protocols/`.
+- `docs/internal/protocol.md` — pointer to the service-protocol contract.
 
 ## Build
 

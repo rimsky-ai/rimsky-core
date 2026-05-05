@@ -16,6 +16,9 @@ vendor/
 /rimsky-migrate
 /rimsky-store-conformance
 /rimsky-entrypoint
+/rimsky-docs-glossary
+/rimsky-docs-lint
+/rimsky-docs-llms-full
 /http-node
 
 # Node executor deps / build output

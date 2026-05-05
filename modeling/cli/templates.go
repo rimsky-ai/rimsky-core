@@ -119,7 +119,7 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		_ = EmitJSON(os.Stdout, tpl)
 	} else {
 		EmitKV(os.Stdout, [][2]string{
-			{"template_id", tpl.Hash()},
+			{"template_hash", tpl.Hash()},
 			{"tags", strings.Join(tpl.Tags, ",")},
 		})
 	}
@@ -220,7 +220,7 @@ func RunTemplateGet(ctx context.Context, args []string) int {
 		return 0
 	}
 	EmitKV(os.Stdout, [][2]string{
-		{"id", tpl.Hash()},
+		{"template_hash", tpl.Hash()},
 		{"state", tpl.State},
 		{"tags", strings.Join(tpl.Tags, ",")},
 		{"source", tpl.Source},

@@ -123,7 +123,7 @@ func RunTagGet(ctx context.Context, args []string) int {
 			} else {
 				EmitKV(os.Stdout, [][2]string{
 					{"tag", t.Tag},
-					{"template_id", t.TemplateID},
+					{"template_hash", t.TemplateID},
 					{"updated_at", t.UpdatedAt},
 				})
 			}

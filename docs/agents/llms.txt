@@ -1,0 +1,51 @@
+# Rimsky
+
+> Project-agnostic reactive node-graph orchestration platform. Workflows are graphs of nodes; an `invalidate` propagates through the graph and the scheduler recalculates eligible stale nodes. Coding agents are the primary documentation consumer.
+
+## Concepts
+
+- [Attributes](concepts/attributes.md): The typed inputs and outputs of a node, declared by a JSON Schema; the substitution boundary.
+- [Cascade](concepts/cascade.md): The propagation of `invalidate` through the node graph.
+- [Claim](concepts/claim.md): A node-declared assertion that the node will read or read-write a producer-defined slice of state for the duration of its run.
+- [Claim handle](concepts/claim-handle.md): The persistent row asserting "holder H has acquired scope S for purpose P."
+- [Claim producer](concepts/claim-producer.md): The protocol-level term for a service that produces claim handles; implements five methods over gRPC.
+- [Executor](concepts/executor.md): The protocol-level term for the service that runs a node's work; implements the `NodeExecutor` dispatch protocol (and optionally the paired read-only `ExecutorObservability` protocol) over gRPC.
+- [Frame](concepts/frame.md): The unit of cascade resolution; `frame_resolution:` picks `serial_queue` or `coalesce` for handling concurrent invalidates.
+- [Holding subgraph](concepts/holding-subgraph.md): The set of nodes a held claim's lifetime spans; the claim resolves automatically at completion (commit on all-success, abandon on any-failure).
+- [Inheritance](concepts/inheritance.md): The DSL mechanism by which a downstream node declares it will use a live claim from an upstream acquirer.
+- [Instance](concepts/instance.md): A running execution of a template, identified by a Rimsky-generated UUID.
+- [Invalidate](concepts/invalidate.md): Rimsky's only graph-level message; marks a node `stale` and cascades the same message to dependents.
+- [Lifecycle subscriber](concepts/lifecycle-subscriber.md): An opt-in protocol for peers that want to react to template and instance state transitions.
+- [Named lock](concepts/named-lock.md): A scalar capacity counter at the deployment level.
+- [Node](concepts/node.md): The unit of work in a Rimsky template.
+- [Node state](concepts/node-state.md): The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`.
+- [Scope](concepts/scope.md): The slice of a producer's namespace under claim; canonicalized by the producer; compared byte-for-byte by Rimsky.
+- [Tag](concepts/tag.md): A movable alias from a string identifier to a template content hash.
+- [Template](concepts/template.md): A content-addressed bundle of node definitions, attribute schemas, claim and lock declarations, and frame-resolution config.
+- [Userdata](concepts/userdata.md): Free-form opaque bytes a template author attaches to a node's executor invocation; never inspected by Rimsky.
+- [Write semantics](concepts/write-semantics.md): The per-claim verdict from `ClaimProducer.Open` describing how writes against the claimed scope are visible to other claims.
+
+## Protocols
+
+- [ClaimProducer](protocols/claim-producer.md): How to implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
+- [Executor](protocols/executor.md): How to implement an executor — `NodeExecutor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (GetCapabilities / GetTrace / StreamTrace).
+- [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (six template/instance state-transition hooks).
+
+## Examples
+
+- [Minimal rimsky.yml](agents/examples/minimal-rimsky-yml.md)
+- [Minimal template and instance](agents/examples/minimal-template-and-instance.md)
+- [Two-node template with a claim dependency](agents/examples/two-node-with-claim.md)
+- [Claude-agent template demonstrating userdata substitution](agents/examples/claude-agent-userdata.md)
+- [Holding-subgraph template demonstrating held-claim resolution](agents/examples/holding-subgraph.md)
+- [rimsky-compose multi-template project](agents/examples/rimsky-compose-multi-template.md)
+
+## Errors
+
+- [Error catalog](agents/errors/README.md)
+
+## Optional
+
+- [Glossary](glossary.md)
+- [Vocabulary discipline and deprecated terms](vocabulary.md)
+- [Dashboard UI guide](humans/dashboard.md)
