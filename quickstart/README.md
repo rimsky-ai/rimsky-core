@@ -87,6 +87,22 @@ export RIMSKY_COMPOSE_FILE=$PWD/docker-compose.minimal.yml
 ./rimsky-cli health
 ```
 
+### Override host ports if 8080 / 8090 are in use
+
+Default port mappings are `8080:8080` (control-api) and `8090:8090` (dashboard). If you have other services on those ports (Hasura, another local API, etc.), override:
+
+```sh
+RIMSKY_HOST_PORT=18080 RIMSKY_DASHBOARD_HOST_PORT=18090 docker compose up
+```
+
+When you override `RIMSKY_HOST_PORT`, also tell the wrapper how to reach the published port:
+
+```sh
+RIMSKY_HOST_PORT=18080 ./rimsky-cli health
+```
+
+(The wrapper's `docker compose exec` path doesn't care about the host port, but native `rimsky-cli` invocations and any `curl http://localhost:8080/...` examples in this README do — substitute your override.)
+
 ### Inspect the SQLite state from the host
 
 By default the SQLite db lives in a Docker named volume — clean lifecycle, but invisible to host tools. To put the db file on your filesystem instead:

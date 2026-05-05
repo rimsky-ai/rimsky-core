@@ -15,6 +15,14 @@
 #   for Linux: the rimsky container runs as user `nonroot`; host UID
 #   mismatches may produce permission errors on a bind-mount. The named
 #   volume default avoids this.
+#
+# Host ports:
+#   Default mappings are 8080 (control-api) and 8090 (dashboard). If
+#   either is in use on your host, override with environment variables
+#   before `docker compose up`:
+#     RIMSKY_HOST_PORT=18080 RIMSKY_DASHBOARD_HOST_PORT=18090 docker compose up
+#   The container-side ports stay 8080/8090; only the host mapping
+#   changes.
 
 services:
   rimsky:
@@ -23,7 +31,7 @@ services:
       dockerfile: deploy/Dockerfile.all
     image: rimsky/all:quickstart
     ports:
-      - "8080:8080"
+      - "${RIMSKY_HOST_PORT:-8080}:8080"
     volumes:
       - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
@@ -59,7 +67,7 @@ services:
       context: ../dashboards/rimsky-dashboard
     image: rimsky/dashboard:quickstart
     ports:
-      - "8090:8090"
+      - "${RIMSKY_DASHBOARD_HOST_PORT:-8090}:8090"
     environment:
       RIMSKY_CONTROL_API_URL: http://rimsky:8080
     depends_on:

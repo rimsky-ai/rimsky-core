@@ -12,7 +12,7 @@ services:
       dockerfile: deploy/Dockerfile.all
     image: rimsky/all:quickstart
     ports:
-      - "8080:8080"
+      - "${RIMSKY_HOST_PORT:-8080}:8080"
     volumes:
       - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
