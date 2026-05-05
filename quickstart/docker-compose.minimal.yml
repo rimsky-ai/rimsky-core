@@ -1,11 +1,25 @@
-# Minimal compose: rimsky/all + stub claim-producer + stub executor.
-# No dashboard. For users who want to script against the control API
-# without building the Node frontend.
+# Minimal compose: postgres + rimsky/all + stub claim-producer + stub
+# executor. No dashboard. For users who want to script against the
+# control API without building the Node frontend.
 #
 # All other behavior matches docker-compose.yml — see that file's
-# header for state-volume notes.
+# header for state-volume notes and the rationale for postgres-over-sqlite.
 
 services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: rimsky
+      POSTGRES_PASSWORD: rimsky
+      POSTGRES_DB: rimsky
+    volumes:
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rimsky -d rimsky"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   rimsky:
     build:
       context: ..
@@ -14,17 +28,20 @@ services:
     ports:
       - "${RIMSKY_HOST_PORT:-8080}:8080"
     volumes:
-      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
     environment:
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
+      RIMSKY_CONTROL_API_HOST: "0.0.0.0"
+      RIMSKY_CONTROL_API_PORT: "8080"
     depends_on:
+      postgres:
+        condition: service_healthy
       store-stub:
         condition: service_started
       executor-stub:
         condition: service_started
     healthcheck:
-      test: ["CMD", "/usr/local/bin/rimsky-cli", "--endpoint=http://localhost:8080", "health"]
+      test: ["CMD", "/usr/local/bin/rimsky-cli", "health", "--endpoint=http://localhost:8080"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -34,6 +51,10 @@ services:
       context: ..
       dockerfile: stores/stub/Dockerfile.stub
     image: rimsky/store-stub:quickstart
+    environment:
+      STORE_STUB_CONFIG: /etc/store/config.yml
+    volumes:
+      - ./store-stub.yml:/etc/store/config.yml:ro
     expose: ["9102"]
 
   executor-stub:
