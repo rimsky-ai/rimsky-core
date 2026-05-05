@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // types.go contains SQLite-specific type-marshalling helpers shared across
 // the per-feature impls. Per spec §6.3 the SQLite dialect drift requires
 // app-side translation:

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §9: an async-handoff dispatch keeps the frame in flight
 // until the callback resolves. While the executor returns AsyncAccepted,
 // the source node stays in 'running' state, so frame-end's predicate

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // manifest.go — rimsky-compose.yml shape and local validation.
 //
 // Validation rules per spec §2.8: every failure is collected and

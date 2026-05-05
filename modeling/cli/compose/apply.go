@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // apply.go — execute a Plan serially against the control-api.
 //
 // Compose-up entry point: parse manifest, query state, compute plan,

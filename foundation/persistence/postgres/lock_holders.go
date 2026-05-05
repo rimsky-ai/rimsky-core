@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // lock_holders.go is the postgres accessor for `rimsky_claim_handle`
 // (v3 spec §12). Lifts the SQL from core/store/lockholders.go (which
 // the persistence refactor folds away — the lock-holder mechanism lives

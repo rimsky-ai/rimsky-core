@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -16,6 +16,18 @@ build:
 
 lint:
 	golangci-lint run
+
+# license-lint enforces the multi-license boundary documented in
+# docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
+# cannot import AGPL-classified ones, and every source file's header must
+# match its directory's classification per licensing.yml.
+license-lint:
+	go run ./cmd/rimsky-license-check
+
+# license-stamp adds the appropriate header to any source file that lacks
+# one. Idempotent. Run after moving files across the licensing boundary.
+license-stamp:
+	go run ./cmd/rimsky-license-check --stamp
 
 tidy:
 	go mod tidy

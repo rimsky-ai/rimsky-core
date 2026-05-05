@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Empty-executor sweep. Per spec §7.3 step 4 (the omnibus runner) the
 // supervisor distinguishes three dispatch paths inside one runner; the
 // scheduler-side sweep here is the upstream-equivalent split for the

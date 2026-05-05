@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // ScheduleStore — port of rimsky/src/storage/postgres/timer-store.ts adapted
 // for the spec §11.1 rename: rimsky_timers → rimsky_schedules, keyed on
 // node_id (no separate target_cell_id or reason columns).

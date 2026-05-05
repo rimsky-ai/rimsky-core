@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §3.1: under serial_queue, each invalidate produces a
 // distinct frame; multiple rapid invalidates queue separately, all
 // render serially, all produce terminal commits. The smoke fixture's

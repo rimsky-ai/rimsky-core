@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 import { api } from '../api';
 import { ResourceTable } from '../components/ResourceTable';
 import type { ScheduleRow } from '../types';

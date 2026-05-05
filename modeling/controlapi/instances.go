@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // instances.go — POST /instances, GET /instances, GET /instances/:id_or_key,
 // DELETE /instances/:id_or_key. Includes the instance-factory logic that
 // provisions instance + nodes + schedules from a template.

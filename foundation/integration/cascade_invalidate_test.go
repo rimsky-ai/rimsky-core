@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Tests for InvalidateNode + RecalculateNode. Backed by the real
 // persistence.Driver via the pgtest harness; a lightweight in-memory
 // fake satisfies persistence.Queue so the test can assert on dispatch

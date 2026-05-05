@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package persistence is the runtime-state-storage protocol for rimsky.
 // The Driver interface (driver.go) aggregates Queue, Store, and AdvisoryLocker
 // sub-interfaces. Two impls live under postgres/ and sqlite/.

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // testaccess.go provides test-only escape hatches for code that needs
 // raw *sql.DB access against a sqlite-backed persistence.Driver.
 // Mirrors `core/persistence/postgres/testaccess.go`.

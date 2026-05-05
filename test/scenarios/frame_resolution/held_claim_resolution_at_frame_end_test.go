@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies the stores redesign ClaimHolderInsertInput shape round-
 // trips through the storage interface and the (claim_handle_id,
 // holder_node_id) uniqueness constraint holds.

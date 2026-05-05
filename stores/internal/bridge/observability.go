@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // observability.go mounts the per-store HTTP+JSON observability bridge
 // onto an http.ServeMux. Routes (per spec §3.1):
 //

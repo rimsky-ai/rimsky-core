@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Atomic-acquisition scenario coverage — invariants 10 and 15.
 //
 // Invariant 10 (rimsky-side, v3 §4.10): the §7.3 acquisition transaction

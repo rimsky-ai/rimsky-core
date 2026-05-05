@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scenario 17 — stub completes with changed=false; supervisor records a
 // `no_op_commit` event (preserved kind, spec §16) and does NOT emit
 // `attributes_committed`. Dependents are NOT cascaded.

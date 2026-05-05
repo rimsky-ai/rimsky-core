@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies blessed invariant 16 (spec §18): "Per-instance ordering — at
 // most one running frame per instance. Enforced by uq_rimsky_frames_running."
 //

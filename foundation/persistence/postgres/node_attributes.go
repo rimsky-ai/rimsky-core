@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // node_attributes.go is the postgres accessor for `rimsky_node_attributes`
 // (spec §9.9.1). The table is created lazily on first dispatch of a node;
 // callers that read before any write see (nil, nil) from Get.

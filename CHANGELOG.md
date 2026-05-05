@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Licensing — first license declaration
+
+- **Tri-license structure landed.** Apache 2.0 for the embedder layer
+  (wire IDL, executor SDK, reference stores/executors, CLI, conformance,
+  deploy, docs); AGPL-3.0-or-later for the orchestrator-internal layer
+  (scheduler, supervisor, control-API, persistence, integration, modeling
+  runtime); a Fall Guy Consulting commercial license available separately
+  for organizations needing orchestrator modifications without AGPL §5/§13
+  obligations. See `docs/history/2026-05-02-licensing-design.md` for
+  rationale and `docs/licensing.md` for the operator FAQ.
+- **Per-file headers added** across every source file per the boundary map
+  in `licensing.yml`. AGPL files carry the mandatory "dual-licensed"
+  wording that preserves the commercial-license track.
+- **`cmd/rimsky-license-check/` binary** verifies the boundary mechanically
+  on every CI run via `make license-lint`. Apache-classified Go files
+  cannot import AGPL-classified packages; every source file's header must
+  match its directory's classification.
+- **`modeling/qualityrule/` split** to keep the Apache → AGPL boundary
+  clean: spec types (`Spec`, `Failure`, `EvalInput`, `Evaluator`) stay in
+  `modeling/qualityrule/` (Apache, interface-shaped) so `modeling/node`'s
+  `TemplateNodeDef` can declare them; the registry, `EvaluateAll`, and
+  built-in evaluators move to `modeling/qualityrule/eval/` (AGPL,
+  orchestrator runtime). The supervisor now imports both packages.
+- **CLA + DCO required for contributions** per `CONTRIBUTING.md` and
+  `CLA.md`. Inbound=outbound + relicensing-grant shape; one-time
+  signature via cla-assistant.io (off-repo configuration).
+
 ### Refactor — Layer crystallization Phase 7: documentation refresh complete
 
 The seven doc rewrites deferred from the dispatch-7 partial completion are now landed.

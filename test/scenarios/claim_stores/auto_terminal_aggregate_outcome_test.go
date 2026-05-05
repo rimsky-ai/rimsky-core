@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Auto-terminal aggregate-outcome scenario coverage — invariant 13
 // (held-claim resolution at holding-subgraph completion).
 //

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 // Types matching the Rimsky observability API responses (spec §1.2).
 //
 // These are the public contract the dashboard renders. Field names

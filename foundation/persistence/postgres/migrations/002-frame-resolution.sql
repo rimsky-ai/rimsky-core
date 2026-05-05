@@ -1,3 +1,7 @@
+-- Copyright © 2026 Fall Guy Consulting.
+-- Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+-- license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 -- 002-frame-resolution.sql
 -- Frame-resolution semantics per docs/specs/2026-04-26-frame-resolution-design.md.
 -- Adds the rimsky_frames table and frame_id columns. The pre-frame-resolution

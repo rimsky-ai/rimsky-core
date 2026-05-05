@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // observability_smoke_test.go — minimal smoke: assert that the
 // observability endpoints come up on the in-process control-api built
 // by BringUpStack and serve the documented JSON shapes. Includes an

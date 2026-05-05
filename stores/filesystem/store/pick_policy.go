@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Package store: pick-policy logic. Per docs/specs/2026-05-03-
 // fs-store-pick-policies-design.md. Auto-discovery + rename-based
 // atomic claim. Sentinels live at <store-root>/.fs-store/<policy>/

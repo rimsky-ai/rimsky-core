@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Tests for the scheduler main loop (Start / tick / sweeps). Uses the
 // pgtest harness plus the real Postgres-backed persistence.Driver so
 // the advisory-lock path is exercised end-to-end.

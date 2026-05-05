@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // TemplateStore — Postgres-backed persistence.TemplateStore. Per docs/specs/
 // 2026-05-01-control-plane-and-store-lifecycle-design.md §1.2:
 // rimsky_templates.id is the content hash ("sha256-<64-hex>"); state

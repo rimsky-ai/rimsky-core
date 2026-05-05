@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // LifecycleIdempotencyStore — Postgres-backed persistence.LifecycleIdempotencyStore.
 // Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
 // §5.3: rimsky_lifecycle_idempotency is the per-(store, scope) bookkeeping

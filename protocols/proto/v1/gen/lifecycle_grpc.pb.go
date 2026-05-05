@@ -1,3 +1,6 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
 // LifecycleSubscriber wire protocol.
 //
 // Per spec docs/specs/2026-05-04-service-protocol-contract.md §3

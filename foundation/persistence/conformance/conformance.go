@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package conformance is the cross-driver test suite. Both Postgres and
 // SQLite drivers must pass every test here. Run via the per-driver
 // wrappers in conformance_test.go.

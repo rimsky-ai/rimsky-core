@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // down.go — `compose down`. Reverses the application-state portion of
 // the manifest: instance deletes → undeploys → tag deletes → best-effort
 // template deletes. Optionally runs infra.down.command at the end with

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // rimsky-scheduler is the env-var-driven entry point for the
 // scheduler process. Builds a typed config.SchedulerConfig from
 // environment variables, loads the unified deployment-shape config

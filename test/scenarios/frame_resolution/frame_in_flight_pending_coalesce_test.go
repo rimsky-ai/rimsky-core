@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §3.2: under coalesce mode, no matter how many
 // invalidates fire while a frame is running, at most one queued
 // coalesce row exists at any time. Enforced structurally by

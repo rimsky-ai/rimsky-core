@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §3.2: under coalesce mode, mid-render invalidates
 // collapse into a single trailing frame. Many invalidates → at most
 // 2 distinct frames produced (the initial running frame + one

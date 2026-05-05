@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // ClaimProducer interface — the rimsky-side contract every
 // claim-producer implementation satisfies. Per spec
 // docs/specs/2026-05-04-service-protocol-contract.md §2.

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // lifecycle_test.go — coverage for the FanOutTemplateEvent /
 // FanOutInstanceEvent helpers. Uses storetest.Fake stores as targets
 // and a real testcontainer-backed Postgres for the rimsky_lifecycle_idempotency

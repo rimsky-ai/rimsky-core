@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 // EventSource wrapper with automatic reconnection + exponential
 // backoff. Returns an unsubscribe function. The caller passes
 // onComplete; the wrapper invokes it when an upstream "trace_complete"

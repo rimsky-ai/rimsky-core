@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scope-conflict race scenario coverage — invariant 4b (single-
 // writer-per-scope), with explicit regression cover for the cycle-4
 // fix at `foundation/persistence/postgres/advisory_locker.go::TakeScopeLockInTx`

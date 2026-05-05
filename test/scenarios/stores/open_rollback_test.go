@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Open-rollback scenario coverage — invariant 15 (revised v3): `Open`
 // fires inside the rimsky-side acquisition transaction, and an Open
 // error must roll back the rimsky-side INSERTs (lock-holder row and

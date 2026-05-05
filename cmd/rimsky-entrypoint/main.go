@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // rimsky-entrypoint is the unified-image PID-1 process supervisor. Runs
 // rimsky-migrate synchronously, then spawns the three runtime binaries
 // (rimsky-scheduler, rimsky-supervisor, rimsky-control-api) and forwards

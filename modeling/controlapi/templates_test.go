@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // templates_test.go — coverage for the new POST /templates state
 // machine + tag interactions per the 2026-05-01 control-plane spec
 // §1.4 / §1.5. Drives a real testcontainer-backed Postgres + the chi

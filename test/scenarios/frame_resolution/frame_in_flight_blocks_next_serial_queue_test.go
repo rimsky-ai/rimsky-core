@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §3.1: under serial_queue, while frame N is running,
 // frame N+1 stays queued. After frame N completes, the engine
 // advances frame N+1 to running on a subsequent scheduler tick.

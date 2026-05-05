@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scenario 11 — node declares an executor that is not registered. The
 // supervisor's omnibus runner picks the candidate (its accept-list
 // contains the executor name), then `Resolver.Resolve` misses, an

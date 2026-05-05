@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package pgtest provides a test-only helper for spinning up a Postgres
 // container, applying rimsky migrations, and returning a ready pool.
 // Shared across storage, queue, and scenario tests so each test file

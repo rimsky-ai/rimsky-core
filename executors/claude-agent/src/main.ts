@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 // pino ships CJS; reach the callable through the interop namespace.
 import * as pinoNs from "pino";
 type PinoFn = (opts?: object) => import("pino").Logger;

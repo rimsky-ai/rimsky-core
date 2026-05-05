@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // store-postgres is the standard direct-mode postgres store-service
 // with store-side pick-policy support. Per spec §8.2.
 //

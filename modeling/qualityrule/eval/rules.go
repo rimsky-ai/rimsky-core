@@ -1,26 +1,32 @@
-package qualityrule
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+package eval
 
 import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/fallguy/rimsky/modeling/qualityrule"
 )
 
 var (
 	evalsMu sync.RWMutex
-	evals   = map[string]Evaluator{}
+	evals   = map[string]qualityrule.Evaluator{}
 )
 
 // Register associates an Evaluator with a rule type name. Safe for concurrent
 // use. Consumers register "custom" handlers under their own unique names.
-func Register(name string, ev Evaluator) {
+func Register(name string, ev qualityrule.Evaluator) {
 	evalsMu.Lock()
 	defer evalsMu.Unlock()
 	evals[name] = ev
 }
 
 // Get looks up a registered Evaluator by name.
-func Get(name string) (Evaluator, bool) {
+func Get(name string) (qualityrule.Evaluator, bool) {
 	evalsMu.RLock()
 	defer evalsMu.RUnlock()
 	e, ok := evals[name]
@@ -30,8 +36,8 @@ func Get(name string) (Evaluator, bool) {
 // EvaluateAll runs a set of Specs over the input, partitioning Failures by
 // severity. err-severity failures should block a commit; warning-severity
 // failures should be logged but not block.
-func EvaluateAll(ctx context.Context, specs []Spec, input EvalInput) ([]Failure, []Failure, error) {
-	var errors, warnings []Failure
+func EvaluateAll(ctx context.Context, specs []qualityrule.Spec, input qualityrule.EvalInput) ([]qualityrule.Failure, []qualityrule.Failure, error) {
+	var errors, warnings []qualityrule.Failure
 	for _, s := range specs {
 		ev, ok := Get(s.Type)
 		if !ok {
@@ -42,13 +48,13 @@ func EvaluateAll(ctx context.Context, specs []Spec, input EvalInput) ([]Failure,
 			}
 			return nil, nil, fmt.Errorf("qualityrule: unknown rule type %q", s.Type)
 		}
-		in := EvalInput{NewData: input.NewData, PreviousData: input.PreviousData, Cfg: s.Config}
+		in := qualityrule.EvalInput{NewData: input.NewData, PreviousData: input.PreviousData, Cfg: s.Config}
 		passed, details, err := ev.Evaluate(ctx, in)
 		if err != nil {
 			return nil, nil, fmt.Errorf("qualityrule %q: %w", s.Type, err)
 		}
 		if !passed {
-			f := Failure{RuleType: s.Type, Config: s.Config, Severity: s.Severity, Details: details}
+			f := qualityrule.Failure{RuleType: s.Type, Config: s.Config, Severity: s.Severity, Details: details}
 			if s.Severity == "warning" {
 				warnings = append(warnings, f)
 			} else {
@@ -66,7 +72,7 @@ func EvaluateAll(ctx context.Context, specs []Spec, input EvalInput) ([]Failure,
 // if no previous.
 type rowCountRatioEvaluator struct{}
 
-func (rowCountRatioEvaluator) Evaluate(_ context.Context, in EvalInput) (bool, string, error) {
+func (rowCountRatioEvaluator) Evaluate(_ context.Context, in qualityrule.EvalInput) (bool, string, error) {
 	minRatio, _ := toFloat(in.Cfg["min_ratio"])
 	newLen, _ := lenOf(in.NewData)
 	if in.PreviousData == nil {
@@ -87,7 +93,7 @@ func (rowCountRatioEvaluator) Evaluate(_ context.Context, in EvalInput) (bool, s
 // values for each listed field.
 type noNullsEvaluator struct{}
 
-func (noNullsEvaluator) Evaluate(_ context.Context, in EvalInput) (bool, string, error) {
+func (noNullsEvaluator) Evaluate(_ context.Context, in qualityrule.EvalInput) (bool, string, error) {
 	fields, _ := in.Cfg["fields"].([]any)
 	rows, ok := in.NewData.([]map[string]any)
 	if !ok {
@@ -116,7 +122,7 @@ func (noNullsEvaluator) Evaluate(_ context.Context, in EvalInput) (bool, string,
 // exist (may be null) in every record.
 type nullableFieldsPresentEvaluator struct{}
 
-func (nullableFieldsPresentEvaluator) Evaluate(_ context.Context, in EvalInput) (bool, string, error) {
+func (nullableFieldsPresentEvaluator) Evaluate(_ context.Context, in qualityrule.EvalInput) (bool, string, error) {
 	fields, _ := in.Cfg["fields"].([]any)
 	rows, ok := in.NewData.([]map[string]any)
 	if !ok {

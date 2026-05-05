@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Cross-queue concurrency through the loopback gRPC fixture.
 // Two pick policies share the same sub-root; both auto-discover
 // folder "alpha". Both acquirer nodes produce byte-equal regions

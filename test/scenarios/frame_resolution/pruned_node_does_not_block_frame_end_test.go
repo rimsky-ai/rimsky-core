@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §4.4: when a parent node commits with changed=false,
 // downstream cascade message-passes are skipped. The downstream nodes
 // remain fresh and never enter stale; the frame ends without them.

@@ -1,0 +1,17 @@
+Rimsky
+Copyright © 2026 Fall Guy Consulting.
+
+This product includes software developed by Fall Guy Consulting and
+contributors to the Rimsky project. Portions of Rimsky are licensed under
+the Apache License, Version 2.0 (see LICENSE.apache); portions are
+dual-licensed under the GNU Affero General Public License v3.0 or later (see
+LICENSE.agpl) or a separately-negotiated Fall Guy Consulting commercial
+license. See COPYRIGHT for the per-layer breakdown and
+docs/licensing.md for an operator FAQ.
+
+This NOTICE file is provided pursuant to Apache License 2.0 §4(d). It will
+grow over time as third-party Apache-licensed code is bundled with Rimsky.
+Today, no third-party Apache-licensed source is vendored into this
+repository; transitive dependencies are pulled at build time via Go modules
+(see go.mod and go.sum) and the npm package manifest of the TypeScript
+executor (executors/claude-agent/package.json).

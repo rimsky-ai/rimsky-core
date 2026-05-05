@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Auto-terminal mechanism (spec §4.10 invariant 13, as amended by
 // docs/history/2026-04-30-stores-protocol-cleanup-design.md).
 //

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Terminal-event handling under the stores redesign — release path
 // (§7.6 / §4.10 invariant 13 auto-terminal).
 //
@@ -33,6 +37,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/attribute"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/qualityrule"
+	qreval "github.com/fallguy/rimsky/modeling/qualityrule/eval"
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
@@ -624,7 +629,7 @@ func runQualityRules(rules []qualityrule.Spec, attrs map[string]any) []qualityru
 	if len(rules) == 0 {
 		return nil
 	}
-	errs, _, err := qualityrule.EvaluateAll(context.Background(), rules,
+	errs, _, err := qreval.EvaluateAll(context.Background(), rules,
 		qualityrule.EvalInput{NewData: attrs})
 	if err != nil {
 		return []qualityrule.Failure{{

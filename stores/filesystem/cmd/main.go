@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // store-filesystem is the standard direct-mode filesystem store-service.
 // Per spec docs/history/2026-04-27-stores-redesign-v3-design.md §8.1.
 //

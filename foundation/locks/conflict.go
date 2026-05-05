@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
 // Lives in core/store/ so both the supervisor's acquisition flow
 // (core/supervisor/runner_acquire.go) and the queue's eligibility

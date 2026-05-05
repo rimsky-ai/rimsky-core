@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // lifecycle_e2e_test.go — end-to-end coverage of the six store-lifecycle
 // events from spec §4.1, driven through the scenario harness against a
 // loopback stub store-service.

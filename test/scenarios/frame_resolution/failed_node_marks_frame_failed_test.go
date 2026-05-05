@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies spec §8 ("Quality-rule failures and frame outcomes") and
 // spec §6.2 ("On terminal failure: frame_id is preserved"): a node
 // failing during a frame causes the frame to end with state='failed';

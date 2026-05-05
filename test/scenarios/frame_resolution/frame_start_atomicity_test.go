@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies blessed invariant 18 (spec §18): "Frame-start atomicity —
 // queued→running transition AND source-node state='stale', frame_id=$frame_id
 // writes happen in one transaction."

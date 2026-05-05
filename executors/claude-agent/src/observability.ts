@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 // observability.ts — claude-agent's ExecutorObservability surface.
 //
 // Records per-dispatch trace events in a bounded in-memory ledger.

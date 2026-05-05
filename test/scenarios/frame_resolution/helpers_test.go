@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Shared helpers for frame_resolution scenario tests. Direct DB queries
 // against rimsky_frames, plus invalidate-firing utilities that bypass
 // the controlapi when a test wants to drive many invalidates rapidly.

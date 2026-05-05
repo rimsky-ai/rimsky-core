@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // templates.go — `template register/list/get/deploy/undeploy/rm`.
 //
 // All handlers share the same boilerplate: own a flag set, register

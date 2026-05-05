@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Template DSL types (spec §18). The graph-author's view of a node:
 // stores it interacts with, named locks it holds, attributes it
 // declares, and inheritance edges for held claims it consumes

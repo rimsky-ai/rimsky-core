@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Spec §4.2 (on_error) + §7.3 (policy chain). Consults the node's
 // error_types policy chain, evaluates an occurrence, persists the resolved
 // EvaluatorState, logs an `error` event, and applies the resolved action

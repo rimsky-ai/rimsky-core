@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Package store: ledger.go is the in-memory per-claim history used by
 // the filesystem store's observability surface (StoreObservability).
 // Rimsky-side claim content invariants (blessed-invariant 20) do not

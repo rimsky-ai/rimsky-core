@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // state.go — query the control-api for compose-owned resources.
 //
 // `GET /tags` and `GET /instances` do not support prefix filtering server-

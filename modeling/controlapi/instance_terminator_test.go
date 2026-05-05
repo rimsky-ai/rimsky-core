@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // instance_terminator_test.go — coverage for the control-api
 // background worker that fires OnInstanceTerminated against the stores
 // recorded in rimsky_lifecycle_idempotency. Drives a real testcontainer-

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Package locks defines the rimsky-side claim-producer contract. Per spec
 // docs/history/2026-04-27-stores-redesign-v3-design.md as amended by
 // docs/history/2026-04-30-stores-protocol-cleanup-design.md (store-

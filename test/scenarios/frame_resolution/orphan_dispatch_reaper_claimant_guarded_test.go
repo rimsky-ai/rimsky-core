@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies that runReapOrphanFrameDispatches releases dispatch claims
 // using a per-row, claimant-guarded UPDATE (blessed-invariant 4): the
 // SET clauses run only when `claimed_by = priorClaimedBy`. A fresh

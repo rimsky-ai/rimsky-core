@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // health.go — GET /health. Returns a shallow liveness snapshot: the API is
 // ok if it can query supervisors and node counts; the response also surfaces
 // registered supervisors and node-state rollup so operators can eyeball the

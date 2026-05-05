@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies that an applyTerminalAppError → retry path that transitions
 // a node back to 'stale' preserves frame_id. Frame-end detection
 // (runFrameEndDetection) filters by `n.frame_id = f.frame_id`, so a

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`.
 // One row per (lock_holder, holder_node) pair from the §18.4 holding
 // subgraph. Rows transition `'active'` → `'completed'` (success) or

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // lifecycle_check.go drives the six lifecycle RPCs against a peer that
 // implements LifecycleSubscriber. The probe is shape-only: it sends one
 // of each event with synthetic IDs and asserts the call returns success.

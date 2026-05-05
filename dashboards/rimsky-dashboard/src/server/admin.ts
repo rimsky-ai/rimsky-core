@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 import { Hono } from 'hono';
 
 import { discoveryCacheStatus, invalidateDiscoveryCache } from './discovery.js';

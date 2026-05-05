@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package scheduler schedule_ticker.go — cron-driven schedule fires.
 //
 // Missed-fire policy: cron advancement is based on the row's prior

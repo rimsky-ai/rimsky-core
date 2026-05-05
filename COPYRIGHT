@@ -1,0 +1,31 @@
+Rimsky is Copyright © 2026 Fall Guy Consulting.
+
+Rimsky is multi-licensed:
+
+  1. Source files in the embedder layer are licensed under the Apache License,
+     Version 2.0 (see LICENSE.apache). The embedder layer is identified
+     per-file by an "Apache License, Version 2.0" header and is documented in
+     docs/future-work/2026-05-02-licensing-design.md §4.1.
+
+  2. Source files in the orchestrator layer are dual-licensed:
+
+       (a) under the GNU Affero General Public License v3.0 or later (see
+           LICENSE.agpl). This is the default; no action is required to use
+           Rimsky under AGPL terms.
+
+       (b) under a Fall Guy Consulting commercial license, available to
+           organizations that prefer to use, modify, or distribute the
+           orchestrator without AGPL §5 (copyleft) or §13 (network-service
+           source disclosure) obligations. Contact
+           licensing@fallguyconsulting.com.
+
+     The orchestrator layer is identified per-file by a "Dual-licensed under
+     AGPL-3.0-or-later or a Fall Guy Consulting commercial license" header
+     and is documented in docs/future-work/2026-05-02-licensing-design.md §4.2.
+
+Contributions are accepted under the terms of the Contributor License
+Agreement at CLA.md, which grants Fall Guy Consulting the rights necessary
+to maintain the multi-license structure.
+
+"Rimsky" and the Rimsky logo are trademarks of Fall Guy Consulting. See
+TRADEMARKS.md for the trademark usage policy.

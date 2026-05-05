@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 import { describe, it, expect, afterEach } from "vitest";
 import pino from "pino";
 import { startInternalMcpServer, type CallbackServerHandle } from "./internal-mcp-server.js";

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Substantive coverage for the §4.10 invariant 13 auto-terminal mechanism in
 // isolation. Drives CheckAndFireResolution against a real Postgres + a
 // stub-filesystem store and asserts the aggregate-outcome semantics.

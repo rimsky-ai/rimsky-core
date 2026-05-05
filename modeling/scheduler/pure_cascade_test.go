@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Tests for ProcessPureCascade. Uses the real persistence.Driver via
 // pgtest (same pattern as invalidate_test.go) and a lightweight fake
 // persistence.Queue so assertions can inspect exactly what propagated.

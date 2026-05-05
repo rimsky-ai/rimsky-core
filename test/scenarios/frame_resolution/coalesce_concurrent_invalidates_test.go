@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies the §7.3 step 1 coalesce upsert is race-free under concurrent
 // producers. Two operator invalidates landing simultaneously must both
 // succeed (one INSERTs, the other DO UPDATEs source_node_ids) — neither

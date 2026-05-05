@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scope-envelope coverage — verifies the `template_id` and
 // `instance_id` fields populated on the supervisor-side OpenRequest
 // reach the store at dispatch time. Pin per spec §13.4 (the wire

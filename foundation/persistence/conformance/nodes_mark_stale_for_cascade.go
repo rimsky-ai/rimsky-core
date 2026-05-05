@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // nodes_mark_stale_for_cascade.go — NodesMarkStaleForCascade conformance area.
 //
 // Covers NodeStore.MarkStaleForCascade — the cascade target used by the

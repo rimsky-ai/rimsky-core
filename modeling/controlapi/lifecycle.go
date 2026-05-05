@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Lifecycle event fan-out helper. Per the layer-crystallization design
 // (2026-05-04, Phase 4) lifecycle events fire synchronously from
 // control-api state-transition handlers to every LifecycleSubscriber

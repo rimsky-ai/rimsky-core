@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Package clitest provides an httptest-backed fake control-api for
 // CLI tests. It lives under internal/ because it imports rimsky's
 // canonical-hash and template-spec packages to mirror the production

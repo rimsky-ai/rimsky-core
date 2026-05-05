@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Spec §12.4 — async-handoff terminal callback. Executors that returned
 // AsyncAccepted POST a TerminalEvent JSON body to
 // `POST {callback_url}/v1/callback/{async_ack_id}`. The CallbackRegistry

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // InstanceStore — Postgres-backed persistence.InstanceStore. Per docs/specs/
 // 2026-05-01-control-plane-and-store-lifecycle-design.md §2:
 // rimsky_instances binds to template_hash (TEXT) instead of template_id

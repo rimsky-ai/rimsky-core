@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // fixtures.go — shared seed helpers for the cross-driver conformance
 // suite. Each helper takes a persistence.Driver so it works against both
 // Postgres and SQLite without driver-specific cruft.

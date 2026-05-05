@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as grpc from "@grpc/grpc-js";
 import pino from "pino";

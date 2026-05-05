@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package observability is the read-only observability surface mounted
 // on rimsky-control-api at /v1/observability/*. Exposes a curated view
 // over rimsky_* tables plus a handshake-driven discovery cache for the

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+// See LICENSE.apache at the repo root.
+
 // Typed fetch wrappers around the dashboard's proxy endpoints.
 //
 // All paths go through the Hono server's /api/control, /api/exec/:name,

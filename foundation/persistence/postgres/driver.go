@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package postgres is the Postgres-backed persistence.Driver. Lifted from
 // the previous core/queue/postgres + core/storage/postgres + core/migrations
 // packages and refactored to use persistence.Tx instead of pgx.Tx in

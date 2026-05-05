@@ -62,4 +62,11 @@ Pre-v1; in active development.
 
 ## License
 
-TBD (will be permissive open-source at v1 ship).
+Rimsky is multi-licensed. The orchestrator (scheduler, supervisor,
+control-API and their internal packages) is licensed under
+AGPL-3.0-or-later or a Fall Guy Consulting commercial license. The
+embedder layer (wire IDL, executor SDK, reference store and executor
+binaries, CLI, conformance suites, deployment artifacts, documentation)
+is licensed under the Apache License 2.0. See `COPYRIGHT` for the
+per-layer breakdown, `LICENSE.apache` and `LICENSE.agpl` for the license
+texts, and `docs/licensing.md` for an operator FAQ.

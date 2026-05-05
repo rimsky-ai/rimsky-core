@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // NodeStore — port of rimsky/src/storage/postgres/cell-store.ts, renamed for
 // the cell→node rename (spec §11.1). The `kind` discriminator is gone; the
 // store manages `executor` and `schedule_cron` nullable TEXT columns instead.

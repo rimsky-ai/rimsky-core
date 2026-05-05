@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scenario 9 — agentic-style async handoff. Executor returns AsyncAccepted
 // with an ack; node stays running. The test then POSTs a Complete body to
 // the supervisor's callback endpoint with the same ack; the node reaches

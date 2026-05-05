@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // rimsky-supervisor is the YAML-configured entry point for the
 // supervisor process. Reads its config path from
 // RIMSKY_SUPERVISOR_CONFIG (per-process tuning: concurrency, callback,

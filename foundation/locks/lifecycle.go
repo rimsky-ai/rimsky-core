@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // LifecycleSubscriber interface — the rimsky-side contract for binaries
 // that hook into Rimsky's control-plane lifecycle events. Per spec
 // docs/specs/2026-05-04-service-protocol-contract.md §3 (extracted from

@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Omnibus runner — the stores redesign per-claim-cycle execution path.
 //
 // One call to RunNode picks an eligible candidate, runs the §7.3

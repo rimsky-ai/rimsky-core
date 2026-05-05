@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // tags_test.go — coverage for the POST /tags / PUT /tags/{tag} /
 // DELETE /tags/{tag} routes added by the 2026-05-01 control-plane
 // spec §1.5.

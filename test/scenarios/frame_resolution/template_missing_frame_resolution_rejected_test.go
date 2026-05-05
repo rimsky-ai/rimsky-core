@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies blessed invariant 15 (spec §18): "Frame-resolution mode is
 // mandatory and per-template. Control-api rejects template uploads
 // missing frame_resolution; the field is one of coalesce | serial_queue."

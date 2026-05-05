@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scenario 14 — verify-before-run race (blessed invariant 5): a dispatch
 // row already claimed by another supervisor must NOT be executed by ours.
 // In the redesigned omnibus runner this manifests as the §7.3 step 1

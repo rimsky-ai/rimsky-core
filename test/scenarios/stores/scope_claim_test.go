@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scope-claim scenario coverage — invariant 4b (single-writer-per-
 // scope) and invariant 10 (atomic acquisition).
 //

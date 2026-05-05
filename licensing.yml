@@ -1,0 +1,94 @@
+# Rimsky licensing boundary map.
+# Single source of truth for the per-file license headers and the
+# import-graph lint enforced by `cmd/rimsky-license-check/`. See
+# docs/history/2026-05-02-licensing-design.md for rationale.
+#
+# Update procedure: edit this file, run `make license-lint` to verify
+# import direction, then run `make license-stamp` to update per-file
+# headers.
+#
+# Path classification rule: longest-prefix-match wins. Subdirectories of
+# AGPL paths can be reclassified Apache by being listed under the apache:
+# block (e.g. foundation/integration/remote/ is Apache despite living
+# under foundation/integration/ AGPL).
+
+apache:
+  - protocols/
+  - foundation/locks/
+  - foundation/integration/remote/
+  - foundation/shared/
+  - modeling/cli/
+  - modeling/executor/
+  - modeling/node/
+  - modeling/shared/
+  - modeling/template/canonical/
+  - modeling/qualityrule/  # spec types only; runtime is at modeling/qualityrule/eval/ (AGPL)
+  - conformance/
+  - stores/
+  - executors/
+  - cmd/rimsky-cli/
+  - cmd/rimsky-conformance/
+  - cmd/rimsky-claim-producer-conformance/
+  - cmd/rimsky-conformance-probe/
+  - cmd/rimsky-license-check/
+  - dashboards/
+  - deploy/
+  - docs/
+  - cold-read/
+  # Top-level files and dotfiles default to Apache (build config, README,
+  # CHANGELOG, Makefile, .golangci.yml, etc.). Non-source files (LICENSE.*,
+  # COPYRIGHT, NOTICE, TRADEMARKS.md, CLA.md, CONTRIBUTING.md, licensing.yml,
+  # this file itself) carry no header and are exempt from the lint.
+
+agpl:
+  - foundation/cascade/
+  - foundation/integration/  # excludes foundation/integration/remote/ (override above)
+  - foundation/persistence/
+  - foundation/internal/
+  - modeling/attribute/
+  - modeling/config/
+  - modeling/controlapi/
+  - modeling/frame/
+  - modeling/internal/
+  - modeling/observability/
+  - modeling/qualityrule/eval/  # runtime evaluators + registry
+  - modeling/scenario/
+  - modeling/scheduler/
+  - cmd/rimsky-scheduler/
+  - cmd/rimsky-supervisor/
+  - cmd/rimsky-control-api/
+  - cmd/rimsky-migrate/
+  - cmd/rimsky-entrypoint/
+  - test/
+
+exempt:
+  # Non-source files at the repo root that carry no per-file header.
+  - LICENSE.apache
+  - LICENSE.agpl
+  - COPYRIGHT
+  - NOTICE
+  - TRADEMARKS.md
+  - CLA.md
+  - CONTRIBUTING.md
+  - licensing.yml
+  - go.mod
+  - go.sum
+  - go.work
+  - go.work.sum
+  - .gitignore
+  - .gitattributes
+  - .dockerignore
+  # Build artifacts and vendor trees. The walker only hard-skips VCS dirs
+  # (.git, .svn, .hg); every other "skip me" directory must be listed here.
+  - bin/
+  - protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
+  - executors/claude-agent/node_modules/
+  - executors/claude-agent/dist/
+  - executors/claude-agent/build/
+  - executors/claude-agent/.cache/
+  - dashboards/rimsky-dashboard/node_modules/
+  - dashboards/rimsky-dashboard/dist/
+  - dashboards/rimsky-dashboard/build/
+  - dashboards/rimsky-dashboard/.cache/
+  - .elves/
+  # Binary blobs are skipped by the walker (see cmd/rimsky-license-check/).

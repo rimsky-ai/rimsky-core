@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Package attributes owns the per-node typed attribute object described in
 // stores-redesign spec §5.7: substitution of `{{deps...}}` / `{{claim...}}`
 // / `{{params...}}` directives at dispatch, JSON Schema validation at

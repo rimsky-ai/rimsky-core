@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Verifies blessed invariant 19 (spec §18): "frame_id flows with
 // cascade. No rimsky_worker_request row has frame_id IS NULL. No rimsky_nodes
 // row in state stale or running has frame_id IS NULL."

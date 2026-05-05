@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Unified terminal-decision engine — Phase 6 of the
 // layer-crystallization plan. Both the executor-terminal path
 // (releaseClaim's non-held branch in runner_terminal.go) and the

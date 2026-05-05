@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 // Scenario 13 — orphaned claim: a `rimsky_claim_handle` row outlives its
 // supervisor's heartbeat. The scheduler's §7.5 step-2 lock-holder sweep
 // reaps the expired row, deletes it claimant-guarded on

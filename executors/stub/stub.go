@@ -1,3 +1,7 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
 // Package stub is a scripted in-process executor used by scenario tests.
 // NOT a user-facing reference executor — lives under executors/stub/ so
 // tests can drive any sequence of Execute events against a real gRPC server.
