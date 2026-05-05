@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -87,8 +88,12 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	// Verify the callback's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
-	row, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, nil)
-	require.NoError(t, err)
+	var row *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row, "expected node_attributes row to exist after async commit")
 	require.Equal(t, true, row.Data["done"],
 		"expected attributes.data.done = true from callback's delta")

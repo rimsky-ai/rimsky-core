@@ -54,9 +54,13 @@ func TestHappyPathExecutor(t *testing.T) {
 
 	// Verify a commit (or work_completed) event was appended.
 	nid := n.ID
-	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
-		persistence.ListPagination{Limit: 200}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+			persistence.ListPagination{Limit: 200}, tx)
+		evs = r
+		return err
+	}))
 	var sawCompleted bool
 	for _, e := range evs.Events {
 		if e.Kind == "work_completed" {
@@ -69,8 +73,12 @@ func TestHappyPathExecutor(t *testing.T) {
 	// Verify the executor's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
-	row, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, nil)
-	require.NoError(t, err)
+	var row *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row, "expected node_attributes row to exist after commit")
 	require.Equal(t, true, row.Data["ok"],
 		"expected attributes.data.ok = true from executor's delta")

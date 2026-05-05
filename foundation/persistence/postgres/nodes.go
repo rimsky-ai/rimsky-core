@@ -258,19 +258,7 @@ func (s *nodesImpl) UpdateState(
 	reason cascade.TransitionReason,
 	tx persistence.Tx,
 ) error {
-	if tx != nil {
-		return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
-	}
-	// Open an ephemeral tx so the SELECT FOR UPDATE + UPDATE are atomic.
-	pgT, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = pgT.Rollback(ctx) }()
-	if err := s.enforceAndUpdate(ctx, pgT, id, state, reason); err != nil {
-		return err
-	}
-	return pgT.Commit(ctx)
+	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
 }
 
 func (s *nodesImpl) enforceAndUpdate(

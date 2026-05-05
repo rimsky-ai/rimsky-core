@@ -85,7 +85,12 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	deadline := time.Now().Add(25 * time.Second)
 	var sawStale bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
+		var got *persistence.NodeRow
+		_ = h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
+			got = r
+			return err
+		})
 		if got != nil && got.State == shared.NodeStateStale {
 			sawStale = true
 			break
@@ -96,21 +101,24 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 
 	// Verify heartbeat_lost event.
 	nid := n.ID
-	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "heartbeat_lost"},
-		persistence.ListPagination{Limit: 10}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "heartbeat_lost"},
+			persistence.ListPagination{Limit: 10}, tx)
+		evs = r
+		return err
+	}))
 	require.NotEmpty(t, evs.Events, "expected heartbeat_lost event")
 
 	// A fresh dispatch row should exist (re-enqueued).
 	var dispatchID uuid.UUID
-	err = h.Pool.QueryRow(h.Ctx, `SELECT id FROM rimsky_worker_request WHERE node_id = $1`, n.ID).Scan(&dispatchID)
-	require.NoError(t, err, "expected re-enqueued dispatch row")
+	require.NoError(t, h.Pool.QueryRow(h.Ctx, `SELECT id FROM rimsky_worker_request WHERE node_id = $1`, n.ID).Scan(&dispatchID),
+		"expected re-enqueued dispatch row")
 	// And no claim is held against it (the dispatch row is a fresh
 	// re-enqueue from the scheduler, not a survival of the zombie's claim).
 	var claimedBy *string
-	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`, dispatchID).Scan(&claimedBy)
-	require.NoError(t, err)
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`, dispatchID).Scan(&claimedBy))
 	require.Nil(t, claimedBy, "re-enqueued dispatch row should not be claimed")
 
 	// The §7.5 step-2 lock-holder sweep should reap the expired row we
@@ -118,7 +126,12 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	deadline = time.Now().Add(25 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, nil)
+		var got *persistence.LockHolderRow
+		_ = h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, tx)
+			got = r
+			return err
+		})
 		if got == nil {
 			reaped = true
 			break
@@ -128,9 +141,13 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
 	// And a `lock_orphan_reaped` event was emitted for the reaped row.
-	reapEvs, err := h.Persist.Events().List(h.Ctx,
-		persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
-		persistence.ListPagination{Limit: 10}, nil)
-	require.NoError(t, err)
+	var reapEvs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
+			persistence.ListPagination{Limit: 10}, tx)
+		reapEvs = r
+		return err
+	}))
 	require.NotEmpty(t, reapEvs.Events, "expected lock_orphan_reaped event")
 }

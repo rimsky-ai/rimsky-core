@@ -77,8 +77,12 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		log = shared.SilentLogger{}
 	}
 
-	nd, err := sb.Nodes().Get(ctx, args.NodeID, nil)
-	if err != nil {
+	var nd *persistence.NodeRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		n, err := sb.Nodes().Get(ctx, args.NodeID, tx)
+		nd = n
+		return err
+	}); err != nil {
 		return err
 	}
 	if nd == nil {
@@ -98,29 +102,33 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	}
 	resolved := node.Evaluate(policy, state, args.ErrorClass, nil)
 
-	// Persist resolved EvaluatorState.
-	if err := sb.Nodes().UpdateError(ctx, args.NodeID, resolved.NewState, nil); err != nil {
+	// Persist resolved EvaluatorState + log the occurrence in one short tx.
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := sb.Nodes().UpdateError(ctx, args.NodeID, resolved.NewState, tx); err != nil {
+			return err
+		}
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &args.InstanceID,
+			NodeID:     &args.NodeID,
+			Kind:       "error",
+			Payload: map[string]any{
+				"error_class":  args.ErrorClass,
+				"details":      args.Payload,
+				"action_taken": resolved.Kind,
+				"action_index": resolved.NewState.ActionIndex,
+				"delay_ms":     resolved.DelayMs,
+			},
+		}, tx)
+	}); err != nil {
 		return err
 	}
-
-	// Log the occurrence.
-	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-		InstanceID: &args.InstanceID,
-		NodeID:     &args.NodeID,
-		Kind:       "error",
-		Payload: map[string]any{
-			"error_class":  args.ErrorClass,
-			"details":      args.Payload,
-			"action_taken": resolved.Kind,
-			"action_index": resolved.NewState.ActionIndex,
-			"delay_ms":     resolved.DelayMs,
-		},
-	}, nil)
 
 	switch resolved.Kind {
 	case "retry", "discard_then_retry", "resume_then_retry":
 		if nd.State == shared.NodeStateRunning {
-			if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyRetry, nil); err != nil {
+			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyRetry, tx)
+			}); err != nil {
 				return err
 			}
 		}
@@ -138,14 +146,20 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 
 	case "invalidate":
 		if nd.State == shared.NodeStateRunning {
-			if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyInvalidate, nil); err != nil {
+			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyInvalidate, tx)
+			}); err != nil {
 				return err
 			}
 		}
 		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
 
-		other, err := sb.Nodes().ListByInstance(ctx, nd.InstanceID, nil)
-		if err != nil {
+		var other []persistence.NodeRow
+		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := sb.Nodes().ListByInstance(ctx, nd.InstanceID, tx)
+			other = rows
+			return err
+		}); err != nil {
 			return err
 		}
 		typeToID := make(map[string]shared.UUID, len(other))
@@ -162,17 +176,19 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			}
 		}
 		if len(unresolved) > 0 {
-			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-				InstanceID: &args.InstanceID,
-				NodeID:     &args.NodeID,
-				Kind:       "unresolved_invalidate_target",
-				Payload: map[string]any{
-					"error_class":        args.ErrorClass,
-					"instance_id":        nd.InstanceID.String(),
-					"unresolved_targets": unresolved,
-					"resolved_targets":   uuidsToStrings(resolvedTargets),
-				},
-			}, nil)
+			_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return sb.Events().Append(ctx, persistence.EventAppendInput{
+					InstanceID: &args.InstanceID,
+					NodeID:     &args.NodeID,
+					Kind:       "unresolved_invalidate_target",
+					Payload: map[string]any{
+						"error_class":        args.ErrorClass,
+						"instance_id":        nd.InstanceID.String(),
+						"unresolved_targets": unresolved,
+						"resolved_targets":   uuidsToStrings(resolvedTargets),
+					},
+				}, tx)
+			})
 		}
 		src := args.NodeID
 		for _, tid := range resolvedTargets {
@@ -188,7 +204,9 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		return nil
 
 	case "give_up":
-		if err := sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil); err != nil {
+		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateFailed, cascade.ReasonPolicyGiveUp, tx)
+		}); err != nil {
 			return err
 		}
 		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
@@ -203,16 +221,25 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 // (`template_resolution_failed`, `attributes_schema_failed`) this is the
 // §10.4 / §9.4 default chain `[ {give_up} ]`.
 func lookupPolicy(ctx context.Context, sb persistence.Store, nd *persistence.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
-	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
-	if err != nil {
+	var inst *persistence.InstanceRow
+	var tmpl *persistence.TemplateRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := sb.Instances().Get(ctx, nd.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		inst = i
+		if inst == nil {
+			return nil
+		}
+		t, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		tmpl = t
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if inst == nil {
 		return nil, nil
-	}
-	tmpl, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
-	if err != nil {
-		return nil, err
 	}
 	if tmpl == nil {
 		return nil, nil
@@ -239,12 +266,24 @@ func lookupPolicy(ctx context.Context, sb persistence.Store, nd *persistence.Nod
 // the queue treats nil and []string{} as equivalent (no required stores
 // declared, accepted by every supervisor pool).
 func requiredStoresForNode(ctx context.Context, sb persistence.Store, nd *persistence.NodeRow) []string {
-	inst, err := sb.Instances().Get(ctx, nd.InstanceID, nil)
-	if err != nil || inst == nil {
+	var inst *persistence.InstanceRow
+	var tmpl *persistence.TemplateRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := sb.Instances().Get(ctx, nd.InstanceID, tx)
+		if err != nil || i == nil {
+			return err
+		}
+		inst = i
+		t, err := sb.Templates().GetByHash(ctx, i.TemplateHash, tx)
+		if err != nil {
+			return err
+		}
+		tmpl = t
+		return nil
+	}); err != nil {
 		return nil
 	}
-	tmpl, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
-	if err != nil || tmpl == nil {
+	if inst == nil || tmpl == nil {
 		return nil
 	}
 	for _, td := range tmpl.Spec.Nodes {

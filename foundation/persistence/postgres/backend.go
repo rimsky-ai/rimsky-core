@@ -79,11 +79,18 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// q returns a querier — pool when tx is nil, otherwise the tx carrier.
-// Per-feature impls call this at the top of every method.
+// q returns the tx-bound querier. Panics on nil tx — every Store
+// method must be invoked with an explicit tx (option C / no-nil-tx
+// contract; see foundation/persistence/sqlite/deadlock_guard_test.go).
+// Callers that do not already hold a tx must open one with
+// Store.Transaction first; the previous nil-tx pool-driven
+// auto-commit code path is gone. The deadlock that motivated the
+// rule is SQLite-specific (MaxOpenConns=1), but the contract is
+// uniform across drivers so a successful postgres run can't mask a
+// SQLite-only regression.
 func (s *storeImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
-		return s.pool
+		panic("persistence: nil tx — every Store method requires an explicit tx; wrap with Store.Transaction")
 	}
 	t, ok := tx.(*pgTx)
 	if !ok {

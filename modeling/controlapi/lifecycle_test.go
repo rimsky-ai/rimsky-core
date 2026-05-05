@@ -143,16 +143,24 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	require.Contains(t, perStore["beta"].Error(), "simulated beta failure")
 
 	// alpha row was committed before beta failed.
-	row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
-		persistence.LifecycleIdempotencyScopeTemplate, hash, nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
+			persistence.LifecycleIdempotencyScopeTemplate, hash, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row, "alpha row must persist past beta's failure")
 	require.Equal(t, persistence.LifecycleIdempotencyStateRegistered, row.State)
 
 	// beta row was never written.
-	betaRow, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "beta",
-		persistence.LifecycleIdempotencyScopeTemplate, hash, nil)
-	require.NoError(t, err)
+	var betaRow *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "beta",
+			persistence.LifecycleIdempotencyScopeTemplate, hash, tx)
+		betaRow = r
+		return err
+	}))
 	require.Nil(t, betaRow)
 
 	// Deterministic-sort assertion: alpha's recorded call must precede
@@ -184,9 +192,13 @@ func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, name := range []string{"alpha", "beta"} {
-		row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, name,
-			persistence.LifecycleIdempotencyScopeTemplate, hash, nil)
-		require.NoError(t, err)
+		var row *persistence.LifecycleIdempotencyRow
+		require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, name,
+				persistence.LifecycleIdempotencyScopeTemplate, hash, tx)
+			row = r
+			return err
+		}))
 		require.Nil(t, row, "deregister must delete %q row", name)
 	}
 }
@@ -203,17 +215,25 @@ func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 
 	_, _, err := FanOutInstanceEvent(ctx, f.deps, EventInstanceCreated, hash, instanceID, twoStoreSpec(), InstancePayload{}, nil)
 	require.NoError(t, err)
-	row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
-		persistence.LifecycleIdempotencyScopeInstance, instanceID, nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
+			persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row)
 
 	_, _, err = FanOutInstanceEvent(ctx, f.deps, EventInstanceTerminated, hash, instanceID, twoStoreSpec(), InstancePayload{}, nil)
 	require.NoError(t, err)
 	for _, name := range []string{"alpha", "beta"} {
-		row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, name,
-			persistence.LifecycleIdempotencyScopeInstance, instanceID, nil)
-		require.NoError(t, err)
+		var row *persistence.LifecycleIdempotencyRow
+		require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, name,
+				persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
+			row = r
+			return err
+		}))
 		require.Nil(t, row, "terminate must delete %q row", name)
 	}
 }

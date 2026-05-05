@@ -33,12 +33,20 @@ func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.St
 	t.Helper()
 	sum := sha256.Sum256([]byte(spec.Name + ":" + spec.Version))
 	hash := "sha256-" + hex.EncodeToString(sum[:])
-	require.NoError(t, sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID: hash, Spec: spec, State: persistence.TemplateStateRegistered,
-	}, nil))
-	require.NoError(t, sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, nil))
-	row, err := sb.Templates().GetByHash(ctx, hash, nil)
-	require.NoError(t, err)
+	var row *persistence.TemplateRow
+	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: hash, Spec: spec, State: persistence.TemplateStateRegistered,
+		}, tx); err != nil {
+			return err
+		}
+		if err := sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
+			return err
+		}
+		r, err := sb.Templates().GetByHash(ctx, hash, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row)
 	return *row
 }
@@ -58,18 +66,32 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		Name: "auto-term-commit", Version: "1",
 	})
 	ck := "ck"
-	inst, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
-	acqNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
-	}, nil)
-	require.NoError(t, err)
-	inhNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	var acqNode, inhNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = i
+		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		acqNode = a
+		ih, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inhNode = ih
+		return nil
+	}))
 
 	reg := locks.NewRegistry()
 	stubStore := storetest.NewFake("workspace", locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}})
@@ -98,12 +120,16 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		}, tx)
 	}))
 
-	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, nil,
-	))
-	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateCompleted, nil,
-	))
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHolders().CompleteByLockHolderAndNode(
+			ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, tx,
+		); err != nil {
+			return err
+		}
+		return backend.ClaimHolders().CompleteByLockHolderAndNode(
+			ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateCompleted, tx,
+		)
+	}))
 
 	args := integration.RunArgs{
 		Persist:       backend,
@@ -116,8 +142,12 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		return integration.CheckAndFireResolution(ctx, args, tx, lockHolderID)
 	}))
 
-	row, err := backend.LockHolders().Get(ctx, lockHolderID, nil)
-	require.NoError(t, err)
+	var row *persistence.LockHolderRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := backend.LockHolders().Get(ctx, lockHolderID, tx)
+		row = r
+		return err
+	}))
 	require.Nil(t, row, "auto-terminal must delete lock-holder on aggregate-completed")
 
 	abandonSeen, commitSeen := false, false
@@ -146,18 +176,32 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		Name: "auto-term-give-up", Version: "1",
 	})
 	ck := "ck"
-	inst, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
-	acqNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
-	}, nil)
-	require.NoError(t, err)
-	inhNode, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	var acqNode, inhNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = i
+		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		acqNode = a
+		ih, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "inheritor", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inhNode = ih
+		return nil
+	}))
 
 	reg := locks.NewRegistry()
 	stubStore := storetest.NewFake("workspace", locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}})
@@ -185,12 +229,16 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: inhNode.ID,
 		}, tx)
 	}))
-	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, nil,
-	))
-	require.NoError(t, backend.ClaimHolders().CompleteByLockHolderAndNode(
-		ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateFailed, nil,
-	))
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHolders().CompleteByLockHolderAndNode(
+			ctx, lockHolderID, acqNode.ID, persistence.ClaimHolderStateCompleted, tx,
+		); err != nil {
+			return err
+		}
+		return backend.ClaimHolders().CompleteByLockHolderAndNode(
+			ctx, lockHolderID, inhNode.ID, persistence.ClaimHolderStateFailed, tx,
+		)
+	}))
 
 	args := integration.RunArgs{
 		Persist:       backend,
@@ -203,8 +251,12 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		return integration.CheckAndFireResolution(ctx, args, tx, lockHolderID)
 	}))
 
-	row, err := backend.LockHolders().Get(ctx, lockHolderID, nil)
-	require.NoError(t, err)
+	var row *persistence.LockHolderRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := backend.LockHolders().Get(ctx, lockHolderID, tx)
+		row = r
+		return err
+	}))
 	require.Nil(t, row, "auto-terminal must delete lock-holder on aggregate-failed too")
 
 	abandonSeen, commitSeen := false, false

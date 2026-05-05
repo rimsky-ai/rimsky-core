@@ -43,16 +43,24 @@ func openSQLite(t *testing.T) persistence.Driver {
 func TestSQLite_EventListFilter_KindIn(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
-	events := d.Store().Events()
+	store := d.Store()
+	events := store.Events()
 	for _, kind := range []string{"work_started", "error", "work_completed"} {
-		if err := events.Append(ctx, persistence.EventAppendInput{Kind: kind}, nil); err != nil {
-			t.Fatalf("append %s: %v", kind, err)
+		k := kind
+		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return events.Append(ctx, persistence.EventAppendInput{Kind: k}, tx)
+		}); err != nil {
+			t.Fatalf("append %s: %v", k, err)
 		}
 	}
-	res, err := events.List(ctx, persistence.EventListFilter{
-		KindIn: []string{"work_started", "work_completed"},
-	}, persistence.ListPagination{Limit: 10}, nil)
-	if err != nil {
+	var res persistence.EventListResult
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := events.List(ctx, persistence.EventListFilter{
+			KindIn: []string{"work_started", "work_completed"},
+		}, persistence.ListPagination{Limit: 10}, tx)
+		res = r
+		return err
+	}); err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(res.Events) != 2 {
@@ -81,8 +89,12 @@ func TestSQLite_QueueListLive_Empty(t *testing.T) {
 
 func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
 	d := openSQLite(t)
-	active, terminated, err := d.Store().Instances().CountByActive(context.Background(), nil)
-	if err != nil {
+	var active, terminated int
+	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		a, ter, err := d.Store().Instances().CountByActive(ctx, tx)
+		active, terminated = a, ter
+		return err
+	}); err != nil {
 		t.Fatalf("countbyactive: %v", err)
 	}
 	if active != 0 || terminated != 0 {
@@ -92,9 +104,13 @@ func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
 
 func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
 	d := openSQLite(t)
-	res, err := d.Store().Frames().ListForObservability(context.Background(),
-		persistence.FrameListFilter{}, persistence.ListPagination{Limit: 10}, nil)
-	if err != nil {
+	var res persistence.PaginatedListResult[persistence.FrameRow]
+	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Store().Frames().ListForObservability(ctx,
+			persistence.FrameListFilter{}, persistence.ListPagination{Limit: 10}, tx)
+		res = r
+		return err
+	}); err != nil {
 		t.Fatalf("listforobservability: %v", err)
 	}
 	if len(res.Rows) != 0 {
@@ -104,8 +120,12 @@ func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
 
 func TestSQLite_FrameGetForObservability_NotFound(t *testing.T) {
 	d := openSQLite(t)
-	row, err := d.Store().Frames().GetForObservability(context.Background(), uuid.New(), nil)
-	if err != nil {
+	var row *persistence.FrameRow
+	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Store().Frames().GetForObservability(ctx, uuid.New(), tx)
+		row = r
+		return err
+	}); err != nil {
 		t.Fatalf("getforobservability: %v", err)
 	}
 	if row != nil {

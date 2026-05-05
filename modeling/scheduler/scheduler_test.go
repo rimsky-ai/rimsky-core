@@ -55,11 +55,18 @@ func newSchedFixture(t *testing.T) *schedFixture {
 		Nodes:           []nodepkg.TemplateNodeDef{},
 	})
 	ck := "ck-" + uuid.NewString()
-	inst, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
-		Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	inTxTest(t, ctx, d.Store(), func(tx persistence.Tx) error {
+		row, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
+			Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = row
+		return nil
+	})
 
 	return &schedFixture{
 		persist:     d.Store(),
@@ -80,11 +87,18 @@ func newSchedFixture(t *testing.T) *schedFixture {
 func (f *schedFixture) createNode(t *testing.T, executor string, state shared.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
-	n, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
-		Executor: executor, Dependencies: deps,
-	}, nil)
-	require.NoError(t, err)
+	var n persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
+			Executor: executor, Dependencies: deps,
+		}, tx)
+		if err != nil {
+			return err
+		}
+		n = row
+		return nil
+	})
 	// Always UPDATE: Create() now defaults to 'fresh' (frame-resolution
 	// model), so any test asking for a non-fresh state must override.
 	pgtest.ExecForTest(ctx, t, f.driver,
@@ -213,16 +227,24 @@ func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
 	require.NoError(t, tick(ctx, f.schedConfig()))
 
 	// Node should be stale now.
-	after, err := f.persist.Nodes().Get(ctx, n.ID, nil)
-	require.NoError(t, err)
+	var after *persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, n.ID, tx)
+		after = r
+		return err
+	})
 	assert.Equal(t, shared.NodeStateStale, after.State)
 
 	// heartbeat_lost event appended.
-	events, err := f.persist.Events().List(ctx,
-		persistence.EventListFilter{NodeID: &n.ID, Kind: "heartbeat_lost"},
-		persistence.ListPagination{Limit: 10}, nil,
-	)
-	require.NoError(t, err)
+	var events persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		e, err := f.persist.Events().List(ctx,
+			persistence.EventListFilter{NodeID: &n.ID, Kind: "heartbeat_lost"},
+			persistence.ListPagination{Limit: 10}, tx,
+		)
+		events = e
+		return err
+	})
 	require.NotEmpty(t, events.Events, "expected a heartbeat_lost event")
 
 	// Dispatch row was re-enqueued.
@@ -285,11 +307,15 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		"expected orphan claim to be released")
 
 	// orphaned_claim_released event appended.
-	events, err := f.persist.Events().List(ctx,
-		persistence.EventListFilter{NodeID: &n.ID, Kind: "orphaned_claim_released"},
-		persistence.ListPagination{Limit: 10}, nil,
-	)
-	require.NoError(t, err)
+	var events persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		e, err := f.persist.Events().List(ctx,
+			persistence.EventListFilter{NodeID: &n.ID, Kind: "orphaned_claim_released"},
+			persistence.ListPagination{Limit: 10}, tx,
+		)
+		events = e
+		return err
+	})
 	require.NotEmpty(t, events.Events, "expected an orphaned_claim_released event")
 }
 

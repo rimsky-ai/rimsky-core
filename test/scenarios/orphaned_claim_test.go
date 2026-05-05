@@ -69,7 +69,12 @@ func TestOrphanedClaim(t *testing.T) {
 	deadline := time.Now().Add(20 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		got, _ := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, nil)
+		var got *persistence.LockHolderRow
+		_ = h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, tx)
+			got = r
+			return err
+		})
 		if got == nil {
 			reaped = true
 			break
@@ -80,10 +85,14 @@ func TestOrphanedClaim(t *testing.T) {
 
 	// `lock_orphan_reaped` event was emitted with the reaped row's metadata.
 	nid := n.ID
-	evs, err := h.Persist.Events().List(h.Ctx,
-		persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
-		persistence.ListPagination{Limit: 10}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &nid, Kind: "lock_orphan_reaped"},
+			persistence.ListPagination{Limit: 10}, tx)
+		evs = r
+		return err
+	}))
 	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
 
 	// Spot-check the payload carries the kind + supervisor for operator

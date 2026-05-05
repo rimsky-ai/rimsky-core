@@ -244,18 +244,7 @@ func (s *nodesImpl) UpdateState(
 	reason cascade.TransitionReason,
 	tx persistence.Tx,
 ) error {
-	if tx != nil {
-		return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
-	}
-	sTx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = sTx.Rollback() }()
-	if err := s.enforceAndUpdate(ctx, sTx, id, state, reason); err != nil {
-		return err
-	}
-	return sTx.Commit()
+	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
 }
 
 func (s *nodesImpl) enforceAndUpdate(

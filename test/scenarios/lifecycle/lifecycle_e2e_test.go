@@ -99,7 +99,9 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 	// Drive instance terminal — manual SQL bypass; lifecycle test
 	// doesn't depend on the frame engine.
-	require.NoError(t, h.Persist.Instances().MarkTerminated(ctx, instanceID, nil))
+	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
+	}))
 
 	// DELETE /instances triggers OnInstanceTerminated fan-out, which
 	// deletes the per-store lifecycle row before dropping the
@@ -122,8 +124,12 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 func getLifecycleRow(t *testing.T, h *scenario.Harness, storeName string, kind persistence.LifecycleIdempotencyScopeKind, scopeID string) *persistence.LifecycleIdempotencyRow {
 	t.Helper()
-	row, err := h.Persist.LifecycleIdempotency().Get(context.Background(), storeName, kind, scopeID, nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.Persist.LifecycleIdempotency().Get(ctx, storeName, kind, scopeID, tx)
+		row = r
+		return err
+	}))
 	return row
 }
 

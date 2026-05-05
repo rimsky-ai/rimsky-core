@@ -8,6 +8,7 @@
 package controlapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -81,8 +82,12 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		// Reject when the tag already exists. Use Get to distinguish a
 		// pre-existing tag from a missing one; Upsert would silently
 		// overwrite, which the POST endpoint does not allow.
-		existing, err := deps.Persist.TemplateTags().Get(req.Context(), body.Tag, nil)
-		if err != nil {
+		var existing *persistence.TemplateTagRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.TemplateTags().Get(ctx, body.Tag, tx)
+			existing = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -90,7 +95,9 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
 			return
 		}
-		if err := deps.Persist.TemplateTags().Upsert(req.Context(), body.Tag, hash, nil); err != nil {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.TemplateTags().Upsert(ctx, body.Tag, hash, tx)
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -103,15 +110,19 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 
 func handleListTags(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		page, err := deps.Persist.TemplateTags().List(
-			req.Context(),
-			persistence.ListPagination{
-				Limit:  parseLimit(req, 100),
-				Cursor: req.URL.Query().Get("cursor"),
-			},
-			nil,
-		)
-		if err != nil {
+		var page persistence.PaginatedListResult[persistence.TemplateTagRow]
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.TemplateTags().List(
+				ctx,
+				persistence.ListPagination{
+					Limit:  parseLimit(req, 100),
+					Cursor: req.URL.Query().Get("cursor"),
+				},
+				tx,
+			)
+			page = p
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -133,8 +144,12 @@ func handleListTags(deps AppDeps) http.HandlerFunc {
 func handleMoveTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		existing, err := deps.Persist.TemplateTags().Get(req.Context(), tag, nil)
-		if err != nil {
+		var existing *persistence.TemplateTagRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)
+			existing = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -156,7 +171,9 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		if err := deps.Persist.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -170,8 +187,12 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 func handleDeleteTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		deleted, err := deps.Persist.TemplateTags().Delete(req.Context(), tag, nil)
-		if err != nil {
+		var deleted bool
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			ok, err := deps.Persist.TemplateTags().Delete(ctx, tag, tx)
+			deleted = ok
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

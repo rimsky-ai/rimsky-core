@@ -65,30 +65,38 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
-	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &args.TargetNodeID,
-		Kind:   "message_emitted",
-		Payload: map[string]any{
-			"type":           "invalidate",
-			"source_node_id": sourceStr,
-			"target_node_id": args.TargetNodeID.String(),
-			"params":         params,
-		},
-	}, nil)
-	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &args.TargetNodeID,
-		Kind:   "message_received",
-		Payload: map[string]any{
-			"type":           "invalidate",
-			"source_node_id": sourceStr,
-			"target_node_id": args.TargetNodeID.String(),
-			"params":         params,
-		},
-	}, nil)
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := sb.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &args.TargetNodeID,
+			Kind:   "message_emitted",
+			Payload: map[string]any{
+				"type":           "invalidate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+				"params":         params,
+			},
+		}, tx); err != nil {
+			return err
+		}
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &args.TargetNodeID,
+			Kind:   "message_received",
+			Payload: map[string]any{
+				"type":           "invalidate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+				"params":         params,
+			},
+		}, tx)
+	})
 
 	// Load target to resolve instance_id.
-	target, err := sb.Nodes().Get(ctx, args.TargetNodeID, nil)
-	if err != nil {
+	var target *persistence.NodeRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
+		target = t
+		return err
+	}); err != nil {
 		return err
 	}
 	if target == nil {

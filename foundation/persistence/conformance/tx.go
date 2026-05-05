@@ -36,8 +36,12 @@ func testTxAtomicity(t *testing.T, d persistence.Driver) {
 	if !errors.Is(err, tryRollback) {
 		t.Fatalf("expected tryRollback err, got %v", err)
 	}
-	got, err := store.TemplateTags().Get(ctx, tagA, nil)
-	if err != nil {
+	var got *persistence.TemplateTagRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.TemplateTags().Get(ctx, tagA, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get tagA: %v", err)
 	}
 	if got != nil {
@@ -60,8 +64,13 @@ func testTxAtomicity(t *testing.T, d persistence.Driver) {
 		t.Fatalf("commit tx: %v", err)
 	}
 	for _, tag := range []string{tagB, tagC} {
-		row, err := store.TemplateTags().Get(ctx, tag, nil)
-		if err != nil {
+		tag := tag
+		var row *persistence.TemplateTagRow
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.TemplateTags().Get(ctx, tag, tx)
+			row = r
+			return err
+		}); err != nil {
 			t.Fatalf("Get %s: %v", tag, err)
 		}
 		if row == nil {

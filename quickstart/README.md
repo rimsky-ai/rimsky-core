@@ -63,13 +63,10 @@ docker compose down -v
 
 | Service | Image | Purpose |
 |---|---|---|
-| `postgres` | `postgres:15` | persistence backend (state lives here, not in the rimsky container) |
-| `rimsky` | `rimsky/all` | scheduler + supervisor + control-api + migrate, all under one entrypoint |
+| `rimsky` | `rimsky/all` | scheduler + supervisor + control-api + migrate, all under one entrypoint; SQLite state in a named volume |
 | `store-stub` | `rimsky/store-stub` | bundled stub claim-producer (in-memory; deterministic) |
 | `executor-stub` | `rimsky/executor-stub` | bundled stub executor (every Execute returns Complete) |
 | `dashboard` | `rimsky/dashboard` | read-only UI on :8090, dials the control-api |
-
-Postgres is the persistence backend because the unified `rimsky/all` image runs three rimsky processes (scheduler, supervisor, control-api) concurrently — SQLite's writer-lock model produces frequent `SQLITE_BUSY` errors under that contention. Postgres handles concurrent transactions properly.
 
 The `rimsky.yml` here wires them together. To bring your own claim producer or executor, point the `claim_producers:` / `executors:` blocks at your service and rebuild the compose stack.
 
@@ -106,15 +103,15 @@ RIMSKY_HOST_PORT=18080 ./rimsky-cli health
 
 (The wrapper's `docker compose exec` path doesn't care about the host port, but native `rimsky-cli` invocations and any `curl http://localhost:8080/...` examples in this README do — substitute your override.)
 
-### Inspect the postgres state
+### Inspect the SQLite state
 
-State lives in postgres (not directly accessible from the host). Inspect with:
+State lives in a SQLite db inside the rimsky container. Inspect with:
 
 ```sh
-docker compose exec postgres psql -U rimsky -d rimsky
+docker compose exec rimsky sqlite3 /var/lib/rimsky/state.db
 ```
 
-By default the postgres data dir is in a Docker named volume. Override with `RIMSKY_STATE_DIR=./state docker compose up` to bind-mount a host path; postgres manages permissions inside the bound directory.
+By default the state lives in a Docker named volume. Override with `RIMSKY_STATE_DIR=./state docker compose up` to bind-mount a host path.
 
 ### Skip the wrapper, install the CLI natively
 

@@ -95,8 +95,12 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
-		if err != nil {
+		var row *persistence.NodeRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
+			row = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -119,8 +123,12 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		// Body is optional; ignore decode error when body is empty.
 		_ = json.NewDecoder(req.Body).Decode(&body)
 
-		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
-		if err != nil {
+		var row *persistence.NodeRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
+			row = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -129,14 +137,16 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Record the operator action in the audit log.
-		_ = deps.Persist.Events().Append(req.Context(), persistence.EventAppendInput{
-			NodeID: &id,
-			Kind:   "operator_override",
-			Payload: map[string]any{
-				"action": "invalidate",
-				"reason": body.Reason,
-			},
-		}, nil)
+		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &id,
+				Kind:   "operator_override",
+				Payload: map[string]any{
+					"action": "invalidate",
+					"reason": body.Reason,
+				},
+			}, tx)
+		})
 		if err := integration.InvalidateNode(req.Context(), integration.InvalidateArgs{
 			Persist:      deps.Persist,
 			Queue:        deps.Queue,
@@ -170,8 +180,12 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid id")
 			return
 		}
-		row, err := deps.Persist.Nodes().Get(req.Context(), id, nil)
-		if err != nil {
+		var row *persistence.NodeRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
+			row = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -186,15 +200,13 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Clear error bookkeeping.
-		if err := deps.Persist.Nodes().UpdateError(req.Context(), id, node.EvaluatorState{}, nil); err != nil {
-			writeError(w, err)
-			return
-		}
-		// Defensively clear the stale frame_id pointing at the previously-
-		// failed frame; the frame engine will write the new frame's id at
-		// frame-start.
-		if err := deps.Persist.Nodes().SetFrameID(req.Context(), id, nil, nil); err != nil {
+		// Clear error bookkeeping + defensively clear stale frame_id in one tx.
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
+				return err
+			}
+			return deps.Persist.Nodes().SetFrameID(ctx, id, nil, tx)
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -210,13 +222,15 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		_ = deps.Persist.Events().Append(req.Context(), persistence.EventAppendInput{
-			NodeID: &id,
-			Kind:   "operator_override",
-			Payload: map[string]any{
-				"action": "reset",
-			},
-		}, nil)
+		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &id,
+				Kind:   "operator_override",
+				Payload: map[string]any{
+					"action": "reset",
+				},
+			}, tx)
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
@@ -234,9 +248,13 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		}
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
-		page, err := deps.Persist.Nodes().ListByInstancePaged(req.Context(), inst.ID,
-			persistence.ListPagination{Limit: limit, Cursor: cursor}, nil)
-		if err != nil {
+		var page persistence.PaginatedListResult[persistence.NodeRow]
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Nodes().ListByInstancePaged(ctx, inst.ID,
+				persistence.ListPagination{Limit: limit, Cursor: cursor}, tx)
+			page = p
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -254,11 +272,26 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 // resolveInstance looks up an instance by UUID (preferred) or instance_key
 // (fallback). Returns nil, nil when not found.
 func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persistence.InstanceRow, error) {
+	var out *persistence.InstanceRow
 	if id, err := uuid.Parse(idOrKey); err == nil {
-		return deps.Persist.Instances().Get(ctx, id, nil)
+		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Instances().Get(ctx, id, tx)
+			out = r
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 	// instance_key resolution: dedicated dispatch — there's no
 	// (template_hash, instance_key) on this URL, so use the
 	// instance-key-only lookup.
-	return deps.Persist.Instances().FindAnyByInstanceKey(ctx, idOrKey, nil)
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := deps.Persist.Instances().FindAnyByInstanceKey(ctx, idOrKey, tx)
+		out = r
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

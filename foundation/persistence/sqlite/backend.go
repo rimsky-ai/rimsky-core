@@ -70,10 +70,15 @@ type querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// q returns a querier — the *sql.DB when tx is nil, otherwise the tx.
+// q returns the tx-bound querier. Panics on nil tx — every Store
+// method must be invoked with an explicit tx (option C / no-nil-tx
+// contract; see foundation/persistence/sqlite/deadlock_guard_test.go).
+// Callers that do not already hold a tx must open one with
+// Store.Transaction first; the previous nil-tx auto-commit code path
+// is gone.
 func (s *storeImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
-		return s.db
+		panic("persistence: nil tx — every Store method requires an explicit tx; wrap with Store.Transaction")
 	}
 	t, ok := tx.(*sqliteTx)
 	if !ok {

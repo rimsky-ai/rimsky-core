@@ -56,55 +56,57 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	staleNullFrameID := uuid.New()
 	runningID := uuid.New()
 
-	// fresh node: created in 'fresh' by NodeStore.Create.
-	if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID:           freshID,
-		InstanceID:   fix.InstanceID,
-		NodeType:     "cascade-fresh",
-		Executor:     "test-executor",
-		Dependencies: []shared.UUID{},
-	}, nil); err != nil {
-		t.Fatalf("create fresh node: %v", err)
-	}
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		// fresh node: created in 'fresh' by NodeStore.Create.
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:           freshID,
+			InstanceID:   fix.InstanceID,
+			NodeType:     "cascade-fresh",
+			Executor:     "test-executor",
+			Dependencies: []shared.UUID{},
+		}, tx); err != nil {
+			return err
+		}
 
-	// stale node with NULL frame_id: created fresh, then transitioned to
-	// stale via operator_invalidate, frame_id left at NULL.
-	if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID:           staleNullFrameID,
-		InstanceID:   fix.InstanceID,
-		NodeType:     "cascade-stale-null",
-		Executor:     "test-executor",
-		Dependencies: []shared.UUID{},
-	}, nil); err != nil {
-		t.Fatalf("create stale-null node: %v", err)
-	}
-	if err := store.Nodes().UpdateState(ctx, staleNullFrameID,
-		shared.NodeStateStale, cascade.ReasonOperatorInvalidate, nil); err != nil {
-		t.Fatalf("transition staleNull to stale: %v", err)
-	}
+		// stale node with NULL frame_id: created fresh, then transitioned to
+		// stale via operator_invalidate, frame_id left at NULL.
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:           staleNullFrameID,
+			InstanceID:   fix.InstanceID,
+			NodeType:     "cascade-stale-null",
+			Executor:     "test-executor",
+			Dependencies: []shared.UUID{},
+		}, tx); err != nil {
+			return err
+		}
+		if err := store.Nodes().UpdateState(ctx, staleNullFrameID,
+			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, tx); err != nil {
+			return err
+		}
 
-	// running node: fresh -> stale -> running.
-	if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID:           runningID,
-		InstanceID:   fix.InstanceID,
-		NodeType:     "cascade-running",
-		Executor:     "test-executor",
-		Dependencies: []shared.UUID{},
-	}, nil); err != nil {
-		t.Fatalf("create running node: %v", err)
-	}
-	if err := store.Nodes().UpdateState(ctx, runningID,
-		shared.NodeStateStale, cascade.ReasonOperatorInvalidate, nil); err != nil {
-		t.Fatalf("running: fresh→stale: %v", err)
-	}
-	if err := store.Nodes().UpdateState(ctx, runningID,
-		shared.NodeStateRunning, cascade.ReasonDispatchClaimed, nil); err != nil {
-		t.Fatalf("running: stale→running: %v", err)
-	}
-	// Pin the running node's frame_id to a different frame; the cascade
-	// must NOT overwrite it.
-	if err := store.Nodes().SetFrameID(ctx, runningID, &otherFrameID, nil); err != nil {
-		t.Fatalf("running: SetFrameID: %v", err)
+		// running node: fresh -> stale -> running.
+		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:           runningID,
+			InstanceID:   fix.InstanceID,
+			NodeType:     "cascade-running",
+			Executor:     "test-executor",
+			Dependencies: []shared.UUID{},
+		}, tx); err != nil {
+			return err
+		}
+		if err := store.Nodes().UpdateState(ctx, runningID,
+			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, tx); err != nil {
+			return err
+		}
+		if err := store.Nodes().UpdateState(ctx, runningID,
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx); err != nil {
+			return err
+		}
+		// Pin the running node's frame_id to a different frame; the cascade
+		// must NOT overwrite it.
+		return store.Nodes().SetFrameID(ctx, runningID, &otherFrameID, tx)
+	}); err != nil {
+		t.Fatalf("seed nodes: %v", err)
 	}
 
 	// Issue MarkStaleForCascade against each.
@@ -121,8 +123,12 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	}
 
 	// fresh node: state=stale, frame_id=cascadeFrameID
-	gotFresh, err := store.Nodes().Get(ctx, freshID, nil)
-	if err != nil {
+	var gotFresh *persistence.NodeRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Nodes().Get(ctx, freshID, tx)
+		gotFresh = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get freshID: %v", err)
 	}
 	if gotFresh == nil {
@@ -136,8 +142,12 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	}
 
 	// stale-null node: state=stale, frame_id=cascadeFrameID
-	gotStaleNull, err := store.Nodes().Get(ctx, staleNullFrameID, nil)
-	if err != nil {
+	var gotStaleNull *persistence.NodeRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Nodes().Get(ctx, staleNullFrameID, tx)
+		gotStaleNull = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get staleNullFrameID: %v", err)
 	}
 	if gotStaleNull == nil {
@@ -152,8 +162,12 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 
 	// running node: state=running, frame_id=otherFrameID (predicate excluded
 	// the running row; the cascade must NOT have overwritten it).
-	gotRunning, err := store.Nodes().Get(ctx, runningID, nil)
-	if err != nil {
+	var gotRunning *persistence.NodeRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Nodes().Get(ctx, runningID, tx)
+		gotRunning = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get runningID: %v", err)
 	}
 	if gotRunning == nil {

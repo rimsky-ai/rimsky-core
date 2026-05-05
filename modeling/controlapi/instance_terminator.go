@@ -122,14 +122,22 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 	defer cancel()
 
 	const batch = 100
-	rows, err := t.deps.Persist.Instances().ListTerminatedWithLifecycleRows(tickCtx, batch, nil)
-	if err != nil {
+	var rows []persistence.InstanceRow
+	if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := t.deps.Persist.Instances().ListTerminatedWithLifecycleRows(ctx, batch, tx)
+		rows = r
+		return err
+	}); err != nil {
 		t.logger.Warn("instance_terminator.list_failed", "error", err.Error())
 		return
 	}
 	for _, inst := range rows {
-		tpl, err := t.deps.Persist.Templates().GetByHash(tickCtx, inst.TemplateHash, nil)
-		if err != nil {
+		var tpl *persistence.TemplateRow
+		if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := t.deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			tpl = r
+			return err
+		}); err != nil {
 			t.logger.Warn("instance_terminator.template_lookup_failed",
 				"instance_id", inst.ID,
 				"template_hash", inst.TemplateHash,
@@ -175,9 +183,13 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 // warning so the operator can either re-introduce the store or delete
 // the bookkeeping row by hand.
 func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst persistence.InstanceRow) error {
-	rows, err := t.deps.Persist.LifecycleIdempotency().ListByScope(ctx,
-		persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), nil)
-	if err != nil {
+	var rows []persistence.LifecycleIdempotencyRow
+	if err := t.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := t.deps.Persist.LifecycleIdempotency().ListByScope(ctx,
+			persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx)
+		rows = r
+		return err
+	}); err != nil {
 		return err
 	}
 	if t.deps.LifecycleSubs == nil {
@@ -202,10 +214,12 @@ func (t *InstanceTerminator) fanOutFromLifecycleRows(ctx context.Context, inst p
 		}); err != nil {
 			return err
 		}
-		if err := t.deps.Persist.LifecycleIdempotency().Delete(ctx,
-			r.StoreRegistrationName,
-			persistence.LifecycleIdempotencyScopeInstance,
-			inst.ID.String(), nil); err != nil {
+		if err := t.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return t.deps.Persist.LifecycleIdempotency().Delete(ctx,
+				r.StoreRegistrationName,
+				persistence.LifecycleIdempotencyScopeInstance,
+				inst.ID.String(), tx)
+		}); err != nil {
 			return err
 		}
 	}

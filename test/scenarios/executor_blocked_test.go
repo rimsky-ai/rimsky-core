@@ -56,9 +56,13 @@ func TestExecutorBlocked(t *testing.T) {
 
 	// Verify error event carries executor_blocked class.
 	nid := n.ID
-	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "error"},
-		persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "error"},
+			persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	}))
 	var found bool
 	for _, e := range evs.Events {
 		if cls, _ := e.Payload["error_class"].(string); cls == "executor_blocked" {

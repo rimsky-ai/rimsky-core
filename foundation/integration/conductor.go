@@ -66,8 +66,12 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 		log = shared.SilentLogger{}
 	}
 	cutoff := args.Clock.Now().Add(-args.HeartbeatTimeout)
-	stale, err := args.Persist.Nodes().ListWithStaleHeartbeat(ctx, cutoff, nil)
-	if err != nil {
+	var stale []persistence.NodeRow
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.Persist.Nodes().ListWithStaleHeartbeat(ctx, cutoff, tx)
+		stale = rows
+		return err
+	}); err != nil {
 		return err
 	}
 	for _, n := range stale {
@@ -77,18 +81,22 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 			"supervisor_id":     n.AssignedSupervisorID,
 			"last_heartbeat_at": n.LastHeartbeatAt,
 		}
-		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &nodeID, InstanceID: &instanceID,
-			Kind:    "heartbeat_lost",
-			Payload: payload,
-		}, nil); err != nil {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &nodeID, InstanceID: &instanceID,
+				Kind:    "heartbeat_lost",
+				Payload: payload,
+			}, tx)
+		}); err != nil {
 			log.Warn("tick: append heartbeat_lost failed",
 				"node_id", n.ID.String(), "error", err.Error())
 		}
 		// running → stale (also clears assigned_supervisor_id + heartbeat
 		// as part of the state transition; no separate clear call needed).
-		if err := args.Persist.Nodes().UpdateState(ctx, n.ID,
-			shared.NodeStateStale, cascade.ReasonHeartbeatLost, nil); err != nil {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Nodes().UpdateState(ctx, n.ID,
+				shared.NodeStateStale, cascade.ReasonHeartbeatLost, tx)
+		}); err != nil {
 			log.Warn("tick: heartbeat_lost state transition failed",
 				"node_id", n.ID.String(), "error", err.Error())
 			continue
@@ -155,15 +163,17 @@ func SweepOrphanedClaims(ctx context.Context, args ConductorArgs) error {
 		if o.LastHeartbeatAt != nil {
 			hb = *o.LastHeartbeatAt
 		}
-		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &nodeID,
-			Kind:   "orphaned_claim_released",
-			Payload: map[string]any{
-				"dispatch_id":       o.ID.String(),
-				"prior_claimed_by":  prior,
-				"last_heartbeat_at": hb,
-			},
-		}, nil); err != nil {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &nodeID,
+				Kind:   "orphaned_claim_released",
+				Payload: map[string]any{
+					"dispatch_id":       o.ID.String(),
+					"prior_claimed_by":  prior,
+					"last_heartbeat_at": hb,
+				},
+			}, tx)
+		}); err != nil {
 			log.Warn("tick: append orphaned_claim_released failed",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 		}
@@ -178,8 +188,12 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	ready, err := args.Persist.Nodes().ListReadyForDispatch(ctx, nil)
-	if err != nil {
+	var ready []persistence.NodeRow
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.Persist.Nodes().ListReadyForDispatch(ctx, tx)
+		ready = rows
+		return err
+	}); err != nil {
 		return err
 	}
 	for _, n := range ready {

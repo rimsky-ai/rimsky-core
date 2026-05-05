@@ -41,11 +41,18 @@ func newTickerFixture(t *testing.T) *tickerFixture {
 		Nodes: []nodepkg.TemplateNodeDef{},
 	})
 	ck := "ck-" + uuid.NewString()
-	inst, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
-		Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	inTxTest(t, ctx, d.Store(), func(tx persistence.Tx) error {
+		row, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
+			Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = row
+		return nil
+	})
 
 	return &tickerFixture{persist: d.Store(), instance: inst}
 }
@@ -54,11 +61,18 @@ func newTickerFixture(t *testing.T) *tickerFixture {
 func (f *tickerFixture) addNode(t *testing.T) shared.UUID {
 	t.Helper()
 	ctx := context.Background()
-	n, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
-		Executor: "worker",
-	}, nil)
-	require.NoError(t, err)
+	var n persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
+			Executor: "worker",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		n = row
+		return nil
+	})
 	return n.ID
 }
 
@@ -66,26 +80,36 @@ func (f *tickerFixture) addNode(t *testing.T) shared.UUID {
 // next_fire_at. Register acts as an upsert.
 func (f *tickerFixture) addSchedule(t *testing.T, nodeID shared.UUID, cronExpr string, nextFireAt time.Time) {
 	t.Helper()
-	require.NoError(t, f.persist.Schedules().Register(context.Background(), persistence.ScheduleRegisterInput{
-		NodeID: nodeID, CronExpr: cronExpr, NextFireAt: nextFireAt,
-	}, nil))
+	inTxTest(t, context.Background(), f.persist, func(tx persistence.Tx) error {
+		return f.persist.Schedules().Register(context.Background(), persistence.ScheduleRegisterInput{
+			NodeID: nodeID, CronExpr: cronExpr, NextFireAt: nextFireAt,
+		}, tx)
+	})
 }
 
 // eventsFor returns all events for nodeID (most recent first).
 func (f *tickerFixture) eventsFor(t *testing.T, nodeID shared.UUID) []persistence.EventRow {
 	t.Helper()
-	res, err := f.persist.Events().List(context.Background(),
-		persistence.EventListFilter{NodeID: &nodeID},
-		persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var res persistence.EventListResult
+	inTxTest(t, context.Background(), f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(context.Background(),
+			persistence.EventListFilter{NodeID: &nodeID},
+			persistence.ListPagination{Limit: 100}, tx)
+		res = r
+		return err
+	})
 	return res.Events
 }
 
 // scheduleFor returns the schedule row for nodeID, or nil if not present.
 func (f *tickerFixture) scheduleFor(t *testing.T, nodeID shared.UUID) *persistence.ScheduleRow {
 	t.Helper()
-	all, err := f.persist.Schedules().ListAll(context.Background(), nil)
-	require.NoError(t, err)
+	var all []persistence.ScheduleRow
+	inTxTest(t, context.Background(), f.persist, func(tx persistence.Tx) error {
+		rows, err := f.persist.Schedules().ListAll(context.Background(), tx)
+		all = rows
+		return err
+	})
 	for i := range all {
 		if all[i].NodeID == nodeID {
 			return &all[i]

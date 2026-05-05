@@ -86,14 +86,18 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil
 		}
-		_ = args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
-		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "work_started", Payload: map[string]any{
-				"supervisor_id": args.SupervisorID,
-				"dispatch_id":   acq.DispatchID.String(),
-			},
-		}, nil)
+		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
+				return err
+			}
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "work_started", Payload: map[string]any{
+					"supervisor_id": args.SupervisorID,
+					"dispatch_id":   acq.DispatchID.String(),
+				},
+			}, tx)
+		})
 		for _, lk := range acq.Locks {
 			emitLockAcquired(ctx, args, acq, lk)
 		}
@@ -189,9 +193,9 @@ func tryAcquire(
 		return acquisition{}, false, nil
 	}
 	inst, _ := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
-	tmpl := lookupTemplate(ctx, args, inst)
+	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
-	specs, err := buildLockSpecs(ctx, args, nd, nodeDef, inst)
+	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())
@@ -587,20 +591,24 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 			return args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx)
 		})
 	}
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "orphaned_claim_lost_race",
-		Payload: map[string]any{
-			"dispatch_id":   acq.DispatchID.String(),
-			"supervisor_id": args.SupervisorID,
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "orphaned_claim_lost_race",
+			Payload: map[string]any{
+				"dispatch_id":   acq.DispatchID.String(),
+				"supervisor_id": args.SupervisorID,
+			},
+		}, tx)
+	})
 }
 
 // transitionToRunning is the short-tx state transition.
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
-	return args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-		shared.NodeStateRunning, cascade.ReasonDispatchClaimed, nil)
+	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx)
+	})
 }
 
 // emitLockAcquired emits the per-spec lock_acquired event.
@@ -619,10 +627,12 @@ func emitLockAcquired(ctx context.Context, args RunArgs, acq acquisition, lk Acq
 		payload["alias"] = sp.Alias
 		payload["intent"] = string(sp.Intent)
 	}
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "lock_acquired", Payload: payload,
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "lock_acquired", Payload: payload,
+		}, tx)
+	})
 }
 
 // claimScope returns the store's scope bytes for a ClaimSpec

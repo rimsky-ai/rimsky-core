@@ -16,6 +16,7 @@
 package controlapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -62,8 +63,12 @@ func handleListClaimHolders(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "claim_handle_id must be a UUID")
 			return
 		}
-		rows, err := deps.Persist.ClaimHolders().ListByLockHolderID(req.Context(), id, nil)
-		if err != nil {
+		var rows []persistence.ClaimHolderRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.ClaimHolders().ListByLockHolderID(ctx, id, tx)
+			rows = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

@@ -61,9 +61,13 @@ func TestPureCascadeNode(t *testing.T) {
 
 	// Verify pure_cascade_commit event was emitted at some point.
 	nid := hub.ID
-	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
-		persistence.ListPagination{Limit: 500}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+			persistence.ListPagination{Limit: 500}, tx)
+		evs = r
+		return err
+	}))
 	var sawCommit bool
 	for _, e := range evs.Events {
 		if e.Kind == "pure_cascade_commit" {

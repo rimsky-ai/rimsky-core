@@ -356,8 +356,12 @@ func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
 	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	rows, err := h.Persist.Nodes().ListReadyForDispatch(h.Ctx, nil)
-	if err != nil {
+	var rows []persistence.NodeRow
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().ListReadyForDispatch(ctx, tx)
+		rows = r
+		return err
+	}); err != nil {
 		return
 	}
 	for _, n := range rows {
@@ -381,8 +385,13 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state shared.NodeState, t
 	deadline := time.Now().Add(timeout)
 	requireRun := state == shared.NodeStateFresh
 	for time.Now().Before(deadline) {
-		n, err := h.Persist.Nodes().Get(h.Ctx, nodeID, nil)
-		if err == nil && n != nil && n.State == state {
+		var n *persistence.NodeRow
+		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
+			n = r
+			return err
+		})
+		if n != nil && n.State == state {
 			if !requireRun || h.hasRunEvent(nodeID) {
 				return true
 			}
@@ -438,10 +447,24 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 	return false
 }
 
+// InTx runs fn inside a fresh Persist.Transaction. Test convenience
+// wrapper — option C requires every persistence call to thread an
+// explicit tx, so scenario tests run their reads inside one of these.
+func (h *Harness) InTx(fn func(tx persistence.Tx) error) error {
+	return h.Persist.Transaction(h.Ctx, func(_ context.Context, tx persistence.Tx) error {
+		return fn(tx)
+	})
+}
+
 // GetNodes fetches all nodes for an instance.
 func (h *Harness) GetNodes(instanceID shared.UUID) []persistence.NodeRow {
 	h.T.Helper()
-	nodes, err := h.Persist.Nodes().ListByInstance(h.Ctx, instanceID, nil)
+	var nodes []persistence.NodeRow
+	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
+		nodes = r
+		return err
+	})
 	if err != nil {
 		h.T.Fatalf("GetNodes: %v", err)
 	}

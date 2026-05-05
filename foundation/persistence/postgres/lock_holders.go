@@ -51,9 +51,6 @@ const lockHolderCols = `
 // every per-spec lock-holder row is inserted via this method so the row
 // commits atomically with the dispatch claim.
 func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderInsertInput, tx persistence.Tx) error {
-	if tx == nil {
-		return errors.New("lockholders.Insert: persistence.Tx required")
-	}
 	now := time.Now().UTC()
 	var rws *string
 	if in.RealizedWriteSemantics != "" {
@@ -88,9 +85,6 @@ func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderI
 func (s *lockHoldersImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
-	if tx == nil {
-		return errors.New("lockholders.UpdateAddress: persistence.Tx required")
-	}
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handle
 		    SET address = $1
@@ -110,9 +104,6 @@ func (s *lockHoldersImpl) UpdateAddress(
 func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
 	ctx context.Context, id shared.UUID, supervisorID string, ws string, tx persistence.Tx,
 ) error {
-	if tx == nil {
-		return errors.New("lockholders.UpdateRealizedWriteSemantics: persistence.Tx required")
-	}
 	var v *string
 	if ws != "" {
 		s := ws
@@ -136,9 +127,6 @@ func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
 func (s *lockHoldersImpl) UpdateScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
-	if tx == nil {
-		return errors.New("lockholders.UpdateScope: persistence.Tx required")
-	}
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handle
 		    SET scope_data = $1
@@ -170,9 +158,6 @@ func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 // by core/supervisor/auto_terminal.go to serialize auto-terminal
 // resolution per @blessed-invariant 13.
 func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
-	if tx == nil {
-		return nil, errors.New("lockholders.LockForUpdate: persistence.Tx required")
-	}
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = $1 FOR UPDATE`, id,
 	)
@@ -287,9 +272,6 @@ func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([
 // Delete removes the row keyed by id. Claimant-guarded on
 // expectedSupervisorID; mismatch is a no-op (returns nil).
 func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
-	if tx == nil {
-		return errors.New("lockholders.Delete: persistence.Tx required")
-	}
 	_, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = $1 AND holder_supervisor_id = $2`,
@@ -306,9 +288,6 @@ func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSu
 // pg_advisory_xact_lock(hashtext('rimsky_lock:'||lockName)) to enforce
 // the named-lock counting-mode limit.
 func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
-	if tx == nil {
-		return 0, errors.New("lockholders.CountByNamedLock: persistence.Tx required (advisory lock must be held)")
-	}
 	var n int
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT count(*) FROM rimsky_claim_handle
@@ -326,9 +305,6 @@ func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string,
 // storeName. Used by the supervisor's scope-conflict re-check (§7.3
 // step 4a/4b).
 func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
-	if tx == nil {
-		return nil, errors.New("lockholders.ListByStoreScope: persistence.Tx required")
-	}
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE lock_kind = 'scope' AND store_name = $1
@@ -348,9 +324,6 @@ func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string
 // the orphan reaper. Returns deleted=true on success; false on no-op
 // (claimant mismatch or fresh heartbeat extended the row).
 func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
-	if tx == nil {
-		return false, errors.New("lockholders.DeleteIfExpired: persistence.Tx required")
-	}
 	tag, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = $1

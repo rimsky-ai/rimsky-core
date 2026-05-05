@@ -32,6 +32,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/integration"
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/executor"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
@@ -97,8 +98,12 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		"runner should not execute when another supervisor holds the claim")
 
 	// Node remains in stale; the dispatch row is still owned by fake-other.
-	got, err := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
-	require.NoError(t, err)
+	var got *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
+		got = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateStale, got.State)
 
 	own, err := h.Queue.GetClaimedBy(h.Ctx, dispatchID)

@@ -130,11 +130,18 @@ func newFixture(t *testing.T) *fixture {
 	})
 
 	ck := "ck-" + uuid.NewString()
-	inst, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
-		Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	require.NoError(t, d.Store().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := d.Store().Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
+			Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = row
+		return nil
+	}))
 
 	return &fixture{
 		driver:   d,
@@ -154,11 +161,18 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) createNodeInState(t *testing.T, executor string, state shared.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
-	n, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
-		Executor: executor, Dependencies: deps,
-	}, nil)
-	require.NoError(t, err)
+	var n persistence.NodeRow
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
+			Executor: executor, Dependencies: deps,
+		}, tx)
+		if err != nil {
+			return err
+		}
+		n = row
+		return nil
+	}))
 
 	// Always UPDATE: Create() now defaults to 'fresh' (frame-resolution
 	// model), so any test asking for a non-fresh state must override.
@@ -219,8 +233,12 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Source node remains fresh until the frame engine advances the frame.
-	p, err := f.persist.Nodes().Get(ctx, parent.ID, nil)
-	require.NoError(t, err)
+	var p *persistence.NodeRow
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, parent.ID, tx)
+		p = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFresh, p.State)
 
 	// A queued frame row exists with this node as source.
@@ -238,9 +256,13 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	require.True(t, hasNode)
 
 	// Audit events were appended.
-	events, err := f.persist.Events().List(ctx, persistence.EventListFilter{NodeID: &parent.ID},
-		persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var events persistence.EventListResult
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{NodeID: &parent.ID},
+			persistence.ListPagination{Limit: 100}, tx)
+		events = r
+		return err
+	}))
 	kinds := map[string]int{}
 	for _, e := range events.Events {
 		kinds[e.Kind]++
@@ -286,8 +308,12 @@ func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	eq, _ := f.q.snapshot()
 	require.Empty(t, eq)
 
-	after, err := f.persist.Nodes().Get(ctx, n.ID, nil)
-	require.NoError(t, err)
+	var after *persistence.NodeRow
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, n.ID, tx)
+		after = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFresh, after.State)
 }
 

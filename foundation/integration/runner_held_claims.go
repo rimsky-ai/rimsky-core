@@ -72,14 +72,18 @@ func markClaimHolderForNode(
 // This is deterministic on a per-row basis (no cartesian product) and
 // agrees with the acquirer-side computation that drove the original
 // `insertHeldClaimHoldersAtAcquire`.
+//
+// All persistence reads share the caller's tx — option C / no-nil-tx
+// (the release path is inside an open Persist.Transaction; passing
+// nil here would self-deadlock under the SQLite single-conn pool).
 func findInheritedAliasesForNode(
-	ctx context.Context, args RunArgs,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	subgraphs []node.HoldingSubgraph, nodeType string, nodeID, instanceID shared.UUID,
 ) ([]inheritedAlias, error) {
 	if len(subgraphs) == 0 {
 		return nil, nil
 	}
-	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nodeID, nil)
+	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nodeID, tx)
 	if err != nil {
 		return nil, fmt.Errorf("findInheritedAliasesForNode: ListByHolderNode: %w", err)
 	}
@@ -109,14 +113,14 @@ func findInheritedAliasesForNode(
 	}
 	out := make([]inheritedAlias, 0, len(rows))
 	for _, r := range rows {
-		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, nil)
+		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: LockHolders.Get: %w", err)
 		}
 		if lh == nil {
 			continue // already auto-terminated by a sibling
 		}
-		acquirerNode, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		acquirerNode, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: Nodes.Get acquirer: %w", err)
 		}
@@ -127,7 +131,7 @@ func findInheritedAliasesForNode(
 		if !ok || len(picks) == 0 {
 			continue
 		}
-		alias := pickAliasForLockHolder(ctx, args, instanceID, acquirerNode.NodeType, picks, lh)
+		alias := pickAliasForLockHolder(ctx, args, tx, instanceID, acquirerNode.NodeType, picks, lh)
 		if alias == "" {
 			continue
 		}
@@ -147,18 +151,20 @@ func findInheritedAliasesForNode(
 // selector to the row's `scope_data`; return the first match. Falls
 // back to the first candidate when no selector matches (the row may
 // have been inserted before the store-chosen scope was written).
+//
+// Reuses the caller's tx (option C / no-nil-tx). See findInheritedAliasesForNode.
 func pickAliasForLockHolder(
-	ctx context.Context, args RunArgs, instanceID shared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	acquirerType string, picks []aliasCandidate, lh *persistence.LockHolderRow,
 ) string {
 	if len(picks) == 1 {
 		return picks[0].alias
 	}
-	inst, err := args.Persist.Instances().Get(ctx, instanceID, nil)
+	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil || inst == nil {
 		return picks[0].alias
 	}
-	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 	if err != nil || tmpl == nil {
 		return picks[0].alias
 	}

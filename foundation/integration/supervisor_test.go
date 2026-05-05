@@ -17,6 +17,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/integration"
 	"github.com/fallguy/rimsky/foundation/internal/pgtest"
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/executor"
 	"github.com/fallguy/rimsky/modeling/shared"
 )
@@ -49,8 +50,12 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, h.CallbackAddr())
 
-	rec, err := d.Store().Supervisors().Get(ctx, supID, nil)
-	require.NoError(t, err)
+	var rec *persistence.SupervisorRow
+	require.NoError(t, d.Store().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Store().Supervisors().Get(ctx, supID, tx)
+		rec = r
+		return err
+	}))
 	require.NotNil(t, rec)
 	require.Equal(t, 1, rec.Concurrency)
 

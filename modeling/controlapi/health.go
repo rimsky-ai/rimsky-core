@@ -9,11 +9,13 @@
 package controlapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
@@ -38,13 +40,18 @@ func registerHealthRoutes(r chi.Router, deps AppDeps) {
 
 func handleHealth(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		sups, err := deps.Persist.Supervisors().List(req.Context(), nil)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		counts, err := deps.Persist.Nodes().CountByState(req.Context(), nil)
-		if err != nil {
+		var sups []persistence.SupervisorRow
+		var counts map[shared.NodeState]int
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			s, err := deps.Persist.Supervisors().List(ctx, tx)
+			if err != nil {
+				return err
+			}
+			sups = s
+			c, err := deps.Persist.Nodes().CountByState(ctx, tx)
+			counts = c
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

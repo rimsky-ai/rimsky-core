@@ -54,21 +54,28 @@ func NextFireAt(expr string, after time.Time) (time.Time, error) {
 // Errors in one row do not block others — each is logged and processing
 // continues. Returns the number of schedules fired (even if some of their
 // invalidates errored).
+//
+// Persistence access goes through Persist.Transaction wrappers because
+// the underlying Store methods require an explicit tx (option C / no
+// nil-tx). Each per-row read/write pair runs in its own short tx so a
+// failed row doesn't roll back its neighbours; the out-of-band
+// EmitInvalidate runs between the firing-state-write tx and the
+// success-event tx.
 func ProcessSchedules(ctx context.Context, sb persistence.Store, disp MessageDispatcher, clock shared.Clock, log shared.Logger) (int, error) {
-	due, err := sb.Schedules().DueBefore(ctx, clock.Now(), nil)
-	if err != nil {
+	var due []persistence.ScheduleRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		d, err := sb.Schedules().DueBefore(ctx, clock.Now(), tx)
+		if err != nil {
+			return err
+		}
+		due = d
+		return nil
+	}); err != nil {
 		return 0, err
 	}
 	fired := 0
 	for _, row := range due {
-		// Resolve the node so the instance_id can be attached to emitted
-		// events (matches the pattern used by pure_cascade.go). Missing node
-		// is not fatal — we still log the failure with a nil InstanceID.
-		var instancePtr *shared.UUID
-		if nd, nerr := sb.Nodes().Get(ctx, row.NodeID, nil); nerr == nil && nd != nil {
-			inst := nd.InstanceID
-			instancePtr = &inst
-		}
+		instancePtr := lookupInstanceForNode(ctx, sb, row.NodeID)
 		// Advance from the row's prior next_fire_at (not wall-clock). See
 		// package doc for missed-fire rationale: after an outage we produce
 		// a single fire and resume on-rhythm, not a backfill burst.
@@ -80,29 +87,17 @@ func ProcessSchedules(ctx context.Context, sb persistence.Store, disp MessageDis
 					"cron", row.CronExpr,
 					"error", err.Error())
 			}
-			// Append schedule_dispatch_failed event (plan-added; see spec §11.2 + CHANGELOG).
-			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID:     ptrUUID(row.NodeID),
-				InstanceID: instancePtr,
-				Kind:       "schedule_dispatch_failed",
-				Payload: map[string]any{
-					"node_id": row.NodeID.String(),
-					"error":   err.Error(),
-				},
-			}, nil)
+			appendDispatchFailed(ctx, sb, row.NodeID, instancePtr, err)
 			continue
 		}
 		firedAt := clock.Now()
-		if err := sb.Schedules().RecordFired(ctx, row.NodeID, next, firedAt, nil); err != nil {
+		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return sb.Schedules().RecordFired(ctx, row.NodeID, next, firedAt, tx)
+		}); err != nil {
 			if log != nil {
 				log.Warn("schedule RecordFired failed", "node_id", row.NodeID.String(), "error", err.Error())
 			}
-			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID:     ptrUUID(row.NodeID),
-				InstanceID: instancePtr,
-				Kind:       "schedule_dispatch_failed",
-				Payload:    map[string]any{"node_id": row.NodeID.String(), "error": err.Error()},
-			}, nil)
+			appendDispatchFailed(ctx, sb, row.NodeID, instancePtr, err)
 			continue
 		}
 		// Emit invalidate to the node itself. Downstream cascade follows.
@@ -114,28 +109,58 @@ func ProcessSchedules(ctx context.Context, sb persistence.Store, disp MessageDis
 			if log != nil {
 				log.Warn("schedule emit invalidate failed", "node_id", row.NodeID.String(), "error", err.Error())
 			}
-			_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID:     ptrUUID(row.NodeID),
-				InstanceID: instancePtr,
-				Kind:       "schedule_dispatch_failed",
-				Payload:    map[string]any{"node_id": row.NodeID.String(), "error": err.Error()},
-			}, nil)
+			appendDispatchFailed(ctx, sb, row.NodeID, instancePtr, err)
 			continue
 		}
 		// Log the successful fire.
-		_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID:     ptrUUID(row.NodeID),
-			InstanceID: instancePtr,
-			Kind:       "schedule_fired",
-			Payload: map[string]any{
-				"node_id":   row.NodeID.String(),
-				"cron_expr": row.CronExpr,
-				"fired_at":  firedAt,
-			},
-		}, nil)
+		_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return sb.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID:     ptrUUID(row.NodeID),
+				InstanceID: instancePtr,
+				Kind:       "schedule_fired",
+				Payload: map[string]any{
+					"node_id":   row.NodeID.String(),
+					"cron_expr": row.CronExpr,
+					"fired_at":  firedAt,
+				},
+			}, tx)
+		})
 		fired++
 	}
 	return fired, nil
+}
+
+// lookupInstanceForNode reads the node row to extract its instance_id,
+// or returns nil when the node is missing. Best-effort — a missing
+// node is not fatal at the schedule-fire layer.
+func lookupInstanceForNode(ctx context.Context, sb persistence.Store, nodeID shared.UUID) *shared.UUID {
+	var out *shared.UUID
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nd, err := sb.Nodes().Get(ctx, nodeID, tx)
+		if err == nil && nd != nil {
+			inst := nd.InstanceID
+			out = &inst
+		}
+		return nil
+	})
+	return out
+}
+
+// appendDispatchFailed writes a schedule_dispatch_failed event in its
+// own short tx. Errors are swallowed — failing to log a failure is
+// not worth aborting the schedule-tick over.
+func appendDispatchFailed(ctx context.Context, sb persistence.Store, nodeID shared.UUID, instancePtr *shared.UUID, cause error) {
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID:     ptrUUID(nodeID),
+			InstanceID: instancePtr,
+			Kind:       "schedule_dispatch_failed",
+			Payload: map[string]any{
+				"node_id": nodeID.String(),
+				"error":   cause.Error(),
+			},
+		}, tx)
+	})
 }
 
 func ptrUUID(u shared.UUID) *shared.UUID { return &u }

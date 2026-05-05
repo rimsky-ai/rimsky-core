@@ -75,8 +75,12 @@ func TestNoOpCommit(t *testing.T) {
 
 	// Capture the dependent's last-updated time so we can later assert the
 	// no-op producer commit didn't drag it back through running.
-	depBefore, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, nil)
-	require.NoError(t, err)
+	var depBefore *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, tx)
+		depBefore = r
+		return err
+	}))
 
 	// Swap the stub to changed=false and invalidate the producer; the
 	// supervisor should re-run it, emit `no_op_commit`, NOT emit
@@ -87,10 +91,14 @@ func TestNoOpCommit(t *testing.T) {
 	// pre-existing committed event from the first run doesn't false-positive
 	// the assertion below.
 	pid := producer.ID
-	priorCommitted, err := h.Persist.Events().List(h.Ctx,
-		persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
-		persistence.ListPagination{Limit: 200}, nil)
-	require.NoError(t, err)
+	var priorCommitted persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+			persistence.ListPagination{Limit: 200}, tx)
+		priorCommitted = r
+		return err
+	}))
 	priorCount := len(priorCommitted.Events)
 
 	// Under frame resolution, operator-driven invalidation goes through
@@ -110,17 +118,25 @@ func TestNoOpCommit(t *testing.T) {
 		"producer did not emit no_op_commit after changed=false run")
 
 	// `no_op_commit` event recorded for the producer.
-	noOpEvs, err := h.Persist.Events().List(h.Ctx,
-		persistence.EventListFilter{NodeID: &pid, Kind: "no_op_commit"},
-		persistence.ListPagination{Limit: 10}, nil)
-	require.NoError(t, err)
+	var noOpEvs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &pid, Kind: "no_op_commit"},
+			persistence.ListPagination{Limit: 10}, tx)
+		noOpEvs = r
+		return err
+	}))
 	require.NotEmpty(t, noOpEvs.Events, "expected no_op_commit event after changed=false run")
 
 	// No NEW `attributes_committed` event was emitted by the second run.
-	postCommitted, err := h.Persist.Events().List(h.Ctx,
-		persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
-		persistence.ListPagination{Limit: 200}, nil)
-	require.NoError(t, err)
+	var postCommitted persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx,
+			persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+			persistence.ListPagination{Limit: 200}, tx)
+		postCommitted = r
+		return err
+	}))
 	require.Equal(t, priorCount, len(postCommitted.Events),
 		"no_op commit must NOT emit attributes_committed (changed=false)")
 
@@ -134,8 +150,12 @@ func TestNoOpCommit(t *testing.T) {
 	require.Equal(t, 0, depDispatchCount,
 		"dependent should not be re-enqueued after producer no_op commit")
 
-	depAfter, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, nil)
-	require.NoError(t, err)
+	var depAfter *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, tx)
+		depAfter = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFresh, depAfter.State,
 		"dependent should still be fresh (never cascaded)")
 	require.Equal(t, depBefore.UpdatedAt, depAfter.UpdatedAt,

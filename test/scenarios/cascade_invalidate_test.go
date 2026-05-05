@@ -26,6 +26,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -96,8 +97,12 @@ func TestCascadeInvalidate(t *testing.T) {
 	// Verify the new data-flow path: b's attributes.data should contain
 	// the `a` field (substituted from deps.a.a) and the `b` field
 	// (written by b's executor delta).
-	bRow, err := h.Persist.NodeAttributes().Get(h.Ctx, b.ID, nil)
-	require.NoError(t, err)
+	var bRow *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().Get(h.Ctx, b.ID, tx)
+		bRow = r
+		return err
+	}))
 	require.NotNil(t, bRow, "b should have a node_attributes row after fresh")
 	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from deps.a.a")
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")

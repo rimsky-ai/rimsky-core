@@ -419,8 +419,12 @@ func TestOperatorInvalidate(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status, out)
 
-	loaded, err := h.persist.Nodes().Get(ctx, nodeRow.ID, nil)
-	require.NoError(t, err)
+	var loaded *persistence.NodeRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.Nodes().Get(ctx, nodeRow.ID, tx)
+		loaded = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFresh, loaded.State)
 
 	var frameCount int
@@ -447,8 +451,12 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ = h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 
-	loaded, err := h.persist.Nodes().Get(ctx, nodeRow.ID, nil)
-	require.NoError(t, err)
+	var loaded *persistence.NodeRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.Nodes().Get(ctx, nodeRow.ID, tx)
+		loaded = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFailed, loaded.State)
 	require.Nil(t, loaded.FrameID)
 
@@ -545,8 +553,12 @@ func seedInstance(t *testing.T, h *harness, tplName string) persistence.Instance
 	require.Equal(t, http.StatusCreated, status, out)
 	id, err := uuid.Parse(out["instance_id"].(string))
 	require.NoError(t, err)
-	inst, err := h.persist.Instances().Get(ctx, id, nil)
-	require.NoError(t, err)
+	var inst *persistence.InstanceRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.Instances().Get(ctx, id, tx)
+		inst = r
+		return err
+	}))
 	require.NotNil(t, inst)
 	return *inst
 }
@@ -554,8 +566,12 @@ func seedInstance(t *testing.T, h *harness, tplName string) persistence.Instance
 func firstNode(t *testing.T, h *harness, inst persistence.InstanceRow) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
-	nodes, err := h.persist.Nodes().ListByInstance(ctx, inst.ID, nil)
-	require.NoError(t, err)
+	var nodes []persistence.NodeRow
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := h.persist.Nodes().ListByInstance(ctx, inst.ID, tx)
+		nodes = r
+		return err
+	}))
 	require.Greater(t, len(nodes), 0)
 	return nodes[0]
 }

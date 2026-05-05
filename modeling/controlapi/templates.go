@@ -176,7 +176,12 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// short-circuit per spec §1.5 step 1. If a tag was supplied, upsert
 		// it pointing at the existing row.
 		tGetByHash := time.Now()
-		existing, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
+		var existing *persistence.TemplateRow
+		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Templates().GetByHash(ctx, hash, tx)
+			existing = r
+			return err
+		})
 		log.Debug("register.getbyhash.done", "elapsed_ms", time.Since(tGetByHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
@@ -184,7 +189,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 		if existing != nil {
 			if tag != "" {
-				if err := deps.Persist.TemplateTags().Upsert(req.Context(), tag, hash, nil); err != nil {
+				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+					return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
+				}); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -252,12 +259,16 @@ func handleListTemplates(deps AppDeps) http.HandlerFunc {
 		state := req.URL.Query().Get("state")
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
-		page, err := deps.Persist.Templates().List(req.Context(),
-			persistence.TemplateListFilter{State: persistence.TemplateState(state)},
-			persistence.ListPagination{Limit: limit, Cursor: cursor},
-			nil,
-		)
-		if err != nil {
+		var page persistence.PaginatedListResult[persistence.TemplateRow]
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Templates().List(ctx,
+				persistence.TemplateListFilter{State: persistence.TemplateState(state)},
+				persistence.ListPagination{Limit: limit, Cursor: cursor},
+				tx,
+			)
+			page = p
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -290,8 +301,12 @@ func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		row, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
-		if err != nil {
+		var row *persistence.TemplateRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Templates().GetByHash(ctx, hash, tx)
+			row = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -332,13 +347,20 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 
 		if isTag {
 			// Tag-form: count remaining tags pointing at the same hash.
-			n, err := deps.Persist.TemplateTags().CountByTemplate(req.Context(), hash, nil)
-			if err != nil {
+			var n int
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				v, err := deps.Persist.TemplateTags().CountByTemplate(ctx, hash, tx)
+				n = v
+				return err
+			}); err != nil {
 				writeError(w, err)
 				return
 			}
 			if n > 1 {
-				if _, err := deps.Persist.TemplateTags().Delete(req.Context(), idOrTag, nil); err != nil {
+				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+					_, err := deps.Persist.TemplateTags().Delete(ctx, idOrTag, tx)
+					return err
+				}); err != nil {
 					writeError(w, err)
 					return
 				}
@@ -348,8 +370,12 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			// last tag → fall through to template deregister.
 		}
 
-		row, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
-		if err != nil {
+		var row *persistence.TemplateRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.Templates().GetByHash(ctx, hash, tx)
+			row = r
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -363,8 +389,12 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		active, err := deps.Persist.Instances().CountActiveByTemplate(req.Context(), hash, nil)
-		if err != nil {
+		var active int
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			v, err := deps.Persist.Instances().CountActiveByTemplate(ctx, hash, tx)
+			active = v
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -635,8 +665,12 @@ func resolveTagOrHash(ctx context.Context, deps AppDeps, value string) (string, 
 	if looksLikeHash(value) {
 		return value, nil
 	}
-	row, err := deps.Persist.TemplateTags().Get(ctx, value, nil)
-	if err != nil {
+	var row *persistence.TemplateTagRow
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := deps.Persist.TemplateTags().Get(ctx, value, tx)
+		row = r
+		return err
+	}); err != nil {
 		return "", err
 	}
 	if row == nil {
@@ -668,8 +702,12 @@ func looksLikeHash(s string) bool {
 // tagsForTemplate returns the sorted list of tag strings that point at
 // templateHash. Best-effort: a query failure produces a nil slice.
 func tagsForTemplate(ctx context.Context, deps AppDeps, templateHash string) []string {
-	rows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, templateHash, nil)
-	if err != nil {
+	var rows []persistence.TemplateTagRow
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := deps.Persist.TemplateTags().ListByTemplate(ctx, templateHash, tx)
+		rows = r
+		return err
+	}); err != nil {
 		return nil
 	}
 	out := make([]string, 0, len(rows))

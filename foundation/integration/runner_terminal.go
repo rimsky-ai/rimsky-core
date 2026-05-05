@@ -69,13 +69,15 @@ func applyTerminalComplete(
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
 	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
-			_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "attributes_schema_failed",
-				Payload: map[string]any{
-					"errors": []map[string]any{{"message": err.Error()}},
-				},
-			}, nil)
+			_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+					NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+					Kind: "attributes_schema_failed",
+					Payload: map[string]any{
+						"errors": []map[string]any{{"message": err.Error()}},
+					},
+				}, tx)
+			})
 			return applyTerminalAppError(ctx, args, acq, "attributes_schema_failed",
 				map[string]any{"error": err.Error()})
 		}
@@ -117,24 +119,28 @@ func applyTerminalComplete(
 	if !t.Changed {
 		commitKind = "no_op_commit"
 	}
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: commitKind,
-		Payload: map[string]any{
-			"changed":        t.Changed,
-			"updated_fields": fieldNames(t.AttributesDel),
-			"change_summary": t.ChangeSummary,
-		},
-	}, nil)
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "work_completed",
-		Payload: map[string]any{
-			"outcome":        outcomeForChanged(t.Changed),
-			"change_summary": t.ChangeSummary,
-			"node_type":      acq.NodeType,
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: commitKind,
+			Payload: map[string]any{
+				"changed":        t.Changed,
+				"updated_fields": fieldNames(t.AttributesDel),
+				"change_summary": t.ChangeSummary,
+			},
+		}, tx); err != nil {
+			return err
+		}
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "work_completed",
+			Payload: map[string]any{
+				"outcome":        outcomeForChanged(t.Changed),
+				"change_summary": t.ChangeSummary,
+				"node_type":      acq.NodeType,
+			},
+		}, tx)
+	})
 	if t.Changed {
 		fanoutRecalculate(ctx, args, acq)
 	}
@@ -148,16 +154,19 @@ func emitQualityRuleFailures(
 	ctx context.Context, args RunArgs, acq *acquisition, errs []qualityrule.Failure,
 ) {
 	for _, qe := range errs {
-		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "quality_rule_failed",
-			Payload: map[string]any{
-				"rule_type":   qe.RuleType,
-				"rule_config": qe.Config,
-				"severity":    string(qe.Severity),
-				"details":     qe.Details,
-			},
-		}, nil)
+		qe := qe
+		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "quality_rule_failed",
+				Payload: map[string]any{
+					"rule_type":   qe.RuleType,
+					"rule_config": qe.Config,
+					"severity":    string(qe.Severity),
+					"details":     qe.Details,
+				},
+			}, tx)
+		})
 	}
 }
 
@@ -184,8 +193,12 @@ func cascadeChildrenStaleInTx(
 // in-tx walk in cascadeChildrenStaleInTx mutates child state, this
 // post-commit walk routes the recalculate event.
 func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
-	dependents, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, nil)
-	if err != nil {
+	var dependents []persistence.NodeRow
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, tx)
+		dependents = rows
+		return err
+	}); err != nil {
 		return
 	}
 	src := acq.NodeID
@@ -213,7 +226,12 @@ func applyTerminalAppError(
 		return err
 	}
 	state := node.EvaluatorState{}
-	prior, _ := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
+	var prior *persistence.NodeRow
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
+		prior = p
+		return err
+	})
 	if prior != nil {
 		state = node.EvaluatorState{
 			ActionIndex:       prior.ActionIndex,
@@ -238,17 +256,19 @@ func applyTerminalAppError(
 		return fmt.Errorf("applyTerminalAppError: %w", err)
 	}
 
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "error",
-		Payload: map[string]any{
-			"error_class":  errorClass,
-			"details":      payload,
-			"action_taken": resolved.Kind,
-			"action_index": resolved.NewState.ActionIndex,
-			"delay_ms":     resolved.DelayMs,
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "error",
+			Payload: map[string]any{
+				"error_class":  errorClass,
+				"details":      payload,
+				"action_taken": resolved.Kind,
+				"action_index": resolved.NewState.ActionIndex,
+				"delay_ms":     resolved.DelayMs,
+			},
+		}, tx)
+	})
 	if resolved.Kind == "invalidate" {
 		return invalidateTargets(ctx, args, acq, resolved.Targets)
 	}
@@ -306,7 +326,12 @@ func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any,
 ) error {
-	prior, _ := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
+	var prior *persistence.NodeRow
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
+		prior = p
+		return err
+	})
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
 			return err
@@ -331,15 +356,17 @@ func applyTerminalInfraError(
 		return fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
 
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "error",
-		Payload: map[string]any{
-			"error_class":  errorClass,
-			"details":      payload,
-			"action_taken": "infra_reenqueue",
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "error",
+			Payload: map[string]any{
+				"error_class":  errorClass,
+				"details":      payload,
+				"action_taken": "infra_reenqueue",
+			},
+		}, tx)
+	})
 	return nil
 }
 
@@ -455,7 +482,7 @@ func releaseClaim(
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) error {
-	inherited, err := findInheritedAliasesForNode(ctx, args, acq.HeldSubgraphs, acq.NodeType, acq.NodeID, acq.InstanceID)
+	inherited, err := findInheritedAliasesForNode(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.NodeID, acq.InstanceID)
 	if err != nil {
 		return err
 	}
@@ -539,10 +566,12 @@ func emitLockReleased(ctx context.Context, args RunArgs, acq *acquisition, lk Ac
 		payload["store_name"] = sp.StoreName
 		payload["alias"] = sp.Alias
 	}
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "lock_released", Payload: payload,
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "lock_released", Payload: payload,
+		}, tx)
+	})
 }
 
 // lookupPolicyForNode resolves the per-error-class policy from the
@@ -576,8 +605,12 @@ func requiredStoresForAcq(acq *acquisition) []string {
 func invalidateTargets(
 	ctx context.Context, args RunArgs, acq *acquisition, targets []string,
 ) error {
-	other, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, nil)
-	if err != nil {
+	var other []persistence.NodeRow
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
+		other = rows
+		return err
+	}); err != nil {
 		return err
 	}
 	typeToID := make(map[string]shared.UUID, len(other))
@@ -594,13 +627,15 @@ func invalidateTargets(
 		}
 	}
 	if len(unresolved) > 0 {
-		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "unresolved_invalidate_target",
-			Payload: map[string]any{
-				"unresolved_targets": unresolved,
-			},
-		}, nil)
+		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "unresolved_invalidate_target",
+				Payload: map[string]any{
+					"unresolved_targets": unresolved,
+				},
+			}, tx)
+		})
 	}
 	src := acq.NodeID
 	for _, tid := range resolved {

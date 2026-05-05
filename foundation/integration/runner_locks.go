@@ -77,8 +77,13 @@ func storeNameForSpec(sp any) string {
 // `{{deps.<n>.<f>}}`, and `{{claim.<alias>.{address|scope|payload.<f>}}}`
 // (when the alias has a live inherited claim) into the selector and
 // named-lock name per the substitution grammar.
+//
+// All persistence reads share the caller's tx — passing nil here would
+// self-deadlock against the SQLite driver's single-connection pool
+// (the tx holds the only conn; a nil-tx auto-commit would block
+// forever). See foundation/persistence/sqlite/deadlock_guard_test.go.
 func buildLockSpecs(
-	ctx context.Context, args RunArgs,
+	ctx context.Context, args RunArgs, tx persistence.Tx,
 	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
 ) ([]any, error) {
 	if def == nil {
@@ -94,8 +99,8 @@ func buildLockSpecs(
 	}
 	resolveCtx := attributes.ResolveContext{
 		Params: paramsRaw,
-		Deps:   loadDepsAttributes(ctx, args, nd),
-		Claim:  loadInheritedClaimsForNode(ctx, args, nd),
+		Deps:   loadDepsAttributes(ctx, args, tx, nd),
+		Claim:  loadInheritedClaimsForNode(ctx, args, tx, nd),
 	}
 
 	out := make([]any, 0, len(def.Locks)+len(def.Stores))
@@ -129,29 +134,31 @@ func buildLockSpecs(
 // Aliases for which this node is itself the acquirer are resolved from
 // the lock-holder rows the supervisor wrote at acquire time. Returns nil
 // when the node holds no claim-holder rows.
-func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, nd *persistence.NodeRow) map[string]locks.ClaimResult {
+//
+// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
+func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]locks.ClaimResult {
 	if nd == nil {
 		return nil
 	}
-	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nd.ID, nil)
+	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nd.ID, tx)
 	if err != nil || len(rows) == 0 {
 		return nil
 	}
-	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, nil)
+	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
 	if err != nil || inst == nil {
 		return nil
 	}
-	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 	if err != nil || tmpl == nil {
 		return nil
 	}
 	out := map[string]locks.ClaimResult{}
 	for _, r := range rows {
-		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, nil)
+		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, tx)
 		if err != nil || lh == nil {
 			continue
 		}
-		acquirer, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, nil)
+		acquirer, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		if err != nil || acquirer == nil {
 			continue
 		}
@@ -207,17 +214,19 @@ func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *persistence.LockHold
 // rimsky_node_attributes.data into a map keyed by the upstream's
 // node_type, marshalled to json.RawMessage so the substitution engine
 // can lazy-walk into it.
-func loadDepsAttributes(ctx context.Context, args RunArgs, nd *persistence.NodeRow) map[string]json.RawMessage {
+//
+// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
+func loadDepsAttributes(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]json.RawMessage {
 	if nd == nil || len(nd.Dependencies) == 0 {
 		return nil
 	}
 	out := make(map[string]json.RawMessage, len(nd.Dependencies))
 	for _, depID := range nd.Dependencies {
-		depNode, _ := args.Persist.Nodes().Get(ctx, depID, nil)
+		depNode, _ := args.Persist.Nodes().Get(ctx, depID, tx)
 		if depNode == nil {
 			continue
 		}
-		row, err := args.Persist.NodeAttributes().Get(ctx, depNode.ID, nil)
+		row, err := args.Persist.NodeAttributes().Get(ctx, depNode.ID, tx)
 		if err != nil || row == nil {
 			continue
 		}
@@ -252,11 +261,12 @@ func instInstanceScope(inst *persistence.InstanceRow) string {
 }
 
 // lookupTemplate fetches the template for an instance, or nil on miss.
-func lookupTemplate(ctx context.Context, args RunArgs, inst *persistence.InstanceRow) *node.TemplateSpec {
+// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
+func lookupTemplate(ctx context.Context, args RunArgs, tx persistence.Tx, inst *persistence.InstanceRow) *node.TemplateSpec {
 	if inst == nil {
 		return nil
 	}
-	tmpl, _ := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, nil)
+	tmpl, _ := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 	if tmpl == nil {
 		return nil
 	}

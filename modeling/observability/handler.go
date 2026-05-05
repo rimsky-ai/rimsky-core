@@ -20,6 +20,15 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
+// inTx runs fn inside a fresh short Persist.Transaction. Read-only
+// observability handlers all share this shape: a single read or a small
+// fan-out followed by JSON serialization. Wrapping each persistence
+// call in its own short tx keeps each handler invocation simple under
+// option C (every Store method requires an explicit tx).
+func inTx(ctx context.Context, store persistence.Store, fn func(ctx context.Context, tx persistence.Tx) error) error {
+	return store.Transaction(ctx, fn)
+}
+
 // Deps bundles the dependencies the observability HTTP handlers need.
 // The persistence layer is consumed via the typed Store/Queue
 // interfaces; no driver-specific subpackages are imported here. The
@@ -150,8 +159,12 @@ func handleGetStore(deps Deps) http.HandlerFunc {
 			return
 		}
 		cached, _ := deps.Discovery.GetStore(name)
-		lifecycle, err := deps.Store.LifecycleIdempotency().ListByStore(r.Context(), name, nil)
-		if err != nil {
+		var lifecycle []persistence.LifecycleIdempotencyRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := deps.Store.LifecycleIdempotency().ListByStore(ctx, name, tx)
+			lifecycle = rows
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -219,8 +232,12 @@ func handleListTemplates(deps Deps) http.HandlerFunc {
 		if t := r.URL.Query().Get("tag"); t != "" {
 			filter.Tag = t
 		}
-		res, err := deps.Store.Templates().List(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.TemplateRow]
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Templates().List(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -234,18 +251,26 @@ func handleListTemplates(deps Deps) http.HandlerFunc {
 func handleGetTemplate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hash := chi.URLParam(r, "hash")
-		row, err := deps.Store.Templates().GetByHash(r.Context(), hash, nil)
-		if err != nil {
+		var row *persistence.TemplateRow
+		var tags []persistence.TemplateTagRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Templates().GetByHash(ctx, hash, tx)
+			if err != nil {
+				return err
+			}
+			row = r2
+			if row == nil {
+				return nil
+			}
+			t, err := deps.Store.TemplateTags().ListByTemplate(ctx, hash, tx)
+			tags = t
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
 		if row == nil {
 			notFound(w, "template not found")
-			return
-		}
-		tags, err := deps.Store.TemplateTags().ListByTemplate(r.Context(), hash, nil)
-		if err != nil {
-			internalErr(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -269,8 +294,12 @@ func handleListInstances(deps Deps) http.HandlerFunc {
 			b := v == "1" || v == "true"
 			filter.Active = &b
 		}
-		res, err := deps.Store.Instances().List(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.InstanceRow]
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Instances().List(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -289,8 +318,27 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid instance id")
 			return
 		}
-		row, err := deps.Store.Instances().Get(r.Context(), id, nil)
-		if err != nil {
+		var row *persistence.InstanceRow
+		var nodes []persistence.NodeRow
+		var template *persistence.TemplateRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Instances().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			row = r2
+			if row == nil {
+				return nil
+			}
+			ns, err := deps.Store.Nodes().ListByInstance(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			nodes = ns
+			t, _ := deps.Store.Templates().GetByHash(ctx, row.TemplateHash, tx)
+			template = t
+			return nil
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -298,12 +346,6 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 			notFound(w, "instance not found")
 			return
 		}
-		nodes, err := deps.Store.Nodes().ListByInstance(r.Context(), id, nil)
-		if err != nil {
-			internalErr(w, err)
-			return
-		}
-		template, _ := deps.Store.Templates().GetByHash(r.Context(), row.TemplateHash, nil)
 		graph := computeCascadeGraph(r.Context(), deps, *row, nodes, template)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instance":      row,
@@ -328,8 +370,12 @@ func handleListSchedules(deps Deps) http.HandlerFunc {
 			}
 			filter.NodeID = &id
 		}
-		res, err := deps.Store.Schedules().ListForObservability(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.ScheduleRow]
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Schedules().ListForObservability(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -361,8 +407,12 @@ func handleListFrames(deps Deps) http.HandlerFunc {
 		if s := r.URL.Query().Get("state"); s != "" {
 			filter.State = persistence.FrameState(s)
 		}
-		res, err := deps.Store.Frames().ListForObservability(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.FrameRow]
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Frames().ListForObservability(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -381,8 +431,12 @@ func handleGetFrame(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid frame id")
 			return
 		}
-		row, err := deps.Store.Frames().GetForObservability(r.Context(), id, nil)
-		if err != nil {
+		var row *persistence.FrameRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Frames().GetForObservability(ctx, id, tx)
+			row = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -403,8 +457,12 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			return
 		}
 		nodeType := chi.URLParam(r, "node_type")
-		nodes, err := deps.Store.Nodes().ListByInstance(r.Context(), id, nil)
-		if err != nil {
+		var nodes []persistence.NodeRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := deps.Store.Nodes().ListByInstance(ctx, id, tx)
+			nodes = rows
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -419,14 +477,18 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			notFound(w, "node not found")
 			return
 		}
-		holdings, err := deps.Store.LockHolders().ListByHolderNode(r.Context(), match.ID, nil)
-		if err != nil {
-			holdings = nil
-		}
-		eventRes, err := deps.Store.Events().List(r.Context(), persistence.EventListFilter{NodeID: &match.ID}, persistence.ListPagination{Limit: 50}, nil)
-		if err != nil {
-			eventRes = persistence.EventListResult{}
-		}
+		var holdings []persistence.LockHolderRow
+		_ = inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			h, err := deps.Store.LockHolders().ListByHolderNode(ctx, match.ID, tx)
+			holdings = h
+			return err
+		})
+		var eventRes persistence.EventListResult
+		_ = inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			e, err := deps.Store.Events().List(ctx, persistence.EventListFilter{NodeID: &match.ID}, persistence.ListPagination{Limit: 50}, tx)
+			eventRes = e
+			return err
+		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"node":     match,
 			"events":   eventRes.Events,
@@ -511,20 +573,23 @@ func handleGetDispatch(deps Deps) http.HandlerFunc {
 		// follow the dispatch → claim_id link. Direct (frame_id, node_id)
 		// lookup avoids the full holder-list scan.
 		var claimID *shared.UUID
-		if holder, err := deps.Store.LockHolders().GetByFrameAndNode(r.Context(), match.NodeID, match.FrameID, nil); err == nil && holder != nil {
-			claimID = &holder.ID
-		}
-		// Also surface instance_id and node_type so the dashboard can
-		// resolve the executor's `dispatch_url_template` substitution
-		// markers ({dispatch_id}, {instance_id}, {node_type}) per
-		// spec §2.2 on the dispatch-detail page.
 		var instanceID *shared.UUID
 		var nodeType string
-		if nodeRow, err := deps.Store.Nodes().Get(r.Context(), match.NodeID, nil); err == nil && nodeRow != nil {
-			id := nodeRow.InstanceID
-			instanceID = &id
-			nodeType = nodeRow.NodeType
-		}
+		_ = inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			if holder, err := deps.Store.LockHolders().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
+				claimID = &holder.ID
+			}
+			// Also surface instance_id and node_type so the dashboard can
+			// resolve the executor's `dispatch_url_template` substitution
+			// markers ({dispatch_id}, {instance_id}, {node_type}) per
+			// spec §2.2 on the dispatch-detail page.
+			if nodeRow, err := deps.Store.Nodes().Get(ctx, match.NodeID, tx); err == nil && nodeRow != nil {
+				id := nodeRow.InstanceID
+				instanceID = &id
+				nodeType = nodeRow.NodeType
+			}
+			return nil
+		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":                match.ID,
 			"node_id":           match.NodeID,
@@ -572,8 +637,12 @@ func handleListLockHolders(deps Deps) http.HandlerFunc {
 			}
 			filter.InstanceID = &id
 		}
-		res, err := deps.Store.LockHolders().ListForObservability(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.LockHolderRow]
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.LockHolders().ListForObservability(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -592,18 +661,29 @@ func handleGetLockHolder(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid lock-holder id")
 			return
 		}
-		row, err := deps.Store.LockHolders().Get(r.Context(), id, nil)
-		if err != nil {
+		var row *persistence.LockHolderRow
+		var holders []persistence.ClaimHolderRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.LockHolders().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			row = r2
+			if row == nil {
+				return nil
+			}
+			h, err := deps.Store.ClaimHolders().ListByLockHolderID(ctx, id, tx)
+			if err == nil {
+				holders = h
+			}
+			return nil
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
 		if row == nil {
 			notFound(w, "lock-holder not found")
 			return
-		}
-		holders, err := deps.Store.ClaimHolders().ListByLockHolderID(r.Context(), id, nil)
-		if err != nil {
-			holders = nil
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"lock_holder":   row,
@@ -655,8 +735,12 @@ func handleListEvents(deps Deps) http.HandlerFunc {
 			}
 			filter.NodeID = &id
 		}
-		res, err := deps.Store.Events().List(r.Context(), filter, pag, nil)
-		if err != nil {
+		var res persistence.EventListResult
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			r2, err := deps.Store.Events().List(ctx, filter, pag, tx)
+			res = r2
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -671,8 +755,12 @@ func handleListEvents(deps Deps) http.HandlerFunc {
 
 func handleSystemHealth(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sups, err := deps.Store.Supervisors().List(r.Context(), nil)
-		if err != nil {
+		var sups []persistence.SupervisorRow
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			s, err := deps.Store.Supervisors().List(ctx, tx)
+			sups = s
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -701,8 +789,18 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 
 func handleSystemSummary(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		counts, err := deps.Store.Nodes().CountByState(r.Context(), nil)
-		if err != nil {
+		var counts map[shared.NodeState]int
+		var active, terminated int
+		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
+			c, err := deps.Store.Nodes().CountByState(ctx, tx)
+			if err != nil {
+				return err
+			}
+			counts = c
+			a, t, err := deps.Store.Instances().CountByActive(ctx, tx)
+			active, terminated = a, t
+			return err
+		}); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -711,11 +809,6 @@ func handleSystemSummary(deps Deps) http.HandlerFunc {
 			string(shared.NodeStateStale):   counts[shared.NodeStateStale],
 			string(shared.NodeStateRunning): counts[shared.NodeStateRunning],
 			string(shared.NodeStateFailed):  counts[shared.NodeStateFailed],
-		}
-		active, terminated, err := deps.Store.Instances().CountByActive(r.Context(), nil)
-		if err != nil {
-			internalErr(w, err)
-			return
 		}
 		dispatchClaimed, err := deps.Queue.CountLive(r.Context(), persistence.DispatchListFilter{State: "claimed"})
 		if err != nil {

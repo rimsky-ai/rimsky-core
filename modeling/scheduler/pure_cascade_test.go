@@ -113,10 +113,17 @@ func pcDeployTemplate(ctx context.Context, t *testing.T, b persistence.Store, na
 func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Store, templateHash string, ck string) persistence.InstanceRow {
 	t.Helper()
 	ckCopy := ck
-	inst, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: uuid.New(), TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
+	var inst persistence.InstanceRow
+	inTxTest(t, ctx, b, func(tx persistence.Tx) error {
+		row, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: uuid.New(), TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = row
+		return nil
+	})
 	return inst
 }
 
@@ -125,11 +132,18 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Store, te
 // in-flight stale source to exercise ProcessPureCascade.
 func pcCreateNode(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, executor string, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
-	n, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID: uuid.New(), InstanceID: instanceID, NodeType: "t",
-		Executor: executor, Dependencies: deps,
-	}, nil)
-	require.NoError(t, err)
+	var n persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: uuid.New(), InstanceID: instanceID, NodeType: "t",
+			Executor: executor, Dependencies: deps,
+		}, tx)
+		if err != nil {
+			return err
+		}
+		n = row
+		return nil
+	})
 	forceState(ctx, t, f, n.ID, "stale")
 	n.State = shared.NodeStateStale
 	return n
@@ -202,16 +216,24 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	assert.Equal(t, 1, count)
 
 	// State transitioned to fresh.
-	got, err := f.persist.Nodes().Get(ctx, pure.ID, nil)
-	require.NoError(t, err)
+	var got *persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, pure.ID, tx)
+		got = r
+		return err
+	})
 	require.NotNil(t, got)
 	assert.Equal(t, shared.NodeStateFresh, got.State)
 
 	// pure_cascade_commit event logged with correct node + instance.
-	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-		NodeID: &pure.ID, Kind: "pure_cascade_commit",
-	}, persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
+			NodeID: &pure.ID, Kind: "pure_cascade_commit",
+		}, persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	})
 	require.Len(t, evs.Events, 1)
 	require.NotNil(t, evs.Events[0].NodeID)
 	assert.Equal(t, pure.ID, *evs.Events[0].NodeID)
@@ -238,14 +260,22 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 
-	got, err := f.persist.Nodes().Get(ctx, execNode.ID, nil)
-	require.NoError(t, err)
+	var got *persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, execNode.ID, tx)
+		got = r
+		return err
+	})
 	assert.Equal(t, shared.NodeStateStale, got.State)
 
-	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-		NodeID: &execNode.ID, Kind: "pure_cascade_commit",
-	}, persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
+			NodeID: &execNode.ID, Kind: "pure_cascade_commit",
+		}, persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	})
 	assert.Empty(t, evs.Events)
 
 	// And no one else transitioned or enqueued.
@@ -290,8 +320,12 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	assert.Equal(t, 1, count)
 
 	// Node stays stale — supervisor's omnibus runner will drive it.
-	got, err := f.persist.Nodes().Get(ctx, claimNode.ID, nil)
-	require.NoError(t, err)
+	var got *persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, claimNode.ID, tx)
+		got = r
+		return err
+	})
 	assert.Equal(t, shared.NodeStateStale, got.State)
 
 	// One enqueue with empty ExecutorName and the template's RequiredStores.
@@ -302,10 +336,14 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredStores)
 
 	// No pure_cascade_commit event for native claim-only nodes.
-	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-		NodeID: &claimNode.ID, Kind: "pure_cascade_commit",
-	}, persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
+			NodeID: &claimNode.ID, Kind: "pure_cascade_commit",
+		}, persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	})
 	assert.Empty(t, evs.Events)
 }
 
@@ -332,8 +370,12 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	assert.Equal(t, 1, count)
 
 	// A is fresh.
-	gotA, err := f.persist.Nodes().Get(ctx, pureA.ID, nil)
-	require.NoError(t, err)
+	var gotA *persistence.NodeRow
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Nodes().Get(ctx, pureA.ID, tx)
+		gotA = r
+		return err
+	})
 	assert.Equal(t, shared.NodeStateFresh, gotA.State)
 
 	// B was enqueued by the recalculate path.
@@ -343,10 +385,14 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	assert.Equal(t, "worker", enq[0].ExecutorName)
 
 	// pure_cascade_commit logged for A only.
-	evs, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-		Kind: "pure_cascade_commit",
-	}, persistence.ListPagination{Limit: 100}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
+			Kind: "pure_cascade_commit",
+		}, persistence.ListPagination{Limit: 100}, tx)
+		evs = r
+		return err
+	})
 	require.Len(t, evs.Events, 1)
 	require.NotNil(t, evs.Events[0].NodeID)
 	assert.Equal(t, pureA.ID, *evs.Events[0].NodeID)

@@ -360,33 +360,13 @@ func (s *framesImpl) EnqueueSerialFrame(
 
 // EnqueueCoalesceFrame inserts a queued coalesce frame, or appends the
 // source node to an existing pending coalesce row for the instance.
-//
-// Mirrors postgres semantics: when `tx == nil` the impl opens an
-// internal tx (BEGIN IMMEDIATE per the connection's _txlock=immediate
-// pragma) and runs the read-then-update inside it. When `tx != nil`
-// the work participates in the caller's tx.
+// Reads-then-updates inside the caller's tx (BEGIN IMMEDIATE on
+// SQLite gives writer-slot serialisation for the duration).
 func (s *framesImpl) EnqueueCoalesceFrame(
 	ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
-	if tx == nil {
-		// Open an internal tx so the read-then-update is atomic (matches
-		// the postgres impl's nil-tx semantics).
-		var out shared.UUID
-		err := (*storeImpl)(s).Transaction(ctx, func(ctx context.Context, innerTx persistence.Tx) error {
-			id, err := s.EnqueueCoalesceFrame(ctx, instanceID, sourceNodeID, frameTimeoutMs, innerTx)
-			if err != nil {
-				return err
-			}
-			out = id
-			return nil
-		})
-		if err != nil {
-			return shared.UUID{}, err
-		}
-		return out, nil
-	}
 	// Look for an existing queued+coalesce frame for this instance under
-	// the surrounding tx (BEGIN IMMEDIATE serialises writers).
+	// the surrounding tx.
 	var existing string
 	err := s.q(tx).QueryRowContext(ctx, `
         SELECT frame_id FROM rimsky_frames

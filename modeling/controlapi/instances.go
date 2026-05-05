@@ -229,8 +229,12 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),
 		}
-		page, err := deps.Persist.Instances().List(req.Context(), filter, pag, nil)
-		if err != nil {
+		var page persistence.PaginatedListResult[persistence.InstanceRow]
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Instances().List(ctx, filter, pag, tx)
+			page = p
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -241,8 +245,13 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 		for _, r := range page.Rows {
 			redact, ok := redactCache[r.TemplateHash]
 			if !ok {
-				tpl, err := deps.Persist.Templates().GetByHash(req.Context(), r.TemplateHash, nil)
-				if err == nil && tpl != nil {
+				var tpl *persistence.TemplateRow
+				_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+					t, err := deps.Persist.Templates().GetByHash(ctx, r.TemplateHash, tx)
+					tpl = t
+					return err
+				})
+				if tpl != nil {
 					redact = tpl.Spec.ParamsRedact
 				}
 				redactCache[r.TemplateHash] = redact
@@ -267,7 +276,12 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrInstanceNotFound.Error())
 			return
 		}
-		tpl, _ := deps.Persist.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
+		var tpl *persistence.TemplateRow
+		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			tpl = t
+			return err
+		})
 		var redact []string
 		if tpl != nil {
 			redact = tpl.Spec.ParamsRedact
@@ -306,8 +320,12 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		// retry; surviving lifecycle rows are picked up by the
 		// terminator if the instance row remains. We only proceed with
 		// the row delete after fan-out fully succeeds.
-		tpl, err := deps.Persist.Templates().GetByHash(req.Context(), inst.TemplateHash, nil)
-		if err != nil {
+		var tpl *persistence.TemplateRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			tpl = t
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -343,12 +361,13 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 		}
 		// Defensive: per spec §1.6 any remaining lifecycle rows for
 		// scope='instance' on this id are deleted with the instance.
-		if err := deps.Persist.LifecycleIdempotency().DeleteByScope(req.Context(),
-			persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), nil); err != nil {
-			writeError(w, err)
-			return
-		}
-		if err := deps.Persist.Instances().Delete(req.Context(), inst.ID, nil); err != nil {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
+				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
+				return err
+			}
+			return deps.Persist.Instances().Delete(ctx, inst.ID, tx)
+		}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -374,9 +393,13 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 	templateHash, instanceID string,
 	terminatedAtUnixMs int64,
 ) error {
-	rows, err := deps.Persist.LifecycleIdempotency().ListByScope(ctx,
-		persistence.LifecycleIdempotencyScopeInstance, instanceID, nil)
-	if err != nil {
+	var rows []persistence.LifecycleIdempotencyRow
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := deps.Persist.LifecycleIdempotency().ListByScope(ctx,
+			persistence.LifecycleIdempotencyScopeInstance, instanceID, tx)
+		rows = r
+		return err
+	}); err != nil {
 		return fmt.Errorf("lifecycle row list: %w", err)
 	}
 	if deps.LifecycleSubs == nil {
@@ -389,10 +412,12 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 				"instance_id", instanceID,
 				"template_hash", templateHash,
 				"peer_name", r.StoreRegistrationName)
-			if err := deps.Persist.LifecycleIdempotency().Delete(ctx,
-				r.StoreRegistrationName,
-				persistence.LifecycleIdempotencyScopeInstance,
-				instanceID, nil); err != nil {
+			if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return deps.Persist.LifecycleIdempotency().Delete(ctx,
+					r.StoreRegistrationName,
+					persistence.LifecycleIdempotencyScopeInstance,
+					instanceID, tx)
+			}); err != nil {
 				return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
 			}
 			continue
@@ -404,10 +429,12 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 		}); err != nil {
 			return fmt.Errorf("peer %q OnInstanceTerminated: %w", r.StoreRegistrationName, err)
 		}
-		if err := deps.Persist.LifecycleIdempotency().Delete(ctx,
-			r.StoreRegistrationName,
-			persistence.LifecycleIdempotencyScopeInstance,
-			instanceID, nil); err != nil {
+		if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.LifecycleIdempotency().Delete(ctx,
+				r.StoreRegistrationName,
+				persistence.LifecycleIdempotencyScopeInstance,
+				instanceID, tx)
+		}); err != nil {
 			return fmt.Errorf("delete lifecycle row %q: %w", r.StoreRegistrationName, err)
 		}
 	}

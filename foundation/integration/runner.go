@@ -357,12 +357,14 @@ func upsertAttributesPreDispatch(
 	nodeID shared.UUID,
 	resolvedAttrs map[string]any,
 ) error {
-	prior, _ := args.Persist.NodeAttributes().Get(ctx, nodeID, nil)
-	attempt := 1
-	if prior != nil {
-		attempt = prior.RunAttempt + 1
-	}
-	return args.Persist.NodeAttributes().Upsert(ctx, nodeID, attempt, resolvedAttrs, nil)
+	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		prior, _ := args.Persist.NodeAttributes().Get(ctx, nodeID, tx)
+		attempt := 1
+		if prior != nil {
+			attempt = prior.RunAttempt + 1
+		}
+		return args.Persist.NodeAttributes().Upsert(ctx, nodeID, attempt, resolvedAttrs, tx)
+	})
 }
 
 // emitTemplateResolutionFailedEvent appends the typed event for a
@@ -371,16 +373,18 @@ func upsertAttributesPreDispatch(
 func emitTemplateResolutionFailedEvent(
 	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
 ) {
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &nodeID, InstanceID: &instanceID,
-		Kind: "template_resolution_failed",
-		Payload: map[string]any{
-			"directive": directive,
-			"site":      site,
-			"field":     field,
-			"reason":    reason,
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &nodeID, InstanceID: &instanceID,
+			Kind: "template_resolution_failed",
+			Payload: map[string]any{
+				"directive": directive,
+				"site":      site,
+				"field":     field,
+				"reason":    reason,
+			},
+		}, tx)
+	})
 }
 
 // applyTemplateResolutionFailure routes a substitution miss through the

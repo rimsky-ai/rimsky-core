@@ -107,16 +107,24 @@ func TestUnresolvedExecutor(t *testing.T) {
 
 	// With no policy declared for unresolved_executor, node.Evaluate
 	// defaults to give_up(unknown_error_class) → state failed.
-	got, err := h.Persist.Nodes().Get(h.Ctx, n.ID, nil)
-	require.NoError(t, err)
+	var got *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
+		got = r
+		return err
+	}))
 	require.Equal(t, shared.NodeStateFailed, got.State)
 
 	// Verify event trail: unresolved_executor followed by an `error`
 	// event with error_class=unresolved_executor and action_taken=give_up.
 	nid := n.ID
-	evs, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
-		persistence.ListPagination{Limit: 500}, nil)
-	require.NoError(t, err)
+	var evs persistence.EventListResult
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid},
+			persistence.ListPagination{Limit: 500}, tx)
+		evs = r
+		return err
+	}))
 	var (
 		sawUnresolved  bool
 		sawErrorGiveUp bool

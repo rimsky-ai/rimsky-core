@@ -1,17 +1,17 @@
 # Quickstart rimsky.yml — wires rimsky/all to the bundled stub
 # claim-producer and stub executor over the compose network.
 #
-# Persistence is postgres because the unified image runs three rimsky
-# processes (scheduler + supervisor + control-api) concurrently against
-# one persistence backend. SQLite's writer-lock model produces frequent
-# SQLITE_BUSY errors under that contention even with WAL mode; postgres
-# handles concurrent transactions properly. The docker-compose.yml in
-# this directory provides the postgres container.
+# SQLite is the quickstart's default persistence. The unified
+# rimsky/all image runs three rimsky processes (scheduler +
+# supervisor + control-api) concurrently against one db; that worked
+# once the option-C nil-tx refactor removed the auto-commit code
+# path that caused self-deadlock on the SQLite single-conn pool.
+# State lives in a Docker named volume (see docker-compose.yml).
 
 persistence:
-  driver: postgres
-  postgres:
-    dsn: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
 
 # Single bundled stub claim-producer. The "stub" name is what node
 # declarations reference in their `stores:` block.

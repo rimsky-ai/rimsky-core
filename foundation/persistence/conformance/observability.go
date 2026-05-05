@@ -28,8 +28,12 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Driver) {
 	}
 	store := d.Store()
 
-	row, err := store.Instances().FindAnyByInstanceKey(ctx, "no-such-key", nil)
-	if err != nil {
+	var row *persistence.InstanceRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Instances().FindAnyByInstanceKey(ctx, "no-such-key", tx)
+		row = r
+		return err
+	}); err != nil {
 		t.Fatalf("FindAnyByInstanceKey unknown: %v", err)
 	}
 	if row != nil {
@@ -37,32 +41,38 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Driver) {
 	}
 
 	tmpl := "sha256-" + uuid.NewString()
-	if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID: tmpl,
-		Spec: nodepkg.TemplateSpec{
-			Name: "find-key", Version: "1",
-			FrameResolution: nodepkg.FrameResolutionSerialQueue,
-			FrameTimeoutMs:  600000,
-			Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
-		},
-		State:  persistence.TemplateStateRegistered,
-		Source: "direct",
-	}, nil); err != nil {
-		t.Fatalf("template insert: %v", err)
-	}
 	key := "instance-key-1"
 	id := uuid.New()
-	_, err = store.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:           id,
-		TemplateHash: tmpl,
-		InstanceKey:  &key,
-		Params:       map[string]any{},
-	}, nil)
-	if err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: tmpl,
+			Spec: nodepkg.TemplateSpec{
+				Name: "find-key", Version: "1",
+				FrameResolution: nodepkg.FrameResolutionSerialQueue,
+				FrameTimeoutMs:  600000,
+				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+			},
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           id,
+			TemplateHash: tmpl,
+			InstanceKey:  &key,
+			Params:       map[string]any{},
+		}, tx)
+		return err
+	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := store.Instances().FindAnyByInstanceKey(ctx, key, nil)
-	if err != nil {
+	var got *persistence.InstanceRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Instances().FindAnyByInstanceKey(ctx, key, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("FindAnyByInstanceKey: %v", err)
 	}
 	if got == nil || got.ID != id {
@@ -81,32 +91,43 @@ func testStoreLifecycleListByStore(t *testing.T, d persistence.Driver) {
 	}
 	store := d.Store()
 
-	rows, err := store.LifecycleIdempotency().ListByStore(ctx, "no-store", nil)
-	if err != nil {
+	var rows []persistence.LifecycleIdempotencyRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LifecycleIdempotency().ListByStore(ctx, "no-store", tx)
+		rows = r
+		return err
+	}); err != nil {
 		t.Fatalf("ListByStore empty: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("ListByStore empty returned %d rows", len(rows))
 	}
 
-	if err := store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-		StoreRegistrationName: "store-a",
-		ScopeKind:             persistence.LifecycleIdempotencyScopeTemplate,
-		ScopeID:               "tpl-1",
-		State:                 persistence.LifecycleIdempotencyStateRegistered,
-	}, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+			StoreRegistrationName: "store-a",
+			ScopeKind:             persistence.LifecycleIdempotencyScopeTemplate,
+			ScopeID:               "tpl-1",
+			State:                 persistence.LifecycleIdempotencyStateRegistered,
+		}, tx)
+	}); err != nil {
 		t.Fatalf("upsert tpl: %v", err)
 	}
-	if err := store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-		StoreRegistrationName: "store-a",
-		ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-		ScopeID:               uuid.New().String(),
-		State:                 persistence.LifecycleIdempotencyStateCreated,
-	}, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+			StoreRegistrationName: "store-a",
+			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:               uuid.New().String(),
+			State:                 persistence.LifecycleIdempotencyStateCreated,
+		}, tx)
+	}); err != nil {
 		t.Fatalf("upsert inst: %v", err)
 	}
-	rows, err = store.LifecycleIdempotency().ListByStore(ctx, "store-a", nil)
-	if err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LifecycleIdempotency().ListByStore(ctx, "store-a", tx)
+		rows = r
+		return err
+	}); err != nil {
 		t.Fatalf("ListByStore: %v", err)
 	}
 	if len(rows) != 2 {
@@ -126,38 +147,48 @@ func testEventsListDescending(t *testing.T, d persistence.Driver) {
 	store := d.Store()
 
 	tmpl := "sha256-" + uuid.NewString()
-	if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID: tmpl,
-		Spec: nodepkg.TemplateSpec{
-			Name: "events-desc", Version: "1",
-			FrameResolution: nodepkg.FrameResolutionSerialQueue,
-			FrameTimeoutMs:  600000,
-			Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
-		},
-		State:  persistence.TemplateStateRegistered,
-		Source: "direct",
-	}, nil); err != nil {
-		t.Fatalf("template insert: %v", err)
-	}
 	id := uuid.New()
-	if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:           id,
-		TemplateHash: tmpl,
-		Params:       map[string]any{},
-	}, nil); err != nil {
-		t.Fatalf("Create: %v", err)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: tmpl,
+			Spec: nodepkg.TemplateSpec{
+				Name: "events-desc", Version: "1",
+				FrameResolution: nodepkg.FrameResolutionSerialQueue,
+				FrameTimeoutMs:  600000,
+				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+			},
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           id,
+			TemplateHash: tmpl,
+			Params:       map[string]any{},
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("template/instance insert: %v", err)
 	}
 	for _, k := range []string{"a", "b", "c"} {
-		if err := store.Events().Append(ctx, persistence.EventAppendInput{
-			InstanceID: &id,
-			Kind:       k,
-			Payload:    map[string]any{},
-		}, nil); err != nil {
+		k := k
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &id,
+				Kind:       k,
+				Payload:    map[string]any{},
+			}, tx)
+		}); err != nil {
 			t.Fatalf("append %s: %v", k, err)
 		}
 	}
-	res, err := store.Events().List(ctx, persistence.EventListFilter{InstanceID: &id}, persistence.ListPagination{Limit: 10}, nil)
-	if err != nil {
+	var res persistence.EventListResult
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.Events().List(ctx, persistence.EventListFilter{InstanceID: &id}, persistence.ListPagination{Limit: 10}, tx)
+		res = r
+		return err
+	}); err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(res.Events) != 3 {
@@ -190,26 +221,29 @@ func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Drive
 	// is satisfied. The frame seeded by seedFixtureSet is unused here —
 	// schedules attach to nodes regardless of frame state.
 	tmpl := "sha256-" + uuid.NewString()
-	if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID: tmpl,
-		Spec: nodepkg.TemplateSpec{
-			Name: "schedules-dense", Version: "1",
-			FrameResolution: nodepkg.FrameResolutionSerialQueue,
-			FrameTimeoutMs:  600000,
-			Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
-		},
-		State:  persistence.TemplateStateRegistered,
-		Source: "direct",
-	}, nil); err != nil {
-		t.Fatalf("template insert: %v", err)
-	}
 	instID := uuid.New()
-	if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:           instID,
-		TemplateHash: tmpl,
-		Params:       map[string]any{},
-	}, nil); err != nil {
-		t.Fatalf("instance create: %v", err)
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: tmpl,
+			Spec: nodepkg.TemplateSpec{
+				Name: "schedules-dense", Version: "1",
+				FrameResolution: nodepkg.FrameResolutionSerialQueue,
+				FrameTimeoutMs:  600000,
+				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+			},
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           instID,
+			TemplateHash: tmpl,
+			Params:       map[string]any{},
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("template/instance create: %v", err)
 	}
 
 	// Register 5 schedules sharing the same next_fire_at so dense
@@ -220,21 +254,23 @@ func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Drive
 	expected := make(map[string]struct{}, numSchedules)
 	for i := 0; i < numSchedules; i++ {
 		nodeID := uuid.New()
-		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           nodeID,
-			InstanceID:   instID,
-			NodeType:     "n",
-			Executor:     "e",
-			Dependencies: []shared.UUID{},
-		}, nil); err != nil {
-			t.Fatalf("node create: %v", err)
-		}
-		if err := store.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
-			NodeID:     nodeID,
-			CronExpr:   "* * * * *",
-			NextFireAt: nextFire,
-		}, nil); err != nil {
-			t.Fatalf("schedule register: %v", err)
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+				ID:           nodeID,
+				InstanceID:   instID,
+				NodeType:     "n",
+				Executor:     "e",
+				Dependencies: []shared.UUID{},
+			}, tx); err != nil {
+				return err
+			}
+			return store.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
+				NodeID:     nodeID,
+				CronExpr:   "* * * * *",
+				NextFireAt: nextFire,
+			}, tx)
+		}); err != nil {
+			t.Fatalf("node+schedule create: %v", err)
 		}
 		expected[nodeID.String()] = struct{}{}
 	}
@@ -242,12 +278,16 @@ func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Drive
 	seen := map[string]int{}
 	cursor := ""
 	for page := 0; page < numSchedules+2; page++ {
-		res, err := store.Schedules().ListForObservability(ctx,
-			persistence.ScheduleListFilter{},
-			persistence.ListPagination{Limit: 2, Cursor: cursor},
-			nil,
-		)
-		if err != nil {
+		var res persistence.PaginatedListResult[persistence.ScheduleRow]
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.Schedules().ListForObservability(ctx,
+				persistence.ScheduleListFilter{},
+				persistence.ListPagination{Limit: 2, Cursor: cursor},
+				tx,
+			)
+			res = r
+			return err
+		}); err != nil {
 			t.Fatalf("ListForObservability page=%d: %v", page, err)
 		}
 		for _, row := range res.Rows {

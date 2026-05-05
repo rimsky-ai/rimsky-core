@@ -1,6 +1,6 @@
-# Quickstart compose: postgres + rimsky/all + bundled stub
-# claim-producer + bundled stub executor + dashboard. One command brings
-# up a working Rimsky on http://localhost:8080 with the dashboard at
+# Quickstart compose: rimsky/all + bundled stub claim-producer +
+# bundled stub executor + dashboard. One command brings up a working
+# Rimsky on http://localhost:8080 with the dashboard at
 # http://localhost:8090.
 #
 # Build context is the repo root (..) so the Dockerfiles can COPY the
@@ -8,19 +8,11 @@
 # are cached.
 #
 # State volume:
-#   Postgres data lives in a Docker named volume by default so the
-#   quickstart directory stays clean. Override with RIMSKY_STATE_DIR=./state
-#   (or any path) for a host bind-mount. Inspect the db with
-#   `docker compose exec postgres psql -U rimsky rimsky`.
-#
-#   Why postgres instead of sqlite for the quickstart: the unified
-#   rimsky/all image runs three rimsky processes (scheduler, supervisor,
-#   control-api) concurrently against one persistence backend. SQLite's
-#   writer-lock model produces frequent SQLITE_BUSY errors under that
-#   contention even with WAL mode. Postgres handles concurrent
-#   transactions properly. (rimsky/all + sqlite is fine for a single
-#   process at low load — see the foundation contract for the supported
-#   single-replica configurations.)
+#   The SQLite state file lives in a Docker named volume mounted at
+#   /var/lib/rimsky inside the rimsky container (see rimsky.yml's
+#   persistence.sqlite.path). Override with RIMSKY_STATE_DIR=./state
+#   (or any path) for a host bind-mount. Inspect with
+#   `docker compose exec rimsky sqlite3 /var/lib/rimsky/state.db`.
 #
 # Host ports:
 #   Default mappings are 8080 (control-api) and 8090 (dashboard). If
@@ -28,23 +20,9 @@
 #   before `docker compose up`:
 #     RIMSKY_HOST_PORT=18080 RIMSKY_DASHBOARD_HOST_PORT=18090 docker compose up
 #   The container-side ports stay 8080/8090; only the host mapping
-#   changes. Postgres is internal-only — not exposed to the host.
+#   changes.
 
 services:
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: rimsky
-      POSTGRES_PASSWORD: rimsky
-      POSTGRES_DB: rimsky
-    volumes:
-      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rimsky -d rimsky"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-
   rimsky:
     build:
       context: ..
@@ -54,13 +32,12 @@ services:
       - "${RIMSKY_HOST_PORT:-8080}:8080"
     volumes:
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
     environment:
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
       RIMSKY_CONTROL_API_HOST: "0.0.0.0"
       RIMSKY_CONTROL_API_PORT: "8080"
     depends_on:
-      postgres:
-        condition: service_healthy
       store-stub:
         condition: service_started
       executor-stub:

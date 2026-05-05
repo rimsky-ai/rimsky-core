@@ -56,28 +56,31 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Driver) fix
 		},
 	}
 
-	if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID:     templateHash,
-		Spec:   spec,
-		State:  persistence.TemplateStateRegistered,
-		Source: "direct",
-	}, nil); err != nil {
-		t.Fatalf("seedFixtureSet: template insert: %v", err)
-	}
-	if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:           instanceID,
-		TemplateHash: templateHash,
-	}, nil); err != nil {
-		t.Fatalf("seedFixtureSet: instance create: %v", err)
-	}
-	if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-		ID:           nodeID,
-		InstanceID:   instanceID,
-		NodeType:     "fixture-node-type",
-		Executor:     "test-executor",
-		Dependencies: []shared.UUID{},
-	}, nil); err != nil {
-		t.Fatalf("seedFixtureSet: node create: %v", err)
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID:     templateHash,
+			Spec:   spec,
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:           instanceID,
+			TemplateHash: templateHash,
+		}, tx); err != nil {
+			return err
+		}
+		_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID:           nodeID,
+			InstanceID:   instanceID,
+			NodeType:     "fixture-node-type",
+			Executor:     "test-executor",
+			Dependencies: []shared.UUID{},
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("seedFixtureSet: template/instance/node create: %v", err)
 	}
 
 	// Create a frame in 'queued' state then promote to 'running' so the
@@ -105,4 +108,12 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Driver) fix
 		NodeID:       nodeID,
 		FrameID:      frameID,
 	}
+}
+
+// inTx wraps fn in a fresh Persist.Transaction for use in test-helper
+// reads under option C (every Store method requires an explicit tx).
+func inTx(ctx context.Context, store persistence.Store, fn func(tx persistence.Tx) error) error {
+	return store.Transaction(ctx, func(_ context.Context, tx persistence.Tx) error {
+		return fn(tx)
+	})
 }

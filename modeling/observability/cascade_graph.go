@@ -43,7 +43,12 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 		nodeIDs = append(nodeIDs, n.ID)
 	}
 	// Single batch query for terminal events across every live node.
-	terminals, _ := deps.Store.Events().LastTerminalByNodes(ctx, nodeIDs, nil)
+	var terminals map[shared.UUID]persistence.EventRow
+	_ = deps.Store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		t, err := deps.Store.Events().LastTerminalByNodes(ctx, nodeIDs, tx)
+		terminals = t
+		return err
+	})
 	terminalView := func(id shared.UUID) *terminalEventView {
 		ev, ok := terminals[id]
 		if !ok {

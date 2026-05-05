@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 )
@@ -92,8 +93,10 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		`UPDATE rimsky_nodes SET state='running' WHERE id=$1`,
 		uuid.UUID(worker.ID))
 	require.NoError(t, err)
-	require.NoError(t, h.Persist.Nodes().UpdateState(h.Ctx,
-		worker.ID, "stale", cascade.ReasonPolicyRetry, nil))
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		return h.Persist.Nodes().UpdateState(h.Ctx,
+			worker.ID, "stale", cascade.ReasonPolicyRetry, tx)
+	}))
 
 	// Re-read frame_id; it must still be set.
 	var preservedFrameID *uuid.UUID

@@ -20,10 +20,13 @@
 package controlapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
 // registerAdminScheduleRoutes wires POST /admin/scheduled-nodes/{node_id}/force-fire.
@@ -39,7 +42,9 @@ func handleAdminForceFire(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid node_id")
 			return
 		}
-		if err := deps.Persist.Schedules().ForceFire(req.Context(), id, nil); err != nil {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			return deps.Persist.Schedules().ForceFire(ctx, id, tx)
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

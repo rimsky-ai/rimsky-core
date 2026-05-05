@@ -196,14 +196,16 @@ func Start(cfg Config) (*Handle, error) {
 	host, port := splitHostPort(addr)
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
-	if err := cfg.Persist.Supervisors().Register(context.Background(), persistence.SupervisorRegisterInput{
-		ID:                cfg.SupervisorID,
-		AcceptedExecutors: accepted,
-		AcceptedStores:    acceptedStores,
-		Concurrency:       cfg.Concurrency,
-		CallbackHost:      host,
-		CallbackPort:      port,
-	}, nil); err != nil {
+	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		return cfg.Persist.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
+			ID:                cfg.SupervisorID,
+			AcceptedExecutors: accepted,
+			AcceptedStores:    acceptedStores,
+			Concurrency:       cfg.Concurrency,
+			CallbackHost:      host,
+			CallbackPort:      port,
+		}, tx)
+	}); err != nil {
 		_ = callbackSrv.Close(context.Background())
 		return nil, err
 	}
@@ -280,7 +282,10 @@ func runLoop(
 		}
 		activeMu.Unlock()
 
-		if err := cfg.Persist.Supervisors().Heartbeat(context.Background(), cfg.SupervisorID, cnt, nil); err != nil {
+		hbCtx := context.Background()
+		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+			return cfg.Persist.Supervisors().Heartbeat(ctx, cfg.SupervisorID, cnt, tx)
+		}); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
 		// §7.5 lock-holder heartbeat refresh. ExtendHeartbeat issues the
@@ -291,11 +296,15 @@ func runLoop(
 		// HeartbeatInterval` per the spec; the persistence layer converts
 		// the duration back to integer seconds for the §7.5 SQL literal.
 		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
-		if err := lockHolders.ExtendHeartbeat(context.Background(), cfg.SupervisorID, expiresAt, nil); err != nil {
+		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+			return lockHolders.ExtendHeartbeat(ctx, cfg.SupervisorID, expiresAt, tx)
+		}); err != nil {
 			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
 		}
 		for _, id := range ids {
-			_ = cfg.Persist.Nodes().UpdateHeartbeat(context.Background(), id, cfg.Clock.Now(), cfg.SupervisorID, nil)
+			_ = cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, id, cfg.Clock.Now(), cfg.SupervisorID, tx)
+			})
 		}
 	}
 
@@ -402,7 +411,9 @@ func runLoop(
 			}
 			cancelWait()
 			_ = srv.Close(context.Background())
-			if err := cfg.Persist.Supervisors().Unregister(context.Background(), cfg.SupervisorID, nil); err != nil {
+			if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+				return cfg.Persist.Supervisors().Unregister(ctx, cfg.SupervisorID, tx)
+			}); err != nil {
 				cfg.Logger.Warn("supervisor: Unregister failed", "error", err.Error())
 			}
 			_ = pool.Close()

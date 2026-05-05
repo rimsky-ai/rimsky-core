@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -54,8 +55,12 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	require.NotNil(t, g)
 	require.True(t, h.WaitForNodeState(g.ID, shared.NodeStateFresh, 15*time.Second))
 
-	row, err := h.Persist.NodeAttributes().Get(h.Ctx, g.ID, nil)
-	require.NoError(t, err)
+	var row *persistence.NodeAttributesRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.NodeAttributes().Get(h.Ctx, g.ID, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row)
 	require.Equal(t, "hello-world", row.Data["greeting"], "params substitution should resolve at dispatch")
 	require.Equal(t, "from-executor", row.Data["executor_field"], "executor delta should merge into final attributes")

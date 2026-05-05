@@ -1,25 +1,11 @@
-# Minimal compose: postgres + rimsky/all + stub claim-producer + stub
-# executor. No dashboard. For users who want to script against the
-# control API without building the Node frontend.
+# Minimal compose: rimsky/all + stub claim-producer + stub executor.
+# No dashboard. For users who want to script against the control API
+# without building the Node frontend.
 #
 # All other behavior matches docker-compose.yml — see that file's
-# header for state-volume notes and the rationale for postgres-over-sqlite.
+# header for state-volume notes.
 
 services:
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: rimsky
-      POSTGRES_PASSWORD: rimsky
-      POSTGRES_DB: rimsky
-    volumes:
-      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rimsky -d rimsky"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-
   rimsky:
     build:
       context: ..
@@ -29,13 +15,12 @@ services:
       - "${RIMSKY_HOST_PORT:-8080}:8080"
     volumes:
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
     environment:
       RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
       RIMSKY_CONTROL_API_HOST: "0.0.0.0"
       RIMSKY_CONTROL_API_PORT: "8080"
     depends_on:
-      postgres:
-        condition: service_healthy
       store-stub:
         condition: service_started
       executor-stub:

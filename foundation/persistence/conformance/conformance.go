@@ -31,7 +31,6 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Driver) {
 	t.Run("AcquisitionTxAtomicity", func(t *testing.T) { testAcquisitionTxAtomicity(t, factory(t)) })
 	t.Run("HeldClaimAutoTerminalSerialization", func(t *testing.T) { testHeldClaimAutoTerminalSerialization(t, factory(t)) })
 	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
-	t.Run("CoalesceFrameNilTx", func(t *testing.T) { testCoalesceFrameNilTx(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("LockHoldersUpdateScope", func(t *testing.T) { testLockHoldersUpdateScope(t, factory(t)) })
 	t.Run("NodesMarkStaleForCascade", func(t *testing.T) { testNodesMarkStaleForCascade(t, factory(t)) })

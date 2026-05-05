@@ -116,7 +116,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	// at the supervisor's advertised callback URL.
 	if c.Persist != nil {
 		r.Method(http.MethodPost, "/v1/attributes/{node_id}", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
-			Store:  attributesStoreAdapter{inner: c.Persist.NodeAttributes()},
+			Store:  attributesStoreAdapter{store: c.Persist},
 			Auth:   c.attributesAuth,
 			Logger: c.Logger,
 		}))
@@ -324,12 +324,16 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 // The split exists because `core/attributes` cannot import
 // `core/persistence` without a cycle.
 type attributesStoreAdapter struct {
-	inner persistence.NodeAttributesStore
+	store persistence.Store
 }
 
 func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*rimskyattrs.Row, error) {
-	row, err := a.inner.Get(ctx, nodeID, nil)
-	if err != nil {
+	var row *persistence.NodeAttributesRow
+	if err := a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := a.store.NodeAttributes().Get(ctx, nodeID, tx)
+		row = r
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if row == nil {
@@ -344,9 +348,13 @@ func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*r
 }
 
 func (a attributesStoreAdapter) Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error {
-	return a.inner.Upsert(ctx, nodeID, runAttempt, data, nil)
+	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return a.store.NodeAttributes().Upsert(ctx, nodeID, runAttempt, data, tx)
+	})
 }
 
 func (a attributesStoreAdapter) MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error {
-	return a.inner.MergeDelta(ctx, nodeID, delta, nil)
+	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return a.store.NodeAttributes().MergeDelta(ctx, nodeID, delta, tx)
+	})
 }

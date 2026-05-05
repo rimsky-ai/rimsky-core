@@ -75,25 +75,30 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 			Stores: []node.NodeStoreRef{{Name: storeName, Selector: "x", Intent: "r"}},
 		}},
 	}
-	require.NoError(t, f.persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID: templateHash, Spec: spec, State: persistence.TemplateStateDeployed,
-	}, nil))
-
 	instanceID = uuid.New()
 	ck := "ck-" + uuid.NewString()
-	_, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
-		Params: map[string]any{},
-	}, nil)
-	require.NoError(t, err)
-
-	require.NoError(t, f.persist.Instances().MarkTerminated(ctx, instanceID, nil))
-	require.NoError(t, f.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
-		StoreRegistrationName: storeName,
-		ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
-		ScopeID:               instanceID.String(),
-		State:                 persistence.LifecycleIdempotencyStateCreated,
-	}, nil))
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := f.persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID: templateHash, Spec: spec, State: persistence.TemplateStateDeployed,
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
+			Params: map[string]any{},
+		}, tx); err != nil {
+			return err
+		}
+		if err := f.persist.Instances().MarkTerminated(ctx, instanceID, tx); err != nil {
+			return err
+		}
+		return f.persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+			StoreRegistrationName: storeName,
+			ScopeKind:             persistence.LifecycleIdempotencyScopeInstance,
+			ScopeID:               instanceID.String(),
+			State:                 persistence.LifecycleIdempotencyStateCreated,
+		}, tx)
+	}))
 
 	if !withTemplate {
 		// Drop the FK constraint so we can null/replace the binding,
@@ -125,9 +130,13 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	require.Equal(t, hash, calls[0].TemplateID)
 	require.Equal(t, inst.String(), calls[0].InstanceID)
 
-	row, err := f.deps.Persist.LifecycleIdempotency().Get(context.Background(),
-		"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx,
+			"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), tx)
+		row = r
+		return err
+	}))
 	require.Nil(t, row, "lifecycle row must be deleted on success")
 }
 
@@ -148,9 +157,13 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	term := NewInstanceTerminator(f.deps, time.Hour)
 	term.tick(context.Background())
 
-	row, err := f.deps.Persist.LifecycleIdempotency().Get(context.Background(),
-		"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx,
+			"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row, "lifecycle row must survive a per-store failure")
 }
 
@@ -170,9 +183,13 @@ func TestInstanceTerminator_TemplateMissingFallsBackToLifecycleRows(t *testing.T
 	require.Len(t, calls, 1, "fallback path must fire OnInstanceTerminated against the lifecycle-row store")
 	require.Equal(t, "on_instance_terminated", calls[0].Verb)
 
-	row, err := f.deps.Persist.LifecycleIdempotency().Get(context.Background(),
-		"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), nil)
-	require.NoError(t, err)
+	var row *persistence.LifecycleIdempotencyRow
+	require.NoError(t, f.deps.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx,
+			"alpha", persistence.LifecycleIdempotencyScopeInstance, inst.String(), tx)
+		row = r
+		return err
+	}))
 	require.Nil(t, row, "fallback path must delete the lifecycle row on success")
 }
 

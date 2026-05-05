@@ -77,14 +77,16 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 
 	ep, ok := args.Resolver.Resolve(acq.Executor)
 	if !ok {
-		_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "unresolved_executor",
-			Payload: map[string]any{
-				"executor_name": acq.Executor,
-				"supervisor_id": args.SupervisorID,
-			},
-		}, nil)
+		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "unresolved_executor",
+				Payload: map[string]any{
+					"executor_name": acq.Executor,
+					"supervisor_id": args.SupervisorID,
+				},
+			}, tx)
+		})
 		return terminalEvent{
 			Kind:       terminalKindErrored,
 			ErrorClass: "unresolved_executor",
@@ -173,7 +175,9 @@ func readExecutorStream(
 		}
 		switch e := ev.Event.(type) {
 		case *genv1.ExecuteEvent_Heartbeat:
-			_ = args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, nil)
+			_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx)
+			})
 			_ = e
 		case *genv1.ExecuteEvent_Complete:
 			t := terminalEvent{
@@ -234,13 +238,15 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, err
 	}
-	_ = args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "attributes_substituted",
-		Payload: map[string]any{
-			"substituted_fields": fieldNames(resolved),
-		},
-	}, nil)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "attributes_substituted",
+			Payload: map[string]any{
+				"substituted_fields": fieldNames(resolved),
+			},
+		}, tx)
+	})
 	return resolved, schema, nil
 }
 
@@ -376,13 +382,21 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-// loadDepsAttributesByID is the per-dispatch dep map.
+// loadDepsAttributesByID is the per-dispatch dep map. Runs between
+// the acquisition tx and the dispatch tx, so it opens its own
+// short-lived read tx — every Store method requires an explicit tx
+// (option C / no-nil-tx).
 func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
-	nd, err := args.Persist.Nodes().Get(ctx, acq.NodeID, nil)
-	if err != nil || nd == nil {
+	var out map[string]json.RawMessage
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nd, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
+		if err != nil || nd == nil {
+			return nil
+		}
+		out = loadDepsAttributes(ctx, args, tx, nd)
 		return nil
-	}
-	return loadDepsAttributes(ctx, args, nd)
+	})
+	return out
 }
 
 // buildExecuteRequest assembles the gRPC ExecuteRequest payload.
@@ -415,7 +429,12 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	}
 
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
-	prior, _ := dctx.Args.Persist.NodeAttributes().Get(ctx, acq.NodeID, nil)
+	var prior *persistence.NodeAttributesRow
+	_ = dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := dctx.Args.Persist.NodeAttributes().Get(ctx, acq.NodeID, tx)
+		prior = p
+		return err
+	})
 	runAttempt := 1
 	if prior != nil {
 		runAttempt = prior.RunAttempt

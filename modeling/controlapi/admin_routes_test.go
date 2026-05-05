@@ -98,11 +98,13 @@ func TestClaimHoldersRoute(t *testing.T) {
 	holderNodeID := seedThrowawayNode(t, h)
 	lockHolderID := seedScopeLockHolder(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
-	require.NoError(t, h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-		ID:           claimHolderID,
-		LockHolderID: lockHolderID,
-		HolderNodeID: holderNodeID,
-	}, nil))
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
+			ID:           claimHolderID,
+			LockHolderID: lockHolderID,
+			HolderNodeID: holderNodeID,
+		}, tx)
+	}))
 
 	status, body = doJSON(t, router, http.MethodGet, "/lock-holders/"+lockHolderID.String()+"/claim-holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
@@ -130,11 +132,13 @@ func TestAdminForceFireRoute(t *testing.T) {
 
 	nodeID := seedThrowawayNode(t, h)
 	future := time.Now().Add(24 * time.Hour)
-	require.NoError(t, h.persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
-		NodeID:     nodeID,
-		CronExpr:   "*/5 * * * *",
-		NextFireAt: future,
-	}, nil))
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
+			NodeID:     nodeID,
+			CronExpr:   "*/5 * * * *",
+			NextFireAt: future,
+		}, tx)
+	}))
 
 	status, _ := doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/not-a-uuid/force-fire", nil)
 	require.Equal(t, http.StatusBadRequest, status)
@@ -144,7 +148,12 @@ func TestAdminForceFireRoute(t *testing.T) {
 	status, _ = doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/"+nodeID.String()+"/force-fire", nil)
 	require.Equal(t, http.StatusNoContent, status)
 
-	rows, err := h.persist.Schedules().ListAll(ctx, nil)
+	var rows []persistence.ScheduleRow
+	err := h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, e := h.persist.Schedules().ListAll(ctx, tx)
+		rows = r
+		return e
+	})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, nodeID, rows[0].NodeID)

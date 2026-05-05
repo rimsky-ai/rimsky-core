@@ -7,6 +7,7 @@
 package controlapi
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -75,8 +76,12 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),
 		}
-		page, err := deps.Persist.Events().List(req.Context(), filter, pag, nil)
-		if err != nil {
+		var page persistence.EventListResult
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			p, err := deps.Persist.Events().List(ctx, filter, pag, tx)
+			page = p
+			return err
+		}); err != nil {
 			writeError(w, err)
 			return
 		}

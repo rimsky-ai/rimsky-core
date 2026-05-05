@@ -64,10 +64,14 @@ func TestScheduledNode(t *testing.T) {
 	deadline := time.Now().Add(20 * time.Second)
 	var sawFired bool
 	for time.Now().Before(deadline) {
-		evs, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &nid, Kind: "schedule_fired"},
-			persistence.ListPagination{Limit: 10}, nil)
-		require.NoError(t, err)
+		var evs persistence.EventListResult
+		require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.Events().List(h.Ctx,
+				persistence.EventListFilter{NodeID: &nid, Kind: "schedule_fired"},
+				persistence.ListPagination{Limit: 10}, tx)
+			evs = r
+			return err
+		}))
 		if len(evs.Events) > 0 {
 			sawFired = true
 			break

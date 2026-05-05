@@ -54,8 +54,12 @@ func testLockHoldersUpdateScope(t *testing.T, d persistence.Driver) {
 	}); err != nil {
 		t.Fatalf("UpdateScope: %v", err)
 	}
-	got, err := store.LockHolders().Get(ctx, lockHolderID, nil)
-	if err != nil {
+	var got *persistence.LockHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get after UpdateScope: %v", err)
 	}
 	if got == nil {
@@ -73,8 +77,11 @@ func testLockHoldersUpdateScope(t *testing.T, d persistence.Driver) {
 	}); err != nil {
 		t.Fatalf("UpdateScope (wrong sup): %v", err)
 	}
-	got, err = store.LockHolders().Get(ctx, lockHolderID, nil)
-	if err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get after wrong-sup UpdateScope: %v", err)
 	}
 	if got == nil {

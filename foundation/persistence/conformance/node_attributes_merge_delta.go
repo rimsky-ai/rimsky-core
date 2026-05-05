@@ -31,8 +31,10 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
 
 	// ---- Missing row: MergeDelta returns wrapped ErrNotFound ----
 	missingNodeID := uuid.New()
-	err := store.NodeAttributes().MergeDelta(ctx, missingNodeID,
-		map[string]any{"k": "v"}, nil)
+	err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().MergeDelta(ctx, missingNodeID,
+			map[string]any{"k": "v"}, tx)
+	})
 	if err == nil {
 		t.Fatalf("MergeDelta on missing row: expected error, got nil")
 	}
@@ -48,7 +50,9 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
 			"b": float64(2),
 		},
 	}
-	if err := store.NodeAttributes().Upsert(ctx, fix.NodeID, 0, initial, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().Upsert(ctx, fix.NodeID, 0, initial, tx)
+	}); err != nil {
 		t.Fatalf("Upsert seed: %v", err)
 	}
 
@@ -61,11 +65,17 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
 			// replaces the prior wholesale, so b should be gone.
 		},
 	}
-	if err := store.NodeAttributes().MergeDelta(ctx, fix.NodeID, delta, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().MergeDelta(ctx, fix.NodeID, delta, tx)
+	}); err != nil {
 		t.Fatalf("MergeDelta shallow: %v", err)
 	}
-	got, err := store.NodeAttributes().Get(ctx, fix.NodeID, nil)
-	if err != nil {
+	var got *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().Get(ctx, fix.NodeID, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get after shallow merge: %v", err)
 	}
 	if got == nil {
@@ -96,11 +106,17 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
 	// regardless of underlying clock granularity (Postgres NOW() is
 	// microsecond-resolution; SQLite's nowUTC() is RFC3339Nano).
 	time.Sleep(10 * time.Millisecond)
-	if err := store.NodeAttributes().MergeDelta(ctx, fix.NodeID, nil, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().MergeDelta(ctx, fix.NodeID, nil, tx)
+	}); err != nil {
 		t.Fatalf("MergeDelta nil-delta touch: %v", err)
 	}
-	got2, err := store.NodeAttributes().Get(ctx, fix.NodeID, nil)
-	if err != nil {
+	var got2 *persistence.NodeAttributesRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.NodeAttributes().Get(ctx, fix.NodeID, tx)
+		got2 = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get after nil-delta touch: %v", err)
 	}
 	if got2 == nil {
@@ -123,7 +139,9 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
 
 	// ---- nil-delta on missing row: silent no-op (no error) ----
 	missingNodeID2 := uuid.New()
-	if err := store.NodeAttributes().MergeDelta(ctx, missingNodeID2, nil, nil); err != nil {
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.NodeAttributes().MergeDelta(ctx, missingNodeID2, nil, tx)
+	}); err != nil {
 		t.Fatalf("MergeDelta nil-delta on missing row: expected silent no-op, got %v", err)
 	}
 }

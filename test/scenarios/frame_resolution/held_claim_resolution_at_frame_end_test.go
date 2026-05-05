@@ -69,8 +69,12 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		}, tx)
 	}))
 
-	row, err := h.Persist.ClaimHolders().Get(h.Ctx, holderID, nil)
-	require.NoError(t, err)
+	var row *persistence.ClaimHolderRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.ClaimHolders().Get(h.Ctx, holderID, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row)
 	require.Equal(t, lockHolderID, row.LockHolderID)
 	require.Equal(t, worker.ID, row.HolderNodeID)
@@ -78,7 +82,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 
 	// Second insert on same (claim_handle_id, holder_node_id) must fail
 	// per the §12.11 unique index.
-	err = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:           shared.UUID(uuid.New()),
 			LockHolderID: lockHolderID,

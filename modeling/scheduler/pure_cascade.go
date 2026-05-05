@@ -68,8 +68,12 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 		log = shared.SilentLogger{}
 	}
 
-	ready, err := sb.Nodes().ListPureCascadeReady(ctx, nil)
-	if err != nil {
+	var ready []persistence.NodeRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := sb.Nodes().ListPureCascadeReady(ctx, tx)
+		ready = rows
+		return err
+	}); err != nil {
 		return 0, err
 	}
 
@@ -105,27 +109,35 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	// UpdateState atomically clears frame_id when target state is 'fresh'
 	// (per the defensive guard in enforceAndUpdate; spec §4.4 + §10.3,
 	// fresh nodes carry no frame_id). No separate SetFrameID call needed.
-	if err := sb.Nodes().UpdateState(ctx, n.ID, shared.NodeStateFresh, cascade.ReasonPureCascade, nil); err != nil {
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Nodes().UpdateState(ctx, n.ID, shared.NodeStateFresh, cascade.ReasonPureCascade, tx)
+	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
 			"node_id", n.ID.String(), "error", err.Error())
 		return err
 	}
 	nodeID := n.ID
 	instanceID := n.InstanceID
-	if err := sb.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID:     &nodeID,
-		InstanceID: &instanceID,
-		Kind:       "pure_cascade_commit",
-		Payload:    map[string]any{},
-	}, nil); err != nil {
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID:     &nodeID,
+			InstanceID: &instanceID,
+			Kind:       "pure_cascade_commit",
+			Payload:    map[string]any{},
+		}, tx)
+	}); err != nil {
 		log.Warn("ProcessPureCascade: append pure_cascade_commit failed",
 			"node_id", n.ID.String(), "error", err.Error())
 		// Not fatal — the state transition already succeeded.
 	}
-	dependents, derr := sb.Nodes().ListDependentsOf(ctx, n.ID, nil)
-	if derr != nil {
+	var dependents []persistence.NodeRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := sb.Nodes().ListDependentsOf(ctx, n.ID, tx)
+		dependents = rows
+		return err
+	}); err != nil {
 		log.Warn("ProcessPureCascade: list dependents failed",
-			"node_id", n.ID.String(), "error", derr.Error())
+			"node_id", n.ID.String(), "error", err.Error())
 		return nil
 	}
 	// Cascade message-pass: mark each child stale + parent's frame_id
@@ -185,12 +197,19 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persist
 // hop: rimsky_nodes.instance_id → rimsky_instances.template_hash →
 // rimsky_templates.spec → node-by-type.
 func lookupTemplateNodeDef(ctx context.Context, sb persistence.Store, n persistence.NodeRow) *nodepkg.TemplateNodeDef {
-	inst, _ := sb.Instances().Get(ctx, n.InstanceID, nil)
-	if inst == nil {
-		return nil
-	}
-	tmpl, _ := sb.Templates().GetByHash(ctx, inst.TemplateHash, nil)
-	if tmpl == nil {
+	var inst *persistence.InstanceRow
+	var tmpl *persistence.TemplateRow
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := sb.Instances().Get(ctx, n.InstanceID, tx)
+		if err != nil || i == nil {
+			return err
+		}
+		inst = i
+		t, err := sb.Templates().GetByHash(ctx, i.TemplateHash, tx)
+		tmpl = t
+		return err
+	})
+	if inst == nil || tmpl == nil {
 		return nil
 	}
 	for i := range tmpl.Spec.Nodes {

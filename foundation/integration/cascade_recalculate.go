@@ -42,18 +42,24 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
-	_ = sb.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &args.TargetNodeID,
-		Kind:   "message_received",
-		Payload: map[string]any{
-			"type":           "recalculate",
-			"source_node_id": sourceStr,
-			"target_node_id": args.TargetNodeID.String(),
-		},
-	}, nil)
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &args.TargetNodeID,
+			Kind:   "message_received",
+			Payload: map[string]any{
+				"type":           "recalculate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+			},
+		}, tx)
+	})
 
-	target, err := sb.Nodes().Get(ctx, args.TargetNodeID, nil)
-	if err != nil {
+	var target *persistence.NodeRow
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
+		target = t
+		return err
+	}); err != nil {
 		return err
 	}
 	if target == nil {
@@ -65,14 +71,24 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	}
 
 	// Check all deps.
-	for _, depID := range target.Dependencies {
-		dep, err := sb.Nodes().Get(ctx, depID, nil)
-		if err != nil {
-			return err
+	depsAllFresh := true
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, depID := range target.Dependencies {
+			dep, err := sb.Nodes().Get(ctx, depID, tx)
+			if err != nil {
+				return err
+			}
+			if dep == nil || dep.State != shared.NodeStateFresh {
+				depsAllFresh = false
+				return nil
+			}
 		}
-		if dep == nil || dep.State != shared.NodeStateFresh {
-			return nil
-		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !depsAllFresh {
+		return nil
 	}
 
 	// All deps fresh. If no executor → pure-cascade sweep handles. If executor → enqueue.

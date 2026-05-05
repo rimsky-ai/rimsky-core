@@ -64,8 +64,12 @@ func SweepLockHolders(ctx context.Context, args OrphanReaperArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	expired, err := args.LockHolders.ListExpired(ctx, nil)
-	if err != nil {
+	var expired []persistence.LockHolderRow
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.LockHolders.ListExpired(ctx, tx)
+		expired = rows
+		return err
+	}); err != nil {
 		return fmt.Errorf("tick: list expired lock-holders: %w", err)
 	}
 	for _, lh := range expired {

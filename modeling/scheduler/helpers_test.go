@@ -28,14 +28,22 @@ import (
 func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.Store, spec nodepkg.TemplateSpec) persistence.TemplateRow {
 	t.Helper()
 	hash := deterministicTestHash(spec.Name, spec.Version)
-	require.NoError(t, sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
-		ID:    hash,
-		Spec:  spec,
-		State: persistence.TemplateStateRegistered,
-	}, nil))
-	require.NoError(t, sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, nil))
-	row, err := sb.Templates().GetByHash(ctx, hash, nil)
-	require.NoError(t, err)
+	var row *persistence.TemplateRow
+	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := sb.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID:    hash,
+			Spec:  spec,
+			State: persistence.TemplateStateRegistered,
+		}, tx); err != nil {
+			return err
+		}
+		if err := sb.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
+			return err
+		}
+		r, err := sb.Templates().GetByHash(ctx, hash, tx)
+		row = r
+		return err
+	}))
 	require.NotNil(t, row)
 	return *row
 }
@@ -43,4 +51,15 @@ func insertDeployedTemplate(ctx context.Context, t *testing.T, sb persistence.St
 func deterministicTestHash(name, version string) string {
 	sum := sha256.Sum256([]byte(name + ":" + version))
 	return "sha256-" + hex.EncodeToString(sum[:])
+}
+
+// inTxTest wraps fn in a fresh Persist.Transaction. Test fixtures and
+// helpers run outside any tx; under option C every Store method needs
+// an explicit non-nil tx, so reads + writes are wrapped one short tx
+// at a time.
+func inTxTest(t *testing.T, ctx context.Context, sb persistence.Store, fn func(tx persistence.Tx) error) {
+	t.Helper()
+	require.NoError(t, sb.Transaction(ctx, func(_ context.Context, tx persistence.Tx) error {
+		return fn(tx)
+	}))
 }

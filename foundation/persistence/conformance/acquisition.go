@@ -85,8 +85,12 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 	}
 
 	// Verify nothing landed.
-	got, err := store.LockHolders().Get(ctx, lockHolderID, nil)
-	if err != nil {
+	var got *persistence.LockHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		got = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get lock-holder: %v", err)
 	}
 	if got != nil {
@@ -139,8 +143,12 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		t.Fatalf("commit tx: %v", err)
 	}
 
-	got2, err := store.LockHolders().Get(ctx, lockHolderID, nil)
-	if err != nil {
+	var got2 *persistence.LockHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		got2 = r
+		return err
+	}); err != nil {
 		t.Fatalf("Get lock-holder #2: %v", err)
 	}
 	if got2 == nil {

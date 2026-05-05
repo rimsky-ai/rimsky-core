@@ -58,8 +58,12 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Driver) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	expired, err := store.LockHolders().ListExpired(ctx, nil)
-	if err != nil {
+	var expired []persistence.LockHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.LockHolders().ListExpired(ctx, tx)
+		expired = rows
+		return err
+	}); err != nil {
 		t.Fatalf("ListExpired: %v", err)
 	}
 	foundPast := false

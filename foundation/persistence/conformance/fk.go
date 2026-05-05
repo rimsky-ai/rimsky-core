@@ -63,13 +63,19 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 	}
 
 	// Verify both rows present.
-	got, err := store.LockHolders().Get(ctx, lockHolderID, nil)
-	if err != nil || got == nil {
-		t.Fatalf("lock-holder Get: row=%v err=%v", got, err)
-	}
-	gotClaims, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, nil)
-	if err != nil {
-		t.Fatalf("claim-holder list: %v", err)
+	var got *persistence.LockHolderRow
+	var gotClaims []persistence.ClaimHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		got = r
+		if err != nil {
+			return err
+		}
+		c, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
+		gotClaims = c
+		return err
+	}); err != nil || got == nil {
+		t.Fatalf("lock-holder Get / claim-holder list: row=%v err=%v", got, err)
 	}
 	if len(gotClaims) != 1 {
 		t.Fatalf("expected 1 claim-holder; got %d", len(gotClaims))
@@ -83,8 +89,12 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 	}
 
 	// Cascade should have removed the claim-holder.
-	gotClaims2, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, nil)
-	if err != nil {
+	var gotClaims2 []persistence.ClaimHolderRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		c, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
+		gotClaims2 = c
+		return err
+	}); err != nil {
 		t.Fatalf("claim-holder list post-delete: %v", err)
 	}
 	if len(gotClaims2) != 0 {

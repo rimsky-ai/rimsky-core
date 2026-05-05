@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Refactor — Persistence option C: tx is required everywhere
+
+The persistence Store interface no longer accepts `nil` for the `tx`
+parameter. The auto-commit code path inside `q(tx)` is gone — every
+Store method panics on a nil tx. The motivating bug: a `nil`-tx call
+from inside an open `Persist.Transaction` callback used to silently
+auto-commit on a fresh connection, which deadlocked under the SQLite
+driver's `MaxOpenConns=1` (the only conn was held by the outer tx).
+Postgres masked the same shape because its pool is large enough to
+hand out a second connection.
+
+- **`q(nil)` panics** in both `foundation/persistence/{sqlite,postgres}/backend.go`.
+- **Methods with hand-rolled `if tx == nil { open my own tx }` branches**
+  (`Nodes.UpdateState`, `Frames.EnqueueCoalesceFrame`, all of `LockHolders`)
+  are simplified to require a non-nil tx — those branches are gone.
+- **All call sites updated** to either thread an existing tx (when
+  inside a `Persist.Transaction`) or open a short-lived one. Notable
+  inside-tx production fixes: `runner_locks.go::buildLockSpecs /
+  loadInheritedClaimsForNode / loadDepsAttributes / lookupTemplate`,
+  `runner_held_claims.go::findInheritedAliasesForNode /
+  pickAliasForLockHolder`. Notable outside-tx wraps: every HTTP
+  handler under `modeling/controlapi/`, every observability handler
+  under `modeling/observability/`, the scheduler's `ProcessSchedules`
+  and `ProcessPureCascade`, every test fixture in `test/scenarios/`,
+  conformance, and `modeling/scenario`.
+- **Structural enforcement.** `foundation/persistence/sqlite/deadlock_guard_test.go`
+  enumerates every public Store method and asserts it panics on a
+  nil tx, plus pins the historical SQLite hang shape (a nil-tx call
+  from inside an open Persist.Transaction must complete in
+  milliseconds, not deadlock to the test deadline).
+- **Conformance test deleted.** `testCoalesceFrameNilTx` explicitly
+  asserted the now-removed nil-tx behavior on `EnqueueCoalesceFrame`;
+  removed alongside its `Suite()` entry.
+- **Quickstart switched to SQLite.** `quickstart/rimsky.yml` now uses
+  `driver: sqlite` with state at `/var/lib/rimsky/state.db` in a
+  Docker named volume; `quickstart/docker-compose.yml` drops the
+  postgres service. The README's postgres-vs-sqlite explanation is
+  gone — the unified `rimsky/all` image now runs cleanly on SQLite
+  through a real cascade (both nodes reach `fresh`, instance
+  terminates, no `SQLITE_BUSY`).
+
+Audit doc archived to `docs/history/2026-05-05-nil-tx-deadlock-audit.md`.
+
 ### Licensing — first license declaration
 
 - **Tri-license structure landed.** Apache 2.0 for the embedder layer
