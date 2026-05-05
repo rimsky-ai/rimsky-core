@@ -2,19 +2,18 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package stub is a scripted in-process executor used by scenario tests.
-// NOT a user-facing reference executor — lives under executors/stub/ so
-// tests can drive any sequence of Execute events against a real gRPC server.
+// Package stub is a scripted NodeExecutor implementation. The
+// executors/stub/cmd binary wraps it as a standalone gRPC server (used
+// by the quickstart and by smoke deployments that need a no-op
+// executor); the executors/stub/stubtest package wraps it for in-process
+// scenario tests.
 package stub
 
 import (
 	"fmt"
-	"net"
 	"sync"
-	"testing"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
@@ -256,24 +255,6 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 		}}})
 	}
 	return nil
-}
-
-// Listen starts a gRPC server on an OS-assigned port and registers the Stub
-// as the NodeExecutor handler plus the capabilities-only ExecutorObservability
-// surface. Registers cleanup via t.Cleanup to stop the server. Returns the
-// server and its listening address.
-func (s *Stub) Listen(t testing.TB) (*grpc.Server, string) {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := grpc.NewServer()
-	genv1.RegisterNodeExecutorServer(srv, s)
-	RegisterObservability(srv)
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(func() { srv.Stop() })
-	return srv, lis.Addr().String()
 }
 
 // stubFixtures maps node_type to a default attributes_delta the stub

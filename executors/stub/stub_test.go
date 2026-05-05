@@ -7,6 +7,7 @@ package stub
 import (
 	"context"
 	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -17,6 +18,20 @@ import (
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
+
+// listenForTest mirrors stubtest.Listen but lives inside package stub so
+// the package's own tests can call it without an import cycle.
+func listenForTest(t testing.TB, s *Stub) (*grpc.Server, string) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	genv1.RegisterNodeExecutorServer(srv, s)
+	RegisterObservability(srv)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop() })
+	return srv, lis.Addr().String()
+}
 
 func dial(t *testing.T, addr string) genv1.NodeExecutorClient {
 	t.Helper()
@@ -42,7 +57,7 @@ func drain(t *testing.T, stream grpc.ServerStreamingClient[genv1.ExecuteEvent]) 
 func TestScriptedComplete(t *testing.T) {
 	s := New()
 	s.WhenType("t.complete").Complete(map[string]any{"ok": true}, true, "did the thing")
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.complete"})
@@ -61,7 +76,7 @@ func TestScriptedComplete(t *testing.T) {
 func TestScriptedError(t *testing.T) {
 	s := New()
 	s.WhenType("t.err").Error("CONFIG", map[string]any{"hint": "bad"})
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.err"})
@@ -78,7 +93,7 @@ func TestScriptedError(t *testing.T) {
 func TestScriptedBlocked(t *testing.T) {
 	s := New()
 	s.WhenType("t.blk").Blocked("waiting for review", map[string]any{"ticket": "Z-1"})
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.blk"})
@@ -95,7 +110,7 @@ func TestScriptedBlocked(t *testing.T) {
 func TestScriptedAsyncAccepted(t *testing.T) {
 	s := New()
 	s.WhenType("t.async").AsyncAccepted("ack-123", 5000)
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.async"})
@@ -112,7 +127,7 @@ func TestScriptedAsyncAccepted(t *testing.T) {
 func TestHeartbeatsCount(t *testing.T) {
 	s := New()
 	s.WhenType("t.hb").Complete(nil, false, "").Heartbeats(3)
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.hb"})
@@ -129,7 +144,7 @@ func TestHeartbeatsCount(t *testing.T) {
 func TestDelayRespectsContextCancellation(t *testing.T) {
 	s := New()
 	s.WhenType("t.slow").Complete(nil, false, "").Delay(500 * time.Millisecond)
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -155,7 +170,7 @@ func TestDelayRespectsContextCancellation(t *testing.T) {
 
 func TestUnknownNodeTypeReturnsError(t *testing.T) {
 	s := New()
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.unknown"})
@@ -171,7 +186,7 @@ func TestUnknownNodeTypeReturnsError(t *testing.T) {
 func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 	s := New()
 	s.WhenType("t.obs").Complete(map[string]any{}, false, "")
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	attrs, err := structpb.NewStruct(map[string]any{"items": []any{"a", "b"}, "count": 2})
@@ -204,7 +219,7 @@ func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 // attributes_delta sourced from StubAttributesFor and changed=true.
 func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	s := New().EnableStubMode()
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	// Known fixture node_type: stub returns the fixture map.
@@ -225,7 +240,7 @@ func TestStubModeReturnsImmediateComplete(t *testing.T) {
 // emits a Complete with an empty attributes_delta object.
 func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	s := New().EnableStubMode()
-	_, addr := s.Listen(t)
+	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.never.heard.of"})

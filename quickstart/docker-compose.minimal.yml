@@ -1,0 +1,47 @@
+# Minimal compose: rimsky/all + stub claim-producer + stub executor.
+# No dashboard. For users who want to script against the control API
+# without building the Node frontend.
+#
+# All other behavior matches docker-compose.yml — see that file's
+# header for state-volume notes.
+
+services:
+  rimsky:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.all
+    image: rimsky/all:quickstart
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
+    environment:
+      RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
+    depends_on:
+      store-stub:
+        condition: service_started
+      executor-stub:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rimsky-cli", "--endpoint=http://localhost:8080", "health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  store-stub:
+    build:
+      context: ..
+      dockerfile: stores/stub/Dockerfile.stub
+    image: rimsky/store-stub:quickstart
+    expose: ["9102"]
+
+  executor-stub:
+    build:
+      context: ..
+      dockerfile: executors/stub/Dockerfile.stub
+    image: rimsky/executor-stub:quickstart
+    expose: ["9300"]
+
+volumes:
+  rimsky-state:

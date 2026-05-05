@@ -13,6 +13,7 @@ done
 
 docker build -f deploy/Dockerfile.http-node -t rimsky/executor-http-node:$VERSION -t rimsky/executor-http-node:latest .
 docker build -f deploy/Dockerfile.claude-agent -t rimsky/executor-claude-agent:$VERSION -t rimsky/executor-claude-agent:latest .
+docker build -f executors/stub/Dockerfile.stub -t rimsky/executor-stub:$VERSION -t rimsky/executor-stub:latest .
 
 # Unified image (rimsky/all) — bundles the four runtime binaries plus
 # rimsky-entrypoint under a single PID-1 process supervisor. Defaults to
@@ -23,4 +24,4 @@ docker build -f stores/filesystem/Dockerfile.filesystem -t rimsky/store-filesyst
 docker build -f stores/postgres/Dockerfile.postgres -t rimsky/store-postgres:$VERSION -t rimsky/store-postgres:latest .
 docker build -f stores/stub/Dockerfile.stub -t rimsky/store-stub:$VERSION -t rimsky/store-stub:latest .
 
-echo "Built 10 images at version $VERSION"
+echo "Built 11 images at version $VERSION"

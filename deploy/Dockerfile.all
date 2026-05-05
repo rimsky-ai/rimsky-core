@@ -19,7 +19,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
       -o /out/rimsky-migrate     ./cmd/rimsky-migrate && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-      -o /out/rimsky-entrypoint  ./cmd/rimsky-entrypoint
+      -o /out/rimsky-entrypoint  ./cmd/rimsky-entrypoint && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/rimsky-cli         ./cmd/rimsky-cli
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rimsky/all"
@@ -30,6 +32,7 @@ COPY --from=build /out/rimsky-supervisor  /usr/local/bin/rimsky-supervisor
 COPY --from=build /out/rimsky-control-api /usr/local/bin/rimsky-control-api
 COPY --from=build /out/rimsky-migrate     /usr/local/bin/rimsky-migrate
 COPY --from=build /out/rimsky-entrypoint  /usr/local/bin/rimsky-entrypoint
+COPY --from=build /out/rimsky-cli         /usr/local/bin/rimsky-cli
 COPY deploy/rimsky-all.yml        /etc/rimsky/rimsky.yml
 COPY deploy/supervisor-config.yml /etc/rimsky/supervisor-config.yml
 

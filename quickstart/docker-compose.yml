@@ -1,0 +1,70 @@
+# Quickstart compose: rimsky/all (sqlite-backed) + bundled stub
+# claim-producer + bundled stub executor + dashboard. One command brings
+# up a working Rimsky on http://localhost:8080 with the dashboard at
+# http://localhost:8090.
+#
+# Build context is the repo root (..) so the Dockerfiles can COPY the
+# whole tree. First-run is slow (Go + Node compiles); subsequent runs
+# are cached.
+#
+# State volume:
+#   By default SQLite state lives in a Docker named volume so the
+#   quickstart directory stays clean. Set RIMSKY_STATE_DIR=./state (or
+#   any path) before `docker compose up` to bind-mount the host path
+#   instead — useful for `sqlite3 ./state/state.db` introspection. Note
+#   for Linux: the rimsky container runs as user `nonroot`; host UID
+#   mismatches may produce permission errors on a bind-mount. The named
+#   volume default avoids this.
+
+services:
+  rimsky:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.all
+    image: rimsky/all:quickstart
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${RIMSKY_STATE_DIR:-rimsky-state}:/var/lib/rimsky
+      - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
+    environment:
+      RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST: "rimsky"
+    depends_on:
+      store-stub:
+        condition: service_started
+      executor-stub:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rimsky-cli", "--endpoint=http://localhost:8080", "health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  store-stub:
+    build:
+      context: ..
+      dockerfile: stores/stub/Dockerfile.stub
+    image: rimsky/store-stub:quickstart
+    expose: ["9102"]
+
+  executor-stub:
+    build:
+      context: ..
+      dockerfile: executors/stub/Dockerfile.stub
+    image: rimsky/executor-stub:quickstart
+    expose: ["9300"]
+
+  dashboard:
+    build:
+      context: ../dashboards/rimsky-dashboard
+    image: rimsky/dashboard:quickstart
+    ports:
+      - "8090:8090"
+    environment:
+      RIMSKY_CONTROL_API_URL: http://rimsky:8080
+    depends_on:
+      rimsky:
+        condition: service_healthy
+
+volumes:
+  rimsky-state:

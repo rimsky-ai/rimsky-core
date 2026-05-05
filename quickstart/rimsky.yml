@@ -1,0 +1,33 @@
+# Quickstart rimsky.yml — wires rimsky/all to the bundled stub
+# claim-producer and stub executor over the compose network.
+#
+# Persistence defaults to SQLite at /var/lib/rimsky/state.db inside the
+# rimsky container; the docker-compose.yml in this directory mounts a
+# named volume there so state survives `docker compose down/up`.
+
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+# Single bundled stub claim-producer. The "stub" name is what node
+# declarations reference in their `stores:` block.
+claim_producers:
+  stub:
+    endpoint: "grpc://store-stub:9102"
+    protocols: [claim_producer]
+    write_semantics_envelope: [sync]
+
+# A single named lock for examples that want to demonstrate
+# capacity-bounded coordination.
+named_locks:
+  example-mutex: { limit: 1 }
+
+# Single bundled stub executor. Always returns Complete with
+# `changed: true` and a small attributes_delta keyed on node_type.
+executors:
+  stub:
+    transport: grpc
+    endpoint: "executor-stub:9300"
+    tls: off
+    protocols: [executor]

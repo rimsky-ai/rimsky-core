@@ -27,6 +27,7 @@ import (
 	"log/slog"
 
 	stubexec "github.com/fallguy/rimsky/executors/stub"
+	stubtest "github.com/fallguy/rimsky/executors/stub/stubtest"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
@@ -138,7 +139,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	}
 
 	s := stubexec.New()
-	_, stubAddr := s.Listen(t)
+	_, stubAddr := stubtest.Listen(t, s)
 
 	executors := map[string]executor.Endpoint{
 		"stub":     {Transport: "grpc", URL: stubAddr},

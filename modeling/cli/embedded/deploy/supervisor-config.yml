@@ -1,9 +1,8 @@
 # Per-process supervisor tuning. Operator-managed deployment-shape
-# config (stores, named_locks, executors) lives in rimsky.yml under
-# RIMSKY_CONFIG; this file is loaded by RIMSKY_SUPERVISOR_CONFIG and
-# carries only supervisor-local knobs.
+# config (claim_producers, named_locks, executors) lives in rimsky.yml
+# under RIMSKY_CONFIG; this file is loaded by RIMSKY_SUPERVISOR_CONFIG
+# and carries only supervisor-local knobs.
 
-postgres_url: "${RIMSKY_DB_URL}"
 concurrency: 8
 heartbeat_interval_ms: 5000
 claim_poll_interval_ms: 1000
