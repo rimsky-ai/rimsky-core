@@ -23,8 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -124,6 +126,8 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 // are rejected by decodeRegisterRequest.
 func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		t0 := time.Now()
+		log := slog.With("path", "/templates")
 		raw, err := readAllBody(req)
 		if err != nil {
 			badRequest(w, "read body: "+err.Error())
@@ -140,7 +144,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		spec := *specBody
+		tValidate := time.Now()
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps))
+		log.Debug("register.validate.done", "elapsed_ms", time.Since(tValidate).Milliseconds())
 		if !res.Ok() {
 			errs := make([]map[string]string, 0, len(res.Errors))
 			for _, e := range res.Errors {
@@ -158,7 +164,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// carries the resolved value.
 		node.ApplyFrameResolutionDefaults(&spec)
 
+		tHash := time.Now()
 		hash, err := canonical.CanonicalSpecHash(spec)
+		log.Debug("register.hash.done", "elapsed_ms", time.Since(tHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
 			return
@@ -167,7 +175,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// Idempotent re-register: if a row with this hash already exists,
 		// short-circuit per spec §1.5 step 1. If a tag was supplied, upsert
 		// it pointing at the existing row.
+		tGetByHash := time.Now()
 		existing, err := deps.Persist.Templates().GetByHash(req.Context(), hash, nil)
+		log.Debug("register.getbyhash.done", "elapsed_ms", time.Since(tGetByHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
 			return
@@ -197,7 +207,10 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}); err != nil {
+		tFanOut := time.Now()
+		peers, perStore, ferr := FanOutTemplateEvent(req.Context(), deps, EventTemplateRegistered, hash, spec, TemplatePayload{Spec: canonBytes}, nil)
+		log.Debug("register.fanout.done", "elapsed_ms", time.Since(tFanOut).Milliseconds(), "peers", len(peers), "err", ferr)
+		if ferr != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "template lifecycle fan-out failed",
 				"details": perStore,
@@ -205,6 +218,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
+		tTx := time.Now()
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
 				ID:     hash,
@@ -219,6 +233,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			}
 			return nil
 		})
+		log.Debug("register.tx.done", "elapsed_ms", time.Since(tTx).Milliseconds(), "total_ms", time.Since(t0).Milliseconds(), "err", err)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -360,7 +375,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}); err != nil {
+		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, nil); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "template lifecycle fan-out failed",
 				"details": perStore,
@@ -407,7 +422,10 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 // lock to avoid lost-update on the lifecycle bookkeeping rows.
 func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		t0 := time.Now()
+		log := slog.With("path", "/templates/deploy", "request_id", req.Header.Get("X-Request-Id"))
 		hash, err := resolveTagOrHash(req.Context(), deps, chi.URLParam(req, "id"))
+		log.Debug("deploy.resolve.done", "elapsed_ms", time.Since(t0).Milliseconds(), "err", err)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -423,8 +441,12 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			fanOutErr     error
 			fanOutDetails map[string]error
 		)
+		txStart := time.Now()
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			tBegin := time.Now()
+			log.Debug("deploy.tx.begin", "elapsed_ms", time.Since(txStart).Milliseconds())
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
+			log.Debug("deploy.lockforupdate.done", "elapsed_ms", time.Since(tBegin).Milliseconds(), "err", err)
 			if err != nil {
 				return err
 			}
@@ -441,7 +463,9 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
+			tListTags := time.Now()
 			tagRows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
+			log.Debug("deploy.listtags.done", "elapsed_ms", time.Since(tListTags).Milliseconds(), "tags", len(tagRows), "err", err)
 			if err != nil {
 				return err
 			}
@@ -449,17 +473,24 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			for _, t := range tagRows {
 				tags = append(tags, t.Tag)
 			}
-			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}); ferr != nil {
+			tFanOut := time.Now()
+			peers, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateDeployed, hash, row.Spec, TemplatePayload{Tags: tags}, tx)
+			log.Debug("deploy.fanout.done", "elapsed_ms", time.Since(tFanOut).Milliseconds(), "peers", len(peers), "err", ferr)
+			if ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
 				return ferr
 			}
+			tUpdate := time.Now()
 			if err := deps.Persist.Templates().UpdateState(ctx, hash, persistence.TemplateStateDeployed, tx); err != nil {
+				log.Debug("deploy.updatestate.err", "elapsed_ms", time.Since(tUpdate).Milliseconds(), "err", err)
 				return err
 			}
+			log.Debug("deploy.updatestate.done", "elapsed_ms", time.Since(tUpdate).Milliseconds())
 			outState = "deployed"
 			return nil
 		})
+		log.Debug("deploy.tx.done", "elapsed_ms", time.Since(txStart).Milliseconds(), "err", err)
 		if err != nil {
 			if fanOutErr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -539,7 +570,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template has active instances",
 					map[string]any{"template_hash": hash, "active_count": active})
 			}
-			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}); ferr != nil {
+			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}, tx); ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
 				return ferr

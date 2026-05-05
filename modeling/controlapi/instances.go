@@ -200,7 +200,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 			EventInstanceCreated, hash, respOut.InstanceID, tplSpec,
-			InstancePayload{InstanceKey: instanceKey, Params: paramsBytes}); err != nil {
+			InstancePayload{InstanceKey: instanceKey, Params: paramsBytes}, nil); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "instance lifecycle fan-out failed",
 				"details": perStore,
@@ -318,7 +318,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			}
 			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
-				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}); err != nil {
+				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
 					"error":   "instance lifecycle fan-out failed",
 					"details": perStore,

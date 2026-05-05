@@ -15,7 +15,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
@@ -94,6 +96,13 @@ type InstancePayload struct {
 // Returns the deduped peer-name list, the per-peer error map (only
 // populated when at least one peer failed), and a top-level error
 // when the operation should be considered a failure.
+//
+// `tx` is the open transaction the caller holds, or nil. When non-nil,
+// every persistence call inside the fan-out reuses that connection.
+// Passing nil from inside an open tx self-deadlocks against the SQLite
+// driver's single-connection pool: the fan-out's lifecycle Get blocks
+// waiting for the pool to free up, the caller's tx blocks waiting for
+// the fan-out to return.
 func FanOutTemplateEvent(
 	ctx context.Context,
 	deps AppDeps,
@@ -101,6 +110,7 @@ func FanOutTemplateEvent(
 	templateHash string,
 	spec node.TemplateSpec,
 	payload TemplatePayload,
+	tx persistence.Tx,
 ) ([]string, map[string]error, error) {
 	switch event {
 	case EventTemplateRegistered, EventTemplateDeployed, EventTemplateUndeployed, EventTemplateDeregistered:
@@ -112,17 +122,22 @@ func FanOutTemplateEvent(
 	deletesRow := event == EventTemplateDeregistered
 	scopeKind := persistence.LifecycleIdempotencyScopeTemplate
 
+	flog := slog.With("event", fmt.Sprintf("%v", event), "template_hash", templateHash, "peers", len(peerNames))
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
-		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, nil)
+		tPeer := time.Now()
+		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, templateHash, tx)
+		flog.Debug("fanout.peer.lookup", "peer", name, "elapsed_ms", time.Since(tPeer).Milliseconds(), "err", err)
 		if err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: lifecycle row lookup for %q: %w", name, err)
 		}
 		if !deletesRow && row != nil && row.State == target {
+			flog.Debug("fanout.peer.skip", "peer", name, "reason", "already_at_target")
 			continue
 		}
 		if deletesRow && row == nil {
+			flog.Debug("fanout.peer.skip", "peer", name, "reason", "delete_no_row")
 			continue
 		}
 		if deps.LifecycleSubs == nil {
@@ -131,16 +146,19 @@ func FanOutTemplateEvent(
 		}
 		s, ok := deps.LifecycleSubs.Get(name)
 		if !ok {
+			flog.Debug("fanout.peer.skip", "peer", name, "reason", "not_subscribed")
 			// Peer is referenced by the template but does not subscribe
 			// to lifecycle events; skip silently.
 			continue
 		}
+		tDispatch := time.Now()
 		if err := dispatchTemplateEvent(ctx, s, event, templateHash, payload); err != nil {
+			flog.Debug("fanout.peer.dispatch.err", "peer", name, "elapsed_ms", time.Since(tDispatch).Milliseconds(), "err", err)
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: peer %q: %w", name, err)
 		}
 		if deletesRow {
-			if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, templateHash, nil); err != nil {
+			if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, templateHash, tx); err != nil {
 				perPeerErr[name] = err
 				return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: delete lifecycle row %q: %w", name, err)
 			}
@@ -151,7 +169,7 @@ func FanOutTemplateEvent(
 			ScopeKind:             scopeKind,
 			ScopeID:               templateHash,
 			State:                 target,
-		}, nil); err != nil {
+		}, tx); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutTemplateEvent: upsert lifecycle row %q: %w", name, err)
 		}
@@ -160,7 +178,9 @@ func FanOutTemplateEvent(
 }
 
 // FanOutInstanceEvent is the instance-scope analogue of
-// FanOutTemplateEvent.
+// FanOutTemplateEvent. See FanOutTemplateEvent for the `tx` semantics —
+// callers inside an open transaction MUST pass it through, otherwise
+// the SQLite single-connection pool self-deadlocks.
 func FanOutInstanceEvent(
 	ctx context.Context,
 	deps AppDeps,
@@ -168,6 +188,7 @@ func FanOutInstanceEvent(
 	templateHash, instanceID string,
 	spec node.TemplateSpec,
 	payload InstancePayload,
+	tx persistence.Tx,
 ) ([]string, map[string]error, error) {
 	switch event {
 	case EventInstanceCreated, EventInstanceTerminated:
@@ -181,7 +202,7 @@ func FanOutInstanceEvent(
 
 	perPeerErr := map[string]error{}
 	for _, name := range peerNames {
-		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, instanceID, nil)
+		row, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, instanceID, tx)
 		if err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutInstanceEvent: lifecycle row lookup for %q: %w", name, err)
@@ -205,7 +226,7 @@ func FanOutInstanceEvent(
 			return peerNames, perPeerErr, fmt.Errorf("FanOutInstanceEvent: peer %q: %w", name, err)
 		}
 		if deletesRow {
-			if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, instanceID, nil); err != nil {
+			if err := deps.Persist.LifecycleIdempotency().Delete(ctx, name, scopeKind, instanceID, tx); err != nil {
 				perPeerErr[name] = err
 				return peerNames, perPeerErr, fmt.Errorf("FanOutInstanceEvent: delete lifecycle row %q: %w", name, err)
 			}
@@ -216,7 +237,7 @@ func FanOutInstanceEvent(
 			ScopeKind:             scopeKind,
 			ScopeID:               instanceID,
 			State:                 target,
-		}, nil); err != nil {
+		}, tx); err != nil {
 			perPeerErr[name] = err
 			return peerNames, perPeerErr, fmt.Errorf("FanOutInstanceEvent: upsert lifecycle row %q: %w", name, err)
 		}

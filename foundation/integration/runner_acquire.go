@@ -171,18 +171,24 @@ var errTryAcquireRollback = fmt.Errorf("supervisor: tryAcquire rollback (sentine
 // tryAcquire runs the acquisition steps for a single candidate inside
 // the open rimsky-side tx. Note: Store.Open RPCs over the wire and the
 // store runs in its own tx (per spec §7.3).
+//
+// All persistence calls reuse the open `tx`. Passing nil here would
+// self-deadlock against the SQLite driver's single-connection pool:
+// the caller's tx holds the only conn, so a fresh-conn read would
+// block forever waiting for the tx to commit (which can't, because
+// it's awaiting the read).
 func tryAcquire(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	cand persistence.Candidate, heartbeatInterval time.Duration,
 ) (acquisition, bool, error) {
-	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, nil)
+	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, tx)
 	if err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: nodes.Get: %w", err)
 	}
 	if nd == nil {
 		return acquisition{}, false, nil
 	}
-	inst, _ := args.Persist.Instances().Get(ctx, nd.InstanceID, nil)
+	inst, _ := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
 	tmpl := lookupTemplate(ctx, args, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	specs, err := buildLockSpecs(ctx, args, nd, nodeDef, inst)
@@ -496,11 +502,11 @@ func insertHeldClaimHoldersAtAcquire(
 	if !ok || !subgraph.IsHeld() {
 		return nil
 	}
-	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, nil)
+	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, tx)
 	if err != nil || nd == nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: nodes.Get: %w", err)
 	}
-	siblings, err := args.Persist.Nodes().ListByInstance(ctx, nd.InstanceID, nil)
+	siblings, err := args.Persist.Nodes().ListByInstance(ctx, nd.InstanceID, tx)
 	if err != nil {
 		return fmt.Errorf("insertHeldClaimHoldersAtAcquire: ListByInstance: %w", err)
 	}

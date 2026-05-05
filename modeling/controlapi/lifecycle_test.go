@@ -86,7 +86,7 @@ func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("a", 64)
-	storeNames, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{})
+	storeNames, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, storeNames, "must dedupe + sort")
 
@@ -106,12 +106,12 @@ func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("b", 64)
-	_, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{})
+	_, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1)
 
 	// Second fire — both rows are already at target state.
-	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{})
+	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1, "second fire must skip when already at target")
 	require.Len(t, f.beta.Calls(), 1)
@@ -137,7 +137,7 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 		}
 		return nil
 	}
-	_, perStore, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{})
+	_, perStore, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.Error(t, err)
 	require.NotNil(t, perStore["beta"])
 	require.Contains(t, perStore["beta"].Error(), "simulated beta failure")
@@ -177,10 +177,10 @@ func TestFanOutTemplateEvent_DeregisterDeletesRow(t *testing.T) {
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("d", 64)
-	_, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{})
+	_, _, err := FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 
-	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateDeregistered, hash, twoStoreSpec(), TemplatePayload{})
+	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateDeregistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 
 	for _, name := range []string{"alpha", "beta"} {
@@ -201,14 +201,14 @@ func TestFanOutInstanceEvent_TerminatedDeletesRow(t *testing.T) {
 	hash := "sha256-" + repeatHex("e", 64)
 	instanceID := "instance-" + repeatHex("f", 16)
 
-	_, _, err := FanOutInstanceEvent(ctx, f.deps, EventInstanceCreated, hash, instanceID, twoStoreSpec(), InstancePayload{})
+	_, _, err := FanOutInstanceEvent(ctx, f.deps, EventInstanceCreated, hash, instanceID, twoStoreSpec(), InstancePayload{}, nil)
 	require.NoError(t, err)
 	row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
 		persistence.LifecycleIdempotencyScopeInstance, instanceID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, row)
 
-	_, _, err = FanOutInstanceEvent(ctx, f.deps, EventInstanceTerminated, hash, instanceID, twoStoreSpec(), InstancePayload{})
+	_, _, err = FanOutInstanceEvent(ctx, f.deps, EventInstanceTerminated, hash, instanceID, twoStoreSpec(), InstancePayload{}, nil)
 	require.NoError(t, err)
 	for _, name := range []string{"alpha", "beta"} {
 		row, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, name,

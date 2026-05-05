@@ -155,7 +155,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		}
 		_, perStoreErr, err := FanOutInstanceEvent(tickCtx, t.deps,
 			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
-			InstancePayload{TerminatedAtUnixMs: terminatedAtMs})
+			InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil)
 		if err != nil {
 			// Per-store failure: log and try again next tick. The
 			// FanOut helper has already deleted lifecycle rows for the
