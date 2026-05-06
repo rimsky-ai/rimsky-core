@@ -30,6 +30,20 @@ A note on the genesis case: a freshly-created node carries the named state `fres
 
 The state machine rejects illegal transitions (e.g., `running → running` under the same dispatch reason is an error, not a no-op). This is a load-bearing safety property that prevents subtle double-dispatch bugs.
 
+### `last_outcome` — resolution flavor
+
+Alongside `state`, every node row carries a `last_outcome` column capturing the **resolution flavor** of the most recent terminal-for-this-frame transition. Five values:
+
+- `fresh_changed` — node committed and propagated; downstream cascade fires.
+- `fresh_unchanged` — node committed without change; downstream cascade does not fire.
+- `passed` — handler resolved `pass` (Unavailable / Blocked / Errored skipped without error routing).
+- `pure_cascade` — node transitioned `stale → fresh` via dependency cascade only (no executor invocation).
+- `failed` — node landed in `failed` via give_up policy or dispatch_impossible.
+
+`last_outcome` is **observability metadata, not a dispatch gate**. The cascade-firing predicate is now expressed as `last_outcome == fresh_changed`; under the default `by_changed` resolution this is functionally identical to the prior `t.Changed` gate.
+
+The four named states (`fresh`, `stale`, `running`, `failed`) are unchanged. `last_outcome` is an additional column written by the same transition that lands the node in `fresh` or `failed`.
+
 ## How you encounter it
 
 - **Control API**: `GET /nodes/{id}` returns the current state by name. `GET /instances/{idOrKey}/nodes` lists nodes with their states.

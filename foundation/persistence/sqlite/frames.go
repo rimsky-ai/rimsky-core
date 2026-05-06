@@ -219,10 +219,10 @@ func (s *framesImpl) MarkSourceNodeStale(
 // existence predicates, then do the time math in Go.
 func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.Tx) ([]persistence.FrameStuck, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
-        SELECT f.frame_id, f.instance_id, f.frame_timeout_ms, f.started_at
+        SELECT f.frame_id, f.instance_id, f.frame_timeout_ms, f.last_progress_at
         FROM rimsky_frames f
         WHERE f.state = 'running'
-          AND f.started_at IS NOT NULL
+          AND f.last_progress_at IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_worker_request d
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
@@ -240,19 +240,23 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 	var out []persistence.FrameStuck
 	for rows.Next() {
 		var (
-			frameIDStr     string
-			instanceIDStr  string
-			frameTimeoutMs int64
-			startedAtStr   string
+			frameIDStr      string
+			instanceIDStr   string
+			frameTimeoutMs  int64
+			lastProgressStr string
 		)
-		if err := rows.Scan(&frameIDStr, &instanceIDStr, &frameTimeoutMs, &startedAtStr); err != nil {
+		if err := rows.Scan(&frameIDStr, &instanceIDStr, &frameTimeoutMs, &lastProgressStr); err != nil {
 			return nil, fmt.Errorf("frames.ListStuckRunningFrames: scan: %w", err)
 		}
-		startedAt, err := parseTime(startedAtStr)
+		lastProgress, err := parseTime(lastProgressStr)
 		if err != nil {
 			return nil, err
 		}
-		if !startedAt.Add(time.Duration(frameTimeoutMs) * time.Millisecond).Before(now) {
+		// Per the reactive-loops + lifecycle-handlers spec §7,
+		// frame_timeout_ms measures "no progress in window" rather than
+		// frame age. Compare against last_progress_at (refreshed by every
+		// node-state transition write) instead of started_at.
+		if !lastProgress.Add(time.Duration(frameTimeoutMs) * time.Millisecond).Before(now) {
 			continue
 		}
 		fid, err := uuid.Parse(frameIDStr)
@@ -266,18 +270,6 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 		out = append(out, persistence.FrameStuck{FrameID: fid, InstanceID: iid, FrameTimeoutMs: frameTimeoutMs})
 	}
 	return out, rows.Err()
-}
-
-func (s *framesImpl) FailAllPendingNodes(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx, `
-        UPDATE rimsky_nodes
-        SET state = 'failed', updated_at = ?
-        WHERE instance_id = ? AND state IN ('stale','running')
-    `, nowUTC(), instanceID.String())
-	if err != nil {
-		return fmt.Errorf("frames.FailAllPendingNodes: %w", err)
-	}
-	return nil
 }
 
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
@@ -346,12 +338,19 @@ func (s *framesImpl) EnqueueSerialFrame(
 	ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
 	frameID := uuid.New()
+	now := nowUTC()
+	// Explicitly write last_progress_at at insert time using nowUTC()
+	// (RFC3339Nano) so the column is uniformly nano-precision across
+	// all rows. The migration's strftime DEFAULT only delivers
+	// millisecond precision; relying on it for runtime inserts would
+	// leave the column with mixed precision and break any future
+	// SQL-level string comparison against the column.
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
-        VALUES (?, ?, 'serial_queue', 'queued', ?, ?, ?)
+            (frame_id, instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms, last_progress_at)
+        VALUES (?, ?, 'serial_queue', 'queued', ?, ?, ?, ?)
     `, frameID.String(), instanceID.String(),
-		marshalUUIDArray([]shared.UUID{sourceNodeID}), nowUTC(), frameTimeoutMs)
+		marshalUUIDArray([]shared.UUID{sourceNodeID}), now, frameTimeoutMs, now)
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueSerialFrame: %w", err)
 	}
@@ -411,14 +410,16 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: select: %w", err)
 	}
 
-	// Insert a new coalesce frame.
+	// Insert a new coalesce frame. Write last_progress_at explicitly
+	// (see EnqueueSerialFrame for the precision rationale).
 	frameID := uuid.New()
+	now := nowUTC()
 	if _, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
-        VALUES (?, ?, 'coalesce', 'queued', ?, ?, ?)
+            (frame_id, instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms, last_progress_at)
+        VALUES (?, ?, 'coalesce', 'queued', ?, ?, ?, ?)
     `, frameID.String(), instanceID.String(),
-		marshalUUIDArray([]shared.UUID{sourceNodeID}), nowUTC(), frameTimeoutMs); err != nil {
+		marshalUUIDArray([]shared.UUID{sourceNodeID}), now, frameTimeoutMs, now); err != nil {
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: insert: %w", err)
 	}
 	return frameID, nil
@@ -537,6 +538,23 @@ func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
 		return time.Time{}, shared.UUID{}, err
 	}
 	return c.Q, c.F, nil
+}
+
+// RefreshProgress updates rimsky_frames.last_progress_at to now() for
+// the given frame. Called by the node-state-transition write path on
+// every UpdateState that carries the frame's id, so frame_timeout_ms
+// measures no-progress-in-window rather than frame age.
+//
+// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §7.
+func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, tx persistence.Tx) error {
+	_, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
+		nowUTC(), frameID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("frames.RefreshProgress: %w", err)
+	}
+	return nil
 }
 
 // GetForObservability returns one frame by id.

@@ -128,6 +128,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, &res)
+		validateOnAcquireUnavailable(n, base, declared, &res)
+		validateOnExecutorComplete(n, base, declared, &res)
+		validateOnExecutorTerminal(n, n.OnExecutorBlocked, base+".on_executor_blocked", declared, &res)
+		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", declared, &res)
 	}
 
 	detectCycles(spec.Nodes, &res)
@@ -200,8 +204,176 @@ func validateErrorTypes(n TemplateNodeDef, base string, declared map[string]int,
 					})
 				}
 			}
+			// Per the reactive-loops + lifecycle-handlers spec §5,
+			// PolicyAction.Frame is "" | "in" | "next"; empty defaults
+			// to next at dispatch time.
+			switch action.Frame {
+			case "", FrameIn, FrameNext:
+			default:
+				res.Errors = append(res.Errors, ValidationError{
+					Path: fmt.Sprintf("%s.error_types[%s].policy[%d].frame", base, className, ai),
+					Msg:  fmt.Sprintf("frame = %q is not valid (one of: %q, %q)", action.Frame, FrameIn, FrameNext),
+				})
+			}
 		}
 	}
+}
+
+// validateOnAcquireUnavailable enforces the resolve vocabulary
+// (pass | retry | error), the error_class requirement when resolve=error,
+// and the optional invalidate sub-block. See spec §3.
+func validateOnAcquireUnavailable(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+	h := n.OnAcquireUnavailable
+	if h == nil {
+		return
+	}
+	hbase := base + ".on_acquire_unavailable"
+	if h.Resolve == "" && h.Invalidate == nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase,
+			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+		})
+		return
+	}
+	switch h.Resolve {
+	case "", ResolvePass, ResolveRetry:
+	case ResolveError:
+		if strings.TrimSpace(h.ErrorClass) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".error_class",
+				Msg:  "error_class is required when resolve = error",
+			})
+		} else if _, declaredClass := n.ErrorTypes[h.ErrorClass]; !declaredClass && !isBuiltinErrorClass(h.ErrorClass) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".error_class",
+				Msg:  fmt.Sprintf("error_class %q does not match any error_types[...] key on this node", h.ErrorClass),
+			})
+		}
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase + ".resolve",
+			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolvePass, ResolveRetry, ResolveError),
+		})
+	}
+	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
+}
+
+// validateOnExecutorComplete enforces the resolve vocabulary
+// (by_changed | always_propagate | never_propagate) and the optional
+// invalidate sub-block. See spec §3.
+func validateOnExecutorComplete(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+	h := n.OnExecutorComplete
+	if h == nil {
+		return
+	}
+	hbase := base + ".on_executor_complete"
+	if h.Resolve == "" && h.Invalidate == nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase,
+			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+		})
+		return
+	}
+	switch h.Resolve {
+	case "", ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate:
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase + ".resolve",
+			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate),
+		})
+	}
+	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
+}
+
+// validateOnExecutorTerminal enforces the resolve vocabulary
+// (error | pass) for on_executor_blocked and on_executor_errored,
+// the error_class requirement when resolve=error, and the optional
+// invalidate sub-block. See spec §3.
+func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler, hbase string, declared map[string]int, res *ValidationResult) {
+	if h == nil {
+		return
+	}
+	if h.Resolve == "" && h.Invalidate == nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase,
+			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+		})
+		return
+	}
+	switch h.Resolve {
+	case "", ResolvePass:
+	case ResolveError:
+		if strings.TrimSpace(h.ErrorClass) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".error_class",
+				Msg:  "error_class is required when resolve = error",
+			})
+		} else if _, declaredClass := n.ErrorTypes[h.ErrorClass]; !declaredClass && !isBuiltinErrorClass(h.ErrorClass) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".error_class",
+				Msg:  fmt.Sprintf("error_class %q does not match any error_types[...] key on this node", h.ErrorClass),
+			})
+		}
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: hbase + ".resolve",
+			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q)", h.Resolve, ResolveError, ResolvePass),
+		})
+	}
+	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
+}
+
+// validateHandlerInvalidate validates an optional HandlerInvalidate
+// block. Targets must be non-empty; each target is "self" (literal)
+// or a declared node type; Frame must be "" | "in" | "next".
+func validateHandlerInvalidate(inv *HandlerInvalidate, declared map[string]int, base string, res *ValidationResult) {
+	if inv == nil {
+		return
+	}
+	ibase := base + ".invalidate"
+	if len(inv.Targets) == 0 {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: ibase + ".targets",
+			Msg:  "invalidate.targets must be non-empty",
+		})
+	}
+	for ti, target := range inv.Targets {
+		if target == SelfTarget {
+			continue
+		}
+		if _, ok := declared[target]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.targets[%d]", ibase, ti),
+				Msg:  fmt.Sprintf("target %q does not reference a declared node (or %q)", target, SelfTarget),
+			})
+		}
+	}
+	switch inv.Frame {
+	case "", FrameIn, FrameNext:
+	default:
+		res.Errors = append(res.Errors, ValidationError{
+			Path: ibase + ".frame",
+			Msg:  fmt.Sprintf("frame = %q is not valid (one of: %q, %q)", inv.Frame, FrameIn, FrameNext),
+		})
+	}
+}
+
+// isBuiltinErrorClass returns true for the error classes rimsky raises
+// itself (vs. those declared in the template). Used to permit
+// resolve=error to point at a built-in class like
+// "template_resolution_failed" without requiring it to be redeclared
+// in error_types: on the node.
+func isBuiltinErrorClass(name string) bool {
+	switch name {
+	case "template_resolution_failed",
+		"attributes_schema_failed",
+		"quality_rule_failed",
+		"executor_blocked",
+		"executor_errored",
+		"acquire_unavailable":
+		return true
+	}
+	return false
 }
 
 func validateSchedule(n TemplateNodeDef, base string, parser cron.Parser, res *ValidationResult) {

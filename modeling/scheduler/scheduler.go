@@ -33,7 +33,7 @@
 //  7. integration.SweepReady — executor-backed stale nodes whose deps
 //     are all fresh get enqueued for the next claim cycle.
 //  8. frame.RunTick — frame-end detection, queue advancement,
-//     stuck-frame reaper, orphan-frame-dispatch reap.
+//     stuck-frame warning (advisory only), orphan-frame-dispatch reap.
 package scheduler
 
 import (
@@ -254,7 +254,7 @@ func tick(ctx context.Context, cfg Config) error {
 	}
 
 	// 10. Frame engine tick (frame-end detection, queue advancement,
-	// stuck-frame reaper, orphan-frame-dispatch reap).
+	// stuck-frame warning (advisory only), orphan-frame-dispatch reap).
 	if cfg.Persist != nil && cfg.Queue != nil {
 		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())

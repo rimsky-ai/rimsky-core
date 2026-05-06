@@ -184,14 +184,21 @@ func (s *framesImpl) MarkSourceNodeStale(
 	return cmd.RowsAffected() == 1, nil
 }
 
-// ListStuckRunningFrames returns running frames past their timeout
-// with no claimed dispatches and at least one stale/running node.
+// ListStuckRunningFrames returns running frames where last_progress_at
+// is older than frame_timeout_ms (i.e. no node-state transition has
+// happened in the timeout window), with no claimed dispatches and at
+// least one stale/running node.
+//
+// Per the reactive-loops + lifecycle-handlers spec §7, frame_timeout_ms
+// measures "no progress in window" rather than frame age — a
+// progressing self-invalidate loop should not trip the soft warning
+// even if its total runtime exceeds the timeout.
 func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.Tx) ([]persistence.FrameStuck, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT f.frame_id, f.instance_id, f.frame_timeout_ms
         FROM rimsky_frames f
         WHERE f.state = 'running'
-          AND f.started_at + (f.frame_timeout_ms || ' milliseconds')::interval < now()
+          AND f.last_progress_at + (f.frame_timeout_ms || ' milliseconds')::interval < now()
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_worker_request d
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
@@ -214,20 +221,6 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// FailAllPendingNodes flips every stale/running node for the instance
-// to state='failed'.
-func (s *framesImpl) FailAllPendingNodes(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).Exec(ctx, `
-        UPDATE rimsky_nodes
-        SET state = 'failed', updated_at = now()
-        WHERE instance_id = $1 AND state IN ('stale','running')
-    `, instanceID)
-	if err != nil {
-		return fmt.Errorf("frames.FailAllPendingNodes: %w", err)
-	}
-	return nil
 }
 
 // ListOrphanFrameDispatches returns dispatch rows whose claim is non-NULL
@@ -423,6 +416,23 @@ func decodeFrameCursor(s string) (time.Time, shared.UUID, error) {
 		return time.Time{}, shared.UUID{}, err
 	}
 	return c.Q, c.F, nil
+}
+
+// RefreshProgress updates rimsky_frames.last_progress_at to NOW() for
+// the given frame. Called by the node-state-transition write path on
+// every UpdateState that carries the frame's id, so frame_timeout_ms
+// measures no-progress-in-window rather than frame age.
+//
+// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §7.
+func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, tx persistence.Tx) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
+		frameID,
+	)
+	if err != nil {
+		return fmt.Errorf("frames.RefreshProgress: %w", err)
+	}
+	return nil
 }
 
 // GetForObservability returns one frame by id.

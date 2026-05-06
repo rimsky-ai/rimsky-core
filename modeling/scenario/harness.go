@@ -447,6 +447,29 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 	return false
 }
 
+// WaitForWorkerRequestDeleted polls until no rimsky_worker_request rows
+// remain for the given node. Used by tests that need to assert post-
+// terminal queue cleanup deterministically: `Queue.Complete` runs
+// inside the supervisor's poll-goroutine AFTER `applyTerminalComplete`
+// returns, so a "wait for fresh state, then check the queue row is
+// gone" sequence races. Polling on the row-count directly removes the
+// race.
+func (h *Harness) WaitForWorkerRequestDeleted(nodeID shared.UUID, timeout time.Duration) bool {
+	h.T.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var count int
+		err := h.Pool.QueryRow(h.Ctx,
+			`SELECT count(*) FROM rimsky_worker_request WHERE node_id = $1`, nodeID,
+		).Scan(&count)
+		if err == nil && count == 0 {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
 // InTx runs fn inside a fresh Persist.Transaction. Test convenience
 // wrapper — option C requires every persistence call to thread an
 // explicit tx, so scenario tests run their reads inside one of these.
@@ -595,13 +618,50 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 				if a.ReasonTemplate != "" {
 					act["reason_template"] = a.ReasonTemplate
 				}
+				if a.Frame != "" {
+					act["frame"] = a.Frame
+				}
 				actions = append(actions, act)
 			}
 			ets[cls] = map[string]any{"policy": actions}
 		}
 		nd["error_types"] = ets
 	}
+	if n.OnAcquireUnavailable != nil {
+		nd["on_acquire_unavailable"] = handlerToJSON(n.OnAcquireUnavailable.Resolve, n.OnAcquireUnavailable.ErrorClass, n.OnAcquireUnavailable.Invalidate)
+	}
+	if n.OnExecutorComplete != nil {
+		nd["on_executor_complete"] = handlerToJSON(n.OnExecutorComplete.Resolve, "", n.OnExecutorComplete.Invalidate)
+	}
+	if n.OnExecutorBlocked != nil {
+		nd["on_executor_blocked"] = handlerToJSON(n.OnExecutorBlocked.Resolve, n.OnExecutorBlocked.ErrorClass, n.OnExecutorBlocked.Invalidate)
+	}
+	if n.OnExecutorErrored != nil {
+		nd["on_executor_errored"] = handlerToJSON(n.OnExecutorErrored.Resolve, n.OnExecutorErrored.ErrorClass, n.OnExecutorErrored.Invalidate)
+	}
 	return nd
+}
+
+// handlerToJSON serializes a lifecycle handler block.
+func handlerToJSON(resolve, errorClass string, inv *node.HandlerInvalidate) map[string]any {
+	h := map[string]any{}
+	if resolve != "" {
+		h["resolve"] = resolve
+	}
+	if errorClass != "" {
+		h["error_class"] = errorClass
+	}
+	if inv != nil {
+		invMap := map[string]any{}
+		if len(inv.Targets) > 0 {
+			invMap["targets"] = inv.Targets
+		}
+		if inv.Frame != "" {
+			invMap["frame"] = inv.Frame
+		}
+		h["invalidate"] = invMap
+	}
+	return h
 }
 
 func storeRefToJSON(s node.NodeStoreRef) map[string]any {

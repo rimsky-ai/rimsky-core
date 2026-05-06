@@ -32,6 +32,14 @@ The frame ID is a correlation token, not a structural lock. Workers within a fra
 
 The two modes never mix within an instance — the policy is template-level.
 
+## Frame timeout: `frame_timeout_ms`
+
+A template may declare `frame_timeout_ms:` (default 600_000 = 10 minutes; hard floor 60_000 = 60 seconds). The scheduler compares this timeout against the frame's `last_progress_at` — i.e., **no progress in window**, not frame age. Any node-state transition within the frame refreshes `last_progress_at`, so a long-running but progressing self-invalidate loop or worker-pool stays under the timeout indefinitely; a wedged frame whose nodes stop transitioning trips the warning.
+
+Trips a `frame.stuck.observed` slog warning and nothing else. There is no destructive action; the frame stays `running`. Operators are expected to investigate via the dashboard / event log and decide whether to issue an operator invalidate, mark a node failed manually, or wait. (Pre-v1 design choice: no blanket "frame too old; kill it" policy. We will revisit destructive timeout behavior, if any, post-v1.)
+
+This is distinct from per-run executor silence-timeout (which lives on the executor peer): `frame_timeout_ms` is the scheduler-level "is the frame making progress" observation; per-executor silence is the executor-side "did this run go silent" metric. Neither auto-fails a frame.
+
 ## How you encounter it
 
 - **Templates**: the `frame_resolution:` field at the template's top level. Required; one of `serial_queue` or `coalesce`.

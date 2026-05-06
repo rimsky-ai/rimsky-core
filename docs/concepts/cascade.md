@@ -23,6 +23,17 @@ A workflow whose steps depend on each other faces a natural problem: when an ups
 
 A cascade always happens in the context of a frame. The frame ID stamps every cascade-affected row, so observability tooling can answer "show me everything that happened as a result of this invalidate."
 
+### The cascade-firing gate (lazy + last_outcome-driven)
+
+Today's lazy + Changed-gated cascade is preserved end-to-end. When a node commits, the supervisor's terminal handler fires the cascade only when the commit produced new value — i.e., the upstream's `last_outcome == fresh_changed`. Under the default `on_executor_complete: { resolve: by_changed }` (also the implicit default when no handler is declared) this is functionally identical to the prior `t.Changed` gate.
+
+`last_outcome` is **observability metadata, not a dispatch gate**. Two non-default `on_executor_complete` resolutions diverge from the default:
+
+- `always_propagate` forces `last_outcome=fresh_changed` even on `changed:false`, so the cascade fires.
+- `never_propagate` forces `last_outcome=fresh_unchanged` even on `changed:true`, so the cascade does not fire.
+
+Per-emit invalidate frame discipline (`frame: in | next`) is documented in [`invalidate.md`](invalidate.md).
+
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` triggers a cascade rooted at the named node.

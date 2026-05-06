@@ -16,21 +16,22 @@ import (
 // NodeRow mirrors a row of rimsky_nodes — the per-instance node-state
 // row driven by the cascade engine and the supervisor.
 type NodeRow struct {
-	ID                   shared.UUID      `json:"id"`
-	InstanceID           shared.UUID      `json:"instance_id"`
-	NodeType             string           `json:"node_type"`
-	Executor             string           `json:"executor"`
-	ScheduleCron         string           `json:"schedule_cron"`
-	State                shared.NodeState `json:"state"`
-	Dependencies         []shared.UUID    `json:"dependencies"`
-	CurrentErrorClass    string           `json:"current_error_class,omitempty"`
-	RetryCounter         int              `json:"retry_counter"`
-	ActionIndex          int              `json:"action_index"`
-	LastHeartbeatAt      *time.Time       `json:"last_heartbeat_at,omitempty"`
-	AssignedSupervisorID string           `json:"assigned_supervisor_id,omitempty"`
-	FrameID              *shared.UUID     `json:"frame_id,omitempty"`
-	CreatedAt            time.Time        `json:"created_at"`
-	UpdatedAt            time.Time        `json:"updated_at"`
+	ID                   shared.UUID        `json:"id"`
+	InstanceID           shared.UUID        `json:"instance_id"`
+	NodeType             string             `json:"node_type"`
+	Executor             string             `json:"executor"`
+	ScheduleCron         string             `json:"schedule_cron"`
+	State                shared.NodeState   `json:"state"`
+	LastOutcome          shared.LastOutcome `json:"last_outcome,omitempty"`
+	Dependencies         []shared.UUID      `json:"dependencies"`
+	CurrentErrorClass    string             `json:"current_error_class,omitempty"`
+	RetryCounter         int                `json:"retry_counter"`
+	ActionIndex          int                `json:"action_index"`
+	LastHeartbeatAt      *time.Time         `json:"last_heartbeat_at,omitempty"`
+	AssignedSupervisorID string             `json:"assigned_supervisor_id,omitempty"`
+	FrameID              *shared.UUID       `json:"frame_id,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
 }
 
 // NodeCreateInput is the per-row input for Create.
@@ -55,10 +56,20 @@ type NodeStore interface {
 	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[shared.NodeState]int, error)
-	UpdateState(ctx context.Context, id shared.UUID, state shared.NodeState, reason cascade.TransitionReason, tx Tx) error
+	// UpdateState transitions the node to `state` under `reason`, validated
+	// against the cascade state machine. `lastOutcome` is the resolution
+	// flavor for terminal-for-this-frame transitions; the empty string
+	// "" means "do not write the column" (preserves the existing value).
+	// See modeling/shared/types.go for LastOutcome values.
+	UpdateState(ctx context.Context, id shared.UUID, state shared.NodeState, reason cascade.TransitionReason, lastOutcome shared.LastOutcome, tx Tx) error
 	UpdateError(ctx context.Context, id shared.UUID, es node.EvaluatorState, tx Tx) error
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
+	// ClearLastOutcome sets last_outcome = NULL. Used by the operator
+	// reset path so the dashboard does not display a stale `failed`
+	// resolution flavor while the node transitions back through
+	// stale → running → fresh.
+	ClearLastOutcome(ctx context.Context, id shared.UUID, tx Tx) error
 	ClearSupervisorAssignment(ctx context.Context, id shared.UUID, tx Tx) error
 	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
 	// MarkStaleForCascade is the cascade-from-parent-commit helper used by

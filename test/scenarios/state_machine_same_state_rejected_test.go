@@ -42,14 +42,14 @@ func TestStateMachineSameStateRejected(t *testing.T) {
 	// Force the node into running first (stale→running via dispatch_claimed).
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
-			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx)
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
 	}))
 
 	// Attempt running→running under dispatch_claimed. Should fail with
 	// ErrIllegalTransition (blessed-invariant §17).
 	err := h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx, n.ID,
-			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx)
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, shared.ErrIllegalTransition),

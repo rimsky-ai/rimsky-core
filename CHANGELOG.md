@@ -2,6 +2,88 @@
 
 ## Unreleased
 
+### Reactive loops + lifecycle handlers — review-cleanup pass 3
+
+Third-cycle fixes after the second cleanup pass's verification surfaced a
+real correctness bug plus four hygiene items.
+
+- **`emitLockReleased` no longer opens a nested transaction.** Called from `releaseAcquiredLock` / `releaseClaim`, which run inside an open `Persist.Transaction(...)` block in `applyTerminalComplete` / `applyTerminalAppError` / `applyTerminalInfraError` / `applyTerminalPass`. Previously opened its own fresh `Persist.Transaction(...)` for the `lock_released` event append — under SQLite (`MaxOpenConns=1`) this self-deadlocked; under postgres it tied up two pool connections concurrently. Fix: `emitLockReleased` now takes the in-flight `tx persistence.Tx` as a parameter and uses it for the event append. `emitLockAcquired` and `emitQualityRuleFailures` updated to mirror the tx-required pattern (defensive — neither was called from inside an open tx, but the uniform contract prevents future regressions of the same shape).
+- **`runner_terminal.go` split into siblings to honor the cold-read 500-line guideline.** `applyTerminalAppError` + `applyResolvedAction` + `applyTerminalInfraError` + `lookupPolicyForNode` + `requiredStoresForAcq` + `invalidateTargets` moved to `runner_terminal_errors.go`. Resulting `runner_terminal.go` is 363 lines (was 585); the Complete-branch + cascade fan-out remains in one place since they interleave. Sibling files: `runner_terminal_handlers.go` (121), `runner_terminal_errors.go` (264), `runner_terminal_release.go` (217).
+- **`acquisition` struct documented as not safe for concurrent use.** Doc-comment on the type spells out the single-goroutine-per-dispatched-run contract and the post-acquisition immutability of the fields, so a future refactor that parallelises any release path adds explicit synchronization (or copies the fields it needs) before sharing the pointer.
+- **Contract docs updated for the lifecycle-handler landing.** Tasks 49/50 of the original plan were skipped in cycle 1 because the plan referenced `docs/specs/...` paths that don't exist; the actual files live at `.ok-planner/specs/2026-05-04-foundation-contract.md` and `.ok-planner/specs/2026-05-04-modeling-layer-contract.md`. Foundation contract gains §5.6 (lifecycle-handler-driven resolution) and a `last_outcome` mention in §6.1's `rimsky_nodes` description. Modeling contract gains the four lifecycle-handler blocks + per-emit `frame: in | next` field in §3.1, and the `last_outcome` field in §9.1's state vocabulary. Notes file at `.ok-planner/plans/2026-05-05-reactive-loops-and-lifecycle-handlers-notes.md` corrected.
+- **`TestFrameTimeoutReaper` no longer flakes on postgres deadlocks.** Test seeds wedged frame state via direct DELETEs against `rimsky_worker_request` / `rimsky_claim_handle` / `rimsky_frames` and drives `frame.RunTick` manually; the supervisor poll-loop's row locks (including the new `last_progress_at` UPDATE inside `enforceAndUpdate`) raced with the seed DELETEs. Adding `NoSupervisor: true` to the harness opts removes the contention; the supervisor wasn't needed since `RunTick` is called explicitly. Verified at `-count=20`.
+- **`TestWorkerRequestPhaseAdvancesOnClaim` no longer races queue-row deletion.** `Queue.Complete` runs inside the supervisor poll-goroutine AFTER `applyTerminalComplete` returns; the prior pattern (wait for `fresh` state, then SELECT count) raced. Added `Harness.WaitForWorkerRequestDeleted(nodeID, timeout)` polling helper and switched the assertion to use it. Verified at `-count=20`.
+
+### Reactive loops + lifecycle handlers — review-cleanup pass 2
+
+Second-cycle hygiene + correctness fixes after the first review-cleanup
+pass. All issues found by the verification reviewer.
+
+- **`invalidateInFrame` no longer self-deadlocks under SQLite on the nil-source-frame fallback.** The frame_id resolution read is now a separate short tx; only the success path opens the mutating tx. Prior code called `invalidateNextFrame` (which opens its own tx) from inside the outer tx — under SQLite (`MaxOpenConns=1`) this would deadlock, and under postgres it tied up two pool connections concurrently. Reachability path: legacy `invalidateTargets` policy chain firing `invalidate` with `frame: "in"` against a source row whose `frame_id` is currently nil. Latent (no test exercised the combination); fixed by structure rather than test.
+- **`FailAllActiveByLockHolder` now claimant-guarded.** The bulk UPDATE filters via `EXISTS (... AND holder_supervisor_id = supervisorID)` — defense-in-depth against future refactors that share claim-handle ownership across supervisors. Signature change: `FailAllActiveByLockHolder(ctx, lockHolderID, supervisorID, tx)`. Postgres + SQLite impls and the lone caller in `releaseClaim` updated.
+- **`emitHandlerInvalidate` no longer takes a useless `acq` parameter.** The `_ = acq // reserved for future use` comment is gone; the unresolved-target event in `resolveHandlerTargets` now keys on the source node id passed in directly. Cold-read hygiene — no behavior change.
+- **`runner_terminal.go` split into siblings to honor the cold-read 500-line guideline.** `applyTerminalBlockedOrErrored` + `applyTerminalPass` moved to `runner_terminal_handlers.go` (121 lines). `releaseLocksInTx` + `releaseAcquiredLock` + `releaseClaim` + `releaseInheritedClaimsInTx` + `releaseActionString` + `emitLockReleased` moved to `runner_terminal_release.go` (205 lines). `runner_terminal.go` now ~585 lines.
+- **CLAUDE.md stale `docs/vocabulary.md` reference removed.** Earlier review-cleanup pass missed this entry; the file was deleted in the doc restructure and there is no successor under `docs/`.
+
+### Reactive loops + lifecycle handlers — review-cleanup pass
+
+Follow-up correctness fixes after the reactive-loops + lifecycle-handlers
+landing. All issues found by the post-merge review.
+
+- **`frame: in` self-invalidate from `on_executor_complete` now actually stays in-frame.** Added `InvalidateArgs.SourceFrameID` override; the post-Complete handler.invalidate emit now passes `acq.FrameID` so `invalidateInFrame` lands on the closing frame even though the running-tx already cleared the source row's `frame_id` (defensive guard in `nodes.UpdateState` on transitions to fresh). Without this, the in-frame self-invalidate spec (§5.2 "single frame for the entire drain") silently delivered a next-frame loop. Test in `test/scenarios/reactive_loop_self_invalidate_in_frame_test.go` re-tightened from `≤4 frames` to `== 1 frame`.
+- **Held-claim handle no longer leaks under `on_executor_blocked / errored: { resolve: pass }`.** When a held-claim acquirer terminates with !success, `releaseClaim` now also calls `ClaimHoldersStore.FailAllActiveByLockHolder` so every still-active inheritor row is marked failed; auto-terminal fires immediately rather than waiting for inheritors to reach a terminal they would never reach (passed does not cascade). New `FailAllActiveByLockHolder` method on `ClaimHoldersStore` interface; postgres + sqlite impls. Regression test: `test/scenarios/held_claim_acquirer_blocked_pass_test.go`.
+- **`handleAcquireUnavailable` defends against nil `acq.NodeDef`.** Mirrors the pattern in `applyTerminalBlockedOrErrored` so a future refactor that exposes a nil-NodeDef path crashes in tests instead of in production.
+- **`handleResetNode` clears `last_outcome` to NULL.** New `NodeStore.ClearLastOutcome` method; postgres + sqlite impls. Without this, a failed → reset → stale → running transition briefly displayed `state=stale, last_outcome=failed` in the dashboard (the COALESCE pattern in `UpdateState` preserves `last_outcome` on stale → running).
+- **`resolveHandlerTargets` emits `unresolved_invalidate_target` events.** Parity with `invalidateTargets` (the error_types policy-chain path); previously only logged via `log.Warn` and dropped silently from the audit trail.
+- **CLAUDE.md doc-drift fix.** All references to non-existent `docs/specs/` and `docs/history/` paths updated to the actual `.ok-planner/specs/` and `.ok-planner/history/` paths.
+- **SQLite frame INSERTs now write `last_progress_at` explicitly with `nowUTC()`.** The migration's `strftime('%f')` DEFAULT only delivers ms precision; runtime writes were nano-precision, leaving the column with mixed precision across rows. The migration's DEFAULT is now consumed only by rows existing at migration time (none in dev workflows); all subsequent INSERTs include the column at uniform RFC3339Nano precision.
+- **`acquire_pass_invalidate_emit_test.go` made deterministic.** Monitor now depends on worker so a non-cascading passed terminal cannot wake it; the only remaining wake path is the handler.invalidate emit, asserted as `work_completed == 1` (was `>= 2` with a race against the initial scheduler tick).
+
+### Reactive loops + lifecycle handlers
+
+Per `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md`. Adds four declarable lifecycle-handler slots on each node (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_blocked`, `on_executor_errored`); a `last_outcome` column on `rimsky_nodes` capturing the resolution flavor (`fresh_changed | fresh_unchanged | passed | pure_cascade | failed`); a per-emit `frame: in | next` field on every invalidate emit declaration; and a `last_progress_at`-based refinement of `frame_timeout_ms` semantics ("no progress in window" instead of frame age).
+
+- **Templates without lifecycle-handler blocks are unaffected.** Defaults preserve today's hardcoded supervisor behavior (silent retry on Unavailable, by_changed on Complete, route through error_types on Blocked / Errored).
+- **The cascade-firing gate is now `last_outcome == fresh_changed`** instead of `t.Changed` directly. Functionally identical under the default `by_changed` resolution; diverges under explicit `always_propagate` / `never_propagate`.
+- **`pass` and `error` resolutions on `on_acquire_unavailable` / `on_executor_blocked` / `on_executor_errored` call `Abandon`** on already-Open'd claims, matching `handleOrphanedClaim` semantics.
+- **`frame_timeout_ms` measures "no progress in window"** via the new `rimsky_frames.last_progress_at` column, and emits a `frame.stuck.observed` slog warning when a running frame's last node-state transition was longer than `frame_timeout_ms` ago. The warning is purely informational — the frame stays `running`, no nodes are failed, the instance is not terminated. The destructive `reapOneStuckFrame` path is **removed** in this dispatch (operator clarification: timeouts must not auto-fail frames pre-v1; we will revisit this post-v1). A self-invalidate loop that progresses by one node per iteration refreshes `last_progress_at` and stays under the timeout indefinitely; a wedged frame whose nodes stop transitioning trips the warning.
+- **Removed:** `Frames.FailAllPendingNodes` interface method + Postgres/SQLite impls; `modeling/frame/engine.reapOneStuckFrame`; `runReapStuckFrames` renamed to `runWarnStuckFrames`; the slog key `frame.stuck.reaped` renamed to `frame.stuck.observed`.
+- **New TransitionReason kinds:** `acquire_pass`, `handler_complete` (subsumes `work_completed` for new code paths; old name kept as deprecated alias for one cycle), `handler_error` (audit-log only; not a direct NextState input), `handler_pass`.
+- **Schema:** new ALTER TABLE migrations adding `last_outcome TEXT` to `rimsky_nodes` and `last_progress_at TIMESTAMPTZ NOT NULL DEFAULT now()` to `rimsky_frames`. Pre-v1; no compat shim. Existing dev DBs accept the new columns via the migration runner.
+- **`Nodes.UpdateState` signature change:** added `lastOutcome shared.LastOutcome` parameter (empty string preserves the existing column value via COALESCE). All call sites updated.
+- **`PolicyAction.Frame`** field added (yaml `frame: in | next`); error_types invalidate actions now propagate the frame setting through to `InvalidateNode`.
+- **CLI:** `rimsky-cli admin invalidate --frame in|next` flag added.
+- **Control API:** `POST /nodes/{id}/invalidate` accepts an optional `frame` field in the request body.
+- **Validator:** `modeling/node/template_validator.go` rejects out-of-vocabulary handler resolutions, missing `error_class` when `resolve=error`, invalid `frame` values, unknown invalidate targets, and empty handler blocks.
+- **Tests:** new scenario tests in `test/scenarios/lifecycle_handlers_test.go` covering always_propagate / never_propagate cascade gates, fresh_unchanged column gate, blocked/errored pass resolutions, operator-invalidate-target-only, pure_cascade column. Additional regression coverage in `test/scenarios/`: `reactive_loop_self_invalidate_next_frame_test.go`, `reactive_loop_self_invalidate_in_frame_test.go`, `acquire_unavailable_pass_test.go`, `acquire_unavailable_retry_default_test.go`, `acquire_unavailable_error_routing_test.go`, `held_claim_acquirer_passes_test.go`, `held_claim_mixed_upstream_test.go`, `frame_coalesce_self_invalidate_test.go`, `frame_timeout_progressing_loop_test.go`, `frame_timeout_stuck_frame_test.go`, `handler_invalidate_orthogonal_to_changed_test.go`, `acquire_pass_invalidate_emit_test.go`. Frame seed helpers updated to populate `last_progress_at` so the stuck-frame reaper test still trips on stuck-since-X seeded frames.
+- **State machine:** extended `NextState` in `foundation/cascade/state.go` to accept `policy_give_up` as a `stale → failed` transition (previously only `running → failed`). Required for `on_acquire_unavailable: { resolve: error }` paired with an `error_types[X].policy = [{give_up}]` chain — under that path the node is still `stale` (Open returned Unavailable; never entered running) and the OnError give_up branch must succeed.
+
+### Docs — `CLAUDE.md` stale `docs/internal/` references removed
+
+Lines 176-181 of `CLAUDE.md` (the "internal/working engineering material"
+section) referenced `docs/internal/node-graph-design.md`,
+`docs/internal/architecture.md`, `docs/internal/operator-guide.md`,
+`docs/internal/glossary.md`, `docs/internal/claim-producer-author-guide.md`,
+and `docs/internal/executor-author-guide.md` — paths that no longer
+exist after the layer-crystallization doc restructure (the originals
+were archived to `.ok-planner/archive/internal/`). Replaced the dead
+references with one short paragraph noting the restructure and pointing
+at the successor public-surface homes (`docs/concepts/`,
+`docs/protocols/`, `docs/glossary.md`) which were already cited in the
+"external-consumer-facing material" section above.
+
+### Docs — `CLAUDE.md` vocabulary fix
+
+`CLAUDE.md`'s "What this repo is" vocabulary line claimed two message
+types (`invalidate`, `recalculate`) and pointed at `docs/node-graph-design.md`
++ `docs/architecture.md` for the conceptual / implementation models.
+Both were stale: `recalculate` is a scheduler action, not a peer
+message (the `docs/concepts/` cleanup pass already corrected the
+public-surface docs but missed `CLAUDE.md`); the two referenced design
+docs were archived during layer-crystallization. Updated to the
+current single-message vocabulary and to point at `docs/concepts/`
+plus the foundation/modeling contract specs in `docs/specs/`.
+
 ### Refactor — Persistence option C: tx is required everywhere
 
 The persistence Store interface no longer accepts `nil` for the `tx`

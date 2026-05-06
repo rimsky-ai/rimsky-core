@@ -131,15 +131,15 @@ type FrameStore interface {
 	// frame).
 	MarkSourceNodeStale(ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx Tx) (matched bool, err error)
 
-	// ---- Stuck frame reaper (engine.runReapStuckFrames) ----
+	// ---- Stuck-frame warning (engine.runWarnStuckFrames) ----
 
-	// ListStuckRunningFrames returns running frames past their timeout
-	// with no claimed dispatches and at least one stale/running node.
+	// ListStuckRunningFrames returns running frames whose
+	// last_progress_at is past their frame_timeout_ms with no claimed
+	// dispatches and at least one stale/running node. The frame engine
+	// emits a `frame.stuck.observed` slog warning per row and takes no
+	// destructive action — the frame stays running, no nodes are failed,
+	// the instance is not terminated.
 	ListStuckRunningFrames(ctx context.Context, tx Tx) ([]FrameStuck, error)
-
-	// FailAllPendingNodes flips every stale/running node for the instance
-	// to state='failed' and stamps updated_at=now().
-	FailAllPendingNodes(ctx context.Context, instanceID shared.UUID, tx Tx) error
 
 	// ---- Orphan dispatch reaper (engine.runReapOrphanFrameDispatches) ----
 
@@ -173,4 +173,13 @@ type FrameStore interface {
 	// GetForObservability returns one frame by id. Returns (nil, nil) when
 	// the row does not exist.
 	GetForObservability(ctx context.Context, frameID shared.UUID, tx Tx) (*FrameRow, error)
+
+	// RefreshProgress updates rimsky_frames.last_progress_at to NOW() for
+	// the given frame. Called by the node-state-transition write path on
+	// every UpdateState that carries the frame's id, so the
+	// frame_timeout_ms metric measures no-progress-in-window rather than
+	// frame age.
+	//
+	// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §7.
+	RefreshProgress(ctx context.Context, frameID shared.UUID, tx Tx) error
 }

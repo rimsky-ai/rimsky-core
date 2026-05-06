@@ -33,20 +33,27 @@ func RunAdminForceFire(ctx context.Context, args []string) int {
 
 // RunAdminInvalidate implements `admin invalidate`.
 func RunAdminInvalidate(ctx context.Context, args []string) int {
-	var reason string
+	var reason, frame string
 	fs, _, endpoint, code := runWithCommon("admin invalidate", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&reason, "reason", "", "human-readable reason for the audit log")
+		fs.StringVar(&frame, "frame", "", "per-emit frame discipline (\"in\" or \"next\"; default \"next\")")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin invalidate <node-id> [--reason ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin invalidate <node-id> [--reason ...] [--frame in|next]")
+		return 2
+	}
+	switch frame {
+	case "", "in", "next":
+	default:
+		fmt.Fprintln(os.Stderr, "rimsky-cli admin invalidate: --frame must be \"in\" or \"next\"")
 		return 2
 	}
 	c := NewClient(endpoint)
-	if err := c.InvalidateNode(ctx, rest[0], InvalidateNodeRequest{Reason: reason}); err != nil {
+	if err := c.InvalidateNode(ctx, rest[0], InvalidateNodeRequest{Reason: reason, Frame: frame}); err != nil {
 		return reportError(err)
 	}
 	fmt.Fprintf(os.Stdout, "invalidated %s\n", rest[0])

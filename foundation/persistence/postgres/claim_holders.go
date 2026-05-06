@@ -142,6 +142,39 @@ func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
 	return nil
 }
 
+// FailAllActiveByLockHolder satisfies persistence.ClaimHoldersStore.
+// Single bulk UPDATE that flips every still-'active' row for the given
+// claim_handle to 'failed'. Used by the held-claim acquirer-failure
+// path so auto-terminal fires immediately instead of leaking the
+// claim_handle while inheritors never reach a terminal.
+//
+// Defense-in-depth claimant guard: the EXISTS clause confirms the
+// caller still owns the parent rimsky_claim_handle (matches blessed-
+// invariant 4 — every ownership-bearing UPDATE/DELETE filters on
+// supervisor).
+func (s *claimHoldersImpl) FailAllActiveByLockHolder(
+	ctx context.Context, lockHolderID shared.UUID, supervisorID string, tx persistence.Tx,
+) error {
+	ex := s.q(tx)
+	_, err := ex.Exec(ctx,
+		`UPDATE rimsky_claim_holders
+		    SET state = 'failed',
+		        completed_at = now()
+		  WHERE claim_handle_id = $1
+		    AND state = 'active'
+		    AND EXISTS (
+		      SELECT 1 FROM rimsky_claim_handle
+		       WHERE id = $1
+		         AND holder_supervisor_id = $2
+		    )`,
+		lockHolderID, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("claim_holders.FailAllActiveByLockHolder: %w", err)
+	}
+	return nil
+}
+
 // ---- helpers ----
 
 func scanClaimHolder(sc scannable) (persistence.ClaimHolderRow, error) {

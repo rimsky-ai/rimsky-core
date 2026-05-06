@@ -1,0 +1,108 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// Task 26 — on_acquire_unavailable: { resolve: pass }. A node whose
+// claim-producer returns Unavailable on its required claim transitions
+// stale → fresh+passed; the executor is not invoked; no cascade-on-
+// commit fires.
+package scenarios
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
+	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+)
+
+// TestAcquireUnavailablePass starts a stub claim-producer with an empty
+// pick-policy queue (selector "@queue"), so the producer's Open returns
+// Unavailable. The node has on_acquire_unavailable: { resolve: pass }
+// — the supervisor must transition the node to fresh+passed without
+// invoking the executor.
+func TestAcquireUnavailablePass(t *testing.T) {
+	t.Parallel()
+
+	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		PickPolicies: map[string]stubstore.PickPolicyConfig{
+			"@queue": {
+				OnCommitDefault: "delete",
+				OnGiveUpDefault: "release_to_back",
+				// No InitialItems — the queue is drained from the start.
+			},
+		},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		Stores: config.RemoteStoresConfig{
+			Stores: map[string]config.StoreEntry{
+				"queue-store": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+	// Script the executor — but we expect it to never be called.
+	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "should-not-run")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "acq-unavail-pass", Version: "1",
+		FrameResolution: node.FrameResolutionSerialQueue,
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "worker",
+					Executor: "stub",
+					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
+						Resolve: node.ResolvePass,
+					},
+				},
+				scenario.WithStores(scenario.WriteClaimRef("queue-store", "@queue")),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-acq-unavail-pass", map[string]any{})
+
+	worker := h.FindNode(iid, "worker")
+	require.NotNil(t, worker)
+
+	// Node should record last_outcome=passed.
+	require.True(t, waitForLastOutcome(t, h, worker.ID, shared.LastOutcomePassed, 30*time.Second),
+		"worker should record last_outcome=passed under on_acquire_unavailable: pass")
+
+	var wRow *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
+		wRow = r
+		return err
+	}))
+	require.Equal(t, shared.NodeStateFresh, wRow.State,
+		"worker should be fresh after resolve=pass")
+
+	// The stub producer must have seen at least one Open (the one that
+	// returned Unavailable). The executor must not have been invoked.
+	var sawOpen bool
+	for _, c := range sub.Calls() {
+		if c.Verb == "open" {
+			sawOpen = true
+			break
+		}
+	}
+	require.True(t, sawOpen, "stub producer should have received at least one Open")
+
+	// Stub executor's observed-request log should be empty.
+	require.Empty(t, h.Stub.Observed(),
+		"executor must not be invoked when on_acquire_unavailable: pass fires")
+}

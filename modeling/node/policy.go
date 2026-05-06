@@ -50,6 +50,11 @@ type PolicyAction struct {
 	MaxDelayMs     int                `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
 	Targets        []string           `yaml:"targets,omitempty" json:"targets,omitempty"`
 	ReasonTemplate string             `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
+	// Frame controls whether the invalidate emit (when Action ==
+	// "invalidate") joins the current cascade (FrameIn) or buffers
+	// through frame.EnqueueOrCoalesce as a new frame (FrameNext;
+	// default). See the reactive-loops + lifecycle-handlers spec §5.
+	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
 }
 
 // EvaluatorState is the persisted per-node, per-error-class policy chain
@@ -75,9 +80,13 @@ type EvaluatorState struct {
 //   - "invalidate"         — targets returned in Targets.
 //   - "give_up"            — terminal.
 type ResolvedAction struct {
-	Kind     string
-	DelayMs  int
-	Targets  []string
+	Kind    string
+	DelayMs int
+	Targets []string
+	// Frame is propagated from PolicyAction.Frame for invalidate
+	// actions; the runner forwards this through to InvalidateNode's
+	// Frame field. Empty defaults to FrameNext at the call site.
+	Frame    string
 	Reason   string
 	NewState EvaluatorState
 }
@@ -145,6 +154,7 @@ func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng fun
 		return ResolvedAction{
 			Kind:    "invalidate",
 			Targets: action.Targets,
+			Frame:   action.Frame,
 			NewState: EvaluatorState{
 				ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
 			},

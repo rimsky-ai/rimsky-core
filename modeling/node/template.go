@@ -64,7 +64,65 @@ type TemplateNodeDef struct {
 	QualityRules []qualityrule.Spec         `yaml:"quality_rules,omitempty" json:"quality_rules,omitempty"`
 	Inherits     []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
 	ErrorTypes   map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
+
+	// Lifecycle handlers — declarative slots for the four supervisor
+	// terminal-event paths. Per the reactive-loops + lifecycle-handlers
+	// spec at .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §3.
+	// All four slots are optional; absent slots use today's hardcoded
+	// supervisor defaults (silent retry on Unavailable, by_changed on
+	// Complete, route through error_types on Blocked/Errored).
+	OnAcquireUnavailable *OnAcquireUnavailableHandler `yaml:"on_acquire_unavailable,omitempty" json:"on_acquire_unavailable,omitempty"`
+	OnExecutorComplete   *OnExecutorCompleteHandler   `yaml:"on_executor_complete,omitempty"   json:"on_executor_complete,omitempty"`
+	OnExecutorBlocked    *OnExecutorTerminalHandler   `yaml:"on_executor_blocked,omitempty"    json:"on_executor_blocked,omitempty"`
+	OnExecutorErrored    *OnExecutorTerminalHandler   `yaml:"on_executor_errored,omitempty"    json:"on_executor_errored,omitempty"`
 }
+
+// OnAcquireUnavailableHandler declares the supervisor's behavior when
+// any required claim's Open returns Unavailable. See spec §3.
+type OnAcquireUnavailableHandler struct {
+	Resolve    string             `yaml:"resolve" json:"resolve"`                             // pass | retry | error
+	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
+	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
+}
+
+// OnExecutorCompleteHandler declares the supervisor's behavior on a
+// Complete terminal. See spec §3.
+type OnExecutorCompleteHandler struct {
+	Resolve    string             `yaml:"resolve" json:"resolve"` // by_changed | always_propagate | never_propagate
+	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
+}
+
+// OnExecutorTerminalHandler declares behavior on a Blocked or Errored
+// terminal. See spec §3.
+type OnExecutorTerminalHandler struct {
+	Resolve    string             `yaml:"resolve" json:"resolve"`                             // error | pass
+	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
+	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
+}
+
+// HandlerInvalidate is the optional invalidate-emit slot on every
+// lifecycle handler. Fires unconditionally when the handler runs;
+// orthogonal to resolve. See spec §3.5.
+type HandlerInvalidate struct {
+	Targets []string `yaml:"targets" json:"targets"`
+	Frame   string   `yaml:"frame,omitempty" json:"frame,omitempty"` // in | next; default next
+}
+
+// Resolve constants per handler. The validator at template-deploy
+// rejects out-of-vocabulary combinations.
+const (
+	ResolvePass            = "pass"
+	ResolveRetry           = "retry"
+	ResolveError           = "error"
+	ResolveByChanged       = "by_changed"
+	ResolveAlwaysPropagate = "always_propagate"
+	ResolveNeverPropagate  = "never_propagate"
+
+	FrameIn   = "in"
+	FrameNext = "next"
+
+	SelfTarget = "self"
+)
 
 // NodeStoreRef declares this node's claim against a registered store.
 // Selector is opaque text post-substitution; the store parses and

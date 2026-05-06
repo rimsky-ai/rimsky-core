@@ -95,7 +95,7 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 		// as part of the state transition; no separate clear call needed).
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Nodes().UpdateState(ctx, n.ID,
-				shared.NodeStateStale, cascade.ReasonHeartbeatLost, tx)
+				shared.NodeStateStale, cascade.ReasonHeartbeatLost, "", tx)
 		}); err != nil {
 			log.Warn("tick: heartbeat_lost state transition failed",
 				"node_id", n.ID.String(), "error", err.Error())

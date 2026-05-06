@@ -95,7 +95,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, "stale", cascade.ReasonPolicyRetry, tx)
+			worker.ID, "stale", cascade.ReasonPolicyRetry, "", tx)
 	}))
 
 	// Re-read frame_id; it must still be set.

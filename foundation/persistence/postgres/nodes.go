@@ -28,7 +28,7 @@ import (
 )
 
 const nodeCols = `
-  id, instance_id, node_type, executor, schedule_cron, state, dependencies,
+  id, instance_id, node_type, executor, schedule_cron, state, last_outcome, dependencies,
   current_error_class, retry_counter, action_index, last_heartbeat_at,
   assigned_supervisor_id, frame_id, created_at, updated_at
 `
@@ -251,14 +251,19 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 // UpdateState enforces the node state machine on every call. Takes a row
 // lock for the duration of the transition so two concurrent updaters can't
 // compute conflicting next-states.
+//
+// `lastOutcome` is the resolution flavor for terminal-for-this-frame
+// transitions; the empty string "" means "do not write the column"
+// (preserves the existing value via COALESCE).
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
 	id shared.UUID,
 	state shared.NodeState,
 	reason cascade.TransitionReason,
+	lastOutcome shared.LastOutcome,
 	tx persistence.Tx,
 ) error {
-	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
+	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason, lastOutcome)
 }
 
 func (s *nodesImpl) enforceAndUpdate(
@@ -267,11 +272,13 @@ func (s *nodesImpl) enforceAndUpdate(
 	id shared.UUID,
 	state shared.NodeState,
 	reason cascade.TransitionReason,
+	lastOutcome shared.LastOutcome,
 ) error {
 	var current shared.NodeState
+	var frameIDBefore *shared.UUID
 	err := ex.QueryRow(ctx,
-		`SELECT state FROM rimsky_nodes WHERE id = $1 FOR UPDATE`, id,
-	).Scan(&current)
+		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&current, &frameIDBefore)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// TS parity: silent no-op when row gone.
@@ -297,17 +304,45 @@ func (s *nodesImpl) enforceAndUpdate(
 	// here means producers don't have to issue a separate SetFrameID call
 	// — and a producer that forgets cannot strand a stale frame_id on a
 	// fresh row (per review Issue 8 / Issue 24).
+	//
+	// last_outcome is preserved when the caller passes "" (empty); explicit
+	// values overwrite. COALESCE($3::text, last_outcome) leaves the
+	// column unchanged on transitions like → stale or → running where
+	// the resolution flavor is not yet known.
+	var outcomeArg any
+	if lastOutcome == "" {
+		outcomeArg = nil
+	} else {
+		outcomeArg = string(lastOutcome)
+	}
 	_, err = ex.Exec(ctx,
 		`UPDATE rimsky_nodes
 		   SET state = $2,
 		       updated_at = NOW(),
 		       assigned_supervisor_id = CASE WHEN $2 = 'running' THEN assigned_supervisor_id ELSE NULL END,
 		       last_heartbeat_at = CASE WHEN $2 = 'running' THEN last_heartbeat_at ELSE NULL END,
-		       frame_id = CASE WHEN $2 = 'fresh' THEN NULL ELSE frame_id END
+		       frame_id = CASE WHEN $2 = 'fresh' THEN NULL ELSE frame_id END,
+		       last_outcome = COALESCE($3::text, last_outcome)
 		 WHERE id = $1`,
-		id, string(state),
+		id, string(state), outcomeArg,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Refresh frame progress: any state-transition write within a frame
+	// counts as progress for frame_timeout_ms's "no progress in window"
+	// semantics. The frame_id captured BEFORE the UPDATE is the closing
+	// frame for transitions to 'fresh' (which clear frame_id); using the
+	// before-value lets the closing frame record progress.
+	if frameIDBefore != nil {
+		if _, err := ex.Exec(ctx,
+			`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
+			*frameIDBefore,
+		); err != nil {
+			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.EvaluatorState, tx persistence.Tx) error {
@@ -343,6 +378,17 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *sha
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET frame_id = $2, updated_at = NOW() WHERE id = $1`, id, frameID)
+	return err
+}
+
+// ClearLastOutcome resets last_outcome to NULL on the row. Used by the
+// operator reset path (modeling/controlapi/nodes.go::handleResetNode)
+// so the dashboard does not display a stale `failed` resolution flavor
+// while the node transitions back through stale → running → fresh.
+func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+	ex := s.q(tx)
+	_, err := ex.Exec(ctx,
+		`UPDATE rimsky_nodes SET last_outcome = NULL, updated_at = NOW() WHERE id = $1`, id)
 	return err
 }
 
@@ -389,6 +435,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		r               persistence.NodeRow
 		executor        *string
 		scheduleCron    *string
+		lastOutcome     *string
 		currentErrClass *string
 		lastHB          *time.Time
 		assignedSup     *string
@@ -396,7 +443,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	)
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
-		&executor, &scheduleCron, &r.State,
+		&executor, &scheduleCron, &r.State, &lastOutcome,
 		&r.Dependencies,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameID,
@@ -406,6 +453,9 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	}
 	r.Executor = derefString(executor)
 	r.ScheduleCron = derefString(scheduleCron)
+	if lastOutcome != nil {
+		r.LastOutcome = shared.LastOutcome(*lastOutcome)
+	}
 	r.CurrentErrorClass = derefString(currentErrClass)
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB

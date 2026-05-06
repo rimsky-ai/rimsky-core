@@ -27,6 +27,10 @@ var allReasons = []TransitionReason{
 	ReasonInfraReenqueue,
 	ReasonPureCascade,
 	ReasonDispatchImpossible,
+	ReasonAcquirePass,
+	ReasonHandlerComplete,
+	ReasonHandlerError,
+	ReasonHandlerPass,
 }
 
 var allStates = []shared.NodeState{
@@ -49,9 +53,16 @@ func TestTransitionTable(t *testing.T) {
 			"dispatch_claimed":    shared.NodeStateRunning,
 			"pure_cascade":        shared.NodeStateFresh,
 			"dispatch_impossible": shared.NodeStateFailed,
+			"acquire_pass":        shared.NodeStateFresh,
+			// policy_give_up from stale supports
+			// on_acquire_unavailable: { resolve: error } with
+			// error_types[X].policy ending in give_up.
+			"policy_give_up": shared.NodeStateFailed,
 		},
 		shared.NodeStateRunning: {
 			"work_completed":    shared.NodeStateFresh,
+			"handler_complete":  shared.NodeStateFresh,
+			"handler_pass":      shared.NodeStateFresh,
 			"policy_retry":      shared.NodeStateStale,
 			"policy_invalidate": shared.NodeStateStale,
 			"heartbeat_lost":    shared.NodeStateStale,
@@ -126,4 +137,90 @@ func TestPureCascadeOnlyValidFromStale(t *testing.T) {
 			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
 		})
 	}
+}
+
+// TestNextState_AcquirePass confirms stale → fresh under ReasonAcquirePass,
+// illegal from other states.
+func TestNextState_AcquirePass(t *testing.T) {
+	got, err := NextState(shared.NodeStateStale, ReasonAcquirePass)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateFresh, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateRunning,
+		shared.NodeStateFailed,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonAcquirePass)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_HandlerComplete confirms running → fresh under
+// ReasonHandlerComplete, illegal from other states.
+func TestNextState_HandlerComplete(t *testing.T) {
+	got, err := NextState(shared.NodeStateRunning, ReasonHandlerComplete)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateFresh, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateStale,
+		shared.NodeStateFailed,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonHandlerComplete)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_HandlerPass confirms running → fresh under ReasonHandlerPass,
+// illegal from other states.
+func TestNextState_HandlerPass(t *testing.T) {
+	got, err := NextState(shared.NodeStateRunning, ReasonHandlerPass)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateFresh, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateStale,
+		shared.NodeStateFailed,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonHandlerPass)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_HandlerErrorIsAuditOnly confirms ReasonHandlerError is not
+// a direct NextState input from any state — it's an audit-log marker only.
+func TestNextState_HandlerErrorIsAuditOnly(t *testing.T) {
+	for _, from := range allStates {
+		from := from
+		t.Run(string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonHandlerError)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestLastOutcomeStringSerialization protects the column-value contract:
+// LastOutcome constants must serialize to the documented strings.
+func TestLastOutcomeStringSerialization(t *testing.T) {
+	require.Equal(t, "fresh_changed", string(shared.LastOutcomeFreshChanged))
+	require.Equal(t, "fresh_unchanged", string(shared.LastOutcomeFreshUnchanged))
+	require.Equal(t, "passed", string(shared.LastOutcomePassed))
+	require.Equal(t, "pure_cascade", string(shared.LastOutcomePureCascade))
+	require.Equal(t, "failed", string(shared.LastOutcomeFailed))
 }

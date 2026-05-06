@@ -76,8 +76,14 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 
 // invalidateNodeRequest carries the optional human-readable reason an
 // operator supplies on POST /nodes/:id/invalidate.
+//
+// Frame controls whether the invalidate joins the current cascade
+// ("in") or buffers through frame.EnqueueOrCoalesce as a new frame
+// ("next"; default). See the reactive-loops + lifecycle-handlers
+// spec §5.
 type invalidateNodeRequest struct {
 	Reason string `json:"reason,omitempty"`
+	Frame  string `json:"frame,omitempty"` // "" | "in" | "next"; default "next"
 }
 
 // registerNodesRoutes wires the /nodes and /instances/:id_or_key/nodes groups.
@@ -122,6 +128,13 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		var body invalidateNodeRequest
 		// Body is optional; ignore decode error when body is empty.
 		_ = json.NewDecoder(req.Body).Decode(&body)
+		// Validate Frame; reject anything other than "" | "in" | "next".
+		switch body.Frame {
+		case "", "in", "next":
+		default:
+			badRequest(w, "frame must be \"in\" or \"next\"")
+			return
+		}
 
 		var row *persistence.NodeRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -154,6 +167,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			Logger:       deps.Logger,
 			TargetNodeID: id,
 			Reason:       "operator_override",
+			Frame:        body.Frame,
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -200,9 +214,19 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Clear error bookkeeping + defensively clear stale frame_id in one tx.
+		// Clear error bookkeeping + defensively clear stale frame_id +
+		// clear last_outcome in one tx. Clearing last_outcome here means
+		// the dashboard does not show a stale `failed` resolution
+		// flavor while the node transitions back through stale →
+		// running → fresh — UpdateState's COALESCE pattern preserves
+		// last_outcome on stale → running, so without this clear, a
+		// failed → stale → running → (fresh+changed) sequence would
+		// briefly display state=stale, last_outcome=failed.
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
+				return err
+			}
+			if err := deps.Persist.Nodes().ClearLastOutcome(ctx, id, tx); err != nil {
 				return err
 			}
 			return deps.Persist.Nodes().SetFrameID(ctx, id, nil, tx)

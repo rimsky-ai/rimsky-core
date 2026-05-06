@@ -81,14 +81,16 @@ func TestWorkerRequestPhaseAdvancesOnClaim(t *testing.T) {
 	// (b) it advanced through the active phase (executor saw the work), and
 	// (c) it was deleted at terminal. Phase column existence is verified
 	// by the SELECT itself succeeding.
+	//
+	// Sequencing note: `Queue.Complete` runs inside the supervisor's
+	// poll-goroutine AFTER `applyTerminalComplete` returns, so the
+	// node may reach `fresh` slightly before the worker_request row is
+	// physically deleted. Polling for the deletion directly removes
+	// the race; the prior pattern (wait for fresh, then SELECT count)
+	// flaked under load.
 	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
-
-	var rowsRemaining int
-	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_worker_request WHERE node_id = $1`, n.ID,
-	).Scan(&rowsRemaining))
-	require.Equal(t, 0, rowsRemaining,
+	require.True(t, h.WaitForWorkerRequestDeleted(n.ID, 5*time.Second),
 		"worker-request row must be deleted at terminal (phase='completed' equivalent)")
 }
 

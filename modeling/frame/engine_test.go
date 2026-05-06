@@ -5,6 +5,7 @@
 package frame_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -43,6 +44,12 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Driver,
 // seedFrameRow inserts a rimsky_frames row with explicit fields. Goes
 // through ExecForTest because some target states (completed/failed) and
 // queued_at offsets are not reachable through FrameStore.
+//
+// last_progress_at is set to startedAt (when non-nil) so the stuck-frame
+// warning sees a frame whose progress timestamp matches its perceived
+// stuck time — the per-test contract is that a "stuck-since-X" frame
+// has had no progress since X. Per the reactive-loops + lifecycle-handlers
+// spec §7, frame_timeout_ms compares against last_progress_at.
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Driver,
 	instanceID uuid.UUID, mode, state string, sources []uuid.UUID,
 	startedAt *time.Time, timeoutMs int64) uuid.UUID {
@@ -53,11 +60,15 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Driver,
 		end := time.Now()
 		endedAt = &end
 	}
+	progressAt := time.Now()
+	if startedAt != nil {
+		progressAt = *startedAt
+	}
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, mode, state, source_node_ids, queued_at, started_at, ended_at, frame_timeout_ms)
-        VALUES ($1, $2, $3, $4, $5::UUID[], now(), $6, $7, $8)
-    `, id, instanceID, mode, state, sources, startedAt, endedAt, timeoutMs)
+            (frame_id, instance_id, mode, state, source_node_ids, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
+        VALUES ($1, $2, $3, $4, $5::UUID[], now(), $6, $7, $8, $9)
+    `, id, instanceID, mode, state, sources, startedAt, endedAt, timeoutMs, progressAt)
 	return id
 }
 
@@ -191,7 +202,11 @@ func TestRunTick_AdvanceTrailing_Coalesce(t *testing.T) {
 	require.Equal(t, "running", queuedState)
 }
 
-func TestRunTick_ReapStuckFrame(t *testing.T) {
+// TestRunTick_WarnStuckFrame asserts the stuck-frame path is purely
+// observational: the `frame.stuck.observed` slog warning fires, but the
+// frame stays running, the wedged node keeps its state, and the
+// instance is NOT terminated.
+func TestRunTick_WarnStuckFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -203,51 +218,37 @@ func TestRunTick_ReapStuckFrame(t *testing.T) {
 	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "running",
 		[]uuid.UUID{src}, &stuckStart, 600000)
 	seedNode(t, ctx, d, instanceID, src, "stale", &frameID)
-	// No claimed dispatches => stuck.
+	// No claimed dispatches => stuck (predicate matches).
 
-	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
+	require.NoError(t, runTickAgainstDriver(ctx, d, logger))
+
+	// Warning fired with frame_id reference.
+	logged := buf.String()
+	require.Contains(t, logged, "frame.stuck.observed",
+		"expected stuck-frame observation; got logger output: %q", logged)
+	require.Contains(t, logged, frameID.String(),
+		"warning should mention frame_id %s; got %q", frameID.String(), logged)
+
+	// Frame stays running — no destructive action.
 	var fState, nState string
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &fState)
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_nodes WHERE id = $1`, []any{src}, &nState)
-	require.Equal(t, "failed", fState)
-	require.Equal(t, "failed", nState)
-}
+	require.Equal(t, "running", fState,
+		"frame must stay running after stuck-frame observation; warning is non-destructive")
+	require.Equal(t, "stale", nState,
+		"wedged node must keep its state; warning does not fail nodes")
 
-// TestRunTick_ReapStuckFrame_TerminatesInstance pins the
-// terminated_at write inside reapOneStuckFrame: when the only frame
-// for an instance is wedged and gets reaped, the instance row's
-// terminated_at must be populated so the OnInstanceTerminated
-// fan-out can fire downstream. Without this set, the instance
-// would stay un-terminated forever and the lifecycle event would
-// leak.
-func TestRunTick_ReapStuckFrame_TerminatesInstance(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
-	src := uuid.New()
-	stuckStart := time.Now().Add(-11 * time.Minute)
-	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "running",
-		[]uuid.UUID{src}, &stuckStart, 600000)
-	seedNode(t, ctx, d, instanceID, src, "stale", &frameID)
-
-	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
-
-	var frameState string
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &frameState)
-	require.Equal(t, "failed", frameState)
-
+	// Instance terminated_at must NOT be set as a side effect of the warning.
 	var terminatedAt *time.Time
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceID}, &terminatedAt)
-	require.NotNil(t, terminatedAt,
-		"reaping the only stuck frame must set rimsky_instances.terminated_at so the lifecycle terminate fan-out fires")
+	require.Nil(t, terminatedAt,
+		"stuck-frame warning must not terminate the instance")
 }
 
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {

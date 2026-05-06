@@ -25,7 +25,7 @@ import (
 )
 
 const nodeCols = `
-  id, instance_id, node_type, executor, schedule_cron, state, dependencies,
+  id, instance_id, node_type, executor, schedule_cron, state, last_outcome, dependencies,
   current_error_class, retry_counter, action_index, last_heartbeat_at,
   assigned_supervisor_id, frame_id, created_at, updated_at
 `
@@ -237,14 +237,19 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 // UpdateState enforces the node state machine on every call, mirroring
 // the postgres impl. SQLite has no SELECT FOR UPDATE; the surrounding
 // BEGIN IMMEDIATE writer-slot hold serialises the SELECT+UPDATE atomically.
+//
+// `lastOutcome` is the resolution flavor for terminal-for-this-frame
+// transitions; the empty string "" preserves the existing column value
+// via COALESCE.
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
 	id shared.UUID,
 	state shared.NodeState,
 	reason cascade.TransitionReason,
+	lastOutcome shared.LastOutcome,
 	tx persistence.Tx,
 ) error {
-	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason)
+	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason, lastOutcome)
 }
 
 func (s *nodesImpl) enforceAndUpdate(
@@ -253,11 +258,13 @@ func (s *nodesImpl) enforceAndUpdate(
 	id shared.UUID,
 	state shared.NodeState,
 	reason cascade.TransitionReason,
+	lastOutcome shared.LastOutcome,
 ) error {
 	var current shared.NodeState
+	var frameIDBefore sql.NullString
 	err := ex.QueryRowContext(ctx,
-		`SELECT state FROM rimsky_nodes WHERE id = ?`, id.String(),
-	).Scan(&current)
+		`SELECT state, frame_id FROM rimsky_nodes WHERE id = ?`, id.String(),
+	).Scan(&current, &frameIDBefore)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -276,17 +283,40 @@ func (s *nodesImpl) enforceAndUpdate(
 				"computed": expected, "reason": reason.Kind,
 			})
 	}
+	var outcomeArg any
+	if lastOutcome == "" {
+		outcomeArg = nil
+	} else {
+		outcomeArg = string(lastOutcome)
+	}
 	_, err = ex.ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET state = ?,
 		       updated_at = ?,
 		       assigned_supervisor_id = CASE WHEN ? = 'running' THEN assigned_supervisor_id ELSE NULL END,
 		       last_heartbeat_at = CASE WHEN ? = 'running' THEN last_heartbeat_at ELSE NULL END,
-		       frame_id = CASE WHEN ? = 'fresh' THEN NULL ELSE frame_id END
+		       frame_id = CASE WHEN ? = 'fresh' THEN NULL ELSE frame_id END,
+		       last_outcome = COALESCE(?, last_outcome)
 		 WHERE id = ?`,
-		string(state), nowUTC(), string(state), string(state), string(state), id.String(),
+		string(state), nowUTC(), string(state), string(state), string(state), outcomeArg, id.String(),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Refresh frame progress: any state-transition write within a frame
+	// counts as progress for frame_timeout_ms's "no progress in window"
+	// semantics. The frame_id captured BEFORE the UPDATE is the closing
+	// frame for transitions to 'fresh' (which clear frame_id); using the
+	// before-value lets the closing frame record progress.
+	if frameIDBefore.Valid {
+		if _, err := ex.ExecContext(ctx,
+			`UPDATE rimsky_frames SET last_progress_at = ? WHERE frame_id = ?`,
+			nowUTC(), frameIDBefore.String,
+		); err != nil {
+			return fmt.Errorf("nodes.updateState: refresh frame progress: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.EvaluatorState, tx persistence.Tx) error {
@@ -317,6 +347,17 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *sha
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
 		nullableUUID(frameID), nowUTC(), id.String())
+	return err
+}
+
+// ClearLastOutcome resets last_outcome to NULL on the row. Used by the
+// operator reset path so the dashboard does not display a stale
+// `failed` resolution flavor while the node transitions back through
+// stale → running → fresh.
+func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+	_, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_nodes SET last_outcome = NULL, updated_at = ? WHERE id = ?`,
+		nowUTC(), id.String())
 	return err
 }
 
@@ -356,6 +397,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		executor        sql.NullString
 		scheduleCron    sql.NullString
 		stateStr        string
+		lastOutcomeStr  sql.NullString
 		dependenciesStr string
 		currentErrClass sql.NullString
 		lastHB          sql.NullString
@@ -366,7 +408,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	)
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
-		&executor, &scheduleCron, &stateStr,
+		&executor, &scheduleCron, &stateStr, &lastOutcomeStr,
 		&dependenciesStr,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameIDStr,
@@ -397,6 +439,9 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.ID = id
 	r.InstanceID = instanceID
 	r.State = shared.NodeState(stateStr)
+	if lastOutcomeStr.Valid {
+		r.LastOutcome = shared.LastOutcome(lastOutcomeStr.String)
+	}
 	r.Dependencies = deps
 	r.Executor = executor.String
 	r.ScheduleCron = scheduleCron.String

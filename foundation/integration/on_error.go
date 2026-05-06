@@ -127,7 +127,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	case "retry", "discard_then_retry", "resume_then_retry":
 		if nd.State == shared.NodeStateRunning {
 			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyRetry, tx)
+				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyRetry, "", tx)
 			}); err != nil {
 				return err
 			}
@@ -147,7 +147,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	case "invalidate":
 		if nd.State == shared.NodeStateRunning {
 			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyInvalidate, tx)
+				return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateStale, cascade.ReasonPolicyInvalidate, "", tx)
 			}); err != nil {
 				return err
 			}
@@ -199,13 +199,14 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				TargetNodeID: tid,
 				Reason:       "policy_invalidate",
 				SupervisorID: args.SupervisorID,
+				Frame:        resolved.Frame,
 			})
 		}
 		return nil
 
 	case "give_up":
 		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateFailed, cascade.ReasonPolicyGiveUp, tx)
+			return sb.Nodes().UpdateState(ctx, args.NodeID, shared.NodeStateFailed, cascade.ReasonPolicyGiveUp, shared.LastOutcomeFailed, tx)
 		}); err != nil {
 			return err
 		}

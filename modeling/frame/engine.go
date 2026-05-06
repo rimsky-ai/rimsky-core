@@ -31,7 +31,7 @@ type Logger interface {
 // Steps per §4.1 of the spec:
 //  1. Detect frame-end (transition running → completed|failed).
 //  2. Advance queued (serial_queue and coalesce) — promote oldest queued to running.
-//  3. Reap stuck frames (timeout exceeded with no claimed dispatches).
+//  3. Warn on stuck frames (timeout exceeded with no claimed dispatches) — observation only, not destructive.
 //  4. Reap orphan dispatches (frame in terminal state but dispatch still claimed).
 //
 // Each step opens its own short tx so partial failures don't poison the
@@ -44,8 +44,8 @@ func RunTick(ctx context.Context, store persistence.Store, queue persistence.Que
 	if err := runAdvanceQueued(ctx, store, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: advance: %w", err)
 	}
-	if err := runReapStuckFrames(ctx, store, logger); err != nil {
-		return fmt.Errorf("frame.RunTick: reap stuck: %w", err)
+	if err := runWarnStuckFrames(ctx, store, logger); err != nil {
+		return fmt.Errorf("frame.RunTick: warn stuck: %w", err)
 	}
 	if err := runReapOrphanFrameDispatches(ctx, store, queue, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: reap orphan: %w", err)
@@ -196,7 +196,15 @@ func advanceOneFrame(
 // advanceOneFrame without surfacing as a failure to the caller.
 var errSourceOutOfBounds = fmt.Errorf("frame.advance: source node out of bounds")
 
-func runReapStuckFrames(ctx context.Context, store persistence.Store, logger Logger) error {
+// runWarnStuckFrames observes frames that have made no progress within
+// their `frame_timeout_ms` window and emits a single `frame.stuck.observed`
+// slog warning per such frame. It does NOT take destructive action:
+// the frame stays `running`, no nodes are failed, the instance is not
+// terminated. Operators are expected to investigate via the dashboard /
+// event log and decide whether to issue an operator invalidate, mark a
+// node failed manually, or wait. (Pre-v1 design choice: no blanket
+// "frame too old; kill it" policy.)
+func runWarnStuckFrames(ctx context.Context, store persistence.Store, logger Logger) error {
 	var stuckFrames []persistence.FrameStuck
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ss, err := store.Frames().ListStuckRunningFrames(ctx, tx)
@@ -210,36 +218,12 @@ func runReapStuckFrames(ctx context.Context, store persistence.Store, logger Log
 	}
 
 	for _, s := range stuckFrames {
-		if err := reapOneStuckFrame(ctx, store, s.FrameID, s.InstanceID); err != nil {
-			logger.Warn("frame.stuck.reap_failed",
-				"frame_id", s.FrameID,
-				"instance_id", s.InstanceID,
-				"timeout_ms", s.FrameTimeoutMs,
-				"error", err.Error())
-			continue
-		}
-		logger.Warn("frame.stuck.reaped",
+		logger.Warn("frame.stuck.observed",
 			"frame_id", s.FrameID,
 			"instance_id", s.InstanceID,
 			"timeout_ms", s.FrameTimeoutMs)
 	}
 	return nil
-}
-
-// reapOneStuckFrame fails one stuck frame in its own tx. Marks all
-// stale/running nodes in the instance as failed, transitions the frame
-// to failed, and (per spec §2.4) sets rimsky_instances.terminated_at
-// when no further work remains.
-func reapOneStuckFrame(ctx context.Context, store persistence.Store, frameID, instanceID shared.UUID) error {
-	return store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Frames().FailAllPendingNodes(ctx, instanceID, tx); err != nil {
-			return err
-		}
-		if _, err := store.Frames().MarkRunningFrameTerminal(ctx, frameID, persistence.FrameStateFailed, tx); err != nil {
-			return err
-		}
-		return store.Frames().MarkInstanceTerminatedIfDone(ctx, instanceID, tx)
-	})
 }
 
 // runReapOrphanFrameDispatches releases dispatch claims whose frame has

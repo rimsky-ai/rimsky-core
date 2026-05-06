@@ -23,15 +23,10 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation
-1. **`docs/architecture.md`** — update when package structure, blessed invariants, or the three-collections boundary changes.
-2. **`docs/specs/2026-05-04-service-protocol-contract.md`** — update when the wire contract changes. Authoritative source for all three service protocols. The proto sources at `protocols/proto/v1/*.proto` and the contract doc must stay in sync. (`docs/protocol.md` is now a one-page pointer to this contract.)
-3. **`docs/node-graph-design.md`** — update when the conceptual model (states, messages, error actions, resource semantics) changes.
-4. **`docs/operator-guide.md`** — update when env vars, YAML config, or deployment topology changes.
-5. **`docs/executor-author-guide.md` / `docs/claim-producer-author-guide.md`** — update when the corresponding interface contract changes.
-6. **Cold-read annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
-7. **`CHANGELOG.md`** — append a bullet under `## Unreleased` describing the change and its rationale.
-8. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
-9. **Dead code** — remove anything the change has rendered unreachable.
+1. **Cold-read annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
+2. **`CHANGELOG.md`** — append a bullet under `## Unreleased` describing the change and its rationale.
+3. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
+4. **Dead code** — remove anything the change has rendered unreachable.
 
 ## Fix Every Bug You Find
 If you discover a bug, broken behavior, or incorrect code while working — even if it's unrelated to your current task — fix it. Do not log it for later. Do not defer it. Do not work around it. Do not describe it in a report and move on. Fix it, verify the fix, and document what you changed.
@@ -49,9 +44,9 @@ All new code must follow cold-read conventions (see `cold-read-cheatsheet.md` an
 The Go-specific lint set is enforced by `.golangci.yml` (`make lint`): gofmt, goimports, govet, staticcheck, unused, ineffassign, errcheck, revive (without the `exported` rule). Logging is stdlib `log/slog` only — no Zap, no Zerolog. HTTP routing is `go-chi/chi`. Postgres is `jackc/pgx/v5`. Cron parsing is `robfig/cron/v3`. Resist adding heavier alternatives (Viper, Cobra, Gin, Echo).
 
 ## Search Scoping
-Exclude from file searches: `.git/`, `vendor/`, `bin/`, `tmp/`, `proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
+Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
 
 ## Writing & Analysis
 - Save project-specific notes to project-local paths (`./CLAUDE.md`, `./docs/`, `./CHANGELOG.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
-- Design proposals go in `docs/` with a YYYY-MM-DD prefix (e.g. `docs/2026-04-25-stores-redesign.md`). Implementation execution logs go in `docs/history/` once the work lands.
+- Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (e.g. `docs/2026-04-25-stores-redesign.md`).

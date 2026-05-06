@@ -347,3 +347,228 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 	}
 	require.Contains(t, msg, "claude-agent")
 }
+
+// --- Lifecycle handler validation tests ---
+
+func TestValidateTemplate_OnAcquireUnavailable_Pass(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:                 "a",
+			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: ResolvePass},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_OnAcquireUnavailable_BadResolve(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:                 "a",
+			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: "bogus"},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.resolve")
+}
+
+func TestValidateTemplate_OnAcquireUnavailable_ErrorMissingClass(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:                 "a",
+			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: ResolveError},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.error_class")
+}
+
+func TestValidateTemplate_OnAcquireUnavailable_ErrorClassUnknown(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnAcquireUnavailable: &OnAcquireUnavailableHandler{
+				Resolve: ResolveError, ErrorClass: "not_declared",
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.error_class")
+}
+
+func TestValidateTemplate_OnExecutorComplete_AlwaysPropagate(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:               "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{Resolve: ResolveAlwaysPropagate},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_OnExecutorComplete_BadResolve(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:               "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{Resolve: "bogus"},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_executor_complete.resolve")
+}
+
+func TestValidateTemplate_OnExecutorBlocked_Pass(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:              "a",
+			OnExecutorBlocked: &OnExecutorTerminalHandler{Resolve: ResolvePass},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_OnExecutorErrored_BadResolve(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:              "a",
+			OnExecutorErrored: &OnExecutorTerminalHandler{Resolve: "bogus"},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_executor_errored.resolve")
+}
+
+func TestValidateTemplate_HandlerInvalidate_SelfTarget(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{
+				Resolve: ResolveByChanged,
+				Invalidate: &HandlerInvalidate{
+					Targets: []string{SelfTarget},
+					Frame:   FrameNext,
+				},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_HandlerInvalidate_BadFrame(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{
+				Resolve: ResolveByChanged,
+				Invalidate: &HandlerInvalidate{
+					Targets: []string{SelfTarget},
+					Frame:   "bogus",
+				},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.frame")
+}
+
+func TestValidateTemplate_HandlerInvalidate_UnknownTarget(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{
+				Resolve: ResolveByChanged,
+				Invalidate: &HandlerInvalidate{
+					Targets: []string{"nonexistent"},
+				},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.targets[0]")
+}
+
+func TestValidateTemplate_HandlerInvalidate_EmptyTargets(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnExecutorComplete: &OnExecutorCompleteHandler{
+				Resolve: ResolveByChanged,
+				Invalidate: &HandlerInvalidate{
+					Targets: []string{},
+				},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.targets")
+}
+
+func TestValidateTemplate_EmptyHandlerRejected(t *testing.T) {
+	// A handler with neither resolve nor invalidate is meaningless.
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:                 "a",
+			OnAcquireUnavailable: &OnAcquireUnavailableHandler{},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable")
+}
+
+func TestValidateTemplate_PolicyAction_Frame(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a"},
+			{Type: "b", ErrorTypes: map[string]ErrorTypePolicy{
+				"some_error": {Policy: []PolicyAction{
+					{Action: "invalidate", Targets: []string{"a"}, Frame: FrameIn},
+				}},
+			}},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateTemplate_PolicyAction_BadFrame(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a"},
+			{Type: "b", ErrorTypes: map[string]ErrorTypePolicy{
+				"some_error": {Policy: []PolicyAction{
+					{Action: "invalidate", Targets: []string{"a"}, Frame: "bogus"},
+				}},
+			}},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].frame")
+}

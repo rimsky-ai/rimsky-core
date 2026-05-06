@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Rimsky is a project-agnostic reactive node-graph orchestration platform. The codebase is organized into three Go modules plus a root modeling layer per the layer-crystallization design (`docs/specs/2026-05-04-layer-crystallization-design.md`):
+Rimsky is a project-agnostic reactive node-graph orchestration platform. The codebase is organized into three Go modules plus a root modeling layer per the layer-crystallization design (`.ok-planner/specs/2026-05-04-layer-crystallization-design.md`):
 
 1. **Foundation** — `foundation/` (own Go module: `github.com/fallguy/rimsky/foundation`). Cascade engine, claim/lock primitive types, integration-layer supervisor runner + sweeps, and foundation persistence (Postgres + SQLite drivers). The state machine, scope-byte conflict primitive, atomic acquisition transaction, worker-request lifecycle, orphan reapers, and the unified terminal-decision engine all live here.
 2. **Protocols** — `protocols/` (own Go module: `github.com/fallguy/rimsky/protocols`). The three service-protocol Go interfaces (`ClaimProducer`, `Executor`, `LifecycleSubscriber`) plus the `.proto` sources and generated bindings. Stdlib + grpc + protobuf only.
@@ -18,15 +18,15 @@ Rimsky still ships as three independent long-running processes (`rimsky-schedule
 
 **Executors** are peer services that speak the executor protocol (gRPC + HTTP+JSON bridge). Reference impls: `http-node` (Go), `claude-agent` (TypeScript / npm), `stub` (Go test fixture). Executors do **not** run in-process; supervisors dispatch to them over the wire.
 
-Vocabulary: 2 message types (`invalidate`, `recalculate`), 4 node states (`fresh`, `stale`, `running`, `failed`), 3 error actions (`retry`, `invalidate(targets)`, `give_up`). Read `docs/node-graph-design.md` for the conceptual model and `docs/architecture.md` for the implementation shape before making non-trivial changes.
+Vocabulary: 1 graph-level message (`invalidate` — see `docs/concepts/invalidate.md`); recalculation is a scheduler action, not a peer message. 4 node states (`fresh`, `stale`, `running`, `failed`) plus a sibling `last_outcome` column for resolution flavor (`fresh_changed`, `fresh_unchanged`, `passed`, `pure_cascade`, `failed`). 4 declarable lifecycle handlers (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_blocked`, `on_executor_errored`). 3 error actions (`retry`, `invalidate(targets)`, `give_up`). Read `docs/concepts/` for the conceptual model and `.ok-planner/specs/2026-05-04-foundation-contract.md` + `.ok-planner/specs/2026-05-04-modeling-layer-contract.md` for the implementation shape before making non-trivial changes.
 
-The three contracts in `docs/specs/` define the layered architecture's responsibilities:
+The three contracts in `.ok-planner/specs/` define the layered architecture's responsibilities:
 
-- `docs/specs/2026-05-04-foundation-contract.md` — what foundation owns (cascade, claim/lock primitives, atomic acquisition, persistence drivers, sweeps).
-- `docs/specs/2026-05-04-modeling-layer-contract.md` — what modeling owns (templates, instances, frames, scheduling, control-api, attributes, quality rules).
-- `docs/specs/2026-05-04-service-protocol-contract.md` — the three peer-service protocols and their boundaries.
+- `.ok-planner/specs/2026-05-04-foundation-contract.md` — what foundation owns (cascade, claim/lock primitives, atomic acquisition, persistence drivers, sweeps).
+- `.ok-planner/specs/2026-05-04-modeling-layer-contract.md` — what modeling owns (templates, instances, frames, scheduling, control-api, attributes, quality rules).
+- `.ok-planner/specs/2026-05-04-service-protocol-contract.md` — the three peer-service protocols and their boundaries.
 
-Earlier dated design docs in `docs/history/` capture the path here (stores redesign v2/v3, control-plane v1, frame-resolution, persistence-pluggable, layer crystallization). The contracts above supersede the earlier docs; the historical docs remain for context but are not authoritative.
+Earlier dated design docs in `.ok-planner/history/` capture the path here (stores redesign v2/v3, control-plane v1, frame-resolution, persistence-pluggable, layer crystallization). The contracts above supersede the earlier docs; the historical docs remain for context but are not authoritative.
 
 ## Package import rules (enforced; violations break the build)
 
@@ -156,6 +156,9 @@ The Phase-5 cycle consolidated the legacy split tables:
 - **SQLite is the dev-only driver.** Multi-process / multi-host SQLite is not supported. Production deployments must use the postgres driver.
 - **The unified image (`rimsky/all`) defaults to `driver: sqlite`** with state at `/var/lib/rimsky/state.db`. Running with replicas > 1 creates independent SQLite databases — broken. Use the per-process images plus the postgres driver for multi-replica deployments.
 - **YAML config: `claim_producers:` block (legacy alias `stores:`).** Each entry has optional `protocols: [...]` (default `[claim_producer]`); required `write_semantics_envelope: [...]` (legacy single-value `write_semantics:` accepted as a single-element envelope shortcut). Operator's declared envelope MUST be ⊆ producer's advertised envelope (validated at startup).
+- **Cascade-firing gate is `last_outcome == fresh_changed`, not `t.Changed`.** The supervisor's terminal-complete path now reads the resolved `last_outcome` (computed from the node's `on_executor_complete` handler resolution) before firing `cascadeChildrenStaleInTx` and `fanoutRecalculate`. Functionally identical to today's behavior under the default `by_changed` resolution; diverges under explicit `always_propagate` (force fresh_changed even on `changed:false`) and `never_propagate` (force fresh_unchanged even on `changed:true`). See spec `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md`.
+- **`pass` and `error` resolutions on `on_acquire_unavailable` / `on_executor_blocked` / `on_executor_errored` call `Abandon`** on already-Open'd claims (matching `handleOrphanedClaim` semantics). Fired before the state-transition tx; producer-side state is cleaned up first. Per-emit invalidate frame discipline (`frame: in | next`) on every invalidate emit declaration: operator-API, error_types policy, lifecycle-handler. Default empty → `next`.
+- **`frame_timeout_ms` measures "no progress in window," not frame age — and is purely advisory.** The scheduler tick emits a single `frame.stuck.observed` slog warning when `last_progress_at` (refreshed by every node-state transition write) falls outside the timeout, then takes no destructive action: the frame stays `running`, no nodes are failed, the instance is not terminated. A progressing self-invalidate loop stays under the timeout indefinitely; a wedged frame trips the warning. Pre-v1 design choice: no blanket "frame too old; kill it" policy.
 
 ## Where to look first
 
@@ -166,20 +169,15 @@ For external-consumer-facing material (cite from agents and external docs):
 - Agent-shaped indices: `docs/agents/llms.txt`, `docs/agents/llms-full.txt`
 - Human-shaped narrative onboarding: `docs/humans/landing.md`, `docs/humans/concepts.md`, `docs/humans/dashboard.md`
 - Public glossary (auto-generated): `docs/glossary.md`
-- Public vocabulary discipline / deprecated terms: `docs/vocabulary.md`
 
 For internal/working engineering material (do NOT cite from public surfaces):
 
-- Foundation contract: `docs/specs/2026-05-04-foundation-contract.md`
-- Modeling contract: `docs/specs/2026-05-04-modeling-layer-contract.md`
-- Service-protocol contract: `docs/specs/2026-05-04-service-protocol-contract.md`
-- Conceptual: `docs/internal/node-graph-design.md`
-- Implementation: `docs/internal/architecture.md`
-- Operating: `docs/internal/operator-guide.md`
-- Internal glossary (now superseded by `docs/glossary.md` for external use): `docs/internal/glossary.md`
-- Writing a claim producer (internal predecessor of `docs/protocols/claim-producer.md`): `docs/internal/claim-producer-author-guide.md`
-- Writing an executor (internal predecessor of `docs/protocols/executor.md`): `docs/internal/executor-author-guide.md`
+- Foundation contract: `.ok-planner/specs/2026-05-04-foundation-contract.md`
+- Modeling contract: `.ok-planner/specs/2026-05-04-modeling-layer-contract.md`
+- Service-protocol contract: `.ok-planner/specs/2026-05-04-service-protocol-contract.md`
 - Recent changes & rationale: `CHANGELOG.md` (long but informative)
+
+The pre-layer-crystallization design docs (`node-graph-design.md`, `architecture.md`, `operator-guide.md`, `glossary.md`, `claim-producer-author-guide.md`, `executor-author-guide.md`) were archived during the doc restructure. Their successor public-surface homes are `docs/concepts/`, `docs/protocols/`, and `docs/glossary.md` (already cited above); the foundation / modeling / service-protocol contracts above carry the implementation-shape and architectural-boundary material. The archived originals live under `.ok-planner/archive/internal/` for historical reference but should not be cited from working material.
 
 ## Code style
 

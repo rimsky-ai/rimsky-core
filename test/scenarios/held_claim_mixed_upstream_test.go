@@ -1,0 +1,135 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// Task 30 — held_claim_mixed_upstream.
+//
+// A three-node template: A acquires a held claim from a stub queue
+// (passes via on_acquire_unavailable: pass); C is an independent
+// upstream of B that commits Changed=true; B inherits the held claim
+// from A AND depends on C.
+//
+// Expected behavior:
+//   - C cascades to B; B dispatches.
+//   - B's substitution into {{claim.held.address}} fails because A
+//     never acquired the claim.
+//   - template_resolution_failed routes through B's error_types policy
+//     (give_up); B lands in failed.
+package scenarios
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/modeling/shared"
+	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+)
+
+func TestHeldClaimMixedUpstream(t *testing.T) {
+	t.Parallel()
+
+	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
+		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		PickPolicies: map[string]stubstore.PickPolicyConfig{
+			"@queue": {
+				OnCommitDefault: "delete",
+				OnGiveUpDefault: "release_to_back",
+				// Empty queue — A's Open returns Unavailable.
+			},
+		},
+	})
+	t.Cleanup(teardown)
+
+	h := scenario.Start(t, scenario.HarnessOpts{
+		Stores: config.RemoteStoresConfig{
+			Stores: map[string]config.StoreEntry{
+				"queue-store": {
+					Endpoint:     "grpc://" + endpoint,
+					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				},
+			},
+		},
+	})
+	h.Stub.WhenType("a").Complete(map[string]any{}, true, "a-should-not-run")
+	h.Stub.WhenType("c").Complete(map[string]any{"c": 1}, true, "c-ran")
+	h.Stub.WhenType("b").Complete(map[string]any{}, true, "b-should-not-run")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "held-mixed-upstream", Version: "1",
+		FrameResolution: node.FrameResolutionSerialQueue,
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "a",
+					Executor: "stub",
+					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
+						Resolve: node.ResolvePass,
+					},
+				},
+				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "@queue", "rw", "held")),
+			),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"}),
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:         "b",
+					Executor:     "stub",
+					Dependencies: []string{"a", "c"},
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"template_resolution_failed": {
+							Policy: []node.PolicyAction{{Action: "give_up"}},
+						},
+					},
+				},
+				scenario.WithInherits(scenario.Inherit("held")),
+				scenario.WithAttributes(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						// Source-driven attribute that requires A to have
+						// acquired the held claim. When A passes, this
+						// substitution fails → template_resolution_failed.
+						"held_addr": map[string]any{
+							"type":   "string",
+							"source": "{{claim.held.address}}",
+						},
+					},
+					"required": []any{"held_addr"},
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-held-mixed", map[string]any{})
+
+	a := h.FindNode(iid, "a")
+	bNode := h.FindNode(iid, "b")
+	c := h.FindNode(iid, "c")
+	require.NotNil(t, a)
+	require.NotNil(t, bNode)
+	require.NotNil(t, c)
+
+	// A passes (last_outcome=passed); C commits (last_outcome=fresh_changed).
+	require.True(t, waitForLastOutcome(t, h, a.ID, shared.LastOutcomePassed, 30*time.Second),
+		"a should record last_outcome=passed")
+	require.True(t, waitForLastOutcome(t, h, c.ID, shared.LastOutcomeFreshChanged, 30*time.Second),
+		"c should record last_outcome=fresh_changed")
+
+	// B should land in failed via template_resolution_failed → give_up.
+	require.True(t, h.WaitForNodeState(bNode.ID, shared.NodeStateFailed, 30*time.Second),
+		"b should land in failed via template_resolution_failed → give_up")
+
+	var bRow *persistence.NodeRow
+	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
+		r, err := h.Persist.Nodes().Get(h.Ctx, bNode.ID, tx)
+		bRow = r
+		return err
+	}))
+	require.Equal(t, shared.LastOutcomeFailed, bRow.LastOutcome,
+		"b's give_up should record last_outcome=failed")
+}

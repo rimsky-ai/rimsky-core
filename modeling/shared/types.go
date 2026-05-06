@@ -23,6 +23,26 @@ const (
 	NodeStateFailed  NodeState = "failed"
 )
 
+// LastOutcome is the resolution flavor recorded on rimsky_nodes for
+// terminal-for-this-frame transitions. Distinct from NodeState; the
+// node's state machine is unchanged. last_outcome lives on the
+// rimsky_nodes row alongside state and is written by the same
+// transition that lands the node in fresh or failed.
+//
+// Values are persisted as TEXT under both Postgres and SQLite. NULL
+// means "no outcome recorded yet" (legacy fresh nodes pre-migration).
+//
+// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §2.2.
+type LastOutcome string
+
+const (
+	LastOutcomeFreshChanged   LastOutcome = "fresh_changed"
+	LastOutcomeFreshUnchanged LastOutcome = "fresh_unchanged"
+	LastOutcomePassed         LastOutcome = "passed"
+	LastOutcomePureCascade    LastOutcome = "pure_cascade"
+	LastOutcomeFailed         LastOutcome = "failed"
+)
+
 type Severity string
 
 const (

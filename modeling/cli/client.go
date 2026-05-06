@@ -497,6 +497,10 @@ type Node struct {
 // InvalidateNodeRequest is the POST /nodes/{id}/invalidate body.
 type InvalidateNodeRequest struct {
 	Reason string `json:"reason,omitempty"`
+	// Frame controls the per-emit frame discipline ("" | "in" | "next").
+	// Default "" → "next". See the reactive-loops + lifecycle-handlers
+	// spec §5.
+	Frame string `json:"frame,omitempty"`
 }
 
 // GetNode calls GET /nodes/{id}.

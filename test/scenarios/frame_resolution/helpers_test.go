@@ -100,18 +100,3 @@ func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.U
 	}
 	return false
 }
-
-func waitForFrameTerminal(t *testing.T, h *scenario.Harness, frameID uuid.UUID, timeout time.Duration) (string, bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		var state string
-		h.QueryRowSQL(
-			`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &state)
-		if state == "completed" || state == "failed" {
-			return state, true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return "", false
-}

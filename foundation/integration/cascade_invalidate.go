@@ -31,6 +31,25 @@ type InvalidateArgs struct {
 	// Callers originating from the scheduler tick / cron fire leave this
 	// empty (no supervisor is holding the row then).
 	SupervisorID string
+	// Frame controls whether the invalidate joins the current cascade
+	// (FrameIn) or buffers through frame.EnqueueOrCoalesce as a new
+	// frame (FrameNext; default).
+	//
+	// Empty string is treated as FrameNext for backwards compatibility
+	// with all existing call sites (operator invalidate, scheduler
+	// cron-fire, cascade-from-commit).
+	//
+	// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §5.
+	Frame string
+	// SourceFrameID, when non-nil, overrides the frame_id read from the
+	// source node row in invalidateInFrame. Used by post-Complete
+	// handler.invalidate emits where the running-tx has already cleared
+	// the source's frame_id (per the defensive guard in
+	// nodes.UpdateState on transitions to 'fresh'). Without the
+	// override, in-frame self-invalidate from on_executor_complete
+	// would always fall back to next-frame, defeating the spec's
+	// "single frame for the entire drain" property.
+	SourceFrameID *shared.UUID
 }
 
 // InvalidateNode routes an invalidate event to TargetNodeID per the
@@ -41,10 +60,18 @@ type InvalidateArgs struct {
 // frame engine (§4.1) advances the queued frame to running and writes the
 // source nodes stale + frame_id atomically.
 //
-// Flow:
+// Default Flow (Frame == "" or "next"):
 //  1. Append message_emitted + message_received events for audit.
 //  2. Load target node to resolve its instance_id.
 //  3. Run frame.EnqueueOrCoalesce inside a tx, keyed on (instance_id, target.ID).
+//
+// In-frame Flow (Frame == "in"):
+//  1. Append the audit events.
+//  2. Load target + source to resolve their instance_id and frame_id.
+//  3. If the source has a non-NULL frame_id and target/source are in the
+//     same instance, mark the target stale + frame_id = source's frame_id
+//     in a single tx (no frame enqueue, no coalesce).
+//  4. Otherwise fall back to the next-frame path.
 //
 // kill_requested writes are gone (§blessed-invariant 11): operator
 // invalidates do not preempt running work; they enqueue a frame.
@@ -104,8 +131,21 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 		return nil
 	}
 
-	// Enqueue/coalesce into a frame for this instance.
-	return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	useFrame := args.Frame
+	if useFrame == "" {
+		useFrame = "next"
+	}
+	if useFrame == "in" {
+		return invalidateInFrame(ctx, args, target, log)
+	}
+	return invalidateNextFrame(ctx, args, target, log)
+}
+
+// invalidateNextFrame is the default path: enqueue or coalesce a frame
+// for the target's instance, sourced on the target's id. Today's
+// behavior, preserved unchanged.
+func invalidateNextFrame(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, log shared.Logger) error {
+	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, target.InstanceID, target.ID)
 		if err != nil {
 			return err
@@ -116,5 +156,68 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 			"target_node_id", target.ID.String(),
 			"reason", args.Reason)
 		return nil
+	})
+}
+
+// invalidateInFrame is the frame: in path. Bypasses
+// frame.EnqueueOrCoalesce and directly transitions the target
+// fresh → stale within the source's frame (the source's frame_id).
+//
+// Frame-id resolution order:
+//  1. args.SourceFrameID, if non-nil (post-Complete handler.invalidate
+//     where the running-tx has already cleared the source row's
+//     frame_id);
+//  2. otherwise re-read from the source node row.
+//
+// Falls back to the next-frame path when:
+//   - SourceNodeID is nil and SourceFrameID is nil (no source frame
+//     to join);
+//   - the source can't be loaded and SourceFrameID is nil;
+//   - the resolved frame_id is nil (e.g., the source is itself stale
+//     and the cascade hasn't established a frame for this propagation).
+//
+// Per the reactive-loops + lifecycle-handlers spec §5.
+func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, log shared.Logger) error {
+	if args.SourceFrameID == nil && args.SourceNodeID == nil {
+		log.Debug("InvalidateNode: frame=in fallback (no source); next-frame")
+		return invalidateNextFrame(ctx, args, target, log)
+	}
+	// Resolve frame_id outside the mutating tx. Calling
+	// invalidateNextFrame from inside an open tx would self-deadlock
+	// under SQLite (MaxOpenConns=1) and tie up two pool connections
+	// concurrently under postgres. Per spec §5 this fallback
+	// must remain reachable from the legacy invalidateTargets policy
+	// chain (frame: in + nil source frame_id), so we resolve first
+	// and only open the mutating tx on the success path.
+	frameID := args.SourceFrameID
+	if frameID == nil {
+		var src *persistence.NodeRow
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			s, err := args.Persist.Nodes().Get(ctx, *args.SourceNodeID, tx)
+			src = s
+			return err
+		}); err != nil || src == nil || src.FrameID == nil {
+			srcStr := "(nil)"
+			if args.SourceNodeID != nil {
+				srcStr = args.SourceNodeID.String()
+			}
+			log.Debug("InvalidateNode: frame=in fallback (no source frame); next-frame",
+				"source_node_id", srcStr)
+			return invalidateNextFrame(ctx, args, target, log)
+		}
+		frameID = src.FrameID
+	}
+	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := args.Persist.Nodes().MarkStaleForCascade(ctx, target.ID, *frameID, tx); err != nil {
+			return err
+		}
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &target.ID, InstanceID: &target.InstanceID,
+			Kind: "state_transition",
+			Payload: map[string]any{
+				"from": "fresh", "to": "stale", "reason": "in_frame_invalidate",
+				"frame_id": frameID.String(),
+			},
+		}, tx)
 	})
 }

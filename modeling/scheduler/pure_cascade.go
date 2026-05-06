@@ -110,7 +110,7 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	// (per the defensive guard in enforceAndUpdate; spec §4.4 + §10.3,
 	// fresh nodes carry no frame_id). No separate SetFrameID call needed.
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return sb.Nodes().UpdateState(ctx, n.ID, shared.NodeStateFresh, cascade.ReasonPureCascade, tx)
+		return sb.Nodes().UpdateState(ctx, n.ID, shared.NodeStateFresh, cascade.ReasonPureCascade, shared.LastOutcomePureCascade, tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
 			"node_id", n.ID.String(), "error", err.Error())

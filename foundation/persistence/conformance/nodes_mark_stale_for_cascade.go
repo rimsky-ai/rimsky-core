@@ -80,7 +80,7 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, staleNullFrameID,
-			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, tx); err != nil {
+			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 			return err
 		}
 
@@ -95,11 +95,11 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, runningID,
-			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, tx); err != nil {
+			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, runningID,
-			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx); err != nil {
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
 			return err
 		}
 		// Pin the running node's frame_id to a different frame; the cascade

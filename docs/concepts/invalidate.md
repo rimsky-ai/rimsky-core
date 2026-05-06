@@ -29,6 +29,23 @@ The single-message design keeps the cascade engine small and auditable. The stat
 
 In all three cases, the propagation rule is identical.
 
+A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the four lifecycle handler slots may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
+
+## `frame: in | next` — per-emit frame discipline
+
+Every invalidate emit declaration carries an optional `frame:` field controlling whether the emit joins the current cascade or buffers a new frame:
+
+- **`frame: next`** (default) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. This preserves today's behavior: cascades don't cross frame boundaries.
+- **`frame: in`** — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Useful for self-invalidation loops (`{ targets: [self], frame: in }`) that want a single frame to span all iterations.
+
+Where it can appear:
+
+- Operator API (`POST /nodes/{id}/invalidate { frame: ... }`).
+- Error-types policy invalidate action (`policy: [{action: invalidate, targets: [...], frame: ...}]`).
+- Lifecycle-handler invalidate (`on_*: { invalidate: { targets: [...], frame: ... } }`).
+
+Default is `next` everywhere except the cascade-on-commit and pure-cascade scheduler walks (which are scheduler actions, not configurable invalidate emits).
+
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` is the operator-facing trigger.

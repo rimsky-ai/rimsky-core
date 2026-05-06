@@ -212,7 +212,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_, _ = store.Nodes().CountByState(ctx, nil)
 		}},
 		{"Nodes.UpdateState", func() {
-			_ = store.Nodes().UpdateState(ctx, someID, shared.NodeStateFresh, cascade.ReasonOperatorReset, nil)
+			_ = store.Nodes().UpdateState(ctx, someID, shared.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
 		}},
 		{"Nodes.UpdateHeartbeat", func() {
 			_ = store.Nodes().UpdateHeartbeat(ctx, someID, time.Now(), "sup", nil)
@@ -382,9 +382,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		}},
 		{"Frames.ListStuckRunningFrames", func() {
 			_, _ = store.Frames().ListStuckRunningFrames(ctx, nil)
-		}},
-		{"Frames.FailAllPendingNodes", func() {
-			_ = store.Frames().FailAllPendingNodes(ctx, someID, nil)
 		}},
 		{"Frames.ListOrphanFrameDispatches", func() {
 			_, _ = store.Frames().ListOrphanFrameDispatches(ctx, nil)

@@ -34,6 +34,10 @@ These four predicates are the totality of the foundation's "read me at decision 
 
 A **template** is a content-addressed, reusable graph shape declaring nodes, edges, attributes, frame-resolution policy, and any embedded executor/producer references. Templates are the unit of declaration; instances (§4) are the unit of execution.
 
+Per-node template specs MAY declare four lifecycle-handler blocks (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_blocked`, `on_executor_errored`) per the reactive-loops + lifecycle-handlers spec at `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md`. Each handler declares a `resolve` ∈ `{pass, error, retry}` and an optional `invalidate { targets, frame }` emit. Validation at template-deploy enforces the resolve enum and any `error_class` reference resolves against the node's declared `error_types` policy. Templates without any lifecycle-handler block preserve today's hardcoded supervisor behavior (default `by_changed` cascade gate; executor-supplied error class on Errored).
+
+PolicyAction emits and lifecycle-handler emits both gain a per-emit `frame: in | next` field controlling whether the emitted invalidate joins the current running frame (`in`) or enqueues a new one (`next`). Default for cascade recalculation is the scheduler's choice (not configurable); default for handler/policy emits is `next`.
+
 ### 3.2 Content-addressing
 
 Template ID is `sha256-<64-hex>` over the RFC 8785 JCS-canonicalized template spec bytes. Implementation: the `modeling/template/canonical/` package (formerly `core/canonical/`) computes `CanonicalSpecHash`. Hash bytes are not pinned across pre-v1 changes; consumers MUST re-resolve by tag rather than caching hash strings.
@@ -304,6 +308,8 @@ The four user-facing state names map to the foundation's two-bit-plus-flag space
 | false     | false                   | true          | `stale`   |
 | false     | true                    | n/a           | `running` |
 | false     | false                   | false         | `failed`  |
+
+Each `rimsky_nodes` row also carries a `last_outcome` sibling field expressing the resolution flavor of the most recent terminal: `fresh_changed | fresh_unchanged | passed | pure_cascade | failed`. The cascade-firing gate is `last_outcome == fresh_changed` (functionally identical to the prior `t.Changed` gate under default `by_changed`; divergent under the lifecycle-handler `always_propagate` / `never_propagate` resolves).
 
 ### 9.2 Message vocabulary
 

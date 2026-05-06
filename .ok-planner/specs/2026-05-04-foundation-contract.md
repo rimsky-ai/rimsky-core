@@ -171,13 +171,19 @@ Resolution is single, terminal, and aggregate-outcome-driven. The foundation nev
 
 The "holding subgraph" itself is a modeling-layer concept; the foundation requires only that the modeling layer supplies (a) a completion predicate and (b) an aggregate-outcome predicate. The foundation contributes the row lock, the verb dispatch, and the row cleanup.
 
+### 5.6 Lifecycle-handler-driven resolution
+
+The foundation's terminal handler dispatches lifecycle-handler resolutions supplied by the modeling layer (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_blocked`, `on_executor_errored`). Per the reactive-loops + lifecycle-handlers spec at `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md`, each handler resolves to one of: `pass` (fresh terminal with `last_outcome=passed`, no cascade), `error` (route through the modeling layer's error-class chain), or `retry` (re-enqueue without retry counter bump). The foundation provides the dispatch primitive; the modeling layer owns the resolution semantics and the per-error-class routing.
+
+The foundation also exposes a `last_outcome` column on the node-state table (`rimsky_nodes.last_outcome`) — a sibling field to `state` capturing the resolution flavor of the most recent terminal (`fresh_changed | fresh_unchanged | passed | pure_cascade | failed`). The cascade-firing gate is `last_outcome == fresh_changed` (functionally identical to the prior `t.Changed` gate under default `by_changed`, divergent under `always_propagate` / `never_propagate`). The column is a foundation-layer surface — the cascade engine consults it; the modeling layer assigns the values per its lifecycle-handler resolution.
+
 ## 6. Persistence contract
 
 ### 6.1 Tables owned by the foundation
 
 The foundation defines and owns the following persistence schema:
 
-- **Node-state table.** Per-node `has_value` / `has_outstanding_request` / `auto_recovers` plus modeling-layer correlation columns. Implementation: `rimsky_nodes` (split-owned with the modeling layer per modeling contract §11.3).
+- **Node-state table.** Per-node `has_value` / `has_outstanding_request` / `auto_recovers` plus a `last_outcome` sibling field expressing the most recent terminal's resolution flavor (`fresh_changed | fresh_unchanged | passed | pure_cascade | failed`), plus modeling-layer correlation columns. Implementation: `rimsky_nodes` (split-owned with the modeling layer per modeling contract §11.3). The cascade-firing gate is `last_outcome == fresh_changed`.
 - **Worker-request table.** Outstanding work, with `claimed_by`, heartbeat timestamp, `phase` column expressing active/held lifecycle. Implementation: `rimsky_worker_request`.
 - **Claim-handle table.** Acquired scopes, with `holder`, `scope_data BYTEA`, address, payload, purpose tag, `realized_write_semantics`, `is_held` flag, worker-request FK. Implementation: `rimsky_claim_handle`.
 

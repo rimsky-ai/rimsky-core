@@ -40,6 +40,23 @@ import (
 )
 
 // acquisition is the in-memory record of one successful acquisition.
+//
+// NOT safe for concurrent use across goroutines. The omnibus runner
+// owns one acquisition per dispatched run and threads the same
+// `*acquisition` (or an `acquisition` value) sequentially through
+// dispatch → terminal → release on a single goroutine. Release-path
+// helpers (`releaseInheritedClaimsInTx`, `releaseClaim`, etc.) read
+// fields like `HeldSubgraphs` / `NodeType` / `NodeID` / `InstanceID`
+// without locking; if a future refactor parallelises any of those
+// paths it must add explicit synchronization (or pass copies of the
+// fields it needs) before sharing the pointer between goroutines.
+//
+// Per blessed-invariant 11 (userdata is opaque) and the cold-read
+// "Explicit Code" rule, no helper here mutates `acquisition` fields
+// after the acquisition tx commits — fields are effectively immutable
+// post-acquisition. New fields added here must preserve that property
+// or the single-goroutine contract above; mutable post-acquisition
+// state belongs in a per-call value, not on `acquisition`.
 type acquisition struct {
 	DispatchID     shared.UUID
 	NodeID         shared.UUID
@@ -51,7 +68,44 @@ type acquisition struct {
 	NodeDef        *node.TemplateNodeDef
 	HeldSubgraphs  []node.HoldingSubgraph
 	InstanceParams map[string]any
+
+	// PartialLocks are locks that successfully Open'd before an
+	// Unavailable was encountered. Captured only when the acquisition
+	// path took the Unavailable branch (errAcquireUnavailable from
+	// tryAcquire); the outer caller uses these for Abandon cleanup
+	// under on_acquire_unavailable resolutions of pass / error.
+	PartialLocks []AcquiredLock
+	// UnavailableSpec is the spec whose Open returned Unavailable, when
+	// the acquisition took the Unavailable branch. Carried through the
+	// rollback so the unavailable-handler dispatch can log / route on
+	// it.
+	UnavailableSpec locks.ClaimSpec
 }
+
+// openResult discriminates the three outcomes of acquiring one
+// lock-or-claim spec under the §7.3 acquisition flow:
+//
+//	openResultAcquired   — the spec acquired successfully.
+//	openResultUnavailable — the producer returned Available=false.
+//	                        Routed through on_acquire_unavailable.
+//	openResultBail        — any other reason (eligibility, scope
+//	                        conflict, named-lock counter limit). The
+//	                        per-candidate tx rolls back without firing
+//	                        the unavailable handler.
+type openResult int
+
+const (
+	openResultAcquired openResult = iota
+	openResultUnavailable
+	openResultBail
+)
+
+// errAcquireUnavailable is a sentinel returned from tryAcquire when
+// any required claim's Open returned Unavailable. Like
+// errTryAcquireRollback it's not a real error to surface — the outer
+// caller interprets it and dispatches the
+// on_acquire_unavailable handler.
+var errAcquireUnavailable = fmt.Errorf("supervisor: acquire bailed on Unavailable claim (sentinel)")
 
 // acquireCandidate runs the §7.3 flow against the live database.
 func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.Duration) (acquisition, bool, error) {
@@ -72,6 +126,10 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			continue
 		}
 		acq, ok, err := tryAcquireWithTx(ctx, args, cand, heartbeatInterval)
+		if err == errAcquireUnavailable {
+			handleAcquireUnavailable(ctx, args, acq, cand)
+			continue
+		}
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -90,17 +148,22 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
 				return err
 			}
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: "work_started", Payload: map[string]any{
 					"supervisor_id": args.SupervisorID,
 					"dispatch_id":   acq.DispatchID.String(),
 				},
-			}, tx)
+			}, tx); err != nil {
+				return err
+			}
+			for _, lk := range acq.Locks {
+				if err := emitLockAcquired(ctx, args, tx, acq, lk); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
-		for _, lk := range acq.Locks {
-			emitLockAcquired(ctx, args, acq, lk)
-		}
 		return acq, true, nil
 	}
 	return acquisition{}, false, nil
@@ -135,7 +198,10 @@ func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]persistence.C
 
 // tryAcquireWithTx wraps tryAcquire in its own tx so a failed
 // candidate's partial mutations roll back rather than leak into the
-// next candidate.
+// next candidate. The errAcquireUnavailable sentinel propagates out so
+// the outer dispatch loop can run the on_acquire_unavailable handler;
+// the partial-acquired list is in acq.PartialLocks for Abandon
+// cleanup.
 func tryAcquireWithTx(
 	ctx context.Context, args RunArgs, cand persistence.Candidate,
 	heartbeatInterval time.Duration,
@@ -157,6 +223,12 @@ func tryAcquireWithTx(
 		}
 		return nil
 	})
+	if err == errAcquireUnavailable {
+		// Tx rolled back via the sentinel. acq carries PartialLocks /
+		// UnavailableSpec for the outer caller to dispatch the
+		// on_acquire_unavailable handler.
+		return acq, false, errAcquireUnavailable
+	}
 	if err != nil && err != errTryAcquireRollback {
 		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: %w", err)
 	}
@@ -219,14 +291,37 @@ func tryAcquire(
 
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, ok, err := acquireOneLock(ctx, args, tx, sp, cand, heartbeatInterval, heldSubgraphs)
+		al, res, err := acquireOneLock(ctx, args, tx, sp, cand, heartbeatInterval, heldSubgraphs)
 		if err != nil {
 			return acquisition{}, false, err
 		}
-		if !ok {
+		switch res {
+		case openResultAcquired:
+			acquiredLocks = append(acquiredLocks, al)
+		case openResultUnavailable:
+			// Carry the partial-acquired list and the unavailable spec
+			// out across the rollback so the outer caller can dispatch
+			// the on_acquire_unavailable handler.
+			unavailableSpec, _ := sp.(locks.ClaimSpec)
+			out := acquisition{
+				DispatchID:      cand.DispatchID,
+				NodeID:          cand.NodeID,
+				InstanceID:      nd.InstanceID,
+				NodeType:        nd.NodeType,
+				Executor:        nd.Executor,
+				FrameID:         cand.FrameID,
+				NodeDef:         nodeDef,
+				HeldSubgraphs:   heldSubgraphs,
+				PartialLocks:    acquiredLocks,
+				UnavailableSpec: unavailableSpec,
+			}
+			if inst != nil {
+				out.InstanceParams = inst.Params
+			}
+			return out, false, errAcquireUnavailable
+		case openResultBail:
 			return acquisition{}, false, nil
 		}
-		acquiredLocks = append(acquiredLocks, al)
 	}
 
 	out := acquisition{
@@ -262,18 +357,30 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 }
 
 // acquireOneLock handles one spec inside the acquisition tx.
+// acquireOneLock dispatches one spec to the right acquisition path and
+// returns one of the three openResult flavors. NamedLockSpec acquisitions
+// never report Unavailable (acquired or bail only). ClaimSpec
+// acquisitions may report Unavailable when the producer's Open returns
+// Available=false.
 func acquireOneLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	sp any, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
-) (AcquiredLock, bool, error) {
+) (AcquiredLock, openResult, error) {
 	switch spec := sp.(type) {
 	case locks.NamedLockSpec:
-		return acquireNamedLock(ctx, args, tx, spec, cand, heartbeatInterval)
+		al, ok, err := acquireNamedLock(ctx, args, tx, spec, cand, heartbeatInterval)
+		if err != nil {
+			return AcquiredLock{}, openResultBail, err
+		}
+		if !ok {
+			return AcquiredLock{}, openResultBail, nil
+		}
+		return al, openResultAcquired, nil
 	case locks.ClaimSpec:
 		return acquireClaim(ctx, args, tx, spec, cand, heartbeatInterval, heldSubgraphs)
 	}
-	return AcquiredLock{}, false, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
+	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
 
 // acquireNamedLock enforces the counter-semaphore limit then inserts
@@ -344,17 +451,17 @@ func acquireClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
-) (AcquiredLock, bool, error) {
+) (AcquiredLock, openResult, error) {
 	s, ok := args.StoreRegistry.Get(spec.StoreName)
 	if !ok {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: unknown store %q", spec.StoreName)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown store %q", spec.StoreName)
 	}
 	scopeInitial, err := json.Marshal(spec.Selector)
 	if err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: marshal selector: %w", err)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: marshal selector: %w", err)
 	}
 	if err := args.AdvisoryLocker.TakeScopeLockInTx(ctx, tx, spec.StoreName, scopeInitial); err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: TakeScopeLockInTx: %w", err)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeScopeLockInTx: %w", err)
 	}
 	// Pre-Open conflict check: any existing scope-byte-equal holder must
 	// permit our intent under its own RealizedWriteSemantics. Per the
@@ -363,10 +470,10 @@ func acquireClaim(
 	// match equals the holder's recorded value.
 	conflicted, err := evaluateScopeConflict(ctx, args, tx, spec, cand)
 	if err != nil {
-		return AcquiredLock{}, false, err
+		return AcquiredLock{}, openResultBail, err
 	}
 	if conflicted {
-		return AcquiredLock{}, false, nil
+		return AcquiredLock{}, openResultBail, nil
 	}
 
 	rowID := uuid.New()
@@ -394,32 +501,32 @@ func acquireClaim(
 		IsHeld:             isHeld,
 	}
 	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Insert: %w", err)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
 	claimID := locks.ClaimID(rowID.String())
 	outcome, err := s.Open(ctx, claimID, spec)
 	if err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: Open(%s): %w", spec.StoreName, err)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Open(%s): %w", spec.StoreName, err)
 	}
-	// Store has nothing to give right now (e.g. drained items-table
-	// queue). Per the 2026-04-30 cleanup spec the store signals this
-	// via OpenOutcome.Available=false (was: all-empty ClaimResult under
-	// v3 §4.7's "pool-empty" convention). Roll back the tx and skip;
-	// the next scheduler tick may retry.
+	// Producer has nothing to give right now (e.g. drained items-table
+	// queue). The producer signals this via OpenOutcome.Available=false.
+	// Distinguished from openResultBail so the outer caller can route
+	// through the on_acquire_unavailable handler (default = silent
+	// retry preserving today's behavior).
 	if !outcome.Available {
-		return AcquiredLock{}, false, nil
+		return AcquiredLock{}, openResultUnavailable, nil
 	}
 	cr := outcome.Result
 
 	if err := args.LockHolders.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
-		return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
 	// Pick-policy claims have store-chosen scope; scoped claims
 	// keep the substituted selector (already written above).
 	if len(cr.Scope) > 0 && string(cr.Scope) != string(scopeInitial) {
 		if err := args.LockHolders.UpdateScope(ctx, rowID, args.SupervisorID, cr.Scope, tx); err != nil {
-			return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateScope: %w", err)
+			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateScope: %w", err)
 		}
 	}
 	// Persist the per-claim RealizedWriteSemantics returned by the
@@ -428,12 +535,12 @@ func acquireClaim(
 	// byte-equal-Scope claims must share this value.
 	if cr.RealizedWriteSemantics != "" {
 		if err := args.LockHolders.UpdateRealizedWriteSemantics(ctx, rowID, args.SupervisorID, string(cr.RealizedWriteSemantics), tx); err != nil {
-			return AcquiredLock{}, false, fmt.Errorf("acquireClaim: UpdateRealizedWriteSemantics: %w", err)
+			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateRealizedWriteSemantics: %w", err)
 		}
 	}
 
 	if err := insertHeldClaimHoldersAtAcquire(ctx, args, tx, rowID, cand, spec.Alias, heldSubgraphs); err != nil {
-		return AcquiredLock{}, false, err
+		return AcquiredLock{}, openResultBail, err
 	}
 
 	return AcquiredLock{
@@ -442,7 +549,7 @@ func acquireClaim(
 		ClaimResult:  cr,
 		Store:        s,
 		Alias:        spec.Alias,
-	}, true, nil
+	}, openResultAcquired, nil
 }
 
 // evaluateScopeConflict re-loads existing scope holders for the
@@ -607,12 +714,19 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, tx)
+			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
 	})
 }
 
-// emitLockAcquired emits the per-spec lock_acquired event.
-func emitLockAcquired(ctx context.Context, args RunArgs, acq acquisition, lk AcquiredLock) {
+// emitLockAcquired emits the per-spec lock_acquired event using the
+// caller's open `tx`. Tx-required to prevent the nested-tx footgun
+// (mirrors emitLockReleased): a fresh inner Persist.Transaction would
+// self-deadlock under SQLite (MaxOpenConns=1) and tie up two pool
+// connections under postgres if any future callsite invoked this from
+// inside an open tx.
+func emitLockAcquired(
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq acquisition, lk AcquiredLock,
+) error {
 	payload := map[string]any{
 		"holder_id":     lk.LockHolderID.String(),
 		"supervisor_id": args.SupervisorID,
@@ -627,12 +741,13 @@ func emitLockAcquired(ctx context.Context, args RunArgs, acq acquisition, lk Acq
 		payload["alias"] = sp.Alias
 		payload["intent"] = string(sp.Intent)
 	}
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "lock_acquired", Payload: payload,
-		}, tx)
-	})
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+		Kind: "lock_acquired", Payload: payload,
+	}, tx); err != nil {
+		return fmt.Errorf("emitLockAcquired: %w", err)
+	}
+	return nil
 }
 
 // claimScope returns the store's scope bytes for a ClaimSpec
