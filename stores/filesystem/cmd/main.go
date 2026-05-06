@@ -19,8 +19,8 @@
 //	  "@docs-ring":
 //	    root: documents
 //	    folder_pattern: "^[a-z][a-z0-9-]*$"
-//	    on_commit_default: release_to_back
-//	    on_give_up_default: release_to_back
+//	    on_commit: recycle
+//	    on_give_up: recycle
 //	    visibility_timeout_seconds: 1800
 //	    sync_strategy: on_open
 package main
@@ -38,6 +38,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/fallguy/rimsky/stores/common/action"
 	"github.com/fallguy/rimsky/stores/filesystem/server"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 )
@@ -56,12 +57,12 @@ type yamlConfig struct {
 }
 
 type yamlPickPolicy struct {
-	Root                     string `yaml:"root"`
-	FolderPattern            string `yaml:"folder_pattern"`
-	OnCommitDefault          string `yaml:"on_commit_default"`
-	OnGiveUpDefault          string `yaml:"on_give_up_default"`
-	VisibilityTimeoutSeconds int    `yaml:"visibility_timeout_seconds"`
-	SyncStrategy             string `yaml:"sync_strategy"`
+	Root                     string        `yaml:"root"`
+	FolderPattern            string        `yaml:"folder_pattern"`
+	OnCommit                 action.Action `yaml:"on_commit"`
+	OnGiveUp                 action.Action `yaml:"on_give_up"`
+	VisibilityTimeoutSeconds int           `yaml:"visibility_timeout_seconds"`
+	SyncStrategy             string        `yaml:"sync_strategy"`
 }
 
 func main() {
@@ -100,8 +101,8 @@ func main() {
 		policies[selector] = &fsstore.PickPolicy{
 			Root:              pp.Root,
 			FolderPattern:     pat,
-			OnCommitDefault:   pp.OnCommitDefault,
-			OnGiveUpDefault:   pp.OnGiveUpDefault,
+			OnCommit:          pp.OnCommit,
+			OnGiveUp:          pp.OnGiveUp,
 			VisibilityTimeout: time.Duration(pp.VisibilityTimeoutSeconds) * time.Second,
 			SyncStrategy:      pp.SyncStrategy,
 		}

@@ -303,8 +303,8 @@ func (s *ObservabilityServer) pickPoliciesView() (*genv1.AdminView, error) {
 		rows = append(rows, map[string]any{
 			"selector":                   sel,
 			"items_table":                pp.ItemsTable,
-			"on_commit_default":          pp.OnCommitDefault,
-			"on_give_up_default":         pp.OnGiveUpDefault,
+			"on_commit":                  string(pp.OnCommit.Kind),
+			"on_give_up":                 string(pp.OnGiveUp.Kind),
 			"visibility_timeout_seconds": int(pp.VisibilityTimeout.Seconds()),
 		})
 	}
@@ -313,8 +313,8 @@ func (s *ObservabilityServer) pickPoliciesView() (*genv1.AdminView, error) {
 		Schema: &genv1.AdminViewSchema{Columns: []*genv1.AdminViewColumn{
 			{Name: "selector", Type: "string"},
 			{Name: "items_table", Type: "string"},
-			{Name: "on_commit_default", Type: "string"},
-			{Name: "on_give_up_default", Type: "string"},
+			{Name: "on_commit", Type: "string"},
+			{Name: "on_give_up", Type: "string"},
 			{Name: "visibility_timeout_seconds", Type: "int"},
 		}},
 		Data:       data,

@@ -1981,9 +1981,9 @@ type ClaimAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	StoreName     string                 `protobuf:"bytes,2,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
-	Hold          bool                   `protobuf:"varint,3,opt,name=hold,proto3" json:"hold,omitempty"`                        // §5.6.3
-	OnCommit      string                 `protobuf:"bytes,4,opt,name=on_commit,json=onCommit,proto3" json:"on_commit,omitempty"` // "delete" | "release_to_back" | "release_to_head"
-	OnGiveUp      string                 `protobuf:"bytes,5,opt,name=on_give_up,json=onGiveUp,proto3" json:"on_give_up,omitempty"`
+	Hold          bool                   `protobuf:"varint,3,opt,name=hold,proto3" json:"hold,omitempty"`                          // §5.6.3
+	OnCommit      string                 `protobuf:"bytes,4,opt,name=on_commit,json=onCommit,proto3" json:"on_commit,omitempty"`   // "pop" | "pop_and_move" | "pop_and_delete" | "recycle"
+	OnGiveUp      string                 `protobuf:"bytes,5,opt,name=on_give_up,json=onGiveUp,proto3" json:"on_give_up,omitempty"` // same vocabulary as on_commit
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2124,7 +2124,7 @@ func (x *ClaimHeldPayload) GetTerminalNodeIds() []string {
 // `claim_id`, `store_name` per spec §9.8.
 type ClaimResolvedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "delete" | "release_to_back" | "release_to_head" | "delete_won"
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "commit" | "abandon" — the rimsky-side verb fired at held-claim resolution
 	ClaimId       string                 `protobuf:"bytes,2,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	StoreName     string                 `protobuf:"bytes,3,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
 	unknownFields protoimpl.UnknownFields

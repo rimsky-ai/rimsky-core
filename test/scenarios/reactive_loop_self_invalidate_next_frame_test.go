@@ -33,6 +33,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -44,8 +45,8 @@ func TestReactiveLoopSelfInvalidateNextFrame(t *testing.T) {
 		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
-				OnCommitDefault: "delete",
-				OnGiveUpDefault: "release_to_back",
+				OnCommit: action.Action{Kind: action.Pop},
+				OnGiveUp: action.Action{Kind: action.Recycle},
 				InitialItems: []json.RawMessage{
 					json.RawMessage(`{"i":1}`),
 					json.RawMessage(`{"i":2}`),

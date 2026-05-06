@@ -690,8 +690,8 @@ func draftNode() map[string]any {
 // not transitive — each downstream that needs the live claim declares
 // it explicitly). At terminal the supervisor fires Commit on the
 // store (success) or Abandon (failure); the postgres reference
-// store-service's per-policy `on_commit_default` /
-// `on_give_up_default` config governs disposition. This node just
+// store-service's per-policy `on_commit` /
+// `on_give_up` config governs disposition. This node just
 // reads the draft's output scope.
 func reviewNode() map[string]any {
 	return map[string]any{

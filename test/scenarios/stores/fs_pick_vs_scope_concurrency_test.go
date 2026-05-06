@@ -21,6 +21,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/stores/common/action"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 )
@@ -31,8 +32,8 @@ func TestFsPickVsScopeConcurrency(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs", "alpha"), 0o755))
 
 	pp := &fsstore.PickPolicy{
-		Root: "docs", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		Root: "docs", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute, SyncStrategy: "on_open",
 	}
 	grpcEndpoint, _, teardown := fsfixture.Start(t, fsfixture.Config{

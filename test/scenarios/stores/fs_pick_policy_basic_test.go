@@ -5,7 +5,7 @@
 // Basic ring-cycle scenario through the fs store's pick-policy
 // dispatch, exercised over the gRPC wire surface. Three folders
 // auto-discover under the configured sub-root; three sequential
-// Open → Commit cycles must rotate through all three (release_to_back).
+// Open → Commit cycles must rotate through all three (recycle).
 package stores
 
 import (
@@ -21,12 +21,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/stores/common/action"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 )
 
 // TestFsPickPolicy_BasicRingCycle verifies a full ring cycle through
-// the gRPC wire surface: pick → commit (release_to_back) → pick
+// the gRPC wire surface: pick → commit (recycle) → pick
 // (different folder) → commit → pick (third folder).
 func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 	root := t.TempDir()
@@ -37,8 +38,8 @@ func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 		}
 	}
 	pp := &fsstore.PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute, SyncStrategy: "on_open",
 	}
 	grpcAddr, _, teardown := fsfixture.Start(t, fsfixture.Config{

@@ -7,7 +7,7 @@
 // folder "alpha". Both acquirer nodes produce byte-equal regions
 // (json("docs/alpha")), so rimsky's conflict predicate serializes
 // them. Eventually both reach `fresh` in some order — the losing
-// acquirer recycles via on_give_up_default → release_to_back.
+// acquirer recycles via on_give_up: recycle.
 package stores
 
 import (
@@ -23,6 +23,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/scenario"
 	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/stores/common/action"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 )
@@ -33,13 +34,13 @@ func TestFsCrossQueueConcurrency(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs", "alpha"), 0o755))
 
 	p1 := &fsstore.PickPolicy{
-		Root: "docs", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		Root: "docs", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute, SyncStrategy: "on_open",
 	}
 	p2 := &fsstore.PickPolicy{
-		Root: "docs", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		Root: "docs", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute, SyncStrategy: "on_open",
 	}
 	grpcEndpoint, _, teardown := fsfixture.Start(t, fsfixture.Config{

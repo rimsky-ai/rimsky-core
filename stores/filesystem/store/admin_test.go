@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 func TestAdminBumpToHead_204(t *testing.T) {
@@ -22,8 +24,8 @@ func TestAdminBumpToHead_204(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
 	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
@@ -46,7 +48,7 @@ func TestAdminBumpToHead_204(t *testing.T) {
 }
 
 func TestAdminBumpToHead_404FolderMissing(t *testing.T) {
-	st, _, _ := newRingStore(t, "release_to_back", "release_to_back")
+	st, _, _ := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	handler := st.AdminHandler()
 	req := httptest.NewRequest(http.MethodPost, "/admin/bump-to-head/%40r",
 		strings.NewReader(`{"folder":"nonexistent"}`))
@@ -58,7 +60,7 @@ func TestAdminBumpToHead_404FolderMissing(t *testing.T) {
 }
 
 func TestAdminBumpToHead_409InProgress(t *testing.T) {
-	st, root, sub := newRingStore(t, "release_to_back", "release_to_back")
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	_, _ = st.Open(context.Background(), "c", "@r") // claims alpha
 	handler := st.AdminHandler()
@@ -72,7 +74,7 @@ func TestAdminBumpToHead_409InProgress(t *testing.T) {
 }
 
 func TestAdminBumpToHead_400UnknownSelector(t *testing.T) {
-	st, _, _ := newRingStore(t, "release_to_back", "release_to_back")
+	st, _, _ := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	handler := st.AdminHandler()
 	req := httptest.NewRequest(http.MethodPost, "/admin/bump-to-head/%40nope",
 		strings.NewReader(`{"folder":"x"}`))
@@ -89,7 +91,7 @@ func TestAdminBumpToHead_400UnknownSelector(t *testing.T) {
 // embedded separators, and ".." / "." literals; the cases caught by
 // each guard in admin.go are noted alongside.
 func TestAdminBumpToHead_400InvalidFolder(t *testing.T) {
-	st, _, _ := newRingStore(t, "release_to_back", "release_to_back")
+	st, _, _ := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	handler := st.AdminHandler()
 	cases := []struct {
 		name   string

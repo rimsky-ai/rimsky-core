@@ -262,8 +262,8 @@ message ClaimAcquiredPayload {
   string claim_id = 1;
   string store_name = 2;
   bool hold = 3;                           // §5.6.3
-  string on_commit = 4;                    // "delete" | "release_to_back" | "release_to_head"
-  string on_give_up = 5;
+  string on_commit = 4;                    // "pop" | "pop_and_move" | "pop_and_delete" | "recycle"
+  string on_give_up = 5;                   // same vocabulary as on_commit
 }
 
 // ClaimHeldPayload is emitted at commit of a claiming-source node when
@@ -282,7 +282,7 @@ message ClaimHeldPayload {
 // scheduler's claim-holder GC sweep (§13.5 step 3). Carries `action`,
 // `claim_id`, `store_name` per spec §9.8.
 message ClaimResolvedPayload {
-  string action = 1;                       // "delete" | "release_to_back" | "release_to_head" | "delete_won"
+  string action = 1;                       // "commit" | "abandon" — the rimsky-side verb fired at held-claim resolution
   string claim_id = 2;
   string store_name = 3;
 }

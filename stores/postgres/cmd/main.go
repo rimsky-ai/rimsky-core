@@ -15,8 +15,8 @@
 //	pick_policies:
 //	  "@queue":
 //	    items_table: items_inbound
-//	    on_commit_default: delete
-//	    on_give_up_default: release_to_back
+//	    on_commit: pop
+//	    on_give_up: recycle
 //	    visibility_timeout_seconds: 300
 //	host: 0.0.0.0
 //	grpc_port: 9101
@@ -38,6 +38,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 	"github.com/fallguy/rimsky/stores/postgres/server"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 )
@@ -67,10 +68,10 @@ type yamlConfig struct {
 }
 
 type yamlPickPolicy struct {
-	ItemsTable               string `yaml:"items_table"`
-	OnCommitDefault          string `yaml:"on_commit_default"`
-	OnGiveUpDefault          string `yaml:"on_give_up_default"`
-	VisibilityTimeoutSeconds int    `yaml:"visibility_timeout_seconds"`
+	ItemsTable               string        `yaml:"items_table"`
+	OnCommit                 action.Action `yaml:"on_commit"`
+	OnGiveUp                 action.Action `yaml:"on_give_up"`
+	VisibilityTimeoutSeconds int           `yaml:"visibility_timeout_seconds"`
 }
 
 func main() {
@@ -108,8 +109,8 @@ func main() {
 		}
 		policies[selector] = &pgsstore.PickPolicy{
 			ItemsTable:        pp.ItemsTable,
-			OnCommitDefault:   pp.OnCommitDefault,
-			OnGiveUpDefault:   pp.OnGiveUpDefault,
+			OnCommit:          pp.OnCommit,
+			OnGiveUp:          pp.OnGiveUp,
 			VisibilityTimeout: time.Duration(pp.VisibilityTimeoutSeconds) * time.Second,
 		}
 	}

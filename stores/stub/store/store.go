@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 // Store is the in-memory store implementation. Two operating modes: scoped-direct
@@ -33,8 +34,8 @@ type Store struct {
 type pickPolicy struct {
 	queue           []item
 	inFlight        map[string]item
-	defaultOnCommit string
-	defaultOnGiveUp string
+	defaultOnCommit action.Action
+	defaultOnGiveUp action.Action
 	nextSeq         int
 }
 
@@ -61,9 +62,9 @@ type Config struct {
 
 // PickPolicyConfig is the per-policy config (store-internal).
 type PickPolicyConfig struct {
-	OnCommitDefault string
-	OnGiveUpDefault string
-	InitialItems    []json.RawMessage
+	OnCommit     action.Action
+	OnGiveUp     action.Action
+	InitialItems []json.RawMessage
 }
 
 // New constructs a Store from cfg. The stub store declares a singleton
@@ -82,8 +83,8 @@ func New(cfg Config) *Store {
 	for selector, pc := range cfg.PickPolicies {
 		pp := &pickPolicy{
 			inFlight:        make(map[string]item),
-			defaultOnCommit: pc.OnCommitDefault,
-			defaultOnGiveUp: pc.OnGiveUpDefault,
+			defaultOnCommit: pc.OnCommit,
+			defaultOnGiveUp: pc.OnGiveUp,
 		}
 		for _, payload := range pc.InitialItems {
 			pp.nextSeq++
@@ -209,23 +210,24 @@ func (s *Store) applyPickActionByClaimID(claimID string, successPath bool) error
 		if !ok {
 			continue
 		}
-		var action string
+		var act action.Action
 		if successPath {
-			action = pp.defaultOnCommit
+			act = pp.defaultOnCommit
 		} else {
-			action = pp.defaultOnGiveUp
+			act = pp.defaultOnGiveUp
 		}
-		switch action {
-		case "delete":
+		switch act.Kind {
+		case action.Pop, action.PopAndMove, action.PopAndDelete:
+			// Stub has no separate folder concept; all three "pop" variants
+			// drop the in-flight entry. The distinction matters for
+			// fs/pg-store mechanics but reduces to "drain queue entry"
+			// here.
 			delete(pp.inFlight, itemID)
-		case "release_to_back":
+		case action.Recycle:
 			delete(pp.inFlight, itemID)
 			pp.queue = append(pp.queue, it)
-		case "release_to_head":
-			delete(pp.inFlight, itemID)
-			pp.queue = append([]item{it}, pp.queue...)
 		default:
-			return fmt.Errorf("stub store: applyPickAction: unknown action %q", action)
+			return fmt.Errorf("stub store: applyPickAction: unknown action %q", act.Kind)
 		}
 		return nil
 	}

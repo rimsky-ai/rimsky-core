@@ -304,6 +304,10 @@ func (s *ObservabilityServer) pickPoliciesView() (*genv1.AdminView, error) {
 			"in_progress_count":          inProg,
 			"visibility_timeout_seconds": int(pp.VisibilityTimeout.Seconds()),
 			"sync_strategy":              pp.SyncStrategy,
+			"on_commit":                  string(pp.OnCommit.Kind),
+			"on_commit_move_target":      pp.OnCommit.MoveTarget,
+			"on_give_up":                 string(pp.OnGiveUp.Kind),
+			"on_give_up_move_target":     pp.OnGiveUp.MoveTarget,
 		})
 	}
 	data, _ := structpb.NewStruct(map[string]any{"rows": rows})
@@ -315,6 +319,10 @@ func (s *ObservabilityServer) pickPoliciesView() (*genv1.AdminView, error) {
 			{Name: "in_progress_count", Type: "int"},
 			{Name: "visibility_timeout_seconds", Type: "int"},
 			{Name: "sync_strategy", Type: "string"},
+			{Name: "on_commit", Type: "string"},
+			{Name: "on_commit_move_target", Type: "string"},
+			{Name: "on_give_up", Type: "string"},
+			{Name: "on_give_up_move_target", Type: "string"},
 		}},
 		Data:       data,
 		RenderHint: "table",

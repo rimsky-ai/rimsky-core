@@ -10,17 +10,18 @@ import (
 	"testing"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
-func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp string) *Store {
+func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp action.Action) *Store {
 	t.Helper()
 	cfg := Config{
 		Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}},
 		PickPolicies: map[string]PickPolicyConfig{
 			selector: {
-				OnCommitDefault: onCommit,
-				OnGiveUpDefault: onGiveUp,
-				InitialItems:    items,
+				OnCommit:     onCommit,
+				OnGiveUp:     onGiveUp,
+				InitialItems: items,
 			},
 		},
 	}
@@ -32,7 +33,7 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 		json.RawMessage(`{"value":"a"}`),
 		json.RawMessage(`{"value":"b"}`),
 	}
-	st := newStubWithPolicy(t, "@queue", items, "release_to_back", "release_to_back")
+	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
 	o1, err := st.Open(ctx, "c1", "@queue")
@@ -71,7 +72,7 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 
 func TestApplyPickActionDelete(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"value":"a"}`)}
-	st := newStubWithPolicy(t, "@queue", items, "delete", "delete")
+	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Pop}, action.Action{Kind: action.Pop})
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
 	if err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
@@ -90,7 +91,7 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 		json.RawMessage(`{"v":"a"}`),
 		json.RawMessage(`{"v":"b"}`),
 	}
-	st := newStubWithPolicy(t, "@queue", items, "release_to_back", "release_to_back")
+	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
 	o, _ := st.Open(ctx, "c1", "@queue")
@@ -105,36 +106,44 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 	}
 }
 
-func TestApplyPickActionReleaseToHead(t *testing.T) {
+// TestApplyPickActionRecycleAbandonReturnsItemToTail — Abandon with
+// recycle puts the item back at the queue tail; the next Open picks
+// the OTHER item (b) first, then the recycled one.
+func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 	items := []json.RawMessage{
 		json.RawMessage(`{"v":"a"}`),
 		json.RawMessage(`{"v":"b"}`),
 	}
-	st := newStubWithPolicy(t, "@queue", items, "release_to_head", "release_to_head")
+	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	ctx := context.Background()
 
 	o, _ := st.Open(ctx, "c1", "@queue")
-	// Decode the picked item id so we can verify it lands at the head.
 	var pickedID string
 	_ = json.Unmarshal(o.Result.Scope, &pickedID)
 
 	if err := st.Abandon(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
-	// After Abandon with release_to_head default, the next Open should
-	// receive the same item back.
+	// Recycle puts a back at the tail → next pick is b.
 	o2, _ := st.Open(ctx, "c2", "@queue")
 	var nextID string
 	_ = json.Unmarshal(o2.Result.Scope, &nextID)
-	if pickedID == "" || pickedID != nextID {
-		t.Fatalf("release_to_head should return same item to head; got picked=%q, next=%q", pickedID, nextID)
+	if pickedID == "" || pickedID == nextID {
+		t.Fatalf("recycle should send to tail, not head; got picked=%q, next=%q", pickedID, nextID)
+	}
+	// Third pick gets the recycled a.
+	o3, _ := st.Open(ctx, "c3", "@queue")
+	var lastID string
+	_ = json.Unmarshal(o3.Result.Scope, &lastID)
+	if lastID != pickedID {
+		t.Fatalf("third pick should be the recycled item; got %q, want %q", lastID, pickedID)
 	}
 }
 
 func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"v":"a"}`)}
 	// Configure an invalid default action; the store should reject at terminal.
-	st := newStubWithPolicy(t, "@queue", items, "what-is-this", "what-is-this")
+	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Kind("what-is-this")}, action.Action{Kind: action.Kind("what-is-this")})
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
 	err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address)
@@ -162,7 +171,7 @@ func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
 }
 
 func TestSeedPickPolicyItem(t *testing.T) {
-	st := newStubWithPolicy(t, "@queue", nil, "delete", "delete")
+	st := newStubWithPolicy(t, "@queue", nil, action.Action{Kind: action.Pop}, action.Action{Kind: action.Pop})
 	id, err := st.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":"new"}`))
 	if err != nil {
 		t.Fatalf("SeedPickPolicyItem: %v", err)
@@ -176,7 +185,7 @@ func TestSeedPickPolicyItem(t *testing.T) {
 }
 
 func TestSeedPickPolicyItemUnknownSelector(t *testing.T) {
-	st := newStubWithPolicy(t, "@queue", nil, "delete", "delete")
+	st := newStubWithPolicy(t, "@queue", nil, action.Action{Kind: action.Pop}, action.Action{Kind: action.Pop})
 	if _, err := st.SeedPickPolicyItem("@unknown", json.RawMessage(`{}`)); err == nil {
 		t.Fatal("expected error for unknown selector")
 	}

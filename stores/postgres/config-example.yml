@@ -17,8 +17,8 @@ write_semantics: direct
 pick_policies:
   "@review-queue":
     items_table: topics_items
-    on_commit_default: release_to_back
-    on_give_up_default: release_to_back
+    on_commit: recycle
+    on_give_up: recycle
     visibility_timeout_seconds: 300
 
 # Listen addresses. The admin port hosts the store-internal items

@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 	"github.com/fallguy/rimsky/stores/stub/server"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 )
@@ -43,9 +44,9 @@ type yamlConfig struct {
 }
 
 type yamlPickPolicy struct {
-	OnCommitDefault string   `yaml:"on_commit_default"`
-	OnGiveUpDefault string   `yaml:"on_give_up_default"`
-	InitialItems    []string `yaml:"initial_items"`
+	OnCommit     action.Action `yaml:"on_commit"`
+	OnGiveUp     action.Action `yaml:"on_give_up"`
+	InitialItems []string      `yaml:"initial_items"`
 }
 
 func main() {
@@ -82,9 +83,9 @@ func main() {
 			initial = append(initial, json.RawMessage(raw))
 		}
 		policies[selector] = stubstore.PickPolicyConfig{
-			OnCommitDefault: p.OnCommitDefault,
-			OnGiveUpDefault: p.OnGiveUpDefault,
-			InitialItems:    initial,
+			OnCommit:     p.OnCommit,
+			OnGiveUp:     p.OnGiveUp,
+			InitialItems: initial,
 		}
 	}
 

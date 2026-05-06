@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 func TestParseFromRight(t *testing.T) {
@@ -75,8 +77,8 @@ func TestRunSyncReconciles(t *testing.T) {
 	}
 	pp := &PickPolicy{
 		Root:              sub,
-		OnCommitDefault:   "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_open",
 	}
@@ -135,8 +137,8 @@ func TestOpenPickPolicy_Basic(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	pp := &PickPolicy{
 		Root:              sub,
-		OnCommitDefault:   "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_open",
 	}
@@ -171,8 +173,8 @@ func TestOpenPickPolicy_EmptyQueueReturnsUnavailable(t *testing.T) {
 	root := t.TempDir()
 	must(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
 	pp := &PickPolicy{
-		Root: "docs", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: "docs", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
@@ -188,8 +190,8 @@ func TestOpenSelectorDispatch(t *testing.T) {
 	sub := "docs"
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@docs-ring": pp}})
 	must(t, err)
@@ -218,8 +220,8 @@ func TestOpenPickPolicy_ConcurrentPicksAreUnique(t *testing.T) {
 		must(t, os.MkdirAll(filepath.Join(root, sub, fmt.Sprintf("f-%02d", i)), 0o755))
 	}
 	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
@@ -266,7 +268,7 @@ func TestOpenPickPolicy_ConcurrentPicksAreUnique(t *testing.T) {
 }
 
 func TestCommit_ReleaseToBack(t *testing.T) {
-	st, root, sub := newRingStore(t, "release_to_back", "release_to_back")
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
 	// First pick — whichever sentinel happens to have the older mtime
@@ -288,8 +290,10 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	}
 }
 
-func TestCommit_Delete_RemovesFolder(t *testing.T) {
-	st, root, sub := newRingStore(t, "delete", "release_to_back")
+func TestCommit_PopAndDelete_RemovesFolder(t *testing.T) {
+	st, root, sub := newRingStore(t,
+		action.Action{Kind: action.PopAndDelete},
+		action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "doomed"), 0o755))
 	o, _ := st.Open(context.Background(), "c", "@r")
 	if !o.Available {
@@ -297,11 +301,11 @@ func TestCommit_Delete_RemovesFolder(t *testing.T) {
 	}
 	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("folder should be removed after delete commit; stat err = %v", err)
+		t.Errorf("folder should be removed after pop_and_delete commit; stat err = %v", err)
 	}
 	// Pin the in_progress sentinel cleanup behaviour: a regression that
-	// drops the unlink in applyPickAction's "delete" arm would leave a
-	// stranded sentinel here, causing a wasted-cycle visibility-timeout
+	// drops the unlink in applyPickAction's pop_and_delete arm would leave
+	// a stranded sentinel here, causing a wasted-cycle visibility-timeout
 	// reclamation later.
 	inProgDir := filepath.Join(root, ".fs-store", "r", "in_progress")
 	inProg, _ := os.ReadDir(inProgDir)
@@ -310,47 +314,12 @@ func TestCommit_Delete_RemovesFolder(t *testing.T) {
 		for _, e := range inProg {
 			names = append(names, e.Name())
 		}
-		t.Errorf("expected in_progress/ empty after delete commit; got %v", names)
-	}
-}
-
-func TestAbandon_ReleaseToHead(t *testing.T) {
-	// Three folders required to actually pin head-bump semantics. With
-	// only two, the second-picked folder's claim-time mtime is older
-	// than the first folder's release_to_back-stamped mtime, so the
-	// second sorts to head regardless of release_to_head. Adding a
-	// third folder (1 commit-release_to_back, 2 commit-release_to_back,
-	// 3 abandon-release_to_head) ensures only release_to_head can put
-	// folder 3 in front of folder 1 — folder 1's mtime was stamped
-	// earlier than folder 3's claim-time mtime.
-	st, root, sub := newRingStore(t, "release_to_back", "release_to_head")
-	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
-	must(t, os.MkdirAll(filepath.Join(root, sub, "beta"), 0o755))
-	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))
-	o1, _ := st.Open(context.Background(), "c1", "@r")
-	must(t, st.Commit(context.Background(), "c1", o1.Result.Scope, o1.Result.Address))
-	// Sleep briefly so folder 2's release_to_back mtime is strictly
-	// later than folder 1's; mtime resolution on some filesystems is
-	// only 1ms (or coarser) so identical timestamps would otherwise
-	// fall through to lexical tiebreaker.
-	time.Sleep(10 * time.Millisecond)
-	o2, _ := st.Open(context.Background(), "c2", "@r")
-	must(t, st.Commit(context.Background(), "c2", o2.Result.Scope, o2.Result.Address))
-	time.Sleep(10 * time.Millisecond)
-	o3, _ := st.Open(context.Background(), "c3", "@r")
-	must(t, st.Abandon(context.Background(), "c3", o3.Result.Scope, o3.Result.Address))
-	// Without release_to_head, folder 3's claim-time mtime is newer
-	// than folder 1's commit-time mtime, so folder 3 would sort last.
-	// Only release_to_head's epoch-stamp puts it at the head.
-	o4, _ := st.Open(context.Background(), "c4", "@r")
-	if string(o4.Result.Scope) != string(o3.Result.Scope) {
-		t.Errorf("expected re-pick of head-bumped folder 3; got scope %s vs %s",
-			o4.Result.Scope, o3.Result.Scope)
+		t.Errorf("expected in_progress/ empty after pop_and_delete commit; got %v", names)
 	}
 }
 
 func TestCommit_Idempotent(t *testing.T) {
-	st, root, sub := newRingStore(t, "release_to_back", "release_to_back")
+	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	o, _ := st.Open(context.Background(), "c", "@r")
 	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
@@ -363,8 +332,8 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	sub := "docs"
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		Root: sub, OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: 50 * time.Millisecond, // tight for test
 		SyncStrategy:      "on_open",
 	}
@@ -390,34 +359,6 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	}
 }
 
-func TestSweep_OnSweepStrategyRunsSync(t *testing.T) {
-	root := t.TempDir()
-	sub := "docs"
-	must(t, os.MkdirAll(filepath.Join(root, sub), 0o755))
-	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
-		VisibilityTimeout: time.Minute,
-		SyncStrategy:      "on_sweep",
-	}
-	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
-	must(t, err)
-	// Folder added AFTER store creation; on_sweep should pick it up via sweepOnce.
-	must(t, os.MkdirAll(filepath.Join(root, sub, "late-arrival"), 0o755))
-	must(t, st.sweepOnce())
-	availDir := filepath.Join(root, ".fs-store", "r", "available")
-	entries, _ := os.ReadDir(availDir)
-	found := false
-	for _, e := range entries {
-		if e.Name() == "late-arrival" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("on_sweep sync should have added late-arrival sentinel; got %v", entries)
-	}
-}
-
 func TestFolderPattern_FiltersNonMatching(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
@@ -427,8 +368,8 @@ func TestFolderPattern_FiltersNonMatching(t *testing.T) {
 	pp := &PickPolicy{
 		Root:              sub,
 		FolderPattern:     regexp.MustCompile(`^area-.*$`),
-		OnCommitDefault:   "release_to_back",
-		OnGiveUpDefault:   "release_to_back",
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
 		VisibilityTimeout: time.Minute,
 		SyncStrategy:      "on_open",
 	}
@@ -454,12 +395,12 @@ func TestMultiPolicy_NoCrossTalk(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(root, "docs", "alpha"), 0o755))
 	must(t, os.MkdirAll(filepath.Join(root, "reports", "beta"), 0o755))
 	p1 := &PickPolicy{
-		Root: "docs", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: "docs", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	p2 := &PickPolicy{
-		Root: "reports", OnCommitDefault: "release_to_back",
-		OnGiveUpDefault: "release_to_back", VisibilityTimeout: time.Minute,
+		Root: "reports", OnCommit: action.Action{Kind: action.Recycle},
+		OnGiveUp: action.Action{Kind: action.Recycle}, VisibilityTimeout: time.Minute,
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{
 		"@docs": p1, "@reports": p2,
@@ -475,13 +416,13 @@ func TestMultiPolicy_NoCrossTalk(t *testing.T) {
 	}
 }
 
-func newRingStore(t *testing.T, onCommit, onGiveUp string) (*Store, string, string) {
+func newRingStore(t *testing.T, onCommit, onGiveUp action.Action) (*Store, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	sub := "docs"
 	must(t, os.MkdirAll(filepath.Join(root, sub), 0o755))
 	pp := &PickPolicy{
-		Root: sub, OnCommitDefault: onCommit, OnGiveUpDefault: onGiveUp,
+		Root: sub, OnCommit: onCommit, OnGiveUp: onGiveUp,
 		VisibilityTimeout: time.Minute, SyncStrategy: "on_open",
 	}
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})

@@ -36,6 +36,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/executor"
 	"github.com/fallguy/rimsky/modeling/shared"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/stores/common/action"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
 	pgsfixture "github.com/fallguy/rimsky/stores/postgres/testfixture"
@@ -99,8 +100,8 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		PickPolicies: map[string]*pgsstore.PickPolicy{
 			"@review-queue": {
 				ItemsTable:        itemsTable,
-				OnCommitDefault:   "release_to_back",
-				OnGiveUpDefault:   "release_to_back",
+				OnCommit:          action.Action{Kind: action.Recycle},
+				OnGiveUp:          action.Action{Kind: action.Recycle},
 				VisibilityTimeout: 300 * time.Second,
 			},
 		},

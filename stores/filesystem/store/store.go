@@ -13,14 +13,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 // PickPolicy is one configured pick policy. Store-internal.
@@ -28,14 +31,14 @@ import (
 // Auto-discovery is the only insertion mechanism: the sync step
 // reconciles <store-root>/<Root>/* against the available/ sentinel
 // set. Queue-vs-ring vs single-shot drain is emergent from
-// OnCommitDefault / OnGiveUpDefault.
+// OnCommit / OnGiveUp action choice.
 type PickPolicy struct {
 	Root              string         // relative path under store root
 	FolderPattern     *regexp.Regexp // nil means "no extra filter beyond skip-leading-dot"
-	OnCommitDefault   string         // "release_to_back" | "release_to_head" | "delete"
-	OnGiveUpDefault   string         // same vocabulary
+	OnCommit          action.Action
+	OnGiveUp          action.Action
 	VisibilityTimeout time.Duration
-	SyncStrategy      string // "on_open" | "on_sweep"
+	SyncStrategy      string // "on_open" | "on_drain" | "explicit" | "never"
 
 	// syncMu serializes runSync for this policy so concurrent Open
 	// callers don't race on the (read-available, read-in_progress,
@@ -88,8 +91,17 @@ func New(cfg Config) (*Store, error) {
 		return nil, errors.New("filesystem store: root must not be empty")
 	}
 	for selector, pp := range cfg.PickPolicies {
-		if err := validatePickPolicy(cfg.Root, selector, pp); err != nil {
-			return nil, fmt.Errorf("filesystem store: pick_policies[%q]: %w", selector, err)
+		res := validatePickPolicy(cfg.Root, selector, pp)
+		if !res.OK() {
+			msgs := make([]string, 0, len(res.Errors))
+			for _, e := range res.Errors {
+				msgs = append(msgs, e.Error())
+			}
+			return nil, fmt.Errorf("filesystem store: pick_policies[%q]: %s",
+				selector, strings.Join(msgs, "; "))
+		}
+		for _, w := range res.Warnings {
+			slog.Warn(w)
 		}
 		// Idempotent state-directory creation.
 		dir := filepath.Join(cfg.Root, ".fs-store", trimAtPrefix(selector))
@@ -248,7 +260,7 @@ func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) er
 	delete(s.claims, claimID)
 	s.mu.Unlock()
 	if pp != nil {
-		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnCommitDefault); err != nil {
+		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnCommit); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
 		}
@@ -267,7 +279,7 @@ func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) e
 	delete(s.claims, claimID)
 	s.mu.Unlock()
 	if pp != nil {
-		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnGiveUpDefault); err != nil {
+		if err := s.applyPickAction(pp, sel, entry, folder, pp.OnGiveUp); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
 		}
@@ -294,81 +306,206 @@ func hasGlobMeta(s string) bool {
 }
 
 // validatePickPolicy validates the operator-supplied pick policy against
-// the store root: the Root field must be a relative subpath that exists
-// as a readable + writable directory; action defaults must be one of
-// the three known actions; visibility_timeout must be positive;
-// sync_strategy defaults to "on_open" when empty.
+// the store root and returns a ValidationResult. Per spec §6: returns
+// the full set of errors (so operators see every problem in one pass)
+// plus advisory warnings (e.g. inert combinations). Pre-v1 break-cleanly:
+// old field names and old action values are rejected at config-load.
 //
 // Symlink assumption: the lexical Rel-based containment check below
 // confirms `<storeRoot>/<pp.Root>` is lexically under storeRoot, but
 // `os.Stat` follows symlinks. If the operator places a symlink under
 // the store root that points outside, runtime operations will follow
-// it. Per the spec's "POSIX local filesystems" assumption (and the
-// operator-guide §8.4.2 deployment guidance) the store root must not
-// contain symlinks pointing outside itself; this is an operator-fault
-// constraint, not enforced here. Same posture as openScoped.
-func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) error {
+// it. Per the spec's "POSIX local filesystems" assumption the store
+// root must not contain symlinks pointing outside itself; this is an
+// operator-fault constraint, not enforced here.
+func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.ValidationResult {
+	var res action.ValidationResult
+	addErr := func(err error) { res.Errors = append(res.Errors, err) }
+	addWarn := func(w string) { res.Warnings = append(res.Warnings, w) }
+
 	if pp == nil {
-		return errors.New("policy is nil")
+		addErr(errors.New("policy is nil"))
+		return res
 	}
 	if pp.Root == "" {
-		return errors.New("root: required")
+		addErr(errors.New("root: required"))
+	} else if filepath.IsAbs(pp.Root) {
+		addErr(fmt.Errorf("root: %q is absolute; must be relative to store root", pp.Root))
+	} else {
+		cleaned := filepath.Clean(pp.Root)
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			addErr(fmt.Errorf("root: %q escapes the store root", pp.Root))
+		} else {
+			absPath := filepath.Join(storeRoot, cleaned)
+			rel, relErr := filepath.Rel(storeRoot, absPath)
+			if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				addErr(fmt.Errorf("root: %q resolves to %q which escapes the store root", pp.Root, absPath))
+			} else if info, err := os.Stat(absPath); err != nil {
+				addErr(fmt.Errorf("root: stat %s: %w", absPath, err))
+			} else if !info.IsDir() {
+				addErr(fmt.Errorf("root: %s is not a directory", absPath))
+			} else if _, err := os.ReadDir(absPath); err != nil {
+				addErr(fmt.Errorf("root: %s not readable: %w", absPath, err))
+			} else {
+				probe, perr := os.CreateTemp(absPath, ".rimsky-fs-store-probe-*")
+				if perr != nil {
+					addErr(fmt.Errorf("root: %s not writable: %w", absPath, perr))
+				} else {
+					probeName := probe.Name()
+					_ = probe.Close()
+					_ = os.Remove(probeName)
+				}
+			}
+		}
 	}
-	if filepath.IsAbs(pp.Root) {
-		return fmt.Errorf("root: %q is absolute; must be relative to store root", pp.Root)
+
+	// Action validation (replaces the old switch on string vocabulary).
+	//
+	// Issue 11: yaml.v3 silently skips UnmarshalYAML when the source is
+	// null and the target is a struct value, leaving Kind=="". The raw
+	// Validate() error for that case is `unknown action ""`, which
+	// leaks an empty quoted string. Surface a clearer message before
+	// delegating to Validate().
+	if pp.OnCommit.Kind == "" {
+		addErr(errors.New("on_commit: required (got null or missing)"))
+	} else if err := pp.OnCommit.Validate(); err != nil {
+		addErr(fmt.Errorf("on_commit: %w", err))
 	}
-	cleaned := filepath.Clean(pp.Root)
+	if pp.OnGiveUp.Kind == "" {
+		addErr(errors.New("on_give_up: required (got null or missing)"))
+	} else if err := pp.OnGiveUp.Validate(); err != nil {
+		addErr(fmt.Errorf("on_give_up: %w", err))
+	}
+
+	// pop_and_move target validation: cross-fs check.
+	if pp.OnCommit.Kind == action.PopAndMove && pp.OnCommit.MoveTarget != "" {
+		if err := validateMoveTargetSameFS(storeRoot, pp.Root, pp.OnCommit.MoveTarget); err != nil {
+			addErr(fmt.Errorf("on_commit: pop_and_move: %w", err))
+		}
+	}
+	if pp.OnGiveUp.Kind == action.PopAndMove && pp.OnGiveUp.MoveTarget != "" {
+		if err := validateMoveTargetSameFS(storeRoot, pp.Root, pp.OnGiveUp.MoveTarget); err != nil {
+			addErr(fmt.Errorf("on_give_up: pop_and_move: %w", err))
+		}
+	}
+
+	if pp.VisibilityTimeout <= 0 {
+		addErr(errors.New("visibility_timeout_seconds: must be > 0"))
+	}
+
+	switch pp.SyncStrategy {
+	case "":
+		pp.SyncStrategy = "on_open" // default
+	case "on_open", "on_drain", "explicit", "never":
+		// ok
+	default:
+		addErr(fmt.Errorf("sync_strategy: must be on_open|on_drain|explicit|never, got %q", pp.SyncStrategy))
+	}
+
+	// Validator rule §6.1a: pop + sync_strategy: on_open is rejected.
+	// Open's sync step would re-add popped folders under fs-store
+	// discovery semantics, so the queue would never drain.
+	if pp.OnCommit.Kind == action.Pop && pp.SyncStrategy == "on_open" {
+		addErr(errors.New("on_commit: pop is incompatible with sync_strategy: on_open (queue would never drain because runSync re-adds popped folders); use sync_strategy: on_drain"))
+	}
+
+	// Validator rule §6.2: warn on recycle + on_drain (queue never empties; on_drain never fires).
+	if pp.OnCommit.Kind == action.Recycle && pp.SyncStrategy == "on_drain" {
+		addWarn(fmt.Sprintf("filesystem store: pick_policies[%q]: recycle + sync_strategy: on_drain is inert (queue never empties; on_drain never fires)", selector))
+	}
+
+	_ = selector
+	return res
+}
+
+// validateMoveTargetContained mirrors the policy-root containment
+// checks for `target` so an operator config of
+// `pop_and_move: ../../etc/triage` cannot redirect renames outside
+// the configured store root. The target — like the policy root —
+// must be relative, must not begin with `..`, and must lexically
+// resolve under storeRoot.
+//
+// This is symmetric with the openScoped traversal guard
+// (filesystem/store.go::openScoped lines ~190-204).
+func validateMoveTargetContained(storeRoot, target string) error {
+	if target == "" {
+		return errors.New("target must be non-empty")
+	}
+	if filepath.IsAbs(target) {
+		return fmt.Errorf("target %q is absolute; must be relative to store root", target)
+	}
+	cleaned := filepath.Clean(target)
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("root: %q escapes the store root", pp.Root)
+		return fmt.Errorf("target %q escapes the store root", target)
 	}
 	absPath := filepath.Join(storeRoot, cleaned)
-	// Defense-in-depth containment check: ensure the joined path
-	// actually lives under storeRoot, catching symlink edge cases
-	// (mirrors openScoped's existing filepath.Rel check).
 	rel, relErr := filepath.Rel(storeRoot, absPath)
 	if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("root: %q resolves to %q which escapes the store root", pp.Root, absPath)
+		return fmt.Errorf("target %q resolves to %q which escapes the store root", target, absPath)
 	}
-	info, err := os.Stat(absPath)
+	return nil
+}
+
+// validateMoveTargetSameFS checks that target (resolved relative to
+// storeRoot) is on the same filesystem as <storeRoot>/<policyRoot>,
+// is contained within the store root, exists, is a directory, and
+// is not the same directory as the policy root.
+//
+// Per spec §6.3: resolve both paths to absolute, follow symlinks via
+// filepath.EvalSymlinks, then compare device IDs.
+//
+// The target must also exist (must be a directory). The validator
+// does NOT create missing target directories.
+//
+// Containment-check note: containment is enforced first, before the
+// EvalSymlinks-based same-fs check — a `..`-prefixed target that
+// happens to resolve to a same-fs directory would otherwise load
+// cleanly and let every commit rename folders outside the store root.
+func validateMoveTargetSameFS(storeRoot, policyRoot, target string) error {
+	if err := validateMoveTargetContained(storeRoot, target); err != nil {
+		return err
+	}
+	policyAbs, err := filepath.Abs(filepath.Join(storeRoot, policyRoot))
 	if err != nil {
-		return fmt.Errorf("root: stat %s: %w", absPath, err)
+		return fmt.Errorf("resolve policy root: %w", err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("root: %s is not a directory", absPath)
-	}
-	// Readability probe.
-	if _, err := os.ReadDir(absPath); err != nil {
-		return fmt.Errorf("root: %s not readable: %w", absPath, err)
-	}
-	// Writability probe via temp-file create + remove.
-	probe, err := os.CreateTemp(absPath, ".rimsky-fs-store-probe-*")
+	targetAbs, err := filepath.Abs(filepath.Join(storeRoot, target))
 	if err != nil {
-		return fmt.Errorf("root: %s not writable: %w", absPath, err)
+		return fmt.Errorf("resolve target %q: %w", target, err)
 	}
-	probeName := probe.Name()
-	_ = probe.Close()
-	_ = os.Remove(probeName)
-	switch pp.OnCommitDefault {
-	case "release_to_back", "release_to_head", "delete":
-	default:
-		return fmt.Errorf("on_commit_default: must be release_to_back|release_to_head|delete, got %q", pp.OnCommitDefault)
+	policyResolved, err := filepath.EvalSymlinks(policyAbs)
+	if err != nil {
+		return fmt.Errorf("resolve symlinks for policy root %q: %w", policyAbs, err)
 	}
-	switch pp.OnGiveUpDefault {
-	case "release_to_back", "release_to_head", "delete":
-	default:
-		return fmt.Errorf("on_give_up_default: must be release_to_back|release_to_head|delete, got %q", pp.OnGiveUpDefault)
+	targetResolved, err := filepath.EvalSymlinks(targetAbs)
+	if err != nil {
+		return fmt.Errorf("resolve symlinks for target %q: %w", targetAbs, err)
 	}
-	if pp.VisibilityTimeout <= 0 {
-		return errors.New("visibility_timeout_seconds: must be > 0")
+	// Issue 7: degenerate target == policy root produces silent
+	// behavioral drift (os.Rename(dir, dir) is a no-op). Reject
+	// explicitly so the operator gets an error instead of "pop_and_move
+	// silently degenerated to pop."
+	if policyResolved == targetResolved {
+		return fmt.Errorf("target %q resolves to the same directory as the policy root %q; pop_and_move with target == policy root is a no-op (use pop instead)", target, policyRoot)
 	}
-	switch pp.SyncStrategy {
-	case "", "on_open", "on_sweep":
-		if pp.SyncStrategy == "" {
-			pp.SyncStrategy = "on_open"
-		}
-	default:
-		return fmt.Errorf("sync_strategy: must be on_open|on_sweep, got %q", pp.SyncStrategy)
+	policyStat, err := os.Stat(policyResolved)
+	if err != nil {
+		return fmt.Errorf("stat policy root: %w", err)
 	}
-	_ = selector // selector is interpolated by the caller for error context; not validated here.
+	targetStat, err := os.Stat(targetResolved)
+	if err != nil {
+		return fmt.Errorf("stat target: %w", err)
+	}
+	if !targetStat.IsDir() {
+		return fmt.Errorf("target %q is not a directory", target)
+	}
+	policySys, ok1 := policyStat.Sys().(*syscall.Stat_t)
+	targetSys, ok2 := targetStat.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return errors.New("filesystem device-id query unavailable on this platform")
+	}
+	if policySys.Dev != targetSys.Dev {
+		return fmt.Errorf("target %q is on a different filesystem than the policy root %q; os.Rename across filesystems is not atomic, refusing to load", target, policyRoot)
+	}
 	return nil
 }

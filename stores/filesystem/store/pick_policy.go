@@ -27,6 +27,7 @@ import (
 	"time"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 // parseFromRight splits an in-progress sentinel filename into
@@ -123,6 +124,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 	}
 
 	// Add brand-new folders.
+	addedAny := false
 	for folder := range extant {
 		if _, ok := tracked[folder]; ok {
 			continue
@@ -131,6 +133,7 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 			os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			_ = f.Close()
+			addedAny = true
 			continue
 		}
 		if !errors.Is(err, fs.ErrExist) {
@@ -148,30 +151,105 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 			return fmt.Errorf("unlink stale available sentinel %s: %w", folder, err)
 		}
 	}
+	if addedAny {
+		removeDrainedIfPresent(state)
+	}
 	return nil
+}
+
+// removeDrainedIfPresent unlinks <state>/drained if present. Best-effort;
+// ENOENT is benign (no drained sentinel was written). Used to clear the
+// single-pass-then-refresh sentinel when new work is observed (sync adds
+// a new folder, or sweep reclaims an in-progress sentinel).
+func removeDrainedIfPresent(state string) {
+	_ = os.Remove(filepath.Join(state, "drained"))
 }
 
 // openPickPolicy runs sync (per policy.SyncStrategy) and attempts the
 // rename-as-claim. Returns OpenOutcome{Available: false} on empty queue.
+//
+// Strategy dispatch (spec §5):
+//   - on_open: always sync first, then attempt the claim.
+//   - on_drain: if available/ is empty, check for the drained sentinel
+//     — present means single-pass-then-refresh: consume sentinel and
+//     return Unavailable. Absent: run sync. On the last claim, write
+//     the sentinel atomically (O_EXCL).
+//   - explicit, never: never sync from Open.
 func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corestore.OpenOutcome, error) {
-	if pp.SyncStrategy == "" || pp.SyncStrategy == "on_open" {
-		if err := s.runSync(selector, pp); err != nil {
-			return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: sync: %w", err)
-		}
-	}
 	state := policyStateDir(s.root, selector)
 	availDir := filepath.Join(state, "available")
 	inProgDir := filepath.Join(state, "in_progress")
+	drainedPath := filepath.Join(state, "drained")
 
+	switch pp.SyncStrategy {
+	case "on_open":
+		if err := s.runSync(selector, pp); err != nil {
+			return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: sync: %w", err)
+		}
+	case "on_drain":
+		empty, err := isDirEmpty(availDir)
+		if err != nil {
+			return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: readdir available: %w", err)
+		}
+		if empty {
+			if drainedFileExists(drainedPath) {
+				if err := os.Remove(drainedPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: remove drained: %w", err)
+				}
+				return corestore.OpenOutcome{Available: false}, nil
+			}
+			if err := s.runSync(selector, pp); err != nil {
+				return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: sync: %w", err)
+			}
+		}
+	case "explicit", "never":
+		// No sync trigger.
+	default:
+		return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: invalid sync_strategy %q", pp.SyncStrategy)
+	}
+
+	outcome, lastItem, err := s.tryRenameClaim(claimID, selector, pp, availDir, inProgDir)
+	if err != nil {
+		return corestore.OpenOutcome{}, err
+	}
+	if outcome.Available {
+		if pp.SyncStrategy == "on_drain" && lastItem {
+			// Write drained sentinel atomically (O_EXCL).
+			// EEXIST is benign: a concurrent Open already wrote it.
+			f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+			if ferr == nil {
+				_ = f.Close()
+			}
+		}
+		return outcome, nil
+	}
+	// available/ empty after sync. on_drain corpus-empty case writes
+	// the drained sentinel so the next Open returns Unavailable.
+	if pp.SyncStrategy == "on_drain" {
+		f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if ferr == nil {
+			_ = f.Close()
+		}
+	}
+	return corestore.OpenOutcome{Available: false}, nil
+}
+
+// tryRenameClaim is the rename-as-claim loop factored out of
+// openPickPolicy. Returns (outcome, wasLastItem, err). wasLastItem
+// reports whether available/ became empty as a result of the
+// successful claim. It's always false on Unavailable outcomes.
+//
+// The actual claim (rename) remains lockless and relies on POSIX
+// rename atomicity; the lastItem check below re-reads available/
+// once per success, which is racy in the sense that a concurrent
+// runSync could have inserted a sentinel before the readdir — but
+// the worst case is "we miss writing the drained sentinel for one
+// claim cycle," which the next Open's empty-available path covers.
+func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDir, inProgDir string) (corestore.OpenOutcome, bool, error) {
 	entries, err := os.ReadDir(availDir)
 	if err != nil {
-		return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: readdir available: %w", err)
+		return corestore.OpenOutcome{}, false, fmt.Errorf("filesystem store: readdir available: %w", err)
 	}
-	// Sort by mtime ascending; lexical tiebreaker. If `entries[i].Info()`
-	// returns an error (e.g., the entry was unlinked between ReadDir and
-	// Info under a high-churn pick policy), the closure falls through to
-	// the lexical comparison for that pair. Robustness over perfect
-	// FIFO ordering — a stale entry would have been a no-op pick anyway.
 	sort.Slice(entries, func(i, j int) bool {
 		ii, _ := entries[i].Info()
 		jj, _ := entries[j].Info()
@@ -184,30 +262,33 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corest
 	for _, entry := range entries {
 		folder := entry.Name()
 		src := filepath.Join(availDir, folder)
-		// Recompute nowNanos per attempt: if N earlier entries lost
-		// the rename race (ENOENT) the suffix should record the
-		// actual claim moment, not when the loop began.
 		nowNanos := time.Now().UnixNano()
 		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue // raced; try next
 			}
-			return corestore.OpenOutcome{}, fmt.Errorf("filesystem store: claim rename: %w", err)
+			return corestore.OpenOutcome{}, false, fmt.Errorf("filesystem store: claim rename: %w", err)
 		}
+		// Re-read available/ to decide whether this was the last claim.
+		// Best-effort; on error we just won't write the drained sentinel
+		// this cycle — the next Open's empty-available path covers it.
+		remaining, _ := os.ReadDir(availDir)
+		lastItem := len(remaining) == 0
+
 		subPath := filepath.Join(pp.Root, folder)
 		absPath := filepath.Join(s.root, subPath)
 		addr, err := json.Marshal(absPath)
 		if err != nil {
-			return corestore.OpenOutcome{}, err
+			return corestore.OpenOutcome{}, false, err
 		}
 		scope, err := json.Marshal(subPath)
 		if err != nil {
-			return corestore.OpenOutcome{}, err
+			return corestore.OpenOutcome{}, false, err
 		}
 		payload, err := json.Marshal(map[string]string{"folder": folder})
 		if err != nil {
-			return corestore.OpenOutcome{}, err
+			return corestore.OpenOutcome{}, false, err
 		}
 		s.mu.Lock()
 		s.claims[claimID] = absPath
@@ -221,9 +302,22 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (corest
 				Scope:                  json.RawMessage(scope),
 				RealizedWriteSemantics: corestore.WriteSemanticsSync,
 			},
-		}, nil
+		}, lastItem, nil
 	}
-	return corestore.OpenOutcome{Available: false}, nil
+	return corestore.OpenOutcome{Available: false}, false, nil
+}
+
+func isDirEmpty(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
+func drainedFileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // findByClaimID linearly scans every configured policy's in_progress/
@@ -253,39 +347,49 @@ func (s *Store) findByClaimID(claimID string) (pp *PickPolicy, selector, entry, 
 //
 // Takes the resolved entry/folder from findByClaimID so this function
 // can stay action-only (no extra readdir).
-func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder, action string) error {
+func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, act action.Action) error {
 	inProgDir := filepath.Join(policyStateDir(s.root, selector), "in_progress")
 	availDir := filepath.Join(policyStateDir(s.root, selector), "available")
 	src := filepath.Join(inProgDir, entry)
-	switch action {
-	case "release_to_back":
-		now := time.Now()
-		if err := os.Chtimes(src, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: chtimes: %w", err)
-		}
-		if err := os.Rename(src, filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: release_to_back rename: %w", err)
+	switch act.Kind {
+	case action.Pop:
+		// Queue entry consumed (sentinel removed); folder stays on disk.
+		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: pop unlink in_progress: %w", err)
 		}
 		return nil
-	case "release_to_head":
-		epoch := time.Unix(0, 0)
-		if err := os.Chtimes(src, epoch, epoch); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: chtimes (head): %w", err)
-		}
-		if err := os.Rename(src, filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: release_to_head rename: %w", err)
-		}
-		return nil
-	case "delete":
+	case action.PopAndMove:
 		folderAbs := filepath.Join(s.root, pp.Root, folder)
-		if err := os.RemoveAll(folderAbs); err != nil {
-			return fmt.Errorf("filesystem store: removeall %s: %w", folderAbs, err)
+		targetAbs := filepath.Join(s.root, act.MoveTarget, folder)
+		if err := os.Rename(folderAbs, targetAbs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: pop_and_move rename %q→%q: %w",
+				folderAbs, targetAbs, err)
 		}
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("filesystem store: unlink in_progress: %w", err)
+			return fmt.Errorf("filesystem store: pop_and_move unlink in_progress: %w", err)
+		}
+		return nil
+	case action.PopAndDelete:
+		folderAbs := filepath.Join(s.root, pp.Root, folder)
+		if err := os.RemoveAll(folderAbs); err != nil {
+			return fmt.Errorf("filesystem store: pop_and_delete removeall %s: %w", folderAbs, err)
+		}
+		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: pop_and_delete unlink in_progress: %w", err)
+		}
+		return nil
+	case action.Recycle:
+		// Equivalent to the legacy release_to_back: bump mtime so the
+		// FIFO order moves the freshly-released sentinel to the tail.
+		now := time.Now()
+		if err := os.Chtimes(src, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: recycle chtimes: %w", err)
+		}
+		if err := os.Rename(src, filepath.Join(availDir, folder)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("filesystem store: recycle rename: %w", err)
 		}
 		return nil
 	default:
-		return fmt.Errorf("filesystem store: unknown pick action %q", action)
+		return fmt.Errorf("filesystem store: unknown pick action %q", act.Kind)
 	}
 }

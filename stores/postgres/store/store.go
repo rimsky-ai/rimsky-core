@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	corestore "github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/stores/common/action"
 )
 
 // ItemsTableIdentRegex is the strict identifier shape every layer must
@@ -68,13 +71,14 @@ func NewForTest() *Store {
 
 // PickPolicy is one configured pick policy. Store-internal.
 //
-// Queue-vs-ring behavior is emergent from on_commit_default /
-// on_give_up_default (delete = drain, release_to_back = recycle), not
-// switched on a discriminator field.
+// Queue-vs-ring behavior is emergent from OnCommit / OnGiveUp action
+// choice (pop = drain, recycle = ring). The pg-store supports only
+// `pop` and `recycle`; `pop_and_move` and `pop_and_delete` are
+// rejected at config-load (no separate folder concept).
 type PickPolicy struct {
 	ItemsTable        string
-	OnCommitDefault   string
-	OnGiveUpDefault   string
+	OnCommit          action.Action
+	OnGiveUp          action.Action
 	VisibilityTimeout time.Duration
 }
 
@@ -100,10 +104,18 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 		cfg.WriteSemantics = corestore.WriteSemanticsStagedAsync
 	}
 	for selector, pp := range cfg.PickPolicies {
-		if !validIdent(pp.ItemsTable) {
+		res := validatePickPolicy(selector, pp)
+		if !res.OK() {
 			pool.Close()
-			return nil, fmt.Errorf("postgres store: pick_policies[%q]: items_table %q is not a valid identifier (lowercase letters/digits/underscore; not starting with a digit)",
-				selector, pp.ItemsTable)
+			msgs := make([]string, 0, len(res.Errors))
+			for _, e := range res.Errors {
+				msgs = append(msgs, e.Error())
+			}
+			return nil, fmt.Errorf("postgres store: pick_policies[%q]: %s",
+				selector, strings.Join(msgs, "; "))
+		}
+		for _, w := range res.Warnings {
+			slog.Warn(w)
 		}
 		if err := verifyItemsTable(ctx, pool, pp.ItemsTable); err != nil {
 			pool.Close()
@@ -246,7 +258,7 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 	}, nil
 }
 
-// Commit applies the configured on_commit_default action for pick-
+// Commit applies the configured OnCommit action for pick-
 // policy claims; no-op for scope-bytes claims. address is accepted for
 // signature uniformity across the three standard stores and
 // ignored — postgres looks up the in-flight pick-policy item by
@@ -268,7 +280,7 @@ func (s *Store) Commit(ctx context.Context, claimID string, _ []byte, _ []byte) 
 	return nil
 }
 
-// Abandon applies the configured on_give_up_default action for pick-
+// Abandon applies the configured OnGiveUp action for pick-
 // policy claims; degenerate no-op for scope-bytes claims (cannot undo
 // direct writes). address is accepted for signature uniformity and
 // ignored. Lookup is claim_token-based (= rimsky claim_id) per §7.8
@@ -301,29 +313,36 @@ func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) e
 // (rimsky-supplied claim_id is unique across all policies) without
 // needing per-row policy_selector bookkeeping.
 //
-// successPath=true uses on_commit_default; false uses
-// on_give_up_default. Store-side defaults are the only governing
-// input; per the 2026-04-30 cleanup amending v3 §4.5, no rimsky-side
-// override is plumbed across the wire. Runs in its own store-side tx.
+// successPath=true uses OnCommit; false uses OnGiveUp. Store-side
+// defaults are the only governing input; per the 2026-04-30 cleanup
+// amending v3 §4.5, no rimsky-side override is plumbed across the
+// wire. Runs in its own store-side tx.
+//
+// Action support (per spec §3.2): pop and recycle only. pop_and_move
+// and pop_and_delete are rejected at config-load; the defensive
+// branch below handles any value that slips past validator.
 func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath bool) error {
 	if claimID == "" {
 		return nil
 	}
-	pp, found := s.findPolicyForClaim(ctx, claimID)
+	pp, found, err := s.findPolicyForClaim(ctx, claimID)
+	if err != nil {
+		return fmt.Errorf("postgres store: locate policy for claim: %w", err)
+	}
 	if !found {
 		// Either the claim was already terminated (claim_token cleared)
 		// or it never belonged to any pick-policy items table (scope-
 		// bytes claim). Both are no-ops at this layer.
 		return nil
 	}
-	var action string
+	var act action.Action
 	if successPath {
-		action = pp.OnCommitDefault
+		act = pp.OnCommit
 	} else {
-		action = pp.OnGiveUpDefault
+		act = pp.OnGiveUp
 	}
-	if !validPickAction(action) {
-		return fmt.Errorf("postgres store: applyPickAction: invalid action %q", action)
+	if !validPickAction(act.Kind) {
+		return fmt.Errorf("postgres store: applyPickAction: invalid action %q", act.Kind)
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -340,14 +359,16 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 	// RPC with a stale claim_id (the row was re-claimed by a different
 	// supervisor in between) affects zero rows — preserving the live
 	// claim's state.
-	switch action {
-	case "delete":
+	switch act.Kind {
+	case action.Pop:
+		// Replaces the legacy "delete" branch — same SQL.
 		if _, err := tx.Exec(ctx,
 			fmt.Sprintf(`DELETE FROM %s WHERE claim_token = $1`, pp.ItemsTable), claimID,
 		); err != nil {
-			return fmt.Errorf("postgres store: delete item: %w", err)
+			return fmt.Errorf("postgres store: pop item: %w", err)
 		}
-	case "release_to_back":
+	case action.Recycle:
+		// Replaces the legacy "release_to_back" branch — same SQL.
 		if _, err := tx.Exec(ctx,
 			fmt.Sprintf(`UPDATE %s
 			    SET state = 'available', claim_token = NULL, claimed_at = NULL,
@@ -355,18 +376,10 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 			  WHERE claim_token = $2`, pp.ItemsTable),
 			pp.ItemsTable, claimID,
 		); err != nil {
-			return fmt.Errorf("postgres store: release_to_back: %w", err)
+			return fmt.Errorf("postgres store: recycle: %w", err)
 		}
-	case "release_to_head":
-		if _, err := tx.Exec(ctx,
-			fmt.Sprintf(`UPDATE %s
-			    SET state = 'available', claim_token = NULL, claimed_at = NULL,
-			        priority = priority + 1
-			  WHERE claim_token = $1`, pp.ItemsTable),
-			claimID,
-		); err != nil {
-			return fmt.Errorf("postgres store: release_to_head: %w", err)
-		}
+	default:
+		return fmt.Errorf("postgres store: applyPickAction: action %q not supported by postgres store", act.Kind)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("postgres store: commit action tx: %w", err)
@@ -380,15 +393,24 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 // claim_token matches claimID. Lookup by claim_token (rimsky-supplied,
 // unique per claim) sidesteps the multi-policy ambiguity that an
 // item_id-based lookup would have when two policies share an id space.
-func (s *Store) findPolicyForClaim(ctx context.Context, claimID string) (*PickPolicy, bool) {
+//
+// Returns (nil, false, nil) when no policy matches (a real "not
+// found"). Returns (nil, false, err) when a SQL error occurs — the
+// caller MUST surface this to the supervisor so a transient pool
+// hiccup does not silently degrade Commit/Abandon to a no-op while
+// reporting success to the ledger (issue 8: pre-existing bug).
+func (s *Store) findPolicyForClaim(ctx context.Context, claimID string) (*PickPolicy, bool, error) {
 	for _, pp := range s.pickPolicies {
 		var exists bool
 		query := fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s WHERE claim_token = $1)`, pp.ItemsTable)
-		if err := s.pool.QueryRow(ctx, query, claimID).Scan(&exists); err == nil && exists {
-			return pp, true
+		if err := s.pool.QueryRow(ctx, query, claimID).Scan(&exists); err != nil {
+			return nil, false, fmt.Errorf("query items_table %q: %w", pp.ItemsTable, err)
+		}
+		if exists {
+			return pp, true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // InsertItems bulk-inserts payloads into one configured pick-policy's
@@ -420,8 +442,8 @@ func (s *Store) InsertItems(ctx context.Context, selector string, payloads []jso
 	return nil
 }
 
-func validPickAction(s string) bool {
-	return s == "delete" || s == "release_to_back" || s == "release_to_head"
+func validPickAction(k action.Kind) bool {
+	return k == action.Pop || k == action.Recycle
 }
 
 // validIdent accepts a value that satisfies ItemsTableIdentRegex —
@@ -430,6 +452,89 @@ func validPickAction(s string) bool {
 // the same regex so an items_table that passes one passes all three.
 func validIdent(s string) bool {
 	return ItemsTableIdentRegex.MatchString(s)
+}
+
+// validatePickPolicy validates one operator-supplied pick policy and
+// returns a ValidationResult. Per spec §6.1, §6.1b: returns the full
+// set of errors (so operators see every problem in one pass). Pre-v1
+// break-cleanly: old field names and old action values are rejected.
+//
+// pg-store-specific rules: `pop_and_move` and `pop_and_delete` are
+// rejected as not supported by the postgres store (no separate folder
+// concept; pg's row IS the resource).
+func validatePickPolicy(selector string, pp *PickPolicy) action.ValidationResult {
+	var res action.ValidationResult
+	addErr := func(err error) { res.Errors = append(res.Errors, err) }
+
+	if pp == nil {
+		addErr(errors.New("policy is nil"))
+		return res
+	}
+
+	if !validIdent(pp.ItemsTable) {
+		addErr(fmt.Errorf("items_table %q is not a valid identifier (lowercase letters/digits/underscore; not starting with a digit)", pp.ItemsTable))
+	}
+
+	// Issue 9: emit only ONE error per slot for an unsupported pg-store
+	// action. The pg-rejection check runs first; if it fires (e.g. an
+	// operator wrote `on_commit: pop_and_move`), we skip the per-action
+	// `Validate()` call so the operator doesn't see two errors stacked
+	// up for the same root-cause mistake (the missing-target one + the
+	// not-supported-by-pg one).
+	//
+	// Issue 11: a zero Kind (yaml.v3 silently dropping null on a struct
+	// value, or an operator missing the field entirely) produces the
+	// hard-to-decode `unknown action ""` from Validate(). Surface a
+	// clearer message ahead of Validate(). Zero-Kind is also not a
+	// PopAndMove/PopAndDelete so pgRejectAction does not fire for it.
+	commitHandled := pgZeroOrRejected("on_commit", pp.OnCommit, addErr)
+	giveUpHandled := pgZeroOrRejected("on_give_up", pp.OnGiveUp, addErr)
+
+	if !commitHandled {
+		if err := pp.OnCommit.Validate(); err != nil {
+			addErr(fmt.Errorf("on_commit: %w", err))
+		}
+	}
+	if !giveUpHandled {
+		if err := pp.OnGiveUp.Validate(); err != nil {
+			addErr(fmt.Errorf("on_give_up: %w", err))
+		}
+	}
+
+	if pp.VisibilityTimeout <= 0 {
+		addErr(errors.New("visibility_timeout_seconds: must be > 0"))
+	}
+
+	_ = selector
+	return res
+}
+
+// pgZeroOrRejected handles the two cases where a per-slot action
+// should NOT also be passed to Action.Validate():
+//
+//   - Zero Kind (yaml.v3 dropped null on the struct value, or the
+//     field was absent): emit a clear "required" error instead of the
+//     opaque `unknown action ""` produced by Validate().
+//   - Pg-store-rejected (PopAndMove / PopAndDelete): emit the §6.1b
+//     not-supported message; suppress Validate() so a second
+//     "missing target" error doesn't stack up for the same root cause.
+//
+// Returns true if the slot was handled here (so the caller skips
+// Action.Validate() for this slot).
+func pgZeroOrRejected(slot string, a action.Action, addErr func(error)) bool {
+	if a.Kind == "" {
+		addErr(fmt.Errorf("%s: required (got null or missing)", slot))
+		return true
+	}
+	switch a.Kind {
+	case action.PopAndMove:
+		addErr(fmt.Errorf("%s: action %q not supported by postgres store; supported actions are pop and recycle", slot, a.Kind))
+		return true
+	case action.PopAndDelete:
+		addErr(fmt.Errorf("%s: action %q not supported by postgres store (semantically equivalent to pop; use pop)", slot, a.Kind))
+		return true
+	}
+	return false
 }
 
 // expectedColumns lists the store's items-table column requirements.

@@ -4,7 +4,11 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fallguy/rimsky/stores/common/action"
+)
 
 // TestValidIdent covers the construction-time validation of operator-
 // supplied items_table names. The store uses fmt.Sprintf to
@@ -40,15 +44,23 @@ func TestValidIdent(t *testing.T) {
 	}
 }
 
-// TestValidPickAction covers the pick-action vocabulary check.
+// TestValidPickAction covers the pick-action vocabulary check —
+// pg-store supports pop and recycle only.
 func TestValidPickAction(t *testing.T) {
-	good := []string{"delete", "release_to_back", "release_to_head"}
+	good := []action.Kind{action.Pop, action.Recycle}
 	for _, a := range good {
 		if !validPickAction(a) {
 			t.Errorf("validPickAction(%q) = false, want true", a)
 		}
 	}
-	bad := []string{"", "commit", "abandon", "release_to_nowhere", "DELETE"}
+	bad := []action.Kind{
+		action.Kind(""),
+		action.PopAndMove,
+		action.PopAndDelete,
+		action.Kind("delete"),
+		action.Kind("release_to_back"),
+		action.Kind("release_to_head"),
+	}
 	for _, a := range bad {
 		if validPickAction(a) {
 			t.Errorf("validPickAction(%q) = true, want false", a)

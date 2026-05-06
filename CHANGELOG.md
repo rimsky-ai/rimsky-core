@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Pick-policy action vocabulary v2 (filesystem + postgres stores)
+
+Per `.ok-planner/specs/2026-05-06-fs-store-pick-policy-action-vocabulary-design.md`. Replaces the legacy `release_to_back | release_to_head | delete` vocabulary with the v2 named-action set across both bundled stores.
+
+- **New shared package `stores/common/action/`.** Defines the `Action` tagged-union type, the four action-name constants (`pop`, `pop_and_move`, `pop_and_delete`, `recycle`), the `ValidationResult` struct, and YAML unmarshal for the inline parameterized form. Both `stores/filesystem/` and `stores/postgres/` (and the test stub `stores/stub/`) import this package.
+- **Filesystem store supports all four actions.** Plus a new `sync_strategy: on_drain` value (and a `drained` sentinel mechanism under `<store-root>/.fs-store/<policy>/drained`) that produces single-pass-then-refresh queue mode. The legacy `sync_strategy: on_sweep` is dropped (configs using it fail at config-load with the "must be on_open|on_drain|explicit|never" error).
+- **Postgres store supports `pop` and `recycle`.** `pop_and_move` and `pop_and_delete` rejected at config-load with "not supported by postgres store"; the items-table mechanism has no separate folder concept. Old `delete` migrates to `pop`; old `release_to_back` migrates to `recycle`.
+- **Stub store accepts the full vocabulary** with pop variants collapsed to "drain queue entry" (no folder concept exists in-memory). Used by scenario tests to drive both Available and Unavailable Open paths.
+- **Migration:** pre-v1 break-cleanly. Old field names (`OnCommitDefault`, `OnGiveUpDefault`) and old action values (`release_to_back`, `release_to_head`, bare `delete`) are rejected at config-load with errors pointing at the new vocabulary. In-tree configs and tests have been updated.
+- **YAML shape:** inline parameterized action; `on_commit: pop` is a bare string, `on_commit: { pop_and_move: target }` is a one-key map. Parser rejects number, sequence, multi-key map, or empty-map shapes (null silently zero-values per yaml.v3 behavior; the validator catches the resulting empty Kind).
+- **Validator:** rejects bad combinations at config-load (e.g., `pop + sync_strategy: on_open` for fs-store; `pop_and_move` for pg-store) and warns on inert pairings (`recycle + sync_strategy: on_drain`). Returns a `ValidationResult{Errors, Warnings}` struct; warnings logged via package-level slog by the constructor.
+- **Cross-filesystem check for `pop_and_move`.** Validator confirms via `filepath.EvalSymlinks` + `syscall.Stat_t.Dev` that the target root is on the same filesystem as the policy root. Different-filesystem targets fail config-load (`os.Rename` is not atomic across filesystems).
+- **Concept docs added:** `docs/concepts/claim-producer-fs-store.md` and `docs/concepts/claim-producer-pg-store.md` document the per-store action support matrix and common patterns.
+- **No proto wire change; comments-only update.** Strictly store-side. Stale example-value comments in `protocols/proto/v1/events.proto` on `ClaimAcquiredPayload.on_commit` / `on_give_up` and `ClaimResolvedPayload.action` updated to the new vocabulary (the payload types themselves are dead — declared in the `Event.payload` oneof but never emitted by any Go code). The reactive-loops + lifecycle-handlers work shipped 2026-05-05 stays the same.
+
+#### Action-vocabulary review-cleanup pass 1
+
+Eleven issues from the first review pass on the action-vocabulary work
+above, fixed in this commit. Tightens the validator's containment
+guards for `pop_and_move`, fixes a sweep bug that clobbered the
+drained sentinel on ENOENT, surfaces postgres errors that
+`findPolicyForClaim` was swallowing, and adds the SQL-path tests the
+spec mandated under §10.7.
+
+- **`pop_and_move` MoveTarget now goes through the same containment checks as `pp.Root`.** `validateMoveTargetContained` enforces filepath.IsAbs reject, `..`-prefix reject, and `filepath.Rel`-based containment under `storeRoot`. Without this an operator config of `pop_and_move: ../../etc/triage` could pass the same-fs check (typical case: target on the same filesystem) and let every commit `os.Rename` outside the store root. New tests: `TestValidator_RejectsTraversalTarget`, `TestValidator_RejectsAbsoluteTarget`.
+- **`pop_and_move` rejects `target == policy.Root`.** Previously `os.Rename(root/folder, root/folder)` was a silent no-op, observably equivalent to plain `pop` — operators who fat-fingered the target got behavioral drift instead of an error. The validator now rejects (using `filepath.EvalSymlinks` on both sides) with "target resolves to the same directory as the policy root". New test: `TestValidator_RejectsTargetEqualsPolicyRoot`.
+- **Sweep no longer clobbers the drained sentinel on ENOENT.** `os.Rename` returning ENOENT (a concurrent terminal RPC removed the in-progress sentinel just before sweep tried to rename it) used to set `reclaimed = true` anyway, causing `removeDrainedIfPresent` to clobber a still-needed drained sentinel and burn one extra Unavailable cycle on the next Open. Fix: only set `reclaimed = true` on successful rename.
+- **Pg-store `findPolicyForClaim` no longer swallows postgres errors.** Signature changed to `(*PickPolicy, bool, error)`; SQL errors propagate to `applyPickAction` instead of degrading silently to a no-op while reporting `claim_committed` to the ledger.
+- **Pg-store validator emits one error per slot for unsupported actions.** Previously `pop_and_move` on the pg-store produced two stacked errors (the missing-target one + the not-supported-by-pg one) for the same root cause. New helper `pgZeroOrRejected` runs the pg-rejection check first and skips the per-action `Validate()` when the kind is rejected.
+- **Both validators surface a clear error when an action field is null/missing.** yaml.v3 silently skips `UnmarshalYAML` when the source is null and the target is a struct value, leaving Kind="". The previous downstream error was `unknown action ""` (with the empty quoted string). Both fs- and pg-store validators now emit `<slot>: required (got null or missing)` ahead of `Validate()`. New test: `TestValidator_RejectsNullCommit`.
+- **Pg-store SQL paths now have direct test coverage.** New `TestPGAction_Pop_RowDeleted` and `TestPGAction_Recycle_RowReturnsToQueue` (in `stores/postgres/store/action_vocab_test.go`) spin up a throwaway postgres container via testcontainers, seed an items table, drive `Open` → `Commit` end-to-end, and assert the SQL state mutation. Closes the gap left by the earlier "deferred to scenario suite" rationale (the scenario tests only exercised `Recycle` via the smoke fixture, never `Pop`'s `DELETE`).
+- **`TestValidator_RejectsCrossFilesystemTarget` added per spec §10.3.** Probes for an alternate-filesystem mount point at runtime; skips on platforms where two distinct filesystems can't be assembled (macOS by default). Closes the missing test for the load-bearing same-filesystem guard.
+- **`TestOnDrain_RaceUnderConcurrentOpens` post-storm assertion tightened.** Adds a serialized drain-cycle check after the storm: drives bounded follow-up Opens until one returns Unavailable (proving the drained pass-boundary signal still works after the concurrent storm), and asserts drained is consumed afterwards.
+- **`TestOnDrain_SinglePass` cold-read comment added** to the pass-2 block explaining that under `pop`, folders stay on disk and runSync re-discovers them on the next pass — operators using `pop + on_drain` MUST mutate the corpus externally between passes (or use `pop_and_delete` / `pop_and_move`) to actually drain. The rationale lives at the call site rather than only in the implementation notes.
+
 ### Reactive loops + lifecycle handlers — review-cleanup pass 3
 
 Third-cycle fixes after the second cleanup pass's verification surfaced a
