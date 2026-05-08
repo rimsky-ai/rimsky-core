@@ -177,6 +177,16 @@ function handleExecute(
     dispatch_id: req.dispatch_id,
   });
 
+  logger.info(
+    {
+      instance_id: req.instance_id,
+      model: stringOrUndefined(toRecord(req.userdata).model),
+      cwd_from_store: stringOrUndefined(toRecord(req.userdata).cwd_from_store),
+      stores: Object.keys(req.stores ?? {}),
+    },
+    "execute.received",
+  );
+
   if (config.observability) {
     config.observability.recordEvent(traceId, {
       category: "step_started",

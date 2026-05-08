@@ -427,6 +427,18 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       addDirs: cliConfig?.addDirs,
       maxBudgetUsd: cliConfig?.maxBudgetUsd,
     });
+    logger.info(
+      {
+        runId,
+        pid: handle.pid,
+        model,
+        cwd,
+        bare: cliConfig?.bare ?? false,
+        permission_mode: cliConfig?.permissionMode ?? "bypassPermissions",
+        mcp_url: effectiveCallback.url,
+      },
+      "cli.spawned",
+    );
   } catch (e) {
     effectiveCallback.registry.release(callbackToken);
     void closeDispatchMcp();
@@ -495,8 +507,19 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
   })();
 
+  const spawnedAt = Date.now();
   void (async () => {
     const { exitCode, signal } = await handle.waitExit();
+    logger.info(
+      {
+        runId,
+        pid: handle.pid,
+        exit_code: exitCode,
+        signal,
+        duration_ms: Date.now() - spawnedAt,
+      },
+      "cli.exited",
+    );
     let raceTimer: NodeJS.Timeout | null = null;
     await Promise.race([
       teardownDone,

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Claude-agent: dispatch lifecycle logging
+
+Pre-fix the executor logged only its startup messages, then nothing until the spawned `claude` subprocess emitted its first stdout chunk — typically 30-90s into a Sonnet dispatch with file reads. An operator watching `docker compose logs claude-agent` couldn't tell whether a dispatch had even arrived, much less whether the subprocess was alive.
+
+Four new info-level log events fire at the natural lifecycle points, each tagged with `run_id` for trace correlation:
+
+- **`execute.received`** (gRPC server) — fires when an `Execute` RPC arrives. Includes the rimsky `instance_id`, the resolved `model` from userdata, the `cwd_from_store` selector, and the keys of the `stores` map. Lets an operator see which template was dispatched to which area.
+- **`cli.spawned`** (agent-run, after `cliRunner.spawn`) — fires after the subprocess launches. Includes the subprocess `pid`, `model`, `cwd`, the `bare` / `permission_mode` settings actually applied (so misconfigured templates surface immediately), and the per-dispatch MCP `mcp_url` so log readers can correlate with the rimsky-callback server logs.
+- **`mcp.tool_called`** (internal-mcp-server) — fires once per MCP tool invocation by the agent (`report_complete`, `report_blocked`, `report_error`, `attributes_read`, `attributes_set`). Logs the tool name and the `run_id` resolved via the per-run token, NOT the raw token (auth secret) or the args (which carry agent-generated text — change_summary, attributes_delta, error payloads, etc.). Lets an operator see the agent making progress in real time.
+- **`cli.exited`** (agent-run, on `waitExit`) — fires when the subprocess exits. Includes `pid`, `exit_code`, `signal`, and `duration_ms` (computed from the spawn). Pairs with `cli.spawned` to make per-dispatch wall-time visible at a glance.
+
+Plus one warn-level event: `mcp.unknown_token` fires when an MCP tool call presents a token the registry doesn't know — surfaces stale-token usage, brand-new attempts after teardown, and (operationally) any future bug that misroutes traffic to the wrong server. Replaces an `isError: true` response with no log.
+
+The existing `cli.stdout` (info) and `cli.stderr` (warn) chunk-level logs are unchanged — they fire as the subprocess produces output.
+
+`CliHandle` now exposes the subprocess `pid` as a readonly field so the spawn/exit logs can include it. Optional (undefined for the in-process fakes used in tests).
+
 ### Claude-agent: per-template CLI tuning via `userdata.cli`
 
 Template authors can now configure how the Claude Code subprocess is invoked, on a per-node basis, without touching the executor's source. The previous spawn-args block was hardcoded; only `--model` (via `userdata.model`) and `--max-budget-usd` (via the `RIMSKY_DISPATCH_MAX_USD` env var) were configurable.

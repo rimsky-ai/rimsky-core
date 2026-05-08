@@ -60,6 +60,9 @@ export interface CliSpawnRequest {
 }
 
 export interface CliHandle {
+  /** Subprocess PID once the child is alive. Undefined for fake handles
+   * that don't spawn a real process. Useful for trace-correlation logs. */
+  readonly pid?: number;
   onStdout(cb: (chunk: string) => void): void;
   onStderr(cb: (chunk: string) => void): void;
   onExit(
@@ -239,6 +242,7 @@ export function createClaudeCliRunner(opts: {
       });
 
       return {
+        pid: child.pid,
         onStdout: (cb) => {
           stdoutCbs.push(cb);
         },

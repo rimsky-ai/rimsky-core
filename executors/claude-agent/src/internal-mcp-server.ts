@@ -145,6 +145,23 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     }, 0);
   };
 
+  // Centralized invocation log. Fires once per tool call AFTER token
+  // lookup (so we can log the rimsky-side runId rather than the raw
+  // token, which is the auth secret). Tool args themselves are not
+  // logged: `attributes_set` deltas, `report_complete` change_summary,
+  // and `report_error` payloads can carry agent-generated text we
+  // shouldn't drop into the executor's log stream verbatim.
+  const logCall = (name: string, runId: string): void => {
+    log.info({ tool: name, run_id: runId }, "mcp.tool_called");
+  };
+  const unknownToken = (name: string) => {
+    log.warn({ tool: name }, "mcp.unknown_token");
+    return {
+      content: [{ type: "text" as const, text: "unknown_token" }],
+      isError: true,
+    };
+  };
+
   mcp.tool(
     "report_complete",
     "Report successful completion of this dispatch. Call exactly once at the end of the run. " +
@@ -159,12 +176,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
     async (args) => {
       const entry = registry.lookup(args.token);
-      if (!entry) {
-        return {
-          content: [{ type: "text" as const, text: "unknown_token" }],
-          isError: true,
-        };
-      }
+      if (!entry) return unknownToken("report_complete");
+      logCall("report_complete", entry.runId);
       const outcome = await entry.onComplete(
         args.attributes_delta ?? null,
         args.changed,
@@ -187,12 +200,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
     async (args) => {
       const entry = registry.lookup(args.token);
-      if (!entry) {
-        return {
-          content: [{ type: "text" as const, text: "unknown_token" }],
-          isError: true,
-        };
-      }
+      if (!entry) return unknownToken("report_blocked");
+      logCall("report_blocked", entry.runId);
       await entry.onBlocked(args.reason, args.context ?? null, deferTeardown);
       const ack = { status: "accepted" as const };
       return {
@@ -211,12 +220,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
     async (args) => {
       const entry = registry.lookup(args.token);
-      if (!entry) {
-        return {
-          content: [{ type: "text" as const, text: "unknown_token" }],
-          isError: true,
-        };
-      }
+      if (!entry) return unknownToken("report_error");
+      logCall("report_error", entry.runId);
       await entry.onError(args.error_class, args.payload ?? null, deferTeardown);
       const ack = { status: "accepted" as const };
       return {
@@ -234,12 +239,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
     async (args) => {
       const entry = registry.lookup(args.token);
-      if (!entry) {
-        return {
-          content: [{ type: "text" as const, text: "unknown_token" }],
-          isError: true,
-        };
-      }
+      if (!entry) return unknownToken("attributes_read");
+      logCall("attributes_read", entry.runId);
       const snapshot = entry.attributesAtSpawn;
       return {
         content: [{ type: "text" as const, text: JSON.stringify(snapshot) }],
@@ -258,12 +259,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
     async (args) => {
       const entry = registry.lookup(args.token);
-      if (!entry) {
-        return {
-          content: [{ type: "text" as const, text: "unknown_token" }],
-          isError: true,
-        };
-      }
+      if (!entry) return unknownToken("attributes_set");
+      logCall("attributes_set", entry.runId);
       const result = await entry.onAttributesSet(args.delta);
       const ok = result.status >= 200 && result.status < 300;
       const body = ok
