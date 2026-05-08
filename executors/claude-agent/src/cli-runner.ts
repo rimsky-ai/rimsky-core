@@ -80,29 +80,61 @@ export function createClaudeCliRunner(opts: {
       const mcpServers: Record<string, unknown> = {};
       for (const t of req.tools) {
         if (t.kind === "mcp-http") {
-          mcpServers[t.name] = { url: t.url, headers: t.headers ?? {} };
+          mcpServers[t.name] = {
+            type: "http",
+            url: t.url,
+            headers: t.headers ?? {},
+          };
         }
       }
       await writeFile(mcpConfigPath, JSON.stringify({ mcpServers }));
 
       const { env: authEnv, cleanup: cleanupAuthEnv } = buildCliEnv(auth);
-      const child: ChildProcess = spawn(
-        binary,
-        [
-          "--model",
-          req.model,
-          "--system-prompt-file",
-          systemPromptPath,
-          "--mcp-config",
-          mcpConfigPath,
-        ],
-        {
-          cwd: req.cwd,
-          env: { ...authEnv, ...req.env },
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      child.stdin?.end(req.userPrompt);
+      // Args follow the working pattern from skillprompting/brain
+      // (judging-orchestrator.ts:197-207). The CLI:
+      //   - `--print` enables non-interactive print mode (required when
+      //     stdin/stdout are pipes; the executor's silence-tracker reads
+      //     stdout incrementally so plain text is fine — `stream-json`
+      //     is an enhancement for downstream parsing, not required).
+      //   - `--permission-mode bypassPermissions` skips all permission
+      //     checks — including approval for MCP tool calls (the
+      //     rimsky-callback `report_complete` etc.) and edits outside
+      //     cwd. The container's bind-mount + non-root user is the
+      //     real sandbox; layering claude's permission gate on top
+      //     just blocks the agent from calling the tools rimsky needs
+      //     it to call. `acceptEdits` is too narrow — it auto-approves
+      //     Edit/Write but still gates MCP and out-of-cwd reads.
+      //   - `--system-prompt-file` injects the rendered system prompt.
+      //   - `--mcp-config` points the CLI at the per-run MCP config
+      //     that exposes the rimsky-callback tool surface.
+      //   - `-p <prompt>` provides the user prompt as the positional
+      //     argument; stdin is closed (`stdio[0] = "ignore"`).
+      // Per-dispatch token-budget ceiling. Reads from the per-run env var
+      // RIMSKY_DISPATCH_MAX_USD (set by the operator on the executor service)
+      // and is omitted when unset — the CLI's `--max-budget-usd` flag ends a
+      // run that exceeds the ceiling instead of letting it spiral. Useful as
+      // a safety net during smoke testing or for capping per-area spend in
+      // production. Only effective with `--print`.
+      const maxBudgetUsd = process.env.RIMSKY_DISPATCH_MAX_USD;
+      const args = [
+        "--print",
+        "--model",
+        req.model,
+        "--permission-mode",
+        "bypassPermissions",
+        "--system-prompt-file",
+        systemPromptPath,
+        "--mcp-config",
+        mcpConfigPath,
+        ...(maxBudgetUsd ? ["--max-budget-usd", maxBudgetUsd] : []),
+        "-p",
+        req.userPrompt,
+      ];
+      const child: ChildProcess = spawn(binary, args, {
+        cwd: req.cwd,
+        env: { ...authEnv, ...req.env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
       const stdoutCbs: ((chunk: string) => void)[] = [];
       const stderrCbs: ((chunk: string) => void)[] = [];

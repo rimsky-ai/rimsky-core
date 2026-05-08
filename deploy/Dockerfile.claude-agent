@@ -7,7 +7,12 @@ RUN npm run build
 COPY protocols/proto/v1/ /build/protocols/proto/v1/
 
 FROM node:20-alpine
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini git
+# The executor spawns the Claude Code CLI as a subprocess. cli-runner.ts
+# defaults to `"claude"` from PATH; install it globally so the binary
+# lands at /usr/local/bin/claude. Without this the executor exits with
+# error_class: subprocess_exit_before_complete on every dispatch.
+RUN npm install -g @anthropic-ai/claude-code
 WORKDIR /app
 COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/node_modules ./node_modules

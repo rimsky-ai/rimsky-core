@@ -173,6 +173,20 @@ func TestValidator_DefaultsEmptySyncStrategyToOnOpen(t *testing.T) {
 	}
 }
 
+// Empty pp.Root means the policy operates at the store root itself —
+// useful for single-entry policies whose FolderPattern matches one
+// specific top-level folder (e.g. a "consolidate-on-the-corpus-root"
+// pick policy). filepath.Clean("") == ".", so the canonicalization
+// checks treat empty and "." identically.
+func TestValidator_AcceptsEmptyPolicyRoot(t *testing.T) {
+	root, _ := validatorTestRoot(t)
+	pp := newValidPolicy(root, "")
+	res := validatePickPolicy(root, "@r", pp)
+	if !res.OK() {
+		t.Fatalf("expected OK with empty Root, got errors: %v", res.Errors)
+	}
+}
+
 // TestValidator_RejectsCrossFilesystemTarget exercises the load-bearing
 // same-fs guard in validateMoveTargetSameFS. os.Rename across
 // filesystems is not atomic — admitting a cross-fs target would let

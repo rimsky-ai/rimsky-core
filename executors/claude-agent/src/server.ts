@@ -233,7 +233,7 @@ async function runAndCallback(
         userdata,
         attributes,
       },
-      stores: req.stores ?? {},
+      stores: unwrapStores(req.stores ?? {}),
       cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
       cwdOverride: stringOrUndefined(userdata.cwd),
       callbackUrl: req.callback_url ?? "",
@@ -326,11 +326,67 @@ function outcomeToCallbackBody(
   };
 }
 
-function toRecord(v: unknown): Record<string, unknown> {
-  if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, unknown>;
+// Unwraps a google.protobuf.Struct value (as decoded by @grpc/proto-loader
+// with the default options: { fields: { [key]: Value } }) into a plain
+// object. Without this, downstream lookups like `userdata.model` see
+// `undefined` because the actual value is at `userdata.fields.model.stringValue`.
+function unwrapStructValue(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "object") return v;
+  const o = v as Record<string, unknown>;
+  const kind = typeof o.kind === "string" ? o.kind : undefined;
+  if (kind === "stringValue") return typeof o.stringValue === "string" ? o.stringValue : "";
+  if (kind === "numberValue") return typeof o.numberValue === "number" ? o.numberValue : 0;
+  if (kind === "boolValue") return typeof o.boolValue === "boolean" ? o.boolValue : false;
+  if (kind === "nullValue") return null;
+  if (kind === "structValue") return unwrapStruct(o.structValue);
+  if (kind === "listValue") {
+    const lv = o.listValue as { values?: unknown[] } | undefined;
+    return (lv?.values ?? []).map(unwrapStructValue);
   }
-  return {};
+  return v;
+}
+
+function unwrapStruct(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object") return {};
+  const fields = (v as { fields?: Record<string, unknown> }).fields;
+  if (!fields || typeof fields !== "object") return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(fields)) {
+    out[k] = unwrapStructValue(val);
+  }
+  return out;
+}
+
+function toRecord(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  // google.protobuf.Struct shape from @grpc/proto-loader: a top-level
+  // `fields` map of Value-typed entries with a `kind` discriminator.
+  // Plain object shape is also accepted (e.g. from in-process tests).
+  if ("fields" in v && typeof (v as { fields?: unknown }).fields === "object") {
+    return unwrapStruct(v);
+  }
+  return v as Record<string, unknown>;
+}
+
+// Unwraps the per-store `StoreHandle.handle` Struct into a plain object
+// so downstream consumers (resolveCwd, attribute substitution) can read
+// `stores[alias].handle.address` as a string. Without this, `.handle` is
+// the raw Struct shape and `.handle.address` is `undefined`.
+function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(stores)) {
+    if (!v || typeof v !== "object") {
+      out[k] = v;
+      continue;
+    }
+    const sh = v as { kind?: unknown; handle?: unknown };
+    out[k] = {
+      kind: sh.kind,
+      handle: sh.handle ? unwrapStruct(sh.handle) : {},
+    };
+  }
+  return out;
 }
 
 function stringOr(v: unknown, fallback: string): string {

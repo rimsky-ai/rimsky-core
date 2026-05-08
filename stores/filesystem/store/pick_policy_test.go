@@ -359,6 +359,63 @@ func TestSweep_ReclaimsExpired(t *testing.T) {
 	}
 }
 
+// TestOpenPickPolicy_StoreRootSingleEntry exercises a pick policy whose
+// Root is the store root itself (Root: "") combined with a FolderPattern
+// that matches exactly one top-level folder. This shape lets a policy
+// yield a single rw claim on a top-level subtree (here: "guidance/")
+// rather than picking from inside a folder. recycle-on-commit gives
+// the consumer a long-lived "always-available" rw claim against that
+// subtree.
+func TestOpenPickPolicy_StoreRootSingleEntry(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(root, "guidance"), 0o755))
+	must(t, os.MkdirAll(filepath.Join(root, "specs"), 0o755))
+	must(t, os.MkdirAll(filepath.Join(root, "prompts"), 0o755))
+	pp := &PickPolicy{
+		Root:              "",
+		FolderPattern:     regexp.MustCompile(`^guidance$`),
+		OnCommit:          action.Action{Kind: action.Recycle},
+		OnGiveUp:          action.Action{Kind: action.Recycle},
+		VisibilityTimeout: time.Minute,
+		SyncStrategy:      "on_open",
+	}
+	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@root": pp}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	outcome, err := st.Open(context.Background(), "claim-1", "@root")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !outcome.Available {
+		t.Fatal("expected Available, got Unavailable")
+	}
+	var addr, scope string
+	must(t, json.Unmarshal(outcome.Result.Address, &addr))
+	must(t, json.Unmarshal(outcome.Result.Scope, &scope))
+	wantAddr := filepath.Join(root, "guidance")
+	wantScope := "guidance"
+	if addr != wantAddr {
+		t.Errorf("address = %q, want %q", addr, wantAddr)
+	}
+	if scope != wantScope {
+		t.Errorf("scope = %q, want %q", scope, wantScope)
+	}
+	// The pattern excludes "specs" and "prompts"; only "guidance" should be
+	// in available/.
+	availDir := filepath.Join(root, ".fs-store", "root", "available")
+	entries, _ := os.ReadDir(availDir)
+	got := make(map[string]bool)
+	for _, e := range entries {
+		got[e.Name()] = true
+	}
+	// "guidance" was just claimed (rename-as-claim), so it's in in_progress/
+	// rather than available/. The other two must NOT be present.
+	if got["specs"] || got["prompts"] {
+		t.Errorf("non-matching top-level folders leaked into available/: %v", got)
+	}
+}
+
 func TestFolderPattern_FiltersNonMatching(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"

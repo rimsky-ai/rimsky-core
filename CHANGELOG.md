@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Claude-agent: compatibility with current Claude Code CLI (2.1.x) and per-dispatch MCP
+
+The `executors/claude-agent` reference impl was no longer wire-compatible with the Claude Code CLI it spawns. End-to-end runs through the executor surfaced six distinct gaps; all are fixed here. Verified end-to-end against Claude Code 2.1.132 with both `claude-haiku-4-5` and `claude-sonnet-4-6` against a downstream consumer's docs-pipeline (single-area smoke; both `area-pass` and `consolidate` nodes complete cleanly via `report_complete` MCP tool, attributes commit, locks release with `action: release`).
+
+- **MCP server now uses `@modelcontextprotocol/sdk` Streamable-HTTP transport.** The previous v1 implementation was a hand-rolled JSON-RPC endpoint that handled only `tools/list` + `tools/call` — Claude Code's MCP-HTTP client requires the full MCP `initialize` handshake and silently skips servers that don't speak it. `internal-mcp-server.ts` now constructs an `McpServer` and wires it through `StreamableHTTPServerTransport`. Tool registration moved to a separate exported `registerTools(mcp, registry, log)` seam that mirrors brain's `registerTopicTools` test seam (`skillprompting/brain/src/mcp-topic-server.ts`).
+- **Per-dispatch MCP server lifecycle.** The single shared MCP server in `main.ts` was found to mishandle multi-spawn lifecycles — a second dispatch's CLI silently lost visibility of the rimsky-callback tools after the first dispatch's session ended. `agent-run.ts` now starts a fresh internal MCP server per `runAgent` invocation and tears it down in the `finally` block. Mirrors brain's per-spawn pattern (`startTopicMcpServer` per session). The legacy `callback` parameter on `RunArgs` is preserved for back-compat but its `url` / `registry` are unused by the run.
+- **Per-run callback token now substituted into prompts.** A new `{{callback_token}}` placeholder is rendered in the system / user prompt so the agent receives the token without needing shell access to `$RIMSKY_CALLBACK_TOKEN`. `renderTemplate` extended to accept an optional `callback_token` field; existing `{{userdata.x}}` / `{{attributes.x}}` substitutions unchanged. The env var is still set on the child for tools that DO have shell.
+- **Spawn args aligned with brain (`judging-orchestrator.ts:197-207`).** Previously: `claude --model X --system-prompt-file Y --mcp-config Z` with `userPrompt` written to stdin. Now: `claude --print --model X --permission-mode bypassPermissions [--max-budget-usd $] --system-prompt-file Y --mcp-config Z -p <userPrompt>` with `stdio[0] = "ignore"`. The CLI requires `--print` for non-interactive operation, `--permission-mode bypassPermissions` for both `Edit/Write` AND MCP tool calls (`acceptEdits` is too narrow — it gates MCP), and the prompt as a positional `-p <prompt>` rather than via stdin.
+- **Optional per-dispatch token-spend ceiling.** `RIMSKY_DISPATCH_MAX_USD` env var on the executor service plumbs through to `claude --max-budget-usd`. When set, the CLI ends a run that exceeds the ceiling instead of letting it spiral. Useful for smoke tests and per-area spend caps in production.
+- **`@anthropic-ai/claude-code` installed in the executor image.** The Dockerfile (`deploy/Dockerfile.claude-agent`) previously built only the executor's gRPC wrapper, leaving `claude` not in `$PATH`. `cli-runner.ts` defaults to spawning `"claude"` from PATH, so every dispatch failed instantly with `subprocess_exit_before_complete`. Added `RUN npm install -g @anthropic-ai/claude-code` (and `apk add --no-cache git` since some Claude CLI flows shell out to git).
+- **`google.protobuf.Struct` shape unwrapped at the gRPC / HTTP boundary.** With `@grpc/proto-loader`'s default options (`keepCase / longs:String / enums:String / defaults:true / oneofs:true`), `userdata` and `StoreHandle.handle` arrive as `{fields: {<key>: {kind, stringValue, ...}}}` — `userdata.user_prompt_template` was undefined because the actual value lived at `userdata.fields.user_prompt_template.stringValue`. Added `unwrapStruct` / `unwrapStructValue` / `unwrapStores` in `server.ts` and `http-bridge.ts` (intentionally duplicated, `@source`-annotated per the cold-read tracked-duplication convention).
+- **CLI subprocess stdout/stderr now logged.** `agent-run.ts` previously discarded child output silently — debugging required `docker compose exec` into the running container. Stdout chunks log at `info` (`cli.stdout`) and stderr at `warn` (`cli.stderr`) with the `runId` / `node_id` / `dispatch_id` for trace correlation. Capped at 2000 chars/chunk to bound log volume.
+- **Tests rewritten to use the SDK Client over `InMemoryTransport`** instead of probing the bare HTTP endpoint with `fetch()`. Mirrors brain's `mcp-topic-server_test.ts` pattern. `registerTools` is now exported as the test seam.
+
+### Foundation: store-handle wire map keyed by Alias, not StoreName
+
+`buildStoreHandles` (`foundation/integration/runner_dispatch.go::buildStoreHandles`) keyed the `map[string]*StoreHandle` by `ClaimSpec.StoreName`. A node with two store entries on the same store name (e.g. a `consolidate` node holding both `@consolidate-queue` aliased `doc` and `@guidance-root` aliased `root`, both on the `content` store) saw the second handle silently overwrite the first — the executor then failed to look up `stores["doc"]` because only `stores["content"]` existed. Switched to keying by `ClaimSpec.Alias` (defaulting to `StoreName` when empty), matching the alias-keyed lookup the executor already does for `cwd_from_store: <alias>` and the alias-keyed claim map the modeling-layer attribute substitution uses (`modeling/attribute/substitution.go::resolveClaim`). Existing single-store-per-node templates are unaffected (alias defaults to StoreName).
+
+### Filesystem store: pick policy may root at the store root itself
+
+`PickPolicy.Root` may now be empty (`root: ""` in YAML). The validator previously rejected this with `root: required`; emptiness is now accepted and treated identically to `"."` — the policy operates against the store root directly. Combined with `FolderPattern`, this yields a clean shape for a single-entry policy that picks one specific top-level folder, e.g.
+
+```yaml
+"@guidance-root":
+  root: ""
+  folder_pattern: "^guidance$"
+  on_commit: recycle
+  on_give_up: recycle
+  visibility_timeout_seconds: 3600
+```
+
+Yields a long-lived rw claim on `<store-root>/guidance/` that recycle-on-commit returns to the queue tail after each pass — i.e. an always-available rw scope on the entire subtree. Previously the only way to express this was through concrete-path mode (`selector: "guidance"` via `openScoped`), which bypasses the pick-policy machinery entirely (no visibility timeout, no queue introspection).
+
+- `stores/filesystem/store/store.go::validatePickPolicy` — drop the `pp.Root == ""` early reject; the existing canonicalization checks treat empty and `"."` identically (`filepath.Clean("") == "."`).
+- New tests: `TestValidator_AcceptsEmptyPolicyRoot` (validator surface) and `TestOpenPickPolicy_StoreRootSingleEntry` (end-to-end Open against a `Root: ""` policy with `FolderPattern: "^guidance$"` and two non-matching siblings; asserts the address/scope shape and that the non-matching entries are filtered out).
+
 ### Pick-policy action vocabulary v2 (filesystem + postgres stores)
 
 Per `.ok-planner/specs/2026-05-06-fs-store-pick-policy-action-vocabulary-design.md`. Replaces the legacy `release_to_back | release_to_head | delete` vocabulary with the v2 named-action set across both bundled stores.

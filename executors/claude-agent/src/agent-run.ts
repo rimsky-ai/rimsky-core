@@ -13,7 +13,7 @@ type AjvCtor = new (opts?: object) => { compile: (schema: object) => (v: unknown
 const Ajv: AjvCtor = (((AjvNs as unknown) as { default?: AjvCtor }).default ??
   ((AjvNs as unknown) as AjvCtor));
 import type { CliRunner, CliHandle } from "./cli-runner.js";
-import type { CallbackServerHandle } from "./internal-mcp-server.js";
+import { startInternalMcpServer, type CallbackServerHandle } from "./internal-mcp-server.js";
 import {
   buildAttributesWritebackUrl,
   defaultPostAttributes,
@@ -175,10 +175,47 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   }
   const cwd = cwdResolution.cwd;
 
-  const renderedSystem = renderTemplate(systemPrompt, templateVars);
-  const renderedUser = renderTemplate(userPromptTemplate, templateVars);
-
+  // Generate the per-run callback token before rendering prompts so it can
+  // be substituted into the system / user prompt via `{{callback_token}}`.
+  // The agent (Claude Code CLI subprocess) needs this token to call any
+  // rimsky-callback MCP tool. Injecting it via the prompt avoids requiring
+  // the agent to have shell access to read `RIMSKY_CALLBACK_TOKEN` from env
+  // (the env var is still set on the child for tools that DO have shell).
   const callbackToken = randomUUID();
+  const promptVars = {
+    ...templateVars,
+    callback_token: callbackToken,
+  };
+
+  const renderedSystem = renderTemplate(systemPrompt, promptVars);
+  const renderedUser = renderTemplate(userPromptTemplate, promptVars);
+
+  // Per-dispatch internal MCP server. The shared / global server on `callback`
+  // (passed in via RunArgs) was found to mishandle multi-spawn lifecycles —
+  // a second dispatch's CLI couldn't `initialize` the MCP after the first
+  // dispatch ran, and the rimsky-callback tools silently disappeared from
+  // the agent's tool surface. Starting a fresh server per dispatch mirrors
+  // skillprompting/brain (mcp-topic-server.ts::startTopicMcpServer), which
+  // is the production reference for this spawn-claude → MCP-HTTP loop.
+  const dispatchMcp = await startInternalMcpServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+  });
+  let dispatchMcpClosed = false;
+  const closeDispatchMcp = async (): Promise<void> => {
+    if (dispatchMcpClosed) return;
+    dispatchMcpClosed = true;
+    try {
+      await dispatchMcp.close();
+    } catch (err) {
+      logger.warn({ runId, error: String(err) }, "dispatch MCP close failed");
+    }
+  };
+  // Effective callback handle for THIS dispatch. The passed-in `callback`
+  // parameter is preserved on the RunArgs interface for back-compat but its
+  // url/registry are not used by this run.
+  const effectiveCallback = dispatchMcp;
 
   // Lazily compile the attributes schema if one is provided; ajv throws on
   // an invalid schema shape which we surface as an errored outcome before
@@ -279,7 +316,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
   };
 
-  callback.registry.register(callbackToken, {
+  effectiveCallback.registry.register(callbackToken, {
     runId,
     attributesAtSpawn: attributes,
     cancelToken,
@@ -361,16 +398,17 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       systemPrompt: renderedSystem,
       userPrompt: renderedUser,
       tools: [
-        { kind: "mcp-http", name: "rimsky-callback", url: callback.url },
+        { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
       ],
       env: {
-        RIMSKY_CALLBACK_URL: callback.url,
+        RIMSKY_CALLBACK_URL: effectiveCallback.url,
         RIMSKY_CALLBACK_TOKEN: callbackToken,
       },
       cwd,
     });
   } catch (e) {
-    callback.registry.release(callbackToken);
+    effectiveCallback.registry.release(callbackToken);
+    void closeDispatchMcp();
     return {
       kind: "errored",
       errorClass: "cli_spawn_failed",
@@ -380,8 +418,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   handleRef = handle;
 
   let lastStdoutAt = Date.now();
-  handle.onStdout(() => {
+  handle.onStdout((chunk) => {
     lastStdoutAt = Date.now();
+    logger.info({ runId, chunk: chunk.slice(0, 2000) }, "cli.stdout");
+  });
+  handle.onStderr((chunk) => {
+    logger.warn({ runId, chunk: chunk.slice(0, 2000) }, "cli.stderr");
   });
 
   let teardownResolve!: () => void;
@@ -456,7 +498,8 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     silenceStopped = true;
     teardownResolve();
     await silenceLoop.catch(() => {});
-    callback.registry.release(callbackToken);
+    effectiveCallback.registry.release(callbackToken);
+    void closeDispatchMcp();
   }
 }
 
@@ -549,9 +592,17 @@ export function renderTemplate(
   vars: {
     userdata: Record<string, unknown>;
     attributes: Record<string, unknown>;
+    /**
+     * The per-run rimsky-callback token. Exposed as a bare `{{callback_token}}`
+     * placeholder so templates can inject it into the system / user prompt
+     * without the agent needing shell access to read `RIMSKY_CALLBACK_TOKEN`
+     * from env. Optional — older callers don't pass it; the placeholder is
+     * preserved verbatim in that case.
+     */
+    callback_token?: string;
   },
 ): string {
-  return tpl.replace(
+  let out = tpl.replace(
     /\{\{(userdata|attributes)\.([^}]+)\}\}/g,
     (_, ns: "userdata" | "attributes", key: string) => {
       const bag = vars[ns];
@@ -560,4 +611,8 @@ export function renderTemplate(
       return typeof v === "string" ? v : JSON.stringify(v);
     },
   );
+  if (vars.callback_token !== undefined) {
+    out = out.replace(/\{\{callback_token\}\}/g, vars.callback_token);
+  }
+  return out;
 }

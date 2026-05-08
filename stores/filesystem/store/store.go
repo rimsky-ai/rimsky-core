@@ -327,9 +327,11 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 		addErr(errors.New("policy is nil"))
 		return res
 	}
-	if pp.Root == "" {
-		addErr(errors.New("root: required"))
-	} else if filepath.IsAbs(pp.Root) {
+	// pp.Root may be empty: that means the policy operates at the store root
+	// itself (e.g. a single-entry policy whose FolderPattern matches one
+	// specific top-level folder). filepath.Clean("") == ".", so the
+	// canonicalization checks below treat empty and "." identically.
+	if filepath.IsAbs(pp.Root) {
 		addErr(fmt.Errorf("root: %q is absolute; must be relative to store root", pp.Root))
 	} else {
 		cleaned := filepath.Clean(pp.Root)

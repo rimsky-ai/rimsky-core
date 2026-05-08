@@ -170,7 +170,7 @@ async function runAndCallback(
         userdata,
         attributes,
       },
-      stores: body.stores ?? {},
+      stores: unwrapStores(body.stores ?? {}),
       cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
       cwdOverride: stringOrUndefined(userdata.cwd),
       callbackUrl: body.callback_url ?? "",
@@ -265,11 +265,62 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
   return auth;
 }
 
-function toRecord(v: unknown): Record<string, unknown> {
-  if (v && typeof v === "object" && !Array.isArray(v)) {
-    return v as Record<string, unknown>;
+// @source: src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
+// Mirror of the gRPC server's userdata unwrap. The HTTP bridge usually
+// receives plain JSON (no Struct envelope) but accepts the proto-Struct
+// shape too so behavior stays consistent across transports.
+function unwrapStructValue(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "object") return v;
+  const o = v as Record<string, unknown>;
+  const kind = typeof o.kind === "string" ? o.kind : undefined;
+  if (kind === "stringValue") return typeof o.stringValue === "string" ? o.stringValue : "";
+  if (kind === "numberValue") return typeof o.numberValue === "number" ? o.numberValue : 0;
+  if (kind === "boolValue") return typeof o.boolValue === "boolean" ? o.boolValue : false;
+  if (kind === "nullValue") return null;
+  if (kind === "structValue") return unwrapStruct(o.structValue);
+  if (kind === "listValue") {
+    const lv = o.listValue as { values?: unknown[] } | undefined;
+    return (lv?.values ?? []).map(unwrapStructValue);
   }
-  return {};
+  return v;
+}
+
+function unwrapStruct(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object") return {};
+  const fields = (v as { fields?: Record<string, unknown> }).fields;
+  if (!fields || typeof fields !== "object") return {};
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(fields)) {
+    out[k] = unwrapStructValue(val);
+  }
+  return out;
+}
+
+function toRecord(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  if ("fields" in v && typeof (v as { fields?: unknown }).fields === "object") {
+    return unwrapStruct(v);
+  }
+  return v as Record<string, unknown>;
+}
+
+// @source: src/server.ts (unwrapStores)
+// Mirror of the gRPC server's store-handle unwrap.
+function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(stores)) {
+    if (!v || typeof v !== "object") {
+      out[k] = v;
+      continue;
+    }
+    const sh = v as { kind?: unknown; handle?: unknown };
+    out[k] = {
+      kind: sh.kind,
+      handle: sh.handle ? unwrapStruct(sh.handle) : {},
+    };
+  }
+  return out;
 }
 
 function stringOr(v: unknown, fallback: string): string {

@@ -2,20 +2,21 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import pino from "pino";
-import { startInternalMcpServer, type CallbackServerHandle } from "./internal-mcp-server.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { registerTools } from "./internal-mcp-server.js";
+import { TokenRegistry } from "./token-registry.js";
+
+/**
+ * Tests exercise the rimsky-callback tool surface via an InMemoryTransport
+ * pair (mirrors brain's `mcp-topic-server_test.ts`). The HTTP transport is
+ * itself an SDK concern; tests focus on tool behavior, not transport wiring.
+ */
 
 const logger = pino({ level: "silent" });
-
-let handle: CallbackServerHandle | null = null;
-
-afterEach(async () => {
-  if (handle) {
-    await handle.close();
-    handle = null;
-  }
-});
 
 function makeRegistryEntry(overrides: {
   attributesAtSpawn?: Record<string, unknown>;
@@ -42,20 +43,30 @@ function makeRegistryEntry(overrides: {
   };
 }
 
-describe("startInternalMcpServer", () => {
-  it("serves tools/list with all five tools", async () => {
-    handle = await startInternalMcpServer({ logger });
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.result.tools).toHaveLength(5);
-    const names = body.result.tools
-      .map((t: { name: string }) => t.name)
-      .sort();
+async function buildClient(registry: TokenRegistry): Promise<Client> {
+  const server = new McpServer({ name: "rimsky-callback-test", version: "1.0.0" });
+  registerTools(server, registry, logger);
+
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+
+  const client = new Client({ name: "test-client", version: "1.0.0" });
+  await client.connect(clientTransport);
+  return client;
+}
+
+function parseToolText<T>(content: unknown): T {
+  const arr = content as Array<{ type: string; text?: string }>;
+  return JSON.parse(arr[0]!.text ?? "null") as T;
+}
+
+describe("rimsky-callback MCP tools", () => {
+  it("lists all five tools", async () => {
+    const registry = new TokenRegistry();
+    const client = await buildClient(registry);
+
+    const result = await client.listTools();
+    const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
       "attributes_set",
@@ -66,13 +77,13 @@ describe("startInternalMcpServer", () => {
   });
 
   it("dispatches report_complete with attributes_delta", async () => {
-    handle = await startInternalMcpServer({ logger });
+    const registry = new TokenRegistry();
     let captured: {
       delta: Record<string, unknown> | null;
       changed: boolean;
       summary: string | null;
     } | null = null;
-    handle.registry.register(
+    registry.register(
       "tok-ok",
       makeRegistryEntry({
         onComplete: async (delta, changed, summary) => {
@@ -81,27 +92,18 @@ describe("startInternalMcpServer", () => {
         },
       }),
     );
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: {
-          name: "report_complete",
-          arguments: {
-            token: "tok-ok",
-            attributes_delta: { hello: "world" },
-            changed: true,
-            change_summary: "did",
-          },
-        },
-      }),
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "report_complete",
+      arguments: {
+        token: "tok-ok",
+        attributes_delta: { hello: "world" },
+        changed: true,
+        change_summary: "did",
+      },
     });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.result.structuredContent).toEqual({ status: "accepted" });
+    expect(parseToolText(res.content)).toEqual({ status: "accepted" });
     expect(captured).toEqual({
       delta: { hello: "world" },
       changed: true,
@@ -110,9 +112,9 @@ describe("startInternalMcpServer", () => {
   });
 
   it("dispatches report_complete without attributes_delta (incremental pattern)", async () => {
-    handle = await startInternalMcpServer({ logger });
+    const registry = new TokenRegistry();
     let captured: { delta: Record<string, unknown> | null } | null = null;
-    handle.registry.register(
+    registry.register(
       "tok-ok",
       makeRegistryEntry({
         onComplete: async (delta) => {
@@ -121,51 +123,39 @@ describe("startInternalMcpServer", () => {
         },
       }),
     );
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: {
-          name: "report_complete",
-          arguments: { token: "tok-ok", changed: false },
-        },
-      }),
+    const client = await buildClient(registry);
+
+    await client.callTool({
+      name: "report_complete",
+      arguments: { token: "tok-ok", changed: false },
     });
-    expect(res.status).toBe(200);
     expect(captured).toEqual({ delta: null });
   });
 
   it("attributes_read returns the dispatch-time snapshot", async () => {
-    handle = await startInternalMcpServer({ logger });
-    handle.registry.register(
+    const registry = new TokenRegistry();
+    registry.register(
       "tok-r",
       makeRegistryEntry({
         attributesAtSpawn: { foo: 1, bar: { nested: true } },
       }),
     );
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 10,
-        method: "tools/call",
-        params: { name: "attributes_read", arguments: { token: "tok-r" } },
-      }),
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "attributes_read",
+      arguments: { token: "tok-r" },
     });
-    const body = await res.json();
-    expect(body.result.structuredContent).toEqual({
-      attributes: { foo: 1, bar: { nested: true } },
+    expect(parseToolText(res.content)).toEqual({
+      foo: 1,
+      bar: { nested: true },
     });
   });
 
   it("attributes_set forwards delta to onAttributesSet and reports HTTP status", async () => {
-    handle = await startInternalMcpServer({ logger });
+    const registry = new TokenRegistry();
     let captured: { delta: Record<string, unknown> } | null = null;
-    handle.registry.register(
+    registry.register(
       "tok-s",
       makeRegistryEntry({
         onAttributesSet: async (delta) => {
@@ -174,21 +164,13 @@ describe("startInternalMcpServer", () => {
         },
       }),
     );
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 11,
-        method: "tools/call",
-        params: {
-          name: "attributes_set",
-          arguments: { token: "tok-s", delta: { progress: "halfway" } },
-        },
-      }),
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "attributes_set",
+      arguments: { token: "tok-s", delta: { progress: "halfway" } },
     });
-    const body = await res.json();
-    expect(body.result.structuredContent).toEqual({
+    expect(parseToolText(res.content)).toEqual({
       status: "accepted",
       http_status: 204,
     });
@@ -196,61 +178,34 @@ describe("startInternalMcpServer", () => {
   });
 
   it("attributes_set reports rejection on non-2xx HTTP status", async () => {
-    handle = await startInternalMcpServer({ logger });
-    handle.registry.register(
+    const registry = new TokenRegistry();
+    registry.register(
       "tok-fail",
       makeRegistryEntry({
         onAttributesSet: async () => ({ status: 422 }),
       }),
     );
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 12,
-        method: "tools/call",
-        params: {
-          name: "attributes_set",
-          arguments: { token: "tok-fail", delta: { x: 1 } },
-        },
-      }),
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "attributes_set",
+      arguments: { token: "tok-fail", delta: { x: 1 } },
     });
-    const body = await res.json();
-    expect(body.result.structuredContent).toEqual({
+    expect(parseToolText(res.content)).toEqual({
       status: "rejected",
       http_status: 422,
     });
-    expect(body.result.isError).toBe(true);
+    expect(res.isError).toBe(true);
   });
 
   it("returns isError for unknown token", async () => {
-    handle = await startInternalMcpServer({ logger });
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 4,
-        method: "tools/call",
-        params: {
-          name: "report_complete",
-          arguments: { token: "nope", changed: false },
-        },
-      }),
-    });
-    const body = await res.json();
-    expect(body.result.isError).toBe(true);
-  });
+    const registry = new TokenRegistry();
+    const client = await buildClient(registry);
 
-  it("rejects unknown method", async () => {
-    handle = await startInternalMcpServer({ logger });
-    const res = await fetch(handle.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "bogus" }),
+    const res = await client.callTool({
+      name: "report_complete",
+      arguments: { token: "nope", changed: false },
     });
-    const body = await res.json();
-    expect(body.error.code).toBe(-32601);
+    expect(res.isError).toBe(true);
   });
 });

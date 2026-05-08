@@ -469,7 +469,19 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 		if err != nil {
 			return nil, err
 		}
-		out[spec.StoreName] = h
+		// Key by Alias, not StoreName: two store entries within a node may
+		// share the same store name but must have distinct aliases (e.g. a
+		// consolidate node holding both `@consolidate-queue` aliased `doc`
+		// and `@guidance-root` aliased `root`, both on the same `content`
+		// store). Keying by StoreName would let the second overwrite the
+		// first. Alias is also the lookup key the executor uses for
+		// `cwd_from_store: <alias>` and `claim.<alias>.scope` attribute
+		// substitution, so the wire shape now matches what consumers need.
+		key := spec.Alias
+		if key == "" {
+			key = spec.StoreName
+		}
+		out[key] = h
 	}
 	return out, nil
 }
