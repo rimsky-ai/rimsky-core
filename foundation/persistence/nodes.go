@@ -52,6 +52,15 @@ type NodeStore interface {
 	ListByInstancePaged(ctx context.Context, instanceID shared.UUID, pag ListPagination, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListReadyForDispatch(ctx context.Context, tx Tx) ([]NodeRow, error)
 	ListRunning(ctx context.Context, tx Tx) ([]NodeRow, error)
+	// ListRunningBySupervisor returns the rows in state='running' currently
+	// assigned to the given supervisor (`assigned_supervisor_id = $1`).
+	// Used by the supervisor's heartbeat tick to refresh `last_heartbeat_at`
+	// on every running node it owns — covers both sync dispatches (RunNode
+	// in-flight) and async dispatches (handed off to the callback server
+	// but still running in the DB until the terminal callback arrives).
+	// The DB is the source of truth; do not rely on in-memory bookkeeping
+	// of "currently running" nodes.
+	ListRunningBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]NodeRow, error)
 	ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx Tx) ([]NodeRow, error)
 	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)

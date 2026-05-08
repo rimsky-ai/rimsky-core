@@ -177,6 +177,18 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 	return collectNodes(rows)
 }
 
+func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.NodeRow, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+nodeCols+` FROM rimsky_nodes
+		 WHERE state = 'running' AND assigned_supervisor_id = ?
+		 ORDER BY updated_at ASC`, supervisorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectNodes(rows)
+}
+
 // ListDependentsOf finds nodes that include nodeID in their JSON-array
 // dependencies column. SQLite has no ANY() so we json_each the column
 // against a literal id.

@@ -194,6 +194,19 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 	return collectNodes(rows)
 }
 
+func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.NodeRow, error) {
+	ex := s.q(tx)
+	rows, err := ex.Query(ctx,
+		`SELECT `+nodeCols+` FROM rimsky_nodes
+		 WHERE state = 'running' AND assigned_supervisor_id = $1
+		 ORDER BY updated_at ASC`, supervisorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectNodes(rows)
+}
+
 func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,

@@ -265,7 +265,6 @@ func runLoop(
 		"concurrency", cfg.Concurrency)
 
 	var activeMu sync.Mutex
-	activeNodes := map[shared.UUID]struct{}{}
 	activeCount := 0
 
 	heartbeatTick := time.NewTicker(cfg.HeartbeatInterval)
@@ -276,10 +275,6 @@ func runLoop(
 	doHeartbeat := func() {
 		activeMu.Lock()
 		cnt := activeCount
-		ids := make([]shared.UUID, 0, len(activeNodes))
-		for id := range activeNodes {
-			ids = append(ids, id)
-		}
 		activeMu.Unlock()
 
 		hbCtx := context.Background()
@@ -301,10 +296,37 @@ func runLoop(
 		}); err != nil {
 			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
 		}
-		for _, id := range ids {
-			_ = cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, id, cfg.Clock.Now(), cfg.SupervisorID, tx)
-			})
+		// DB-driven node heartbeat refresh: query `rimsky_nodes` for every
+		// row in state='running' assigned to this supervisor and refresh
+		// `last_heartbeat_at`. The DB is the source of truth — this
+		// covers both sync dispatches (RunNode in-flight) and async
+		// dispatches (handed off to the callback server but still
+		// `running` in the DB until the terminal callback arrives).
+		// In-memory tracking of "currently running" nodes was previously
+		// populated AFTER RunNode returned, so async dispatches' nodes
+		// never entered the tracking set and their heartbeats stopped
+		// firing immediately after AsyncAccepted — the SweepStaleHeartbeats
+		// orphan-reaper would then yank locks from healthy in-flight
+		// runs. Reading the DB here removes the entire class of "RunNode
+		// returned early" bugs.
+		var running []persistence.NodeRow
+		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := cfg.Persist.Nodes().ListRunningBySupervisor(ctx, cfg.SupervisorID, tx)
+			running = rows
+			return err
+		}); err != nil {
+			cfg.Logger.Warn("supervisor: list running nodes by supervisor failed", "error", err.Error())
+			return
+		}
+		now := cfg.Clock.Now()
+		for _, n := range running {
+			nodeID := n.ID
+			if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, nodeID, now, cfg.SupervisorID, tx)
+			}); err != nil {
+				cfg.Logger.Warn("supervisor: node UpdateHeartbeat failed",
+					"node_id", nodeID.String(), "error", err.Error())
+			}
 		}
 	}
 
@@ -346,21 +368,12 @@ func runLoop(
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
 			}
 
-			// Track active node id so the heartbeat tick can refresh
-			// `rimsky_nodes.last_heartbeat_at` for it. Operator
-			// invalidates do not preempt — they enqueue/coalesce a
-			// frame; nothing here owns a per-run cancel registration.
-			// result.NodeID is zero when Ran=false.
-			if result.Ran && result.NodeID != (shared.UUID{}) {
-				activeMu.Lock()
-				activeNodes[result.NodeID] = struct{}{}
-				activeMu.Unlock()
-				defer func() {
-					activeMu.Lock()
-					delete(activeNodes, result.NodeID)
-					activeMu.Unlock()
-				}()
-			}
+			// Per-node heartbeat tracking is DB-driven (see doHeartbeat
+			// above) — no in-memory bookkeeping of result.NodeID is
+			// needed here. The heartbeat tick reads
+			// `rimsky_nodes WHERE state='running' AND assigned_supervisor_id=$self`
+			// directly, which is correct for both sync (RunNode in-flight)
+			// and async (handed off, still running in the DB) dispatches.
 
 			// Release the reserved slot.
 			defer func() {

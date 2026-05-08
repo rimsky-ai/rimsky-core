@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Foundation: supervisor heartbeat tick is DB-driven, fixes async-dispatch heartbeat-loss
+
+Pre-fix, `Supervisor.doHeartbeat` refreshed `rimsky_nodes.last_heartbeat_at` only for entries in an in-memory `activeNodes` map. The map was populated *after* `RunNode` returned — fine for sync executor paths, but for async dispatches (e.g. the bundled claude-agent emitting `AsyncAccepted`) `RunNode` returns within milliseconds while the actual work continues on the executor side. The node never entered the tracking set, no node-level heartbeat fired during the async run, and after `HeartbeatTimeout` (default 15s) the scheduler's `SweepStaleHeartbeats` would mark the running node `stale` and the orphan reaper would yank locks from a perfectly healthy in-flight Claude run.
+
+The fix removes the in-memory tracking entirely and reads the source of truth (the DB) on each heartbeat tick: the supervisor selects every row in `state='running' AND assigned_supervisor_id = $self` and refreshes `last_heartbeat_at` for each. Self-healing — agnostic to sync vs async, robust to any future "RunNode returns early" path.
+
+- New `persistence.NodeStore.ListRunningBySupervisor(ctx, supervisorID, tx) ([]NodeRow, error)`. Implemented in both bundled drivers (`foundation/persistence/postgres/nodes.go`, `foundation/persistence/sqlite/nodes.go`). Adds the supervisor predicate to the existing `state='running'` filter.
+- `foundation/integration/supervisor.go::doHeartbeat` switches from iterating an in-memory map to calling the new query. The `activeNodes` map and the `register-on-RunNode-return / delete-on-goroutine-exit` bookkeeping in the goroutine are removed; `activeCount` (concurrency utilization for `Supervisors().Heartbeat`) stays.
+- New unit test `TestNodes_ListRunningBySupervisor` (sqlite driver) seeds three nodes — one running-and-assigned-to-self, one fresh-and-assigned-to-self, one running-but-assigned-to-another — and asserts the query returns only the running-and-self row.
+- `TestStoreMethodsRejectNilTx` extended with `Nodes.ListRunningBySupervisor`.
+
 ### Claude-agent: compatibility with current Claude Code CLI (2.1.x) and per-dispatch MCP
 
 The `executors/claude-agent` reference impl was no longer wire-compatible with the Claude Code CLI it spawns. End-to-end runs through the executor surfaced six distinct gaps; all are fixed here. Verified end-to-end against Claude Code 2.1.132 with both `claude-haiku-4-5` and `claude-sonnet-4-6` against a downstream consumer's docs-pipeline (single-area smoke; both `area-pass` and `consolidate` nodes complete cleanly via `report_complete` MCP tool, attributes commit, locks release with `action: release`).
