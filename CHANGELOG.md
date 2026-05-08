@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Claude-agent: stream-json output + session-id + resume-with-prompt retry
+
+Three changes that together fix two real failure modes observed running
+the executor against orchestrator-pattern templates (a primary agent
+that spawns Task subagents to do reads/edits): silence-timeouts during
+long subagent calls, and clean exits where the agent forgot to call
+the terminal `report_complete` MCP tool after multi-turn work.
+
+- **`--output-format stream-json --verbose`** added to the CLI spawn
+  args (matches `skillprompting/brain/src/judging-orchestrator.ts`).
+  The CLI emits incremental NDJSON events on stdout for each assistant
+  message, tool call, and tool result. Without this the parent CLI is
+  silent for minutes while a Task subagent runs, tripping the
+  executor's silence-timer; with it, the events stream keeps the
+  silence-tracker happy. Brain has used this shape in production for
+  the same orchestrator pattern.
+
+- **`--session-id <runId>`** passed on every spawn. The rimsky `runId`
+  is already a UUID; reusing it as the CLI's session id (a) gives
+  stable trace correlation across the spawn and any subsequent
+  resume, and (b) is the load-bearing input for the next change.
+
+- **Resume-with-prompt retry** when the subprocess exits with code 0
+  without ever calling `mcp__rimsky-callback__report_complete`. New
+  `CliRunner.resume(req)` method on the production runner: spawns
+  `claude --resume <sessionId> --print -p <reminderPrompt>`, which
+  picks up the session's saved system prompt + MCP config + tool
+  history and delivers one new user-message turn. `agent-run.ts`'s
+  exit-watcher invokes resume() exactly once per dispatch when it
+  observes a clean exit with no terminal callback fired; the resumed
+  session sees its full prior context, the reminder prompt asks the
+  agent to call the appropriate callback, and the per-dispatch MCP
+  server is still up to receive it. If the resume itself exits
+  without calling a callback, the dispatch errors as before but with
+  `retry_attempted: true` in the payload for trace clarity.
+
+  This is the recovery path for the failure mode where multi-turn
+  orchestrator agents lose the imperative for the final tool call —
+  the report_complete instruction is buried 3+ turns back by the time
+  the orchestrator finishes its work. Brain doesn't need this because
+  brain's tool surface is locked to a small allowed_tools list with
+  a designated terminal tool, but rimsky's claude-agent serves
+  templates with arbitrary system prompts; the recovery is the
+  template-author-friendly safety net.
+
+- `CliHandle` construction extracted to `buildHandleFromChild` so
+  `spawn()` and `resume()` produce identically-shaped handles.
+
+- New tests:
+  - `buildClaudeCliArgs` emits `--session-id` only when supplied.
+  - `runAgent` invokes `cliRunner.resume()` exactly once with the
+    runId as session-id when the spawn exits clean without report;
+    final outcome is errored with `retry_attempted: true`. Uses fake
+    runners that return synthetic exit-0 handles.
+
+Verified: full TS test suite green (60/60); go build ./... + make lint
+clean.
+
 ### Claude-agent: dispatch lifecycle logging
 
 Pre-fix the executor logged only its startup messages, then nothing until the spawned `claude` subprocess emitted its first stdout chunk — typically 30-90s into a Sonnet dispatch with file reads. An operator watching `docker compose logs claude-agent` couldn't tell whether a dispatch had even arrived, much less whether the subprocess was alive.

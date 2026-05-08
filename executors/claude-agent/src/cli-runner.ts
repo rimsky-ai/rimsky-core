@@ -35,6 +35,16 @@ export interface CliSpawnRequest {
   env: Record<string, string>;
   cwd?: string;
   /**
+   * UUID-formatted session identifier passed to the CLI as `--session-id`.
+   * Required for the post-exit resume-with-prompt-injection retry path —
+   * if the subprocess exits with code 0 but never calls report_complete,
+   * agent-run.ts uses this id with `--resume` to recover the session and
+   * inject a reminder prompt. Reusing the rimsky `runId` (already a UUID)
+   * gives stable trace correlation across the original spawn, the retry,
+   * and downstream rimsky events.
+   */
+  sessionId?: string;
+  /**
    * Per-template CLI tuning, sourced from `userdata.cli.*` (spec §5.8 +
    * docs/concepts/executor-claude-agent.md). All optional; defaults
    * preserve current behavior. The executor maps each field to one or
@@ -59,6 +69,24 @@ export interface CliSpawnRequest {
   maxBudgetUsd?: string;
 }
 
+/**
+ * Args for {@link CliRunner.resume}. Resumes a prior session by id and
+ * delivers a single follow-up user prompt. The CLI carries the model,
+ * system prompt, MCP config, and tool history from the session — only
+ * the prompt and trace-correlation env need to be supplied here.
+ *
+ * Used by agent-run.ts's exit-watcher when the subprocess exits with
+ * code 0 without ever calling `mcp__rimsky-callback__report_complete`.
+ * The resumed session sees its full prior context and gets one chance
+ * to "remember" the missing terminal call.
+ */
+export interface CliResumeRequest {
+  sessionId: string;
+  prompt: string;
+  env: Record<string, string>;
+  cwd?: string;
+}
+
 export interface CliHandle {
   /** Subprocess PID once the child is alive. Undefined for fake handles
    * that don't spawn a real process. Useful for trace-correlation logs. */
@@ -78,6 +106,17 @@ export interface CliHandle {
 
 export interface CliRunner {
   spawn(req: CliSpawnRequest): Promise<CliHandle>;
+  /**
+   * Resume a previously-spawned session by id and deliver a follow-up
+   * user prompt. Used by agent-run.ts's clean-exit-without-report
+   * recovery path. The resumed CLI replays the session's conversation
+   * (prior model, system prompt, MCP config, tool history) and sees
+   * only `prompt` as the new user message.
+   *
+   * Optional on the interface: fake runners used in tests can omit it
+   * (callers detect absence and skip retry).
+   */
+  resume?(req: CliResumeRequest): Promise<CliHandle>;
 }
 
 /**
@@ -130,10 +169,20 @@ export function buildClaudeCliArgs(
   const maxBudgetUsd = req.maxBudgetUsd ?? process.env.RIMSKY_DISPATCH_MAX_USD;
   return [
     "--print",
+    // stream-json + --verbose make the CLI emit incremental NDJSON events
+    // (one per assistant message, tool call, tool result, etc.) on stdout
+    // while it works — without this, an orchestrator pattern that waits on
+    // long Task subagent calls produces no parent stdout for minutes,
+    // tripping the executor's silence-timer. Matches brain's
+    // judging-orchestrator.ts spawn args.
+    "--output-format",
+    "stream-json",
+    "--verbose",
     "--model",
     req.model,
     "--permission-mode",
     permissionMode,
+    ...(req.sessionId ? ["--session-id", req.sessionId] : []),
     ...(req.bare ? ["--bare"] : []),
     ...(req.allowedTools && req.allowedTools.length > 0
       ? ["--allowedTools", req.allowedTools.join(" ")]
@@ -152,6 +201,79 @@ export function buildClaudeCliArgs(
     "-p",
     req.userPrompt,
   ];
+}
+
+/**
+ * Wraps a spawned ChildProcess in the CliHandle observer surface.
+ * Shared by spawn() and resume() so both produce identical handles.
+ */
+function buildHandleFromChild(
+  child: ChildProcess,
+  onCleanup: () => void,
+): CliHandle {
+  const stdoutCbs: ((chunk: string) => void)[] = [];
+  const stderrCbs: ((chunk: string) => void)[] = [];
+  const exitCbs: ((
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ) => void)[] = [];
+  type ExitResult = {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+  };
+  let exited = false;
+  let exitResult: ExitResult | null = null;
+  const exitWaiters: ((r: ExitResult) => void)[] = [];
+
+  child.stdout?.setEncoding("utf-8");
+  child.stderr?.setEncoding("utf-8");
+  child.stdout?.on("data", (chunk: string) => {
+    for (const cb of stdoutCbs) cb(chunk);
+  });
+  child.stderr?.on("data", (chunk: string) => {
+    for (const cb of stderrCbs) cb(chunk);
+  });
+
+  let cleanupRan = false;
+  const runCleanup = (): void => {
+    if (cleanupRan) return;
+    cleanupRan = true;
+    try { onCleanup(); } catch { /* ignore */ }
+  };
+
+  child.on("exit", (code, signal) => {
+    exited = true;
+    const result: ExitResult = { exitCode: code, signal };
+    exitResult = result;
+    for (const cb of exitCbs) cb(code, signal);
+    for (const w of exitWaiters) w(result);
+    runCleanup();
+  });
+
+  child.on("error", (err) => {
+    for (const cb of stderrCbs) cb(`[spawn error] ${String(err)}\n`);
+    if (!exited) {
+      exited = true;
+      const result: ExitResult = { exitCode: null, signal: null };
+      exitResult = result;
+      for (const cb of exitCbs) cb(null, null);
+      for (const w of exitWaiters) w(result);
+    }
+    runCleanup();
+  });
+
+  return {
+    pid: child.pid,
+    onStdout: (cb) => { stdoutCbs.push(cb); },
+    onStderr: (cb) => { stderrCbs.push(cb); },
+    onExit: (cb) => { exitCbs.push(cb); },
+    sendSigterm: () => { child.kill("SIGTERM"); },
+    sendSigkill: () => { child.kill("SIGKILL"); },
+    waitExit: () =>
+      exited && exitResult
+        ? Promise.resolve(exitResult)
+        : new Promise((resolve) => exitWaiters.push(resolve)),
+  };
 }
 
 export function createClaudeCliRunner(opts: {
@@ -187,82 +309,39 @@ export function createClaudeCliRunner(opts: {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      const stdoutCbs: ((chunk: string) => void)[] = [];
-      const stderrCbs: ((chunk: string) => void)[] = [];
-      const exitCbs: ((
-        code: number | null,
-        signal: NodeJS.Signals | null,
-      ) => void)[] = [];
-      type ExitResult = {
-        exitCode: number | null;
-        signal: NodeJS.Signals | null;
-      };
-      let exited = false;
-      let exitResult: ExitResult | null = null;
-      const exitWaiters: ((r: ExitResult) => void)[] = [];
-
-      child.stdout?.setEncoding("utf-8");
-      child.stderr?.setEncoding("utf-8");
-      child.stdout?.on("data", (chunk: string) => {
-        for (const cb of stdoutCbs) cb(chunk);
-      });
-      child.stderr?.on("data", (chunk: string) => {
-        for (const cb of stderrCbs) cb(chunk);
-      });
-
-      let cleanupRan = false;
-      const runCleanup = (): void => {
-        if (cleanupRan) return;
-        cleanupRan = true;
+      return buildHandleFromChild(child, () => {
         void unlink(systemPromptPath).catch(() => {});
         void unlink(mcpConfigPath).catch(() => {});
         void rm(tmp, { recursive: true, force: true }).catch(() => {});
         try { cleanupAuthEnv(); } catch { /* ignore */ }
-      };
-
-      child.on("exit", (code, signal) => {
-        exited = true;
-        const result: ExitResult = { exitCode: code, signal };
-        exitResult = result;
-        for (const cb of exitCbs) cb(code, signal);
-        for (const w of exitWaiters) w(result);
-        runCleanup();
       });
-
-      child.on("error", (err) => {
-        for (const cb of stderrCbs) cb(`[spawn error] ${String(err)}\n`);
-        if (!exited) {
-          exited = true;
-          const result: ExitResult = { exitCode: null, signal: null };
-          exitResult = result;
-          for (const cb of exitCbs) cb(null, null);
-          for (const w of exitWaiters) w(result);
-        }
-        runCleanup();
+    },
+    async resume(req: CliResumeRequest): Promise<CliHandle> {
+      // Resume re-uses the session's saved system prompt + MCP config,
+      // so we don't write tmpfiles for those. We DO still need a fresh
+      // auth-env mount (the original spawn's was cleaned up at exit).
+      const { env: authEnv, cleanup: cleanupAuthEnv } = buildCliEnv(auth);
+      const args = [
+        "--resume",
+        req.sessionId,
+        "--print",
+        // Keep stream-json + verbose for parity with the original spawn
+        // — the executor's silence-tracker still watches stdout, and the
+        // resume run is typically short (one prompt → one tool call).
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "-p",
+        req.prompt,
+      ];
+      const child: ChildProcess = spawn(binary, args, {
+        cwd: req.cwd,
+        env: { ...authEnv, ...req.env },
+        stdio: ["ignore", "pipe", "pipe"],
       });
-
-      return {
-        pid: child.pid,
-        onStdout: (cb) => {
-          stdoutCbs.push(cb);
-        },
-        onStderr: (cb) => {
-          stderrCbs.push(cb);
-        },
-        onExit: (cb) => {
-          exitCbs.push(cb);
-        },
-        sendSigterm: () => {
-          child.kill("SIGTERM");
-        },
-        sendSigkill: () => {
-          child.kill("SIGKILL");
-        },
-        waitExit: () =>
-          exited && exitResult
-            ? Promise.resolve(exitResult)
-            : new Promise((resolve) => exitWaiters.push(resolve)),
-      };
+      return buildHandleFromChild(child, () => {
+        try { cleanupAuthEnv(); } catch { /* ignore */ }
+      });
     },
   };
 }

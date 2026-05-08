@@ -420,6 +420,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         RIMSKY_CALLBACK_TOKEN: callbackToken,
       },
       cwd,
+      // runId is the rimsky-side UUID for this dispatch. Reusing it as
+      // the CLI's session-id gives stable trace correlation AND lets us
+      // resume the same session on the post-exit retry path below.
+      sessionId: runId,
       bare: cliConfig?.bare,
       permissionMode: cliConfig?.permissionMode,
       allowedTools: cliConfig?.allowedTools,
@@ -529,6 +533,96 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     ]);
     if (raceTimer) clearTimeout(raceTimer);
     if (teardownInProgress) return;
+    if (resolved) return; // a terminal MCP callback fired between exit and now
+
+    // Recovery path: subprocess exited cleanly (code 0) but never called
+    // mcp__rimsky-callback__report_complete. The orchestrator pattern's
+    // long Task-subagent chains seem prone to this — the agent loses the
+    // imperative for the final tool call after several context-heavy
+    // turns. We resume the same session by id and inject a one-shot
+    // reminder prompt; the agent's full prior context (including the
+    // work it did) is intact, and the callback MCP server is still up
+    // (per-dispatch lifecycle bound to runAgent), so calling
+    // report_complete from the resumed session lands cleanly.
+    if (
+      exitCode === 0 &&
+      signal === null &&
+      cliRunner.resume !== undefined
+    ) {
+      const reminderPrompt =
+        "You exited without calling mcp__rimsky-callback__report_complete. " +
+        "Review what you accomplished in this session and call the appropriate " +
+        "callback now: report_complete (with changed:true if you applied edits, " +
+        "changed:false if you found nothing to change), report_blocked (if " +
+        "something prevented you from finishing), or report_error (if you hit " +
+        "an unexpected failure). This is REQUIRED — without it rimsky treats " +
+        "the dispatch as failed and discards your work.";
+      logger.warn(
+        { runId, exit_code: exitCode, duration_ms: Date.now() - spawnedAt },
+        "cli.clean_exit_no_report; attempting resume",
+      );
+      try {
+        const retryHandle = await cliRunner.resume({
+          sessionId: runId,
+          prompt: reminderPrompt,
+          env: {
+            RIMSKY_CALLBACK_URL: effectiveCallback.url,
+            RIMSKY_CALLBACK_TOKEN: callbackToken,
+          },
+          cwd,
+        });
+        handleRef = retryHandle;
+        retryHandle.onStdout((chunk) => {
+          lastStdoutAt = Date.now();
+          logger.info(
+            { runId, retry: true, chunk: chunk.slice(0, 2000) },
+            "cli.stdout",
+          );
+        });
+        retryHandle.onStderr((chunk) => {
+          logger.warn(
+            { runId, retry: true, chunk: chunk.slice(0, 2000) },
+            "cli.stderr",
+          );
+        });
+        const retryStartedAt = Date.now();
+        const retryResult = await retryHandle.waitExit();
+        logger.info(
+          {
+            runId,
+            retry: true,
+            pid: retryHandle.pid,
+            exit_code: retryResult.exitCode,
+            signal: retryResult.signal,
+            duration_ms: Date.now() - retryStartedAt,
+          },
+          "cli.exited",
+        );
+        if (resolved) return; // retry's MCP callback fired — outcome already set
+        safeResolve({
+          kind: "errored",
+          errorClass: "subprocess_exit_before_complete",
+          payload: {
+            exitCode: retryResult.exitCode,
+            signal: retryResult.signal,
+            retry_attempted: true,
+          },
+        });
+        return;
+      } catch (err) {
+        logger.warn(
+          { runId, error: String(err) },
+          "cli.resume_failed",
+        );
+        safeResolve({
+          kind: "errored",
+          errorClass: "subprocess_exit_before_complete",
+          payload: { exitCode, signal, retry_failed: String(err) },
+        });
+        return;
+      }
+    }
+
     safeResolve({
       kind: "errored",
       errorClass: "subprocess_exit_before_complete",

@@ -180,6 +180,99 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
   });
 });
 
+describe("runAgent retries via resume() when subprocess exits clean without report", () => {
+  let cb: CallbackServerHandle;
+  let tmpCwd: string;
+  let resumeInvocations: Array<{ sessionId: string; prompt: string }>;
+  let fakeCli: CliRunner;
+
+  beforeEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    cb = await startInternalMcpServer({ logger });
+    tmpCwd = mkdtempSync(join(tmpdir(), "agent-run-retry-"));
+    writeFileSync(join(tmpCwd, "marker.txt"), "ok");
+    resumeInvocations = [];
+    // Fake CliHandle that fires "exit 0, no signal" on the next tick
+    // and never invokes any registered callback. Both spawn and resume
+    // produce the same shape; resume records the call so the test can
+    // assert it was used.
+    const makeQuietExit0Handle = () => {
+      const exitCbs: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
+      const exitWaiters: Array<(r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void> = [];
+      let exited = false;
+      let result: { exitCode: number | null; signal: NodeJS.Signals | null } | null = null;
+      // Schedule a clean exit on the next tick.
+      setTimeout(() => {
+        exited = true;
+        result = { exitCode: 0, signal: null };
+        for (const cb of exitCbs) cb(0, null);
+        for (const w of exitWaiters) w(result);
+      }, 5);
+      return {
+        pid: 99999,
+        onStdout: () => {},
+        onStderr: () => {},
+        onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+          exitCbs.push(cb);
+        },
+        sendSigterm: () => {},
+        sendSigkill: () => {},
+        waitExit: () =>
+          exited && result
+            ? Promise.resolve(result)
+            : new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+                exitWaiters.push(resolve),
+              ),
+      };
+    };
+    fakeCli = {
+      spawn: async () => makeQuietExit0Handle(),
+      resume: async (req) => {
+        resumeInvocations.push({ sessionId: req.sessionId, prompt: req.prompt });
+        return makeQuietExit0Handle();
+      },
+    };
+  });
+
+  afterEach(async () => {
+    await cb.close();
+    rmSync(tmpCwd, { recursive: true, force: true });
+  });
+
+  it("invokes resume() exactly once and returns errored with retry_attempted=true when retry also exits without report", async () => {
+    const runId = "11111111-2222-3333-4444-555555555555";
+    const outcome = await runAgent({
+      runId,
+      nodeId: "n-1",
+      nodeType: "area-pass",
+      model: "sonnet",
+      systemPrompt: "you are helpful",
+      userPromptTemplate: "do it",
+      attributesSchema: {},
+      attributes: {},
+      templateVars: { userdata: {}, attributes: {} },
+      cwdOverride: tmpCwd,
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: fakeCli,
+      callback: cb,
+      silenceTimeoutMs: 60_000,
+      logger,
+    });
+    // Resume was attempted exactly once with the runId as session-id.
+    expect(resumeInvocations).toHaveLength(1);
+    expect(resumeInvocations[0]!.sessionId).toBe(runId);
+    expect(resumeInvocations[0]!.prompt).toContain("report_complete");
+    // Outcome should be errored, with retry_attempted: true in the payload.
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("subprocess_exit_before_complete");
+      const payload = outcome.payload as { retry_attempted?: boolean };
+      expect(payload.retry_attempted).toBe(true);
+    }
+  });
+});
+
 describe("runAgent in stub mode", () => {
   let cb: CallbackServerHandle;
   const fakeCli: CliRunner = {

@@ -35,6 +35,9 @@ describe("buildClaudeCliArgs", () => {
     const args = buildClaudeCliArgs(baseReq(), PATHS);
     expect(args).toEqual([
       "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
       "--model",
       "claude-sonnet-4-6",
       "--permission-mode",
@@ -125,6 +128,21 @@ describe("buildClaudeCliArgs", () => {
   it("omits --max-budget-usd when neither source is set", () => {
     const args = buildClaudeCliArgs(baseReq(), PATHS);
     expect(args).not.toContain("--max-budget-usd");
+  });
+
+  it("emits --session-id when sessionId is supplied", () => {
+    const args = buildClaudeCliArgs(
+      baseReq({ sessionId: "550e8400-e29b-41d4-a716-446655440000" }),
+      PATHS,
+    );
+    const i = args.indexOf("--session-id");
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe("550e8400-e29b-41d4-a716-446655440000");
+  });
+
+  it("omits --session-id when sessionId is unset", () => {
+    const args = buildClaudeCliArgs(baseReq(), PATHS);
+    expect(args).not.toContain("--session-id");
   });
 
   it("preserves arg ordering (-p prompt is always last) when all knobs set", () => {
