@@ -286,34 +286,85 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 // returns ErrUnauthorizedCallback so the handler maps to HTTP 401 (per
 // `core/attributes/callback.go` semantics).
 func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error {
+	// `c.Logger` is defaulted to SilentLogger{} in Start() before this
+	// handler is mounted, so it is never nil here — same convention as
+	// `handleCallback` which calls `c.Logger.Warn` directly.
 	parts := strings.SplitN(token, ":", 2)
 	if len(parts) != 2 {
+		// Raw token bytes are user-supplied and may be arbitrarily long
+		// or non-printable. Log the length only; the failure mode (no
+		// ':' separator) is self-explanatory.
+		c.Logger.Warn("attributesAuth: token has no ':' separator",
+			"node_id", nodeID.String(),
+			"token_len", len(token))
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	tokSupervisor, tokDispatch := parts[0], parts[1]
 	if tokSupervisor == "" || tokDispatch == "" {
+		c.Logger.Warn("attributesAuth: empty supervisor or dispatch segment",
+			"node_id", nodeID.String(),
+			"token_supervisor_len", len(tokSupervisor),
+			"token_dispatch_len", len(tokDispatch))
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	if c.SupervisorID != "" && tokSupervisor != c.SupervisorID {
+		// Supervisor-mismatch is the most useful branch for diagnostics;
+		// log a bounded prefix of the token's supervisor segment so a
+		// misconfigured caller is identifiable without flooding logs
+		// with arbitrary-length user-supplied bytes.
+		c.Logger.Warn("attributesAuth: supervisor id mismatch",
+			"node_id", nodeID.String(),
+			"token_supervisor", truncForLog(tokSupervisor, 64),
+			"token_supervisor_len", len(tokSupervisor),
+			"server_supervisor", c.SupervisorID)
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	dispatchID, err := uuid.Parse(tokDispatch)
 	if err != nil {
+		// Parse failure mode is self-explanatory; log only the length
+		// of the dispatch segment, not its raw bytes.
+		c.Logger.Warn("attributesAuth: dispatch id parse failed",
+			"node_id", nodeID.String(),
+			"token_dispatch_len", len(tokDispatch),
+			"error", err.Error())
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	// Single round-trip: dispatch must exist, be claimed by us, and
 	// target the URL's node_id.
 	gotNodeID, ownership, err := c.Queue.GetDispatchNode(context.Background(), dispatchID)
 	if err != nil {
+		c.Logger.Warn("attributesAuth: GetDispatchNode failed",
+			"node_id", nodeID.String(),
+			"dispatch_id", dispatchID.String(),
+			"error", err.Error())
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	if ownership.Kind != "claimed_by" || ownership.SupervisorID != tokSupervisor {
+		c.Logger.Warn("attributesAuth: ownership mismatch",
+			"node_id", nodeID.String(),
+			"dispatch_id", dispatchID.String(),
+			"ownership_kind", ownership.Kind,
+			"ownership_supervisor", ownership.SupervisorID,
+			"token_supervisor", truncForLog(tokSupervisor, 64))
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	if gotNodeID != nodeID {
+		c.Logger.Warn("attributesAuth: node id mismatch",
+			"url_node_id", nodeID.String(),
+			"dispatch_node_id", gotNodeID.String(),
+			"dispatch_id", dispatchID.String())
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	return nil
+}
+
+// truncForLog returns s capped to max bytes (with a trailing ellipsis when
+// truncation occurred) so user-supplied token bytes don't bloat logs.
+func truncForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // attributesStoreAdapter bridges the persistence.NodeAttributesStore to

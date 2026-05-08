@@ -18,7 +18,16 @@ import (
 // Suite runs every conformance check against the driver returned by
 // factory. Each subtest is independent; factory is called once per
 // subtest so each gets a fresh DB.
-func Suite(t *testing.T, factory func(*testing.T) persistence.Driver) {
+//
+// rawExec is a per-driver test-helper that runs raw SQL against the
+// driver's underlying connection. Used by tests that need to bypass
+// the application-layer Create paths (e.g. the migration-backfill
+// case for instances.userdata_overrides). The helper is responsible
+// for translating the question-mark placeholders into the driver-
+// native style (`$N` for postgres, `?` for sqlite). Pass nil to skip
+// tests that require it (none currently — both drivers must supply
+// one).
+func Suite(t *testing.T, factory func(*testing.T) persistence.Driver, rawExec func(t *testing.T, d persistence.Driver, sql string, args ...any)) {
 	t.Helper()
 	t.Run("DispatchClaimRelease", func(t *testing.T) { testDispatchClaimRelease(t, factory(t)) })
 	t.Run("VerifyBeforeRunRead", func(t *testing.T) { testVerifyBeforeRunRead(t, factory(t)) })
@@ -37,6 +46,9 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Driver) {
 	t.Run("NodesListRunningBySupervisor", func(t *testing.T) { testNodesListRunningBySupervisor(t, factory(t)) })
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
+	t.Run("InstancesUserdataOverridesRoundTrip", func(t *testing.T) { testInstancesUserdataOverridesRoundTrip(t, factory(t)) })
+	t.Run("InstancesUserdataOverridesDefaultsEmpty", func(t *testing.T) { testInstancesUserdataOverridesDefaultsEmpty(t, factory(t)) })
+	t.Run("InstancesUserdataOverridesMigrationBackfill", func(t *testing.T) { testInstancesUserdataOverridesMigrationBackfill(t, factory(t), rawExec) })
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("SchedulesDenseSameTimestampPagination", func(t *testing.T) { testSchedulesDenseSameTimestampPagination(t, factory(t)) })

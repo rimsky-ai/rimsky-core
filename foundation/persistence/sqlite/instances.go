@@ -20,7 +20,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, created_at, terminated_at`
+const instanceCols = `id, template_hash, instance_key, params, userdata_overrides, created_at, terminated_at`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -30,15 +30,22 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal params: %w", err)
 	}
+	if in.UserdataOverrides == nil {
+		in.UserdataOverrides = map[string]any{}
+	}
+	overridesBytes, err := json.Marshal(in.UserdataOverrides)
+	if err != nil {
+		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal userdata_overrides: %w", err)
+	}
 	if in.ID == (shared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, userdata_overrides, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), nowUTC(),
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(),
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -264,10 +271,11 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		templateHash    string
 		instanceKey     sql.NullString
 		paramsStr       string
+		overridesStr    string
 		createdAtStr    string
 		terminatedAtStr sql.NullString
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &createdAtStr, &terminatedAtStr); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -280,15 +288,22 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 			return persistence.InstanceRow{}, fmt.Errorf("unmarshal params: %w", err)
 		}
 	}
+	overrides := map[string]any{}
+	if overridesStr != "" {
+		if err := json.Unmarshal([]byte(overridesStr), &overrides); err != nil {
+			return persistence.InstanceRow{}, fmt.Errorf("unmarshal userdata_overrides: %w", err)
+		}
+	}
 	createdAt, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	out := persistence.InstanceRow{
-		ID:           id,
-		TemplateHash: templateHash,
-		Params:       m,
-		CreatedAt:    createdAt,
+		ID:                id,
+		TemplateHash:      templateHash,
+		Params:            m,
+		UserdataOverrides: overrides,
+		CreatedAt:         createdAt,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

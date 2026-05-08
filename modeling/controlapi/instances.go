@@ -55,6 +55,18 @@ type createInstanceRequest struct {
 	Template    string         `json:"template"` // tag or hash; per spec §2.2.
 	InstanceKey *string        `json:"instance_key,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
+	// UserdataOverrides is a per-instance ad-hoc override blob deep-merged
+	// into per-node userdata at dispatch time. Shape:
+	//   {
+	//     "by_executor": {"<executor-name>": {<userdata-fragment>}},
+	//     "by_node":     {"<node-name>":     {<userdata-fragment>}}
+	//   }
+	// Both keys optional. Executor names validated against the operator-
+	// declared executors block; node names validated against the locked
+	// template's nodes. Unknown names fail with 400. Per
+	// @blessed-invariant 11 the fragment values themselves are opaque to
+	// rimsky — only the keys are inspected (for routing / validation).
+	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -65,16 +77,17 @@ type createInstanceResponse struct {
 }
 
 type instanceItem struct {
-	ID           string         `json:"id"`
-	TemplateHash string         `json:"template_hash"`
-	InstanceKey  *string        `json:"instance_key,omitempty"`
-	Params       map[string]any `json:"params"`
-	CreatedAt    time.Time      `json:"created_at"`
-	TerminatedAt *time.Time     `json:"terminated_at,omitempty"`
+	ID                string         `json:"id"`
+	TemplateHash      string         `json:"template_hash"`
+	InstanceKey       *string        `json:"instance_key,omitempty"`
+	Params            map[string]any `json:"params"`
+	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	TerminatedAt      *time.Time     `json:"terminated_at,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
-	return instanceItem{
+	out := instanceItem{
 		ID:           r.ID.String(),
 		TemplateHash: r.TemplateHash,
 		InstanceKey:  r.InstanceKey,
@@ -82,6 +95,10 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 		CreatedAt:    r.CreatedAt,
 		TerminatedAt: r.TerminatedAt,
 	}
+	if len(r.UserdataOverrides) > 0 {
+		out.UserdataOverrides = r.UserdataOverrides
+	}
+	return out
 }
 
 // registerInstancesRoutes wires the /instances group.
@@ -130,9 +147,10 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// row. Capture the locked spec for the post-commit fan-out so we
 		// don't have to re-read.
 		var (
-			tplSpec    nodepkg.TemplateSpec
-			respOut    createInstanceResponse
-			existedKey bool
+			tplSpec           nodepkg.TemplateSpec
+			respOut           createInstanceResponse
+			existedKey        bool
+			existingOverrides map[string]any
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -148,6 +166,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
 			tplSpec = row.Spec
+			// Validate userdata_overrides against the locked template's
+			// node list and the operator-declared executors block. Done
+			// inside the tx so that template state at the time of
+			// validation matches the state of the row we'll insert
+			// against.
+			if vErr := validateUserdataOverrides(body.UserdataOverrides, row.Spec.Nodes, deps.Executors); vErr != nil {
+				return vErr
+			}
 			// Idempotent resolution on (template_hash, instance_key).
 			if body.InstanceKey != nil {
 				existing, err := deps.Persist.Instances().GetByInstanceKey(ctx, hash, *body.InstanceKey, tx)
@@ -156,6 +182,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				}
 				if existing != nil {
 					existedKey = true
+					existingOverrides = existing.UserdataOverrides
 					respOut = createInstanceResponse{
 						InstanceID:   existing.ID.String(),
 						TemplateHash: existing.TemplateHash,
@@ -165,7 +192,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return nil
 				}
 			}
-			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, body.InstanceKey, params)
+			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
+				InstanceKey:       body.InstanceKey,
+				Params:            params,
+				UserdataOverrides: body.UserdataOverrides,
+			})
 			if err != nil {
 				return err
 			}
@@ -175,6 +206,10 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, shared.ErrTemplateNotFound) {
 				notFoundResp(w, shared.ErrTemplateNotFound.Error())
+				return
+			}
+			if errors.Is(err, errUserdataOverridesInvalid) {
+				badRequest(w, err.Error())
 				return
 			}
 			if errors.Is(err, shared.ErrTemplateValidation) {
@@ -210,6 +245,35 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		status := http.StatusCreated
 		if existedKey {
 			status = http.StatusOK
+		}
+		// Audit trail for ad-hoc per-instance overrides. Logs key names
+		// only (per @blessed-invariant 11 the userdata fragments
+		// themselves are opaque and could carry arbitrary data — never
+		// log them). Operators can confirm via the /instances/:id GET
+		// response, which echoes the full userdata_overrides verbatim.
+		if !existedKey && len(body.UserdataOverrides) > 0 {
+			byExecutor, byNode := overridePresentKeys(body.UserdataOverrides)
+			deps.Logger.Info("instance.userdata_overrides_attached",
+				"instance_id", respOut.InstanceID,
+				"template_hash", respOut.TemplateHash,
+				"by_executor", byExecutor,
+				"by_node", byNode)
+		}
+		// Idempotent re-create with a non-empty overrides body: rimsky
+		// returns the existing row's persisted overrides, so the
+		// caller's blob would be silently dropped (mirrors how `params`
+		// works on idempotent re-create). Only emit the WARN when the
+		// caller's body actually differs from the persisted row —
+		// otherwise an operator's reconcile loop would emit a noisy
+		// "discarded" warning on every retry, even though nothing was
+		// actually discarded (the values are identical).
+		if existedKey && len(body.UserdataOverrides) > 0 && !overridesEqual(body.UserdataOverrides, existingOverrides) {
+			byExecutor, byNode := overridePresentKeys(body.UserdataOverrides)
+			deps.Logger.Warn("instance.userdata_overrides_replaced_by_idempotent_match",
+				"instance_id", respOut.InstanceID,
+				"template_hash", respOut.TemplateHash,
+				"by_executor", byExecutor,
+				"by_node", byNode)
 		}
 		writeJSON(w, status, respOut)
 	}
@@ -441,6 +505,16 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 	return nil
 }
 
+// provisionArgs carries the per-row inputs `provisionInstanceTx`
+// needs from the request body. Struct-shaped (rather than positional)
+// so the function signature stays narrow as new per-instance fields are
+// added — cold-read style discourages 5+ positional args.
+type provisionArgs struct {
+	InstanceKey       *string
+	Params            map[string]any
+	UserdataOverrides map[string]any
+}
+
 // provisionInstanceTx is the instance-factory routine. Runs the create
 // sequence inside the supplied tx (the same tx that locked the template
 // row FOR UPDATE per spec §2.2) so the entire instance + nodes +
@@ -458,15 +532,15 @@ func provisionInstanceTx(
 	deps AppDeps,
 	tx persistence.Tx,
 	tpl *persistence.TemplateRow,
-	instanceKey *string,
-	params map[string]any,
+	args provisionArgs,
 ) (createInstanceResponse, error) {
 	// Create instance row (fails with ErrInstanceKeyConflict if duplicate).
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:           uuid.New(),
-		TemplateHash: tpl.ID,
-		InstanceKey:  instanceKey,
-		Params:       params,
+		ID:                uuid.New(),
+		TemplateHash:      tpl.ID,
+		InstanceKey:       args.InstanceKey,
+		Params:            args.Params,
+		UserdataOverrides: args.UserdataOverrides,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

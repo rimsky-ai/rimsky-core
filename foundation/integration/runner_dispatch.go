@@ -404,21 +404,52 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	acq := dctx.Acquired
 	def := acq.NodeDef
 
-	userdataStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	// Build per-node userdata, then deep-merge per-instance overrides on
+	// top in order of increasing specificity:
+	//   template userdata → by_executor[node's executor] → by_node[node's name]
+	// Per @blessed-invariant 11 the merge is shape-blind and rimsky never
+	// inspects the resulting fragment values.
+	var baseUserdata map[string]any
 	if def != nil && len(def.Userdata) > 0 {
-		if s, err := structpb.NewStruct(def.Userdata); err == nil {
+		baseUserdata = def.Userdata
+	}
+	merged := applyUserdataOverrides(baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
+	userdataStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
+	if len(merged) > 0 {
+		s, err := structpb.NewStruct(merged)
+		if err != nil {
+			// Steady-state this is unreachable: both layers feed the
+			// merge through json.Unmarshal so values are restricted to
+			// types structpb.NewStruct accepts. With per-instance
+			// overrides now operator-influenced, surface a Warn so
+			// "override silently dropped" leaves a trace rather than an
+			// empty userdata payload at the executor.
+			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for userdata",
+				"node_id", acq.NodeID.String(),
+				"error", err.Error())
+		} else {
 			userdataStruct = s
 		}
 	}
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.Attributes) > 0 {
-		if s, err := structpb.NewStruct(dctx.Attributes); err == nil {
+		s, err := structpb.NewStruct(dctx.Attributes)
+		if err != nil {
+			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for attributes",
+				"node_id", acq.NodeID.String(),
+				"error", err.Error())
+		} else {
 			attrStruct = s
 		}
 	}
 	schemaStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.AttributesSchema) > 0 {
-		if s, err := structpb.NewStruct(dctx.AttributesSchema); err == nil {
+		s, err := structpb.NewStruct(dctx.AttributesSchema)
+		if err != nil {
+			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for attributes_schema",
+				"node_id", acq.NodeID.String(),
+				"error", err.Error())
+		} else {
 			schemaStruct = s
 		}
 	}

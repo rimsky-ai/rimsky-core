@@ -13,13 +13,21 @@ import (
 
 // InstanceRow mirrors a row of rimsky_instances. An instance binds to a
 // template hash at creation; instance_key is nullable.
+//
+// UserdataOverrides carries optional per-instance JSON overrides that
+// rimsky deep-merges into per-node userdata at dispatch time. Shape is
+// validated at instance-create by the control-api but the contents are
+// opaque to rimsky at dispatch (@blessed-invariant 11). Empty map = no
+// overrides; the column has NOT NULL DEFAULT '{}' so dispatch-time
+// reads are unconditional.
 type InstanceRow struct {
-	ID           shared.UUID    `json:"id"`
-	TemplateHash string         `json:"template_hash"` // FK to rimsky_templates.id
-	InstanceKey  *string        `json:"instance_key"`  // nullable
-	Params       map[string]any `json:"params"`
-	CreatedAt    time.Time      `json:"created_at"`
-	TerminatedAt *time.Time     `json:"terminated_at"` // nullable; set at terminal-state detection
+	ID                shared.UUID    `json:"id"`
+	TemplateHash      string         `json:"template_hash"` // FK to rimsky_templates.id
+	InstanceKey       *string        `json:"instance_key"`  // nullable
+	Params            map[string]any `json:"params"`
+	UserdataOverrides map[string]any `json:"userdata_overrides"`
+	CreatedAt         time.Time      `json:"created_at"`
+	TerminatedAt      *time.Time     `json:"terminated_at"` // nullable; set at terminal-state detection
 }
 
 // InstanceStore is the rimsky_instances accessor.
@@ -42,11 +50,16 @@ type InstanceStore interface {
 }
 
 // InstanceCreateInput is the per-row input for Create.
+//
+// UserdataOverrides is the validated overrides blob. Persistence does
+// not re-validate; it serialises and stores. nil/empty are equivalent
+// and persisted as `{}`.
 type InstanceCreateInput struct {
-	ID           shared.UUID
-	TemplateHash string
-	InstanceKey  *string // nullable
-	Params       map[string]any
+	ID                shared.UUID
+	TemplateHash      string
+	InstanceKey       *string // nullable
+	Params            map[string]any
+	UserdataOverrides map[string]any
 }
 
 // InstanceListFilter is the observability/list filter for instances.

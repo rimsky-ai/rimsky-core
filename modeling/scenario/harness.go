@@ -297,12 +297,29 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 // the empty string and immediately conflicting on the next call.
 func (h *Harness) CreateInstance(templateHash string, consumerKey string, params map[string]any) shared.UUID {
 	h.T.Helper()
+	return h.CreateInstanceWithOverrides(templateHash, consumerKey, params, nil)
+}
+
+// CreateInstanceWithOverrides is the per-instance-userdata-overrides
+// variant. Pass a non-nil overrides map to attach a `userdata_overrides`
+// blob to the create request. nil overrides reproduces CreateInstance's
+// behaviour exactly.
+func (h *Harness) CreateInstanceWithOverrides(
+	templateHash string,
+	consumerKey string,
+	params map[string]any,
+	userdataOverrides map[string]any,
+) shared.UUID {
+	h.T.Helper()
 	bodyMap := map[string]any{
 		"template": templateHash,
 		"params":   params,
 	}
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey
+	}
+	if len(userdataOverrides) > 0 {
+		bodyMap["userdata_overrides"] = userdataOverrides
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {

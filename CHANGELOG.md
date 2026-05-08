@@ -2,6 +2,107 @@
 
 ## Unreleased
 
+### Per-instance userdata overrides — ad-hoc dispatch-time userdata at create time
+
+Operators can now attach a `userdata_overrides` blob to a `POST
+/instances` request. Rimsky deep-merges the blob into per-node userdata
+at dispatch time, ordered most-specific-wins. The mechanism is project-
+agnostic — rimsky validates routing-keys (executor names, node names)
+but never inspects the override payload values, preserving
+@blessed-invariant 11. Use cases this unlocks (executor-side, not
+rimsky-side): synthetic-blocker test scenarios, per-run trace artifacts,
+debug-only timeout tweaks. Anything an executor accepts via its
+userdata namespace is reachable.
+
+Wire shape on `POST /instances`:
+
+```json
+"userdata_overrides": {
+  "by_executor": {"<executor-name>": { ...userdata-fragment... }},
+  "by_node":     {"<node-name>":     { ...userdata-fragment... }}
+}
+```
+
+Both top-level keys optional. Executor names are validated against the
+operator-declared `executors:` block AND must be referenced by at least
+one node in the locked template; node names against the locked
+template's `nodes`. Unknown or unused names are rejected with HTTP 400
+(a typo, or an executor declared in `rimsky.yml` that the template
+doesn't dispatch to, would silently produce a no-op — better to fail
+loud at create-time). Any top-level key other than `by_executor` /
+`by_node` is also rejected. The fragment values themselves are
+forwarded verbatim — rimsky-side inspection stops at routing-key names.
+
+Merge order at dispatch (`buildExecuteRequest`):
+
+```
+template userdata
+   ↓ deep-merge
+overrides.by_executor[<node's executor>]
+   ↓ deep-merge
+overrides.by_node[<node's name>]
+```
+
+Object recursion at every layer; arrays + scalars replace wholesale
+(arrays-as-deltas would be too cute). The merge helper
+(`modeling/shared.DeepMergeJSON`) is shape-blind and never mutates
+either input.
+
+Storage shape: `rimsky_instances.userdata_overrides` is a new JSON
+column (postgres: `JSONB`; sqlite: `TEXT`), `NOT NULL DEFAULT '{}'` so
+dispatch-time reads are unconditional. Migrations:
+`postgres/migrations/005-instance-userdata-overrides.sql`,
+`sqlite/migrations/003-instance-userdata-overrides.sql`. The override
+blob is set once at instance-create and read on every dispatch in that
+instance — including reverse cascade re-fires.
+
+Audit visibility: `instance.userdata_overrides_attached` is logged at
+INFO via the request's slog logger when an instance is created with a
+non-empty overrides blob. The log records routing-key names only; the
+opaque fragment values are never logged. An idempotent re-create whose
+request body carries a non-empty overrides blob that ALSO differs from
+the persisted row's overrides logs
+`instance.userdata_overrides_replaced_by_idempotent_match` at WARN —
+same key-names-only shape — so operators get a signal that the persisted
+row's overrides were preserved and the request body's blob was
+discarded. Idempotent retries that send the SAME body as the persisted
+row are silent (no Warn) — there's no actual discard when the bodies
+match, and reconcile-loop callers shouldn't emit a noisy "discarded"
+warning on every retry. The full blob round-trips on `GET /instances/:id`
+for operator confirmation (omitted when empty).
+
+Sketch + design rationale lives at
+`.ok-planner/sketches/2026-05-07-agentic-telemetry.md`
+(specifically the synthetic-blocker section that motivated this).
+
+Touched paths:
+
+- `foundation/persistence/instances.go` — `InstanceRow.UserdataOverrides` + `InstanceCreateInput.UserdataOverrides` fields.
+- `foundation/persistence/{sqlite,postgres}/instances.go` — column round-trip on Create + Get + List.
+- `foundation/persistence/postgres/migrations/005-instance-userdata-overrides.sql`, `foundation/persistence/sqlite/migrations/003-instance-userdata-overrides.sql` — schema.
+- `foundation/persistence/conformance/instances_userdata_overrides.go` — round-trip + default-empty conformance tests; both drivers exercise.
+- `foundation/integration/runner_acquire.go` — `acquisition.InstanceUserdataOverrides` populated at acquisition.
+- `foundation/integration/runner_dispatch.go` — `applyUserdataOverrides` deep-merge before `structpb.NewStruct`.
+- `foundation/integration/userdata_overrides.go` — the merge helper, with unit-test coverage of every wire shape we expect (and several we don't).
+- `modeling/shared/jsonmerge.go` — `DeepMergeJSON` + `cloneJSON`, with unit tests covering shape mismatches, nesting, array replacement, and input non-mutation.
+- `modeling/controlapi/instances.go` — request body field, validator wire-up, audit log line.
+- `modeling/controlapi/userdata_overrides.go` — `validateUserdataOverrides` + `errUserdataOverridesInvalid` sentinel (mapped to HTTP 400 via the handler's error translation).
+- `modeling/controlapi/instance_userdata_overrides_test.go` — HTTP-level coverage: round-trip + persistence + each rejection path (unknown executor, unknown node, unknown top-level key, omitted-defaults-empty).
+- `test/scenarios/userdata_overrides_e2e_test.go` — full-stack scenario: instance create → acquisition → dispatch → stub-executor receives the merged userdata. Guards the load-bearing seam between the persisted column and the dispatch path.
+
+### Foundation: attributes callback auth — log which branch denied
+
+`CallbackServer.attributesAuth` previously returned a single
+`ErrUnauthorizedCallback` regardless of which check failed (token
+shape, supervisor mismatch, dispatch parse, GetDispatchNode error,
+ownership mismatch, node-id mismatch). When a real callback failed in
+the docs-pipeline smoke, the supervisor logged only `"attributes
+callback: unauthorized"` with no clue which branch returned the error,
+making the failure mode unreproducible from logs alone. Each branch
+now emits a `Warn` log with branch-specific context (`token_supervisor`
+vs `server_supervisor`, `ownership_kind`, `dispatch_id`, etc.) before
+returning. No behavior change to non-failure paths; logging only.
+
 ### Claude-agent: stream-json output + session-id + resume-with-prompt retry
 
 Three changes that together fix two real failure modes observed running

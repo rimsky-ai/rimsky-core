@@ -36,6 +36,12 @@ type harness struct {
 	driver  persistence.Driver
 	persist persistence.Store
 	stores  *locks.Registry
+	// logger is a CapturingLogger so tests can assert presence/absence
+	// of structured log records (e.g. the
+	// `instance.userdata_overrides_*` audit lines emitted on the
+	// instance-create path). Tests that don't care about log records
+	// can ignore this field.
+	logger *shared.CapturingLogger
 }
 
 // newHarness boots Postgres, wires the app, and returns a harness +
@@ -58,11 +64,12 @@ func newHarness(t *testing.T) (*harness, func()) {
 	lcReg.Add("content", contentFake)
 	lcReg.Add("topics-ring", topicsFake)
 
+	capLog := shared.NewCapturingLogger()
 	app := NewApp(AppDeps{
 		Persist:       d.Store(),
 		Queue:         d.Queue(),
 		Clock:         shared.SystemClock{},
-		Logger:        shared.SilentLogger{},
+		Logger:        capLog,
 		Stores:        reg,
 		LifecycleSubs: lcReg,
 		NamedLocks: locks.NamedLocksConfig{
@@ -74,13 +81,19 @@ func newHarness(t *testing.T) (*harness, func()) {
 		// templateWithStoresAndLocks so the validator's
 		// ExecutorDeclared hook actually runs (otherwise the hook is
 		// silently nil and missing-executor templates pass deploy).
+		// `unused-exec` is declared but intentionally not referenced by
+		// any test template — used by
+		// TestInstanceCreate_UserdataOverrides_RejectsExecutorNotReferencedByTemplate
+		// to drive the validator's "declared-but-unused executor"
+		// rejection branch end-to-end.
 		Executors: map[string]ExecutorEntry{
-			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
+			"worker":      {Transport: "grpc", Endpoint: "localhost:0"},
+			"unused-exec": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
 	})
 	srv := httptest.NewServer(app)
 
-	h := &harness{srv: srv, driver: d, persist: d.Store(), stores: reg}
+	h := &harness{srv: srv, driver: d, persist: d.Store(), stores: reg, logger: capLog}
 	return h, func() {
 		srv.Close()
 	}

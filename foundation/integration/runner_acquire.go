@@ -68,6 +68,15 @@ type acquisition struct {
 	NodeDef        *node.TemplateNodeDef
 	HeldSubgraphs  []node.HoldingSubgraph
 	InstanceParams map[string]any
+	// InstanceUserdataOverrides is the per-instance override blob loaded
+	// from rimsky_instances.userdata_overrides at acquisition time.
+	// Shape (validated at create-time by control-api):
+	//   {"by_executor": {<name>: {<userdata-fragment>}},
+	//    "by_node":     {<name>: {<userdata-fragment>}}}
+	// Empty / missing → no overrides; the dispatch path's merge is a no-op
+	// in that case. Per @blessed-invariant 11 the fragment values are
+	// opaque to rimsky.
+	InstanceUserdataOverrides map[string]any
 
 	// PartialLocks are locks that successfully Open'd before an
 	// Unavailable was encountered. Captured only when the acquisition
@@ -264,7 +273,18 @@ func tryAcquire(
 	if nd == nil {
 		return acquisition{}, false, nil
 	}
-	inst, _ := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
+	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
+	if err != nil {
+		// Per the Per-instance-userdata-overrides feature: instance row
+		// is load-bearing for dispatch (template lookup AND override
+		// blob). Surface the error to the caller (mirrors the Nodes().Get
+		// path above) so a sustained DB issue produces a visible signal
+		// rather than a silent log-spammy skip on every candidate. The
+		// outer dispatch loop logs and aborts the tick; the candidate's
+		// dispatch row remains in `pending` (we bailed before
+		// ClaimDispatchRow) and will be re-selected on the next tick.
+		return acquisition{}, false, fmt.Errorf("tryAcquire: instances.Get: %w", err)
+	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst)
@@ -317,6 +337,7 @@ func tryAcquire(
 			}
 			if inst != nil {
 				out.InstanceParams = inst.Params
+				out.InstanceUserdataOverrides = inst.UserdataOverrides
 			}
 			return out, false, errAcquireUnavailable
 		case openResultBail:
@@ -337,6 +358,7 @@ func tryAcquire(
 	}
 	if inst != nil {
 		out.InstanceParams = inst.Params
+		out.InstanceUserdataOverrides = inst.UserdataOverrides
 	}
 	return out, true, nil
 }
