@@ -100,6 +100,20 @@ export interface AgentRunOptions {
    */
   cwdOverride?: string;
   /**
+   * Per-template CLI tuning sourced from `userdata.cli.*`. Forwarded
+   * verbatim to {@link CliRunner.spawn} so the executor (not rimsky)
+   * decides how each field maps to spawn args. See CliSpawnRequest
+   * for the mapping. All optional; absence preserves current defaults.
+   */
+  cliConfig?: {
+    bare?: boolean;
+    permissionMode?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+    addDirs?: string[];
+    maxBudgetUsd?: string;
+  };
+  /**
    * Supervisor-issued URLs / tokens that flow through to the incremental
    * writeback path and the async-handoff callback.
    */
@@ -152,6 +166,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     stores,
     cwdFromStore,
     cwdOverride,
+    cliConfig,
     callbackUrl,
     cancelToken,
     cliRunner,
@@ -405,6 +420,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         RIMSKY_CALLBACK_TOKEN: callbackToken,
       },
       cwd,
+      bare: cliConfig?.bare,
+      permissionMode: cliConfig?.permissionMode,
+      allowedTools: cliConfig?.allowedTools,
+      disallowedTools: cliConfig?.disallowedTools,
+      addDirs: cliConfig?.addDirs,
+      maxBudgetUsd: cliConfig?.maxBudgetUsd,
     });
   } catch (e) {
     effectiveCallback.registry.release(callbackToken);

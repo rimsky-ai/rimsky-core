@@ -173,6 +173,7 @@ async function runAndCallback(
       stores: unwrapStores(body.stores ?? {}),
       cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
       cwdOverride: stringOrUndefined(userdata.cwd),
+      cliConfig: parseCliConfig(userdata.cli),
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
       cliRunner,
@@ -329,4 +330,45 @@ function stringOr(v: unknown, fallback: string): string {
 
 function stringOrUndefined(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+// @source: src/server.ts (parseCliConfig + helpers)
+// Mirror of the gRPC path's userdata.cli reader.
+function boolOrUndefined(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function stringArrayOrUndefined(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item === "string" && item.length > 0) out.push(item);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function parseCliConfig(v: unknown): {
+  bare?: boolean;
+  permissionMode?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  addDirs?: string[];
+  maxBudgetUsd?: string;
+} | undefined {
+  const cli = toRecord(v);
+  if (Object.keys(cli).length === 0) return undefined;
+  const out: ReturnType<typeof parseCliConfig> = {};
+  const bare = boolOrUndefined(cli.bare);
+  if (bare !== undefined) out!.bare = bare;
+  const pm = stringOrUndefined(cli.permission_mode);
+  if (pm !== undefined) out!.permissionMode = pm;
+  const at = stringArrayOrUndefined(cli.allowed_tools);
+  if (at !== undefined) out!.allowedTools = at;
+  const dt = stringArrayOrUndefined(cli.disallowed_tools);
+  if (dt !== undefined) out!.disallowedTools = dt;
+  const ad = stringArrayOrUndefined(cli.add_dirs);
+  if (ad !== undefined) out!.addDirs = ad;
+  const mb = stringOrUndefined(cli.max_budget_usd);
+  if (mb !== undefined) out!.maxBudgetUsd = mb;
+  return Object.keys(out!).length > 0 ? out : undefined;
 }

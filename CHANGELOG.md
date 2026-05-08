@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Claude-agent: per-template CLI tuning via `userdata.cli`
+
+Template authors can now configure how the Claude Code subprocess is invoked, on a per-node basis, without touching the executor's source. The previous spawn-args block was hardcoded; only `--model` (via `userdata.model`) and `--max-budget-usd` (via the `RIMSKY_DISPATCH_MAX_USD` env var) were configurable.
+
+The new `userdata.cli` sub-object is the namespace for executor-config concerns — distinct from the agent-facing `userdata` fields (`system_prompt`, `model`, `user_prompt_template`, `cwd_from_store`) that drive what the agent does. `userdata.cli.*` controls how the executor invokes its CLI:
+
+| `userdata.cli.*` field | Type | Default | Maps to |
+|---|---|---|---|
+| `bare` | bool | `false` | `--bare` (skips auto-memory, hooks, LSP, plugin sync, keychain reads, CLAUDE.md auto-discovery; sets `CLAUDE_CODE_SIMPLE=1`. Note: forces ANTHROPIC_API_KEY-only auth — OAuth is unread.) |
+| `permission_mode` | string | `"bypassPermissions"` | `--permission-mode <mode>` |
+| `allowed_tools` | string[] | (none) | `--allowedTools <space-separated list>` |
+| `disallowed_tools` | string[] | (none) | `--disallowedTools <space-separated list>` |
+| `add_dirs` | string[] | (none) | `--add-dir <path1> <path2> …` (forwarded as separate argv tokens, not a joined string) |
+| `max_budget_usd` | string | (`RIMSKY_DISPATCH_MAX_USD` env var fallback) | `--max-budget-usd <amount>` |
+
+Defaults preserve current behavior, so existing templates are unaffected. `max_budget_usd` retains its env-var fallback for deployment-wide caps; the per-template value wins when set.
+
+Why `userdata.cli` rather than a first-class executor-protocol field: the protocol's `userdata google.protobuf.Struct` is intentionally opaque to rimsky (blessed-invariant 11). Different executors have different CLI surfaces — a hypothetical Python-eval executor would have different knobs (`--interpreter-version`, `--isolated`, etc.). Modeling these as first-class proto fields would either bloat the protocol or collapse into "userdata renamed." Keeping it in userdata + namespacing the sub-object preserves the executor-author convention and gives template authors a single place to look.
+
+- New `buildClaudeCliArgs(req, paths)` exported from `cli-runner.ts` — pure function that composes the argv from a `CliSpawnRequest`. Tested directly with 11 cases covering each new field plus ordering.
+- `CliSpawnRequest` extended with optional `bare`, `permissionMode`, `allowedTools`, `disallowedTools`, `addDirs`, `maxBudgetUsd` fields.
+- New `parseCliConfig(userdata.cli)` in both `server.ts` (gRPC) and `http-bridge.ts` (HTTP). Strict type validation: non-boolean `bare` is silently dropped to undefined; non-string-array entries in the list fields are filtered; empty results return `undefined` so the executor's defaults take effect.
+- `runAgent`'s `RunArgs` interface gains a `cliConfig` field threaded through to `cliRunner.spawn`.
+
 ### Foundation: supervisor heartbeat tick is DB-driven, fixes async-dispatch heartbeat-loss
 
 Pre-fix, `Supervisor.doHeartbeat` refreshed `rimsky_nodes.last_heartbeat_at` only for entries in an in-memory `activeNodes` map. The map was populated *after* `RunNode` returned — fine for sync executor paths, but for async dispatches (e.g. the bundled claude-agent emitting `AsyncAccepted`) `RunNode` returns within milliseconds while the actual work continues on the executor side. The node never entered the tracking set, no node-level heartbeat fired during the async run, and after `HeartbeatTimeout` (default 15s) the scheduler's `SweepStaleHeartbeats` would mark the running node `stale` and the orphan reaper would yank locks from a perfectly healthy in-flight Claude run.
