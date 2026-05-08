@@ -264,6 +264,13 @@ func runLoop(
 		"accepts", accepted,
 		"concurrency", cfg.Concurrency)
 
+	// activeCount tracks the supervisor's in-flight tryClaim goroutines
+	// (incremented before launch, decremented when the goroutine exits).
+	// Used for the concurrency guard below and the shutdown drain wait;
+	// NOT used for the supervisor's `active_node_count` heartbeat field —
+	// that comes from a DB query so async dispatches whose goroutines
+	// have already returned (post-AsyncAccepted) are still counted.
+	// See doHeartbeat below.
 	var activeMu sync.Mutex
 	activeCount := 0
 
@@ -273,13 +280,33 @@ func runLoop(
 	defer claimTick.Stop()
 
 	doHeartbeat := func() {
-		activeMu.Lock()
-		cnt := activeCount
-		activeMu.Unlock()
-
 		hbCtx := context.Background()
+
+		// DB-driven view of "what this supervisor is currently running."
+		// The result of this query drives both the per-node
+		// last_heartbeat_at refresh below AND the active_node_count we
+		// stamp into rimsky_supervisors via Supervisors().Heartbeat.
+		// Both must reflect the same source of truth — the in-memory
+		// goroutine counter (`activeCount`, retained for the concurrency
+		// guard below) under-counts async dispatches whose RunNode
+		// goroutine returned at AsyncAccepted while the actual work
+		// continues on the executor side. Reading the DB here covers
+		// sync + async + any future "RunNode returned early" path.
+		var running []persistence.NodeRow
 		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-			return cfg.Persist.Supervisors().Heartbeat(ctx, cfg.SupervisorID, cnt, tx)
+			rows, err := cfg.Persist.Nodes().ListRunningBySupervisor(ctx, cfg.SupervisorID, tx)
+			running = rows
+			return err
+		}); err != nil {
+			cfg.Logger.Warn("supervisor: list running nodes by supervisor failed", "error", err.Error())
+			// Fall through to the supervisor + lock-holder heartbeats with a
+			// zero count — keeping THIS supervisor's row alive matters more
+			// than the running-nodes count being momentarily wrong.
+			running = nil
+		}
+
+		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
+			return cfg.Persist.Supervisors().Heartbeat(ctx, cfg.SupervisorID, len(running), tx)
 		}); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
@@ -295,28 +322,6 @@ func runLoop(
 			return lockHolders.ExtendHeartbeat(ctx, cfg.SupervisorID, expiresAt, tx)
 		}); err != nil {
 			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
-		}
-		// DB-driven node heartbeat refresh: query `rimsky_nodes` for every
-		// row in state='running' assigned to this supervisor and refresh
-		// `last_heartbeat_at`. The DB is the source of truth — this
-		// covers both sync dispatches (RunNode in-flight) and async
-		// dispatches (handed off to the callback server but still
-		// `running` in the DB until the terminal callback arrives).
-		// In-memory tracking of "currently running" nodes was previously
-		// populated AFTER RunNode returned, so async dispatches' nodes
-		// never entered the tracking set and their heartbeats stopped
-		// firing immediately after AsyncAccepted — the SweepStaleHeartbeats
-		// orphan-reaper would then yank locks from healthy in-flight
-		// runs. Reading the DB here removes the entire class of "RunNode
-		// returned early" bugs.
-		var running []persistence.NodeRow
-		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := cfg.Persist.Nodes().ListRunningBySupervisor(ctx, cfg.SupervisorID, tx)
-			running = rows
-			return err
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: list running nodes by supervisor failed", "error", err.Error())
-			return
 		}
 		now := cfg.Clock.Now()
 		for _, n := range running {

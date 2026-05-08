@@ -34,6 +34,7 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Driver) {
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("LockHoldersUpdateScope", func(t *testing.T) { testLockHoldersUpdateScope(t, factory(t)) })
 	t.Run("NodesMarkStaleForCascade", func(t *testing.T) { testNodesMarkStaleForCascade(t, factory(t)) })
+	t.Run("NodesListRunningBySupervisor", func(t *testing.T) { testNodesListRunningBySupervisor(t, factory(t)) })
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
