@@ -116,6 +116,16 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 			return ok
 		}
 	}
+	if deps.ExecutorCapabilities != nil {
+		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
+			events, _, ok := deps.ExecutorCapabilities(name)
+			return events, ok
+		}
+		hooks.ExecutorUserdataSchema = func(name string) ([]byte, bool) {
+			_, schema, ok := deps.ExecutorCapabilities(name)
+			return schema, ok
+		}
+	}
 	return hooks
 }
 

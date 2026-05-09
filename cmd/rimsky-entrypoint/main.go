@@ -48,7 +48,14 @@ func main() {
 	exitCh := make(chan childExit, len(children))
 	for _, name := range children {
 		c := exec.Command(binaryDir + "/" + name)
-		c.Env = append(os.Environ(), "RIMSKY_LOG_BINARY="+nameOf(name))
+		// RIMSKY_PROCESS_ROLE=unified gates the in-process "memory"
+		// BlobBackend (D5 / blob_config.go::ValidateBlobConfig). Set
+		// here so colocated children share the same in-process map;
+		// per-process binaries leave it unset and reject memory backend.
+		c.Env = append(os.Environ(),
+			"RIMSKY_LOG_BINARY="+nameOf(name),
+			"RIMSKY_PROCESS_ROLE=unified",
+		)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if err := c.Start(); err != nil {
@@ -85,7 +92,10 @@ func main() {
 // entrypoint's. Used for the synchronous migrate step.
 func runOnce(binary string) error {
 	c := exec.Command(binaryDir + "/" + binary)
-	c.Env = append(os.Environ(), "RIMSKY_LOG_BINARY="+nameOf(binary))
+	c.Env = append(os.Environ(),
+		"RIMSKY_LOG_BINARY="+nameOf(binary),
+		"RIMSKY_PROCESS_ROLE=unified",
+	)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()

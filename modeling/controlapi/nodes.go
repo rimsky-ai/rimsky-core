@@ -168,6 +168,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			TargetNodeID: id,
 			Reason:       "operator_override",
 			Frame:        body.Frame,
+			Metrics:      deps.Metrics,
 		}); err != nil {
 			writeError(w, err)
 			return

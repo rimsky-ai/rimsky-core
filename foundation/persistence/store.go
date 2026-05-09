@@ -24,5 +24,7 @@ type Store interface {
 	Schedules() ScheduleStore
 	Supervisors() SupervisorStore
 	Frames() FrameStore
+	BlobOrphans() BlobOrphansStore
+	NodeEvents() NodeEventsStore
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx Tx) error) error
 }

@@ -25,6 +25,9 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -97,8 +100,27 @@ type CallbackServer struct {
 	// terminal flow. Zero falls back to the runner's 30-minute default
 	// (see `releaseLocksInTx`).
 	ResumeGrace time.Duration
-	addr        string
-	srv         *http.Server
+	// Blob, BlobSpillThreshold, InvalidateHandler, and
+	// MaxRetriesWithoutProgressDefault are threaded into RunArgs at
+	// driveTerminal time so the async-callback path takes the same
+	// spill / unified-invalidate / retry-cap behaviors that the sync
+	// path takes. Without these wired, applyTerminalPark cannot spill
+	// (large parked payloads end up inline), processNamedEvents cannot
+	// spill, and on_event handler invalidates fall through to bare
+	// InvalidateNode and cannot wake parked targets via the H2 unified
+	// path. Zero values mean "use the runtime defaults" (no spill, no
+	// unified invalidate handler, built-in 100-retry cap).
+	Blob                             persistence.BlobBackend
+	BlobSpillThreshold               int
+	InvalidateHandler                func(ctx context.Context, args InvalidateArgs) error
+	MaxRetriesWithoutProgressDefault int
+	// UserdataValidator is the dispatch-time userdata schema validator
+	// (plan F7), threaded into the async-callback RunArgs so an
+	// async-callback-driven re-dispatch (resume after park, retry) hits
+	// the same validator the synchronous path runs. Nil → skipped.
+	UserdataValidator func(executorName string, merged map[string]any) error
+	addr              string
+	srv               *http.Server
 }
 
 // Start listens on host:port (port=0 for OS-assigned). Safe to call before
@@ -164,6 +186,54 @@ type callbackBody struct {
 	Payload    any    `json:"payload,omitempty"`
 }
 
+// asyncCallbackBody mirrors the new AsyncCallbackBody shape from
+// protocols/proto/v1/executor.proto (plan A5). Events processed in
+// arrival order before the terminal verdict is applied.
+//
+// The supervisor's parser tries this shape first; on parse failure it
+// falls back to the legacy {type: "complete"|"blocked"|"errored", ...}
+// shape (callbackBody above). Both shapes remain accepted indefinitely.
+type asyncCallbackBody struct {
+	Events []asyncCallbackNamedEvent `json:"events,omitempty"`
+	// Exactly one of complete | blocked | errored | park_requested
+	// MUST be set when the new shape is used.
+	Complete      *asyncCallbackComplete `json:"complete,omitempty"`
+	Blocked       *asyncCallbackBlocked  `json:"blocked,omitempty"`
+	Errored       *asyncCallbackErrored  `json:"errored,omitempty"`
+	ParkRequested *asyncCallbackPark     `json:"park_requested,omitempty"`
+}
+
+// asyncCallbackNamedEvent mirrors the proto NamedEvent message.
+//
+// Payload is base64-encoded on the wire (proto-JSON rule for `bytes`).
+type asyncCallbackNamedEvent struct {
+	Name    string `json:"name"`
+	Payload []byte `json:"payload,omitempty"`
+}
+
+type asyncCallbackComplete struct {
+	Changed         bool           `json:"changed,omitempty"`
+	ChangeSummary   string         `json:"change_summary,omitempty"`
+	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+}
+
+type asyncCallbackBlocked struct {
+	Reason  string `json:"reason,omitempty"`
+	Context any    `json:"context,omitempty"`
+}
+
+type asyncCallbackErrored struct {
+	ErrorClass string `json:"error_class,omitempty"`
+	Payload    any    `json:"payload,omitempty"`
+}
+
+type asyncCallbackPark struct {
+	Reason       string `json:"reason,omitempty"`
+	Payload      []byte `json:"payload,omitempty"`
+	ResumeAt     string `json:"resume_at,omitempty"` // RFC3339; empty = absent
+	SessionToken string `json:"session_token,omitempty"`
+}
+
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ackID := chi.URLParam(r, "async_ack_id")
 	if ackID == "" {
@@ -176,19 +246,42 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		_, _ = w.Write([]byte(`{"error":"unknown_async_ack_id"}`))
 		return
 	}
-	var body callbackBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		// Re-register the async context since we didn't actually apply the callback.
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
 		c.Registry.Register(ackID, asyncCtx)
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
 		return
 	}
-	t, ok := classifyCallbackBody(body)
+	// Try the new AsyncCallbackBody shape first (plan A5/H1). Fall back
+	// to the legacy callbackBody shape on indeterminate shape (no terminal
+	// fields and no `type`). Both shapes remain accepted indefinitely.
+	//
+	// Parser surfaces two distinct error shapes:
+	//   - "invalid json": body is not parseable as JSON at all.
+	//   - "async callback body must include exactly one terminal field":
+	//     the new-shape body has zero terminals or more than one.
+	t, namedEvents, parseErr, ok := tryParseAsyncCallback(bodyBytes)
+	if parseErr != nil {
+		c.Registry.Register(ackID, asyncCtx)
+		http.Error(w, `{"error":"`+parseErr.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
 	if !ok {
-		c.Registry.Register(ackID, asyncCtx)
-		http.Error(w, `{"error":"unknown callback type"}`, http.StatusBadRequest)
-		return
+		var legacy callbackBody
+		if err := json.Unmarshal(bodyBytes, &legacy); err != nil {
+			c.Registry.Register(ackID, asyncCtx)
+			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+			return
+		}
+		var legacyOK bool
+		t, legacyOK = classifyCallbackBody(legacy)
+		if !legacyOK {
+			c.Registry.Register(ackID, asyncCtx)
+			http.Error(w, `{"error":"async callback body must include exactly one terminal field (complete | blocked | errored | park_requested) or a legacy type discriminator"}`, http.StatusBadRequest)
+			return
+		}
 	}
+	t.NamedEvents = namedEvents
 
 	if err := c.driveTerminal(r.Context(), asyncCtx, t); err != nil {
 		// Re-register so the executor can retry. If we didn't, a transient
@@ -206,6 +299,106 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	_ = c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"accepted"}`))
+}
+
+// tryParseAsyncCallback attempts to parse the new AsyncCallbackBody
+// shape (plan A5).
+//
+// Return shape:
+//
+//	terminalEvent — populated on the success path.
+//	[]namedEventRecord — events from `events: [...]`.
+//	error — non-nil for an *explicit* validation failure on a body that
+//	  parsed as the new shape but is malformed (e.g. zero or >1 terminal
+//	  fields, or events present without a terminal). The caller surfaces
+//	  this as HTTP 400 directly rather than falling back to the legacy
+//	  parser.
+//	bool — ok=true on success; ok=false signals the caller should attempt
+//	  the legacy callbackBody parser (used for "indeterminate" bodies that
+//	  might be legacy-shape).
+//
+// "Indeterminate" = JSON parses fine, but neither a terminal field nor an
+// events array is present. Legacy bodies look like that (they carry a
+// `type` discriminator) so we hand off to the legacy parser.
+func tryParseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error, bool) {
+	var body asyncCallbackBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return terminalEvent{}, nil, nil, false
+	}
+	// Count terminal fields set. Exactly one must be set in the new shape.
+	terminalCount := 0
+	if body.Complete != nil {
+		terminalCount++
+	}
+	if body.Blocked != nil {
+		terminalCount++
+	}
+	if body.Errored != nil {
+		terminalCount++
+	}
+	if body.ParkRequested != nil {
+		terminalCount++
+	}
+	if terminalCount > 1 {
+		// Two or more terminals → reject explicitly. The legacy parser
+		// can't represent this so falling back would silently drop one.
+		return terminalEvent{}, nil, fmt.Errorf("async callback body must include exactly one terminal field; got %d", terminalCount), false
+	}
+	if terminalCount == 0 {
+		// No terminal fields. If `events` is present, the body intends the
+		// new shape but is missing its terminal — surface a clear error.
+		// Without `events` the body could be legacy → fall through to
+		// indeterminate so the caller tries the legacy parser.
+		if len(body.Events) > 0 {
+			return terminalEvent{}, nil, errors.New("async callback body must include exactly one terminal field (complete | blocked | errored | park_requested) when events are present"), false
+		}
+		return terminalEvent{}, nil, nil, false
+	}
+	events := make([]namedEventRecord, 0, len(body.Events))
+	for _, e := range body.Events {
+		events = append(events, namedEventRecord{
+			Name:          e.Name,
+			PayloadInline: e.Payload,
+		})
+	}
+	switch {
+	case body.Complete != nil:
+		return terminalEvent{
+			Kind:          terminalKindComplete,
+			Changed:       body.Complete.Changed,
+			ChangeSummary: body.Complete.ChangeSummary,
+			AttributesDel: body.Complete.AttributesDelta,
+		}, events, nil, true
+	case body.Blocked != nil:
+		return terminalEvent{
+			Kind:       terminalKindBlocked,
+			ErrorClass: "executor_blocked",
+			Payload: map[string]any{
+				"reason":  body.Blocked.Reason,
+				"context": body.Blocked.Context,
+			},
+		}, events, nil, true
+	case body.Errored != nil:
+		return terminalEvent{
+			Kind:       terminalKindErrored,
+			ErrorClass: body.Errored.ErrorClass,
+			Payload:    map[string]any{"payload": body.Errored.Payload},
+		}, events, nil, true
+	case body.ParkRequested != nil:
+		t := terminalEvent{
+			Kind:             terminalKindPark,
+			ParkReason:       body.ParkRequested.Reason,
+			ParkPayload:      body.ParkRequested.Payload,
+			ParkSessionToken: body.ParkRequested.SessionToken,
+		}
+		if body.ParkRequested.ResumeAt != "" {
+			if pt, err := time.Parse(time.RFC3339, body.ParkRequested.ResumeAt); err == nil {
+				t.ParkResumeAt = pt
+			}
+		}
+		return t, events, nil, true
+	}
+	return terminalEvent{}, nil, nil, false
 }
 
 // classifyCallbackBody folds the §12.3 callback body into the
@@ -246,15 +439,20 @@ func classifyCallbackBody(body callbackBody) (terminalEvent, bool) {
 // re-enqueue, and event audit trail in one place.
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
 	args := RunArgs{
-		Persist:        c.Persist,
-		Queue:          c.Queue,
-		AdvisoryLocker: c.AdvisoryLocker,
-		LockHolders:    c.LockHolders,
-		StoreRegistry:  ac.StoreRegistry,
-		Clock:          c.Clock,
-		Logger:         c.Logger,
-		SupervisorID:   ac.SupervisorID,
-		ResumeGrace:    c.ResumeGrace,
+		Persist:                          c.Persist,
+		Queue:                            c.Queue,
+		AdvisoryLocker:                   c.AdvisoryLocker,
+		LockHolders:                      c.LockHolders,
+		StoreRegistry:                    ac.StoreRegistry,
+		Clock:                            c.Clock,
+		Logger:                           c.Logger,
+		SupervisorID:                     ac.SupervisorID,
+		ResumeGrace:                      c.ResumeGrace,
+		Blob:                             c.Blob,
+		BlobSpillThreshold:               c.BlobSpillThreshold,
+		InvalidateHandler:                c.InvalidateHandler,
+		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
+		UserdataValidator:                c.UserdataValidator,
 	}
 	acq := &acquisition{
 		DispatchID:     ac.DispatchID,

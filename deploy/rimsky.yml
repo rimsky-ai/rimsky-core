@@ -20,6 +20,21 @@ persistence:
   driver: postgres
   postgres:
     dsn: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+  # Optional blob backend for spilling large attribute / event /
+  # parked-payload bytes (plan §D). Default backend "inline" writes
+  # everything inline; "pg-largeobject" / "filesystem" / "memory"
+  # spill above spill_threshold_bytes.
+  #
+  # blob:
+  #   backend: pg-largeobject              # inline | pg-largeobject | filesystem | memory
+  #   spill_threshold_bytes: 65536         # default 64 KiB; bytes ≤ this stay inline
+  #   filesystem:
+  #     root: /var/lib/rimsky/blobs        # required when backend=filesystem
+  #   pg_largeobject:
+  #     schema: public                     # optional; reserved for future per-schema separation
+  #   retention:
+  #     orphan_sweep_interval: 1h          # SweepOrphanedBlobs cadence (default 1h)
+  #     retention_after_unreferenced: 24h  # window before deletion (default 24h)
 
 claim_producers:
   content:

@@ -24,6 +24,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { userdataSchemaBytes, declaredEvents } from "./userdata-schema.js";
 
 export type Severity = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -221,6 +222,9 @@ export function capabilitiesPayload(httpBridgeUrl = "") {
     retention_after_terminal_seconds: RETENTION_AFTER_TERMINAL_SECONDS,
     custom_ui: null,
     http_bridge_url: httpBridgeUrl,
+    // Plan A1 — userdata schema bytes (base64 for JSON wire) and declared events.
+    userdata_schema: Buffer.from(userdataSchemaBytes()).toString("base64"),
+    declared_events: declaredEvents,
   };
 }
 

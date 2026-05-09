@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/santhosh-tekuri/jsonschema/v5"
@@ -48,9 +49,13 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 // dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
+// dispatchDirectiveRe / directiveBodyRe accept the four substitution
+// kinds: `deps`, `claim`, `params`, and `nodes` (the latter for the F4
+// event-substitution path; see modeling/attribute/substitution.go).
+//
 // directiveBodyRe further parses the inside of `{{...}}` against the
 // three known source kinds.
-var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params)\.(.+)$`)
+var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params|nodes)\.(.+)$`)
 
 // RegistryHooks bundles the registry-dependent lookups the validator
 // uses. All fields may be nil; a nil hook short-circuits to "skip the
@@ -75,6 +80,19 @@ type RegistryHooks struct {
 	// 01-control-plane-and-store-lifecycle-design.md §3.1). Drives the
 	// per-node executor-name check.
 	ExecutorDeclared func(name string) bool
+
+	// ExecutorDeclaredEvents returns the set of event names the named
+	// executor advertises via ObservabilityCapabilities.declared_events
+	// (plan A1 / F6). Used to reject templates whose on_event handler
+	// names an event the executor does not declare. nil → skip the
+	// check (e.g. tests that don't wire an observability cache).
+	ExecutorDeclaredEvents func(name string) ([]string, bool)
+
+	// ExecutorUserdataSchema returns the JSON Schema bytes the named
+	// executor advertises via ObservabilityCapabilities.userdata_schema
+	// (plan A1 / F7). Empty bytes mean "no schema; accept any
+	// userdata." nil → skip the check.
+	ExecutorUserdataSchema func(name string) ([]byte, bool)
 }
 
 // ValidateTemplate walks a parsed template and reports errors per spec
@@ -132,6 +150,9 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateOnExecutorComplete(n, base, declared, &res)
 		validateOnExecutorTerminal(n, n.OnExecutorBlocked, base+".on_executor_blocked", declared, &res)
 		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", declared, &res)
+		validateOnEvent(n, base, declared, hooks, &res)
+		validateMaxParkDuration(n, base, &res)
+		validateUserdataAgainstSchema(n, base, hooks, &res)
 	}
 
 	detectCycles(spec.Nodes, &res)
@@ -689,6 +710,29 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 				Msg:  fmt.Sprintf("params directive %q must be params.<key>", body),
 			})
 		}
+	case "nodes":
+		// F4 event substitution: nodes.<emitter>.event.<event_name>.<json-path>
+		if len(parts) < 4 || parts[0] == "" || parts[2] == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<emitter>.event.<name>.<path>", body),
+			})
+			return
+		}
+		if parts[1] != "event" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'event'", body),
+			})
+			return
+		}
+		emitter := parts[0]
+		if _, ok := declared[emitter]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("nodes directive references unknown node %q", emitter),
+			})
+		}
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
@@ -734,7 +778,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|scope|payload.<f>}, or params.<k>)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|scope|payload.<f>}, params.<k>, or nodes.<n>.event.<name>.<path>)", body),
 			})
 		}
 	}
@@ -823,4 +867,162 @@ func canonicalCycle(cycle []string) string {
 		rot = append(rot, body[(minIdx+i)%len(body)])
 	}
 	return strings.Join(rot, "|")
+}
+
+// validateOnEvent enforces plan F1 + F6:
+//   - Each `on_event` key must be a non-empty event name.
+//   - When ExecutorDeclaredEvents is wired, every key must appear in the
+//     executor's declared_events list.
+//   - resolve, when set, must be one of pass | retry | error.
+//   - error_class is required when resolve == "error".
+//   - invalidate.targets reference declared node types or "self".
+//   - invalidate.frame, when set, must be in | next.
+func validateOnEvent(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, res *ValidationResult) {
+	if len(n.OnEvent) == 0 {
+		return
+	}
+	if n.Executor == "" {
+		// on_event has no meaning on a pure-cascade node — there is no
+		// executor to emit events.
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".on_event",
+			Msg:  "on_event is invalid on a node with no executor",
+		})
+		return
+	}
+	var declaredEvents map[string]struct{}
+	if hooks.ExecutorDeclaredEvents != nil {
+		if names, ok := hooks.ExecutorDeclaredEvents(n.Executor); ok {
+			declaredEvents = make(map[string]struct{}, len(names))
+			for _, name := range names {
+				declaredEvents[name] = struct{}{}
+			}
+		}
+	}
+	for eventName, h := range n.OnEvent {
+		hbase := fmt.Sprintf("%s.on_event[%q]", base, eventName)
+		if eventName == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase, Msg: "on_event key must be non-empty",
+			})
+			continue
+		}
+		// Cross-validate against declared_events when the executor's
+		// capabilities are visible. nil declaredEvents means we couldn't
+		// resolve the executor's capability cache (probably no
+		// observability handshake) — skip silently to avoid blocking
+		// development setups.
+		if declaredEvents != nil {
+			if _, ok := declaredEvents[eventName]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: hbase,
+					Msg:  fmt.Sprintf("event %q not declared by executor %q", eventName, n.Executor),
+				})
+				continue
+			}
+		}
+		switch h.Resolve {
+		case "", ResolvePass, ResolveRetry, ResolveError:
+		default:
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".resolve",
+				Msg:  fmt.Sprintf("resolve must be empty | pass | retry | error, got %q", h.Resolve),
+			})
+		}
+		if h.Resolve == ResolveError && strings.TrimSpace(h.ErrorClass) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: hbase + ".error_class",
+				Msg:  "error_class required when resolve=error",
+			})
+		}
+		if h.Invalidate != nil {
+			validateHandlerInvalidate(h.Invalidate, declared, hbase+".invalidate", res)
+		}
+	}
+}
+
+// validateMaxParkDuration parses MaxParkDuration via time.ParseDuration
+// and rejects malformed values. Empty string is valid (= "use deployment
+// default").
+func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResult) {
+	if n.MaxParkDuration == "" {
+		return
+	}
+	if _, err := parseDurationStrict(n.MaxParkDuration); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".max_park_duration",
+			Msg:  fmt.Sprintf("invalid duration %q: %v", n.MaxParkDuration, err),
+		})
+	}
+}
+
+// validateUserdataAgainstSchema runs the executor's advertised userdata
+// schema (if any) against the template-level userdata bytes. Plan F7
+// (registration-time gate). Dispatch-time re-validation lives in the
+// foundation runner; this gate catches schema violations baked into the
+// template even when no per-instance overrides are applied.
+//
+// Skipped silently when:
+//   - The node has no executor.
+//   - Hooks.ExecutorUserdataSchema is nil (e.g. unit tests).
+//   - The advertised schema is empty.
+//   - The node has no userdata.
+func validateUserdataAgainstSchema(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+	if n.Executor == "" || hooks.ExecutorUserdataSchema == nil {
+		return
+	}
+	schemaBytes, ok := hooks.ExecutorUserdataSchema(n.Executor)
+	if !ok || len(schemaBytes) == 0 {
+		return
+	}
+	// Empty userdata is equivalent to {} — cheap to validate; catches
+	// schemas with required: [...]. We always run validation rather
+	// than short-circuiting on len(Userdata)==0 because a missing
+	// required field is a real schema violation that should surface
+	// at registration.
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("inline://schema.json", bytes.NewReader(schemaBytes)); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".userdata",
+			Msg:  fmt.Sprintf("executor %q advertises invalid userdata_schema: %v", n.Executor, err),
+		})
+		return
+	}
+	schema, err := compiler.Compile("inline://schema.json")
+	if err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".userdata",
+			Msg:  fmt.Sprintf("executor %q userdata_schema does not compile: %v", n.Executor, err),
+		})
+		return
+	}
+	// Convert n.Userdata (map[string]any) into a JSON-decoded value.
+	udBytes, err := json.Marshal(n.Userdata)
+	if err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".userdata",
+			Msg:  fmt.Sprintf("marshal userdata: %v", err),
+		})
+		return
+	}
+	var doc any
+	if err := json.Unmarshal(udBytes, &doc); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".userdata",
+			Msg:  fmt.Sprintf("decode userdata: %v", err),
+		})
+		return
+	}
+	if err := schema.Validate(doc); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".userdata",
+			Msg:  fmt.Sprintf("userdata fails executor %q schema: %v", n.Executor, err),
+		})
+	}
+}
+
+// parseDurationStrict wraps time.ParseDuration. Wrapped to keep the
+// validator's call-sites uniform with other "parse and report" helpers.
+func parseDurationStrict(s string) (time.Duration, error) {
+	return time.ParseDuration(s)
 }

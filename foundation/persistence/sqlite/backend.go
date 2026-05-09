@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
@@ -35,11 +36,35 @@ func unwrapTx(tx persistence.Tx) (*sql.Tx, error) {
 // storeImpl is the per-feature umbrella the SQLite driver returns for
 // Store(). Aspect types below downcast *storeImpl to expose per-feature
 // method sets, mirroring the postgres impl in postgres/backend.go.
+//
+// blob/blobThreshold/blobRetention carry the spill-config triple set by
+// driver.SetBlobBackend at startup; same semantics as the postgres impl
+// (see foundation/persistence/postgres/backend.go::storeImpl).
 type storeImpl struct {
-	db *sql.DB
+	db            *sql.DB
+	blob          persistence.BlobBackend
+	blobThreshold int
+	blobRetention time.Duration
 }
 
 func newStore(db *sql.DB) *storeImpl { return &storeImpl{db: db} }
+
+// SetBlobBackend installs (or clears) the spill-config triple. See
+// postgres/backend.go::storeImpl.SetBlobBackend for the contract.
+func (s *storeImpl) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
+	s.blob = bb
+	s.blobThreshold = threshold
+	s.blobRetention = retention
+}
+
+// BlobBackend returns the configured backend (or nil).
+func (s *storeImpl) BlobBackend() persistence.BlobBackend { return s.blob }
+
+// BlobSpillThreshold returns the threshold (0 when disabled).
+func (s *storeImpl) BlobSpillThreshold() int { return s.blobThreshold }
+
+// BlobRetention returns the orphan retention window (0 when unset).
+func (s *storeImpl) BlobRetention() time.Duration { return s.blobRetention }
 
 // Transaction runs fn inside a sql.Tx. Rolls back on error; commits on
 // success.

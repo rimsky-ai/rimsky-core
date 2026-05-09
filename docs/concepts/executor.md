@@ -22,7 +22,7 @@ Rimsky's role is orchestration: when to run a node, what claims and locks to acq
 The executor surface splits into two service definitions:
 
 - **`NodeExecutor`** in `protocols/proto/v1/executor.proto`. The required dispatch protocol. One method:
-    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `Complete`, `Blocked`, `Errored`, or `AsyncAccepted`. The supervisor's terminal handling is keyed on the final event type.
+    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `NamedEvent`, `Complete`, `Blocked`, `Errored`, `AsyncAccepted`, or `ParkRequested`. The supervisor's terminal handling is keyed on the final event type. `NamedEvent` is non-terminal (zero or more per run); `ParkRequested` is terminal-but-resumable (the node transitions to `parked` and can be re-dispatched with `ResumeContext`).
 - **`ExecutorObservability`** in `protocols/proto/v1/executor_observability.proto`. The optional read-only protocol every executor MAY implement to expose per-dispatch traces to dashboards. Three methods:
     - **`GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`**: startup handshake; declares trace-get/trace-stream support and per-dispatch retention.
     - **`GetTrace(GetTraceRequest) → Trace`**: pull a previously-streamed trace by `dispatch_id`.
@@ -37,6 +37,10 @@ An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 - **Operator config**: the `executors:` block in `rimsky.yml`. Each entry has `transport`, `endpoint`, `tls`, and an optional `protocols: [...]` list.
 - **Implementing an executor**: speak gRPC against `protocols/proto/v1/executor.proto` (required) and optionally `protocols/proto/v1/executor_observability.proto`. Reference impls live under `executors/`: `http-node` (Go), `claude-agent` (TypeScript / npm), `stub` (Go test fixture).
 - **Conformance**: `cmd/rimsky-conformance` exercises an executor against the wire-protocol contract. For LLM-calling executors, run with `--require-stub-mode` to ensure the conformance run uses stubs (real LLM calls during conformance are rejected by the stub-mode probe).
+
+## Using `Blocked` as a routing signal
+
+An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Errored` (which means the executor failed). Templates can wire `on_executor_blocked: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
 
 ## Consumer-visible guarantees
 

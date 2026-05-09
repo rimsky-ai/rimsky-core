@@ -15,22 +15,31 @@
 //	                         default /etc/rimsky/rimsky.yml.
 //	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
 //	RIMSKY_CONTROL_API_PORT  optional; default 8080 (0 = OS-assigned).
+//	RIMSKY_METRICS_PORT      optional; default 0 = disabled. When >0
+//	                         exposes /metrics on this port (Prometheus
+//	                         text format) on the same host as the
+//	                         control API.
 //	RIMSKY_LOG_LEVEL         optional; debug|info|warn|error (default info).
 //	RIMSKY_LOG_BINARY        optional; structured slog field for unified-image.
 package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/observability"
 	"github.com/fallguy/rimsky/modeling/shared"
 
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite" // register driver
@@ -75,6 +84,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Install BlobBackend on the driver so attribute writes from
+	// control-api (e.g. instance-create-time fixture seeding via raw
+	// store calls) honor the spill threshold. Validation is identical
+	// across the three processes via ValidateBlobConfig.
+	if _, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver); err != nil {
+		log.Error("config.OpenBlobBackend", "error", err.Error())
+		_ = driver.Close()
+		os.Exit(1)
+	}
+
+	// Plan I1/I2: per-process Prometheus registry. Constructed up-front
+	// so the control-api's admin-invalidate path can be instrumented
+	// via the MetricsHook adapter. The /metrics HTTP listener is opened
+	// below only when RIMSKY_METRICS_PORT > 0; the registry itself is
+	// built unconditionally so the hook stays wired even when the HTTP
+	// surface is disabled.
+	mreg := observability.NewMetricsRegistry()
+
 	h, err := config.StartControlAPI(config.ControlAPIConfig{
 		Driver:     driver,
 		Clock:      shared.SystemClock{},
@@ -84,6 +111,7 @@ func main() {
 		Stores:     rimskyCfg.Stores,
 		NamedLocks: rimskyCfg.NamedLocks,
 		Executors:  rimskyCfg.Executors,
+		Metrics:    observability.MetricsHookOf(mreg),
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())
@@ -92,11 +120,34 @@ func main() {
 	}
 	log.Info("control api listening", "addr", h.Addr())
 
+	// Optional Prometheus /metrics endpoint on a separate port.
+	// Plan I1: gated by RIMSKY_METRICS_PORT (0 = disabled).
+	metricsPort, _ := strconv.Atoi(os.Getenv("RIMSKY_METRICS_PORT"))
+	var metricsSrv *http.Server
+	if metricsPort > 0 {
+		metricsRouter := chi.NewRouter()
+		observability.MountMetrics(metricsRouter, mreg)
+		metricsSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", host, metricsPort),
+			Handler:           metricsRouter,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info("metrics endpoint listening", "addr", metricsSrv.Addr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics endpoint", "error", err.Error())
+			}
+		}()
+	}
+
 	waitForSignal(log)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("control api shutdown", "error", err.Error())
+	}
+	if metricsSrv != nil {
+		_ = metricsSrv.Shutdown(shutdownCtx)
 	}
 	_ = driver.Close()
 }

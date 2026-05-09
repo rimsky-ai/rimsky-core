@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -64,6 +65,15 @@ func (d *driver) AdvisoryLocker() persistence.AdvisoryLocker {
 		return nil
 	}
 	return d.c
+}
+
+// SetBlobBackend installs the active BlobBackend + spill threshold +
+// orphan-retention window on the driver's Store. See the postgres impl
+// for the contract; same semantics apply to SQLite.
+func (d *driver) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
+	if d.s != nil {
+		d.s.SetBlobBackend(bb, threshold, retention)
+	}
 }
 
 func (d *driver) Close() error { return d.db.Close() }

@@ -205,3 +205,60 @@ func TestSubstitute_ErrorRedaction(t *testing.T) {
 		t.Fatalf("error message LEAKED claim content: %q", err.Error())
 	}
 }
+
+// TestSubstitute_NodesEvent covers the new nodes.<emitter>.event.<name>.<path>
+// substitution source kind (plan F4).
+func TestSubstitute_NodesEvent(t *testing.T) {
+	t.Parallel()
+
+	emissions := map[string]json.RawMessage{
+		"router|action_taken": mustJSON(t, map[string]any{
+			"action": "approve",
+			"score":  0.92,
+		}),
+	}
+	ctx := ResolveContext{
+		EventLookup: func(emitter, name string) (json.RawMessage, bool) {
+			payload, ok := emissions[emitter+"|"+name]
+			return payload, ok
+		},
+	}
+
+	t.Run("ok-leaf", func(t *testing.T) {
+		got, err := Substitute("{{nodes.router.event.action_taken.action}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "approve" {
+			t.Fatalf("got %q, want approve", got)
+		}
+	})
+
+	t.Run("missing-emitter", func(t *testing.T) {
+		_, err := Substitute("{{nodes.unknown.event.action_taken.action}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("missing-field", func(t *testing.T) {
+		_, err := Substitute("{{nodes.router.event.action_taken.no_such_field}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("nil-lookup-rejects", func(t *testing.T) {
+		_, err := Substitute("{{nodes.router.event.action_taken.action}}", ResolveContext{})
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("malformed-shape", func(t *testing.T) {
+		_, err := Substitute("{{nodes.router.action_taken}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}

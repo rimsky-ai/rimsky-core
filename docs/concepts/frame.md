@@ -54,6 +54,10 @@ This is distinct from per-run executor silence-timeout (which lives on the execu
 - Under `serial_queue`, frames execute in arrival order. Under `coalesce`, the merged frame represents the most recent invalidate at the time the in-flight frame ended.
 - Frames are never backfilled: a missed schedule fire does not retroactively create a frame; the schedule advances from the recorded next-fire-at, not from the wall clock.
 
+## Held frames
+
+A frame is **held** when one or more of its nodes is in a non-terminal pause state — typically `parked` (the node emitted `ParkRequested` waiting for a time-based or signal-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via `GET /admin/diagnostics/held-frames` (see `docs/concepts/operational-health.md`). They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Auto-terminal of held claims fires once every node in the holding subgraph completes, so the held-claim release happens at the end of the holding subgraph, not at park boundary.
+
 ## Common mistakes
 
 - **Rimsky's frame ≠ stack frame, video frame, UI frame.** A Rimsky frame is the unit of cascade resolution for an instance; nothing to do with call stacks, animation, or screen rendering.

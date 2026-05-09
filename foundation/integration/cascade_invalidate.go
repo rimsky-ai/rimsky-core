@@ -50,6 +50,10 @@ type InvalidateArgs struct {
 	// would always fall back to next-frame, defeating the spec's
 	// "single frame for the entire drain" property.
 	SourceFrameID *shared.UUID
+	// Metrics is the per-invalidate instrumentation hook (plan I3).
+	// Optional. Threaded through so invalidate sources can be classified
+	// by reason (admin vs scheduler vs handler vs policy).
+	Metrics MetricsHook
 }
 
 // InvalidateNode routes an invalidate event to TargetNodeID per the
@@ -82,6 +86,15 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	sb, log := args.Persist, args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
+	}
+	// Plan I3: classify invalidate sources by Reason for the metric.
+	// Reasons today: "admin_invalidate" (G3), "policy_invalidate"
+	// (handler/error_types), "schedule_fire" (cron), "cascade" (post-
+	// commit), and bespoke event-handler reasons. The metric label uses
+	// a coarse bucket so high-cardinality reasons don't blow up
+	// Prometheus storage.
+	if args.Metrics != nil {
+		args.Metrics.IncInvalidate(invalidateSourceBucket(args.Reason))
 	}
 
 	// Emit + receive events for the audit trail.
@@ -220,4 +233,24 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 			},
 		}, tx)
 	})
+}
+
+
+// invalidateSourceBucket classifies the Reason string into a small
+// fixed set of metric labels (admin / scheduler / handler / cascade /
+// other) so the Prometheus invalidate counter has bounded cardinality.
+func invalidateSourceBucket(reason string) string {
+	switch reason {
+	case "admin_invalidate":
+		return "admin"
+	case "schedule_fire":
+		return "scheduler"
+	case "policy_invalidate":
+		return "handler"
+	case "cascade", "cascade_changed", "cascade_unchanged":
+		return "cascade"
+	case "parked_resume_deadline_elapsed":
+		return "scheduler"
+	}
+	return "other"
 }

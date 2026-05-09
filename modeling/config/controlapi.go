@@ -6,6 +6,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,12 +17,48 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/fallguy/rimsky/foundation/integration"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/controlapi"
 	"github.com/fallguy/rimsky/modeling/observability"
 	"github.com/fallguy/rimsky/modeling/shared"
 )
+
+// controlapiInvalidateAdapter wraps the foundation/integration
+// InvalidateHandler so it returns the controlapi.ErrInvalidateConflict
+// sentinel when the foundation runtime reports the target is running.
+// Without this translation the admin handler would 500 instead of 409
+// because errors.Is on the foundation's ErrInvalidateRunning sentinel
+// would fail (the controlapi handler only knows ErrInvalidateConflict).
+type controlapiInvalidateAdapter struct {
+	inner *integration.InvalidateHandler
+}
+
+func (a *controlapiInvalidateAdapter) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
+	out, err := a.inner.InvalidateNode(ctx, instanceID, nodeID)
+	if err != nil {
+		if errors.Is(err, integration.ErrInvalidateRunning) {
+			return nil, fmt.Errorf("%w: %v", controlapi.ErrInvalidateConflict, err)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
+// controlapiSupervisorID returns the supervisor id stamped on
+// audit-log rows for control-api-originated wakes. Defaults to a
+// hostname-derived value so multi-replica deployments don't collide.
+// Override with RIMSKY_CONTROLAPI_ID.
+func controlapiSupervisorID() string {
+	if v := os.Getenv("RIMSKY_CONTROLAPI_ID"); v != "" {
+		return v
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return "control-api-" + h
+	}
+	return "control-api"
+}
 
 // ControlAPIConfig wires the control-api HTTP server. The store config
 // follows the same name → endpoint + capabilities shape as the
@@ -45,6 +82,12 @@ type ControlAPIConfig struct {
 	// registration to validate that every node-referenced executor
 	// name is declared.
 	Executors ExecutorsConfig
+	// Metrics is the prometheus instrumentation hook (plan I2).
+	// Threaded into controlapi.AppDeps.Metrics so admin-fired
+	// invalidates increment `rimsky_invalidates_total{source="admin"}`.
+	// Optional; nil → no-op. Production wiring constructs an
+	// observability.RegistryHook from the per-process MetricsRegistry.
+	Metrics integration.MetricsHook
 }
 
 type ControlAPIHandle interface {
@@ -165,6 +208,35 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		LifecycleSubs: lifecycleReg,
 		NamedLocks:    cfg.NamedLocks,
 		Executors:     executorsByName,
+		// Plan G3 / E3 / H2: control-api delegates admin
+		// invalidates to the foundation runtime's UnifiedInvalidate via
+		// this adapter; same code path that the parked-nodes sweep and
+		// the on_event handler dispatch use, so handler-emitted
+		// invalidates correctly resume parked targets.
+		InvalidateHandler: &controlapiInvalidateAdapter{
+			inner: &integration.InvalidateHandler{
+				Persist:      persistStore,
+				Queue:        persistQueue,
+				Clock:        cfg.Clock,
+				Logger:       cfg.Logger,
+				SupervisorID: controlapiSupervisorID(),
+				Metrics:      cfg.Metrics,
+			},
+		},
+		// Plan F6 / F7: ExecutorCapabilities exposes the observability
+		// discovery cache's per-executor (declared_events, userdata_schema)
+		// to the controlapi templates registration validator. The cache is
+		// already populated by RunHandshake at startup and refreshed by
+		// the RefreshLoop goroutine started above; this hook is a thin
+		// read-only adapter so templates.go can validate at registration
+		// without taking a direct observability import dependency.
+		ExecutorCapabilities: func(executorName string) ([]string, []byte, bool) {
+			peer, ok := disc.GetExecutor(executorName)
+			if !ok || peer.Capabilities == nil {
+				return nil, nil, false
+			}
+			return peer.Capabilities.DeclaredEvents, peer.Capabilities.UserdataSchema, true
+		},
 		Observability: func(r chi.Router) {
 			observability.Routes(r, observability.Deps{
 				Store:     persistStore,
@@ -175,6 +247,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Discovery: disc,
 			})
 		},
+		Metrics: cfg.Metrics,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))

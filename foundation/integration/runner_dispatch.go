@@ -10,6 +10,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -22,6 +23,16 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
+
+// userdataValidationError wraps a UserdataValidator failure so the
+// dispatch path can classify it as an application-error
+// ("userdata_validation_failed") rather than infra. Plan F7.
+type userdataValidationError struct {
+	cause error
+}
+
+func (e *userdataValidationError) Error() string { return e.cause.Error() }
+func (e *userdataValidationError) Unwrap() error { return e.cause }
 
 // dispatchContext carries the per-dispatch state through the
 // executor stream loop.
@@ -44,6 +55,29 @@ type terminalEvent struct {
 	AttributesDel map[string]any
 	ErrorClass    string
 	Payload       map[string]any
+	// Park fields — set when Kind == terminalKindPark.
+	ParkReason       string
+	ParkPayload      []byte
+	ParkResumeAt     time.Time // zero ⇒ indefinite
+	ParkSessionToken string
+	// NamedEvents is the optional list of non-terminal NamedEvent
+	// emissions captured during the dispatch (gRPC stream) or in the
+	// async-callback body. Processed in arrival order before the
+	// terminal verdict (per plan H1).
+	NamedEvents []namedEventRecord
+}
+
+// namedEventRecord captures one NamedEvent emission for ledger persistence.
+//
+// PayloadInline / PayloadHandle / PayloadHandleBackend follow the same
+// inline-or-spill discipline as parked payloads and node attributes.
+// At the runtime entry point (before spill), only PayloadInline is
+// populated; spill-write happens in H1's persist path.
+type namedEventRecord struct {
+	Name                 string
+	PayloadInline        []byte
+	PayloadHandle        string
+	PayloadHandleBackend string
 }
 
 type terminalKind int
@@ -55,12 +89,27 @@ const (
 	terminalKindErrored
 	terminalKindAsyncAccepted
 	terminalKindInfra
+	// terminalKindPark is the in-runner flavor of the protocol-level
+	// ParkRequested event. The supervisor's terminal-handler chain
+	// dispatches to applyTerminalPark for this kind.
+	terminalKindPark
 )
 
 // dispatch routes the candidate to the appropriate execution path.
 func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *RunnerResult, error) {
 	acq := dctx.Acquired
 	args := dctx.Args
+	metrics := metricsOf(args)
+	dispatchStart := args.Clock.Now()
+	defer func() {
+		// Record dispatch latency unconditionally — async paths return
+		// before the executor terminal arrives, so this measures the
+		// supervisor-side dispatch envelope rather than full executor
+		// duration. Async terminals are observed separately in the
+		// callback path.
+		metrics.ObserveDispatchLatency(acq.Executor, args.Clock.Now().Sub(dispatchStart).Seconds())
+	}()
+	metrics.IncDispatch(acq.Executor, "started")
 
 	if acq.Executor == "" {
 		// Native dispatch: claim-only or pure-cascade. Synthesize a
@@ -101,6 +150,20 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}
 	req, err := buildExecuteRequest(ctx, dctx)
 	if err != nil {
+		// Plan F7: userdata-validation failures route through the
+		// application-error chain (Errored → on_executor_errored)
+		// rather than the infra-error chain. This lets templates
+		// declare an on_executor_errored handler with a userdata_
+		// validation_failed branch and react (e.g. invalidate the
+		// upstream attribute-producing node, or give_up).
+		var uerr *userdataValidationError
+		if errors.As(err, &uerr) {
+			return terminalEvent{
+				Kind:       terminalKindErrored,
+				ErrorClass: "userdata_validation_failed",
+				Payload:    map[string]any{"error": uerr.cause.Error()},
+			}, nil, nil
+		}
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
@@ -108,6 +171,19 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	if err != nil {
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
+	}
+	// At this point the executor has accepted the Execute RPC (the
+	// stream handle is live). The resume metadata has been
+	// materialized into ResumeContext on the wire; clear it now so a
+	// re-park during this run, or any later retry cycle, starts a
+	// fresh resume cycle. If the stream subsequently errors mid-flight
+	// (executor crash, network blip), the dispatch is re-enqueued
+	// fresh via applyTerminalInfraError — by design, since the
+	// executor already saw the resume payload.
+	if dctx.Acquired.Resume != nil {
+		_ = dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return dctx.Args.Queue.ClearResumeMetadataInTx(ctx, tx, dctx.Acquired.DispatchID)
+		})
 	}
 	terminal, asyncAck := readExecutorStream(ctx, dctx, stream)
 	_ = stream.Close()
@@ -151,6 +227,11 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 
 // readExecutorStream consumes the executor's gRPC stream up to the
 // terminal event.
+//
+// Non-terminal NamedEvent records are accumulated on the returned
+// terminalEvent's NamedEvents slice; the H1 terminal-handler entry
+// point persists them via NodeEventsStore before applying the terminal
+// verdict.
 func readExecutorStream(
 	ctx context.Context, dctx dispatchContext, stream interface {
 		Recv() (*genv1.ExecuteEvent, error)
@@ -158,19 +239,22 @@ func readExecutorStream(
 ) (terminalEvent, string) {
 	args := dctx.Args
 	acq := dctx.Acquired
+	var pending []namedEventRecord
 	for {
 		ev, rerr := stream.Recv()
 		if rerr == io.EOF {
 			return terminalEvent{
-				Kind:       terminalKindInfra,
-				ErrorClass: "stream_closed_without_terminal",
+				Kind:        terminalKindInfra,
+				ErrorClass:  "stream_closed_without_terminal",
+				NamedEvents: pending,
 			}, ""
 		}
 		if rerr != nil {
 			return terminalEvent{
-				Kind:       terminalKindInfra,
-				ErrorClass: "stream_error",
-				Payload:    map[string]any{"error": rerr.Error()},
+				Kind:        terminalKindInfra,
+				ErrorClass:  "stream_error",
+				Payload:     map[string]any{"error": rerr.Error()},
+				NamedEvents: pending,
 			}, ""
 		}
 		switch e := ev.Event.(type) {
@@ -179,11 +263,17 @@ func readExecutorStream(
 				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx)
 			})
 			_ = e
+		case *genv1.ExecuteEvent_NamedEvent:
+			pending = append(pending, namedEventRecord{
+				Name:          e.NamedEvent.Name,
+				PayloadInline: e.NamedEvent.Payload,
+			})
 		case *genv1.ExecuteEvent_Complete:
 			t := terminalEvent{
 				Kind:          terminalKindComplete,
 				Changed:       e.Complete.Changed,
 				ChangeSummary: e.Complete.ChangeSummary,
+				NamedEvents:   pending,
 			}
 			if e.Complete.AttributesDelta != nil {
 				t.AttributesDel = e.Complete.AttributesDelta.AsMap()
@@ -195,9 +285,10 @@ func readExecutorStream(
 				ctxGo = e.Blocked.Context.AsMap()
 			}
 			return terminalEvent{
-				Kind:       terminalKindBlocked,
-				ErrorClass: "executor_blocked",
-				Payload:    map[string]any{"reason": e.Blocked.Reason, "context": ctxGo},
+				Kind:        terminalKindBlocked,
+				ErrorClass:  "executor_blocked",
+				Payload:     map[string]any{"reason": e.Blocked.Reason, "context": ctxGo},
+				NamedEvents: pending,
 			}, ""
 		case *genv1.ExecuteEvent_Errored:
 			var payloadGo any
@@ -205,11 +296,30 @@ func readExecutorStream(
 				payloadGo = e.Errored.Payload.AsMap()
 			}
 			return terminalEvent{
-				Kind:       terminalKindErrored,
-				ErrorClass: e.Errored.ErrorClass,
-				Payload:    map[string]any{"payload": payloadGo},
+				Kind:        terminalKindErrored,
+				ErrorClass:  e.Errored.ErrorClass,
+				Payload:     map[string]any{"payload": payloadGo},
+				NamedEvents: pending,
 			}, ""
+		case *genv1.ExecuteEvent_ParkRequested:
+			t := terminalEvent{
+				Kind:             terminalKindPark,
+				ParkReason:       e.ParkRequested.Reason,
+				ParkPayload:      e.ParkRequested.Payload,
+				ParkSessionToken: e.ParkRequested.SessionToken,
+				NamedEvents:      pending,
+			}
+			if e.ParkRequested.ResumeAt != nil {
+				t.ParkResumeAt = e.ParkRequested.ResumeAt.AsTime()
+			}
+			return t, ""
 		case *genv1.ExecuteEvent_AsyncAccepted:
+			// AsyncAccepted does not carry NamedEvents — the executor
+			// will POST them via the async-callback body's `events`
+			// array (per plan A5/H1). The runtime drops `pending` here
+			// because the async-callback path handles the entire
+			// session's events on its own.
+			_ = pending
 			return terminalEvent{Kind: terminalKindAsyncAccepted}, e.AsyncAccepted.AsyncAckId
 		}
 	}
@@ -254,6 +364,14 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 // from the candidate's deps, this acquisition's claims (keyed by
 // alias), and instance params (marshalled to RawMessage so the
 // substitution engine can lazy-walk into nested params).
+//
+// The EventLookup callback resolves
+// `nodes.<emitter>.event.<name>.<json_path>` source kinds (plan F4):
+// (a) it maps the emitter node-type to a node-id within the same
+// instance via Nodes().ListByInstance, (b) reads the most recent
+// emission row from rimsky_node_events, (c) materializes the spilled
+// payload via BlobBackend if necessary, (d) returns the bytes for
+// walkPath. Empty bytes / no row → ok=false.
 func buildResolveContextForDispatch(
 	ctx context.Context, args RunArgs, acq *acquisition,
 ) (attributes.ResolveContext, error) {
@@ -273,11 +391,63 @@ func buildResolveContextForDispatch(
 		}
 		paramsRaw = b
 	}
+	eventLookup := func(emitter, eventName string) (json.RawMessage, bool) {
+		return lookupEventPayload(ctx, args, acq.InstanceID, emitter, eventName)
+	}
 	return attributes.ResolveContext{
-		Deps:   deps,
-		Claim:  claims,
-		Params: paramsRaw,
+		Deps:        deps,
+		Claim:       claims,
+		Params:      paramsRaw,
+		EventLookup: eventLookup,
 	}, nil
+}
+
+// lookupEventPayload resolves the most recent NamedEvent emission for
+// the (instance, emitter-type, event-name) tuple. Returns ok=false when
+// no row exists or the materialization fails.
+func lookupEventPayload(
+	ctx context.Context, args RunArgs, instanceID shared.UUID, emitterType, eventName string,
+) (json.RawMessage, bool) {
+	var out json.RawMessage
+	var found bool
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		// Map emitter node-type → emitter node-id within the instance.
+		rows, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
+		if err != nil {
+			return nil
+		}
+		var emitterID string
+		for _, r := range rows {
+			if r.NodeType == emitterType {
+				emitterID = r.ID.String()
+				break
+			}
+		}
+		if emitterID == "" {
+			return nil
+		}
+		evt, err := args.Persist.NodeEvents().LatestByName(ctx, instanceID.String(), emitterID, eventName, tx)
+		if err != nil || evt == nil {
+			return nil
+		}
+		// Inline payload wins; otherwise materialize the handle through
+		// the configured BlobBackend.
+		if len(evt.PayloadInline) > 0 {
+			out = json.RawMessage(evt.PayloadInline)
+			found = true
+			return nil
+		}
+		if evt.PayloadHandle != "" && args.Blob != nil && args.Blob.Name() == evt.PayloadHandleBackend {
+			b, ferr := args.Blob.Read(ctx, persistence.Handle(evt.PayloadHandle))
+			if ferr == nil {
+				out = json.RawMessage(b)
+				found = true
+				return nil
+			}
+		}
+		return nil
+	})
+	return out, found
 }
 
 // substituteAttributesSchema walks the schema's `properties` map and
@@ -414,6 +584,15 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		baseUserdata = def.Userdata
 	}
 	merged := applyUserdataOverrides(baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
+	// Plan F7: dispatch-time userdata schema validation. Runs after
+	// applyUserdataOverrides so per-instance overrides are validated
+	// too. Failure routes through on_executor_errored (handled by the
+	// caller via the returned error).
+	if dctx.Args.UserdataValidator != nil && acq.Executor != "" {
+		if err := dctx.Args.UserdataValidator(acq.Executor, merged); err != nil {
+			return nil, &userdataValidationError{cause: err}
+		}
+	}
 	userdataStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(merged) > 0 {
 		s, err := structpb.NewStruct(merged)
@@ -470,7 +649,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	if prior != nil {
 		runAttempt = prior.RunAttempt
 	}
-	return &genv1.ExecuteRequest{
+	req := &genv1.ExecuteRequest{
 		NodeId:           acq.NodeID.String(),
 		InstanceId:       acq.InstanceID.String(),
 		NodeType:         acq.NodeType,
@@ -482,7 +661,28 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CancelToken:      cancelToken,
 		RunAttempt:       int32(runAttempt),
 		DispatchId:       acq.DispatchID.String(),
-	}, nil
+	}
+	// Resume dispatch: when this acquisition is resuming a parked node,
+	// attach the persisted park metadata as ResumeContext so the
+	// executor can re-establish session state. Per plan E4.
+	//
+	// Note: the clear-of-parked-metadata is deferred to the dispatch
+	// caller (after the executor stream produces a terminal). If
+	// buildExecuteRequest cleared here and the executor RPC then failed
+	// (dial / serialization), the row would be re-enqueued via
+	// applyTerminalInfraError but the next pickup would be a fresh
+	// dispatch — the executor would never see the parked payload it
+	// was resuming. Keeping the clear in the success branch preserves
+	// the metadata across pre-RPC failures so the retry is still a
+	// resume.
+	if acq.Resume != nil {
+		req.ResumeContext = &genv1.ResumeContext{
+			Payload:      acq.Resume.Payload,
+			SessionToken: acq.Resume.SessionToken,
+			ResumeReason: string(acq.Resume.Reason),
+		}
+	}
+	return req, nil
 }
 
 // buildStoreHandles converts each ClaimSpec acquisition into a per-

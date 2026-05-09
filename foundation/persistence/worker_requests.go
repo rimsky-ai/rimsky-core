@@ -173,9 +173,155 @@ type Queue interface {
 	// CountLive counts currently-live dispatch rows matching filter.
 	CountLive(ctx context.Context, filter DispatchListFilter) (int, error)
 
+	// CountParkedByReason returns counts of currently-parked
+	// rimsky_worker_request rows grouped by parked_reason. Empty
+	// reason buckets under the literal string "" so callers can
+	// disambiguate "not parked" (absent from map) from "parked with
+	// no reason" (key=""). Used by the metrics gauge refresher
+	// (`rimsky_parked_by_reason`).
+	CountParkedByReason(ctx context.Context) (map[string]int, error)
+
 	// GetByID returns the live dispatch row for id, or nil when no such
 	// row exists (e.g. terminal-deleted). Used by the observability
 	// /v1/observability/dispatches/{id} endpoint to avoid a full O(N)
 	// ListLive scan.
 	GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error)
+
+	// ParkActive transitions a worker_request row from phase='active' to
+	// phase='parked' under the claimant's id. Persists the park metadata
+	// (parked_at, resume_at, parked_reason, session_token) and the
+	// payload via inline-or-handle (exactly one is non-empty). Clears
+	// claimed_by / claimed_at / last_heartbeat_at so the orphan-claim
+	// reaper's `claimed_by IS NOT NULL` predicate excludes the row. Used
+	// by E1's applyTerminalPark.
+	ParkActiveInTx(ctx context.Context, tx Tx, in ParkActiveInput) error
+
+	// ListParkedReadyForResume returns parked rows whose resume_at has
+	// elapsed (resume_at <= cutoff), ordered by resume_at ascending.
+	// Limit caps the per-tick batch. Used by E3's SweepParkedNodes.
+	ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]ParkedRow, error)
+
+	// ListParkedOverdue returns parked rows whose
+	// parked_at + max_park_duration_seconds has elapsed. The watchdog
+	// path (SweepParkedNodes) uses this to force a park_timeout failure.
+	// Limit caps the per-tick batch.
+	ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]ParkedRow, error)
+
+	// GetParkedByNode returns the parked worker_request row for a node,
+	// or nil when the node is not parked. Used by the
+	// admin-invalidate-against-parked path (G3) and by E4 resume dispatch
+	// to load the persisted park metadata.
+	GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*ParkedRow, error)
+
+	// ResumeParkedInTx transitions a parked row back to phase='pending'
+	// (so any eligible supervisor can pick it up — the row's claimed_by is
+	// reset to NULL). Park metadata (parked_payload_*, parked_reason,
+	// session_token) is preserved so the resume-dispatch path can build
+	// ResumeContext from it; the runner clears it via
+	// ClearResumeMetadataInTx after a successful dispatch.
+	//
+	// Used by E3's sweep-driven wake and by the unified invalidate
+	// handler (G3) for handler-emitted wakes. Returns resumed=true when
+	// exactly one row was updated.
+	//
+	// supervisorID is recorded in audit-log rows by callers; the row
+	// goes back to claimed_by=NULL so any supervisor can pick it up.
+	// wakeReason is persisted on rimsky_worker_request.wake_reason so
+	// the resume-dispatch path (LoadResumeMetadataInTx) can attach it
+	// to ResumeContext.resume_reason ("deadline_elapsed" |
+	// "external_invalidate"). Empty wakeReason persists NULL.
+	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID, wakeReason string) (resumed bool, err error)
+
+	// GetRetryNoProgress returns the current counter value plus the
+	// per-row max_retries_without_progress override (NULL → use deployment
+	// default). Used by E5 to test the cap.
+	GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (count int, override *int, err error)
+
+	// SetRetryNoProgressForNodeInTx writes the carry-forward counter
+	// onto the worker_request row identified by node_id (not by
+	// dispatch_id). Used by the retry path: after the original
+	// dispatch row is removed and a new one is inserted, the supervisor
+	// re-stamps the carried-forward counter so the cap can accumulate
+	// across retries. NodeID is the lookup key because the new row's
+	// dispatch_id is the freshly-allocated UUID.
+	SetRetryNoProgressForNodeInTx(ctx context.Context, tx Tx, nodeID shared.UUID, count int) error
+
+	// UpdateDispatchTuning sets the per-row max_park_duration_seconds and
+	// max_retries_without_progress denormalized columns at dispatch time
+	// from the resolved template DSL. Used by F2/F3 dispatch wiring.
+	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
+
+	// LoadResumeMetadataInTx returns the parked metadata that survived
+	// the parked → pending transition (parked_payload_inline /
+	// parked_payload_handle / parked_payload_handle_backend /
+	// parked_reason / session_token). Returns (nil, nil) when the row
+	// has no parked metadata (fresh dispatch). Used by E4's resume
+	// dispatch.
+	LoadResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (*ResumeMetadataRow, error)
+
+	// ClearResumeMetadataInTx clears the parked_payload_* /
+	// parked_reason / session_token columns. Called by the runner
+	// after a successful resume dispatch so a re-park cycle starts
+	// clean.
+	ClearResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) error
+}
+
+// ResumeMetadataRow is the parked metadata loaded by
+// LoadResumeMetadataInTx for the runner's resume-dispatch path.
+type ResumeMetadataRow struct {
+	PayloadInline        []byte
+	PayloadHandle        string
+	PayloadHandleBackend string
+	Reason               string
+	SessionToken         string
+	// WakeReason carries the WakeReason enum value persisted by
+	// ResumeParkedInTx ("deadline_elapsed" | "external_invalidate").
+	// Empty when no wake has been recorded.
+	WakeReason string
+	// ParkedAt is the timestamp recorded when the worker_request first
+	// transitioned to phase='parked' (ParkActiveInTx). Preserved across
+	// the parked → pending transition; reset to NULL by
+	// ClearResumeMetadataInTx after a successful resume dispatch. Zero
+	// when no park occurred (fresh dispatch).
+	ParkedAt time.Time
+}
+
+// ParkActiveInput is the payload for Queue.ParkActiveInTx.
+//
+// PayloadInline and PayloadHandle are mutually exclusive: at most one is
+// non-empty per write. When PayloadHandle is set, PayloadHandleBackend
+// MUST also be non-empty so the read path can route the fetch.
+//
+// ResumeAt may be zero (indefinite park; resume only via
+// external invalidate). Reason is recommended non-empty but not enforced.
+type ParkActiveInput struct {
+	DispatchID           shared.UUID
+	ExpectedClaimedBy    string
+	ParkedAt             time.Time
+	ResumeAt             time.Time // zero ⇒ NULL (no deadline-based resume)
+	Reason               string
+	SessionToken         string
+	PayloadInline        []byte
+	PayloadHandle        string
+	PayloadHandleBackend string
+}
+
+// ParkedRow is a row returned by ListParkedReadyForResume,
+// ListParkedOverdue, and GetParkedByNode. Carries the persisted park
+// metadata so the resume-dispatch path (E4) can build ResumeContext.
+type ParkedRow struct {
+	DispatchID                shared.UUID
+	NodeID                    shared.UUID
+	ExecutorName              string
+	RequiredStores            []string
+	FrameID                   shared.UUID
+	ParkedAt                  time.Time
+	ResumeAt                  *time.Time
+	Reason                    string
+	SessionToken              string
+	PayloadInline             []byte
+	PayloadHandle             string
+	PayloadHandleBackend      string
+	MaxParkDurationSeconds    *int
+	ConsecutiveRetriesNoProg  int
 }

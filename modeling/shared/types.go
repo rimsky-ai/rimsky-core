@@ -13,7 +13,16 @@ import (
 
 type UUID = uuid.UUID
 
-// NodeState: fresh | stale | running | failed
+// NodeState: fresh | stale | running | failed | parked
+//
+// `parked` is a non-terminal hold state distinct from `failed`. A node
+// enters parked when its executor emits ParkRequested as a terminal
+// event; it leaves parked via either time-based wake (SweepParkedNodes
+// processes resume_at), in-graph or admin invalidate, or watchdog
+// timeout (max_park_duration → failed). Cascade does NOT propagate
+// from parked; held claims are retained across the park boundary; the
+// orphan-claim reaper skips phase='parked' rows because heartbeating
+// is paused during park.
 type NodeState string
 
 const (
@@ -21,6 +30,7 @@ const (
 	NodeStateStale   NodeState = "stale"
 	NodeStateRunning NodeState = "running"
 	NodeStateFailed  NodeState = "failed"
+	NodeStateParked  NodeState = "parked"
 )
 
 // LastOutcome is the resolution flavor recorded on rimsky_nodes for

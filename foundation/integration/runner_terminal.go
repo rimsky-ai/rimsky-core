@@ -45,6 +45,15 @@ func applyTerminal(
 	resolvedAttrs map[string]any, schema map[string]any,
 	t terminalEvent,
 ) error {
+	// Persist any NamedEvent emissions captured during the dispatch's
+	// gRPC stream BEFORE applying the terminal verdict, per plan H1.
+	// Failures here are best-effort and logged — events that fail to
+	// persist do not block the terminal verdict.
+	if len(t.NamedEvents) > 0 {
+		processNamedEvents(ctx, args, acq, t.NamedEvents)
+	}
+	// Plan I2: record the terminal verdict by class + error_class.
+	metricsOf(args).IncTerminal(string(terminalClassFor(t.Kind)), t.ErrorClass)
 	switch t.Kind {
 	case terminalKindComplete:
 		return applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t)
@@ -54,8 +63,29 @@ func applyTerminal(
 		return applyTerminalBlockedOrErrored(ctx, args, acq, t.ErrorClass, t.Payload, "errored")
 	case terminalKindInfra:
 		return applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload)
+	case terminalKindPark:
+		return applyTerminalPark(ctx, args, acq, t)
 	}
 	return fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
+}
+
+// terminalClassFor returns the metric label for a terminal kind. Kept
+// in one place so additions to the kind enum don't drift between the
+// metric labeling and the dispatch switch.
+func terminalClassFor(k terminalKind) string {
+	switch k {
+	case terminalKindComplete:
+		return "complete"
+	case terminalKindBlocked:
+		return "blocked"
+	case terminalKindErrored:
+		return "errored"
+	case terminalKindInfra:
+		return "infra"
+	case terminalKindPark:
+		return "park"
+	}
+	return "unknown"
 }
 
 // applyTerminalBlockedOrErrored / applyTerminalPass live in

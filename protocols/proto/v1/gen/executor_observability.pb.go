@@ -180,8 +180,26 @@ type ObservabilityCapabilities struct {
 	// dial this URL directly for browser-friendly fetch/SSE access. When
 	// empty, peers expose only the gRPC surface.
 	HttpBridgeUrl string `protobuf:"bytes,5,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
+	// the executor's accepted userdata shape. Empty means "no schema; accept
+	// any userdata."
+	//
+	// Rimsky validates incoming template userdata against this schema at
+	// template registration and at dispatch (post-merge,
+	// post-substitution). Validation failures route through
+	// Errored { error_class: "userdata_validation_failed" }.
+	UserdataSchema []byte `protobuf:"bytes,6,opt,name=userdata_schema,json=userdataSchema,proto3" json:"userdata_schema,omitempty"`
+	// declared_events is the set of event names this executor may emit
+	// via the non-terminal Event wire type on ExecuteEvent. Empty means
+	// "executor does not emit events."
+	//
+	// Rimsky validates that any on_event handlers in templates referencing
+	// this executor name an event in declared_events. Reserved lifecycle
+	// slots (on_executor_complete/blocked/errored, on_acquire_unavailable)
+	// are not subject to this validation.
+	DeclaredEvents []string `protobuf:"bytes,7,rep,name=declared_events,json=declaredEvents,proto3" json:"declared_events,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ObservabilityCapabilities) Reset() {
@@ -247,6 +265,20 @@ func (x *ObservabilityCapabilities) GetHttpBridgeUrl() string {
 		return x.HttpBridgeUrl
 	}
 	return ""
+}
+
+func (x *ObservabilityCapabilities) GetUserdataSchema() []byte {
+	if x != nil {
+		return x.UserdataSchema
+	}
+	return nil
+}
+
+func (x *ObservabilityCapabilities) GetDeclaredEvents() []string {
+	if x != nil {
+		return x.DeclaredEvents
+	}
+	return nil
 }
 
 type CustomUI struct {
@@ -562,13 +594,15 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
 	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x18\n" +
-	"\x16GetCapabilitiesRequest\"\xa0\x02\n" +
+	"\x16GetCapabilitiesRequest\"\xf2\x02\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
 	" retention_after_terminal_seconds\x18\x03 \x01(\x04R\x1dretentionAfterTerminalSeconds\x120\n" +
 	"\tcustom_ui\x18\x04 \x01(\v2\x13.rimsky.v1.CustomUIR\bcustomUi\x12&\n" +
-	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\"\x8a\x01\n" +
+	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12'\n" +
+	"\x0fuserdata_schema\x18\x06 \x01(\fR\x0euserdataSchema\x12'\n" +
+	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\"\x8a\x01\n" +
 	"\bCustomUI\x12\x15\n" +
 	"\x06ui_url\x18\x01 \x01(\tR\x05uiUrl\x123\n" +
 	"\n" +

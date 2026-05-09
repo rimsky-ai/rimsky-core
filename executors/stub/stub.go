@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
@@ -26,7 +27,19 @@ const (
 	termError
 	termBlocked
 	termAsync
+	// termPark scripts a ParkRequested terminal event. Used by L2
+	// conformance and by E6 / H3 scenario tests.
+	termPark
 )
+
+// namedEventEmit captures one NamedEvent emission scripted before a
+// terminal verdict. Per plan L2/H1, the stub may emit zero or more
+// NamedEvent records before the terminal so test fixtures and the
+// rimsky-conformance binary can exercise the streaming-events path.
+type namedEventEmit struct {
+	Name    string
+	Payload []byte
+}
 
 type script struct {
 	terminal          terminalKind
@@ -40,6 +53,14 @@ type script struct {
 	asyncCompletionMs int64
 	heartbeats        int
 	delay             time.Duration
+	// Park-terminal scripted fields.
+	parkReason       string
+	parkPayload      []byte
+	parkResumeAt     time.Time // zero ⇒ indefinite park (no resume_at)
+	parkSessionToken string
+	// Named-event emissions scripted before the terminal. Emitted in
+	// order, between heartbeats and the terminal event.
+	namedEvents []namedEventEmit
 }
 
 // Stub is a scripted NodeExecutor server for tests.
@@ -147,6 +168,36 @@ func (b *TypeBuilder) AsyncAccepted(ackID string, completionMs int64) *TypeBuild
 	return b
 }
 
+// Park configures the scripted terminal as a ParkRequested event.
+// resumeAt may be zero (indefinite park; resumes only via external
+// invalidate). reason may be empty (permitted but logged WARN supervisor-
+// side per plan E1). sessionToken is opaque to rimsky and round-tripped
+// to the executor on resume via ResumeContext.session_token.
+//
+// Per plan A3 / E1 / L2.
+func (b *TypeBuilder) Park(reason string, payload []byte, resumeAt time.Time, sessionToken string) *TypeBuilder {
+	b.s.mu.Lock()
+	defer b.s.mu.Unlock()
+	sc := b.s.scripts[b.typ]
+	sc.terminal = termPark
+	sc.parkReason = reason
+	sc.parkPayload = payload
+	sc.parkResumeAt = resumeAt
+	sc.parkSessionToken = sessionToken
+	return b
+}
+
+// EmitNamedEvent scripts a NamedEvent emission before the terminal.
+// Multiple calls accumulate; events are emitted in the order recorded,
+// after heartbeats and before the terminal verdict. Per plan L2/H1.
+func (b *TypeBuilder) EmitNamedEvent(name string, payload []byte) *TypeBuilder {
+	b.s.mu.Lock()
+	defer b.s.mu.Unlock()
+	sc := b.s.scripts[b.typ]
+	sc.namedEvents = append(sc.namedEvents, namedEventEmit{Name: name, Payload: payload})
+	return b
+}
+
 // Heartbeats adds N extra heartbeat events before the terminal event.
 func (b *TypeBuilder) Heartbeats(n int) *TypeBuilder {
 	b.s.mu.Lock()
@@ -216,6 +267,16 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 		}
 	}
 
+	// Scripted NamedEvent emissions before the terminal (plan L2 / H1).
+	for _, ne := range sc.namedEvents {
+		if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_NamedEvent{NamedEvent: &genv1.NamedEvent{
+			Name:    ne.Name,
+			Payload: ne.Payload,
+		}}}); err != nil {
+			return err
+		}
+	}
+
 	// terminal
 	switch sc.terminal {
 	case termComplete:
@@ -253,6 +314,16 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
 			AsyncAckId: sc.asyncAckID, ExpectedCompletionMs: sc.asyncCompletionMs,
 		}}})
+	case termPark:
+		park := &genv1.ParkRequested{
+			Reason:       sc.parkReason,
+			Payload:      sc.parkPayload,
+			SessionToken: sc.parkSessionToken,
+		}
+		if !sc.parkResumeAt.IsZero() {
+			park.ResumeAt = timestamppb.New(sc.parkResumeAt)
+		}
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_ParkRequested{ParkRequested: park}})
 	}
 	return nil
 }

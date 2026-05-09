@@ -7,6 +7,7 @@ package frame
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,14 @@ type Logger interface {
 	Warn(msg string, args ...any)
 }
 
+// MetricsHook is the minimum metrics surface frame.RunTick needs.
+// Foundation/integration's MetricsHook structurally satisfies this so
+// the scheduler can pass through its registry adapter without forcing
+// core/frame to import foundation/integration.
+type MetricsHook interface {
+	ObserveFrameDuration(seconds float64)
+}
+
 // RunTick performs one frame-engine iteration. The caller must hold the
 // scheduler-tick advisory lock (blessed-invariant 7).
 //
@@ -37,8 +46,12 @@ type Logger interface {
 // Each step opens its own short tx so partial failures don't poison the
 // whole tick. The advisory lock guarantees serialization across replicas;
 // within one process this is just a sequential loop.
-func RunTick(ctx context.Context, store persistence.Store, queue persistence.Queue, logger Logger) error {
-	if err := runFrameEndDetection(ctx, store, logger); err != nil {
+func RunTick(ctx context.Context, store persistence.Store, queue persistence.Queue, logger Logger, metrics ...MetricsHook) error {
+	var m MetricsHook
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
+	if err := runFrameEndDetection(ctx, store, logger, m); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
 	if err := runAdvanceQueued(ctx, store, logger); err != nil {
@@ -53,7 +66,7 @@ func RunTick(ctx context.Context, store persistence.Store, queue persistence.Que
 	return nil
 }
 
-func runFrameEndDetection(ctx context.Context, store persistence.Store, logger Logger) error {
+func runFrameEndDetection(ctx context.Context, store persistence.Store, logger Logger, metrics MetricsHook) error {
 	// Step 1: collect pendings outside any subsequent transition tx so a
 	// single bad frame doesn't poison the whole tick.
 	var pendings []persistence.FramePending
@@ -71,7 +84,7 @@ func runFrameEndDetection(ctx context.Context, store persistence.Store, logger L
 	// Step 2: per-frame transition tx so a single frame's failure leaves
 	// the rest unaffected.
 	for _, p := range pendings {
-		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger); err != nil {
+		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, metrics); err != nil {
 			logger.Warn("frame.end.transition_failed",
 				"frame_id", p.FrameID,
 				"instance_id", p.InstanceID,
@@ -87,9 +100,10 @@ func runFrameEndDetection(ctx context.Context, store persistence.Store, logger L
 // terminal, the same tx evaluates the instance's terminal predicate
 // and sets rimsky_instances.terminated_at if satisfied
 // (control-plane spec §2.4: idempotent, set-once).
-func transitionFrameEnd(ctx context.Context, store persistence.Store, frameID, instanceID shared.UUID, logger Logger) error {
+func transitionFrameEnd(ctx context.Context, store persistence.Store, frameID, instanceID shared.UUID, logger Logger, metrics MetricsHook) error {
 	var transitioned bool
 	var finalState persistence.FrameState
+	var startedAt, endedAt *time.Time
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		anyFailed, err := store.Frames().HasFailedNode(ctx, instanceID, frameID, tx)
 		if err != nil {
@@ -99,11 +113,25 @@ func transitionFrameEnd(ctx context.Context, store persistence.Store, frameID, i
 		if anyFailed {
 			finalState = persistence.FrameStateFailed
 		}
+		// Snapshot started_at before MarkRunningFrameTerminal stamps
+		// ended_at = now() so the metric observes the running window
+		// without a second roundtrip.
+		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
+		if gerr != nil {
+			return gerr
+		}
 		moved, err := store.Frames().MarkRunningFrameTerminal(ctx, frameID, finalState, tx)
 		if err != nil {
 			return err
 		}
 		transitioned = moved
+		if moved && row != nil {
+			startedAt = row.StartedAt
+			// Use clock-now for ended_at; the SQL stamps now() in the
+			// same tx so this is equivalent to the persisted value.
+			now := time.Now()
+			endedAt = &now
+		}
 		return store.Frames().MarkInstanceTerminatedIfDone(ctx, instanceID, tx)
 	}); err != nil {
 		return err
@@ -113,6 +141,9 @@ func transitionFrameEnd(ctx context.Context, store persistence.Store, frameID, i
 			"frame_id", frameID,
 			"instance_id", instanceID,
 			"final_state", finalState)
+		if metrics != nil && startedAt != nil && endedAt != nil {
+			metrics.ObserveFrameDuration(endedAt.Sub(*startedAt).Seconds())
+		}
 	}
 	return nil
 }

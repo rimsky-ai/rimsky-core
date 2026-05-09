@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -20,6 +21,9 @@ import (
 	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
+
+// jsonValidate is a thin alias for encoding/json's Unmarshal.
+func jsonValidate(b []byte, v any) error { return json.Unmarshal(b, v) }
 
 // runObservabilityCheck implements the spec §6 / Task F1
 // --check-observability probe. Substantive checks:
@@ -68,6 +72,31 @@ func runObservabilityCheck(ctx context.Context, ep executor.Endpoint, _ bool) er
 	fmt.Printf("observability: capabilities = supports_trace_get=%v supports_trace_stream=%v retention=%ds http_bridge_url=%q\n",
 		caps.GetSupportsTraceGet(), caps.GetSupportsTraceStream(),
 		caps.GetRetentionAfterTerminalSeconds(), caps.GetHttpBridgeUrl())
+
+	// L2 plan: validate the new platform-extensions surfaces on
+	// ObservabilityCapabilities (userdata_schema + declared_events).
+	// Both fields are optional — empty means "no schema" / "no events"
+	// respectively. When userdata_schema is non-empty it must parse as
+	// JSON; when declared_events is non-empty each entry must be a
+	// non-empty string.
+	if schema := caps.GetUserdataSchema(); len(schema) > 0 {
+		if !looksLikeJSON(schema) {
+			return fmt.Errorf("Capabilities.userdata_schema is non-empty but does not parse as JSON (%d bytes)", len(schema))
+		}
+		fmt.Printf("observability: userdata_schema declared (%d bytes JSON)\n", len(schema))
+	} else {
+		fmt.Println("observability: userdata_schema = empty (executor accepts any userdata)")
+	}
+	for i, name := range caps.GetDeclaredEvents() {
+		if name == "" {
+			return fmt.Errorf("Capabilities.declared_events[%d] is empty", i)
+		}
+	}
+	if names := caps.GetDeclaredEvents(); len(names) > 0 {
+		fmt.Printf("observability: declared_events = %v\n", names)
+	} else {
+		fmt.Println("observability: declared_events = []")
+	}
 
 	const probeID = "conformance-probe-no-dispatch"
 
@@ -282,4 +311,13 @@ func stripScheme(s string) string {
 		}
 	}
 	return s
+}
+
+// looksLikeJSON returns true when the bytes parse as valid JSON. Used
+// by the L2 conformance check to validate Capabilities.userdata_schema
+// without depending on a JSON Schema validator at the conformance
+// layer.
+func looksLikeJSON(b []byte) bool {
+	var x any
+	return jsonValidate(b, &x) == nil
 }

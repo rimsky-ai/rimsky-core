@@ -44,6 +44,26 @@ type SupervisorConfig struct {
 	// host:port embedded in the `callback_url` handed to executors.
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
+
+	// Blob is the active BlobBackend; threaded into the integration
+	// runtime so named-event and parked-payload writes can spill.
+	// Nil = no spill at those sites (the attribute persistence path
+	// uses the same backend via the driver's Store, configured via
+	// Driver.SetBlobBackend at startup).
+	Blob persistence.BlobBackend
+	// BlobSpillThreshold is the spill cutoff in bytes; zero disables.
+	BlobSpillThreshold int
+	// UserdataValidator is the dispatch-time userdata schema validator
+	// (plan F7). Optional. When set, the supervisor calls it inside
+	// buildExecuteRequest after applyUserdataOverrides; a non-nil
+	// return routes the dispatch through on_executor_errored with
+	// error_class="userdata_validation_failed". Production wiring
+	// constructs this from observability.NewUserdataValidator(disc).
+	UserdataValidator func(executorName string, merged map[string]any) error
+	// Metrics is the prometheus instrumentation hook (plan I2).
+	// Optional; nil → no-op everywhere. Production wiring constructs an
+	// observability.RegistryHook from the per-process MetricsRegistry.
+	Metrics integration.MetricsHook
 }
 
 // SupervisorHandle is the lifecycle handle returned by StartSupervisor.
@@ -104,6 +124,10 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		CallbackPort:          cfg.CallbackPort,
 		CallbackAdvertiseHost: cfg.CallbackAdvertiseHost,
 		CallbackAdvertisePort: cfg.CallbackAdvertisePort,
+		Blob:                  cfg.Blob,
+		BlobSpillThreshold:    cfg.BlobSpillThreshold,
+		UserdataValidator:     cfg.UserdataValidator,
+		Metrics:               cfg.Metrics,
 	})
 	if err != nil {
 		registry.Close()

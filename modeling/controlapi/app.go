@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/fallguy/rimsky/foundation/integration"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -60,6 +61,35 @@ type AppDeps struct {
 	// existing admin/operator routes. Nil → /v1/observability/* is not
 	// mounted (used by tests that don't exercise observability).
 	Observability ObservabilityRouter
+
+	// ExecutorCapabilities optionally exposes the observability cache's
+	// per-executor capability fields (declared_events, userdata_schema)
+	// without forcing controlapi to import the observability package.
+	// Wired by config.StartControlAPI when an observability handshake
+	// has run. Returns ok=false when no capability cache is loaded for
+	// the named executor (e.g. peer is unreachable). Plan F6 + F7.
+	ExecutorCapabilities func(executorName string) (declaredEvents []string, userdataSchema []byte, ok bool)
+
+	// DiagnosticReader is the operator-supplied accessor for parked-node
+	// diagnostics. nil → /admin/diagnostics/parked-nodes returns an
+	// empty list. Wired by config.StartControlAPI when the persistence
+	// driver's reader is constructed. Plan G1 / G2.
+	DiagnosticReader DiagnosticReader
+
+	// InvalidateHandler is the operator-supplied unified invalidate
+	// dispatch. Used by POST /admin/instances/{i}/nodes/{n}/invalidate
+	// (plan G3) and forward-compat for handler-emitted invalidates
+	// (H2). nil → endpoint returns 503.
+	InvalidateHandler InvalidateHandler
+
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook. Threaded through to the operator-invalidate handler in
+	// nodes.go so admin-fired invalidates increment
+	// `rimsky_invalidates_total{source="admin"}`. Type is
+	// `integration.MetricsHook` from foundation/integration; importing
+	// from here is fine because controlapi already imports integration.
+	// Nil → no-op.
+	Metrics integration.MetricsHook
 }
 
 // ObservabilityRouter is the seam controlapi uses to mount the
@@ -136,6 +166,7 @@ func NewApp(deps AppDeps) http.Handler {
 		registerEventsRoutes(rr, deps)
 		registerClaimsRoutes(rr, deps)
 		registerAdminScheduleRoutes(rr, deps)
+		registerAdminDiagnosticsRoutes(rr, deps)
 		registerHealthRoutes(rr, deps)
 	})
 

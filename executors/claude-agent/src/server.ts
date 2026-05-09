@@ -12,7 +12,8 @@ import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
-import type { Observability } from "./observability.js";
+import type { Observability, TraceEvent } from "./observability.js";
+import { userdataSchemaBytes, declaredEvents } from "./userdata-schema.js";
 
 /**
  * gRPC NodeExecutor implementation. Always responds with the async-handoff
@@ -54,6 +55,12 @@ export interface GrpcServerConfig {
    * dashboards can fetch traces via either transport.
    */
   observability?: Observability;
+  /**
+   * When non-empty, advertised via `ExecutorObservability.GetCapabilities`
+   * as the externally-reachable HTTP+JSON observability bridge URL.
+   * Mirrors the value exposed by `mountObservability(...)`.
+   */
+  observabilityHttpBridgeUrl?: string;
 }
 
 export type PostCallbackFn = (
@@ -92,6 +99,14 @@ interface ExecuteRequest {
   // Supervisor-side rimsky_dispatch.id (proto field 12). Used by the
   // executor observability ledger as the per-dispatch trace key.
   dispatch_id?: string;
+  // J10 plan: resume context populated by the supervisor when this is a
+  // resume after ParkRequested. session_token feeds the CLI's `--resume`
+  // arg; payload + reason are template-visible vars.
+  resume_context?: {
+    payload?: string; // base64 of bytes; optional, may be empty
+    session_token?: string;
+    resume_reason?: string;
+  };
 }
 
 type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
@@ -121,6 +136,131 @@ export async function startGrpcServer(
 
   server.addService(pkg.rimsky.v1.NodeExecutor.service, {
     Execute: (call: GrpcCall) => handleExecute(call, config, cliRunner, post),
+  });
+
+  // Plan A1 — register the ExecutorObservability service so the rimsky
+  // supervisor's discovery handshake succeeds against the gRPC endpoint
+  // (otherwise the cached `userdata_schema` and `declared_events` are
+  // never populated and dispatch-time userdata-schema validation
+  // silently falls through). The handlers bridge into the same
+  // `Observability` ledger the HTTP+JSON routes expose.
+  server.addService(pkg.rimsky.v1.ExecutorObservability.service, {
+    GetCapabilities: (
+      _call: grpc.ServerUnaryCall<unknown, unknown>,
+      cb: grpc.sendUnaryData<unknown>,
+    ) => {
+      cb(null, {
+        supports_trace_get: true,
+        supports_trace_stream: true,
+        retention_after_terminal_seconds: 3600,
+        custom_ui: null,
+        http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
+        userdata_schema: Buffer.from(userdataSchemaBytes()),
+        declared_events: declaredEvents,
+      });
+    },
+    GetTrace: (
+      call: grpc.ServerUnaryCall<{ dispatch_id?: string }, unknown>,
+      cb: grpc.sendUnaryData<unknown>,
+    ) => {
+      const dispatchId = call.request.dispatch_id ?? "";
+      if (!dispatchId) {
+        cb({
+          code: grpc.status.INVALID_ARGUMENT,
+          message: "dispatch_id required",
+        });
+        return;
+      }
+      const obs = config.observability;
+      if (!obs) {
+        cb(null, {
+          dispatch_id: dispatchId,
+          evicted: true,
+          complete: true,
+          events: [],
+        });
+        return;
+      }
+      const trace = obs.getTrace(dispatchId);
+      cb(null, {
+        dispatch_id: trace.dispatch_id,
+        evicted: trace.evicted,
+        complete: trace.complete,
+        events: trace.events.map(traceEventToProto),
+      });
+    },
+    StreamTrace: (
+      call: grpc.ServerWritableStream<{ dispatch_id?: string }, unknown>,
+    ) => {
+      const dispatchId = call.request.dispatch_id ?? "";
+      if (!dispatchId) {
+        call.emit("error", {
+          code: grpc.status.INVALID_ARGUMENT,
+          message: "dispatch_id required",
+        });
+        return;
+      }
+      const obs = config.observability;
+      if (!obs) {
+        // Mirror GetTrace's evicted-shape close.
+        call.write(traceEventToProto({
+          event_id: randomUUID(),
+          timestamp: new Date().toISOString(),
+          severity: "INFO",
+          category: "trace_complete",
+        }));
+        call.end();
+        return;
+      }
+      // Spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
+      // 5 minutes). Without this, a StreamTrace request for an unknown
+      // dispatch_id would create a fresh empty record (`complete:false`,
+      // not yet evicted) and pin server-side resources indefinitely
+      // since no events would ever arrive to drive a `trace_complete`.
+      // Mirror the HTTP+JSON sibling's `armIdle()` protection in
+      // `observability.ts::mountObservability`.
+      const idleMs = Number(process.env.RIMSKY_OBS_IDLE_TIMEOUT_MS ?? 5 * 60 * 1000);
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let closed = false;
+      const closeStream = (): void => {
+        if (closed) return;
+        closed = true;
+        if (idleTimer !== null) {
+          clearTimeout(idleTimer);
+          idleTimer = null;
+        }
+        result.unsubscribe();
+        call.end();
+      };
+      const armIdle = (): void => {
+        if (closed || idleMs <= 0) return;
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          closeStream();
+        }, idleMs);
+      };
+      const result = obs.subscribeWithSnapshot(dispatchId, (ev) => {
+        if (closed) return;
+        call.write(traceEventToProto(ev));
+        if (ev.category === "trace_complete") {
+          closeStream();
+          return;
+        }
+        armIdle();
+      });
+      for (const ev of result.snapshot.events) {
+        call.write(traceEventToProto(ev));
+      }
+      if (result.snapshot.complete || result.snapshot.evicted) {
+        closeStream();
+        return;
+      }
+      armIdle();
+      call.on("cancelled", () => {
+        closeStream();
+      });
+    },
   });
 
   const bindAddr = `${config.host}:${config.port}`;
@@ -254,6 +394,7 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
+      resumeContext: parseResumeContext(req.resume_context),
     });
     const body = outcomeToCallbackBody(outcome);
     if (config.observability) {
@@ -309,6 +450,15 @@ function buildCallbackUrl(base: string, ackId: string): string {
   return `${trimmed}/v1/callback/${encodeURIComponent(ackId)}`;
 }
 
+/**
+ * encodeBase64 wraps a Uint8Array in a base64 string suitable for the
+ * proto-JSON `bytes` field encoding (the convention Go's
+ * `encoding/json.Unmarshal` uses to decode `[]byte` fields).
+ */
+function encodeBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
 function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
@@ -330,6 +480,22 @@ function outcomeToCallbackBody(
       context: outcome.context,
     };
   }
+  if (outcome.kind === "park_requested") {
+    // Plan A5/J9: emit the new AsyncCallbackBody shape.
+    // The proto-JSON convention for `bytes` fields is base64 — Go's
+    // `encoding/json` decodes []byte fields from base64 strings.
+    // JSON.stringify on a Uint8Array would render as a sparse object
+    // ({0: 0x12, 1: 0x34, …}) which Go's json.Unmarshal into []byte
+    // cannot parse, so we encode explicitly here.
+    return {
+      park_requested: {
+        reason: outcome.reason,
+        payload: encodeBase64(outcome.payload),
+        ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
+        session_token: outcome.sessionToken,
+      },
+    };
+  }
   return {
     type: "errored",
     error_class: outcome.errorClass,
@@ -341,24 +507,46 @@ function outcomeToCallbackBody(
 // with the default options: { fields: { [key]: Value } }) into a plain
 // object. Without this, downstream lookups like `userdata.model` see
 // `undefined` because the actual value is at `userdata.fields.model.stringValue`.
-function unwrapStructValue(v: unknown): unknown {
+// Unwrap a google.protobuf.Value carried over the wire by @grpc/proto-loader.
+// Accepts both shapes proto-loader can produce:
+//   - keepCase: true → {kind: "string_value", string_value: "x"} (snake_case;
+//     this is the production setting, see proto-loader.ts).
+//   - keepCase: false → {kind: "stringValue", stringValue: "x"} (camelCase).
+//   - older fixtures that omit the kind discriminator and present the
+//     value field directly.
+// Reading both forms keeps server.ts's type narrowing correct regardless of
+// which encoding the caller used (production gRPC vs hand-rolled test fixtures).
+// Exported for unit tests; not part of the agent-contract surface.
+export function unwrapStructValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
   if (typeof v !== "object") return v;
   const o = v as Record<string, unknown>;
   const kind = typeof o.kind === "string" ? o.kind : undefined;
-  if (kind === "stringValue") return typeof o.stringValue === "string" ? o.stringValue : "";
-  if (kind === "numberValue") return typeof o.numberValue === "number" ? o.numberValue : 0;
-  if (kind === "boolValue") return typeof o.boolValue === "boolean" ? o.boolValue : false;
-  if (kind === "nullValue") return null;
-  if (kind === "structValue") return unwrapStruct(o.structValue);
-  if (kind === "listValue") {
-    const lv = o.listValue as { values?: unknown[] } | undefined;
+  if (kind === "string_value" || kind === "stringValue" || (kind === undefined && typeof (o.string_value ?? o.stringValue) === "string")) {
+    const s = (o.string_value ?? o.stringValue);
+    return typeof s === "string" ? s : "";
+  }
+  if (kind === "number_value" || kind === "numberValue" || (kind === undefined && typeof (o.number_value ?? o.numberValue) === "number")) {
+    const n = (o.number_value ?? o.numberValue);
+    return typeof n === "number" ? n : 0;
+  }
+  if (kind === "bool_value" || kind === "boolValue" || (kind === undefined && typeof (o.bool_value ?? o.boolValue) === "boolean")) {
+    const b = (o.bool_value ?? o.boolValue);
+    return typeof b === "boolean" ? b : false;
+  }
+  if (kind === "null_value" || kind === "nullValue") return null;
+  if (kind === "struct_value" || kind === "structValue") {
+    return unwrapStruct(o.struct_value ?? o.structValue);
+  }
+  if (kind === "list_value" || kind === "listValue") {
+    const lv = (o.list_value ?? o.listValue) as { values?: unknown[] } | undefined;
     return (lv?.values ?? []).map(unwrapStructValue);
   }
   return v;
 }
 
-function unwrapStruct(v: unknown): Record<string, unknown> {
+// Exported for unit tests; not part of the agent-contract surface.
+export function unwrapStruct(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object") return {};
   const fields = (v as { fields?: Record<string, unknown> }).fields;
   if (!fields || typeof fields !== "object") return {};
@@ -437,6 +625,8 @@ function parseCliConfig(v: unknown): {
   disallowedTools?: string[];
   addDirs?: string[];
   maxBudgetUsd?: string;
+  handleRateLimits?: boolean;
+  maxSchemaCorrections?: number;
 } | undefined {
   const cli = toRecord(v);
   if (Object.keys(cli).length === 0) return undefined;
@@ -453,7 +643,46 @@ function parseCliConfig(v: unknown): {
   if (ad !== undefined) out!.addDirs = ad;
   const mb = stringOrUndefined(cli.max_budget_usd);
   if (mb !== undefined) out!.maxBudgetUsd = mb;
+  // userdata.cli.handle_rate_limits — default true (J9). Explicit
+  // false disables the auto-park behavior.
+  const hr = boolOrUndefined(cli.handle_rate_limits);
+  if (hr !== undefined) out!.handleRateLimits = hr;
+  const msc = numberOrUndefined(cli.max_schema_corrections);
+  if (msc !== undefined) out!.maxSchemaCorrections = msc;
   return Object.keys(out!).length > 0 ? out : undefined;
+}
+
+function numberOrUndefined(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Parse the supervisor-supplied resume_context payload into the shape
+ * runAgent consumes. Returns undefined when no resume context is set
+ * (fresh dispatch). Per J10.
+ */
+function parseResumeContext(v: unknown): {
+  payload?: Uint8Array;
+  sessionToken?: string;
+  resumeReason?: string;
+} | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as Record<string, unknown>;
+  const out: {
+    payload?: Uint8Array;
+    sessionToken?: string;
+    resumeReason?: string;
+  } = {};
+  if (typeof r.payload === "string" && r.payload.length > 0) {
+    out.payload = Buffer.from(r.payload, "base64");
+  }
+  if (typeof r.session_token === "string" && r.session_token.length > 0) {
+    out.sessionToken = r.session_token;
+  }
+  if (typeof r.resume_reason === "string" && r.resume_reason.length > 0) {
+    out.resumeReason = r.resume_reason;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
@@ -487,3 +716,66 @@ export const defaultPostCallback: PostCallbackFn = async (url, body, logger) => 
     logger.error({ error: String(e), url }, "callback POST failed");
   }
 };
+
+// Converts an `Observability` ledger TraceEvent into the wire shape the
+// proto-loader-generated `ExecutorObservability` service expects. The
+// loader's `enums: String` option means `severity` stays as the proto
+// constant name. `timestamp` is a `google.protobuf.Timestamp`
+// `{seconds, nanos}` pair; `attributes` is a `google.protobuf.Struct`
+// with a recursive `Value` envelope per field.
+//
+// Exported for unit tests; not part of the agent-contract surface.
+export function traceEventToProto(ev: TraceEvent): Record<string, unknown> {
+  return {
+    event_id: ev.event_id,
+    parent_event_id: ev.parent_event_id ?? "",
+    timestamp: isoToProtoTimestamp(ev.timestamp),
+    severity: ev.severity ?? "SEVERITY_UNSPECIFIED",
+    category: ev.category,
+    message: ev.message ?? "",
+    attributes: jsToProtoStruct(ev.attributes),
+  };
+}
+
+// Exported for unit tests; not part of the agent-contract surface.
+export function isoToProtoTimestamp(iso: string): { seconds: string; nanos: number } {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return { seconds: "0", nanos: 0 };
+  // google.protobuf.Timestamp requires `nanos` ∈ [0, 999_999_999] and
+  // `seconds` to be the floor of the wall time. Using `Math.trunc` would
+  // produce a negative `nanos` (and a non-floor `seconds`) for pre-epoch
+  // sub-second inputs (e.g. -500ms → trunc=0, nanos=-500_000_000), which
+  // violates the proto contract. `Math.floor` keeps the remainder in the
+  // valid range for both positive and negative inputs.
+  const seconds = Math.floor(ms / 1000);
+  const nanos = (ms - seconds * 1000) * 1_000_000;
+  return { seconds: seconds.toString(), nanos };
+}
+
+// Exported for unit tests; not part of the agent-contract surface.
+export function jsToProtoStruct(value: unknown): { fields: Record<string, unknown> } | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    fields[k] = jsToProtoValue(v);
+  }
+  return { fields };
+}
+
+// Exported for unit tests; not part of the agent-contract surface.
+export function jsToProtoValue(value: unknown): Record<string, unknown> {
+  if (value === null || value === undefined) {
+    return { null_value: "NULL_VALUE" };
+  }
+  if (typeof value === "string") return { string_value: value };
+  if (typeof value === "number") return { number_value: value };
+  if (typeof value === "boolean") return { bool_value: value };
+  if (Array.isArray(value)) {
+    return { list_value: { values: value.map(jsToProtoValue) } };
+  }
+  if (typeof value === "object") {
+    return { struct_value: jsToProtoStruct(value) ?? { fields: {} } };
+  }
+  return { string_value: String(value) };
+}

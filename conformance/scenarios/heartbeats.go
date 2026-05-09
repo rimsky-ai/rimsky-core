@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -29,13 +28,16 @@ func init() {
 // Heartbeat event is seen before terminal. For Plan C v1, reference stub
 // executors skip delays — so in practice this may still PASS via the opening
 // heartbeat emitted by http-node, but the requirement is only "≥1 heartbeat".
-func runHeartbeats(ctx context.Context, c executor.Client) error {
+// This scenario is gRPC-stream-only: the heartbeat must appear on the stream
+// before the terminal (whether AsyncAccepted or a synchronous terminal).
+func runHeartbeats(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true, "delay_ms": 500})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-probe", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
@@ -58,7 +60,7 @@ func runHeartbeats(ctx context.Context, c executor.Client) error {
 			sawHeartbeat = true
 			continue
 		}
-		if isTerminal(ev) {
+		if conformance.IsTerminal(ev) {
 			sawTerminal = true
 		}
 	}

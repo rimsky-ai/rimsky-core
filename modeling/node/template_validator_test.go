@@ -572,3 +572,151 @@ func TestValidateTemplate_PolicyAction_BadFrame(t *testing.T) {
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].frame")
 }
+
+// TestValidateOnEvent_OkAndError covers plan F1 + F6 — on_event handler
+// validation including cross-check against ExecutorDeclaredEvents.
+func TestValidateOnEvent_Ok(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			OnEvent: map[string]EventHandler{
+				"action_taken": {Resolve: ResolvePass},
+			},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorDeclaredEvents: func(name string) ([]string, bool) {
+			if name == "h" {
+				return []string{"action_taken", "score_emitted"}, true
+			}
+			return nil, false
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateOnEvent_UndeclaredEventRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			OnEvent: map[string]EventHandler{
+				"never_emitted": {Resolve: ResolvePass},
+			},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorDeclaredEvents: func(name string) ([]string, bool) {
+			return []string{"action_taken"}, true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, `nodes[0].on_event["never_emitted"]`)
+}
+
+func TestValidateOnEvent_PureCascadeRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a",
+			OnEvent: map[string]EventHandler{
+				"any": {Resolve: ResolvePass},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].on_event")
+}
+
+func TestValidateMaxParkDuration_Ok(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a", Executor: "h", MaxParkDuration: "30m",
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateMaxParkDuration_Malformed(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type: "a", Executor: "h", MaxParkDuration: "thirty-minutes",
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].max_park_duration")
+}
+
+func TestValidateUserdataSchema_Ok(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Userdata: map[string]any{"max_tokens": 1024},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorUserdataSchema: func(name string) ([]byte, bool) {
+			return []byte(`{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"properties": { "max_tokens": { "type": "integer" } }
+			}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+func TestValidateUserdataSchema_Violation(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:            "demo",
+		Version:         "1.0.0",
+		FrameResolution: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Userdata: map[string]any{"max_tokens": "should-be-int"},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorUserdataSchema: func(name string) ([]byte, bool) {
+			return []byte(`{
+				"$schema": "https://json-schema.org/draft/2020-12/schema",
+				"type": "object",
+				"properties": { "max_tokens": { "type": "integer" } },
+				"required": ["max_tokens"]
+			}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].userdata")
+}

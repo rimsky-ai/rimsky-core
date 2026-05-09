@@ -17,6 +17,11 @@
 //	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML.
 //	RIMSKY_CONFIG             optional; path to rimsky.yml.
 //	                          default /etc/rimsky/rimsky.yml.
+//	RIMSKY_METRICS_PORT       optional; default 0 = disabled. When >0
+//	                          exposes /metrics on this port (Prometheus
+//	                          text format) bound to RIMSKY_METRICS_HOST
+//	                          (default 127.0.0.1).
+//	RIMSKY_METRICS_HOST       optional; default 127.0.0.1.
 //	RIMSKY_LOG_LEVEL          optional; debug|info|warn|error (default info).
 package main
 
@@ -24,18 +29,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/modeling/config"
 	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/modeling/observability"
 	"github.com/fallguy/rimsky/modeling/shared"
 
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite" // register driver
@@ -156,7 +164,39 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Construct the BlobBackend selected by rimsky.yml's persistence.blob
+	// block and install it on the driver. Plan §D0/D6/D7: the attribute
+	// write/read path consults the driver-installed backend directly;
+	// the named-event / parked-payload write paths receive it via
+	// SupervisorConfig.Blob (threaded through to RunArgs).
+	blobBackend, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver)
+	if err != nil {
+		log.Error("config.OpenBlobBackend", "error", err.Error())
+		_ = driver.Close()
+		os.Exit(1)
+	}
+
 	resolver := executor.NewStaticResolver(endpoints)
+
+	// Run the observability handshake against each declared executor so
+	// the dispatch-time userdata-schema validator (plan F7) can see the
+	// advertised UserdataSchema. The validator is then plumbed into
+	// SupervisorConfig.UserdataValidator below.
+	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
+	for name, e := range rimskyCfg.Executors.Executors {
+		execPeers = append(execPeers, observability.PeerSpec{
+			Name:                  name,
+			Endpoint:              e.Endpoint,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		})
+	}
+	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, slog.Default())
+
+	// Plan I1/I2: per-process Prometheus registry. Constructed up-front
+	// so the supervisor's integration runtime can be instrumented via
+	// the MetricsHook adapter; the /metrics HTTP listener is opened
+	// below only when RIMSKY_METRICS_PORT > 0.
+	mreg := observability.NewMetricsRegistry()
 
 	h, err := config.StartSupervisor(config.SupervisorConfig{
 		SupervisorID:          supID,
@@ -173,6 +213,10 @@ func main() {
 		CallbackPort:          callbackPort,
 		CallbackAdvertiseHost: advertiseHost,
 		CallbackAdvertisePort: advertisePort,
+		Blob:                  blobBackend,
+		BlobSpillThreshold:    rimskyCfg.Blob.SpillThresholdBytes,
+		UserdataValidator:     observability.NewUserdataValidator(disc),
+		Metrics:               observability.MetricsHookOf(mreg),
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())
@@ -181,11 +225,36 @@ func main() {
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
 
+	metricsHost := os.Getenv("RIMSKY_METRICS_HOST")
+	if metricsHost == "" {
+		metricsHost = "127.0.0.1"
+	}
+	metricsPort, _ := strconv.Atoi(os.Getenv("RIMSKY_METRICS_PORT"))
+	var metricsSrv *http.Server
+	if metricsPort > 0 {
+		metricsRouter := chi.NewRouter()
+		observability.MountMetrics(metricsRouter, mreg)
+		metricsSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", metricsHost, metricsPort),
+			Handler:           metricsRouter,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info("metrics endpoint listening", "addr", metricsSrv.Addr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics endpoint", "error", err.Error())
+			}
+		}()
+	}
+
 	waitForSignal(log)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("supervisor shutdown", "error", err.Error())
+	}
+	if metricsSrv != nil {
+		_ = metricsSrv.Shutdown(shutdownCtx)
 	}
 	_ = driver.Close()
 }

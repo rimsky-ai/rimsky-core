@@ -13,6 +13,14 @@
 // Callers that need to observe the fire (e.g. the §10 smoke fixture)
 // poll rimsky_nodes.state or the events table separately.
 //
+// Scope vs. /admin/instances/{i}/nodes/{n}/invalidate (plan G3):
+// force-fire targets *scheduled* nodes — it advances next_fire_at on a
+// rimsky_schedules row so the cron firing pipeline picks the node up.
+// /admin/instances/.../invalidate targets a specific live node within
+// an instance; it triggers either a parked-node resume or a fresh
+// invalidate depending on the node's current state. The two endpoints
+// remain distinct.
+//
 // Auth: relies on the global AppDeps.Auth middleware. Operators that want
 // the endpoint admin-gated wire an Authenticator that checks
 // X-Rimsky-Admin-Token; when no Auth is configured the route is anonymous,

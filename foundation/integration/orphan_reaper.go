@@ -32,6 +32,15 @@
 // items tables is gone — each store-service runs its own sweep
 // internally (foundation contract §4.5). Rimsky has no visibility
 // into producer items tables.
+//
+// Plan E2: parked rows (phase='parked') are intentionally excluded
+// from SweepOrphanedClaims because they have claimed_by IS NULL by
+// construction (the active→parked transition in
+// queue_park.go::ParkActiveInTx clears the claim). The SQL predicate
+// `claimed_by IS NOT NULL AND last_heartbeat_at < cutoff` therefore
+// never matches a parked row. Held claim handles for parked nodes
+// remain in rimsky_claim_handle and are not reaped here either; the
+// auto-terminal mechanism + the holder-row TTL handle them.
 
 package integration
 

@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/frame"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -72,6 +73,34 @@ type Config struct {
 	HeartbeatTimeout     time.Duration
 	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
 	LockHolders          persistence.LockHoldersStore
+	// SupervisorID is the scheduler's own supervisor id. Used by the
+	// parked-nodes sweep (E3) to claim wakes against — every wake
+	// transitions phase parked → pending so any executor-running
+	// supervisor can pick the row up; the scheduler itself doesn't need
+	// to be one.
+	SupervisorID string
+	// ParkedSweepInterval governs how often the parked-nodes sweep
+	// runs. Zero falls back to TickInterval (every tick).
+	ParkedSweepInterval time.Duration
+	// StoreRegistry is the per-process producer registry. Required for
+	// the park_timeout watchdog to fire Abandon on held claims (blessed
+	// invariant 13). When nil the watchdog still removes worker_request
+	// rows but cannot abandon held claims — used in unit tests.
+	StoreRegistry *locks.Registry
+	// BlobBackend is the active backend for the orphan-blob sweep
+	// (D8 / SweepOrphanedBlobs). When nil the sweep is skipped.
+	BlobBackend persistence.BlobBackend
+	// BlobOrphans is the rimsky_blob_orphans accessor for the orphan-
+	// blob sweep. When nil the sweep is skipped.
+	BlobOrphans persistence.BlobOrphansStore
+	// OrphanBlobSweepInterval governs how often SweepOrphanedBlobs runs.
+	// Zero falls back to 1 hour (per BlobConfig.Retention default).
+	OrphanBlobSweepInterval time.Duration
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook. Threaded into per-tick invalidate emits (schedule fire,
+	// parked-resume sweep) so `rimsky_invalidates_total` reflects the
+	// scheduler's contribution. Nil → no-op.
+	Metrics integration.MetricsHook
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -79,6 +108,10 @@ type Config struct {
 type Handle struct {
 	stop chan struct{}
 	done chan struct{}
+	// lastOrphanBlobSweep tracks when the orphan-blob sweep last ran so
+	// we can throttle it to OrphanBlobSweepInterval (typically 1h)
+	// rather than running every tick.
+	lastOrphanBlobSweep time.Time
 }
 
 // Shutdown signals the loop to stop. Returns when the loop has exited, or
@@ -131,6 +164,9 @@ func Start(cfg Config) *Handle {
 		cfg.Logger = shared.SilentLogger{}
 	}
 
+	if cfg.OrphanBlobSweepInterval == 0 {
+		cfg.OrphanBlobSweepInterval = time.Hour
+	}
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{})}
 	go runLoop(cfg, h)
 	return h
@@ -150,7 +186,7 @@ func runLoop(cfg Config, h *Handle) {
 			return
 		default:
 		}
-		if err := tick(context.Background(), cfg); err != nil {
+		if err := tick(context.Background(), cfg, h); err != nil {
 			cfg.Logger.Error("scheduler tick failed", "error", err.Error())
 		}
 		// Sleep with early-wake on stop.
@@ -165,10 +201,19 @@ func runLoop(cfg Config, h *Handle) {
 	}
 }
 
-// tick runs a single sweep under the scheduler-tick exclusion. Exported
-// so tests can invoke it synchronously against a real Postgres-backed
-// driver.
-func tick(ctx context.Context, cfg Config) error {
+// Tick runs a single sweep under the scheduler-tick exclusion.
+// Exported so tests can invoke it synchronously against a real
+// Postgres-backed driver. Pass nil for h when running outside the
+// runLoop (the Handle is used only to track orphan-blob sweep cadence).
+func Tick(ctx context.Context, cfg Config) error {
+	return tick(ctx, cfg, nil)
+}
+
+// tick runs a single sweep under the scheduler-tick exclusion. The
+// Handle pointer is used to track per-sweep cadence state (e.g. the
+// orphan-blob sweep's last-run timestamp); pass nil for synchronous
+// test invocations.
+func tick(ctx context.Context, cfg Config, h *Handle) error {
 	log := cfg.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
@@ -194,6 +239,7 @@ func tick(ctx context.Context, cfg Config) error {
 		scheduleDispatcherAdapter{
 			Persist: cfg.Persist, Queue: cfg.Queue,
 			Clock: cfg.Clock, Logger: log,
+			Metrics: cfg.Metrics,
 		},
 		cfg.Clock, log,
 	); err != nil {
@@ -253,14 +299,75 @@ func tick(ctx context.Context, cfg Config) error {
 		return err
 	}
 
+	// 9b. Parked-nodes sweep (E3 of plan
+	// .ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md).
+	// Wakes parked rows whose resume_at has elapsed and forces park_timeout
+	// failure on rows that overran max_park_duration_seconds.
+	if cfg.SupervisorID != "" {
+		if err := integration.SweepParkedNodes(ctx, integration.ParkedSweepArgs{
+			Persist:        cfg.Persist,
+			Queue:          cfg.Queue,
+			Clock:          cfg.Clock,
+			Logger:         log,
+			SupervisorID:   cfg.SupervisorID,
+			LockHolders:    cfg.LockHolders,
+			AdvisoryLocker: cfg.AdvisoryLocker,
+			StoreRegistry:  cfg.StoreRegistry,
+			Metrics:        cfg.Metrics,
+		}); err != nil {
+			log.Warn("tick: SweepParkedNodes failed", "error", err.Error())
+		}
+	}
+
+	// 9c. Orphan-blob sweep (D8). Drains rimsky_blob_orphans entries
+	// whose reap_after has elapsed; calls BlobBackend.Delete for each
+	// and removes the tracker row. Throttled to OrphanBlobSweepInterval
+	// (default 1h) so it doesn't run every 1.5s tick. Wired only when
+	// both BlobBackend and BlobOrphans are present.
+	if cfg.BlobBackend != nil && cfg.BlobOrphans != nil {
+		now := cfg.Clock.Now()
+		if h == nil || h.lastOrphanBlobSweep.IsZero() || now.Sub(h.lastOrphanBlobSweep) >= cfg.OrphanBlobSweepInterval {
+			if err := integration.SweepOrphanedBlobs(ctx, integration.OrphanBlobsArgs{
+				Persist:     cfg.Persist,
+				BlobOrphans: cfg.BlobOrphans,
+				Backend:     cfg.BlobBackend,
+				Clock:       cfg.Clock,
+				Logger:      log,
+			}); err != nil {
+				log.Warn("tick: SweepOrphanedBlobs failed", "error", err.Error())
+			}
+			if h != nil {
+				h.lastOrphanBlobSweep = now
+			}
+		}
+	}
+
 	// 10. Frame engine tick (frame-end detection, queue advancement,
 	// stuck-frame warning (advisory only), orphan-frame-dispatch reap).
 	if cfg.Persist != nil && cfg.Queue != nil {
-		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log); err != nil {
+		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, frameMetricsAdapter(cfg.Metrics)); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
 		}
 	}
 	return nil
+}
+
+// frameMetricsAdapter narrows the integration.MetricsHook to frame's
+// minimum surface. Returns nil when no hook is configured so RunTick
+// skips the observation.
+func frameMetricsAdapter(m integration.MetricsHook) frame.MetricsHook {
+	if m == nil {
+		return nil
+	}
+	return frameDurationOnly{m}
+}
+
+type frameDurationOnly struct {
+	hook integration.MetricsHook
+}
+
+func (a frameDurationOnly) ObserveFrameDuration(seconds float64) {
+	a.hook.ObserveFrameDuration(seconds)
 }
 
 // --- Adapter bridging InvalidateNode to MessageDispatcher. --------------
@@ -272,6 +379,9 @@ type scheduleDispatcherAdapter struct {
 	Queue   persistence.Queue
 	Clock   shared.Clock
 	Logger  shared.Logger
+	// Metrics threaded through so cron-fire invalidates increment
+	// `rimsky_invalidates_total{source="scheduler"}`. Nil → no-op.
+	Metrics integration.MetricsHook
 }
 
 func (a scheduleDispatcherAdapter) EmitInvalidate(ctx context.Context, req InvalidateRequest) error {
@@ -283,5 +393,6 @@ func (a scheduleDispatcherAdapter) EmitInvalidate(ctx context.Context, req Inval
 		SourceNodeID: req.SourceNodeID,
 		TargetNodeID: req.TargetNodeID,
 		Reason:       req.Reason,
+		Metrics:      a.Metrics,
 	})
 }

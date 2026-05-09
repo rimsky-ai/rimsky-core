@@ -32,10 +32,13 @@ type RunnerOpts struct {
 	Only            []string      // run only these scenario names
 	Skip            []string      // skip these scenario names
 	Timeout         time.Duration // per-scenario; default 30s
+	CallbackBind    string        // BindHost for the callback receiver (default "127.0.0.1")
+	CallbackHost    string        // AdvertiseHost for the callback receiver (default same as BindHost)
 }
 
-// Run dials the endpoint, probes capabilities, and executes every registered
-// scenario (subject to Only/Skip filters). Returns one Result per scenario.
+// Run dials the endpoint, starts a CallbackReceiver, probes capabilities, and
+// executes every registered scenario (subject to Only/Skip filters). Returns
+// one Result per scenario.
 func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
@@ -46,9 +49,17 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
+	receiver, err := StartCallbackReceiver(ReceiverOptions{
+		BindHost:      opts.CallbackBind,
+		AdvertiseHost: opts.CallbackHost,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = receiver.Close() }()
+	env := Env{Client: client, Callbacks: receiver}
 
-	// Stub-mode probe.
-	stubOK, err := probeStubMode(ctx, client, opts.Timeout)
+	stubOK, err := probeStubMode(ctx, env, opts.Timeout)
 	if opts.RequireStubMode {
 		if err != nil {
 			return nil, fmt.Errorf("stub-mode probe failed: %w", err)
@@ -58,8 +69,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 		}
 	}
 
-	// Detect async-handoff capability via a second probe.
-	asyncSupport := probeAsyncSupport(ctx, client, opts.Timeout)
+	asyncSupport := probeAsyncSupport(ctx, env, opts.Timeout)
 
 	results := []Result{}
 	for _, sc := range All() {
@@ -77,7 +87,7 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 		}
 		scenarioCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		start := time.Now()
-		err := sc.Run(scenarioCtx, client)
+		err := sc.Run(scenarioCtx, env)
 		cancel()
 		r := Result{Scenario: sc.Name, Duration: time.Since(start), Passed: err == nil}
 		if err != nil {
@@ -88,51 +98,51 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	return results, nil
 }
 
-// probeStubMode sends a stub-probe Execute and returns true iff the result has
-// a top-level {"stub": true} boolean. Returns false, nil if not in stub mode
-// (i.e. executor answered but without stub:true). Returns err only on RPC failure.
-func probeStubMode(ctx context.Context, c executor.Client, timeout time.Duration) (bool, error) {
+// probeStubMode sends a stub-probe Execute and returns true iff the resulting
+// terminal carries `attributes_delta = {stub: true}`. AwaitTerminal handles
+// async executors by following the callback when AsyncAccepted is observed.
+func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
-	req := &genv1.ExecuteRequest{NodeId: "probe", InstanceId: "probe", NodeType: "conformance-probe", Userdata: ud}
-	stream, err := c.Execute(pctx, req)
+	req := &genv1.ExecuteRequest{
+		NodeId: "probe", InstanceId: "probe", NodeType: "conformance-probe",
+		Userdata:    ud,
+		CallbackUrl: env.Callbacks.URL(),
+	}
+	stream, err := env.Client.Execute(pctx, req)
 	if err != nil {
 		return false, err
 	}
 	defer stream.Close()
-	for {
-		ev, err := stream.Recv()
-		if err != nil {
-			break
-		}
-		if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-			// Stub mode now signals via attributes_delta — Complete.Result
-			// was removed in the §12 protocol rewrite (terminal-final
-			// attribute writeback replaces the old result field).
-			m := ce.Complete.GetAttributesDelta().AsMap()
-			if v, ok := m["stub"].(bool); ok && v {
-				return true, nil
-			}
-			return false, nil
-		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-			// Not a stub-mode response; treat as non-stub.
-			return false, nil
+	ev, err := AwaitTerminal(pctx, stream, env)
+	if err != nil {
+		return false, nil
+	}
+	if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
+		m := ce.Complete.GetAttributesDelta().AsMap()
+		if v, ok := m["stub"].(bool); ok && v {
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
 // probeAsyncSupport sends an Execute with userdata.probe_async=true and
-// returns true iff the executor responds with AsyncAccepted.
-func probeAsyncSupport(ctx context.Context, c executor.Client, timeout time.Duration) bool {
-	// Short-timeout probe that won't block on a real async flow.
+// returns true iff the executor responds with AsyncAccepted on the gRPC
+// stream. Unlike the regular terminal-await flow, this probe deliberately
+// stops at the gRPC terminal — receipt of AsyncAccepted IS the signal we are
+// looking for.
+func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool {
 	pctx, cancel := context.WithTimeout(ctx, timeout/3)
 	defer cancel()
 	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
-	req := &genv1.ExecuteRequest{NodeId: "probe-async", InstanceId: "probe", NodeType: "conformance-probe-async", Userdata: ud}
-	stream, err := c.Execute(pctx, req)
+	req := &genv1.ExecuteRequest{
+		NodeId: "probe-async", InstanceId: "probe", NodeType: "conformance-probe-async",
+		Userdata:    ud,
+		CallbackUrl: env.Callbacks.URL(),
+	}
+	stream, err := env.Client.Execute(pctx, req)
 	if err != nil {
 		return false
 	}

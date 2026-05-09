@@ -79,6 +79,28 @@ var (
 	// on_executor_blocked / on_executor_errored handler resolved pass
 	// (template explicitly opts to ignore the terminal).
 	ReasonHandlerPass = TransitionReason{Kind: "handler_pass"}
+
+	// ReasonHandlerPark — running → parked.
+	// Executor emitted ParkRequested as its terminal event. The node's
+	// held claims are retained across the park boundary. See section B
+	// of .ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md.
+	ReasonHandlerPark = TransitionReason{Kind: "handler_park"}
+
+	// ReasonHandlerResume — parked → stale.
+	// SweepParkedNodes (deadline_elapsed) or an external invalidate
+	// (admin endpoint or in-graph on_event) resumed a parked node.
+	// The node transitions to stale so the standard
+	// SelectCandidates → atomic-acquisition → transitionToRunning path
+	// re-dispatches with ResumeContext populated from the persisted
+	// park metadata; rimsky's wake supervisor doesn't need to be the
+	// one that runs the resume.
+	ReasonHandlerResume = TransitionReason{Kind: "handler_resume"}
+
+	// ReasonParkTimeout — parked → failed.
+	// The watchdog observed parked_at + max_park_duration ≤ now and
+	// transitioned the node to failed with last_outcome=failed and
+	// error_class="park_timeout".
+	ReasonParkTimeout = TransitionReason{Kind: "park_timeout"}
 )
 
 // NextState returns the new state for a transition.
@@ -89,6 +111,15 @@ var (
 // guard against double-execute. Any Go implementation that adds an
 // idempotency optimization for "ergonomics" breaks the invariant.
 // TS reference: rimsky/src/cell/state-machine.ts:37-73 (no from===to branch).
+//
+// @blessed-invariant 1 (post-Phase-6): the five legitimate states are
+// fresh, stale, running, failed, parked. The legitimate transitions
+// involving parked are: running → parked under handler_park; parked →
+// stale under handler_resume (the wake transitions to stale so the
+// standard SelectCandidates → atomic-acquisition → transitionToRunning
+// path re-dispatches); parked → failed under park_timeout. All other
+// transitions involving parked (including parked → fresh, parked →
+// running directly, parked → parked) are illegal.
 func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeState, error) {
 	switch current {
 	case shared.NodeStateFresh:
@@ -127,6 +158,12 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 		if reason.Kind == "handler_pass" {
 			return shared.NodeStateFresh, nil
 		}
+		// handler_park transitions running → parked. The held claim is
+		// retained across the park boundary; the orphan-claim reaper
+		// skips phase='parked' rows.
+		if reason.Kind == "handler_park" {
+			return shared.NodeStateParked, nil
+		}
 		// handler_error transitions follow the policy chain; expressed as
 		// policy_retry / policy_invalidate / policy_give_up at the call site
 		// after the policy chain resolves. ReasonHandlerError itself is not
@@ -145,6 +182,23 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 	case shared.NodeStateFailed:
 		if reason.Kind == "operator_reset" || reason.Kind == "operator_invalidate" {
 			return shared.NodeStateStale, nil
+		}
+	case shared.NodeStateParked:
+		// Parked nodes leave only via resume (deadline-elapsed wake or
+		// external invalidate) or via watchdog timeout. parked → fresh
+		// is explicitly rejected — a parked node re-enters work via
+		// the standard dispatch path (parked → stale → claim →
+		// running). The handler_resume reason routes through stale
+		// rather than directly to running so the wake supervisor (which
+		// may not be one running an executor pool, e.g. control-api)
+		// doesn't have to run the dispatch — the next supervisor
+		// tick's SelectCandidates picks up the stale row and runs the
+		// standard atomic-acquisition path.
+		if reason.Kind == "handler_resume" {
+			return shared.NodeStateStale, nil
+		}
+		if reason.Kind == "park_timeout" {
+			return shared.NodeStateFailed, nil
 		}
 	}
 	return "", fmt.Errorf("%w: from=%s reason=%s", shared.ErrIllegalTransition, current, reason.Kind)

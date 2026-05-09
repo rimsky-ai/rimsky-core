@@ -13,6 +13,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -64,7 +65,11 @@ type ExecuteRequest struct {
 	// consolidation. May be empty when the supervisor invokes Execute
 	// outside the worker-request-row path (e.g. unit tests or stub-mode
 	// probes).
-	DispatchId    string `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
+	DispatchId string `protobuf:"bytes,12,opt,name=dispatch_id,json=dispatchId,proto3" json:"dispatch_id,omitempty"`
+	// resume_context carries the bytes the executor previously emitted on
+	// ParkRequested. When absent, this is a fresh dispatch; when present,
+	// this is a resume of a parked node. See ResumeContext.
+	ResumeContext *ResumeContext `protobuf:"bytes,13,opt,name=resume_context,json=resumeContext,proto3" json:"resume_context,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -176,6 +181,84 @@ func (x *ExecuteRequest) GetDispatchId() string {
 	return ""
 }
 
+func (x *ExecuteRequest) GetResumeContext() *ResumeContext {
+	if x != nil {
+		return x.ResumeContext
+	}
+	return nil
+}
+
+// ResumeContext is rimsky's way of handing back to the executor the
+// session-resume material the executor itself produced when it parked.
+// Rimsky persists payload + session_token + resume_at on ParkRequested,
+// then constructs this message on resume dispatch. Both payload and
+// session_token are opaque to rimsky.
+type ResumeContext struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The original ParkRequested.payload bytes.
+	Payload []byte `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+	// The original ParkRequested.session_token.
+	SessionToken string `protobuf:"bytes,2,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	// Why the parked node is being resumed: "deadline_elapsed" when the
+	// SweepParkedNodes sweep woke the node because resume_at passed;
+	// "external_invalidate" when the wake came from an admin endpoint or
+	// an in-graph on_event invalidate.
+	ResumeReason  string `protobuf:"bytes,3,opt,name=resume_reason,json=resumeReason,proto3" json:"resume_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeContext) Reset() {
+	*x = ResumeContext{}
+	mi := &file_executor_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeContext) ProtoMessage() {}
+
+func (x *ResumeContext) ProtoReflect() protoreflect.Message {
+	mi := &file_executor_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeContext.ProtoReflect.Descriptor instead.
+func (*ResumeContext) Descriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ResumeContext) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *ResumeContext) GetSessionToken() string {
+	if x != nil {
+		return x.SessionToken
+	}
+	return ""
+}
+
+func (x *ResumeContext) GetResumeReason() string {
+	if x != nil {
+		return x.ResumeReason
+	}
+	return ""
+}
+
 // StoreHandle is the per-store reference handed to the executor at
 // dispatch (spec §19.1). `handle` carries the store-supplied Address
 // bytes returned by Store.Open — opaque to Rimsky, decoded by the
@@ -197,7 +280,7 @@ type StoreHandle struct {
 
 func (x *StoreHandle) Reset() {
 	*x = StoreHandle{}
-	mi := &file_executor_proto_msgTypes[1]
+	mi := &file_executor_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -209,7 +292,7 @@ func (x *StoreHandle) String() string {
 func (*StoreHandle) ProtoMessage() {}
 
 func (x *StoreHandle) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[1]
+	mi := &file_executor_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -222,7 +305,7 @@ func (x *StoreHandle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreHandle.ProtoReflect.Descriptor instead.
 func (*StoreHandle) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{1}
+	return file_executor_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *StoreHandle) GetKind() string {
@@ -248,6 +331,8 @@ type ExecuteEvent struct {
 	//	*ExecuteEvent_Blocked
 	//	*ExecuteEvent_Errored
 	//	*ExecuteEvent_AsyncAccepted
+	//	*ExecuteEvent_NamedEvent
+	//	*ExecuteEvent_ParkRequested
 	Event         isExecuteEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -255,7 +340,7 @@ type ExecuteEvent struct {
 
 func (x *ExecuteEvent) Reset() {
 	*x = ExecuteEvent{}
-	mi := &file_executor_proto_msgTypes[2]
+	mi := &file_executor_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -267,7 +352,7 @@ func (x *ExecuteEvent) String() string {
 func (*ExecuteEvent) ProtoMessage() {}
 
 func (x *ExecuteEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[2]
+	mi := &file_executor_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -280,7 +365,7 @@ func (x *ExecuteEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteEvent.ProtoReflect.Descriptor instead.
 func (*ExecuteEvent) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{2}
+	return file_executor_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ExecuteEvent) GetEvent() isExecuteEvent_Event {
@@ -335,6 +420,24 @@ func (x *ExecuteEvent) GetAsyncAccepted() *AsyncAccepted {
 	return nil
 }
 
+func (x *ExecuteEvent) GetNamedEvent() *NamedEvent {
+	if x != nil {
+		if x, ok := x.Event.(*ExecuteEvent_NamedEvent); ok {
+			return x.NamedEvent
+		}
+	}
+	return nil
+}
+
+func (x *ExecuteEvent) GetParkRequested() *ParkRequested {
+	if x != nil {
+		if x, ok := x.Event.(*ExecuteEvent_ParkRequested); ok {
+			return x.ParkRequested
+		}
+	}
+	return nil
+}
+
 type isExecuteEvent_Event interface {
 	isExecuteEvent_Event()
 }
@@ -359,6 +462,14 @@ type ExecuteEvent_AsyncAccepted struct {
 	AsyncAccepted *AsyncAccepted `protobuf:"bytes,5,opt,name=async_accepted,json=asyncAccepted,proto3,oneof"` // terminal; see spec §12.4 async handoff
 }
 
+type ExecuteEvent_NamedEvent struct {
+	NamedEvent *NamedEvent `protobuf:"bytes,6,opt,name=named_event,json=namedEvent,proto3,oneof"` // non-terminal; named domain event
+}
+
+type ExecuteEvent_ParkRequested struct {
+	ParkRequested *ParkRequested `protobuf:"bytes,7,opt,name=park_requested,json=parkRequested,proto3,oneof"` // terminal; node enters parked state
+}
+
 func (*ExecuteEvent_Heartbeat) isExecuteEvent_Event() {}
 
 func (*ExecuteEvent_Complete) isExecuteEvent_Event() {}
@@ -368,6 +479,253 @@ func (*ExecuteEvent_Blocked) isExecuteEvent_Event() {}
 func (*ExecuteEvent_Errored) isExecuteEvent_Event() {}
 
 func (*ExecuteEvent_AsyncAccepted) isExecuteEvent_Event() {}
+
+func (*ExecuteEvent_NamedEvent) isExecuteEvent_Event() {}
+
+func (*ExecuteEvent_ParkRequested) isExecuteEvent_Event() {}
+
+// NamedEvent is a non-terminal record an executor MAY emit zero or more
+// times during a run. Emissions are persisted in the per-instance event
+// ledger (rimsky_node_events) and are made available to substitution via
+// the source kind `nodes.<emitter>.event.<name>.<json_path>`. The executor
+// MUST still emit exactly one terminal event (Complete | Blocked | Errored
+// | AsyncAccepted | ParkRequested) after any number of NamedEvent records.
+//
+// `name` MUST appear in the executor's ObservabilityCapabilities.declared_events;
+// rimsky validates this at template registration and rejects emissions
+// of undeclared names at the supervisor.
+//
+// Renamed from `Event` (the spec used the unqualified name) to avoid a
+// proto-level collision with the existing rimsky-internal events log
+// `Event` message in events.proto. The wire-level role is the same.
+type NamedEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Domain-meaningful event name. MUST be in declared_events.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Opaque to rimsky. Available to substitution via walkPath in the same
+	// way as inline attribute values; per blessed-invariant 20 (and 21 for
+	// spilled bytes), rimsky never logs, formats, transforms, or attaches
+	// payload bytes to traces or errors.
+	Payload       []byte `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NamedEvent) Reset() {
+	*x = NamedEvent{}
+	mi := &file_executor_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NamedEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NamedEvent) ProtoMessage() {}
+
+func (x *NamedEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_executor_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NamedEvent.ProtoReflect.Descriptor instead.
+func (*NamedEvent) Descriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *NamedEvent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NamedEvent) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// ParkRequested is a terminal event from the gRPC stream's perspective:
+// it closes the stream and transitions the node from running to parked.
+// The held claim handle is retained across the park boundary; on resume,
+// rimsky re-dispatches with ExecuteRequest.resume_context populated from
+// payload + session_token captured here.
+//
+// At least one of resume_at or external invalidation must wake the node;
+// rimsky does not enforce this in-protocol. A ParkRequested with no
+// resume_at and no external invalidator produces an indefinite park
+// (eventually capped by the node's max_park_duration if configured).
+type ParkRequested struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Recommended non-empty; empty is permitted but logged WARN at the
+	// supervisor.
+	Reason string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	// Opaque to rimsky. Passed back as ResumeContext.payload on resume.
+	Payload []byte `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	// Optional. When non-zero, the supervisor's SweepParkedNodes sweep
+	// wakes the node at this wall-clock time with
+	// resume_reason = "deadline_elapsed". Absent means signal-based-only.
+	ResumeAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
+	// Optional. Opaque to rimsky. Passed back as
+	// ResumeContext.session_token on resume.
+	SessionToken  string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ParkRequested) Reset() {
+	*x = ParkRequested{}
+	mi := &file_executor_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ParkRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ParkRequested) ProtoMessage() {}
+
+func (x *ParkRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_executor_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ParkRequested.ProtoReflect.Descriptor instead.
+func (*ParkRequested) Descriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ParkRequested) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ParkRequested) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *ParkRequested) GetResumeAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ResumeAt
+	}
+	return nil
+}
+
+func (x *ParkRequested) GetSessionToken() string {
+	if x != nil {
+		return x.SessionToken
+	}
+	return ""
+}
+
+// AsyncCallbackBody is the canonical schema for the HTTP+JSON body an
+// executor POSTs to ${callback_url}/v1/callback/{async_ack_id} after
+// emitting AsyncAccepted. The supervisor's HTTP handler tries to parse
+// the new shape (this message; events array + exactly one terminal
+// field) first and falls back to the legacy single-object shape
+// ({type: "complete"|"blocked"|"errored", ...}) on parse error. Both
+// shapes remain accepted indefinitely; the new shape is preferred.
+//
+// Exactly one of complete | blocked | errored | park_requested MUST be set.
+type AsyncCallbackBody struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Optional. Processed in order before the terminal verdict.
+	Events        []*NamedEvent  `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	Complete      *Complete      `protobuf:"bytes,2,opt,name=complete,proto3" json:"complete,omitempty"`
+	Blocked       *Blocked       `protobuf:"bytes,3,opt,name=blocked,proto3" json:"blocked,omitempty"`
+	Errored       *Errored       `protobuf:"bytes,4,opt,name=errored,proto3" json:"errored,omitempty"`
+	ParkRequested *ParkRequested `protobuf:"bytes,5,opt,name=park_requested,json=parkRequested,proto3" json:"park_requested,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AsyncCallbackBody) Reset() {
+	*x = AsyncCallbackBody{}
+	mi := &file_executor_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AsyncCallbackBody) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AsyncCallbackBody) ProtoMessage() {}
+
+func (x *AsyncCallbackBody) ProtoReflect() protoreflect.Message {
+	mi := &file_executor_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AsyncCallbackBody.ProtoReflect.Descriptor instead.
+func (*AsyncCallbackBody) Descriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *AsyncCallbackBody) GetEvents() []*NamedEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *AsyncCallbackBody) GetComplete() *Complete {
+	if x != nil {
+		return x.Complete
+	}
+	return nil
+}
+
+func (x *AsyncCallbackBody) GetBlocked() *Blocked {
+	if x != nil {
+		return x.Blocked
+	}
+	return nil
+}
+
+func (x *AsyncCallbackBody) GetErrored() *Errored {
+	if x != nil {
+		return x.Errored
+	}
+	return nil
+}
+
+func (x *AsyncCallbackBody) GetParkRequested() *ParkRequested {
+	if x != nil {
+		return x.ParkRequested
+	}
+	return nil
+}
 
 // Heartbeat is a non-terminal progress indicator. Executors may emit any
 // number of these during a long-running execution; supervisors refresh the
@@ -382,7 +740,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_executor_proto_msgTypes[3]
+	mi := &file_executor_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -394,7 +752,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[3]
+	mi := &file_executor_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -407,7 +765,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{3}
+	return file_executor_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Heartbeat) GetTimestampMs() int64 {
@@ -441,7 +799,7 @@ type Complete struct {
 
 func (x *Complete) Reset() {
 	*x = Complete{}
-	mi := &file_executor_proto_msgTypes[4]
+	mi := &file_executor_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +811,7 @@ func (x *Complete) String() string {
 func (*Complete) ProtoMessage() {}
 
 func (x *Complete) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[4]
+	mi := &file_executor_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +824,7 @@ func (x *Complete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Complete.ProtoReflect.Descriptor instead.
 func (*Complete) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{4}
+	return file_executor_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Complete) GetChanged() bool {
@@ -503,7 +861,7 @@ type Blocked struct {
 
 func (x *Blocked) Reset() {
 	*x = Blocked{}
-	mi := &file_executor_proto_msgTypes[5]
+	mi := &file_executor_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +873,7 @@ func (x *Blocked) String() string {
 func (*Blocked) ProtoMessage() {}
 
 func (x *Blocked) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[5]
+	mi := &file_executor_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +886,7 @@ func (x *Blocked) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Blocked.ProtoReflect.Descriptor instead.
 func (*Blocked) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{5}
+	return file_executor_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Blocked) GetReason() string {
@@ -557,7 +915,7 @@ type Errored struct {
 
 func (x *Errored) Reset() {
 	*x = Errored{}
-	mi := &file_executor_proto_msgTypes[6]
+	mi := &file_executor_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +927,7 @@ func (x *Errored) String() string {
 func (*Errored) ProtoMessage() {}
 
 func (x *Errored) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[6]
+	mi := &file_executor_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +940,7 @@ func (x *Errored) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Errored.ProtoReflect.Descriptor instead.
 func (*Errored) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{6}
+	return file_executor_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Errored) GetErrorClass() string {
@@ -618,7 +976,7 @@ type AsyncAccepted struct {
 
 func (x *AsyncAccepted) Reset() {
 	*x = AsyncAccepted{}
-	mi := &file_executor_proto_msgTypes[7]
+	mi := &file_executor_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -630,7 +988,7 @@ func (x *AsyncAccepted) String() string {
 func (*AsyncAccepted) ProtoMessage() {}
 
 func (x *AsyncAccepted) ProtoReflect() protoreflect.Message {
-	mi := &file_executor_proto_msgTypes[7]
+	mi := &file_executor_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -643,7 +1001,7 @@ func (x *AsyncAccepted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AsyncAccepted.ProtoReflect.Descriptor instead.
 func (*AsyncAccepted) Descriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{7}
+	return file_executor_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *AsyncAccepted) GetAsyncAckId() string {
@@ -664,7 +1022,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc4\x04\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x85\x05\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -681,21 +1039,44 @@ const file_executor_proto_rawDesc = "" +
 	"\vrun_attempt\x18\v \x01(\x05R\n" +
 	"runAttempt\x12\x1f\n" +
 	"\vdispatch_id\x18\f \x01(\tR\n" +
-	"dispatchId\x1aQ\n" +
+	"dispatchId\x12?\n" +
+	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\n" +
-	"\x10\vR\aresumed\"\x8a\x01\n" +
+	"\x10\vR\aresumed\"s\n" +
+	"\rResumeContext\x12\x18\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload\x12#\n" +
+	"\rsession_token\x18\x02 \x01(\tR\fsessionToken\x12#\n" +
+	"\rresume_reason\x18\x03 \x01(\tR\fresumeReason\"\x8a\x01\n" +
 	"\vStoreHandle\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12/\n" +
-	"\x06handle\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06handleJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\rwrite_regionsR\fread_regionsR\aresumed\"\xa3\x02\n" +
+	"\x06handle\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06handleJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\rwrite_regionsR\fread_regionsR\aresumed\"\xa0\x03\n" +
 	"\fExecuteEvent\x124\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x14.rimsky.v1.HeartbeatH\x00R\theartbeat\x121\n" +
 	"\bcomplete\x18\x02 \x01(\v2\x13.rimsky.v1.CompleteH\x00R\bcomplete\x12.\n" +
 	"\ablocked\x18\x03 \x01(\v2\x12.rimsky.v1.BlockedH\x00R\ablocked\x12.\n" +
 	"\aerrored\x18\x04 \x01(\v2\x12.rimsky.v1.ErroredH\x00R\aerrored\x12A\n" +
-	"\x0easync_accepted\x18\x05 \x01(\v2\x18.rimsky.v1.AsyncAcceptedH\x00R\rasyncAcceptedB\a\n" +
-	"\x05event\"B\n" +
+	"\x0easync_accepted\x18\x05 \x01(\v2\x18.rimsky.v1.AsyncAcceptedH\x00R\rasyncAccepted\x128\n" +
+	"\vnamed_event\x18\x06 \x01(\v2\x15.rimsky.v1.NamedEventH\x00R\n" +
+	"namedEvent\x12A\n" +
+	"\x0epark_requested\x18\a \x01(\v2\x18.rimsky.v1.ParkRequestedH\x00R\rparkRequestedB\a\n" +
+	"\x05event\":\n" +
+	"\n" +
+	"NamedEvent\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\"\x9f\x01\n" +
+	"\rParkRequested\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\x127\n" +
+	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12#\n" +
+	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\"\x90\x02\n" +
+	"\x11AsyncCallbackBody\x12-\n" +
+	"\x06events\x18\x01 \x03(\v2\x15.rimsky.v1.NamedEventR\x06events\x12/\n" +
+	"\bcomplete\x18\x02 \x01(\v2\x13.rimsky.v1.CompleteR\bcomplete\x12,\n" +
+	"\ablocked\x18\x03 \x01(\v2\x12.rimsky.v1.BlockedR\ablocked\x12,\n" +
+	"\aerrored\x18\x04 \x01(\v2\x12.rimsky.v1.ErroredR\aerrored\x12?\n" +
+	"\x0epark_requested\x18\x05 \x01(\v2\x18.rimsky.v1.ParkRequestedR\rparkRequested\"B\n" +
 	"\tHeartbeat\x12!\n" +
 	"\ftimestamp_ms\x18\x01 \x01(\x03R\vtimestampMs\x12\x12\n" +
 	"\x04note\x18\x02 \x01(\tR\x04note\"\x8f\x01\n" +
@@ -729,41 +1110,55 @@ func file_executor_proto_rawDescGZIP() []byte {
 	return file_executor_proto_rawDescData
 }
 
-var file_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_executor_proto_goTypes = []any{
-	(*ExecuteRequest)(nil),  // 0: rimsky.v1.ExecuteRequest
-	(*StoreHandle)(nil),     // 1: rimsky.v1.StoreHandle
-	(*ExecuteEvent)(nil),    // 2: rimsky.v1.ExecuteEvent
-	(*Heartbeat)(nil),       // 3: rimsky.v1.Heartbeat
-	(*Complete)(nil),        // 4: rimsky.v1.Complete
-	(*Blocked)(nil),         // 5: rimsky.v1.Blocked
-	(*Errored)(nil),         // 6: rimsky.v1.Errored
-	(*AsyncAccepted)(nil),   // 7: rimsky.v1.AsyncAccepted
-	nil,                     // 8: rimsky.v1.ExecuteRequest.StoresEntry
-	(*structpb.Struct)(nil), // 9: google.protobuf.Struct
+	(*ExecuteRequest)(nil),        // 0: rimsky.v1.ExecuteRequest
+	(*ResumeContext)(nil),         // 1: rimsky.v1.ResumeContext
+	(*StoreHandle)(nil),           // 2: rimsky.v1.StoreHandle
+	(*ExecuteEvent)(nil),          // 3: rimsky.v1.ExecuteEvent
+	(*NamedEvent)(nil),            // 4: rimsky.v1.NamedEvent
+	(*ParkRequested)(nil),         // 5: rimsky.v1.ParkRequested
+	(*AsyncCallbackBody)(nil),     // 6: rimsky.v1.AsyncCallbackBody
+	(*Heartbeat)(nil),             // 7: rimsky.v1.Heartbeat
+	(*Complete)(nil),              // 8: rimsky.v1.Complete
+	(*Blocked)(nil),               // 9: rimsky.v1.Blocked
+	(*Errored)(nil),               // 10: rimsky.v1.Errored
+	(*AsyncAccepted)(nil),         // 11: rimsky.v1.AsyncAccepted
+	nil,                           // 12: rimsky.v1.ExecuteRequest.StoresEntry
+	(*structpb.Struct)(nil),       // 13: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
-	9,  // 0: rimsky.v1.ExecuteRequest.userdata:type_name -> google.protobuf.Struct
-	9,  // 1: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
-	9,  // 2: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	8,  // 3: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
-	9,  // 4: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
-	3,  // 5: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
-	4,  // 6: rimsky.v1.ExecuteEvent.complete:type_name -> rimsky.v1.Complete
-	5,  // 7: rimsky.v1.ExecuteEvent.blocked:type_name -> rimsky.v1.Blocked
-	6,  // 8: rimsky.v1.ExecuteEvent.errored:type_name -> rimsky.v1.Errored
-	7,  // 9: rimsky.v1.ExecuteEvent.async_accepted:type_name -> rimsky.v1.AsyncAccepted
-	9,  // 10: rimsky.v1.Complete.attributes_delta:type_name -> google.protobuf.Struct
-	9,  // 11: rimsky.v1.Blocked.context:type_name -> google.protobuf.Struct
-	9,  // 12: rimsky.v1.Errored.payload:type_name -> google.protobuf.Struct
-	1,  // 13: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
-	0,  // 14: rimsky.v1.NodeExecutor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	2,  // 15: rimsky.v1.NodeExecutor.Execute:output_type -> rimsky.v1.ExecuteEvent
-	15, // [15:16] is the sub-list for method output_type
-	14, // [14:15] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	13, // 0: rimsky.v1.ExecuteRequest.userdata:type_name -> google.protobuf.Struct
+	13, // 1: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
+	13, // 2: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
+	12, // 3: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
+	1,  // 4: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
+	13, // 5: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
+	7,  // 6: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
+	8,  // 7: rimsky.v1.ExecuteEvent.complete:type_name -> rimsky.v1.Complete
+	9,  // 8: rimsky.v1.ExecuteEvent.blocked:type_name -> rimsky.v1.Blocked
+	10, // 9: rimsky.v1.ExecuteEvent.errored:type_name -> rimsky.v1.Errored
+	11, // 10: rimsky.v1.ExecuteEvent.async_accepted:type_name -> rimsky.v1.AsyncAccepted
+	4,  // 11: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
+	5,  // 12: rimsky.v1.ExecuteEvent.park_requested:type_name -> rimsky.v1.ParkRequested
+	14, // 13: rimsky.v1.ParkRequested.resume_at:type_name -> google.protobuf.Timestamp
+	4,  // 14: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
+	8,  // 15: rimsky.v1.AsyncCallbackBody.complete:type_name -> rimsky.v1.Complete
+	9,  // 16: rimsky.v1.AsyncCallbackBody.blocked:type_name -> rimsky.v1.Blocked
+	10, // 17: rimsky.v1.AsyncCallbackBody.errored:type_name -> rimsky.v1.Errored
+	5,  // 18: rimsky.v1.AsyncCallbackBody.park_requested:type_name -> rimsky.v1.ParkRequested
+	13, // 19: rimsky.v1.Complete.attributes_delta:type_name -> google.protobuf.Struct
+	13, // 20: rimsky.v1.Blocked.context:type_name -> google.protobuf.Struct
+	13, // 21: rimsky.v1.Errored.payload:type_name -> google.protobuf.Struct
+	2,  // 22: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
+	0,  // 23: rimsky.v1.NodeExecutor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	3,  // 24: rimsky.v1.NodeExecutor.Execute:output_type -> rimsky.v1.ExecuteEvent
+	24, // [24:25] is the sub-list for method output_type
+	23, // [23:24] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }
@@ -771,12 +1166,14 @@ func file_executor_proto_init() {
 	if File_executor_proto != nil {
 		return
 	}
-	file_executor_proto_msgTypes[2].OneofWrappers = []any{
+	file_executor_proto_msgTypes[3].OneofWrappers = []any{
 		(*ExecuteEvent_Heartbeat)(nil),
 		(*ExecuteEvent_Complete)(nil),
 		(*ExecuteEvent_Blocked)(nil),
 		(*ExecuteEvent_Errored)(nil),
 		(*ExecuteEvent_AsyncAccepted)(nil),
+		(*ExecuteEvent_NamedEvent)(nil),
+		(*ExecuteEvent_ParkRequested)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -784,7 +1181,7 @@ func file_executor_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_executor_proto_rawDesc), len(file_executor_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

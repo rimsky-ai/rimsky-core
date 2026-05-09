@@ -31,6 +31,9 @@ var allReasons = []TransitionReason{
 	ReasonHandlerComplete,
 	ReasonHandlerError,
 	ReasonHandlerPass,
+	ReasonHandlerPark,
+	ReasonHandlerResume,
+	ReasonParkTimeout,
 }
 
 var allStates = []shared.NodeState{
@@ -38,6 +41,7 @@ var allStates = []shared.NodeState{
 	shared.NodeStateStale,
 	shared.NodeStateRunning,
 	shared.NodeStateFailed,
+	shared.NodeStateParked,
 }
 
 // TestTransitionTable exhaustively checks every (from, reason) pair against
@@ -68,10 +72,15 @@ func TestTransitionTable(t *testing.T) {
 			"heartbeat_lost":    shared.NodeStateStale,
 			"infra_reenqueue":   shared.NodeStateStale,
 			"policy_give_up":    shared.NodeStateFailed,
+			"handler_park":      shared.NodeStateParked,
 		},
 		shared.NodeStateFailed: {
 			"operator_reset":      shared.NodeStateStale,
 			"operator_invalidate": shared.NodeStateStale,
+		},
+		shared.NodeStateParked: {
+			"handler_resume": shared.NodeStateStale,
+			"park_timeout":   shared.NodeStateFailed,
 		},
 	}
 
@@ -211,6 +220,94 @@ func TestNextState_HandlerErrorIsAuditOnly(t *testing.T) {
 			_, err := NextState(from, ReasonHandlerError)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_HandlerPark confirms running → parked under
+// ReasonHandlerPark, illegal from other states.
+func TestNextState_HandlerPark(t *testing.T) {
+	got, err := NextState(shared.NodeStateRunning, ReasonHandlerPark)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateParked, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateStale,
+		shared.NodeStateFailed,
+		shared.NodeStateParked,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonHandlerPark)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_HandlerResume confirms parked → stale under
+// ReasonHandlerResume, illegal from other states.
+func TestNextState_HandlerResume(t *testing.T) {
+	got, err := NextState(shared.NodeStateParked, ReasonHandlerResume)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateStale, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateStale,
+		shared.NodeStateRunning,
+		shared.NodeStateFailed,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonHandlerResume)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextState_ParkTimeout confirms parked → failed under
+// ReasonParkTimeout, illegal from other states.
+func TestNextState_ParkTimeout(t *testing.T) {
+	got, err := NextState(shared.NodeStateParked, ReasonParkTimeout)
+	require.NoError(t, err)
+	require.Equal(t, shared.NodeStateFailed, got)
+
+	for _, from := range []shared.NodeState{
+		shared.NodeStateFresh,
+		shared.NodeStateStale,
+		shared.NodeStateRunning,
+		shared.NodeStateFailed,
+	} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonParkTimeout)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+		})
+	}
+}
+
+// TestParkedToParkedRejected confirms the blessed-invariant-1 property
+// (no same-state short-circuit) holds for parked under every transition
+// reason — in particular parked → parked under any reason is illegal.
+func TestParkedToParkedRejected(t *testing.T) {
+	for _, reason := range allReasons {
+		reason := reason
+		t.Run(reason.Kind, func(t *testing.T) {
+			got, err := NextState(shared.NodeStateParked, reason)
+			if got == shared.NodeStateParked {
+				t.Fatalf("parked → parked under reason %q must be rejected, got success", reason.Kind)
+			}
+			// handler_resume → running and park_timeout → failed are
+			// the only legal exits from parked; everything else must
+			// surface ErrIllegalTransition.
+			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" {
+				require.Error(t, err, "reason=%s", reason.Kind)
+				require.True(t, errors.Is(err, shared.ErrIllegalTransition))
+			}
 		})
 	}
 }

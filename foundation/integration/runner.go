@@ -142,6 +142,125 @@ type RunArgs struct {
 	// that one supervisor doesn't monopolise a candidate page, large
 	// enough that a single ineligible candidate doesn't stall the tick.
 	SelectCandidatesLimit int
+
+	// Blob is the active BlobBackend (loaded from BlobConfig at startup).
+	// Used by applyTerminalPark to spill large parked-payload bytes and
+	// by the H1 named-event persist path to spill large event payloads.
+	// Nil means "spill disabled" — callers store inline regardless of
+	// size (legacy behavior). Required when BlobSpillThreshold > 0.
+	Blob persistence.BlobBackend
+	// BlobSpillThreshold is the spill cutoff in bytes; payloads larger
+	// than this are written through Blob instead of stored inline.
+	// Zero means "spill disabled" (everything inline). Default applied
+	// at startup is BlobConfig.SpillThresholdBytes (default 64KB).
+	BlobSpillThreshold int
+
+	// MaxRetriesWithoutProgressDefault is the deployment-level cap on
+	// consecutive retries with no last_outcome change before the runner
+	// forces Errored { error_class: "retry_loop_no_progress" }. Zero
+	// means "use the built-in default of 100"; per-row override on
+	// rimsky_worker_request.max_retries_without_progress takes
+	// precedence (NULL on the row falls back to this default; 0 on the
+	// row disables the cap entirely).
+	MaxRetriesWithoutProgressDefault int
+
+	// InvalidateHandler is the unified entry point for invalidate
+	// requests originating from the supervisor's own handlers (E3
+	// SweepParkedNodes wake, H2 on_event-handler-emitted invalidates).
+	// Optional; when nil the runtime falls back to InvalidateNode
+	// directly.
+	InvalidateHandler func(ctx context.Context, args InvalidateArgs) error
+
+	// UserdataValidator runs the executor's advertised JSON Schema (if
+	// any) against the post-merge userdata bytes at dispatch time. Plan
+	// F7. Userdata is opaque to rimsky per @blessed-invariant 11 — no
+	// substitution pass is run on userdata, so the bytes the validator
+	// sees are exactly the result of the deep-merge across template,
+	// by_executor, and by_node fragments (modeling/shared.DeepMergeJSON).
+	// Do NOT add a substitution pre-pass here; the invariant forbids it.
+	//
+	// Returns nil to indicate validation passed (or no schema is known
+	// for the executor); a non-nil error routes the dispatch through
+	// the on_executor_errored handler with
+	// error_class="userdata_validation_failed".
+	//
+	// The hook lives outside foundation/integration so the jsonschema
+	// dependency stays in the modeling layer (foundation has a strict
+	// dependency budget — stdlib + pgx + uuid + modernc/sqlite).
+	UserdataValidator func(executorName string, merged map[string]any) error
+
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook (plan I1/I2/I3). Optional. The interface is intentionally
+	// minimal — counter/observer style — so foundation has no
+	// prometheus dependency. Production wiring constructs an adapter
+	// over modeling/observability.MetricsRegistry; tests pass nil.
+	Metrics MetricsHook
+}
+
+// MetricsHook is the metric-instrumentation surface foundation calls
+// at the integration points (dispatch start/end, terminal verdict,
+// invalidate, claim acquisition, parked sweep, etc.). Each method is a
+// no-op when the hook is nil-shaped (the runner threads a non-nil
+// no-op default rather than nil-checking each call site).
+type MetricsHook interface {
+	// IncDispatch records a dispatch start (executor + terminal class
+	// "started"); pair with IncTerminal at the resolved terminal.
+	IncDispatch(executor, terminalClass string)
+	// IncTerminal records a resolved terminal verdict.
+	IncTerminal(terminalClass, errorClass string)
+	// IncInvalidate records an invalidate fired by source ("admin" |
+	// "scheduler" | "handler" | "policy").
+	IncInvalidate(sourceKind string)
+	// IncClaimAcquisition records a claim acquisition (producer name +
+	// intent: "acquired" | "unavailable" | "abandon").
+	IncClaimAcquisition(producer, intent string)
+	// IncNamedEvent records a NamedEvent persistence write.
+	IncNamedEvent(executor, eventName string)
+	// ObserveDispatchLatency observes the wall-clock dispatch duration.
+	ObserveDispatchLatency(executor string, seconds float64)
+	// ObserveClaimAcquisitionLatency observes the wall-clock claim
+	// acquisition tx duration.
+	ObserveClaimAcquisitionLatency(producer string, seconds float64)
+	// ObserveFrameDuration observes a frame's wall-clock duration.
+	ObserveFrameDuration(seconds float64)
+	// ObserveParkedDurationOnResume observes how long a node spent
+	// parked, sampled at resume time.
+	ObserveParkedDurationOnResume(seconds float64)
+	// SetNodesByState sets the current count of nodes in a state.
+	SetNodesByState(state string, count float64)
+	// SetParkedByReason sets the current count of parked nodes by reason.
+	SetParkedByReason(reason string, count float64)
+	// SetHeldFrames sets the current count of held frames.
+	SetHeldFrames(count float64)
+	// SetDispatchQueueDepth sets the current pending-dispatch row count.
+	SetDispatchQueueDepth(count float64)
+}
+
+// noopMetrics is the silent default used when args.Metrics is nil.
+// Returning this from a helper rather than nil-checking each call site
+// keeps the call sites concise.
+type noopMetrics struct{}
+
+func (noopMetrics) IncDispatch(string, string)                         {}
+func (noopMetrics) IncTerminal(string, string)                         {}
+func (noopMetrics) IncInvalidate(string)                               {}
+func (noopMetrics) IncClaimAcquisition(string, string)                 {}
+func (noopMetrics) IncNamedEvent(string, string)                       {}
+func (noopMetrics) ObserveDispatchLatency(string, float64)             {}
+func (noopMetrics) ObserveClaimAcquisitionLatency(string, float64)     {}
+func (noopMetrics) ObserveFrameDuration(float64)                       {}
+func (noopMetrics) ObserveParkedDurationOnResume(float64)              {}
+func (noopMetrics) SetNodesByState(string, float64)                    {}
+func (noopMetrics) SetParkedByReason(string, float64)                  {}
+func (noopMetrics) SetHeldFrames(float64)                              {}
+func (noopMetrics) SetDispatchQueueDepth(float64)                      {}
+
+// metricsOf returns args.Metrics or noopMetrics.
+func metricsOf(args RunArgs) MetricsHook {
+	if args.Metrics == nil {
+		return noopMetrics{}
+	}
+	return args.Metrics
 }
 
 // AsyncContext is the per-async-handoff context the runner hands to the

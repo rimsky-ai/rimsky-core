@@ -39,6 +39,15 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
+// resumeMetadata captures the parked metadata for a resumed run. When
+// non-nil, the runner attaches a ResumeContext to the ExecuteRequest
+// the executor receives. Per plan E4.
+type resumeMetadata struct {
+	Payload      []byte // ParkRequested.payload (post-spill resolution)
+	SessionToken string
+	Reason       WakeReason
+}
+
 // acquisition is the in-memory record of one successful acquisition.
 //
 // NOT safe for concurrent use across goroutines. The omnibus runner
@@ -84,6 +93,11 @@ type acquisition struct {
 	// tryAcquire); the outer caller uses these for Abandon cleanup
 	// under on_acquire_unavailable resolutions of pass / error.
 	PartialLocks []AcquiredLock
+
+	// Resume is set when this acquisition resumed a parked node — the
+	// dispatch path attaches a ResumeContext to the ExecuteRequest the
+	// executor receives. Nil means "fresh dispatch."
+	Resume *resumeMetadata
 	// UnavailableSpec is the spec whose Open returned Unavailable, when
 	// the acquisition took the Unavailable branch. Carried through the
 	// rollback so the unavailable-handler dispatch can log / route on
@@ -360,6 +374,44 @@ func tryAcquire(
 		out.InstanceParams = inst.Params
 		out.InstanceUserdataOverrides = inst.UserdataOverrides
 	}
+	// Resume detection: if the worker_request row carries parked metadata
+	// surviving from a prior park, build a resumeMetadata struct and
+	// resolve any spilled payload through the BlobBackend. The resumed
+	// flag is consumed by buildExecuteRequest to populate
+	// ExecuteRequest.resume_context.
+	if rm, rerr := args.Queue.LoadResumeMetadataInTx(ctx, tx, cand.DispatchID); rerr == nil && rm != nil {
+		payload := rm.PayloadInline
+		if rm.PayloadHandle != "" && args.Blob != nil && args.Blob.Name() == rm.PayloadHandleBackend {
+			if b, berr := args.Blob.Read(ctx, persistence.Handle(rm.PayloadHandle)); berr == nil {
+				payload = b
+			} else {
+				args.Logger.Warn("tryAcquire: blob fetch for resume payload failed; passing empty payload to executor",
+					"node_id", cand.NodeID.String(), "error", berr.Error())
+				payload = nil
+			}
+		}
+		// resume_reason is read from the persisted wake_reason column,
+		// populated by ResumeParkedInTx at wake time. Empty wake_reason
+		// (NULL) falls back to external_invalidate — covers older rows
+		// upgraded in place pre-v1 and any wake path that forgot to set
+		// it (none today; the fallback is defensive).
+		wakeReason := WakeExternalInvalidate
+		if rm.WakeReason != "" {
+			wakeReason = WakeReason(rm.WakeReason)
+		}
+		out.Resume = &resumeMetadata{
+			Payload:      payload,
+			SessionToken: rm.SessionToken,
+			Reason:       wakeReason,
+		}
+		// Observe parked duration on resume — measured from when the
+		// worker_request entered phase='parked' (rm.ParkedAt) to now.
+		// Skipped when ParkedAt is zero (legacy rows or callers that
+		// haven't backfilled the field).
+		if !rm.ParkedAt.IsZero() {
+			metricsOf(args).ObserveParkedDurationOnResume(args.Clock.Now().Sub(rm.ParkedAt).Seconds())
+		}
+	}
 	return out, true, nil
 }
 
@@ -474,6 +526,11 @@ func acquireClaim(
 	spec locks.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
+	// Latency timer for `rimsky_claim_acquisition_latency_seconds`. Start
+	// the clock at the top of the function so the histogram includes the
+	// pre-Open advisory-lock + scope-conflict check; observe only on
+	// resolved outcomes (acquired / unavailable).
+	acquireStart := args.Clock.Now()
 	s, ok := args.StoreRegistry.Get(spec.StoreName)
 	if !ok {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown store %q", spec.StoreName)
@@ -537,6 +594,10 @@ func acquireClaim(
 	// through the on_acquire_unavailable handler (default = silent
 	// retry preserving today's behavior).
 	if !outcome.Available {
+		// Producer signalled unavailable — count as a resolved
+		// acquisition outcome with intent="unavailable".
+		metricsOf(args).IncClaimAcquisition(spec.StoreName, "unavailable")
+		metricsOf(args).ObserveClaimAcquisitionLatency(spec.StoreName, args.Clock.Now().Sub(acquireStart).Seconds())
 		return AcquiredLock{}, openResultUnavailable, nil
 	}
 	cr := outcome.Result
@@ -564,6 +625,9 @@ func acquireClaim(
 	if err := insertHeldClaimHoldersAtAcquire(ctx, args, tx, rowID, cand, spec.Alias, heldSubgraphs); err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
+
+	metricsOf(args).IncClaimAcquisition(spec.StoreName, "acquired")
+	metricsOf(args).ObserveClaimAcquisitionLatency(spec.StoreName, args.Clock.Now().Sub(acquireStart).Seconds())
 
 	return AcquiredLock{
 		Spec:         spec,

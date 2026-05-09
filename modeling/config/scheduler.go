@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fallguy/rimsky/foundation/integration"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/scheduler"
@@ -41,6 +42,23 @@ type SchedulerConfig struct {
 	// startup; templates referencing undeclared names are rejected at
 	// deploy.
 	NamedLocks locks.NamedLocksConfig
+	// SupervisorID identifies this scheduler instance for the parked-
+	// nodes sweep (E3 of the 2026-05-08 platform-extensions plan). The
+	// sweep transitions parked rows back to phase='pending' so any
+	// executor-running supervisor can pick them up; the scheduler
+	// passes its own id only for audit logging and idempotency.
+	SupervisorID string
+	// Blob is the active BlobBackend; threaded into the orphan-blob
+	// sweep so it can call Backend.Delete on reaped handles. Nil → the
+	// orphan-blob sweep is skipped (no spilled bytes to reap).
+	Blob persistence.BlobBackend
+	// Metrics is the prometheus instrumentation hook (plan I2).
+	// Threaded into scheduler.Config.Metrics so per-tick invalidate
+	// emits (cron schedule fire, parked-resume sweep) and frame.RunTick
+	// observations land on the shared registry. Optional; nil → no-op
+	// everywhere. Production wiring constructs an
+	// observability.RegistryHook from the per-process MetricsRegistry.
+	Metrics integration.MetricsHook
 }
 
 // SchedulerHandle exposes graceful shutdown for a running scheduler
@@ -94,6 +112,18 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		HeartbeatTimeout:     cfg.HeartbeatTimeout,
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
 		LockHolders:          persistStore.LockHolders(),
+		SupervisorID:         cfg.SupervisorID,
+		// StoreRegistry is the dialed producer registry; required by the
+		// park_timeout watchdog to fire Abandon on held claims (blessed
+		// invariant 13).
+		StoreRegistry: registry,
+		// BlobBackend / BlobOrphans drive the orphan-blob sweep (D8).
+		// cfg.Blob is nil when no backend was installed at startup
+		// (typical of unit tests); persistStore.BlobOrphans() returns
+		// the rimsky_blob_orphans accessor on the unified store.
+		BlobBackend: cfg.Blob,
+		BlobOrphans: persistStore.BlobOrphans(),
+		Metrics:     cfg.Metrics,
 	}
 	return schedulerHandleWithRegistry{
 		inner:    scheduler.Start(inner),

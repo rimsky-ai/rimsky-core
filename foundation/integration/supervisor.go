@@ -111,6 +111,30 @@ type Config struct {
 	// falls back to the listener's bound port.
 	CallbackAdvertiseHost string
 	CallbackAdvertisePort int
+
+	// Blob is the active BlobBackend (loaded from BlobConfig at startup,
+	// already installed on the persistence driver via SetBlobBackend).
+	// Threaded into RunArgs so the named-event and parked-payload write
+	// paths can spill payloads through it. Nil disables spill at those
+	// sites (the persistence-layer attribute write path consults the
+	// same backend via the driver's storeImpl).
+	Blob persistence.BlobBackend
+	// BlobSpillThreshold is the spill cutoff in bytes. Zero disables spill.
+	BlobSpillThreshold int
+	// MaxRetriesWithoutProgressDefault is the deployment-level cap on
+	// consecutive retries with no last_outcome change. Threaded into both
+	// the synchronous RunArgs (built per tryClaim) and the async-callback
+	// CallbackServer so async-callback-driven retries observe the same cap.
+	MaxRetriesWithoutProgressDefault int
+	// UserdataValidator is the dispatch-time userdata schema validator
+	// (plan F7). Threaded into RunArgs so buildExecuteRequest can run
+	// it after applyUserdataOverrides. Failures route through the
+	// on_executor_errored chain with error_class="userdata_validation_failed".
+	// Nil → validation skipped (used in unit tests).
+	UserdataValidator func(executorName string, merged map[string]any) error
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook (plan I1/I2/I3). Optional; nil → no-op everywhere.
+	Metrics MetricsHook
 }
 
 // Handle is returned by Start. Callers drive lifecycle via Shutdown and
@@ -177,15 +201,36 @@ func Start(cfg Config) (*Handle, error) {
 	lockHolders := cfg.Persist.LockHolders()
 
 	callbackReg := NewCallbackRegistry()
+	// Build the unified-invalidate adapter once and share it between the
+	// sync path (per-tryClaim RunArgs below) and the async-callback path
+	// (CallbackServer). Without this, handler-emitted invalidates that
+	// arrive via async callback fall back to bare InvalidateNode and
+	// cannot wake parked targets through the H2 unified path.
+	//
+	// Metrics threaded through here so InvalidateNode's
+	// `rimsky_invalidates_total` counter increments at every async-
+	// callback-driven invalidate. Callers that already populated
+	// ia.Metrics (e.g. handler emits that built their own InvalidateArgs)
+	// keep their value; otherwise we fall back to cfg.Metrics.
+	invalidateAdapter := func(ctx context.Context, ia InvalidateArgs) error {
+		if ia.Metrics == nil {
+			ia.Metrics = cfg.Metrics
+		}
+		return UnifiedInvalidate(ctx, ia, cfg.SupervisorID, WakeExternalInvalidate)
+	}
 	callbackSrv := &CallbackServer{
-		Registry:       callbackReg,
-		Persist:        cfg.Persist,
-		Queue:          cfg.Queue,
-		AdvisoryLocker: cfg.AdvisoryLocker,
-		LockHolders:    lockHolders,
-		Clock:          cfg.Clock,
-		Logger:         cfg.Logger,
-		SupervisorID:   cfg.SupervisorID,
+		Registry:                         callbackReg,
+		Persist:                          cfg.Persist,
+		Queue:                            cfg.Queue,
+		AdvisoryLocker:                   cfg.AdvisoryLocker,
+		LockHolders:                      lockHolders,
+		Clock:                            cfg.Clock,
+		Logger:                           cfg.Logger,
+		SupervisorID:                     cfg.SupervisorID,
+		Blob:                             cfg.Blob,
+		BlobSpillThreshold:               cfg.BlobSpillThreshold,
+		InvalidateHandler:                invalidateAdapter,
+		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -352,22 +397,39 @@ func runLoop(
 		go func() {
 			defer h.wg.Done()
 			defer cancel()
+			// Build the unified-invalidate adapter on the supervisor's
+			// own persistence handle so handler-emitted invalidates (H2
+			// on_event) wake parked targets through the same path as
+			// the admin endpoint (G3) and the parked-node sweep (E3).
+			// Metrics fallback matches the async-callback adapter above.
+			invalidateAdapter := func(ctx context.Context, ia InvalidateArgs) error {
+				if ia.Metrics == nil {
+					ia.Metrics = cfg.Metrics
+				}
+				return UnifiedInvalidate(ctx, ia, cfg.SupervisorID, WakeExternalInvalidate)
+			}
 			result, runErr := RunNode(ctx, RunArgs{
-				Persist:           cfg.Persist,
-				Queue:             cfg.Queue,
-				AdvisoryLocker:    cfg.AdvisoryLocker,
-				LockHolders:       lockHolders,
-				Clock:             cfg.Clock,
-				Logger:            cfg.Logger,
-				SupervisorID:      cfg.SupervisorID,
-				AcceptedExecutors: accepted,
-				AcceptedStores:    acceptedStores,
-				Pool:              pool,
-				Resolver:          cfg.Resolver,
-				StoreRegistry:     cfg.StoreRegistry,
-				NamedLocks:        cfg.NamedLocks,
-				CallbackURL:       h.advertisedURL,
-				HeartbeatInterval: cfg.HeartbeatInterval,
+				Persist:                          cfg.Persist,
+				Queue:                            cfg.Queue,
+				AdvisoryLocker:                   cfg.AdvisoryLocker,
+				LockHolders:                      lockHolders,
+				Clock:                            cfg.Clock,
+				Logger:                           cfg.Logger,
+				SupervisorID:                     cfg.SupervisorID,
+				AcceptedExecutors:                accepted,
+				AcceptedStores:                   acceptedStores,
+				Pool:                             pool,
+				Resolver:                         cfg.Resolver,
+				StoreRegistry:                    cfg.StoreRegistry,
+				NamedLocks:                       cfg.NamedLocks,
+				CallbackURL:                      h.advertisedURL,
+				HeartbeatInterval:                cfg.HeartbeatInterval,
+				Blob:                             cfg.Blob,
+				BlobSpillThreshold:               cfg.BlobSpillThreshold,
+				InvalidateHandler:                invalidateAdapter,
+				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
+				UserdataValidator:                cfg.UserdataValidator,
+				Metrics:                          cfg.Metrics,
 			}, reg.Register)
 			if runErr != nil {
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())

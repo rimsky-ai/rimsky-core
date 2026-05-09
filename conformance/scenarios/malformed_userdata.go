@@ -8,57 +8,61 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name: "malformed_userdata",
-		Run:  runMalformedUserdata,
+		// Stub-mode-only: a non-stub claude-agent run would actually
+		// spawn the LLM CLI before any heuristic could detect the
+		// malformed-userdata markers. Same gate applied to
+		// `attributes_serialization` and `heartbeats`.
+		RequiresStub: true,
+		Run:          runMalformedUserdata,
 	})
 }
 
 // runMalformedUserdata sends userdata that should fail validation for any
 // conforming executor (missing url, empty stub_response not applied, etc.)
-// and asserts an Errored terminal with some error class.
-func runMalformedUserdata(ctx context.Context, c executor.Client) error {
+// and asserts an Errored terminal with some error class. AwaitTerminal
+// transparently follows the callback for async executors.
+//
+// Reserved-key contract: scenario authors MUST use `_`-prefixed keys
+// (`_invalid`, `_missing_url`, …) for intentional malformed-shape
+// markers. The `_` prefix is reserved across executors so plain field
+// names (which a real template author might use legitimately) cannot
+// silently trip the rejection heuristic. Keep this list aligned with
+// `executors/claude-agent/src/agent-run.ts::malformedUserdataReason`.
+func runMalformedUserdata(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{
-		"_invalid":    map[string]any{"nested_null": nil},
-		"missing_url": true,
+		"_invalid":     map[string]any{"nested_null": nil},
+		"_missing_url": true,
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-malformed", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
 	defer stream.Close()
 
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("recv: %w", err)
-		}
-		if er, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-			if er.Errored.ErrorClass == "" {
-				return errors.New("Errored terminal had empty error_class")
-			}
-			return nil
-		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-			return errors.New("expected Errored but saw Complete for malformed userdata")
-		}
+	ev, err := conformance.AwaitTerminal(ctx, stream, env)
+	if err != nil {
+		return err
 	}
-	return errors.New("stream ended without Errored terminal for malformed userdata")
+	if er, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
+		if er.Errored.ErrorClass == "" {
+			return errors.New("Errored terminal had empty error_class")
+		}
+		return nil
+	}
+	return fmt.Errorf("expected Errored, got %T", ev.Event)
 }

@@ -2,6 +2,833 @@
 
 ## Unreleased
 
+### Eighth dispatch — N4 docker-compose conformance smoke + claude-agent gRPC observability + stub-mode contract fixes
+
+Eighth-dispatch implementation work. Closes the four eighth-dispatch
+buckets and the eleven follow-up review issues that piled on top of
+them.
+
+- `executors/claude-agent/src/server.ts::StreamTrace`: added an idle
+  timeout (`RIMSKY_OBS_IDLE_TIMEOUT_MS`, default 5min) mirroring the
+  HTTP+JSON sibling at `observability.ts::mountObservability`. Without
+  it, a `StreamTrace` request for an unknown `dispatch_id` would
+  create a fresh empty `TraceRecord` (`complete: false`, not yet
+  evicted) and pin server-side resources indefinitely since no events
+  ever arrive to drive `trace_complete`. Each delivered event resets
+  the timer; the listener and stream are torn down together.
+- `conformance/callback_receiver.go::mapParkRequested`: read
+  `m["resume_at"]` as RFC3339 and propagate as
+  `*timestamppb.Timestamp` on `ParkRequested.ResumeAt`. The TS
+  executor emits this field but the conformance receiver was silently
+  dropping it. Tolerates absence (zero value).
+- `conformance/callback_receiver.go::parseCallbackBody`: count the
+  new-shape terminal fields (`complete | blocked | errored |
+  park_requested`) and reject bodies that declare more than one,
+  matching the supervisor's parser at
+  `foundation/integration/callback.go::tryParseAsyncCallback`. The
+  conformance suite's job is to surface protocol defects the
+  supervisor would reject in production; previously a multi-terminal
+  body silently delivered the first matched terminal.
+- `executors/claude-agent/src/server.ts::isoToProtoTimestamp`:
+  switched from `Math.trunc` to `Math.floor` so `nanos` stays in the
+  proto-required `[0, 999_999_999]` range and `seconds` is the wall-
+  time floor for sub-second pre-epoch inputs. Today all timestamps
+  come from `new Date().toISOString()` (post-epoch), so this is a
+  forward-compat fix; without it any `Date.parse → isoToProtoTimestamp`
+  round-trip on negative-fraction inputs would emit invalid proto
+  Timestamps.
+- `executors/claude-agent/src/agent-run.ts::runAgent`: hoisted the
+  `malformedUserdataReason` check out of the stub-only fork so both
+  stub and live modes reject reserved-key markers consistently
+  (matches http-node's "validate userdata shape even in stub mode"
+  contract at `executors/http-node/server.go:142-148`). Renamed
+  `missing_url` → `_missing_url` in both the heuristic and the
+  conformance scenario fixture so the reserved-key convention is
+  uniformly `_`-prefixed; documented the convention so future
+  scenario authors share it.
+- `conformance/scenarios/malformed_userdata.go`: added
+  `RequiresStub: true` (defense in depth — gates the scenario the
+  same way `attributes_serialization` and `heartbeats` are gated)
+  and updated the marker key to `_missing_url`.
+- `conformance/callback_receiver_test.go` (new): Go-side coverage of
+  the new-shape and legacy-shape parsers, base64-vs-literal payload
+  fallback in `mapParkRequested`, the multi-terminal rejection,
+  concurrent register-then-handle and handle-then-register paths,
+  duplicate-callback discard, the `0.0.0.0` advertise-host fallback,
+  and HTTP-layer rejection of malformed JSON / multi-terminal bodies.
+- `conformance/await_terminal_test.go` (new): unit coverage of
+  AwaitTerminal's sync-terminal pass-through, the
+  `env.Callbacks == nil` AsyncAccepted-as-is branch, the
+  AsyncAccepted-then-callback synthesis path, the early-callback
+  pre-registration race window, ctx cancellation while awaiting
+  the callback, the empty-ack-id error path, and the
+  stream-ends-without-terminal error path. Uses an in-package
+  `fakeStream` fixture; no Postgres required.
+- `executors/claude-agent/src/server.ts`: exported
+  `isoToProtoTimestamp`, `jsToProtoStruct`, `jsToProtoValue`,
+  `traceEventToProto`, `unwrapStruct`, `unwrapStructValue` so
+  vitest can hit them directly without spinning up the gRPC server.
+- `executors/claude-agent/src/server.test.ts`: added unit coverage
+  for the new proto-conversion helpers (every scalar kind, null,
+  array, nested struct, ISO fixed inputs, fractional seconds,
+  pre-epoch sub-second, NaN fallback, full TraceEvent → proto
+  shape, optional-field defaults). Also pinned the `unwrapStruct`
+  production wire shape (`{kind: "string_value", string_value: "x"}`
+  per Value, with `keepCase: true`) and the kind-omitted /
+  camelCase fallback branches so the snake_case fix can't silently
+  regress.
+
+### Platform extensions follow-ups, cycle 3 (review-driven fixes)
+
+Third reviewer-driven fix sweep. Closes 4 issues found by the cycle-2
+verification pass — 2 high-severity functional bugs (SQLite park-resume
+silently broken; metrics dead in 2/3 binaries) and 2 cleanups.
+
+- `foundation/persistence/sqlite/queue_park.go::LoadResumeMetadataInTx`:
+  replaced `parkedAt sql.NullTime` with `parkedAtStr sql.NullString` +
+  `parseTime(...)`. modernc/sqlite v1.50.0 onward refuses to scan a
+  TEXT column (RFC3339Nano) into `sql.NullTime` with `unsupported Scan,
+  storing driver.Value type string into type *time.Time`; the runner's
+  `rerr == nil && rm != nil` short-circuit at
+  `foundation/integration/runner_acquire.go:382` swallowed the error,
+  so resume metadata was silently lost and the dispatch proceeded as a
+  fresh dispatch. Park-resume was functionally broken on SQLite. Now
+  matches the convention used elsewhere in the same file
+  (`scanOneSqliteParkedRow` already scans time columns as
+  `sql.NullString` then runs them through `parseTime`).
+- `foundation/persistence/sqlite/queue_park_test.go`: new SQLite-driver
+  unit test exercising the park / resume / load / clear sequence
+  end-to-end. Regression coverage for the `sql.NullTime` bug.
+- `modeling/config/scheduler.go::SchedulerConfig`,
+  `modeling/config/controlapi.go::ControlAPIConfig`,
+  `cmd/rimsky-scheduler/main.go`,
+  `cmd/rimsky-control-api/main.go`: added `Metrics
+  integration.MetricsHook` to both configs and threaded it through to
+  `scheduler.Config.Metrics` / `controlapi.AppDeps.Metrics`. Hoisted
+  `mreg := observability.NewMetricsRegistry()` out of the
+  `if metricsPort > 0` block in both binaries so the hook is wired
+  even when the HTTP `/metrics` listener is disabled. Without this,
+  scheduler-emitted invalidates (cron schedule fire, parked-resume
+  sweep), `frame.RunTick` observations, `SweepParkedNodes` parked-
+  duration observations, and admin-fired invalidates were all dropped.
+  Matches the supervisor's pattern.
+- `foundation/persistence/postgres/queue_park.go`: dropped the stale
+  parenthetical reference to `IncrementRetryNoProgress` /
+  `ResetRetryNoProgress` (removed in cycle-2 fix #9) from the file
+  header comment; mentions only the surviving helpers
+  (`GetRetryNoProgress` and `SetRetryNoProgressForNodeInTx`).
+- `modeling/observability/userdata_validator.go::NewUserdataValidator`:
+  demoted the cache-miss and missing-schema fall-through cases to
+  `slog.Debug`. Both are expected during normal operation — cold-start
+  window before the first capability handshake, executors that don't
+  ship a userdata schema. Reserved `slog.Warn` for the genuinely
+  pathological "executor present in cache but Capabilities is nil"
+  case. The validator runs once per dispatch; under sustained load
+  the prior unconditional Warn flooded logs.
+
+### Platform extensions follow-ups, cycle 2 (review-driven fixes)
+
+Second reviewer-driven fix sweep. Closes the remaining gaps in metric
+instrumentation, the claude-agent userdata schema, the resume-metadata
+clear timing, the held-claim park-lifecycle scenario coverage, the
+SQLite-migration brittleness comment, and the held-frames diagnostic
+endpoint. Also retires dead persistence-interface methods and surfaces
+silent userdata-validator fall-throughs.
+
+- `executors/claude-agent/src/userdata-schema.ts`: lifted `model`,
+  `system_prompt`, `user_prompt_template` out of the `cli.*` subobject
+  to userdata's top level so they match `parseCliConfig` (server.ts /
+  http-bridge.ts). Templates that use the documented top-level
+  shape now pass dispatch-time validation against the executor's
+  advertised `Capabilities.userdata_schema`. Pruned `cli.tools` and
+  `cli.mcp_servers` from the schema since neither is read by the
+  parser; the schema and the parser stay in lock-step.
+- `foundation/integration/cascade_invalidate.go::InvalidateNode`,
+  `foundation/integration/runner.go::RunArgs.Metrics`,
+  `foundation/integration/supervisor.go` (both invalidate adapters),
+  `foundation/integration/on_error.go`,
+  `foundation/integration/runner_terminal_errors.go`,
+  `foundation/integration/runner_lifecycle.go`,
+  `foundation/integration/sweep_parked.go`,
+  `foundation/integration/wake_parked.go`,
+  `modeling/scheduler/scheduler.go`,
+  `modeling/controlapi/app.go`,
+  `modeling/controlapi/nodes.go`: threaded `MetricsHook` through every
+  `InvalidateArgs` construction site so `rimsky_invalidates_total`
+  actually increments. The supervisor adapters fill in `cfg.Metrics`
+  when callers don't set their own; admin / scheduler /
+  policy-emitted / handler-emitted / parked-resume invalidates all
+  reach `IncInvalidate`.
+- `foundation/integration/runner_named_events.go::persistOneNamedEvent`:
+  added `metricsOf(args).IncNamedEvent(acq.Executor, evt.Name)` after
+  a successful `NodeEvents().Insert` so `rimsky_named_events_total`
+  reflects production traffic.
+- `foundation/integration/runner_acquire.go::acquireClaim`: bookended
+  the producer-side acquisition with
+  `metricsOf(args).IncClaimAcquisition` and
+  `ObserveClaimAcquisitionLatency`, recording the
+  acquired/unavailable verdict + wall-clock duration. Resume detection
+  now fires `ObserveParkedDurationOnResume` from a new
+  `ResumeMetadataRow.ParkedAt` field (populated by both postgres and
+  sqlite drivers).
+- `modeling/frame/engine.go::transitionFrameEnd`: snapshots
+  `started_at` before the terminal stamp and observes
+  `ObserveFrameDuration` from the supplied `frame.MetricsHook`. The
+  scheduler wires its registry adapter through `RunTick(..., metrics
+  ...MetricsHook)`.
+- `modeling/observability/metrics_hook.go::refreshGauges`: now also
+  refreshes `rimsky_nodes_by_state`, `rimsky_parked_by_reason`, and
+  `rimsky_held_frames`, backed by new persistence helpers
+  (`Queue.CountParkedByReason`, `FrameStore.CountHeldFrames`,
+  postgres + sqlite impls).
+- `modeling/observability/userdata_validator.go::NewUserdataValidator`:
+  silent fall-through (executor missing from Discovery cache,
+  capabilities nil, advertised schema empty) now logs a structured
+  `slog.Warn` so operators can detect the case where validation
+  silently accepted because the handshake had not landed.
+- `foundation/integration/runner.go::RunArgs.UserdataValidator`:
+  doc comment corrected — userdata is opaque to rimsky per
+  `@blessed-invariant 11`; the validator runs on the post-merge
+  bytes only, never on a substituted form.
+- `foundation/integration/runner_dispatch.go`: moved
+  `ClearResumeMetadataInTx` from `buildExecuteRequest` to the
+  post-`client.Execute` success branch. If the executor RPC fails
+  before the stream is established (dial / serialization error), the
+  resume metadata stays put and the next pickup is still a resume
+  rather than a fresh dispatch.
+- `test/scenarios/parked_lifecycle_test.go`:
+  `TestParkedLifecycleHeldClaimRetentionAcrossPark` and
+  `TestParkedLifecycleParkTimeoutAbandonsHeldClaim` rewritten so the
+  templates actually acquire a held scope-claim (acquirer + inheritor
+  with `inherits: held`). The first asserts the `rimsky_claim_handle`
+  row survives the active → parked → resumed cycle and is removed
+  only after auto-terminal Commit fires; the second asserts the
+  producer's Abandon verb fires when `max_park_duration` overruns,
+  exercising the held-claim cleanup path on the watchdog branch.
+- `foundation/persistence/sqlite/migrations/004-…sql`: added a
+  brittleness note documenting that re-running this migration after
+  losing `rimsky_migrations` will fail with "duplicate column name"
+  (SQLite has no `ADD COLUMN IF NOT EXISTS`). Postgres mirror is
+  fully idempotent; SQLite is only conditionally so via the migration
+  runner's filename dedup. Recovery guidance included.
+- `foundation/persistence/worker_requests.go` + postgres + sqlite
+  impls + test fakes: removed `IncrementRetryNoProgressInTx` and
+  `ResetRetryNoProgressInTx`. They were superseded by
+  `SetRetryNoProgressForNodeInTx` and had no live callers.
+- `modeling/controlapi/admin_diagnostics.go::handleAdminHeldFrames`:
+  parked rows missing a `frame_id` no longer get bucketed under a
+  synthetic empty-string-keyed `HeldFrameEntry` whose `instance_id`
+  reflected whichever orphan row was seen first. They surface
+  separately on a new `frames_without_frame_id` field on the response
+  body so the held-frames bucket reflects only real held frames.
+
+### Platform extensions follow-ups (review-driven fixes)
+
+Reviewer-driven fix sweep on top of the sixth dispatch. Tightens the
+parked-state lifecycle, async-callback parser, blob-spill safety, and
+metric instrumentation; wires the dispatch-time userdata-schema
+validator and the executor-capabilities controlapi hook; adds
+held-claim coverage to the parked-lifecycle scenario suite.
+
+**Parked lifecycle:**
+
+- `foundation/persistence/postgres/queue_park.go` +
+  `foundation/persistence/sqlite/queue_park.go` /
+  `foundation/persistence/postgres/migrations/006-…sql` +
+  `foundation/persistence/sqlite/migrations/004-…sql`: added
+  `wake_reason TEXT` column to `rimsky_worker_request`. Populated by
+  `ResumeParkedInTx` at wake time and read by `LoadResumeMetadataInTx`,
+  so `ResumeContext.resume_reason` reaches the executor as
+  `deadline_elapsed` vs `external_invalidate` accurately rather than
+  always defaulting to `external_invalidate`.
+- `foundation/persistence/postgres/queue_park.go`: `ResumeParkedInTx`
+  preserves `enqueued_at` across the resume so resumed rows do not
+  compete behind freshly-enqueued ones under `ORDER BY enqueued_at`.
+- `foundation/persistence/postgres/queue_park.go` +
+  `foundation/persistence/sqlite/queue_park.go`: `ListParkedOverdue`
+  now excludes rows whose `resume_at <= now`, eliminating the wake-
+  vs-overdue race that fired `park_timeout` under `parked → failed`
+  on already-resumed rows.
+- `foundation/integration/sweep_parked.go::failOverdueParkedRow`:
+  before deleting the worker_request row, marks `rimsky_claim_holders`
+  for the node's claim-handles `'failed'` and fires
+  `CheckAndFireResolution` per held claim so the auto-terminal Abandon
+  verb runs (blessed invariant 13). Without this, held producer state
+  leaked when a parked node overran `max_park_duration_seconds`.
+- `foundation/integration/wake_parked.go`: doc comments corrected to
+  match the actual transitions (parked→pending phase, parked→stale
+  node state).
+- `foundation/integration/runner_terminal_park.go`: comment updated to
+  note the inline-backend's no-spill behavior under `shouldSpillBlob`.
+
+**Async-callback parser:**
+
+- `foundation/integration/callback.go`: `tryParseAsyncCallback` now
+  returns an error when more than one terminal field is set, and a
+  clear "must include exactly one terminal field" message when events
+  are present without a terminal — instead of falling back silently
+  to the legacy parser.
+- `foundation/integration/callback.go::driveTerminal`: now threads
+  `Blob`, `BlobSpillThreshold`, `InvalidateHandler`,
+  `MaxRetriesWithoutProgressDefault`, and the new
+  `UserdataValidator` into `RunArgs`.
+
+**Terminal-error handlers:**
+
+- `foundation/integration/runner_terminal_errors.go::applyTerminalInfraError`:
+  carries the `consecutive_retries_no_progress` counter forward across
+  the infra-reenqueue round-trip so a flaky executor can't loop
+  indefinitely.
+
+**Userdata validation (plan F7) end-to-end:**
+
+- `foundation/integration/runner.go`: added `UserdataValidator` hook on
+  `RunArgs`.
+- `foundation/integration/runner_dispatch.go`: validation runs inside
+  `buildExecuteRequest`; failures route through Errored with
+  `error_class="userdata_validation_failed"`.
+- `modeling/observability/userdata_validator.go`: new modeling-layer
+  `NewUserdataValidator(disc)` builds the closure (jsonschema dep
+  stays in modeling).
+- `cmd/rimsky-supervisor/main.go`: runs the observability handshake
+  at startup and threads the validator into `SupervisorConfig`.
+
+**Executor capabilities for controlapi (plan F6):**
+
+- `modeling/config/controlapi.go`: `AppDeps.ExecutorCapabilities` is
+  now wired to the observability Discovery cache.
+- `executors/stub/observability.go`: stub now declares the event
+  names used in scenario fixtures.
+- `test/scenarios/on_event_test.go::TestOnEventUndeclaredEventNameRejectedAtRegistration`:
+  un-skipped.
+- `modeling/observability/handshake.go::executorCapsFromProto`: the
+  advertised `userdata_schema` bytes are defensively cloned.
+
+**Metric instrumentation (plan I1/I2/I3):**
+
+- `foundation/integration/runner.go`: declared `MetricsHook` interface
+  and `noopMetrics` default; `RunArgs.Metrics` carries it.
+- `foundation/integration/runner_dispatch.go::dispatch`,
+  `runner_terminal.go::applyTerminal`,
+  `cascade_invalidate.go::InvalidateNode`: instrumented call sites.
+- `modeling/observability/metrics_hook.go`: prometheus-backed
+  `RegistryHook` adapter + `StartGaugeRefresher` periodic loop.
+- `cmd/rimsky-supervisor/main.go`: constructs `MetricsRegistry`
+  before `StartSupervisor` and threads it through.
+
+**Orphan-blob sweep (D8):**
+
+- `modeling/scheduler/scheduler.go`: `SweepOrphanedBlobs` wired into
+  the scheduler tick, throttled to `OrphanBlobSweepInterval` (default
+  1h).
+- `foundation/integration/orphan_blobs.go`: uses injected `Clock`
+  consistent with `sweep_parked.go`.
+- `foundation/persistence/blob_filesystem.go::Write`: path-escape
+  guard now matches `absFromHandle`.
+
+**Misc safety:**
+
+- `cmd/rimsky-scheduler/main.go`: `RIMSKY_SCHEDULER_ID` defaults to
+  `scheduler-<hostname>`.
+- `modeling/config/controlapi.go`: control-api supervisor-id falls
+  back to `control-api-<hostname>`.
+- `foundation/persistence/postgres/migrations/006-…sql` +
+  `foundation/persistence/sqlite/migrations/004-…sql`:
+  `rimsky_node_events.instance_id` now has FK to `rimsky_instances`
+  with `ON DELETE CASCADE`.
+- `foundation/integration/runner_terminal_errors.go::applyTerminalAppError`:
+  `original_error_class` is captured before reassignment so the
+  retry_loop_no_progress payload records the genuine prior class.
+- `foundation/integration/callback.go::driveTerminal`: imports
+  `errors` / `fmt` for the new tightened parser.
+
+**Test additions:**
+
+- `test/scenarios/parked_lifecycle_test.go`:
+  `TestParkedLifecycleResumeOnDeadline` asserts persisted
+  `resume_reason=deadline_elapsed`. New `TestParkedLifecycleHeldClaim
+  RetentionAcrossPark` covers E6 case (e). New
+  `TestParkedLifecycleParkTimeoutAbandonsHeldClaim` covers the held-
+  claim Abandon path.
+- `test/scenarios/on_event_test.go::TestOnEventUndeclaredEventNameRejectedAtRegistration`:
+  un-skipped.
+
+### Platform extensions for agent-driven consumers — sixth dispatch (finish line)
+
+Closed out the scenario-test coverage for E (parked lifecycle) and H
+(on_event lifecycle), the L3 ledger-semantics conformance test, the
+J11 claude-agent end-to-end lifecycle test, and the L2 stub-executor
+extensions for emitting NamedEvent / ParkRequested. Surfaced and
+fixed four production-blocking bugs in flight: SelectCandidates not
+filtering on `phase='pending'` (parked rows leaked into the candidate
+set), ClaimDispatchRow lacking the same gate, the retry-loop counter
+resetting on every retry round-trip (cap never tripped), and the
+supervisor not wiring `RunArgs.InvalidateHandler` (handler-emitted
+invalidates couldn't wake parked targets via the unified path).
+
+**Foundation runtime fixes:**
+
+- `foundation/persistence/postgres/queue.go`: `SelectCandidates` now
+  includes `AND d.phase = 'pending'` so parked rows are not picked up
+  by the supervisor's standard candidate-select. `ClaimDispatchRow`'s
+  UPDATE predicate matches. SQLite mirror in
+  `foundation/persistence/sqlite/queue.go`.
+- `foundation/integration/runner_terminal_errors.go::applyTerminalAppError`:
+  retry counter is now read before the row delete-and-reinsert and
+  re-stamped onto the new row inside the same tx via the new
+  `Queue.SetRetryNoProgressForNodeInTx`. Without this the cap-check
+  always saw count=0.
+- `foundation/integration/supervisor.go::runLoop`: `RunArgs.InvalidateHandler`
+  is now wired to `UnifiedInvalidate` so handler-emitted invalidates
+  (H2 on_event) wake parked targets through the same path G3 admin
+  and E3 sweep use.
+- `foundation/integration/runner_terminal_errors.go::shouldForceRetryLoopGiveUp`:
+  falls back to `acq.NodeDef.MaxRetriesWithoutProgress` when the per-row
+  override has not been denormalized yet (retry-only loops never park
+  so the dispatch-tuning column stays NULL).
+
+**Modeling — template validator:**
+
+- `modeling/node/template_validator.go`: extended `directiveBodyRe`
+  and `checkAttributeSource` to accept the F4 `nodes.<emitter>.event.<name>.<path>`
+  source kind. Templates that reference event payloads in their
+  attribute schema now register cleanly.
+
+**Stub executor — scripted NamedEvent / ParkRequested:**
+
+- `executors/stub/stub.go`: `TypeBuilder.Park(reason, payload, resumeAt,
+  sessionToken)` and `TypeBuilder.EmitNamedEvent(name, payload)` added.
+  Heartbeats fire first, then queued NamedEvents in order, then the
+  scripted terminal verdict (now including `termPark`).
+
+**Scenario-test coverage:**
+
+- `test/scenarios/parked_lifecycle_test.go`: 6 cases covering
+  deadline-elapsed wake, external-invalidate wake, max_park_duration
+  overrun, empty reason permitted, intra-graph invalidate-against-parked.
+- `test/scenarios/retry_loop_cap_test.go`: 2 cases covering force-give_up
+  at the cap and the cap=0 disable.
+- `test/scenarios/on_event_test.go`: gRPC-stream emission persistence,
+  multiple emissions latest-wins. (Validator-strictness case skipped
+  pending decision on declared_events enforcement.)
+- `test/scenarios/conformance_events_test.go`: end-to-end ledger
+  semantics including F4 substitution into a downstream node's
+  attributes.
+
+**claude-agent — end-to-end lifecycle test:**
+
+- `executors/claude-agent/src/lifecycle.e2e.test.ts`: 4 cases covering
+  rate-limit auto-park (J9), J10 resume-with-ResumeContext driving
+  `cliRunner.resume()` with the prior session id, schema-correction
+  registration smoke check, and stub-mode happy-path.
+
+**Scenario harness:**
+
+- `modeling/scenario/harness.go`: scheduler now starts with
+  `SupervisorID="scenario-scheduler"` so SweepParkedNodes runs every
+  tick. Template-JSON serialization extended to include `on_event`,
+  `max_park_duration`, and `max_retries_without_progress` fields.
+
+### Platform extensions for agent-driven consumers — fifth dispatch
+
+Closed the attribute blob-spill loop (D6/D7/D9), wired the J9
+rate-limit detection pipe end-to-end, landed the J8
+validate-on-`report_complete` retry cap, and added J10 resume-with-
+ResumeContext support in claude-agent. Plus a one-line diagnostic
+fix and a side-fix to a pre-existing SQLite bug surfaced during
+spill testing.
+
+**Persistence — attribute blob spill (D6/D7/D9):**
+
+- `Driver.SetBlobBackend(backend, threshold, retention)` added to the
+  `persistence.Driver` interface; postgres + sqlite implementations
+  install it on the per-driver `storeImpl` so attribute upsert/get
+  paths can consult the active backend without a parameter explosion.
+- `foundation/persistence/postgres/node_attributes.go::Upsert` and
+  `foundation/persistence/sqlite/node_attributes.go::Upsert`: when
+  the marshalled `data` exceeds `BlobConfig.SpillThresholdBytes` and
+  the configured backend is non-inline, the bytes spill via
+  `BlobBackend.Write` and the handle is stored in
+  `value_handle` / `value_handle_backend`. Inline path stores
+  `'{}'::jsonb` (Postgres) or `'{}'` (SQLite) so a downstream `Get`
+  routes through the backend cleanly. Overwriting a spilled row
+  queues the prior handle in `rimsky_blob_orphans` via the new
+  `persistence.QueueBlobOrphan` helper for the SweepOrphanedBlobs
+  sweep to delete after the retention window.
+- `Get` reads `value_handle` and dereferences via the active backend
+  when the recorded backend matches. When the recorded backend
+  differs (post-migration topology), falls back to the inline `data`
+  column for continuity. `MergeDelta` is spill-aware: spilled rows
+  are materialized via `Get`, merged in Go, re-Upserted (which
+  re-applies the spill decision); inline rows run the legacy SQL-
+  level shallow merge.
+- `modeling/config.OpenBlobBackend(ctx, cfg.Blob, drv)` constructs
+  the active backend (inline / memory / filesystem / pg-largeobject)
+  from `BlobConfig` and installs it on the driver. The pg-largeobject
+  backend reuses the postgres pool via the new
+  `postgres.NewBlobBackendForDriver` accessor (depguard prevents the
+  modeling/ tree from importing pgx directly).
+- `LoadRimskyConfigYAML` parses an optional `persistence.blob:`
+  block in `rimsky.yml` (`backend`, `spill_threshold_bytes`,
+  `filesystem.root`, `pg_largeobject.schema`,
+  `retention.{orphan_sweep_interval, retention_after_unreferenced}`).
+  Defaults are inline / 64 KiB / 1h / 24h.
+- `cmd/rimsky-supervisor/main.go`, `cmd/rimsky-scheduler/main.go`,
+  `cmd/rimsky-control-api/main.go` all wire the backend at startup;
+  the supervisor additionally threads it into RunArgs.Blob so the
+  named-event and parked-payload spill paths use the same backend.
+- `cmd/rimsky-entrypoint/main.go` sets `RIMSKY_PROCESS_ROLE=unified`
+  on every spawned child's env so the unified image's memory-backend
+  topology validates per `ValidateBlobConfig`.
+
+**Cross-backend round-trip tests (D9):**
+
+- `foundation/persistence/blob_roundtrip_test.go` — table-driven
+  round-trip across memory + filesystem (1 KB inline-equivalent,
+  1 MB above-threshold, range read, idempotent delete, post-delete
+  ErrBlobNotFound). pg-largeobject is exercised separately by the
+  pre-existing `blob_largeobject_test.go` (testcontainers).
+- `foundation/persistence/sqlite/node_attributes_spill_test.go` —
+  end-to-end attribute spill through the SQLite driver + memory
+  backend: small payload stays inline; large payload spills;
+  overwrite queues an orphan row; downgrade-to-inline clears
+  value_handle and queues an orphan; MergeDelta on a spilled row
+  materializes-merges-re-spills.
+
+**Side-fix — SQLite blob_orphans time scan:**
+
+- `foundation/persistence/sqlite/blob_orphans.go` was scanning
+  `orphaned_at` / `reap_after` directly into `*time.Time`, which
+  fails because the SQLite driver returns text columns as strings.
+  Fixed by routing through `formatTime` on insert and `parseTime`
+  on read (matching `events.go`'s pattern). Surfaced while D9
+  testing exercised the orphan-insert path.
+
+**claude-agent — J9 residual + J8 + J10:**
+
+- `executors/claude-agent/src/agent-run.ts`: buffers stderr (capped
+  at 16 KB), and on non-zero CLI exit calls `detectRateLimit` from
+  `rate-limit.ts`. When detected and `userdata.cli.handle_rate_limits
+  !== false`, emits `AgentOutcome.park_requested` with
+  `reason="rate_limit"`, `resumeAt=signal.resumeAt`, and
+  `sessionToken=runId` so the supervisor parks the node and resumes
+  the same CLI session after the reset window.
+- The `onComplete` handler now tracks consecutive schema-validation
+  failures via a `schemaCorrectionFailures` counter and a
+  `rejectWithCorrection` helper. On validation failure: increment;
+  if still ≤ `maxSchemaCorrections` (default 3, configurable via
+  `userdata.cli.max_schema_corrections`), return `{status:
+  "rejected", errors: {...}}` so the agent's MCP tool call surfaces
+  the validation errors and the agent can retry with a corrected
+  delta. Above the cap, schedule teardown with
+  `errored {error_class: "schema_validation_failed"}`. Counter resets
+  to zero on a successful validation (subsequent delta replacements
+  start fresh).
+- `ExecuteRequest.resume_context` field added to both `server.ts`
+  (gRPC) and `http-bridge.ts` (HTTP+JSON) interfaces. The
+  `parseResumeContext` helper (mirrored in both files) decodes
+  base64 `payload`, extracts `session_token` and `resume_reason`,
+  and returns the typed shape `runAgent` consumes via the new
+  `AgentRunOptions.resumeContext`.
+- `runAgent`: when `resumeContext.sessionToken` is non-empty AND
+  `cliRunner.resume` is available, launches the CLI via
+  `cliRunner.resume({sessionId: token, prompt: renderedUser, ...})`
+  instead of `cliRunner.spawn({...})`. Exposes resume context to the
+  prompt-template engine as `{{rimsky.resume_payload}}` (UTF-8 text)
+  and `{{rimsky.resume_reason}}` so template authors can opt to use
+  them.
+- `parseCliConfig` in both `server.ts` and `http-bridge.ts` now reads
+  `userdata.cli.handle_rate_limits` (default true) and
+  `userdata.cli.max_schema_corrections` (default 3).
+- `mcp-transports.test.ts` test fixtures updated to include the
+  required `lifetime: "per-dispatch"` field on `module` /
+  `http-loopback` entries (DIAG fix).
+- `agent-run.ts` no longer destructures the unused `callback` field
+  from `opts` (DIAG fix).
+
+**Conformance — Capabilities validation (L2 partial):**
+
+- `cmd/rimsky-conformance/observability_check.go` now validates the
+  new `userdata_schema` (must parse as JSON when non-empty) and
+  `declared_events` (each entry must be a non-empty string) fields
+  on `ObservabilityCapabilities`. Reports both fields' values during
+  the `--check-observability` probe.
+
+### Platform extensions for agent-driven consumers — fourth dispatch
+
+Continued the 2026-05-08 platform-extensions plan with parked-state
+runtime wiring, named-event processing, retry-cap enforcement, and
+claude-agent transport handlers + rate-limit park.
+
+**Foundation runtime — parked state lifecycle (sections E1–E5, H1–H2):**
+
+- `applyTerminalPark` (`foundation/integration/runner_terminal_park.go`).
+  Wired into `applyTerminal` so the supervisor's terminal pipeline
+  dispatches `ParkRequested` events to the park flow: persists the
+  parked metadata via `Queue.ParkActiveInTx`, spills large payloads via
+  the configured `BlobBackend` (or stores inline below the spill
+  threshold), denormalises `MaxParkDuration` and
+  `MaxRetriesWithoutProgress` onto the row at park time, and transitions
+  node state running→parked via `cascade.ReasonHandlerPark`.
+- `Queue` interface extensions in `foundation/persistence/worker_requests.go`
+  for the parked lifecycle: `ParkActiveInTx`, `ListParkedReadyForResume`,
+  `ListParkedOverdue`, `GetParkedByNode`, `ResumeParkedInTx`,
+  `IncrementRetryNoProgressInTx`, `ResetRetryNoProgressInTx`,
+  `GetRetryNoProgress`, `UpdateDispatchTuningInTx`,
+  `LoadResumeMetadataInTx`, `ClearResumeMetadataInTx`. Postgres impl in
+  `queue_park.go`; SQLite impl in `queue_park.go`.
+- `SweepParkedNodes` (`foundation/integration/sweep_parked.go`). Wakes
+  parked rows whose `resume_at` has elapsed (transitions phase
+  parked→pending, node state parked→stale via `ReasonHandlerResume`),
+  and forces park_timeout failure on rows that overran
+  `max_park_duration_seconds`. Wired into the scheduler tick.
+- `UnifiedInvalidate` (`foundation/integration/wake_parked.go`). Single
+  entry point shared by E3 (sweep), G3 (admin invalidate endpoint), and
+  H2 (on_event handler-emitted invalidates). Dispatches by node state:
+  parked → wake; running → `ErrInvalidateRunning` (caller maps to 409);
+  fresh/stale/failed → standard `InvalidateNode`.
+- `InvalidateHandler` adapter (in `wake_parked.go`) implements the
+  `modeling/controlapi.InvalidateHandler` interface so the control-api
+  process can wire `UnifiedInvalidate` as its admin-endpoint handler;
+  wired in `modeling/config/controlapi.go`.
+- Resume dispatch (E4): the runner's atomic-acquisition path now
+  detects parked-survivor metadata via `LoadResumeMetadataInTx`,
+  resolves any spilled payload through the BlobBackend, and attaches
+  `ExecuteRequest.ResumeContext` on the dispatch with
+  `resume_reason="external_invalidate"`. Cleared via
+  `ClearResumeMetadataInTx` after a successful dispatch.
+- `max_retries_without_progress` cap (E5). The terminal-handler chain
+  bumps `consecutive_retries_no_progress` on retry actions and resets
+  on non-retry. When the counter reaches the effective cap (per-row
+  override > deployment default > built-in 100; per-row 0 disables),
+  the runner rewrites the error_class to `retry_loop_no_progress`
+  before the policy resolves, forcing the standard give_up branch.
+
+**Foundation runtime — named events processing (sections H1, H2):**
+
+- `processNamedEvents` (`foundation/integration/runner_named_events.go`).
+  Persists every NamedEvent emitted during a dispatch via
+  `NodeEventsStore.Insert` (with blob spill via `BlobBackend`), then
+  fires any matching `OnEvent` handler on the emitter node via
+  `emitHandlerInvalidate`. Handler-emitted invalidates flow through the
+  unified invalidate handler so they correctly wake parked targets.
+- gRPC stream consumer in `runner_dispatch.go::readExecutorStream`
+  recognizes the new `NamedEvent` and `ParkRequested` ExecuteEvent
+  variants. NamedEvent records accumulate on the returned terminal
+  event; the terminal-handler entry point (`applyTerminal`) processes
+  the events list before applying the terminal verdict.
+- Async callback handler in `callback.go` accepts both shapes: the new
+  `AsyncCallbackBody` (events array + one of `complete/blocked/errored/
+  park_requested` fields) and the legacy `{type: "complete"|...}` body.
+  Parser tries new shape first; falls back to legacy on parse error.
+
+**Foundation cascade — parked → stale resume:**
+
+The `ReasonHandlerResume` transition target was changed from `running`
+to `stale` so the standard `SelectCandidates → atomic-acquisition →
+transitionToRunning` path runs the resume — the wake supervisor
+doesn't need to be one running an executor pool. Updated
+`@blessed-invariant 1` and the cascade tests accordingly.
+
+**Orphan reaper (E2):** documented that the existing predicate
+`claimed_by IS NOT NULL AND last_heartbeat_at < cutoff` already excludes
+parked rows by construction (active→parked clears `claimed_by`).
+
+**claude-agent (sections J4–J7, J9):**
+
+- MCP transport handlers (`executors/claude-agent/src/mcp-transports.ts`).
+  Translates resolved MCP bindings into the per-dispatch `mcp.json`
+  shape Claude CLI consumes. Four transports:
+  - `http`: passes URL + headers through.
+  - `stdio`: passes command + args + env through.
+  - `module` / `http-loopback`: aliases per the plan's pre-resolved
+    decision; `import()`s a module at dispatch time, exposes a
+    minimal MCP-shaped HTTP server on `127.0.0.1:0`, writes the
+    loopback URL into mcp.json as an `http` entry from the CLI's
+    perspective. Cleanup callback returned to the dispatch caller.
+- Rate-limit detection (`executors/claude-agent/src/rate-limit.ts`).
+  Parses CLI stderr for rate-limit signals
+  (`rate_limit_error`, `429`, free-form "rate limit") and reset
+  timestamps (`retry-after`, `anthropic-ratelimit-reset`,
+  `ResetAt:`). Returns a `RateLimitSignal` for callers to convert to
+  `ParkRequested`.
+- `AgentOutcome.park_requested` variant added; both server.ts and
+  http-bridge.ts emit the new `AsyncCallbackBody` `park_requested:
+  {...}` shape on this outcome.
+
+**TypeScript build hygiene:** `executors/claude-agent/tsconfig.json`
+now sets `types: ["node"]` to make Node typings dependence explicit
+(addresses LSP / `tsc --noEmit` resolution diagnostics flagged in the
+fourth-dispatch handoff). Companion `tsconfig.test.json` covers the
+test-file inclusion shape with `types: ["node", "vitest/globals"]`.
+
+### Platform extensions for agent-driven consumers (partial — protocol surface, state machine, persistence schema, blob backends)
+
+Foundational layers for the platform-extensions plan
+(`.ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md`).
+This entry covers what landed in this dispatch; the runtime wiring,
+control-API endpoints, claude-agent TS work, MCP shim, conformance,
+metrics, and documentation are tracked in the same plan and will be
+completed in follow-on dispatches.
+
+**Protocol additions** (`protocols/proto/v1/executor.proto`,
+`protocols/proto/v1/executor_observability.proto`):
+
+- `ObservabilityCapabilities.userdata_schema` (bytes) — JSON Schema
+  draft 2020-12 the executor advertises for its userdata. Empty means
+  "accept any userdata."
+- `ObservabilityCapabilities.declared_events` (repeated string) — the
+  set of event names the executor may emit via the new non-terminal
+  `NamedEvent` wire type. Empty means "no events."
+- `NamedEvent` non-terminal `ExecuteEvent` variant (the spec's `Event`,
+  renamed because `Event` is already taken in `events.proto`). Carries
+  `name` + opaque `payload` bytes; available to substitution as
+  `nodes.<emitter>.event.<name>.<json_path>`.
+- `ParkRequested` terminal `ExecuteEvent` variant. Carries `reason` +
+  opaque `payload` + optional `resume_at` + opaque `session_token`.
+  Closes the gRPC stream and transitions the node from `running` to
+  `parked`. Held claim handles are retained across the park boundary.
+- `ResumeContext` field on `ExecuteRequest`. Populated on resume
+  dispatches (deadline-elapsed wake or external invalidate); carries
+  back the original `payload` + `session_token` and a `resume_reason`
+  (`deadline_elapsed` | `external_invalidate`).
+- `AsyncCallbackBody` shape — canonical schema for the HTTP+JSON body
+  POSTed by an executor to `${callback_url}/v1/callback/{async_ack_id}`.
+  Shape: `{events: [...], complete | blocked | errored | park_requested:
+  {...}}`. The legacy single-object shape (`{type: "complete"|...}`)
+  remains accepted; the supervisor parser tries the new shape first.
+
+**`parked` node state** (`modeling/shared/types.go`,
+`foundation/cascade/state.go`):
+
+- New `NodeStateParked` constant, sibling to fresh / stale / running /
+  failed.
+- New transition reasons: `ReasonHandlerPark` (running → parked),
+  `ReasonHandlerResume` (parked → running), `ReasonParkTimeout`
+  (parked → failed).
+- The state machine rejects all other transitions involving `parked`,
+  including the same-state `parked → parked` short-circuit (preserves
+  blessed invariant 1).
+- Cascade does NOT propagate from `parked`. Held claims are retained
+  across the park boundary; the orphan-claim reaper skips
+  `phase='parked'` rows because heartbeating is paused during park.
+
+**Persistence schema** (single migration per dialect: PG `006-...`,
+SQLite `004-...`):
+
+- Added `'parked'` to the `rimsky_worker_request.phase` CHECK constraint.
+  SQLite rebuild uses `PRAGMA writable_schema` rather than the
+  rename-and-recreate dance to avoid corrupting FK references in
+  `rimsky_claim_handle` / `rimsky_claim_holders`.
+- Added park-state columns to `rimsky_worker_request`: `parked_at`,
+  `resume_at`, `parked_payload_inline` / `parked_payload_handle` /
+  `parked_payload_handle_backend`, `session_token`, `parked_reason`.
+- Added `value_handle` / `value_handle_backend` columns to
+  `rimsky_node_attributes` for blob-spill addressing.
+- New `rimsky_blob_orphans` table tracking handles awaiting reap.
+- New `rimsky_node_events` ledger for the named-event substitution path.
+- Added `consecutive_retries_no_progress`, `max_park_duration_seconds`,
+  `max_retries_without_progress` columns to `rimsky_worker_request`
+  (denormalized from the template DSL for fast-path sweep access).
+
+**Pluggable blob backends** (`foundation/persistence/blob*.go`):
+
+- New `BlobBackend` interface with `Write` / `Read` / `ReadRange` /
+  `Delete` / `Name`.
+- New `BlobConfig` and `ValidateBlobConfig`. The "memory" backend is
+  rejected at startup unless `RIMSKY_PROCESS_ROLE=unified` (set by
+  `rimsky-entrypoint`); the per-process binaries cannot share state
+  through an in-process map.
+- Reference impls: `InlineBackend` (degenerate; never produces handles),
+  `MemoryBackend` (dev-only), `FilesystemBackend` (atomic writes via
+  temp + rename, 2-level fanout, sha256-derived paths, path-escape
+  rejection).
+- Defined `BlobOrphansStore` interface for the in-progress orphan-blob
+  sweep.
+
+**This dispatch (2026-05-08, second pass) added:**
+
+- **D3** `foundation/persistence/postgres/blob_largeobject.go` — pg-largeobject `BlobBackend` impl using the pgx LargeObjects API. Handles formatted as `pglo:<oid>`. Round-trip + range-read + idempotent-delete tests in `blob_largeobject_test.go` (testcontainers).
+- **D8** `foundation/integration/orphan_blobs.go` — `SweepOrphanedBlobs` sweep. Walks `rimsky_blob_orphans` for due rows, calls `BlobBackend.Delete`, removes the tracker row on success. Treats `ErrBlobNotFound` from `Delete` as success-and-forget; mismatched-backend rows are left alone (forward-compat for future mixed-backend deployments).
+- **D8** `foundation/persistence/{postgres,sqlite}/blob_orphans.go` — driver-side `BlobOrphansStore` impls. Insert is idempotent on the handle PK.
+- **F1 / F2 / F3** `modeling/node/template.go` — DSL extensions on `TemplateNodeDef`: `OnEvent map[string]EventHandler`, `MaxParkDuration string`, `MaxRetriesWithoutProgress *int`. Tri-state retry-cap pointer (nil = use deployment default; 0 = disable cap; N>0 = use N).
+- **F4** `modeling/attribute/substitution.go` — new substitution source kind `nodes.<emitter>.event.<name>.<json_path>`. Resolved via injected `ResolveContext.EventLookup` callable (keeps the substitution package decoupled from the persistence layer). Walks payload bytes through the same `walkPath` site that handles `deps` and `claim.payload` — preserves `@blessed-invariant 20` (claim/event content is inert).
+- **F5** `foundation/persistence/node_events.go` + per-driver impls — `NodeEventsStore` interface + Postgres/SQLite implementations of the rimsky_node_events ledger (Insert / LatestByName / DeleteByInstance). Append-only; DeleteByInstance returns the (handle, backend) pairs it cleared so the caller can queue them into rimsky_blob_orphans.
+- **F6 / F7** `modeling/node/template_validator.go` — `validateOnEvent` (cross-checks event names against `Capabilities.declared_events`) and `validateUserdataAgainstSchema` (compiles the executor's advertised JSON Schema and validates template-level userdata at registration). `RegistryHooks` extended with `ExecutorDeclaredEvents` and `ExecutorUserdataSchema` callable hooks. The control-api wires these from `AppDeps.ExecutorCapabilities` (a function field that exposes the observability cache without forcing controlapi to import observability).
+- **G1 / G2 / G3 / G4** `modeling/controlapi/admin_diagnostics.go` — three new admin endpoints:
+  - `GET /admin/diagnostics/held-frames` — frames with at least one parked node, grouped by frame_id.
+  - `GET /admin/diagnostics/parked-nodes` — every currently-parked node, optional `?reason=<name>` filter.
+  - `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` — admin-triggered invalidate; routed through a new `InvalidateHandler` interface so the control-api stays driver-agnostic. Returns 409 on the `ErrInvalidateConflict` sentinel; 503 when no handler is wired.
+  - The existing `/admin/scheduled-nodes/{id}/force-fire` endpoint stays scoped to scheduled nodes; a new comment in `admin_force_fire.go` documents the relationship.
+- **I1 / I2 / I3** `modeling/observability/metrics.go` + `metrics_test.go` — `MetricsRegistry` with the full plan-specified metric set (counters: dispatches, terminal_verdicts, invalidates, claim_acquisitions, named_events; gauges: nodes_by_state, parked_by_reason, held_frames, dispatch_queue_depth; histograms: dispatch_latency, claim_acquisition_latency, frame_duration, parked_duration_on_resume). All `rimsky_*`-prefixed and `_seconds`-suffixed per Prometheus conventions. `MountMetrics(r, m)` wires `/metrics` on a chi router. **`cmd/rimsky-control-api/main.go` wires `/metrics` on a separate port via `RIMSKY_METRICS_PORT` (0 = disabled).** scheduler + supervisor binaries take the same pattern; not yet wired (deferred).
+- **K1 / K2 / K3 / K4** new `mcp-servers/control-api/` Go module — bundled MCP shim wrapping the rimsky control-API as a tool catalog. JSON-RPC 2.0 over POST /mcp, no third-party MCP SDK. Tools: template_*, tag_*, instance_*, node_get, node_invalidate, force_fire_scheduled, held_frames_list, parked_nodes_list. Configuration via `CONTROL_API_URL`, `CONTROL_API_TOKEN`, `BIND_ADDR`, `PORT`. Docs at `docs/mcp-servers/control-api/README.md`. New module added to `go.work`.
+- **L1** `cmd/rimsky-blob-backend-conformance/main.go` — in-process BlobBackend conformance binary. Six checks: round-trip 1KB + 10MB, range read, delete-then-read, idempotent delete, concurrent writes. Verified working against `memory` and `filesystem` backends; pg-largeobject path tested via the testcontainers test in `foundation/persistence/postgres/blob_largeobject_test.go`.
+
+**Status of the rest of the plan:** Section E (foundation runtime —
+`ParkRequested` terminal handler, `SweepParkedNodes`, resume dispatch
+producing `ResumeContext`, `max_retries_without_progress` cap),
+section H (event handler dispatch in supervisor terminal pipeline),
+section J runtime (claude-agent CLI integration of the new MCP catalog
++ resolver + auto rate-limit park + resume + `report_complete`
+schema validation with corrective retry), section L2/L3 (extending
+`rimsky-conformance` to exercise `userdata_schema` /
+`declared_events` / `ParkRequested` / async-callback new shape;
+ledger-semantics scenario test), and section E5 runtime
+(`max_retries_without_progress` cap wiring on the on_error path) are
+not yet implemented. The protocol / state-machine / schema / blob-
+backend layer + DSL + substitution + control-API endpoint layer +
+bundled MCP shim + blob conformance binary this dispatch delivered
+are load-bearing for those sections; existing scenario tests,
+conformance tests, and the linter all still pass.
+
+**Third-pass dispatch (2026-05-08):**
+
+- `/metrics` endpoint wired into `cmd/rimsky-scheduler` and
+  `cmd/rimsky-supervisor` via `RIMSKY_METRICS_PORT` /
+  `RIMSKY_METRICS_HOST` env vars (matches the rimsky-control-api
+  pattern that landed in the prior dispatch). I1 finished.
+- claude-agent: `Capabilities.userdata_schema` and
+  `declared_events` populated from a new
+  `executors/claude-agent/src/userdata-schema.ts` module that
+  declares the JSON Schema for claude-agent's userdata; surfaced
+  through `capabilitiesPayload`. J1 done.
+- claude-agent: `executors/claude-agent/src/mcp-catalog.ts` —
+  startup-config loader that reads `CLAUDE_AGENT_CONFIG`
+  (default `/etc/claude-agent/config.yaml`), expands
+  `${VAR}` / `${VAR:-default}` env-var indirection, validates
+  catalog entries against the four supported transports
+  (http / stdio / module / http-loopback), and enforces
+  `policy.allow_modules_from` glob allow-listing. J2 done.
+- claude-agent: `executors/claude-agent/src/mcp-resolver.ts` —
+  per-dispatch resolution of userdata-side `cli.mcpServers` entries
+  against the loaded catalog. Refs are looked up; inline entries are
+  rejected unless `policy.allow_inline` is true; module/http-loopback
+  inline entries are checked against `policy.allow_modules_from`.
+  Override `config:` blocks are shallow-merged into module-class
+  catalog entries. J3 done.
+- Documentation: `docs/concepts/x-as-executor.md`,
+  `docs/concepts/domain-stores.md`,
+  `docs/concepts/deterministic-transformations.md`,
+  `docs/concepts/operational-health.md`,
+  `docs/concepts/design-philosophy.md` (M1+M4 done);
+  updates to `docs/protocols/executor.md` (new `NamedEvent` /
+  `ParkRequested` / `ResumeContext` / `AsyncCallbackBody` wire
+  surfaces; `userdata_schema` + `declared_events` Capabilities
+  fields), `docs/concepts/attributes.md` (event substitution source
+  kind), `docs/concepts/executor.md` (NamedEvent + ParkRequested in
+  the events list; "Using `Blocked` as a routing signal" section),
+  `docs/concepts/frame.md` ("Held frames" subsection); new
+  `docs/concepts/error-policy.md` (the `max_retries_without_progress`
+  cap and policy chain reference); new `docs/operator-guide.md`
+  (consolidates the operator-visible knobs added in this plan); new
+  per-component bootstrapping pages for
+  `docs/executors/claude-agent/README.md`,
+  `docs/executors/claude-agent/userdata.md`,
+  `docs/executors/http-node/README.md`,
+  `docs/stores/postgres/README.md`,
+  `docs/stores/filesystem/README.md`,
+  `docs/stores/stub/README.md` (M2 + M3 done).
+
 ### Per-instance userdata overrides — ad-hoc dispatch-time userdata at create time
 
 Operators can now attach a `userdata_overrides` blob to a `POST

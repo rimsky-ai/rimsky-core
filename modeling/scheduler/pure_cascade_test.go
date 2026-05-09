@@ -76,6 +76,44 @@ func (f *fakeQueue) GetByID(_ context.Context, _ shared.UUID) (*shared.DispatchR
 	return nil, nil
 }
 
+// Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
+// fakeQueue is a fixture used by pure-cascade tests that don't park
+// nodes; the helpers are no-ops returning the conventional zero values.
+func (f *fakeQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
+	return nil
+}
+func (f *fakeQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _, _ string) (bool, error) {
+	return false, nil
+}
+func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
+	return 0, nil, nil
+}
+func (f *fakeQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
+	return nil
+}
+func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
+	return nil
+}
+func (f *fakeQueue) LoadResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.ResumeMetadataRow, error) {
+	return nil, nil
+}
+func (f *fakeQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+	return nil
+}
+
+func (f *fakeQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
+	return nil, nil
+}
+
 func (f *fakeQueue) snapshot() []persistence.DispatchRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()

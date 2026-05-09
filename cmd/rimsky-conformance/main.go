@@ -45,6 +45,8 @@ func main() {
 	checkObs := flag.Bool("check-observability", false, "additionally probe ExecutorObservability per spec §6")
 	retentionSec := flag.Int("retention-test-seconds", 0, "if >0, drive a canned dispatch then sleep this long and verify GetTrace returns evicted=true (spec §6 retention check)")
 	checkLifecycle := flag.Bool("check-lifecycle", false, "probe LifecycleSubscriber six-RPC sanity instead of running executor scenarios")
+	callbackBind := flag.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
+	callbackHost := flag.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
 	flag.Parse()
 	obsRetentionTestSeconds = *retentionSec
 
@@ -75,6 +77,8 @@ func main() {
 		Only:            onlyList,
 		Skip:            skipList,
 		Timeout:         *timeout,
+		CallbackBind:    *callbackBind,
+		CallbackHost:    *callbackHost,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)

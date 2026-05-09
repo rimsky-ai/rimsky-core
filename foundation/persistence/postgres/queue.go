@@ -115,11 +115,18 @@ func (q *queueImpl) SelectCandidates(
 		acceptedExecutors = []string{}
 	}
 
+	// SELECT predicates: claimed_by IS NULL is the legacy unclaimed-row
+	// gate, but parked rows ALSO have claimed_by=NULL (cleared during
+	// the park transition so the orphan-claim reaper skips them per E2).
+	// Without phase='pending' the supervisor would claim parked rows
+	// directly and skip the wake path. Per the 2026-05-08 platform-
+	// extensions plan E2/E3.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
 		   FROM rimsky_worker_request d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
+		    AND d.phase = 'pending'
 		    AND d.required_stores <@ $1::text[]
 		    AND (d.executor_name = ANY($2::text[]) OR d.executor_name IS NULL)
 		    AND d.enqueued_at <= NOW()
@@ -160,6 +167,12 @@ func (q *queueImpl) SelectCandidates(
 }
 
 // ClaimDispatchRow — @blessed-invariant 2.
+//
+// The phase='pending' guard prevents accidental claims of parked rows:
+// parked rows have claimed_by=NULL (cleared during park) but their
+// transition back to active must go through the wake path (E3/G3/H2)
+// not through a direct claim, so the parked → stale → claimed lifecycle
+// runs in full.
 func (q *queueImpl) ClaimDispatchRow(
 	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
 ) (bool, error) {
@@ -169,7 +182,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_worker_request
 		    SET claimed_by = $1, claimed_at = NOW(), last_heartbeat_at = NOW(), phase = 'active'
-		  WHERE id = $2 AND claimed_by IS NULL`,
+		  WHERE id = $2 AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, dispatchID,
 	)
 	if err != nil {
@@ -432,6 +445,32 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 		return 0, err
 	}
 	return n, nil
+}
+
+// CountParkedByReason returns currently-parked rimsky_worker_request
+// counts grouped by parked_reason. Buckets NULL reason under "" so
+// callers can distinguish "no rows for this reason" (key absent) from
+// "parked rows with no reason recorded" (key="").
+func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT COALESCE(parked_reason, ''), COUNT(*)
+		   FROM rimsky_worker_request
+		  WHERE phase = 'parked'
+		  GROUP BY COALESCE(parked_reason, '')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var reason string
+		var n int
+		if err := rows.Scan(&reason, &n); err != nil {
+			return nil, err
+		}
+		out[reason] = n
+	}
+	return out, rows.Err()
 }
 
 // GetByID returns the live dispatch row for id, or (nil, nil) when no

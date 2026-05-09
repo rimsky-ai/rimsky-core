@@ -89,6 +89,7 @@ async function main(): Promise<void> {
     silenceTimeoutMs,
     logger,
     observability,
+    observabilityHttpBridgeUrl,
   });
 
   const http = await startHttpBridge({

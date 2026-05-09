@@ -82,6 +82,17 @@ interface ExecuteBody {
   // Field number 10 (`resumed`) is reserved on the wire under
   // stores-redesign-v2. Resume is universal — substrate-detected.
   run_attempt?: number;
+  // J10 plan: when this is a resume after ParkRequested, the supervisor
+  // populates resume_context with the original session_token + payload
+  // and a resume_reason ("deadline_elapsed" | "external_invalidate").
+  // The bridge extracts session_token and passes it to the CLI's
+  // `--resume <id>` arg; payload + reason are exposed to the prompt
+  // template as `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}`.
+  resume_context?: {
+    payload?: string; // base64 of bytes; optional, may be empty
+    session_token?: string;
+    resume_reason?: string;
+  };
 }
 
 export async function startHttpBridge(
@@ -181,6 +192,7 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
+      resumeContext: parseResumeContext(body.resume_context),
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
     if (config.observability) {
@@ -226,6 +238,15 @@ async function runAndCallback(
   }
 }
 
+/**
+ * encodeBase64 wraps a Uint8Array in a base64 string suitable for the
+ * proto-JSON `bytes` field encoding (the convention Go's
+ * `encoding/json.Unmarshal` uses to decode `[]byte` fields).
+ */
+function encodeBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
 function outcomeToCallbackBody(
   outcome: AgentOutcome,
   ackId: string,
@@ -249,6 +270,22 @@ function outcomeToCallbackBody(
       context: outcome.context,
     };
   }
+  if (outcome.kind === "park_requested") {
+    // Plan A5/J9: emit the new AsyncCallbackBody shape (the supervisor
+    // tries the new shape first and falls back to the legacy shape on
+    // parse error, so emitting the new shape is forward-compatible).
+    // The proto-JSON convention for `bytes` fields is base64; Go's
+    // `encoding/json.Unmarshal` into []byte expects a base64 string.
+    return {
+      async_ack_id: ackId,
+      park_requested: {
+        reason: outcome.reason,
+        payload: encodeBase64(outcome.payload),
+        ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
+        session_token: outcome.sessionToken,
+      },
+    };
+  }
   return {
     async_ack_id: ackId,
     type: "errored",
@@ -269,19 +306,32 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
 // @source: src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
 // Mirror of the gRPC server's userdata unwrap. The HTTP bridge usually
 // receives plain JSON (no Struct envelope) but accepts the proto-Struct
-// shape too so behavior stays consistent across transports.
+// shape too so behavior stays consistent across transports. Both snake_case
+// and camelCase Value-kind discriminators are accepted — matches the
+// production gRPC path that uses keepCase: true.
 function unwrapStructValue(v: unknown): unknown {
   if (v === null || v === undefined) return null;
   if (typeof v !== "object") return v;
   const o = v as Record<string, unknown>;
   const kind = typeof o.kind === "string" ? o.kind : undefined;
-  if (kind === "stringValue") return typeof o.stringValue === "string" ? o.stringValue : "";
-  if (kind === "numberValue") return typeof o.numberValue === "number" ? o.numberValue : 0;
-  if (kind === "boolValue") return typeof o.boolValue === "boolean" ? o.boolValue : false;
-  if (kind === "nullValue") return null;
-  if (kind === "structValue") return unwrapStruct(o.structValue);
-  if (kind === "listValue") {
-    const lv = o.listValue as { values?: unknown[] } | undefined;
+  if (kind === "string_value" || kind === "stringValue" || (kind === undefined && typeof (o.string_value ?? o.stringValue) === "string")) {
+    const s = (o.string_value ?? o.stringValue);
+    return typeof s === "string" ? s : "";
+  }
+  if (kind === "number_value" || kind === "numberValue" || (kind === undefined && typeof (o.number_value ?? o.numberValue) === "number")) {
+    const n = (o.number_value ?? o.numberValue);
+    return typeof n === "number" ? n : 0;
+  }
+  if (kind === "bool_value" || kind === "boolValue" || (kind === undefined && typeof (o.bool_value ?? o.boolValue) === "boolean")) {
+    const b = (o.bool_value ?? o.boolValue);
+    return typeof b === "boolean" ? b : false;
+  }
+  if (kind === "null_value" || kind === "nullValue") return null;
+  if (kind === "struct_value" || kind === "structValue") {
+    return unwrapStruct(o.struct_value ?? o.structValue);
+  }
+  if (kind === "list_value" || kind === "listValue") {
+    const lv = (o.list_value ?? o.listValue) as { values?: unknown[] } | undefined;
     return (lv?.values ?? []).map(unwrapStructValue);
   }
   return v;
@@ -354,6 +404,8 @@ function parseCliConfig(v: unknown): {
   disallowedTools?: string[];
   addDirs?: string[];
   maxBudgetUsd?: string;
+  handleRateLimits?: boolean;
+  maxSchemaCorrections?: number;
 } | undefined {
   const cli = toRecord(v);
   if (Object.keys(cli).length === 0) return undefined;
@@ -370,5 +422,38 @@ function parseCliConfig(v: unknown): {
   if (ad !== undefined) out!.addDirs = ad;
   const mb = stringOrUndefined(cli.max_budget_usd);
   if (mb !== undefined) out!.maxBudgetUsd = mb;
+  const hr = boolOrUndefined(cli.handle_rate_limits);
+  if (hr !== undefined) out!.handleRateLimits = hr;
+  const msc = numberOrUndefined(cli.max_schema_corrections);
+  if (msc !== undefined) out!.maxSchemaCorrections = msc;
   return Object.keys(out!).length > 0 ? out : undefined;
+}
+
+function numberOrUndefined(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+// @source: src/server.ts (parseResumeContext)
+function parseResumeContext(v: unknown): {
+  payload?: Uint8Array;
+  sessionToken?: string;
+  resumeReason?: string;
+} | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as Record<string, unknown>;
+  const out: {
+    payload?: Uint8Array;
+    sessionToken?: string;
+    resumeReason?: string;
+  } = {};
+  if (typeof r.payload === "string" && r.payload.length > 0) {
+    out.payload = Buffer.from(r.payload, "base64");
+  }
+  if (typeof r.session_token === "string" && r.session_token.length > 0) {
+    out.sessionToken = r.session_token;
+  }
+  if (typeof r.resume_reason === "string" && r.resume_reason.length > 0) {
+    out.resumeReason = r.resume_reason;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

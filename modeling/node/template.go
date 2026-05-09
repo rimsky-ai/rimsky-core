@@ -75,6 +75,48 @@ type TemplateNodeDef struct {
 	OnExecutorComplete   *OnExecutorCompleteHandler   `yaml:"on_executor_complete,omitempty"   json:"on_executor_complete,omitempty"`
 	OnExecutorBlocked    *OnExecutorTerminalHandler   `yaml:"on_executor_blocked,omitempty"    json:"on_executor_blocked,omitempty"`
 	OnExecutorErrored    *OnExecutorTerminalHandler   `yaml:"on_executor_errored,omitempty"    json:"on_executor_errored,omitempty"`
+
+	// OnEvent declares per-named-event handlers for non-terminal events
+	// the executor emits via the protocol-layer NamedEvent wire type.
+	// Keys are event names that MUST appear in the executor's
+	// Capabilities.declared_events; the modeling-layer template
+	// validator (modeling/template/userdata_validation.go) cross-checks.
+	// Per the 2026-05-08 platform-extensions plan F1.
+	OnEvent map[string]EventHandler `yaml:"on_event,omitempty" json:"on_event,omitempty"`
+
+	// MaxParkDuration caps how long a parked node may stay parked before
+	// the SweepParkedNodes watchdog forces it to fail with
+	// error_class=park_timeout. Empty string means "use deployment
+	// default" (rimsky has no global hard cap; absence = unbounded).
+	// Format: any time.ParseDuration string ("24h", "30m", etc.).
+	// Per the 2026-05-08 platform-extensions plan F2.
+	MaxParkDuration string `yaml:"max_park_duration,omitempty" json:"max_park_duration,omitempty"`
+
+	// MaxRetriesWithoutProgress caps the number of consecutive retry
+	// dispatches that produce no last_outcome change before the runner
+	// forces an Errored verdict with error_class=retry_loop_no_progress.
+	// Pointer for tri-state semantics: nil = use deployment default
+	// (default 100); 0 = disable cap entirely (infinite retries
+	// permitted); N>0 = use N. Per plan F3.
+	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
+}
+
+// EventHandler declares the supervisor's behavior when an executor emits
+// a NamedEvent matching one of the keys in TemplateNodeDef.OnEvent.
+//
+// Resolve is one of "pass" | "retry" | "error" | "" (default = do
+// nothing beyond firing Invalidate). ErrorClass is required when
+// Resolve == "error".
+//
+// Invalidate fires unconditionally when the handler runs (orthogonal to
+// Resolve), exactly like the lifecycle-handler invalidate slot. Targets
+// are node types or "self"; Frame is "in" | "next" (default "next").
+//
+// Per plan F1.
+type EventHandler struct {
+	Resolve    string             `yaml:"resolve,omitempty" json:"resolve,omitempty"`
+	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"`
+	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
 }
 
 // OnAcquireUnavailableHandler declares the supervisor's behavior when

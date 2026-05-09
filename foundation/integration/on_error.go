@@ -49,6 +49,11 @@ type OnErrorArgs struct {
 	SupervisorID string
 	ErrorClass   string
 	Payload      map[string]any
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook (plan I3). Threaded through to InvalidateNode call sites
+	// fired from the policy chain so `rimsky_invalidates_total` covers
+	// policy_invalidate fan-out. Nil → no-op.
+	Metrics MetricsHook
 }
 
 // OnError evaluates the node's policy for ErrorClass and applies the
@@ -200,6 +205,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				Reason:       "policy_invalidate",
 				SupervisorID: args.SupervisorID,
 				Frame:        resolved.Frame,
+				Metrics:      args.Metrics,
 			})
 		}
 		return nil

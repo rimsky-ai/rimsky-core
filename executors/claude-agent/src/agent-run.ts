@@ -7,7 +7,6 @@ import { statSync } from "node:fs";
 import type { Logger } from "pino";
 // ajv ships CJS — under ESM+NodeNext we reach the constructor through the
 // interop namespace; the `.default` arm handles the nested form.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 import * as AjvNs from "ajv";
 type AjvCtor = new (opts?: object) => { compile: (schema: object) => (v: unknown) => boolean };
 const Ajv: AjvCtor = (((AjvNs as unknown) as { default?: AjvCtor }).default ??
@@ -19,6 +18,7 @@ import {
   defaultPostAttributes,
   type PostAttributesFn,
 } from "./attributes-tools.js";
+import { detectRateLimit } from "./rate-limit.js";
 
 /**
  * Outcome the executor relays back to the rimsky supervisor via the async
@@ -41,7 +41,17 @@ export type AgentOutcome =
       changeSummary: string | null;
     }
   | { kind: "blocked"; reason: string; context: unknown }
-  | { kind: "errored"; errorClass: string; payload: unknown };
+  | { kind: "errored"; errorClass: string; payload: unknown }
+  | {
+      // J9 rate-limit auto-park (and any other voluntary park trigger).
+      // The supervisor receives ParkRequested via the gRPC stream or
+      // async callback (see plan A3).
+      kind: "park_requested";
+      reason: string;
+      payload: Uint8Array;
+      resumeAt: Date | null; // null → indefinite park
+      sessionToken: string;
+    };
 
 export interface AgentRunOptions {
   runId: string;
@@ -112,6 +122,22 @@ export interface AgentRunOptions {
     disallowedTools?: string[];
     addDirs?: string[];
     maxBudgetUsd?: string;
+    /**
+     * J9 plan: when true (default), claude-agent inspects CLI stderr for
+     * rate-limit signals (Anthropic 429 / `rate_limit_error`) and emits
+     * `park_requested` instead of `errored` so the supervisor parks the
+     * node and resumes after the reset window.
+     */
+    handleRateLimits?: boolean;
+    /**
+     * J8 plan: maximum corrective `report_complete` retries on schema-
+     * validation failure. The executor returns "rejected" with the
+     * validation errors to the agent's MCP call, the agent corrects
+     * and retries; after this many failed retries the run terminates
+     * with `Errored { error_class: "schema_validation_failed" }`.
+     * Default 3.
+     */
+    maxSchemaCorrections?: number;
   };
   /**
    * Supervisor-issued URLs / tokens that flow through to the incremental
@@ -124,6 +150,19 @@ export interface AgentRunOptions {
   silenceTimeoutMs: number;
   logger: Logger;
   /**
+   * J10: Resume context populated by the supervisor when this dispatch
+   * is a resume after a prior ParkRequested. When `sessionToken` is
+   * non-empty, claude-agent launches the CLI with `--resume <token>`
+   * so the prior conversation resumes; `payload` and `reason` are
+   * surfaced to the prompt-template engine as
+   * `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}`.
+   */
+  resumeContext?: {
+    payload?: Uint8Array;
+    sessionToken?: string;
+    resumeReason?: string;
+  };
+  /**
    * Optional override for the writeback POST function used by the
    * `attributes_set` MCP tool. Tests swap this out to avoid real network
    * calls.
@@ -132,6 +171,24 @@ export interface AgentRunOptions {
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
+  // Protocol contract: executors must reject malformed userdata
+  // consistently across stub and live modes (matches http-node's
+  // `userdata.url required` enforcement at server.go:142-148). The
+  // probe escape hatch (`stub_probe: true`) is *only* honored in
+  // stub mode; conformance scenarios that exercise malformed-shape
+  // rejection deliberately omit the flag so the heuristic fires.
+  const ud = (opts.templateVars.userdata ?? {}) as Record<string, unknown>;
+  const isProbe = ud.stub_probe === true && stubModeEnabled();
+  if (!isProbe) {
+    const reason = malformedUserdataReason(ud);
+    if (reason !== null) {
+      return {
+        kind: "errored",
+        errorClass: "invalid_userdata",
+        payload: { reason },
+      };
+    }
+  }
   if (stubModeEnabled()) {
     return runAgentStub(opts);
   }
@@ -145,12 +202,64 @@ export function stubModeEnabled(): boolean {
 async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   opts.logger.info({ runId: opts.runId }, "agent-run: stub mode");
   await new Promise((r) => setTimeout(r, 50));
+  const ud = opts.templateVars.userdata ?? {};
+
+  // Conformance-probe escape hatch (mirrors http-node/server.go): when the
+  // suite flags userdata with `stub_probe: true`, return either the
+  // configured stub_response or the canonical {stub: true}. Malformed-
+  // userdata rejection runs in `runAgent` before this function is reached,
+  // so non-probe userdata that arrived here is already known good.
+  const isProbe = ud.stub_probe === true;
+  if (!isProbe) {
+    // Stub-mode fallthrough for non-probe userdata: honor the §14.4
+    // contract by returning the canonical stub response.
+    return {
+      kind: "complete",
+      attributesDelta: { stub: true },
+      changed: true,
+      changeSummary: "stub",
+    };
+  }
+
+  const stubResponse = ud.stub_response;
+  if (stubResponse !== undefined) {
+    if (typeof stubResponse !== "object" || stubResponse === null || Array.isArray(stubResponse)) {
+      return {
+        kind: "errored",
+        errorClass: "invalid_userdata",
+        payload: { reason: `stub_response must be a JSON object, got ${typeof stubResponse}` },
+      };
+    }
+    return {
+      kind: "complete",
+      attributesDelta: stubResponse as Record<string, unknown>,
+      changed: true,
+      changeSummary: "stub",
+    };
+  }
   return {
     kind: "complete",
     attributesDelta: { stub: true },
     changed: true,
     changeSummary: "stub",
   };
+}
+
+// malformedUserdataReason returns a non-null reason string when userdata
+// matches a known "malformed" shape the conformance `malformed_userdata`
+// scenario uses. Keep this list aligned with the scenario in
+// `conformance/scenarios/malformed_userdata.go`.
+//
+// Reserved-key convention: malformed-shape markers MUST be `_`-prefixed
+// (`_invalid`, `_missing_url`, …) so plain field names a template author
+// might legitimately use cannot trip the rejection. The userdata schema
+// at registration uses `additionalProperties: false`, so production
+// templates are doubly protected; this heuristic guards ad-hoc / debug
+// paths that bypass schema validation.
+function malformedUserdataReason(ud: Record<string, unknown>): string | null {
+  if (ud._invalid !== undefined) return "userdata._invalid present (reserved)";
+  if (ud._missing_url === true) return "userdata._missing_url is set (reserved)";
+  return null;
 }
 
 async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
@@ -170,10 +279,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     callbackUrl,
     cancelToken,
     cliRunner,
-    callback,
     silenceTimeoutMs,
     logger,
     postAttributes,
+    resumeContext,
   } = opts;
 
   const cwdResolution = resolveCwd({
@@ -197,9 +306,20 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   // the agent to have shell access to read `RIMSKY_CALLBACK_TOKEN` from env
   // (the env var is still set on the child for tools that DO have shell).
   const callbackToken = randomUUID();
+  // Expose resume context to the prompt-template engine as
+  // `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}` per J10.
+  // Templates that don't reference these vars are unaffected.
+  const rimskyVars: Record<string, string> = {};
+  if (resumeContext?.payload && resumeContext.payload.length > 0) {
+    rimskyVars.resume_payload = Buffer.from(resumeContext.payload).toString("utf8");
+  }
+  if (resumeContext?.resumeReason) {
+    rimskyVars.resume_reason = resumeContext.resumeReason;
+  }
   const promptVars = {
     ...templateVars,
     callback_token: callbackToken,
+    rimsky: rimskyVars,
   };
 
   const renderedSystem = renderTemplate(systemPrompt, promptVars);
@@ -331,6 +451,56 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
   };
 
+  // J8: track corrective `report_complete` retries. After more than
+  // maxSchemaCorrections (default 3) consecutive validation failures,
+  // the run terminates with `Errored { error_class: "schema_validation_failed" }`.
+  const maxSchemaCorrections =
+    typeof cliConfig?.maxSchemaCorrections === "number" && cliConfig.maxSchemaCorrections >= 0
+      ? cliConfig.maxSchemaCorrections
+      : 3;
+  let schemaCorrectionFailures = 0;
+
+  // rejectWithCorrection bumps the corrective-retry counter. When the
+  // counter exceeds the cap, it schedules teardown with an `errored`
+  // outcome AND returns "accepted" so the agent's tool call resolves
+  // (the run is committed; the agent sees the success but the
+  // supervisor receives Errored). Otherwise it returns "rejected"
+  // with a corrective message — the agent can re-call report_complete
+  // with a fixed delta.
+  const rejectWithCorrection = (
+    detail: string,
+    scheduleTeardown: (td: () => Promise<void>) => void,
+  ): { status: "accepted" } | { status: "rejected"; errors: Record<string, string[]> } => {
+    schemaCorrectionFailures++;
+    if (schemaCorrectionFailures > maxSchemaCorrections) {
+      logger.warn(
+        { runId, failures: schemaCorrectionFailures, max: maxSchemaCorrections },
+        "report_complete: schema corrections exhausted; committing errored",
+      );
+      scheduleTeardown(async () => {
+        await teardownCli();
+        safeResolve({
+          kind: "errored",
+          errorClass: "schema_validation_failed",
+          payload: {
+            attempts: schemaCorrectionFailures,
+            max: maxSchemaCorrections,
+            last_error: detail,
+          },
+        });
+      });
+      return { status: "accepted" };
+    }
+    return {
+      status: "rejected",
+      errors: {
+        attributes_delta: [
+          `${detail} (correction ${schemaCorrectionFailures}/${maxSchemaCorrections})`,
+        ],
+      },
+    };
+  };
+
   effectiveCallback.registry.register(callbackToken, {
     runId,
     attributesAtSpawn: attributes,
@@ -348,20 +518,18 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       // incremental writeback omit it).
       if (attributesDelta !== null) {
         if (typeof attributesDelta !== "object" || Array.isArray(attributesDelta)) {
-          return {
-            status: "rejected",
-            errors: { attributes_delta: ["must be an object"] },
-          };
+          return rejectWithCorrection(
+            "must be an object",
+            scheduleTeardown,
+          );
         }
         try {
           JSON.stringify(attributesDelta);
         } catch (e) {
-          return {
-            status: "rejected",
-            errors: {
-              attributes_delta: [`unserializable_attributes_delta: ${String(e)}`],
-            },
-          };
+          return rejectWithCorrection(
+            `unserializable_attributes_delta: ${String(e)}`,
+            scheduleTeardown,
+          );
         }
         if (validateAttributes) {
           // The delta merged on top of the dispatch-time attributes is
@@ -371,15 +539,16 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           if (!validateAttributes(merged)) {
             const errs =
               (validateAttributes as unknown as { errors?: unknown[] }).errors ?? [];
-            return {
-              status: "rejected",
-              errors: {
-                attributes_delta: errs.map((e) => JSON.stringify(e)),
-              },
-            };
+            return rejectWithCorrection(
+              errs.map((e) => JSON.stringify(e)).join("; ") || "validation failed",
+              scheduleTeardown,
+            );
           }
         }
       }
+      // Validation passed — reset the corrective-retry counter so a
+      // future delta replacement starts fresh.
+      schemaCorrectionFailures = 0;
       scheduleTeardown(async () => {
         await teardownCli();
         safeResolve({
@@ -408,29 +577,53 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   let handle: CliHandle;
   try {
-    handle = await cliRunner.spawn({
-      model,
-      systemPrompt: renderedSystem,
-      userPrompt: renderedUser,
-      tools: [
-        { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
-      ],
-      env: {
-        RIMSKY_CALLBACK_URL: effectiveCallback.url,
-        RIMSKY_CALLBACK_TOKEN: callbackToken,
-      },
-      cwd,
-      // runId is the rimsky-side UUID for this dispatch. Reusing it as
-      // the CLI's session-id gives stable trace correlation AND lets us
-      // resume the same session on the post-exit retry path below.
-      sessionId: runId,
-      bare: cliConfig?.bare,
-      permissionMode: cliConfig?.permissionMode,
-      allowedTools: cliConfig?.allowedTools,
-      disallowedTools: cliConfig?.disallowedTools,
-      addDirs: cliConfig?.addDirs,
-      maxBudgetUsd: cliConfig?.maxBudgetUsd,
-    });
+    // J10: When resumeContext.sessionToken is set we resume the same
+    // CLI session so the agent's prior context (tool calls, memory,
+    // partial work) is preserved across the park boundary. Otherwise
+    // this is a fresh dispatch.
+    if (
+      resumeContext?.sessionToken &&
+      resumeContext.sessionToken.length > 0 &&
+      cliRunner.resume !== undefined
+    ) {
+      logger.info(
+        { runId, session_token: resumeContext.sessionToken, resume_reason: resumeContext.resumeReason ?? "" },
+        "cli.resume_after_park",
+      );
+      handle = await cliRunner.resume({
+        sessionId: resumeContext.sessionToken,
+        prompt: renderedUser,
+        env: {
+          RIMSKY_CALLBACK_URL: effectiveCallback.url,
+          RIMSKY_CALLBACK_TOKEN: callbackToken,
+        },
+        cwd,
+      });
+    } else {
+      handle = await cliRunner.spawn({
+        model,
+        systemPrompt: renderedSystem,
+        userPrompt: renderedUser,
+        tools: [
+          { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+        ],
+        env: {
+          RIMSKY_CALLBACK_URL: effectiveCallback.url,
+          RIMSKY_CALLBACK_TOKEN: callbackToken,
+        },
+        cwd,
+        // runId is the rimsky-side UUID for this dispatch. Reusing it as
+        // the CLI's session-id gives stable trace correlation AND lets us
+        // resume the same session on the post-exit retry path below.
+        sessionId: runId,
+        bare: cliConfig?.bare,
+        permissionMode: cliConfig?.permissionMode,
+        allowedTools: cliConfig?.allowedTools,
+        disallowedTools: cliConfig?.disallowedTools,
+        addDirs: cliConfig?.addDirs,
+        maxBudgetUsd: cliConfig?.maxBudgetUsd,
+      });
+    }
     logger.info(
       {
         runId,
@@ -455,12 +648,20 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   handleRef = handle;
 
   let lastStdoutAt = Date.now();
+  // Bounded stderr buffer for J9 rate-limit detection. We only care
+  // about the most recent ~16 KB; older bytes are dropped via shift.
+  const stderrCap = 16 * 1024;
+  let stderrBuf = "";
   handle.onStdout((chunk) => {
     lastStdoutAt = Date.now();
     logger.info({ runId, chunk: chunk.slice(0, 2000) }, "cli.stdout");
   });
   handle.onStderr((chunk) => {
     logger.warn({ runId, chunk: chunk.slice(0, 2000) }, "cli.stderr");
+    stderrBuf += chunk;
+    if (stderrBuf.length > stderrCap) {
+      stderrBuf = stderrBuf.slice(stderrBuf.length - stderrCap);
+    }
   });
 
   let teardownResolve!: () => void;
@@ -534,6 +735,43 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     if (raceTimer) clearTimeout(raceTimer);
     if (teardownInProgress) return;
     if (resolved) return; // a terminal MCP callback fired between exit and now
+
+    // J9: rate-limit auto-park. When the CLI dies non-zero AND its
+    // stderr carries a rate-limit signal AND userdata.cli.handle_rate_limits
+    // is enabled (default true), emit `park_requested` instead of
+    // bouncing through the recovery path. The supervisor receives
+    // ParkRequested and parks the node until the reset window
+    // (or external invalidate) fires.
+    const handleRateLimits = cliConfig?.handleRateLimits !== false;
+    if (
+      handleRateLimits &&
+      exitCode !== 0 &&
+      exitCode !== null &&
+      stderrBuf.length > 0
+    ) {
+      const signalRL = detectRateLimit(stderrBuf, new Date());
+      if (signalRL.detected) {
+        logger.warn(
+          {
+            runId,
+            exit_code: exitCode,
+            signal,
+            resume_at: signalRL.resumeAt?.toISOString() ?? null,
+          },
+          "cli.rate_limit_detected; emitting park_requested",
+        );
+        safeResolve({
+          kind: "park_requested",
+          reason: signalRL.reason,
+          payload: new Uint8Array(),
+          resumeAt: signalRL.resumeAt,
+          // The CLI session id is the rimsky run id; resume passes
+          // it back via ResumeContext.session_token for `--resume`.
+          sessionToken: runId,
+        });
+        return;
+      }
+    }
 
     // Recovery path: subprocess exited cleanly (code 0) but never called
     // mcp__rimsky-callback__report_complete. The orchestrator pattern's

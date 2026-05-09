@@ -24,7 +24,9 @@ Nodes need typed contracts. Without them, dependency edges between nodes are wir
 
 Both gates are mandatory. The double-validation catches both substitution bugs (where the source value doesn't match the schema) and executor bugs (where the executor returns something the schema doesn't allow).
 
-The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `{{deps.<source>.<field>}}` for upstream values, `{{claim.<alias>.payload.<field>}}` for claim-pass payloads, or `{{params.<key>}}` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
+The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `nodes.<source>.value.<path>` for upstream values, `nodes.<emitter>.event.<name>.<path>` for executor-emitted named-event payloads, `claim.<alias>.payload.<path>` for claim-pass payloads, or `params.<path>` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
+
+The `nodes.<emitter>.event.<name>.<path>` source kind reads from the per-instance event ledger (rows persisted when the emitting executor streams a `NamedEvent`). The most-recent emission of `(emitter, name)` is selected; `<path>` walks the JSON payload via the same `walkPath` mechanism as the value substitution. Event payloads inherit the same opacity discipline as attribute values — the supervisor never logs, normalizes, or transforms them outside this substitution-leaf extraction (`@blessed-invariant 11` / `@blessed-invariant 21`).
 
 ## How you encounter it
 

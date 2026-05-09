@@ -557,6 +557,22 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 	return nil
 }
 
+// CountHeldFrames returns the number of running frames that have at
+// least one parked rimsky_worker_request row attached via frame_id.
+func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT f.frame_id)
+		   FROM rimsky_frames f
+		   JOIN rimsky_worker_request d ON d.frame_id = f.frame_id
+		  WHERE f.state = 'running' AND d.phase = 'parked'`,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("frames.CountHeldFrames: %w", err)
+	}
+	return n, nil
+}
+
 // GetForObservability returns one frame by id.
 func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRow, error) {
 	var (

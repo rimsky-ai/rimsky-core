@@ -32,6 +32,26 @@ message ObservabilityCapabilities {
   // dial this URL directly for browser-friendly fetch/SSE access. When
   // empty, peers expose only the gRPC surface.
   string http_bridge_url = 5;
+
+  // userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
+  // the executor's accepted userdata shape. Empty means "no schema; accept
+  // any userdata."
+  //
+  // Rimsky validates incoming template userdata against this schema at
+  // template registration and at dispatch (post-merge,
+  // post-substitution). Validation failures route through
+  // Errored { error_class: "userdata_validation_failed" }.
+  bytes userdata_schema = 6;
+
+  // declared_events is the set of event names this executor may emit
+  // via the non-terminal Event wire type on ExecuteEvent. Empty means
+  // "executor does not emit events."
+  //
+  // Rimsky validates that any on_event handlers in templates referencing
+  // this executor name an event in declared_events. Reserved lifecycle
+  // slots (on_executor_complete/blocked/errored, on_acquire_unavailable)
+  // are not subject to this validation.
+  repeated string declared_events = 7;
 }
 
 message CustomUI {

@@ -28,12 +28,23 @@ type ObservabilityServer struct {
 func NewObservabilityServer() *ObservabilityServer { return &ObservabilityServer{} }
 
 // GetCapabilities reports the no-observability shape: every supports_*
-// flag false, retention 0, no custom UI.
+// flag false, retention 0, no custom UI. DeclaredEvents lists the
+// event names the stub emits in scenario fixtures so the F6 cross-
+// validator accepts templates referencing them. The stub itself does
+// not constrain emissions; this list mirrors the event names used
+// across test/scenarios/.
 func (*ObservabilityServer) GetCapabilities(_ context.Context, _ *genv1.GetCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	return &genv1.ObservabilityCapabilities{
 		SupportsTraceGet:              false,
 		SupportsTraceStream:           false,
 		RetentionAfterTerminalSeconds: 0,
+		DeclaredEvents: []string{
+			"ready",
+			"signal",
+			"checkpoint",
+			"progress",
+			"completed",
+		},
 	}, nil
 }
 

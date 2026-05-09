@@ -8,14 +8,11 @@ package scenarios
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -26,51 +23,35 @@ func init() {
 	})
 }
 
-// runExecuteHappyPath opens an Execute stream, asserts a terminal event
-// arrives, and confirms the stream closes cleanly with io.EOF.
-func runExecuteHappyPath(ctx context.Context, c executor.Client) error {
+// runExecuteHappyPath opens an Execute stream and asserts a non-AsyncAccepted
+// terminal event arrives. For async executors AwaitTerminal follows the
+// callback POST to the conformance receiver and surfaces the synthesized
+// terminal in place of the AsyncAccepted bridge event.
+func runExecuteHappyPath(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-probe", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
 	defer stream.Close()
 
-	sawTerminal := false
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			if sawTerminal {
-				break // some transports close with non-EOF after terminal
-			}
-			return fmt.Errorf("recv before terminal: %w", err)
-		}
-		if isTerminal(ev) {
-			sawTerminal = true
-			// Keep draining until EOF to verify clean close.
-			continue
-		}
+	ev, err := conformance.AwaitTerminal(ctx, stream, env)
+	if err != nil {
+		return err
 	}
-	if !sawTerminal {
-		return errors.New("stream closed without a terminal event (spec §7.2)")
-	}
-	return nil
-}
-
-func isTerminal(ev *genv1.ExecuteEvent) bool {
 	switch ev.Event.(type) {
 	case *genv1.ExecuteEvent_Complete,
 		*genv1.ExecuteEvent_Blocked,
 		*genv1.ExecuteEvent_Errored,
-		*genv1.ExecuteEvent_AsyncAccepted:
-		return true
+		*genv1.ExecuteEvent_ParkRequested:
+		return nil
+	case *genv1.ExecuteEvent_AsyncAccepted:
+		return fmt.Errorf("happy-path terminal was AsyncAccepted but no callback arrived to resolve it")
 	}
-	return false
+	return fmt.Errorf("unexpected terminal type: %T", ev.Event)
 }

@@ -95,6 +95,43 @@ func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*shared.Dispat
 	return nil, nil
 }
 
+// Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
+// invTestQueue is the cascade-invalidate test fixture; the parked
+// helpers are no-ops since these tests don't park nodes.
+func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
+	return nil
+}
+func (f *invTestQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *invTestQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _, _ string) (bool, error) {
+	return false, nil
+}
+func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
+	return 0, nil, nil
+}
+func (f *invTestQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
+	return nil
+}
+func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
+	return nil
+}
+func (f *invTestQueue) LoadResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.ResumeMetadataRow, error) {
+	return nil, nil
+}
+func (f *invTestQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
+	return nil, nil
+}
+func (f *invTestQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+	return nil
+}
+
 func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -4,7 +4,7 @@ This directory hosts both the **public-documentation surface** (intended for ext
 
 ## Public surface
 
-- `concepts/` — canonical per-concept reference (one file per domain noun).
+- `concepts/` — canonical per-concept reference (one file per domain noun). See `concepts/design-philosophy.md` for the framing the rest of the surface is written under.
 - `protocols/` — protocol-implementation guides (`ClaimProducer`, `Executor`, `LifecycleSubscriber`).
 - `agents/` — agent-shaped indices (`llms.txt`, `llms-full.txt`), error catalog, copy-pasteable examples.
 - `humans/` — thin human-shaped surface (landing, narrative concept walk, dashboard guide).

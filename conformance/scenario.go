@@ -13,17 +13,27 @@ import (
 	"github.com/fallguy/rimsky/modeling/executor"
 )
 
+// Env is the per-run environment a Scenario receives. It bundles the dialed
+// executor Client with the conformance-side CallbackReceiver so scenarios can
+// validate both synchronous and async-handoff executors with one code path
+// (see AwaitTerminal).
+type Env struct {
+	Client    executor.Client
+	Callbacks *CallbackReceiver
+}
+
 // Scenario describes one protocol conformance check.
 //
-// Run performs the check against a dialed executor Client. A nil error means
-// PASS; any error means FAIL (its message is surfaced in the CLI output).
+// Run performs the check against an Env that bundles the dialed executor
+// Client and the conformance-side CallbackReceiver. A nil error means PASS;
+// any error means FAIL (its message is surfaced in the CLI output).
 // RequiresAsync and RequiresStub cause the Runner to skip the scenario when
 // capability probing indicates the executor cannot satisfy the precondition.
 type Scenario struct {
 	Name          string
 	RequiresAsync bool // skip if executor doesn't advertise async handoff
 	RequiresStub  bool // skip if probe indicates executor not in stub mode
-	Run           func(ctx context.Context, client executor.Client) error
+	Run           func(ctx context.Context, env Env) error
 }
 
 var registered []Scenario

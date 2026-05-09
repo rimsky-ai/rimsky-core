@@ -6,6 +6,7 @@ package persistence
 
 import (
 	"context"
+	"time"
 
 	"github.com/fallguy/rimsky/modeling/shared"
 )
@@ -29,6 +30,14 @@ type Driver interface {
 	// successfully execute a query. Used by the observability
 	// /v1/observability/system/health endpoint.
 	Ping(ctx context.Context) error
+
+	// SetBlobBackend installs the active BlobBackend + spill threshold +
+	// orphan-retention window on the underlying Store. The attribute
+	// write/read paths consult this configuration to decide whether to
+	// spill bytes to the configured BlobBackend (vs. inline storage).
+	// Set with bb=nil and threshold=0 to disable spill. See plan §D0/D6/D7.
+	SetBlobBackend(bb BlobBackend, threshold int, retention time.Duration)
+
 	Close() error
 }
 

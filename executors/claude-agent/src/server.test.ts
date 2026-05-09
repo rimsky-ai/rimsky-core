@@ -8,7 +8,16 @@ import pino from "pino";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadNodeExecutorProto } from "./proto-loader.js";
-import { startGrpcServer, type RunningServer } from "./server.js";
+import {
+  startGrpcServer,
+  type RunningServer,
+  isoToProtoTimestamp,
+  jsToProtoStruct,
+  jsToProtoValue,
+  traceEventToProto,
+  unwrapStruct,
+  unwrapStructValue,
+} from "./server.js";
 import {
   startInternalMcpServer,
   type CallbackServerHandle,
@@ -355,5 +364,192 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();
+  });
+});
+
+// Round-trip the production gRPC wire shape through unwrapStruct.
+// proto-loader runs with `keepCase: true` + `oneofs: true` (see
+// proto-loader.ts) which produces `{kind: "string_value", string_value: "x"}`
+// per Value. The dispatch path reads `userdata.model` from this shape;
+// the fix in unwrapStructValue accepts both the kind-set production form
+// and the kind-omitted older fixture form. Both must be covered.
+describe("unwrapStruct production wire shape (kind-set discriminator)", () => {
+  it("unwraps a kind-set string_value", () => {
+    const wire = {
+      fields: { model: { kind: "string_value", string_value: "sonnet" } },
+    };
+    expect(unwrapStruct(wire)).toEqual({ model: "sonnet" });
+  });
+  it("unwraps a kind-set number_value", () => {
+    const wire = {
+      fields: { delay_ms: { kind: "number_value", number_value: 250 } },
+    };
+    expect(unwrapStruct(wire)).toEqual({ delay_ms: 250 });
+  });
+  it("unwraps a kind-set bool_value", () => {
+    const wire = {
+      fields: { stub_probe: { kind: "bool_value", bool_value: true } },
+    };
+    expect(unwrapStruct(wire)).toEqual({ stub_probe: true });
+  });
+  it("unwraps a kind-set null_value", () => {
+    const wire = { fields: { x: { kind: "null_value", null_value: 0 } } };
+    expect(unwrapStruct(wire)).toEqual({ x: null });
+  });
+  it("unwraps a kind-set struct_value (nested object)", () => {
+    const wire = {
+      fields: {
+        cli: {
+          kind: "struct_value",
+          struct_value: {
+            fields: {
+              bare: { kind: "bool_value", bool_value: false },
+            },
+          },
+        },
+      },
+    };
+    expect(unwrapStruct(wire)).toEqual({ cli: { bare: false } });
+  });
+  it("unwraps a kind-set list_value (heterogeneous array)", () => {
+    const wire = {
+      fields: {
+        xs: {
+          kind: "list_value",
+          list_value: {
+            values: [
+              { kind: "string_value", string_value: "a" },
+              { kind: "number_value", number_value: 1 },
+              { kind: "bool_value", bool_value: false },
+            ],
+          },
+        },
+      },
+    };
+    expect(unwrapStruct(wire)).toEqual({ xs: ["a", 1, false] });
+  });
+  it("preserves the kind-omitted fixture form (legacy test shape)", () => {
+    const wire = { fields: { model: { string_value: "haiku" } } };
+    expect(unwrapStruct(wire)).toEqual({ model: "haiku" });
+  });
+  it("preserves the camelCase kind form (keepCase: false)", () => {
+    const wire = {
+      fields: { model: { kind: "stringValue", stringValue: "opus" } },
+    };
+    expect(unwrapStruct(wire)).toEqual({ model: "opus" });
+  });
+});
+
+// jsToProtoValue / jsToProtoStruct / isoToProtoTimestamp / traceEventToProto
+// are reached on every GetTrace + StreamTrace reply. Bugs in these silently
+// corrupt traces with no visible RPC error.
+describe("proto-conversion helpers", () => {
+  it("jsToProtoValue: scalars + null", () => {
+    expect(jsToProtoValue("x")).toEqual({ string_value: "x" });
+    expect(jsToProtoValue(7)).toEqual({ number_value: 7 });
+    expect(jsToProtoValue(true)).toEqual({ bool_value: true });
+    expect(jsToProtoValue(null)).toEqual({ null_value: "NULL_VALUE" });
+    expect(jsToProtoValue(undefined)).toEqual({ null_value: "NULL_VALUE" });
+  });
+  it("jsToProtoValue: arrays wrap in list_value", () => {
+    expect(jsToProtoValue(["a", 1, true])).toEqual({
+      list_value: {
+        values: [
+          { string_value: "a" },
+          { number_value: 1 },
+          { bool_value: true },
+        ],
+      },
+    });
+  });
+  it("jsToProtoValue: nested struct wraps in struct_value", () => {
+    expect(jsToProtoValue({ k: "v" })).toEqual({
+      struct_value: { fields: { k: { string_value: "v" } } },
+    });
+  });
+  it("jsToProtoStruct: null/undefined/non-object → null", () => {
+    expect(jsToProtoStruct(null)).toBeNull();
+    expect(jsToProtoStruct(undefined)).toBeNull();
+    expect(jsToProtoStruct("nope")).toBeNull();
+    expect(jsToProtoStruct([1, 2])).toBeNull();
+  });
+  it("jsToProtoStruct: empty object → empty fields", () => {
+    expect(jsToProtoStruct({})).toEqual({ fields: {} });
+  });
+  it("isoToProtoTimestamp: post-epoch positive ISO", () => {
+    // Date.UTC(2026, 4, 9, 12, 0, 0) — month is 0-indexed.
+    const iso = "2026-05-09T12:00:00.000Z";
+    const ts = isoToProtoTimestamp(iso);
+    expect(ts.nanos).toBe(0);
+    expect(ts.seconds).toBe(String(Date.UTC(2026, 4, 9, 12, 0, 0) / 1000));
+  });
+  it("isoToProtoTimestamp: fractional milliseconds → positive nanos in [0, 1e9)", () => {
+    const ts = isoToProtoTimestamp("2026-05-09T12:00:00.250Z");
+    expect(ts.nanos).toBe(250_000_000);
+    expect(Number(ts.seconds)).toBe(Math.floor(Date.UTC(2026, 4, 9, 12, 0, 0, 250) / 1000));
+  });
+  it("isoToProtoTimestamp: pre-epoch sub-second uses floor (no negative nanos)", () => {
+    // 1969-12-31T23:59:59.500Z = -500ms wall time. Math.trunc would
+    // produce nanos=-500_000_000 which violates the proto contract;
+    // Math.floor produces seconds=-1, nanos=500_000_000.
+    const ts = isoToProtoTimestamp("1969-12-31T23:59:59.500Z");
+    expect(ts.nanos).toBe(500_000_000);
+    expect(ts.nanos).toBeGreaterThanOrEqual(0);
+    expect(ts.nanos).toBeLessThan(1_000_000_000);
+    expect(ts.seconds).toBe("-1");
+  });
+  it("isoToProtoTimestamp: NaN fallback", () => {
+    expect(isoToProtoTimestamp("not-a-date")).toEqual({ seconds: "0", nanos: 0 });
+  });
+  it("traceEventToProto: full TraceEvent → proto shape with severity + nested attributes", () => {
+    const out = traceEventToProto({
+      event_id: "ev-1",
+      parent_event_id: "ev-0",
+      timestamp: "2026-05-09T12:00:00.000Z",
+      severity: "WARN",
+      category: "tool_call",
+      message: "called",
+      attributes: { tool: "shell", ok: true, count: 3, items: ["a"] },
+    });
+    expect(out.event_id).toBe("ev-1");
+    expect(out.parent_event_id).toBe("ev-0");
+    expect(out.severity).toBe("WARN");
+    expect(out.category).toBe("tool_call");
+    expect(out.message).toBe("called");
+    const ts = out.timestamp as { seconds: string; nanos: number };
+    expect(ts.nanos).toBe(0);
+    const attrs = out.attributes as { fields: Record<string, unknown> };
+    expect(attrs.fields.tool).toEqual({ string_value: "shell" });
+    expect(attrs.fields.ok).toEqual({ bool_value: true });
+    expect(attrs.fields.count).toEqual({ number_value: 3 });
+    expect(attrs.fields.items).toEqual({
+      list_value: { values: [{ string_value: "a" }] },
+    });
+  });
+  it("traceEventToProto: optional fields default sensibly", () => {
+    const out = traceEventToProto({
+      event_id: "ev-2",
+      timestamp: "2026-05-09T12:00:00.000Z",
+      severity: "INFO",
+      category: "trace_complete",
+    });
+    expect(out.parent_event_id).toBe("");
+    expect(out.message).toBe("");
+    expect(out.attributes).toBeNull();
+  });
+});
+
+// unwrapStructValue scalar fallback shapes (kind absent, value field absent
+// → returns sensible default). Pins the kind-omitted-fixture branch separate
+// from the production-wire tests above.
+describe("unwrapStructValue defensive defaults", () => {
+  it("returns null for null/undefined", () => {
+    expect(unwrapStructValue(null)).toBeNull();
+    expect(unwrapStructValue(undefined)).toBeNull();
+  });
+  it("passes scalars through unchanged", () => {
+    expect(unwrapStructValue("x")).toBe("x");
+    expect(unwrapStructValue(7)).toBe(7);
+    expect(unwrapStructValue(true)).toBe(true);
   });
 });

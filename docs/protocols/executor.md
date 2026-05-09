@@ -51,13 +51,15 @@ Dispatch a node. Inside `ExecuteRequest`:
 Stream back any number of these events:
 
 - **`Heartbeat`** — keep-alive while work continues.
+- **`NamedEvent`** — non-terminal domain-shaped signal. Two fields: `string name` (must appear in `Capabilities.declared_events`) plus `bytes payload` (opaque to Rimsky; available to substitution as `nodes.<emitter>.event.<name>.<path>`). Zero or more emissions per run; does not close the stream.
 - **`Complete`** — terminal success. Three fields:
     - `bool changed` — producer-declared verdict on whether this run produced a different value than the previous run. A `false` value halts cascade propagation at this node.
     - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
     - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run (see spec §12.5).
-- **`Blocked`** — terminal: I cannot proceed; the supervisor schedules retry per the node's error policy.
+- **`Blocked`** — terminal: I produced output but explicitly chose not to claim success. Use `Blocked` (rather than `Errored`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
 - **`Errored`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
 - **`AsyncAccepted`** — non-streaming terminal: I'll send the final event later via callback (see §4).
+- **`ParkRequested`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
 
 ### `ExecutorObservability.StreamTrace(StreamTraceRequest) → stream<TraceEvent>`
 
@@ -69,7 +71,9 @@ Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past inv
 
 ### `ExecutorObservability.GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`
 
-Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, and any custom UI URL the dashboard should embed. Probed once per peer at process startup.
+Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per peer at process startup.
+
+`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `on_event` handlers in registering templates; references to undeclared events reject the registration.
 
 ## 3. The userdata guarantee
 
@@ -84,7 +88,27 @@ This means:
 
 ## 4. The async-callback path
 
-For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AsyncAccepted` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor:
+For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AsyncAccepted` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor.
+
+Two callback body shapes are accepted; the supervisor parses the new shape first and falls back to the legacy shape on a parse error.
+
+**New shape (preferred).** Carries an optional events array plus exactly one terminal:
+
+```
+POST ${callback_url}/v1/callback/{async_ack_id}
+Content-Type: application/json
+
+{
+  "events": [
+    { "name": "phase_complete", "payload": "..." }
+  ],
+  "complete": { "changed": true, "attributes_delta": { ... } }
+}
+```
+
+Exactly one of `complete`, `blocked`, `errored`, `park_requested` must be set. Events from the array are persisted and processed before the terminal, so an `on_event` handler can fire mid-flight.
+
+**Legacy shape (still accepted).** Single-terminal-event:
 
 ```
 POST ${callback_url}/v1/callback/{async_ack_id}
@@ -99,10 +123,21 @@ Content-Type: application/json
 Important wire details:
 
 - The callback path is `${callback_url}/v1/callback/{async_ack_id}` — the supervisor's callback hostname (advertised via the `callback.advertise_host` config) plus the async_ack_id.
-- The body is keyed `type` (not `kind`). The supervisor's callback route enforces this exact key.
-- Valid `type` values mirror the streaming-event terminal types: `complete`, `blocked`, `errored`.
+- For the legacy shape, the body is keyed `type` (not `kind`). The supervisor's callback route enforces this exact key.
+- Valid legacy `type` values mirror the streaming-event terminal types: `complete`, `blocked`, `errored`.
+- New-shape bodies that include `park_requested` map onto the `ParkRequested` terminal event.
 
 The TS claude-agent reference impl's test suite (under `executors/claude-agent/`) covers this exact wire shape; refer to those tests when implementing async-callback in a different language.
+
+## 4a. Resume context
+
+When the supervisor resumes a parked node, the dispatch's `ExecuteRequest.resume_context` is populated with three fields:
+
+- `bytes payload` — the original `ParkRequested.payload`.
+- `string session_token` — the original `session_token` (executor-side correlation identifier).
+- `string resume_reason` — `"deadline_elapsed"` (time-based via `resume_at`) or `"external_invalidate"` (admin or in-graph invalidate).
+
+When `resume_context` is empty, this is a fresh dispatch. Executors that do not implement parking can ignore the field.
 
 ## 5. Conformance
 

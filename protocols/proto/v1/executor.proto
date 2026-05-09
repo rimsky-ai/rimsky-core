@@ -6,6 +6,7 @@ syntax = "proto3";
 package rimsky.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
 
@@ -80,6 +81,28 @@ message ExecuteRequest {
   // outside the worker-request-row path (e.g. unit tests or stub-mode
   // probes).
   string dispatch_id = 12;
+
+  // resume_context carries the bytes the executor previously emitted on
+  // ParkRequested. When absent, this is a fresh dispatch; when present,
+  // this is a resume of a parked node. See ResumeContext.
+  ResumeContext resume_context = 13;
+}
+
+// ResumeContext is rimsky's way of handing back to the executor the
+// session-resume material the executor itself produced when it parked.
+// Rimsky persists payload + session_token + resume_at on ParkRequested,
+// then constructs this message on resume dispatch. Both payload and
+// session_token are opaque to rimsky.
+message ResumeContext {
+  // The original ParkRequested.payload bytes.
+  bytes payload = 1;
+  // The original ParkRequested.session_token.
+  string session_token = 2;
+  // Why the parked node is being resumed: "deadline_elapsed" when the
+  // SweepParkedNodes sweep woke the node because resume_at passed;
+  // "external_invalidate" when the wake came from an admin endpoint or
+  // an in-graph on_event invalidate.
+  string resume_reason = 3;
 }
 
 // StoreHandle is the per-store reference handed to the executor at
@@ -112,7 +135,76 @@ message ExecuteEvent {
     Blocked blocked = 3;
     Errored errored = 4;
     AsyncAccepted async_accepted = 5;  // terminal; see spec §12.4 async handoff
+    NamedEvent named_event = 6;         // non-terminal; named domain event
+    ParkRequested park_requested = 7;   // terminal; node enters parked state
   }
+}
+
+// NamedEvent is a non-terminal record an executor MAY emit zero or more
+// times during a run. Emissions are persisted in the per-instance event
+// ledger (rimsky_node_events) and are made available to substitution via
+// the source kind `nodes.<emitter>.event.<name>.<json_path>`. The executor
+// MUST still emit exactly one terminal event (Complete | Blocked | Errored
+// | AsyncAccepted | ParkRequested) after any number of NamedEvent records.
+//
+// `name` MUST appear in the executor's ObservabilityCapabilities.declared_events;
+// rimsky validates this at template registration and rejects emissions
+// of undeclared names at the supervisor.
+//
+// Renamed from `Event` (the spec used the unqualified name) to avoid a
+// proto-level collision with the existing rimsky-internal events log
+// `Event` message in events.proto. The wire-level role is the same.
+message NamedEvent {
+  // Domain-meaningful event name. MUST be in declared_events.
+  string name = 1;
+  // Opaque to rimsky. Available to substitution via walkPath in the same
+  // way as inline attribute values; per blessed-invariant 20 (and 21 for
+  // spilled bytes), rimsky never logs, formats, transforms, or attaches
+  // payload bytes to traces or errors.
+  bytes payload = 2;
+}
+
+// ParkRequested is a terminal event from the gRPC stream's perspective:
+// it closes the stream and transitions the node from running to parked.
+// The held claim handle is retained across the park boundary; on resume,
+// rimsky re-dispatches with ExecuteRequest.resume_context populated from
+// payload + session_token captured here.
+//
+// At least one of resume_at or external invalidation must wake the node;
+// rimsky does not enforce this in-protocol. A ParkRequested with no
+// resume_at and no external invalidator produces an indefinite park
+// (eventually capped by the node's max_park_duration if configured).
+message ParkRequested {
+  // Recommended non-empty; empty is permitted but logged WARN at the
+  // supervisor.
+  string reason = 1;
+  // Opaque to rimsky. Passed back as ResumeContext.payload on resume.
+  bytes payload = 2;
+  // Optional. When non-zero, the supervisor's SweepParkedNodes sweep
+  // wakes the node at this wall-clock time with
+  // resume_reason = "deadline_elapsed". Absent means signal-based-only.
+  google.protobuf.Timestamp resume_at = 3;
+  // Optional. Opaque to rimsky. Passed back as
+  // ResumeContext.session_token on resume.
+  string session_token = 4;
+}
+
+// AsyncCallbackBody is the canonical schema for the HTTP+JSON body an
+// executor POSTs to ${callback_url}/v1/callback/{async_ack_id} after
+// emitting AsyncAccepted. The supervisor's HTTP handler tries to parse
+// the new shape (this message; events array + exactly one terminal
+// field) first and falls back to the legacy single-object shape
+// ({type: "complete"|"blocked"|"errored", ...}) on parse error. Both
+// shapes remain accepted indefinitely; the new shape is preferred.
+//
+// Exactly one of complete | blocked | errored | park_requested MUST be set.
+message AsyncCallbackBody {
+  // Optional. Processed in order before the terminal verdict.
+  repeated NamedEvent events = 1;
+  Complete complete = 2;
+  Blocked blocked = 3;
+  Errored errored = 4;
+  ParkRequested park_requested = 5;
 }
 
 // Heartbeat is a non-terminal progress indicator. Executors may emit any

@@ -142,9 +142,14 @@ func (c ExecutorsConfig) ExecutorDeclared(name string) bool {
 // config loaded by all four rimsky binaries from $RIMSKY_CONFIG.
 type RimskyConfig struct {
 	Persistence persistence.Config
-	Stores      RemoteStoresConfig
-	NamedLocks  locks.NamedLocksConfig
-	Executors   ExecutorsConfig
+	// Blob is the spill-config triple parsed from persistence.blob.
+	// Defaults to DefaultBlobConfig (inline; no spill) when the YAML
+	// key is absent. Validated by ValidateBlobConfig at startup, before
+	// driver.SetBlobBackend installs it.
+	Blob       persistence.BlobConfig
+	Stores     RemoteStoresConfig
+	NamedLocks locks.NamedLocksConfig
+	Executors  ExecutorsConfig
 }
 
 // LoadRimskyConfigYAML reads rimsky.yml: the unified deployment-shape
@@ -172,6 +177,20 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
+	type yamlBlob struct {
+		Backend             string `yaml:"backend"`
+		SpillThresholdBytes int    `yaml:"spill_threshold_bytes"`
+		Filesystem          *struct {
+			Root string `yaml:"root"`
+		} `yaml:"filesystem"`
+		PgLargeObject *struct {
+			Schema string `yaml:"schema"`
+		} `yaml:"pg_largeobject"`
+		Retention *struct {
+			OrphanSweepInterval        time.Duration `yaml:"orphan_sweep_interval"`
+			RetentionAfterUnreferenced time.Duration `yaml:"retention_after_unreferenced"`
+		} `yaml:"retention"`
+	}
 	var wrapper struct {
 		Persistence struct {
 			Driver   string `yaml:"driver"`
@@ -184,6 +203,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			SQLite *struct {
 				Path string `yaml:"path"`
 			} `yaml:"sqlite"`
+			Blob *yamlBlob `yaml:"blob"`
 		} `yaml:"persistence"`
 		ClaimProducers map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
 		// Stores: is supported as a deprecated alias for the
@@ -272,8 +292,36 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence: %w", path, err)
 	}
 
+	bcfg := persistence.DefaultBlobConfig()
+	if blob := wrapper.Persistence.Blob; blob != nil {
+		if blob.Backend != "" {
+			bcfg.Backend = blob.Backend
+		}
+		if blob.SpillThresholdBytes > 0 {
+			bcfg.SpillThresholdBytes = blob.SpillThresholdBytes
+		}
+		if blob.Filesystem != nil {
+			bcfg.Filesystem.Root = blob.Filesystem.Root
+		}
+		if blob.PgLargeObject != nil {
+			bcfg.PgLargeObject.Schema = blob.PgLargeObject.Schema
+		}
+		if blob.Retention != nil {
+			if blob.Retention.OrphanSweepInterval > 0 {
+				bcfg.Retention.OrphanSweepInterval = blob.Retention.OrphanSweepInterval
+			}
+			if blob.Retention.RetentionAfterUnreferenced > 0 {
+				bcfg.Retention.RetentionAfterUnreferenced = blob.Retention.RetentionAfterUnreferenced
+			}
+		}
+	}
+	if err := persistence.ValidateBlobConfig(bcfg); err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
+	}
+
 	return RimskyConfig{
 		Persistence: pcfg,
+		Blob:        bcfg,
 		Stores:      stores,
 		NamedLocks:  locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:   executors,

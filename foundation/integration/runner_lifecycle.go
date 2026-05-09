@@ -143,6 +143,7 @@ func applyAcquireError(
 		Payload: map[string]any{
 			"source": "on_acquire_unavailable",
 		},
+		Metrics: args.Metrics,
 	})
 	if h.Invalidate != nil {
 		frameID := acq.FrameID
@@ -171,7 +172,7 @@ func emitHandlerInvalidate(
 	}
 	src := srcNodeID
 	for _, tid := range targets {
-		_ = InvalidateNode(ctx, InvalidateArgs{
+		ia := InvalidateArgs{
 			Persist:       args.Persist,
 			Queue:         args.Queue,
 			Clock:         args.Clock,
@@ -182,7 +183,20 @@ func emitHandlerInvalidate(
 			Reason:        "handler_invalidate",
 			SupervisorID:  args.SupervisorID,
 			Frame:         useFrame,
-		})
+			Metrics:       args.Metrics,
+		}
+		// Prefer the unified invalidate handler when configured (E3
+		// SweepParkedNodes wake, G3 admin invalidate, H2 on_event
+		// handler dispatch all share this path so handler-emitted
+		// invalidates correctly resume parked targets). Fall back to
+		// the bare InvalidateNode helper when no handler is wired —
+		// preserves the today behavior for tests / callers that don't
+		// set the handler.
+		if args.InvalidateHandler != nil {
+			_ = args.InvalidateHandler(ctx, ia)
+			continue
+		}
+		_ = InvalidateNode(ctx, ia)
 	}
 }
 

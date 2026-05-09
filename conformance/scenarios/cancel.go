@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -25,14 +24,15 @@ func init() {
 
 // runCancel cancels the Execute context after 200ms and verifies the stream
 // terminates within a reasonable window without panicking or hanging.
-func runCancel(parentCtx context.Context, c executor.Client) error {
+func runCancel(parentCtx context.Context, env conformance.Env) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-probe", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("execute: %w", err)

@@ -182,4 +182,11 @@ type FrameStore interface {
 	//
 	// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §7.
 	RefreshProgress(ctx context.Context, frameID shared.UUID, tx Tx) error
+
+	// CountHeldFrames returns the number of running frames that have at
+	// least one parked rimsky_worker_request row attached via frame_id.
+	// Mirrors the held-frame notion used by
+	// /admin/diagnostics/held-frames. Used by the metrics gauge
+	// refresher (`rimsky_held_frames`). Tx must be open.
+	CountHeldFrames(ctx context.Context, tx Tx) (int, error)
 }

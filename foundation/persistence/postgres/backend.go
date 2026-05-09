@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -45,11 +46,44 @@ func init() {
 // per-feature file (nodes.go, instances.go, ...) defines methods on the
 // aspect type. The aspect-type pattern (`type templatesImpl storeImpl`)
 // shares storeImpl's layout so the helper q() works through the cast.
+//
+// blob/blobThreshold/blobRetention are the spill-config triple set by
+// driver.SetBlobBackend at startup. When blob is non-nil and the
+// marshalled attribute bytes exceed blobThreshold, NodeAttributes.Upsert
+// spills to the configured backend instead of writing inline. Reads
+// transparently dereference the handle. See plan §D6/D7.
 type storeImpl struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	blob          persistence.BlobBackend
+	blobThreshold int
+	blobRetention time.Duration
 }
 
 func newStore(pool *pgxpool.Pool) *storeImpl { return &storeImpl{pool: pool} }
+
+// SetBlobBackend installs (or clears) the spill-config triple on the
+// storeImpl. Called by driver.SetBlobBackend at startup; safe to call
+// multiple times during construction. Threshold ≤ 0 disables spill;
+// retention ≤ 0 falls back to 24h at orphan-insert time.
+func (s *storeImpl) SetBlobBackend(bb persistence.BlobBackend, threshold int, retention time.Duration) {
+	s.blob = bb
+	s.blobThreshold = threshold
+	s.blobRetention = retention
+}
+
+// BlobBackend returns the configured backend (or nil when spill is
+// disabled). Used by integration code that already had args.Blob; this
+// accessor lets callers that only carry a *Store also read the backend
+// without an extra argument.
+func (s *storeImpl) BlobBackend() persistence.BlobBackend { return s.blob }
+
+// BlobSpillThreshold returns the spill threshold in bytes (0 when
+// disabled).
+func (s *storeImpl) BlobSpillThreshold() int { return s.blobThreshold }
+
+// BlobRetention returns the orphan-retention window (0 when unset; the
+// orphan-insert site falls back to 24h).
+func (s *storeImpl) BlobRetention() time.Duration { return s.blobRetention }
 
 // Transaction begins a tx, runs fn, and commits/rolls back. If fn returns
 // an error or panics, the tx rolls back. The tx passed to fn is a *pgTx

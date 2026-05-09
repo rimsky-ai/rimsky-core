@@ -172,6 +172,9 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			OrphanedClaimTimeout: 5 * heartbeatTimeout,
 			Stores:               opts.Stores,
 			NamedLocks:           opts.NamedLocks,
+			// Required for SweepParkedNodes (E3) so parked-rows can be
+			// resumed under the scheduler's own supervisor id.
+			SupervisorID: "scenario-scheduler",
 		})
 		if err != nil {
 			t.Fatalf("scenario: start scheduler: %v", err)
@@ -655,6 +658,19 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	}
 	if n.OnExecutorErrored != nil {
 		nd["on_executor_errored"] = handlerToJSON(n.OnExecutorErrored.Resolve, n.OnExecutorErrored.ErrorClass, n.OnExecutorErrored.Invalidate)
+	}
+	if len(n.OnEvent) > 0 {
+		evtMap := map[string]any{}
+		for name, h := range n.OnEvent {
+			evtMap[name] = handlerToJSON(h.Resolve, h.ErrorClass, h.Invalidate)
+		}
+		nd["on_event"] = evtMap
+	}
+	if n.MaxParkDuration != "" {
+		nd["max_park_duration"] = n.MaxParkDuration
+	}
+	if n.MaxRetriesWithoutProgress != nil {
+		nd["max_retries_without_progress"] = *n.MaxRetriesWithoutProgress
 	}
 	return nd
 }

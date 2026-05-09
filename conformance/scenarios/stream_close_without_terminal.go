@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -26,14 +25,16 @@ func init() {
 
 // runStreamCloseWithoutTerminal asserts that an Execute stream MUST emit a
 // terminal event before EOF. If the stream closes cleanly with zero terminals,
-// the executor violates spec §7.2.
-func runStreamCloseWithoutTerminal(ctx context.Context, c executor.Client) error {
+// the executor violates spec §7.2. (For async executors AsyncAccepted IS a
+// gRPC-side terminal — the spec is satisfied at the gRPC layer.)
+func runStreamCloseWithoutTerminal(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-probe", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
@@ -51,7 +52,7 @@ func runStreamCloseWithoutTerminal(ctx context.Context, c executor.Client) error
 			}
 			return fmt.Errorf("recv before terminal: %w", err)
 		}
-		if isTerminal(ev) {
+		if conformance.IsTerminal(ev) {
 			sawTerminal = true
 		}
 	}

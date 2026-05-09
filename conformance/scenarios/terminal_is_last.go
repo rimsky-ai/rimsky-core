@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -26,14 +25,17 @@ func init() {
 
 // runTerminalIsLast asserts that after a terminal event (Complete, Blocked,
 // Errored, or AsyncAccepted), the next Recv() returns io.EOF — no more events
-// follow. Per spec §7.2, terminals close the stream.
-func runTerminalIsLast(ctx context.Context, c executor.Client) error {
+// follow. Per spec §7.2, terminals close the stream. This is gRPC-stream-only:
+// AsyncAccepted is itself a gRPC terminal, and the eventual callback POST is a
+// separate transport.
+func runTerminalIsLast(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
 		NodeType: "conformance-probe", Userdata: ud,
+		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := c.Execute(ctx, req)
+	stream, err := env.Client.Execute(ctx, req)
 	if err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
@@ -57,7 +59,7 @@ func runTerminalIsLast(ctx context.Context, c executor.Client) error {
 		if sawTerminal {
 			return fmt.Errorf("event received after terminal: %T", ev.Event)
 		}
-		if isTerminal(ev) {
+		if conformance.IsTerminal(ev) {
 			sawTerminal = true
 		}
 	}

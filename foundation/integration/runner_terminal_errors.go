@@ -30,10 +30,38 @@ import (
 // applyTerminalAppError routes a Blocked / Errored terminal through
 // the policy chain and drives release + state update + queue
 // mutation in one tx.
+//
+// E5 retry-cap interaction: if the resolved action is a retry shape
+// (retry / discard_then_retry / resume_then_retry) AND the per-row
+// consecutive_retries_no_progress counter (after increment) exceeds
+// the effective max-retries-without-progress cap, the runner forces an
+// Errored verdict with error_class="retry_loop_no_progress" instead of
+// retrying. Per plan E5.
 func applyTerminalAppError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any,
 ) error {
+	// Short-circuit retry-loop guard: if this terminal would route to a
+	// retry action AND we'd be over the cap, rewrite the error_class
+	// before resolving the policy. retry_loop_no_progress's policy
+	// (give_up) takes precedence over the original class's retry.
+	if errorClass != "retry_loop_no_progress" {
+		if shouldForceRetryLoopGiveUp(ctx, args, acq) {
+			args.Logger.Warn("applyTerminalAppError: retry_loop_no_progress cap reached; forcing give_up",
+				"node_id", acq.NodeID.String(),
+				"original_error_class", errorClass)
+			// Capture original error class + payload BEFORE reassigning, so the
+			// new payload's `original_error_class` records the actual prior
+			// class, not the rewritten one.
+			origErrorClass := errorClass
+			origPayload := payload
+			errorClass = "retry_loop_no_progress"
+			payload = map[string]any{
+				"original_error_class": origErrorClass,
+				"original_payload":     origPayload,
+			}
+		}
+	}
 	policy, err := lookupPolicyForNode(ctx, args, acq, errorClass)
 	if err != nil {
 		return err
@@ -53,6 +81,26 @@ func applyTerminalAppError(
 		}
 	}
 	resolved := node.Evaluate(policy, state, errorClass, nil)
+	// E5 counter housekeeping: if the resolved action is a retry, bump
+	// the per-row counter; otherwise reset it. The next terminal that
+	// produces a different last_outcome change will reset via the
+	// applyTerminalComplete path's last-outcome-change detection (the
+	// counter only tracks consecutive retries with no last_outcome
+	// progress).
+	// E5 counter housekeeping: capture the prior dispatch row's
+	// counter so we can carry it forward across the retry round-trip.
+	// applyResolvedAction's retry branch removes the old row and
+	// inserts a new one — without this carry-forward the counter
+	// would reset to zero on every retry and the cap would never
+	// trigger.
+	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
+	var carryForwardCount int
+	switch resolved.Kind {
+	case "retry", "discard_then_retry", "resume_then_retry":
+		carryForwardCount = priorCount + 1
+	default:
+		carryForwardCount = 0
+	}
 
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
@@ -63,6 +111,13 @@ func applyTerminalAppError(
 		}
 		if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved); err != nil {
 			return err
+		}
+		// On retry, re-stamp the counter onto the freshly-inserted
+		// dispatch row so the next iteration's
+		// shouldForceRetryLoopGiveUp can see accumulated retries.
+		switch resolved.Kind {
+		case "retry", "discard_then_retry", "resume_then_retry":
+			return args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, carryForwardCount)
 		}
 		return nil
 	}); err != nil {
@@ -134,7 +189,17 @@ func applyResolvedAction(
 }
 
 // applyTerminalInfraError is the infra_reenqueue path. State→stale,
-// failure-branch release, re-enqueue with no retry bump. Single tx.
+// failure-branch release, re-enqueue. Single tx.
+//
+// Retry-counter handling: an infra-reenqueue is NOT an application
+// retry — the node didn't actually run because of an infrastructure
+// fault (executor unreachable, transient supervisor crash, etc.). The
+// per-row consecutive_retries_no_progress counter is therefore
+// preserved across the round-trip rather than reset, mirroring the
+// retry path's carry-forward (runner_terminal_errors.go::applyTerminalAppError).
+// Without this carry, an executor that's flaky enough to alternate
+// between infra-error and app-retry-with-no-progress could loop
+// indefinitely because the cap would reset to 0 every infra round-trip.
 func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any,
@@ -145,6 +210,9 @@ func applyTerminalInfraError(
 		prior = p
 		return err
 	})
+	// Read the current counter so we can carry it forward onto the
+	// freshly-inserted dispatch row.
+	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
 			return err
@@ -158,13 +226,18 @@ func applyTerminalInfraError(
 		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx); err != nil {
 			return err
 		}
-		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         acq.NodeID,
 			ExecutorName:   acq.Executor,
 			RequiredStores: requiredStoresForAcq(acq),
 			EnqueuedAt:     args.Clock.Now(),
 			FrameID:        acq.FrameID,
-		}, tx)
+		}, tx); err != nil {
+			return err
+		}
+		// Re-stamp the counter on the freshly-inserted dispatch row so
+		// the infra round-trip preserves cap-eligibility.
+		return args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, priorCount)
 	}); err != nil {
 		return fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
@@ -258,7 +331,45 @@ func invalidateTargets(
 			Reason:       "policy_invalidate",
 			SupervisorID: args.SupervisorID,
 			Frame:        frame,
+			Metrics:      args.Metrics,
 		})
 	}
 	return nil
+}
+
+// shouldForceRetryLoopGiveUp returns true when the per-row
+// consecutive_retries_no_progress counter is at or above the effective
+// cap. The cap is resolved per plan E5:
+//
+//   per-row dispatch-tuning override (denormalized via
+//   UpdateDispatchTuningInTx at park time)
+//   > template-spec NodeDef.MaxRetriesWithoutProgress (read at retry
+//     time; lets the cap apply to non-parked retry loops too)
+//   > deployment default (RunArgs.MaxRetriesWithoutProgressDefault)
+//   > built-in default (100)
+//
+// A per-row or per-template override of 0 disables the cap entirely.
+func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisition) bool {
+	count, override, err := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
+	if err != nil {
+		return false
+	}
+	// Fall back to the template-spec value if the dispatch row's
+	// override has not been denormalized yet. This makes the cap apply
+	// to retry-only loops where the row never went through a park
+	// transition.
+	if override == nil && acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
+		override = acq.NodeDef.MaxRetriesWithoutProgress
+	}
+	if override != nil && *override == 0 {
+		return false
+	}
+	cap := resolveMaxRetriesCap(args, override)
+	if cap <= 0 {
+		return false
+	}
+	// We want to force give_up when the next retry would put us over.
+	// Use count >= cap so cap=100 means "100 retries permitted; the
+	// 101st is forced give_up."
+	return count >= cap
 }

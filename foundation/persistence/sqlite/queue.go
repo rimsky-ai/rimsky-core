@@ -109,11 +109,17 @@ func (q *queueImpl) SelectCandidates(
 	// scanning then post-filtering. We push the executor and now filters
 	// into SQL where straightforward, but executor `IN (...)` and
 	// required_stores subset are easier in Go.
+	// SELECT predicates: claimed_by IS NULL is the legacy unclaimed-row
+	// gate; phase='pending' filters out parked rows (which also have
+	// claimed_by=NULL but must transition through wakeParkedNode rather
+	// than being directly claimed). Per the 2026-05-08 platform-extensions
+	// plan E2/E3.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
 		   FROM rimsky_worker_request d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
+		    AND d.phase = 'pending'
 		    AND d.enqueued_at <= ?
 		  ORDER BY d.enqueued_at`,
 		nowUTC(),
@@ -203,6 +209,9 @@ func (q *queueImpl) SelectCandidates(
 }
 
 // ClaimDispatchRow — @blessed-invariant 2.
+//
+// The phase='pending' guard prevents accidental claims of parked rows;
+// see the matching postgres impl for rationale.
 func (q *queueImpl) ClaimDispatchRow(
 	ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID string,
 ) (bool, error) {
@@ -213,7 +222,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_worker_request
 		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?, phase = 'active'
-		  WHERE id = ? AND claimed_by IS NULL`,
+		  WHERE id = ? AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, now, now, dispatchID.String(),
 	)
 	if err != nil {
@@ -491,6 +500,31 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 		return 0, err
 	}
 	return n, nil
+}
+
+// CountParkedByReason mirrors the postgres impl: groups currently-parked
+// worker_request rows by parked_reason for the metrics gauge. Empty /
+// NULL reason buckets under "".
+func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT COALESCE(parked_reason, ''), COUNT(*)
+		   FROM rimsky_worker_request
+		  WHERE phase = 'parked'
+		  GROUP BY COALESCE(parked_reason, '')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var reason string
+		var n int
+		if err := rows.Scan(&reason, &n); err != nil {
+			return nil, err
+		}
+		out[reason] = n
+	}
+	return out, rows.Err()
 }
 
 // GetByID returns the live dispatch row for id, or (nil, nil) when no

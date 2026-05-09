@@ -15,22 +15,32 @@
 //	RIMSKY_CONFIG               optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500.
 //	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000.
+//	RIMSKY_METRICS_PORT         optional; default 0 = disabled. When >0
+//	                            exposes /metrics on this port (Prometheus
+//	                            text format) bound to RIMSKY_METRICS_HOST
+//	                            (default 127.0.0.1).
+//	RIMSKY_METRICS_HOST         optional; default 127.0.0.1.
 //	RIMSKY_LOG_LEVEL            optional; debug|info|warn|error (default info).
 //	RIMSKY_LOG_BINARY           optional; structured slog field for unified-image.
 package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
 	"github.com/fallguy/rimsky/modeling/config"
+	"github.com/fallguy/rimsky/modeling/observability"
 	"github.com/fallguy/rimsky/modeling/shared"
 
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite" // register driver
@@ -69,6 +79,44 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Install BlobBackend on the driver. The scheduler does not itself
+	// spill writes (it reads via SweepParkedNodes which hits parked
+	// payload columns, but those go through queue.LoadResumeMetadataInTx
+	// at the supervisor side). Installing here keeps ValidateBlobConfig
+	// gating consistent across processes (memory backend rejection,
+	// filesystem.root presence) and exposes the backend on the driver
+	// in case future scheduler-side sweeps need it.
+	blobBackend, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver)
+	if err != nil {
+		log.Error("config.OpenBlobBackend", "error", err.Error())
+		_ = driver.Close()
+		os.Exit(1)
+	}
+
+	supervisorID := os.Getenv("RIMSKY_SCHEDULER_ID")
+	if supervisorID == "" {
+		// Hostname-derived default so multi-replica deployments don't
+		// collide on a single shared id. The scheduler-tick advisory
+		// lock still single-writes against the scheduler tick, but a
+		// per-replica id keeps audit-log rows and orphan-claim
+		// attribution honest.
+		if hostname, err := os.Hostname(); err == nil && hostname != "" {
+			supervisorID = "scheduler-" + hostname
+		} else {
+			supervisorID = "scheduler-default"
+		}
+	}
+
+	// Plan I1/I2: per-process Prometheus registry. Constructed up-front
+	// so the scheduler's per-tick invalidate emits and frame.RunTick
+	// observations land on the shared registry via the MetricsHook
+	// adapter. The /metrics HTTP listener is opened below only when
+	// RIMSKY_METRICS_PORT > 0; the registry itself is built
+	// unconditionally so the hook stays wired even when the HTTP
+	// surface is disabled (e.g. unified-image deployments that scrape
+	// a sibling process's port).
+	mreg := observability.NewMetricsRegistry()
+
 	h, err := config.StartScheduler(config.SchedulerConfig{
 		Driver:           driver,
 		Clock:            shared.SystemClock{},
@@ -77,6 +125,9 @@ func main() {
 		HeartbeatTimeout: time.Duration(heartbeatMs) * time.Millisecond,
 		Stores:           rimskyCfg.Stores,
 		NamedLocks:       rimskyCfg.NamedLocks,
+		SupervisorID:     supervisorID,
+		Blob:             blobBackend,
+		Metrics:          observability.MetricsHookOf(mreg),
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
@@ -84,11 +135,38 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Optional Prometheus /metrics endpoint on a separate port.
+	// Plan I1: gated by RIMSKY_METRICS_PORT (0 = disabled).
+	metricsHost := os.Getenv("RIMSKY_METRICS_HOST")
+	if metricsHost == "" {
+		metricsHost = "127.0.0.1"
+	}
+	metricsPort, _ := strconv.Atoi(os.Getenv("RIMSKY_METRICS_PORT"))
+	var metricsSrv *http.Server
+	if metricsPort > 0 {
+		metricsRouter := chi.NewRouter()
+		observability.MountMetrics(metricsRouter, mreg)
+		metricsSrv = &http.Server{
+			Addr:              fmt.Sprintf("%s:%d", metricsHost, metricsPort),
+			Handler:           metricsRouter,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info("metrics endpoint listening", "addr", metricsSrv.Addr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("metrics endpoint", "error", err.Error())
+			}
+		}()
+	}
+
 	waitForSignal(log)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		log.Error("scheduler shutdown", "error", err.Error())
+	}
+	if metricsSrv != nil {
+		_ = metricsSrv.Shutdown(shutdownCtx)
 	}
 	_ = driver.Close()
 }

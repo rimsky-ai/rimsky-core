@@ -205,7 +205,7 @@ func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
 	dep := f.createNode(t, "worker", shared.NodeStateFresh)
 	target := f.createNode(t, "runner", shared.NodeStateStale, dep.ID)
 
-	require.NoError(t, tick(ctx, f.schedConfig()))
+	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
 	// Dispatch row exists for the target.
 	var count int
@@ -224,7 +224,7 @@ func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
 	n := f.createNode(t, "worker", shared.NodeStateRunning)
 	f.setHeartbeat(t, n.ID, time.Now().Add(-5*time.Minute), "sup-dead")
 
-	require.NoError(t, tick(ctx, f.schedConfig()))
+	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
 	// Node should be stale now.
 	var after *persistence.NodeRow
@@ -298,7 +298,7 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		dispatchID,
 	)
 
-	require.NoError(t, tick(ctx, f.schedConfig()))
+	require.NoError(t, tick(ctx, f.schedConfig(), nil))
 
 	// Claim released: claimed_by IS NULL.
 	own, err := f.queue.GetClaimedBy(ctx, dispatchID)
@@ -344,7 +344,7 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	// wedge this test if the pool is single-capacity.
 	done := make(chan error, 1)
 	go func() {
-		done <- tick(ctx, f.schedConfig())
+		done <- tick(ctx, f.schedConfig(), nil)
 	}()
 
 	select {
