@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // templates.go — SQLite-backed persistence.TemplateStore. Mirrors
-// core/persistence/postgres/templates.go method-for-method with SQLite
+// foundation/persistence/postgres/templates.go method-for-method with SQLite
 // dialect translations per spec §6.3.
 package sqlite
 

@@ -70,7 +70,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	lockHolderID := uuid.New()
 	lockName := "hb-loss-zombie-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		return h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -126,9 +126,9 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	deadline = time.Now().Add(25 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		var got *persistence.LockHolderRow
+		var got *persistence.ClaimHandleRow
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, tx)
+			r, err := h.Persist.ClaimHandles().Get(h.Ctx, lockHolderID, tx)
 			got = r
 			return err
 		})

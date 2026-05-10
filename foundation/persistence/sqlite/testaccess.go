@@ -4,7 +4,7 @@
 
 // testaccess.go provides test-only escape hatches for code that needs
 // raw *sql.DB access against a sqlite-backed persistence.Driver.
-// Mirrors `core/persistence/postgres/testaccess.go`.
+// Mirrors `foundation/persistence/postgres/testaccess.go`.
 //
 // Production code MUST go through the persistence.Driver interface.
 // Adding a non-test caller of these helpers is a regression against

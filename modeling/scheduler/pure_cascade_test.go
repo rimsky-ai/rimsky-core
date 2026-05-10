@@ -91,7 +91,7 @@ func (f *fakeQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]
 func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _, _ string) (bool, error) {
+func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
 	return false, nil
 }
 func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
@@ -111,6 +111,10 @@ func (f *fakeQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx,
 }
 
 func (f *fakeQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
+	return nil, nil
+}
+
+func (f *fakeQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, _ string) ([]persistence.ParkedDiagnosticRow, error) {
 	return nil, nil
 }
 

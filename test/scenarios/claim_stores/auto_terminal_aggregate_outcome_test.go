@@ -17,7 +17,7 @@
 //
 // Test 2 (`TestAutoTerminalAggregateFailedFiresGiveUp`) is delegated to
 // the unit-level coverage in
-// `core/supervisor/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp`,
+// `foundation/integration/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp`,
 // which seeds `rimsky_claim_holders` rows directly and exercises the
 // aggregate-failed → Abandon routing without the wire round-trip.
 // Reproducing the same property end-to-end through the loopback fixture
@@ -137,7 +137,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 // pins the routing decision.
 func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
 	t.Skip("scenario-level coverage delegated to " +
-		"core/supervisor/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp; " +
+		"foundation/integration/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp; " +
 		"that unit test seeds claim-holder rows directly and exercises the " +
 		"aggregate-failed → Abandon routing without needing executor-side error wiring")
 }

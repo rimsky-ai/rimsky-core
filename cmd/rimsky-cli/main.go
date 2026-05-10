@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // main.go — rimsky-cli entry point. Dispatches subcommands to handlers
-// in core/cli/. Hand-rolled subcommand routing on os.Args[1].
+// in modeling/cli/. Hand-rolled subcommand routing on os.Args[1].
 package main
 
 import (

@@ -43,6 +43,32 @@ describe("renderTemplate", () => {
     });
     expect(out).toBe("{{deps.foo}}");
   });
+
+  it("substitutes rimsky.* resume-context vars when supplied", () => {
+    const out = renderTemplate(
+      "payload={{rimsky.resume_payload}} reason={{rimsky.resume_reason}}",
+      {
+        userdata: {},
+        attributes: {},
+        rimsky: {
+          resume_payload: "blob-bytes",
+          resume_reason: "deadline_elapsed",
+        },
+      },
+    );
+    expect(out).toBe("payload=blob-bytes reason=deadline_elapsed");
+  });
+
+  it("preserves rimsky.* placeholders when bag is missing or key absent", () => {
+    const out = renderTemplate(
+      "{{rimsky.resume_payload}} {{rimsky.resume_reason}}",
+      {
+        userdata: {},
+        attributes: {},
+      },
+    );
+    expect(out).toBe("{{rimsky.resume_payload}} {{rimsky.resume_reason}}");
+  });
 });
 
 describe("resolveCwd", () => {

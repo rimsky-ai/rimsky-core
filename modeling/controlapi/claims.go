@@ -27,20 +27,20 @@ import (
 )
 
 type claimHolderResponse struct {
-	ID           string     `json:"id"`
-	LockHolderID string     `json:"claim_handle_id"`
-	HolderNodeID string     `json:"holder_node_id"`
-	State        string     `json:"state"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ID            string     `json:"id"`
+	ClaimHandleID string     `json:"claim_handle_id"`
+	HolderNodeID  string     `json:"holder_node_id"`
+	State         string     `json:"state"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 	return claimHolderResponse{
-		ID:           r.ID.String(),
-		LockHolderID: r.LockHolderID.String(),
-		HolderNodeID: r.HolderNodeID.String(),
-		State:        string(r.State),
-		CompletedAt:  r.CompletedAt,
+		ID:            r.ID.String(),
+		ClaimHandleID: r.ClaimHandleID.String(),
+		HolderNodeID:  r.HolderNodeID.String(),
+		State:         string(r.State),
+		CompletedAt:   r.CompletedAt,
 	}
 }
 
@@ -65,7 +65,7 @@ func handleListClaimHolders(deps AppDeps) http.HandlerFunc {
 		}
 		var rows []persistence.ClaimHolderRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := deps.Persist.ClaimHolders().ListByLockHolderID(ctx, id, tx)
+			r, err := deps.Persist.ClaimHolders().ListByClaimHandleID(ctx, id, tx)
 			rows = r
 			return err
 		}); err != nil {

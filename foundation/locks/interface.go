@@ -49,7 +49,7 @@ import (
 //	persist *data* state (e.g. items-table flips, staging metadata), but
 //	the question "is anyone holding lock X" is answered exclusively by
 //	rimsky_claim_handle (managed via foundation/persistence/<driver>/
-//	lock_holders.go).
+//	claim_handles.go).
 //
 // @blessed-invariant 9b: ClaimProducers do not internally serialize on
 // lock-shaped predicates. The reader-lease serialization pattern is not

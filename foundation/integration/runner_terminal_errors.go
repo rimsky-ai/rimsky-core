@@ -341,12 +341,12 @@ func invalidateTargets(
 // consecutive_retries_no_progress counter is at or above the effective
 // cap. The cap is resolved per plan E5:
 //
-//   per-row dispatch-tuning override (denormalized via
-//   UpdateDispatchTuningInTx at park time)
-//   > template-spec NodeDef.MaxRetriesWithoutProgress (read at retry
-//     time; lets the cap apply to non-parked retry loops too)
-//   > deployment default (RunArgs.MaxRetriesWithoutProgressDefault)
-//   > built-in default (100)
+//	per-row dispatch-tuning override (denormalized via
+//	UpdateDispatchTuningInTx at park time)
+//	> template-spec NodeDef.MaxRetriesWithoutProgress (read at retry
+//	  time; lets the cap apply to non-parked retry loops too)
+//	> deployment default (RunArgs.MaxRetriesWithoutProgressDefault)
+//	> built-in default (100)
 //
 // A per-row or per-template override of 0 disables the cap entirely.
 func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisition) bool {
@@ -364,12 +364,12 @@ func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisit
 	if override != nil && *override == 0 {
 		return false
 	}
-	cap := resolveMaxRetriesCap(args, override)
-	if cap <= 0 {
+	maxRetries := resolveMaxRetriesCap(args, override)
+	if maxRetries <= 0 {
 		return false
 	}
 	// We want to force give_up when the next retry would put us over.
-	// Use count >= cap so cap=100 means "100 retries permitted; the
-	// 101st is forced give_up."
-	return count >= cap
+	// Use count >= maxRetries so maxRetries=100 means "100 retries
+	// permitted; the 101st is forced give_up."
+	return count >= maxRetries
 }

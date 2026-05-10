@@ -6,10 +6,10 @@
 // raw *pgxpool.Pool access against a postgres-backed
 // persistence.Driver. Used by:
 //
-//   - core/scenario/harness.go — scenario tests seed fixtures via raw
+//   - modeling/scenario/harness.go — scenario tests seed fixtures via raw
 //     SQL (executor_blocked_test, etc.).
 //   - test/smoke/setup.go — the smoke fixture's force-fire driver.
-//   - core/internal/pgtest — exposes StartPostgres for legacy callers.
+//   - foundation/internal/pgtest — exposes StartPostgres for legacy callers.
 //
 // Production code MUST go through the persistence.Driver interface.
 // Adding a non-test caller of these helpers is a regression

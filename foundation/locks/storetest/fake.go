@@ -23,7 +23,7 @@ func nextFakeSequence() int {
 	return int(fakeSequenceCounter.Add(1))
 }
 
-// Fake is an in-memory store satisfying core/locks.Store. Used by unit
+// Fake is an in-memory store satisfying foundation/locks.Store. Used by unit
 // tests that exercise rimsky-side logic in isolation. State is
 // per-Fake; not shared across instances.
 type Fake struct {

@@ -17,7 +17,7 @@ type Store interface {
 	Instances() InstanceStore
 	LifecycleIdempotency() LifecycleIdempotencyStore
 	Nodes() NodeStore
-	LockHolders() LockHoldersStore
+	ClaimHandles() ClaimHandlesStore
 	NodeAttributes() NodeAttributesStore
 	ClaimHolders() ClaimHoldersStore
 	Events() EventStore

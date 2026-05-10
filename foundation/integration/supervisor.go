@@ -31,8 +31,8 @@
 //	the WHERE clause is `holder_supervisor_id = $1`, so a stale
 //	heartbeat from a different supervisor can never extend a row it
 //	doesn't own. Concrete enforcement of the release path lives
-//	across persistence.Queue / persistence.LockHoldersStore impls,
-//	`core/supervisor/runner.go`, and `core/scheduler/scheduler.go`;
+//	across persistence.Queue / persistence.ClaimHandlesStore impls,
+//	`foundation/integration/runner.go`, and `modeling/scheduler/scheduler.go`;
 //	this file's contribution is the heartbeat-write claimant guard.
 //	Do not relax the `holder_supervisor_id = $1` predicate on the
 //	heartbeat UPDATE.
@@ -47,7 +47,7 @@
 //	decoupled from rimsky's. Single-writer-per-scope (invariant 4b)
 //	holds because rimsky's conflict predicate gates lock-holder
 //	INSERTs against `rimsky_claim_handle` only. The acquisition tx
-//	lives in `core/supervisor/runner_acquire.go`; this file's
+//	lives in `foundation/integration/runner_acquire.go`; this file's
 //	contribution is structural — the heartbeat refresh below MUST
 //	NOT extend rows for nodes that have transitioned out of
 //	`running`. The `holder_node_id IN (running-nodes)` filter keeps
@@ -198,7 +198,7 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, errors.New("supervisor.Start: StoreRegistry is required")
 	}
 
-	lockHolders := cfg.Persist.LockHolders()
+	lockHolders := cfg.Persist.ClaimHandles()
 
 	callbackReg := NewCallbackRegistry()
 	// Build the unified-invalidate adapter once and share it between the
@@ -223,7 +223,7 @@ func Start(cfg Config) (*Handle, error) {
 		Persist:                          cfg.Persist,
 		Queue:                            cfg.Queue,
 		AdvisoryLocker:                   cfg.AdvisoryLocker,
-		LockHolders:                      lockHolders,
+		ClaimHandles:                     lockHolders,
 		Clock:                            cfg.Clock,
 		Logger:                           cfg.Logger,
 		SupervisorID:                     cfg.SupervisorID,
@@ -231,6 +231,8 @@ func Start(cfg Config) (*Handle, error) {
 		BlobSpillThreshold:               cfg.BlobSpillThreshold,
 		InvalidateHandler:                invalidateAdapter,
 		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
+		UserdataValidator:                cfg.UserdataValidator,
+		Metrics:                          cfg.Metrics,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -301,7 +303,7 @@ func runLoop(
 	pool *executor.ClientPool,
 	accepted []string,
 	acceptedStores []string,
-	lockHolders persistence.LockHoldersStore,
+	lockHolders persistence.ClaimHandlesStore,
 ) {
 	defer close(h.done)
 	cfg.Logger.Info("supervisor started",
@@ -412,7 +414,7 @@ func runLoop(
 				Persist:                          cfg.Persist,
 				Queue:                            cfg.Queue,
 				AdvisoryLocker:                   cfg.AdvisoryLocker,
-				LockHolders:                      lockHolders,
+				ClaimHandles:                     lockHolders,
 				Clock:                            cfg.Clock,
 				Logger:                           cfg.Logger,
 				SupervisorID:                     cfg.SupervisorID,

@@ -9,8 +9,9 @@
 // All transitions involving phase='parked' rows go through this file.
 // The ParkActiveInTx helper transitions active→parked under a claimant
 // guard (mirrors ReleaseClaim's claimant-guarded UPDATE pattern), the
-// ResumeParkedInTx helper transitions parked→active under a fresh
-// claimant id, and the per-row counter helpers (GetRetryNoProgress /
+// ResumeParkedInTx helper transitions parked→pending with claimed_by
+// reset to NULL (so any eligible supervisor can claim the resumed row),
+// and the per-row counter helpers (GetRetryNoProgress /
 // SetRetryNoProgressForNodeInTx) track progress against E5's
 // max-retries-without-progress cap.
 
@@ -135,6 +136,65 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	return scanParkedRows(rows)
 }
 
+// ListParkedDiagnostic returns currently-parked rows for the admin
+// diagnostic endpoints. Joins rimsky_nodes for the instance_id needed
+// by the diagnostics endpoints' frame/instance grouping.
+func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+	if tx == nil {
+		return nil, errors.New("postgres.ListParkedDiagnostic: tx required")
+	}
+	var reasonArg any
+	if reasonFilter != "" {
+		reasonArg = reasonFilter
+	}
+	rows, err := q.q(tx).Query(ctx,
+		`SELECT n.instance_id, d.node_id, d.frame_id,
+		        d.parked_at, d.resume_at, d.parked_reason
+		   FROM rimsky_worker_request d
+		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE d.phase = 'parked'
+		    AND ($1::text IS NULL OR d.parked_reason = $1)
+		  ORDER BY d.parked_at ASC`,
+		reasonArg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.ListParkedDiagnostic: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.ParkedDiagnosticRow
+	for rows.Next() {
+		var (
+			r        persistence.ParkedDiagnosticRow
+			instID   sql.NullString
+			frameID  sql.NullString
+			resumeAt sql.NullTime
+			reason   sql.NullString
+			nodeID   string
+		)
+		if err := rows.Scan(&instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason); err != nil {
+			return nil, err
+		}
+		if instID.Valid {
+			r.InstanceID = instID.String
+		}
+		r.NodeID = nodeID
+		if frameID.Valid {
+			r.FrameID = frameID.String
+		}
+		if resumeAt.Valid {
+			r.ResumeAt = resumeAt.Time
+		}
+		if reason.Valid {
+			r.Reason = reason.String
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetParkedByNode returns the parked row for a node, or (nil, nil) when
 // the node has no parked worker_request row.
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
@@ -166,14 +226,13 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 // helpers below (LoadResumeMetadataInTx / ClearResumeMetadataInTx) read
 // and clear it after the resume is dispatched.
 //
-// Note: supervisorID is required by the interface contract but
-// intentionally NOT written to claimed_by — we revert to phase='pending'
-// / claimed_by=NULL so any eligible supervisor can pick the row up. This
-// honors the supervisor-pool specialisation: the supervisor that wakes
-// a node may not be the one that runs the resume (e.g. an admin
-// invalidate fired against a control-api process that doesn't itself
-// run executors). The supervisorID is logged via the caller's audit
-// trail (see wakeParkedNode) so the wake-source is still recoverable.
+// The row goes back to phase='pending' / claimed_by=NULL so any
+// eligible supervisor can pick it up. This honors the supervisor-pool
+// specialisation: the supervisor that wakes a node may not be the one
+// that runs the resume (e.g. an admin invalidate fired against a
+// control-api process that doesn't itself run executors). The wake
+// supervisor id is recorded by the caller in the parked_resume_started
+// audit event.
 //
 // wakeReason is persisted on rimsky_worker_request.wake_reason. The
 // resume-dispatch path's LoadResumeMetadataInTx reads it back so the
@@ -187,11 +246,10 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 // park time should not be deprioritized behind freshly-enqueued rows.
 // Operators expect "resume now" not "resume after every fresh dispatch
 // in the queue" semantics.
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID, wakeReason string) (bool, error) {
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, wakeReason string) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ResumeParkedInTx: tx required")
 	}
-	_ = supervisorID
 	var wakeReasonArg any
 	if wakeReason != "" {
 		wakeReasonArg = wakeReason

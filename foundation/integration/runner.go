@@ -102,10 +102,10 @@ type RunArgs struct {
 	// (per-named-lock advisory locks, per-scope advisory locks, etc.)
 	// the acquisition tx threads through.
 	AdvisoryLocker persistence.AdvisoryLocker
-	// LockHolders is the rimsky_claim_handle accessor. Reachable via
-	// Persist.LockHolders(); kept as an explicit field so call sites
-	// don't have to thread Persist + LockHolders separately.
-	LockHolders persistence.LockHoldersStore
+	// ClaimHandles is the rimsky_claim_handle accessor. Reachable via
+	// Persist.ClaimHandles(); kept as an explicit field so call sites
+	// don't have to thread Persist + ClaimHandles separately.
+	ClaimHandles persistence.ClaimHandlesStore
 	// StoreRegistry is the per-process store registry built at supervisor
 	// startup from rimsky.yml (spec §6.1). The runner dispatches against
 	// the 4-verb locks.Store interface (Open/Commit/Abandon/Release).
@@ -202,6 +202,13 @@ type RunArgs struct {
 // invalidate, claim acquisition, parked sweep, etc.). Each method is a
 // no-op when the hook is nil-shaped (the runner threads a non-nil
 // no-op default rather than nil-checking each call site).
+//
+// Gauge-setters (`SetNodesByState`, `SetParkedByReason`,
+// `SetHeldFrames`, `SetDispatchQueueDepth`) are intentionally NOT on
+// this interface — foundation does not refresh gauges; the modeling-
+// layer's `*RegistryHook.StartGaugeRefresher` polls persistence and
+// calls its own concrete setters. Splitting keeps the foundation-
+// visible surface tight to the call sites that actually exist here.
 type MetricsHook interface {
 	// IncDispatch records a dispatch start (executor + terminal class
 	// "started"); pair with IncTerminal at the resolved terminal.
@@ -226,14 +233,6 @@ type MetricsHook interface {
 	// ObserveParkedDurationOnResume observes how long a node spent
 	// parked, sampled at resume time.
 	ObserveParkedDurationOnResume(seconds float64)
-	// SetNodesByState sets the current count of nodes in a state.
-	SetNodesByState(state string, count float64)
-	// SetParkedByReason sets the current count of parked nodes by reason.
-	SetParkedByReason(reason string, count float64)
-	// SetHeldFrames sets the current count of held frames.
-	SetHeldFrames(count float64)
-	// SetDispatchQueueDepth sets the current pending-dispatch row count.
-	SetDispatchQueueDepth(count float64)
 }
 
 // noopMetrics is the silent default used when args.Metrics is nil.
@@ -241,19 +240,15 @@ type MetricsHook interface {
 // keeps the call sites concise.
 type noopMetrics struct{}
 
-func (noopMetrics) IncDispatch(string, string)                         {}
-func (noopMetrics) IncTerminal(string, string)                         {}
-func (noopMetrics) IncInvalidate(string)                               {}
-func (noopMetrics) IncClaimAcquisition(string, string)                 {}
-func (noopMetrics) IncNamedEvent(string, string)                       {}
-func (noopMetrics) ObserveDispatchLatency(string, float64)             {}
-func (noopMetrics) ObserveClaimAcquisitionLatency(string, float64)     {}
-func (noopMetrics) ObserveFrameDuration(float64)                       {}
-func (noopMetrics) ObserveParkedDurationOnResume(float64)              {}
-func (noopMetrics) SetNodesByState(string, float64)                    {}
-func (noopMetrics) SetParkedByReason(string, float64)                  {}
-func (noopMetrics) SetHeldFrames(float64)                              {}
-func (noopMetrics) SetDispatchQueueDepth(float64)                      {}
+func (noopMetrics) IncDispatch(string, string)                     {}
+func (noopMetrics) IncTerminal(string, string)                     {}
+func (noopMetrics) IncInvalidate(string)                           {}
+func (noopMetrics) IncClaimAcquisition(string, string)             {}
+func (noopMetrics) IncNamedEvent(string, string)                   {}
+func (noopMetrics) ObserveDispatchLatency(string, float64)         {}
+func (noopMetrics) ObserveClaimAcquisitionLatency(string, float64) {}
+func (noopMetrics) ObserveFrameDuration(float64)                   {}
+func (noopMetrics) ObserveParkedDurationOnResume(float64)          {}
 
 // metricsOf returns args.Metrics or noopMetrics.
 func metricsOf(args RunArgs) MetricsHook {
@@ -320,9 +315,9 @@ type AsyncContext struct {
 type AcquiredLock struct {
 	// Spec is one of locks.NamedLockSpec or locks.ClaimSpec.
 	Spec any
-	// LockHolderID is the rimsky_claim_handle row id created at
+	// ClaimHandleID is the rimsky_claim_handle row id created at
 	// acquisition. Drives all subsequent claimant-guarded mutations.
-	LockHolderID shared.UUID
+	ClaimHandleID shared.UUID
 	// ClaimResult is populated by Open for ClaimSpec acquisitions;
 	// zero for NamedLockSpec.
 	ClaimResult locks.ClaimResult
@@ -442,8 +437,8 @@ func validateRunArgs(args RunArgs) error {
 	if args.AdvisoryLocker == nil {
 		return errors.New("supervisor.RunNode: AdvisoryLocker is required")
 	}
-	if args.LockHolders == nil {
-		return errors.New("supervisor.RunNode: LockHolders is required")
+	if args.ClaimHandles == nil {
+		return errors.New("supervisor.RunNode: ClaimHandles is required")
 	}
 	if args.StoreRegistry == nil {
 		return errors.New("supervisor.RunNode: StoreRegistry is required")

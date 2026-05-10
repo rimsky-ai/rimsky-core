@@ -128,7 +128,7 @@ func ResolveClaimHandleTerminal(
 		return fmt.Errorf("ResolveClaimHandleTerminal: producer verb (%s, source=%d): %w",
 			outcomeVerbName(td.Outcome), td.Source, verbErr)
 	}
-	if err := args.LockHolders.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
+	if err := args.ClaimHandles.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
 		return fmt.Errorf("ResolveClaimHandleTerminal: Delete: %w", err)
 	}
 	return nil

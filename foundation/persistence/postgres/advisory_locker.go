@@ -16,8 +16,8 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-// Constants moved here from core/scheduler/scheduler.go and
-// core/migrations/runner.go. Never reuse these int64s elsewhere.
+// Constants moved here from modeling/scheduler/scheduler.go and
+// foundation/persistence/migrations.go. Never reuse these int64s elsewhere.
 const (
 	// RimskySchedulerTickLockKey gates the scheduler tick under
 	// pg_try_advisory_lock. @blessed-invariant 7.

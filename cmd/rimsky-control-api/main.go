@@ -88,7 +88,7 @@ func main() {
 	// control-api (e.g. instance-create-time fixture seeding via raw
 	// store calls) honor the spill threshold. Validation is identical
 	// across the three processes via ValidateBlobConfig.
-	if _, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver); err != nil {
+	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver); err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		_ = driver.Close()
 		os.Exit(1)
@@ -119,6 +119,15 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("control api listening", "addr", h.Addr())
+
+	// Plan I2: launch the gauge refresher so node-state, parked-by-reason,
+	// held-frames, and dispatch-queue-depth gauges reflect live persistence
+	// state. The refresher polls every 5s by default; cancel on shutdown.
+	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
+	defer cancelGauges()
+	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
+		mhook.StartGaugeRefresher(gaugeCtx, driver.Store(), driver.Queue(), 0, log)
+	}
 
 	// Optional Prometheus /metrics endpoint on a separate port.
 	// Plan I1: gated by RIMSKY_METRICS_PORT (0 = disabled).

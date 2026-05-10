@@ -19,14 +19,6 @@ type TransitionReason struct {
 var (
 	ReasonInvalidateReceived = TransitionReason{Kind: "invalidate_received"}
 	ReasonDispatchClaimed    = TransitionReason{Kind: "dispatch_claimed"}
-	// ReasonWorkCompleted is the legacy name for the running → fresh
-	// transition triggered by the supervisor's terminal-Complete handler.
-	// Deprecated for new code paths in favor of ReasonHandlerComplete
-	// (see the lifecycle-handler design at
-	// .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md).
-	// Retained as an alias for one cycle to ease the doc / annotation
-	// migration; existing callers may still emit this kind.
-	ReasonWorkCompleted      = TransitionReason{Kind: "work_completed"}
 	ReasonPolicyRetry        = TransitionReason{Kind: "policy_retry"}
 	ReasonPolicyInvalidate   = TransitionReason{Kind: "policy_invalidate"}
 	ReasonPolicyGiveUp       = TransitionReason{Kind: "policy_give_up"}
@@ -56,23 +48,26 @@ var (
 	// without invoking the executor and without firing the cascade.
 	ReasonAcquirePass = TransitionReason{Kind: "acquire_pass"}
 
-	// ReasonHandlerComplete — running → fresh.
-	// on_executor_complete handler resolved. Subsumes
-	// ReasonWorkCompleted for new code paths; the old constant is kept
-	// as a deprecated alias for one cycle to ease the doc / annotation
-	// migration.
+	// ReasonHandlerComplete — running → fresh. Fired when the
+	// on_executor_complete handler resolves the terminal verdict.
 	ReasonHandlerComplete = TransitionReason{Kind: "handler_complete"}
 
-	// ReasonHandlerError — running → stale or running → failed.
-	// on_executor_blocked / on_executor_errored handler routed
-	// through error_types policy chain; specific transition follows
-	// the policy outcome (retry → stale; invalidate → stale; give_up
-	// → failed).
+	// ReasonHandlerError — RESERVED NEGATIVE. The state machine
+	// deliberately does NOT accept this reason as a direct transition
+	// trigger; on_executor_blocked / on_executor_errored handlers must
+	// route through the error_types policy chain and emit one of
+	// policy_retry / policy_invalidate / policy_give_up.
 	//
-	// NOTE: ReasonHandlerError is an audit-log marker only. NextState
-	// does NOT accept it as a direct transition reason — the actual
-	// state transition uses the policy-chain reasons (policy_retry /
-	// policy_invalidate / policy_give_up) that already exist.
+	// The constant exists so this rejection is encoded in the
+	// transition-reason vocabulary and pinned by a negative test
+	// (`TestNextState_HandlerErrorIsAuditOnly` — name predates this
+	// docstring rewrite). A code change that tries to use this reason
+	// as a NextState input fails closed at the test, not silently in
+	// production.
+	//
+	// No production code path emits this reason; if you find yourself
+	// wanting to, the right move is to add a policy outcome that maps
+	// to one of the existing accepted reasons, not to relax NextState.
 	ReasonHandlerError = TransitionReason{Kind: "handler_error"}
 
 	// ReasonHandlerPass — running → fresh, last_outcome=passed.
@@ -149,9 +144,6 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 			return shared.NodeStateFailed, nil
 		}
 	case shared.NodeStateRunning:
-		if reason.Kind == "work_completed" {
-			return shared.NodeStateFresh, nil
-		}
 		if reason.Kind == "handler_complete" {
 			return shared.NodeStateFresh, nil
 		}
@@ -166,10 +158,9 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 		}
 		// handler_error transitions follow the policy chain; expressed as
 		// policy_retry / policy_invalidate / policy_give_up at the call site
-		// after the policy chain resolves. ReasonHandlerError itself is not
-		// a direct NextState input — it's the audit-log reason recorded
-		// when a handler routes through error_types; the actual state
-		// transition uses the policy-chain reasons that already exist.
+		// after the policy chain resolves. ReasonHandlerError itself is
+		// NOT a direct NextState input — see its docstring for why it's
+		// reserved-negative.
 		if reason.Kind == "policy_retry" ||
 			reason.Kind == "policy_invalidate" ||
 			reason.Kind == "heartbeat_lost" ||

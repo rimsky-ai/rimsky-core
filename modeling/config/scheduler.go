@@ -52,6 +52,11 @@ type SchedulerConfig struct {
 	// sweep so it can call Backend.Delete on reaped handles. Nil → the
 	// orphan-blob sweep is skipped (no spilled bytes to reap).
 	Blob persistence.BlobBackend
+	// OrphanBlobSweepInterval governs how often the orphan-blob sweep
+	// runs. Threaded through to scheduler.Config from rimsky.yml's
+	// persistence.blob.retention.orphan_sweep_interval. Zero → defaults
+	// to 1h inside scheduler.Start.
+	OrphanBlobSweepInterval time.Duration
 	// Metrics is the prometheus instrumentation hook (plan I2).
 	// Threaded into scheduler.Config.Metrics so per-tick invalidate
 	// emits (cron schedule fire, parked-resume sweep) and frame.RunTick
@@ -111,7 +116,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		TickInterval:         cfg.TickInterval,
 		HeartbeatTimeout:     cfg.HeartbeatTimeout,
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
-		LockHolders:          persistStore.LockHolders(),
+		ClaimHandles:         persistStore.ClaimHandles(),
 		SupervisorID:         cfg.SupervisorID,
 		// StoreRegistry is the dialed producer registry; required by the
 		// park_timeout watchdog to fire Abandon on held claims (blessed
@@ -121,9 +126,10 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		// cfg.Blob is nil when no backend was installed at startup
 		// (typical of unit tests); persistStore.BlobOrphans() returns
 		// the rimsky_blob_orphans accessor on the unified store.
-		BlobBackend: cfg.Blob,
-		BlobOrphans: persistStore.BlobOrphans(),
-		Metrics:     cfg.Metrics,
+		BlobBackend:             cfg.Blob,
+		BlobOrphans:             persistStore.BlobOrphans(),
+		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
+		Metrics:                 cfg.Metrics,
 	}
 	return schedulerHandleWithRegistry{
 		inner:    scheduler.Start(inner),

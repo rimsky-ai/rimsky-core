@@ -140,23 +140,14 @@ func applyTerminalPark(
 	return nil
 }
 
-// shouldSpillBlob decides whether a payload of size N bytes should spill
-// to the configured BlobBackend. Returns false when spill is disabled
-// (no backend, threshold zero, or backend is the inline degenerate).
+// shouldSpillBlob is a thin wrapper around persistence.ShouldSpillBlob
+// that takes a RunArgs. The persistence version is the canonical
+// spill-decision; both sites must agree so a value spilled at write time
+// can be read back without ambiguity.
+//
+// @source: foundation/persistence/blob_spill.go:ShouldSpillBlob
 func shouldSpillBlob(args RunArgs, size int) bool {
-	if size == 0 {
-		return false
-	}
-	if args.Blob == nil {
-		return false
-	}
-	if args.BlobSpillThreshold <= 0 {
-		return false
-	}
-	if args.Blob.Name() == "inline" {
-		return false
-	}
-	return size > args.BlobSpillThreshold
+	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
 }
 
 // resumeAtForLog formats time.Time for slog. The zero value renders as
@@ -181,14 +172,4 @@ func resolveMaxRetriesCap(args RunArgs, override *int) int {
 		return args.MaxRetriesWithoutProgressDefault
 	}
 	return 100 // built-in default
-}
-
-// makeNodePtr is a small helper that returns a pointer to a NodeRow's
-// id when the row is non-nil. Used by the resume-dispatch path.
-func makeNodePtr(n *persistence.NodeRow) *shared.UUID {
-	if n == nil {
-		return nil
-	}
-	id := n.ID
-	return &id
 }

@@ -129,7 +129,9 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 //
 // The handler's Resolve verdict (pass/retry/error) is recorded in the
 // audit-log only — it does not transition the emitter's state directly
-// (the executor's terminal verdict drives the state machine).
+// (the executor's terminal verdict drives the state machine). The
+// audit-log entry is written even when no Invalidate is configured so
+// operators can confirm the handler ran.
 func fireOnEventHandler(ctx context.Context, args RunArgs, acq *acquisition, eventName string) {
 	if acq.NodeDef == nil || len(acq.NodeDef.OnEvent) == 0 {
 		return
@@ -138,10 +140,32 @@ func fireOnEventHandler(ctx context.Context, args RunArgs, acq *acquisition, eve
 	if !ok {
 		return
 	}
+	// Audit-log the handler invocation, including the declared Resolve
+	// verdict + ErrorClass. The runtime does not transition the emitter
+	// based on these fields (the executor's terminal verdict drives the
+	// state machine), but operators have asked for visibility into what
+	// the handler declared so a misconfigured `resolve: error` is
+	// recoverable from the audit trail rather than only surfacing as a
+	// silent no-op.
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: "on_event_handler_fired",
+			Payload: map[string]any{
+				"event_name":           eventName,
+				"declared_resolve":     handler.Resolve,
+				"declared_error_class": handler.ErrorClass,
+				"has_invalidate":       handler.Invalidate != nil && len(handler.Invalidate.Targets) > 0,
+			},
+		}, tx)
+	}); err != nil {
+		args.Logger.Warn("fireOnEventHandler: audit-log append failed",
+			"node_id", acq.NodeID.String(),
+			"event_name", eventName,
+			"error", err.Error())
+	}
+
 	if handler.Invalidate == nil || len(handler.Invalidate.Targets) == 0 {
-		// Handler exists but no invalidate to emit; nothing to do
-		// beyond audit (Resolve handling is not implemented at this
-		// layer — the executor's terminal verdict drives state).
 		return
 	}
 	// Convert the modeling DSL HandlerInvalidate to the foundation

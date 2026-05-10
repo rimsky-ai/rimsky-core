@@ -39,7 +39,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 
 	// Insert lock_holder + claim_holder inside a tx (Insert requires tx).
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -51,9 +51,9 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		if err := store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:           claimHolderID,
-			LockHolderID: lockHolderID,
-			HolderNodeID: fix.NodeID,
+			ID:            claimHolderID,
+			ClaimHandleID: lockHolderID,
+			HolderNodeID:  fix.NodeID,
 		}, tx); err != nil {
 			return err
 		}
@@ -63,15 +63,15 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 	}
 
 	// Verify both rows present.
-	var got *persistence.LockHolderRow
+	var got *persistence.ClaimHandleRow
 	var gotClaims []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
 		got = r
 		if err != nil {
 			return err
 		}
-		c, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
+		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)
 		gotClaims = c
 		return err
 	}); err != nil || got == nil {
@@ -83,7 +83,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 
 	// Delete the lock-holder row inside a tx.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.LockHolders().Delete(ctx, lockHolderID, supID, tx)
+		return store.ClaimHandles().Delete(ctx, lockHolderID, supID, tx)
 	}); err != nil {
 		t.Fatalf("Delete lock-holder: %v", err)
 	}
@@ -91,7 +91,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
 	// Cascade should have removed the claim-holder.
 	var gotClaims2 []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		c, err := store.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
+		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)
 		gotClaims2 = c
 		return err
 	}); err != nil {

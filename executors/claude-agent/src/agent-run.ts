@@ -956,18 +956,30 @@ function validateDirectory(path: string, source: string): CwdResolution {
 }
 
 /**
- * Minimal `{{ns.key}}` substitution for system / user prompts. After the
- * stores-redesign (spec §5.7) the only supported namespaces are
- * `userdata` and `attributes`. Substitution against unknown namespaces is
- * preserved verbatim.
+ * Minimal `{{ns.key}}` substitution for system / user prompts. Supported
+ * namespaces are `userdata`, `attributes`, and `rimsky` (the last
+ * carrying resume-context per J10). Substitution against unknown
+ * namespaces is preserved verbatim.
  *
  * @source rimsky/src/supervisor/agentic-runner.ts:renderTemplate
+ * @diverged: true
+ * @reason: Adds the `rimsky` namespace for resume-context exposure
+ *   (resume_payload, resume_reason). Upstream renderer does not yet
+ *   carry this; scope is local to the executor's prompt-render path.
  */
 export function renderTemplate(
   tpl: string,
   vars: {
     userdata: Record<string, unknown>;
     attributes: Record<string, unknown>;
+    /**
+     * Per-J10 resume-context exposure. Templates may reference
+     * `{{rimsky.resume_payload}}` and `{{rimsky.resume_reason}}` to
+     * reach the bytes carried back from a parked node. Empty / missing
+     * values are preserved verbatim so non-resume dispatches see the
+     * literal placeholder rather than an empty string.
+     */
+    rimsky?: Record<string, string>;
     /**
      * The per-run rimsky-callback token. Exposed as a bare `{{callback_token}}`
      * placeholder so templates can inject it into the system / user prompt
@@ -979,9 +991,9 @@ export function renderTemplate(
   },
 ): string {
   let out = tpl.replace(
-    /\{\{(userdata|attributes)\.([^}]+)\}\}/g,
-    (_, ns: "userdata" | "attributes", key: string) => {
-      const bag = vars[ns];
+    /\{\{(userdata|attributes|rimsky)\.([^}]+)\}\}/g,
+    (_, ns: "userdata" | "attributes" | "rimsky", key: string) => {
+      const bag = ns === "rimsky" ? (vars.rimsky ?? {}) : vars[ns];
       const v = bag[key];
       if (v === undefined) return `{{${ns}.${key}}}`;
       return typeof v === "string" ? v : JSON.stringify(v);

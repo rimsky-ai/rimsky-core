@@ -13,6 +13,6 @@
 // claim.<alias>.scope alongside claim.<alias>.payload.<f>. New
 // scenarios for substitution + commit-time validation + resumable-
 // preserve behaviour belong here but must reflect the new
-// substitution shape (see core/attributes/substitution.go).
+// substitution shape (see modeling/attribute/substitution.go).
 
 package attributes

@@ -6,7 +6,7 @@
 // stores redesign.
 //
 // Pre-redesign tests in this directory exercised the deprecated
-// `core/store/claimstorepg` package (now `stores/postgres/store`) plus
+// `stores/postgres/store` package (now `stores/postgres/store`) plus
 // the first-delete-wins / last-released-wins held-claim resolution
 // algorithm that was retired by the redesign (replaced by
 // auto-terminal aggregate-outcome resolution — spec §4.10 invariant

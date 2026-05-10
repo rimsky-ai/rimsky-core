@@ -3,9 +3,9 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
-// Lives in core/store/ so both the supervisor's acquisition flow
-// (core/supervisor/runner_acquire.go) and the queue's eligibility
-// predicate (core/persistence/postgres/queue.go) can call it without
+// Lives in foundation/locks/ so both the supervisor's acquisition flow
+// (foundation/integration/runner_acquire.go) and the queue's eligibility
+// predicate (foundation/persistence/postgres/queue.go) can call it without
 // circular imports.
 //
 // A claim's effective mode is (sync|async, r|w) derived from

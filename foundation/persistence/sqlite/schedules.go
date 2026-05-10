@@ -22,7 +22,7 @@ import (
 // pairs with a strict-tuple comparator: (next_fire_at, node_id) > ($1, $2).
 // Mirrors the postgres-side encoder so cursors round-trip across drivers.
 //
-//	@source: core/persistence/postgres/schedules.go:scheduleCursor
+//	@source: foundation/persistence/postgres/schedules.go:scheduleCursor
 type scheduleCursor struct {
 	N time.Time `json:"n"`
 	I string    `json:"i"`

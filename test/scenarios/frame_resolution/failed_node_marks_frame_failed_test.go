@@ -10,7 +10,7 @@
 //
 // Mechanism: stub returns Errored("test_failure") which, with no
 // matching policy entry, resolves to give_up (default for unknown
-// error class per core/node/policy.go::Evaluate). The runner takes
+// error class per modeling/node/policy.go::Evaluate). The runner takes
 // the give-up path; node state ends 'failed'; frame ends 'failed'.
 // We then re-script the stub to Complete and fire a second invalidate
 // to verify the next frame proceeds.

@@ -17,8 +17,8 @@ import (
 
 // Logger is the minimum logging surface RunTick needs. Both
 // *log/slog.Logger and shared.Logger (the scheduler's structured-log
-// wrapper) satisfy this; keeping it tiny lets core/frame avoid
-// importing core/shared without losing the scheduler's pre-bound
+// wrapper) satisfy this; keeping it tiny lets modeling/frame avoid
+// importing modeling/shared without losing the scheduler's pre-bound
 // fields when the scheduler wires its logger through.
 type Logger interface {
 	Debug(msg string, args ...any)
@@ -29,7 +29,7 @@ type Logger interface {
 // MetricsHook is the minimum metrics surface frame.RunTick needs.
 // Foundation/integration's MetricsHook structurally satisfies this so
 // the scheduler can pass through its registry adapter without forcing
-// core/frame to import foundation/integration.
+// modeling/frame to import foundation/integration.
 type MetricsHook interface {
 	ObserveFrameDuration(seconds float64)
 }

@@ -7,7 +7,6 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +33,7 @@ func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyStore {
 	return nil
 }
 func (noopStore) Nodes() persistence.NodeStore                    { return nil }
-func (noopStore) LockHolders() persistence.LockHoldersStore       { return nil }
+func (noopStore) ClaimHandles() persistence.ClaimHandlesStore     { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributesStore { return nil }
 func (noopStore) ClaimHolders() persistence.ClaimHoldersStore     { return nil }
 func (noopStore) Events() persistence.EventStore                  { return nil }
@@ -48,22 +47,104 @@ func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, t
 	return fn(ctx, &noopTx{})
 }
 
-// fakeDiagnosticReader returns the supplied rows verbatim.
-type fakeDiagnosticReader struct {
-	rows []parkedDiagnosticRow
+// fakeDiagnosticQueue implements persistence.Queue but only services
+// ListParkedDiagnostic. Every other method is a no-op (the
+// admin-diagnostics route handlers never call them).
+type fakeDiagnosticQueue struct {
+	rows []persistence.ParkedDiagnosticRow
 }
 
-func (f *fakeDiagnosticReader) ListParkedNodes(_ context.Context, _ persistence.Tx, reasonFilter string) ([]parkedDiagnosticRow, error) {
+func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
 	if reasonFilter == "" {
 		return f.rows, nil
 	}
-	var out []parkedDiagnosticRow
+	var out []persistence.ParkedDiagnosticRow
 	for _, r := range f.rows {
 		if r.Reason == reasonFilter {
 			out = append(out, r)
 		}
 	}
 	return out, nil
+}
+
+// Stub-out the rest of persistence.Queue so the type satisfies the
+// interface. None of these are exercised by the admin-diagnostics
+// route handlers.
+func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) EnqueueInTx(context.Context, persistence.DispatchRequest, persistence.Tx) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) SelectCandidates(context.Context, persistence.Tx, persistence.SelectCandidatesRequest) ([]persistence.Candidate, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ClaimDispatchRow(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+	return false, nil
+}
+func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, string) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, string, persistence.Tx) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context, time.Time) ([]shared.DispatchRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ReleaseClaim(context.Context, shared.UUID, string) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) GetClaimedBy(context.Context, shared.UUID) (persistence.ClaimOwnership, error) {
+	return persistence.ClaimOwnership{}, nil
+}
+func (f *fakeDiagnosticQueue) GetDispatchNode(context.Context, shared.UUID) (shared.UUID, persistence.ClaimOwnership, error) {
+	return shared.UUID{}, persistence.ClaimOwnership{}, nil
+}
+func (f *fakeDiagnosticQueue) RefreshHeartbeat(context.Context, string) error { return nil }
+func (f *fakeDiagnosticQueue) ListLive(context.Context, persistence.DispatchListFilter, persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+	return persistence.PaginatedListResult[shared.DispatchRow]{}, nil
+}
+func (f *fakeDiagnosticQueue) CountLive(context.Context, persistence.DispatchListFilter) (int, error) {
+	return 0, nil
+}
+func (f *fakeDiagnosticQueue) CountParkedByReason(context.Context) (map[string]int, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*shared.DispatchRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, persistence.ParkActiveInput) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) ListParkedReadyForResume(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ListParkedOverdue(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID) (*persistence.ParkedRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+	return false, nil
+}
+func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
+	return 0, nil, nil
+}
+func (f *fakeDiagnosticQueue) SetRetryNoProgressForNodeInTx(context.Context, persistence.Tx, shared.UUID, int) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int, *int) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) LoadResumeMetadataInTx(context.Context, persistence.Tx, shared.UUID) (*persistence.ResumeMetadataRow, error) {
+	return nil, nil
+}
+func (f *fakeDiagnosticQueue) ClearResumeMetadataInTx(context.Context, persistence.Tx, shared.UUID) error {
+	return nil
 }
 
 // fakeInvalidateHandler returns the configured shape and / or err.
@@ -79,7 +160,7 @@ func (f *fakeInvalidateHandler) InvalidateNode(_ context.Context, _, _ string) (
 func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)
-	rows := []parkedDiagnosticRow{
+	rows := []persistence.ParkedDiagnosticRow{
 		{
 			InstanceID: "11111111-1111-1111-1111-111111111111",
 			NodeID:     "22222222-2222-2222-2222-222222222222",
@@ -96,10 +177,10 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		},
 	}
 	deps := AppDeps{
-		Persist:          noopStore{},
-		Logger:           shared.SilentLogger{},
-		Clock:            shared.SystemClock{},
-		DiagnosticReader: &fakeDiagnosticReader{rows: rows},
+		Persist: noopStore{},
+		Queue:   &fakeDiagnosticQueue{rows: rows},
+		Logger:  shared.SilentLogger{},
+		Clock:   shared.SystemClock{},
 	}
 	app := NewApp(deps)
 	srv := httptest.NewServer(app)
@@ -142,7 +223,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)
-	rows := []parkedDiagnosticRow{
+	rows := []persistence.ParkedDiagnosticRow{
 		{
 			InstanceID: "i1", NodeID: "n1", FrameID: "f1",
 			ParkedAt: now.Add(-time.Hour), Reason: "rate_limit",
@@ -157,10 +238,10 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 		},
 	}
 	deps := AppDeps{
-		Persist:          noopStore{},
-		Logger:           shared.SilentLogger{},
-		Clock:            shared.SystemClock{},
-		DiagnosticReader: &fakeDiagnosticReader{rows: rows},
+		Persist: noopStore{},
+		Queue:   &fakeDiagnosticQueue{rows: rows},
+		Logger:  shared.SilentLogger{},
+		Clock:   shared.SystemClock{},
 	}
 	srv := httptest.NewServer(NewApp(deps))
 	defer srv.Close()
@@ -223,6 +304,3 @@ func TestAdminInvalidateNode_Conflict409(t *testing.T) {
 		t.Fatalf("body should describe conflict: %s", body)
 	}
 }
-
-// Unused imports buster: errors stays present via test code paths.
-var _ = errors.Is

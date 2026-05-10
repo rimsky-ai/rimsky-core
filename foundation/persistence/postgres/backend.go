@@ -143,7 +143,7 @@ type (
 	instancesImpl            storeImpl
 	lifecycleIdempotencyImpl storeImpl
 	nodesImpl                storeImpl
-	lockHoldersImpl          storeImpl
+	claimHandlesImpl         storeImpl
 	nodeAttributesImpl       storeImpl
 	claimHoldersImpl         storeImpl
 	eventsImpl               storeImpl
@@ -160,7 +160,7 @@ var (
 	_ persistence.InstanceStore             = (*instancesImpl)(nil)
 	_ persistence.LifecycleIdempotencyStore = (*lifecycleIdempotencyImpl)(nil)
 	_ persistence.NodeStore                 = (*nodesImpl)(nil)
-	_ persistence.LockHoldersStore          = (*lockHoldersImpl)(nil)
+	_ persistence.ClaimHandlesStore         = (*claimHandlesImpl)(nil)
 	_ persistence.NodeAttributesStore       = (*nodeAttributesImpl)(nil)
 	_ persistence.ClaimHoldersStore         = (*claimHoldersImpl)(nil)
 	_ persistence.EventStore                = (*eventsImpl)(nil)
@@ -178,7 +178,7 @@ func (s *storeImpl) LifecycleIdempotency() persistence.LifecycleIdempotencyStore
 	return (*lifecycleIdempotencyImpl)(s)
 }
 func (s *storeImpl) Nodes() persistence.NodeStore                    { return (*nodesImpl)(s) }
-func (s *storeImpl) LockHolders() persistence.LockHoldersStore       { return (*lockHoldersImpl)(s) }
+func (s *storeImpl) ClaimHandles() persistence.ClaimHandlesStore     { return (*claimHandlesImpl)(s) }
 func (s *storeImpl) NodeAttributes() persistence.NodeAttributesStore { return (*nodeAttributesImpl)(s) }
 func (s *storeImpl) ClaimHolders() persistence.ClaimHoldersStore     { return (*claimHoldersImpl)(s) }
 func (s *storeImpl) Events() persistence.EventStore                  { return (*eventsImpl)(s) }
@@ -193,7 +193,7 @@ func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*store
 func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*storeImpl)(b).q(tx) }
 func (b *lifecycleIdempotencyImpl) q(tx persistence.Tx) querier { return (*storeImpl)(b).q(tx) }
 func (b *nodesImpl) q(tx persistence.Tx) querier                { return (*storeImpl)(b).q(tx) }
-func (b *lockHoldersImpl) q(tx persistence.Tx) querier          { return (*storeImpl)(b).q(tx) }
+func (b *claimHandlesImpl) q(tx persistence.Tx) querier         { return (*storeImpl)(b).q(tx) }
 func (b *nodeAttributesImpl) q(tx persistence.Tx) querier       { return (*storeImpl)(b).q(tx) }
 func (b *claimHoldersImpl) q(tx persistence.Tx) querier         { return (*storeImpl)(b).q(tx) }
 func (b *eventsImpl) q(tx persistence.Tx) querier               { return (*storeImpl)(b).q(tx) }

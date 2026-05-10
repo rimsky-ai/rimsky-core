@@ -11,12 +11,14 @@
 //   - GET /observability/v1/trace/{dispatch_id}/stream  (SSE)
 //
 // Per spec §2: standard vocabulary + free-form fallback. The agent
-// emits step_started/step_completed/step_failed/tool_call/error/log
-// via `recordEvent`; consumers see them via getTrace / streamTrace.
+// emits step_started/step_completed/step_failed/step_blocked/
+// step_parked/tool_call/error/log via `recordEvent`; consumers see
+// them via getTrace / streamTrace.
 //
-// gRPC service registration is deferred to v2 — the dashboard's
-// Hono proxy talks HTTP+JSON regardless, and the conformance probe
-// in `core/cmd/rimsky-conformance/` exercises the HTTP+JSON surface.
+// Both surfaces ship: the gRPC ExecutorObservability service is wired
+// in `server.ts` alongside the executor service, and the HTTP+JSON
+// equivalent is mounted on the Fastify app for the dashboard's Hono
+// proxy and the conformance probe in `cmd/rimsky-conformance/`.
 //
 // Bounded retention: per dispatch, all events are retained until
 // retention_after_terminal_seconds elapses past terminal; then evicted

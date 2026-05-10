@@ -161,11 +161,13 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 // `{type: "..."}` shape. Returns a synthesized ExecuteEvent with the terminal
 // oneof populated.
 //
-// Mirrors the supervisor's parser at foundation/integration/callback.go's
-// tryParseAsyncCallback: when the new-shape body declares more than one
-// terminal field (complete | blocked | errored | park_requested), reject
-// outright. The conformance suite must surface this defect because the
-// supervisor would explode on it in production.
+// @source: foundation/integration/callback.go::tryParseAsyncCallback
+// @diverged: true
+// @reason: The supervisor parses a typed body via json.Unmarshal into
+// asyncCallbackBody. The conformance receiver operates on a
+// map[string]any so test fixtures can be loose; payload bytes do not
+// have to be base64-encoded here. Both must reject >1 terminal-field
+// bodies identically — that branch is the load-bearing parity check.
 func parseCallbackBody(body map[string]any) (*genv1.ExecuteEvent, error) {
 	// New shape: top-level keys complete | blocked | errored | park_requested.
 	terminalCount := 0

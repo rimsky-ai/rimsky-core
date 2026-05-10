@@ -26,13 +26,13 @@ import (
 )
 
 // controlapiInvalidateAdapter wraps the foundation/integration
-// InvalidateHandler so it returns the controlapi.ErrInvalidateConflict
+// InvalidateAdapter so it returns the controlapi.ErrInvalidateConflict
 // sentinel when the foundation runtime reports the target is running.
 // Without this translation the admin handler would 500 instead of 409
 // because errors.Is on the foundation's ErrInvalidateRunning sentinel
 // would fail (the controlapi handler only knows ErrInvalidateConflict).
 type controlapiInvalidateAdapter struct {
-	inner *integration.InvalidateHandler
+	inner *integration.InvalidateAdapter
 }
 
 func (a *controlapiInvalidateAdapter) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
@@ -197,7 +197,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	obsLogger := slogLoggerFor(cfg.Logger)
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
-	go disc.RefreshLoop(discoveryCtx, observabilityRefreshInterval(), obsLogger)
+	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
 	deps := controlapi.AppDeps{
 		Persist:       persistStore,
 		Queue:         persistQueue,
@@ -214,7 +214,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		// the on_event handler dispatch use, so handler-emitted
 		// invalidates correctly resume parked targets.
 		InvalidateHandler: &controlapiInvalidateAdapter{
-			inner: &integration.InvalidateHandler{
+			inner: &integration.InvalidateAdapter{
 				Persist:      persistStore,
 				Queue:        persistQueue,
 				Clock:        cfg.Clock,
@@ -327,10 +327,12 @@ func (h *sharedLoggerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *sharedLoggerHandler) WithGroup(_ string) slog.Handler { return h }
 
-// observabilityRefreshInterval returns the configured background re-
+// ObservabilityRefreshInterval returns the configured background re-
 // probe interval, parsed from RIMSKY_OBSERVABILITY_REFRESH_INTERVAL
-// (Go time.Duration syntax). Defaults to 60s per spec §4.
-func observabilityRefreshInterval() time.Duration {
+// (Go time.Duration syntax). Defaults to 60s per spec §4. Exported so
+// supervisor-side wiring (cmd/rimsky-supervisor/main.go) can drive its
+// own RefreshLoop on the same env-var contract.
+func ObservabilityRefreshInterval() time.Duration {
 	if v := os.Getenv("RIMSKY_OBSERVABILITY_REFRESH_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d

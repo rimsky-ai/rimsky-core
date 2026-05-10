@@ -96,13 +96,13 @@ func TestClaimHoldersRoute(t *testing.T) {
 
 	// Insert a lock-holder + claim-holder pair, then re-fetch.
 	holderNodeID := seedThrowawayNode(t, h)
-	lockHolderID := seedScopeLockHolder(ctx, t, h, holderNodeID)
+	lockHolderID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:           claimHolderID,
-			LockHolderID: lockHolderID,
-			HolderNodeID: holderNodeID,
+			ID:            claimHolderID,
+			ClaimHandleID: lockHolderID,
+			HolderNodeID:  holderNodeID,
 		}, tx)
 	}))
 
@@ -203,16 +203,16 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 	return nodeID
 }
 
-// seedScopeLockHolder inserts a scope-kind lock-holder row anchored to
+// seedScopeClaimHandle inserts a scope-kind lock-holder row anchored to
 // the given node and returns its ID. Used by claim-holders route tests
 // to satisfy the FK on rimsky_claim_holders.claim_handle_id.
-func seedScopeLockHolder(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
+func seedScopeClaimHandle(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
 	t.Helper()
 	storeName := "test-store"
 	intent := "rw"
 	id := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		return h.persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 id,
 			LockKind:           persistence.LockKindScope,
 			StoreName:          &storeName,

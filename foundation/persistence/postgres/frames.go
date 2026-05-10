@@ -5,7 +5,7 @@
 // frames.go is the postgres accessor for `rimsky_frames` and the related
 // frame-engine SQL on `rimsky_nodes`, `rimsky_worker_request`, and
 // `rimsky_instances`. Owns the SQL the frame engine
-// (core/frame/{engine,producer}.go) calls through `persistence.FrameStore`.
+// (modeling/frame/{engine,producer}.go) calls through `persistence.FrameStore`.
 
 package postgres
 

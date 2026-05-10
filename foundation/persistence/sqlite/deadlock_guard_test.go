@@ -232,54 +232,54 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Nodes.MarkStaleForCascade", func() {
 			_ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
 		}},
-		// LockHolders
-		{"LockHolders.Insert", func() {
-			_ = store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{}, nil)
+		// ClaimHandles
+		{"ClaimHandles.Insert", func() {
+			_ = store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{}, nil)
 		}},
-		{"LockHolders.UpdateAddress", func() {
-			_ = store.LockHolders().UpdateAddress(ctx, someID, "sup", nil, nil)
+		{"ClaimHandles.UpdateAddress", func() {
+			_ = store.ClaimHandles().UpdateAddress(ctx, someID, "sup", nil, nil)
 		}},
-		{"LockHolders.Get", func() {
-			_, _ = store.LockHolders().Get(ctx, someID, nil)
+		{"ClaimHandles.Get", func() {
+			_, _ = store.ClaimHandles().Get(ctx, someID, nil)
 		}},
-		{"LockHolders.ListByHolderNode", func() {
-			_, _ = store.LockHolders().ListByHolderNode(ctx, someID, nil)
+		{"ClaimHandles.ListByHolderNode", func() {
+			_, _ = store.ClaimHandles().ListByHolderNode(ctx, someID, nil)
 		}},
-		{"LockHolders.ListBySupervisor", func() {
-			_, _ = store.LockHolders().ListBySupervisor(ctx, "sup", nil)
+		{"ClaimHandles.ListBySupervisor", func() {
+			_, _ = store.ClaimHandles().ListBySupervisor(ctx, "sup", nil)
 		}},
-		{"LockHolders.ExtendHeartbeat", func() {
-			_ = store.LockHolders().ExtendHeartbeat(ctx, "sup", time.Now(), nil)
+		{"ClaimHandles.ExtendHeartbeat", func() {
+			_ = store.ClaimHandles().ExtendHeartbeat(ctx, "sup", time.Now(), nil)
 		}},
-		{"LockHolders.ListExpired", func() {
-			_, _ = store.LockHolders().ListExpired(ctx, nil)
+		{"ClaimHandles.ListExpired", func() {
+			_, _ = store.ClaimHandles().ListExpired(ctx, nil)
 		}},
-		{"LockHolders.Delete", func() {
-			_ = store.LockHolders().Delete(ctx, someID, "sup", nil)
+		{"ClaimHandles.Delete", func() {
+			_ = store.ClaimHandles().Delete(ctx, someID, "sup", nil)
 		}},
-		{"LockHolders.CountByNamedLock", func() {
-			_, _ = store.LockHolders().CountByNamedLock(ctx, "n", nil)
+		{"ClaimHandles.CountByNamedLock", func() {
+			_, _ = store.ClaimHandles().CountByNamedLock(ctx, "n", nil)
 		}},
-		{"LockHolders.ListByStoreScope", func() {
-			_, _ = store.LockHolders().ListByStoreScope(ctx, "s", nil)
+		{"ClaimHandles.ListByStoreScope", func() {
+			_, _ = store.ClaimHandles().ListByStoreScope(ctx, "s", nil)
 		}},
-		{"LockHolders.DeleteIfExpired", func() {
-			_, _ = store.LockHolders().DeleteIfExpired(ctx, someID, "sup", nil)
+		{"ClaimHandles.DeleteIfExpired", func() {
+			_, _ = store.ClaimHandles().DeleteIfExpired(ctx, someID, "sup", nil)
 		}},
-		{"LockHolders.LockForUpdate", func() {
-			_, _ = store.LockHolders().LockForUpdate(ctx, someID, nil)
+		{"ClaimHandles.LockForUpdate", func() {
+			_, _ = store.ClaimHandles().LockForUpdate(ctx, someID, nil)
 		}},
-		{"LockHolders.UpdateScope", func() {
-			_ = store.LockHolders().UpdateScope(ctx, someID, "sup", nil, nil)
+		{"ClaimHandles.UpdateScope", func() {
+			_ = store.ClaimHandles().UpdateScope(ctx, someID, "sup", nil, nil)
 		}},
-		{"LockHolders.UpdateRealizedWriteSemantics", func() {
-			_ = store.LockHolders().UpdateRealizedWriteSemantics(ctx, someID, "sup", "sync", nil)
+		{"ClaimHandles.UpdateRealizedWriteSemantics", func() {
+			_ = store.ClaimHandles().UpdateRealizedWriteSemantics(ctx, someID, "sup", "sync", nil)
 		}},
-		{"LockHolders.ListForObservability", func() {
-			_, _ = store.LockHolders().ListForObservability(ctx, persistence.LockHolderListFilter{}, persistence.ListPagination{Limit: 1}, nil)
+		{"ClaimHandles.ListForObservability", func() {
+			_, _ = store.ClaimHandles().ListForObservability(ctx, persistence.LockHolderListFilter{}, persistence.ListPagination{Limit: 1}, nil)
 		}},
-		{"LockHolders.GetByFrameAndNode", func() {
-			_, _ = store.LockHolders().GetByFrameAndNode(ctx, someID, someID, nil)
+		{"ClaimHandles.GetByFrameAndNode", func() {
+			_, _ = store.ClaimHandles().GetByFrameAndNode(ctx, someID, someID, nil)
 		}},
 		// NodeAttributes
 		{"NodeAttributes.Get", func() {
@@ -298,14 +298,14 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHolders.Get", func() {
 			_, _ = store.ClaimHolders().Get(ctx, someID, nil)
 		}},
-		{"ClaimHolders.ListByLockHolderID", func() {
-			_, _ = store.ClaimHolders().ListByLockHolderID(ctx, someID, nil)
+		{"ClaimHolders.ListByClaimHandleID", func() {
+			_, _ = store.ClaimHolders().ListByClaimHandleID(ctx, someID, nil)
 		}},
 		{"ClaimHolders.ListByHolderNode", func() {
 			_, _ = store.ClaimHolders().ListByHolderNode(ctx, someID, nil)
 		}},
-		{"ClaimHolders.ListActiveByLockHolderID", func() {
-			_, _ = store.ClaimHolders().ListActiveByLockHolderID(ctx, someID, nil)
+		{"ClaimHolders.ListActiveByClaimHandleID", func() {
+			_, _ = store.ClaimHolders().ListActiveByClaimHandleID(ctx, someID, nil)
 		}},
 		{"ClaimHolders.Complete", func() {
 			_ = store.ClaimHolders().Complete(ctx, someID, persistence.ClaimHolderStateCompleted, nil)

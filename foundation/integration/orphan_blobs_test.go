@@ -124,8 +124,8 @@ func TestSweepOrphanedBlobsCrossBackendIgnored(t *testing.T) {
 	be := persistence.NewMemoryBackend()
 	store := &fakeBlobOrphansStore{}
 	if err := store.Insert(ctx, persistence.BlobOrphanRow{
-		Handle: "fs:other-backend",
-		Backend: "filesystem",
+		Handle:     "fs:other-backend",
+		Backend:    "filesystem",
 		OrphanedAt: time.Now().Add(-time.Hour),
 		ReapAfter:  time.Now().Add(-time.Minute),
 	}, nil); err != nil {

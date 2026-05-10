@@ -46,7 +46,13 @@
 --
 -- The writable_schema PRAGMA is inert until any DML against
 -- sqlite_schema runs; the schema_version PRAGMA bump at the end forces
--- SQLite to reparse on the next connection.
+-- SQLite to reparse on the next connection. That bump uses the literal
+-- constant `1000000` because PRAGMA schema_version takes a literal
+-- write (no read-modify-write); see the inline comment at the bump
+-- site (C2) for the long-form rationale and the constraint future
+-- migrations must honor (any subsequent writable_schema dance against
+-- this DB MUST bump to a value strictly greater than 1000000 or compute
+-- a fresh value from the host language).
 
 -- ---------------------------------------------------------------------------
 -- C2 + C5 + C7: ADD COLUMN for the new park-state, retry-cap, and

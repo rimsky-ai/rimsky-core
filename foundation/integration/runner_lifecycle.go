@@ -71,7 +71,7 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 		}
 		scope := claimScope(lk)
 		address := claimAddress(lk)
-		claimID := locks.ClaimID(lk.LockHolderID.String())
+		claimID := locks.ClaimID(lk.ClaimHandleID.String())
 		if err := lk.Store.Abandon(ctx, claimID, scope, address); err != nil {
 			args.Logger.Warn("handleAcquireUnavailable: Abandon failed",
 				"store", storeNameForSpec(lk.Spec), "error", err.Error())

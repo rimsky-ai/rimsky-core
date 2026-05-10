@@ -41,7 +41,7 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Driver, rawExec fu
 	t.Run("HeldClaimAutoTerminalSerialization", func(t *testing.T) { testHeldClaimAutoTerminalSerialization(t, factory(t)) })
 	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
-	t.Run("LockHoldersUpdateScope", func(t *testing.T) { testLockHoldersUpdateScope(t, factory(t)) })
+	t.Run("ClaimHandlesUpdateScope", func(t *testing.T) { testClaimHandlesUpdateScope(t, factory(t)) })
 	t.Run("NodesMarkStaleForCascade", func(t *testing.T) { testNodesMarkStaleForCascade(t, factory(t)) })
 	t.Run("NodesListRunningBySupervisor", func(t *testing.T) { testNodesListRunningBySupervisor(t, factory(t)) })
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })

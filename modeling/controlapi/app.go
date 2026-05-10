@@ -56,7 +56,7 @@ type AppDeps struct {
 	// → templates referencing any executor will fail validation.
 	Executors map[string]ExecutorEntry
 	// Observability is the optional read-only /v1/observability/* mount
-	// hook. Setter is core/config.StartControlAPI; per spec §1.1 the
+	// hook. Setter is modeling/config.StartControlAPI; per spec §1.1 the
 	// observability surface is wired in at startup alongside the
 	// existing admin/operator routes. Nil → /v1/observability/* is not
 	// mounted (used by tests that don't exercise observability).
@@ -69,12 +69,6 @@ type AppDeps struct {
 	// has run. Returns ok=false when no capability cache is loaded for
 	// the named executor (e.g. peer is unreachable). Plan F6 + F7.
 	ExecutorCapabilities func(executorName string) (declaredEvents []string, userdataSchema []byte, ok bool)
-
-	// DiagnosticReader is the operator-supplied accessor for parked-node
-	// diagnostics. nil → /admin/diagnostics/parked-nodes returns an
-	// empty list. Wired by config.StartControlAPI when the persistence
-	// driver's reader is constructed. Plan G1 / G2.
-	DiagnosticReader DiagnosticReader
 
 	// InvalidateHandler is the operator-supplied unified invalidate
 	// dispatch. Used by POST /admin/instances/{i}/nodes/{n}/invalidate
@@ -93,12 +87,12 @@ type AppDeps struct {
 }
 
 // ObservabilityRouter is the seam controlapi uses to mount the
-// observability handlers without importing core/observability/ (which
+// observability handlers without importing modeling/observability/ (which
 // in turn would close a cycle). config.StartControlAPI passes a
 // concrete value populated from observability.Routes.
 type ObservabilityRouter func(r chi.Router)
 
-// ExecutorEntry mirrors core/config.ExecutorEntry but lives in the
+// ExecutorEntry mirrors modeling/config.ExecutorEntry but lives in the
 // controlapi package so the package compiles without the cyclic
 // import (controlapi → config). The wiring helper at AppDeps
 // construction time (config.StartControlAPI) populates this from the

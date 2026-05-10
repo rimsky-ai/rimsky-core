@@ -6,7 +6,7 @@
 //
 // Inv 13: held-claim resolution is auto-terminal, single, and aggregate-
 // outcome-driven. Two concurrent Transactions calling
-// LockHolders.LockForUpdate(ctx, id, tx) must serialise — the second
+// ClaimHandles.LockForUpdate(ctx, id, tx) must serialise — the second
 // blocks until the first commits.
 package conformance
 
@@ -32,7 +32,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Driver) 
 	lockName := "autoterminal-lock"
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -60,7 +60,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Driver) 
 	go func() {
 		defer wg.Done()
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			row, err := store.LockHolders().LockForUpdate(ctx, lockHolderID, tx)
+			row, err := store.ClaimHandles().LockForUpdate(ctx, lockHolderID, tx)
 			if err != nil {
 				return err
 			}
@@ -84,7 +84,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Driver) 
 	go func() {
 		defer wg.Done()
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			row, err := store.LockHolders().LockForUpdate(ctx, lockHolderID, tx)
+			row, err := store.ClaimHandles().LockForUpdate(ctx, lockHolderID, tx)
 			if err != nil {
 				return err
 			}

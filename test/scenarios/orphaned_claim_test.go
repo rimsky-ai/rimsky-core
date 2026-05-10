@@ -9,7 +9,7 @@
 //
 // Migrated to the stores-redesign template grammar (spec §11). The legacy
 // dispatch-row claim-orphan path (`rimsky_worker_request.claimed_by` >
-// 5 × heartbeat_timeout) is still wired in `core/scheduler/scheduler.go` and
+// 5 × heartbeat_timeout) is still wired in `modeling/scheduler/scheduler.go` and
 // emits `orphaned_claim_released`, but the redesign relocates the
 // supervisor-side orphan signal onto `rimsky_claim_handle` (§9.9.2 +
 // §7.5). This scenario exercises the lock-holder path; `verify_before_run_
@@ -53,7 +53,7 @@ func TestOrphanedClaim(t *testing.T) {
 	lockHolderID := uuid.New()
 	lockName := "orphan-zombie-lock"
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		return h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -69,9 +69,9 @@ func TestOrphanedClaim(t *testing.T) {
 	deadline := time.Now().Add(20 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
-		var got *persistence.LockHolderRow
+		var got *persistence.ClaimHandleRow
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.LockHolders().Get(h.Ctx, lockHolderID, tx)
+			r, err := h.Persist.ClaimHandles().Get(h.Ctx, lockHolderID, tx)
 			got = r
 			return err
 		})

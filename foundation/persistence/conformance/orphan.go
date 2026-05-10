@@ -5,7 +5,7 @@
 // orphan.go — OrphanCutoffTime conformance area.
 //
 // Inv 6: orphan-claim cutoff (5× heartbeat). Here we validate that
-// LockHoldersStore.ListExpired returns rows with expires_at < now() and
+// ClaimHandlesStore.ListExpired returns rows with expires_at < now() and
 // not those with future expires_at.
 package conformance
 
@@ -32,7 +32,7 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Driver) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		// Past expires_at.
-		if err := store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 pastID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockNamePast,
@@ -43,7 +43,7 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		// Future expires_at.
-		if err := store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 futureID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockNameFuture,
@@ -58,9 +58,9 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Driver) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	var expired []persistence.LockHolderRow
+	var expired []persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.LockHolders().ListExpired(ctx, tx)
+		rows, err := store.ClaimHandles().ListExpired(ctx, tx)
 		expired = rows
 		return err
 	}); err != nil {

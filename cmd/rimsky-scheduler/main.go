@@ -86,7 +86,7 @@ func main() {
 	// gating consistent across processes (memory backend rejection,
 	// filesystem.root presence) and exposes the backend on the driver
 	// in case future scheduler-side sweeps need it.
-	blobBackend, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver)
+	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		_ = driver.Close()
@@ -118,21 +118,31 @@ func main() {
 	mreg := observability.NewMetricsRegistry()
 
 	h, err := config.StartScheduler(config.SchedulerConfig{
-		Driver:           driver,
-		Clock:            shared.SystemClock{},
-		Logger:           log,
-		TickInterval:     time.Duration(tickMs) * time.Millisecond,
-		HeartbeatTimeout: time.Duration(heartbeatMs) * time.Millisecond,
-		Stores:           rimskyCfg.Stores,
-		NamedLocks:       rimskyCfg.NamedLocks,
-		SupervisorID:     supervisorID,
-		Blob:             blobBackend,
-		Metrics:          observability.MetricsHookOf(mreg),
+		Driver:                  driver,
+		Clock:                   shared.SystemClock{},
+		Logger:                  log,
+		TickInterval:            time.Duration(tickMs) * time.Millisecond,
+		HeartbeatTimeout:        time.Duration(heartbeatMs) * time.Millisecond,
+		Stores:                  rimskyCfg.Stores,
+		NamedLocks:              rimskyCfg.NamedLocks,
+		SupervisorID:            supervisorID,
+		Blob:                    blobBackend,
+		OrphanBlobSweepInterval: rimskyCfg.Blob.Retention.OrphanSweepInterval,
+		Metrics:                 observability.MetricsHookOf(mreg),
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
 		_ = driver.Close()
 		os.Exit(1)
+	}
+
+	// Plan I2: launch the gauge refresher so node-state, parked-by-reason,
+	// held-frames, and dispatch-queue-depth gauges reflect live persistence
+	// state. The refresher polls every 5s by default; cancel on shutdown.
+	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
+	defer cancelGauges()
+	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
+		mhook.StartGaugeRefresher(gaugeCtx, driver.Store(), driver.Queue(), 0, log)
 	}
 
 	// Optional Prometheus /metrics endpoint on a separate port.

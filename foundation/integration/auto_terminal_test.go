@@ -101,7 +101,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: lockHolderID, LockKind: persistence.LockKindScope,
 			StoreName: &storeName, ScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
@@ -111,12 +111,12 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: acqNode.ID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeID: acqNode.ID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: inhNode.ID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeID: inhNode.ID,
 		}, tx)
 	}))
 
@@ -133,7 +133,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 
 	args := integration.RunArgs{
 		Persist:       backend,
-		LockHolders:   backend.LockHolders(),
+		ClaimHandles:  backend.ClaimHandles(),
 		StoreRegistry: reg,
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-A",
@@ -142,9 +142,9 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		return integration.CheckAndFireResolution(ctx, args, tx, lockHolderID)
 	}))
 
-	var row *persistence.LockHolderRow
+	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.LockHolders().Get(ctx, lockHolderID, tx)
+		r, err := backend.ClaimHandles().Get(ctx, lockHolderID, tx)
 		row = r
 		return err
 	}))
@@ -211,7 +211,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := backend.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: lockHolderID, LockKind: persistence.LockKindScope,
 			StoreName: &storeName, ScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
@@ -221,12 +221,12 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 			return err
 		}
 		if err := backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: acqNode.ID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeID: acqNode.ID,
 		}, tx); err != nil {
 			return err
 		}
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID: shared.UUID(uuid.New()), LockHolderID: lockHolderID, HolderNodeID: inhNode.ID,
+			ID: shared.UUID(uuid.New()), ClaimHandleID: lockHolderID, HolderNodeID: inhNode.ID,
 		}, tx)
 	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -242,7 +242,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 
 	args := integration.RunArgs{
 		Persist:       backend,
-		LockHolders:   backend.LockHolders(),
+		ClaimHandles:  backend.ClaimHandles(),
 		StoreRegistry: reg,
 		Logger:        shared.SilentLogger{},
 		SupervisorID:  "sup-G",
@@ -251,9 +251,9 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		return integration.CheckAndFireResolution(ctx, args, tx, lockHolderID)
 	}))
 
-	var row *persistence.LockHolderRow
+	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := backend.LockHolders().Get(ctx, lockHolderID, tx)
+		r, err := backend.ClaimHandles().Get(ctx, lockHolderID, tx)
 		row = r
 		return err
 	}))

@@ -64,7 +64,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		if !ok {
 			t.Fatalf("ClaimDispatchRow: not claimed")
 		}
-		if err := store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -74,7 +74,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.LockHolders().UpdateAddress(ctx, lockHolderID, supID,
+		if err := store.ClaimHandles().UpdateAddress(ctx, lockHolderID, supID,
 			json.RawMessage(`{"addr":"x"}`), tx); err != nil {
 			return err
 		}
@@ -85,9 +85,9 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 	}
 
 	// Verify nothing landed.
-	var got *persistence.LockHolderRow
+	var got *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
 		got = r
 		return err
 	}); err != nil {
@@ -125,7 +125,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		if !ok {
 			t.Fatalf("ClaimDispatchRow #2: not claimed")
 		}
-		if err := store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindNamed,
 			LockName:           &lockName,
@@ -135,7 +135,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.LockHolders().UpdateAddress(ctx, lockHolderID, supID, addressBytes, tx); err != nil {
+		if err := store.ClaimHandles().UpdateAddress(ctx, lockHolderID, supID, addressBytes, tx); err != nil {
 			return err
 		}
 		return nil
@@ -143,9 +143,9 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
 		t.Fatalf("commit tx: %v", err)
 	}
 
-	var got2 *persistence.LockHolderRow
+	var got2 *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.LockHolders().Get(ctx, lockHolderID, tx)
+		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
 		got2 = r
 		return err
 	}); err != nil {

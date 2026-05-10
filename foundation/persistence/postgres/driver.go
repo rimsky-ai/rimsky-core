@@ -3,12 +3,12 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package postgres is the Postgres-backed persistence.Driver. Lifted from
-// the previous core/queue/postgres + core/storage/postgres + core/migrations
+// the previous foundation/persistence/postgres + foundation/persistence/postgres + foundation/persistence/postgres/migrations
 // packages and refactored to use persistence.Tx instead of pgx.Tx in
 // every interface signature.
 //
-// This package is the only place outside core/cmd/, core/internal/pgtest/,
-// core/scenario/, stores/, and test/smoke/ permitted to import pgx
+// This package is the only place outside cmd/, foundation/internal/pgtest/,
+// modeling/scenario/, stores/, and test/smoke/ permitted to import pgx
 // (per spec §2.10; enforced by golangci-lint depguard in `.golangci.yml`).
 package postgres
 

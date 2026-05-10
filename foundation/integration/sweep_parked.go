@@ -29,7 +29,7 @@ import (
 
 // ParkedSweepArgs bundles the dependencies for SweepParkedNodes.
 //
-// LockHolders, ClaimHolders, AdvisoryLocker, and StoreRegistry are
+// ClaimHandles, ClaimHolders, AdvisoryLocker, and StoreRegistry are
 // optional: when nil, the park_timeout watchdog still removes the
 // worker_request row but cannot fire auto-terminal Abandon on held
 // claims associated with the dispatch. Wiring all four enables the
@@ -40,7 +40,7 @@ type ParkedSweepArgs struct {
 	Clock          shared.Clock
 	Logger         shared.Logger
 	SupervisorID   string
-	LockHolders    persistence.LockHoldersStore
+	ClaimHandles   persistence.ClaimHandlesStore
 	AdvisoryLocker persistence.AdvisoryLocker
 	StoreRegistry  *locks.Registry
 	// Limit caps the per-tick batch. Zero falls back to 100.
@@ -135,8 +135,8 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		// node. We mark the claim-holders rows as 'failed' so
 		// CheckAndFireResolution computes the aggregate-failed → Abandon
 		// outcome. Skipped when the wire-time wiring isn't complete
-		// (LockHolders/StoreRegistry nil — typical of unit tests).
-		if args.LockHolders != nil && args.StoreRegistry != nil {
+		// (ClaimHandles/StoreRegistry nil — typical of unit tests).
+		if args.ClaimHandles != nil && args.StoreRegistry != nil {
 			if err := abandonHeldClaimsForOverdueNode(ctx, args, tx, row.NodeID, log); err != nil {
 				return err
 			}
@@ -167,7 +167,7 @@ func abandonHeldClaimsForOverdueNode(
 	ctx context.Context, args ParkedSweepArgs, tx persistence.Tx,
 	nodeID shared.UUID, log shared.Logger,
 ) error {
-	handles, err := args.LockHolders.ListByHolderNode(ctx, nodeID, tx)
+	handles, err := args.ClaimHandles.ListByHolderNode(ctx, nodeID, tx)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func abandonHeldClaimsForOverdueNode(
 		Persist:        args.Persist,
 		Queue:          args.Queue,
 		AdvisoryLocker: args.AdvisoryLocker,
-		LockHolders:    args.LockHolders,
+		ClaimHandles:   args.ClaimHandles,
 		StoreRegistry:  args.StoreRegistry,
 		Clock:          args.Clock,
 		Logger:         log,
@@ -193,7 +193,7 @@ func abandonHeldClaimsForOverdueNode(
 		// Mark every still-active row as failed. ClaimHolders is reachable
 		// via Persist; we don't take a separate field on args because the
 		// dependency surface is already wide enough.
-		if err := args.Persist.ClaimHolders().FailAllActiveByLockHolder(ctx, h.ID, h.HolderSupervisorID, tx); err != nil {
+		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ID, h.HolderSupervisorID, tx); err != nil {
 			return err
 		}
 		// Fire CheckAndFireResolution. The claim-handle row's

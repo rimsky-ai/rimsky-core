@@ -2,6 +2,179 @@
 
 ## Unreleased
 
+### Holistic-review cycle 2: J10 wiring, dialect bucket fixes, post-Phase-5 renames
+
+Second cycle over the holistic-review findings. Closes the genuine new
+bugs surfaced by the cycle-2 verification re-review.
+
+- `executors/claude-agent/src/agent-run.ts`: extend `renderTemplate` to
+  resolve `{{rimsky.resume_payload}}` and `{{rimsky.resume_reason}}`.
+  J10 wired the resume-context bag into `promptVars.rimsky` but the
+  substitution regex only matched `userdata|attributes`, so the
+  documented J10 template variables silently never reached prompts.
+  Added unit tests covering both the populated and empty/absent cases.
+- `foundation/integration/cascade_invalidate.go::invalidateSourceBucket`:
+  align on the actual emitted reason — scheduler emits
+  `schedule_fired` (past tense; see
+  `modeling/scheduler/schedule_ticker.go:107`), not `schedule_fire`.
+  The bucket was switching on the wrong string so cron-fired
+  invalidates were classified as `other` instead of `scheduler`.
+- `executors/claude-agent/src/server.ts`: split outcome-to-category
+  mapping into four distinct categories (`step_completed`,
+  `step_failed`, `step_blocked`, `step_parked`) instead of mapping
+  `blocked` and `park_requested` to the same `step_completed` bucket
+  as `complete`. Updated the doc comment in
+  `executors/claude-agent/src/observability.ts` to list all five
+  categories.
+- `modeling/controlapi/admin_diagnostics.go::handleAdminInvalidateNode`:
+  corrected the godoc dispatch table — only `running` returns 409;
+  `failed` falls through to the standard frame-engine invalidate
+  (matches `foundation/integration/wake_parked.go:86-97`).
+- `foundation/integration/runner_acquire.go::evaluateScopeConflict`:
+  delete the `_ = ctx` discard line. The comment said "ctx no longer
+  used post-envelope refactor" but ctx IS used four lines above.
+- Repo-wide: rename 63 stale `core/...` doc-path references to their
+  post-Phase-5 homes (`foundation/integration/`,
+  `foundation/persistence/`, `modeling/scheduler/`, `modeling/cli/`,
+  `modeling/controlapi/`, `modeling/observability/`, etc.). Affects
+  doc comments across foundation, modeling, cmd, stores, and test
+  scenarios.
+- Repo-wide: rename `LockHoldersStore` → `ClaimHandlesStore` (and
+  `LockHolderRow` → `ClaimHandleRow`, `LockHolderID` →
+  `ClaimHandleID`, `LockHolderInsertInput` → `ClaimHandleInsertInput`,
+  `Persist.LockHolders()` → `Persist.ClaimHandles()`,
+  `args.LockHolders` → `args.ClaimHandles`, `SweepLockHolders` →
+  `SweepClaimHandles`, `FailAllActiveByLockHolder` →
+  `FailAllActiveByClaimHandle`, plus the conformance suite and
+  scenario tests). Schema row is `rimsky_claim_handle`, so the Go-side
+  identifiers now match. File renames:
+  `foundation/persistence/lock_holders.go` →
+  `foundation/persistence/claim_handles.go` (mirrored in postgres,
+  sqlite, and conformance subdirs).
+- `foundation/integration/runner.go`: split `MetricsHook` interface —
+  drop the four gauge-setter methods (`SetNodesByState`,
+  `SetParkedByReason`, `SetHeldFrames`, `SetDispatchQueueDepth`).
+  Foundation never refreshes gauges; the modeling-layer
+  `*RegistryHook.StartGaugeRefresher` keeps the concrete setters on
+  itself. Removes 4 no-op methods from `noopMetrics`.
+- `foundation/persistence/sqlite/migrations/004-platform-extensions-park-blob-events.sql`:
+  surface the `PRAGMA schema_version = 1000000` magic-number rationale
+  in the top-of-file BRITTLENESS NOTE so the SQLite-vs-Postgres
+  dialect asymmetry is findable; the long-form constraint already
+  documented at the bump site (any subsequent writable_schema dance
+  MUST bump strictly above 1000000).
+- `foundation/cascade/state.go`: rewrite `ReasonHandlerError`
+  docstring — the previous "audit-log marker only" framing was
+  aspirational (no audit-log path emits it). Reframed as a
+  reserved-negative sentinel pinned by
+  `TestNextState_HandlerErrorIsAuditOnly`, with explicit guidance
+  that adding a NextState mapping for it is the wrong move.
+- `foundation/cascade/state.go`: delete `ReasonWorkCompleted` (legacy
+  alias for `ReasonHandlerComplete`; both Kind strings mapped to
+  identical state-machine behavior). Also drop the `case
+  "work_completed"` in `NextState` and the test-fixture entry in
+  `state_test.go`. Pre-v1 break-freely.
+
+### Holistic-review cleanup: wire I3 plumbing, drop unused MCP catalog, normalize ResumeParkedInTx
+
+Cleanup pass over the eighth-dispatch + I3 platform-extensions plan.
+Each item closes a finding from the holistic-review pass.
+
+- `cmd/rimsky-supervisor/main.go`, `cmd/rimsky-scheduler/main.go`,
+  `cmd/rimsky-control-api/main.go`: launch
+  `observability.MetricsHookOf(mreg).StartGaugeRefresher` so the
+  registered gauges (`rimsky_nodes_by_state`,
+  `rimsky_parked_nodes_by_reason`, `rimsky_held_frames`,
+  `rimsky_dispatch_queue_depth`) reflect live persistence state
+  instead of staying at 0.
+- `cmd/rimsky-supervisor/main.go`: also start `disc.RefreshLoop` so
+  the userdata-schema validator's discovery cache heals on healed
+  peers without a process restart. Exposes
+  `config.ObservabilityRefreshInterval` for the shared env-var
+  contract.
+- `foundation/integration/supervisor.go` +
+  `foundation/integration/callback.go`: thread `UserdataValidator`
+  and `MetricsHook` onto the `CallbackServer`, and through into
+  `RunArgs` at `driveTerminal` time. Without these the async-
+  callback-driven terminal path silently skipped userdata validation
+  and dropped terminal-verdict / invalidate metric increments.
+- `modeling/config/scheduler.go`: thread
+  `BlobConfig.Retention.OrphanSweepInterval` from rimsky.yml down to
+  `scheduler.Config.OrphanBlobSweepInterval` so the operator's YAML
+  setting drives the orphan-blob sweep cadence.
+- `conformance/runner.go::probeStubMode`: surface the `AwaitTerminal`
+  error to the caller instead of swallowing it. Now
+  `--require-stub-mode` correctly fails on probe-RPC errors instead
+  of letting non-stub executors slip through.
+- `foundation/integration/runner_acquire.go`,
+  `foundation/integration/runner_dispatch.go`: when a spilled-payload
+  resume / NamedEvent payload's recorded backend differs from the
+  supervisor's currently-configured backend, log a structured warning
+  before falling back to empty bytes. Previously the mismatch was
+  silently dropped.
+- `foundation/integration/runner_dispatch.go::makeStoreHandle`:
+  refuse to dispatch when claim address/payload bytes are not
+  JSON-decodable (rather than mangling them into a Go string). Per
+  blessed invariant 20, claim content is opaque — the previous
+  fallback risked corrupting non-UTF-8 byte sequences downstream.
+- `foundation/integration/cascade_invalidate.go::invalidateSourceBucket`:
+  add `handler_invalidate` (fired by on_event handlers) to the
+  `handler` bucket; drop the fictional `cascade_changed` /
+  `cascade_unchanged` cases (no caller emits them).
+- `foundation/integration/runner_named_events.go::fireOnEventHandler`:
+  audit-log the handler invocation (declared resolve / error_class)
+  even when no Invalidate is configured, so a misconfigured
+  `resolve: error` is recoverable from the audit trail rather than
+  silently no-oping at runtime.
+- `foundation/persistence/worker_requests.go::ResumeParkedInTx`:
+  drop the unused `supervisorID` parameter (both postgres and sqlite
+  impls did `_ = supervisorID`); callers record the wake supervisor
+  id in the audit event.
+- `foundation/integration/runner_terminal_park.go::shouldSpillBlob`:
+  collapse to a one-line wrapper around
+  `persistence.ShouldSpillBlob` — the foundation and persistence
+  copies were identical.
+- `foundation/integration/runner_terminal_park.go`: delete unused
+  `makeNodePtr` helper.
+- `foundation/integration/wake_parked.go`: rename the controlapi
+  adapter struct from `InvalidateHandler` to `InvalidateAdapter` so
+  it doesn't shadow `RunArgs.InvalidateHandler` (the function-value
+  field of the same package).
+- `modeling/config/blob.go::OpenBlobBackend`: drop the unused
+  `ctx context.Context` parameter (no backend constructor reads it).
+- `modeling/observability/metrics_hook.go`: delete the unused
+  `MetricsHook` interface re-export; callers consume the concrete
+  `*RegistryHook` directly.
+- `modeling/controlapi/admin_diagnostics.go` +
+  `foundation/persistence/worker_requests.go` +
+  `foundation/persistence/postgres/queue_park.go` +
+  `foundation/persistence/sqlite/queue_park.go`: replace the unwired
+  `DiagnosticReader` interface with a concrete
+  `Queue.ListParkedDiagnostic(ctx, tx, reasonFilter)` accessor. Both
+  postgres and sqlite implement it; admin
+  `/admin/diagnostics/held-frames` and
+  `/admin/diagnostics/parked-nodes` now return real rows instead of
+  always-empty arrays.
+- `foundation/integration/runner_terminal_errors.go`: rename the
+  shadowed `cap :=` variable to `maxRetries`.
+- `executors/claude-agent/src/`: delete `mcp-catalog.ts`,
+  `mcp-resolver.ts`, `mcp-transports.ts` and their tests — the
+  ~1k LOC feature was never wired into `agent-run.ts` / `server.ts`
+  / `http-bridge.ts`. Templates that set `userdata.cli.mcpServers`
+  hit the existing parseCliConfig path; the unwired catalog layer
+  was dead.
+- `mcp-servers/control-api/main.go`: deleted the empty placeholder;
+  the binary lives in `cmd/rimsky-mcp-control-api/main.go`. The
+  binary now references `controlapimcp.Env*` constants instead of
+  inlining string literals.
+- `executors/claude-agent/src/observability.ts`: stale "deferred to
+  v2" comment removed — the gRPC service IS registered in
+  `server.ts`.
+- `docs/concepts/parked.md`: corrected the wake-path description —
+  parked rows transition to `stale` (and the worker_request to
+  `pending`) on wake; the next supervisor tick re-dispatches via
+  the standard flow.
+
 ### Eighth dispatch — N4 docker-compose conformance smoke + claude-agent gRPC observability + stub-mode contract fixes
 
 Eighth-dispatch implementation work. Closes the four eighth-dispatch

@@ -17,11 +17,11 @@
 //
 // Two tests:
 //   - TestAtomicAcquisitionRollsBackOnOpenError exercises the rollback
-//     path using `core/store/storetest.Fake` directly. The fake's
+//     path using `foundation/locks/storetest.Fake` directly. The fake's
 //     in-process surface is sufficient because the rollback is a
 //     rimsky-side property — wire-roundtrip behaviour adds no additional
 //     coverage of invariant 10's all-or-nothing INSERT semantics.
-//   - TestLockHolderRowDeletedAfterTerminal complements the loopback wire
+//   - TestClaimHandleRowDeletedAfterTerminal complements the loopback wire
 //     coverage in stores/regional_claim_test.go by also asserting the
 //     post-terminal `rimsky_claim_handle` row count is zero — invariant
 //     4 (claimant-guarded release) end-to-end.
@@ -118,7 +118,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	args := integration.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
-		LockHolders:       h.Persist.LockHolders(),
+		ClaimHandles:      h.Persist.ClaimHandles(),
 		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
 		StoreRegistry:     reg,
 		Clock:             shared.SystemClock{},
@@ -175,13 +175,13 @@ type errOpenInjected struct{}
 
 func (errOpenInjected) Error() string { return "injected open error" }
 
-// TestLockHolderRowDeletedAfterTerminal drives one scope claim
+// TestClaimHandleRowDeletedAfterTerminal drives one scope claim
 // through the loopback gRPC fixture and asserts that after the worker
 // reaches `fresh`, zero `rimsky_claim_handle` rows remain for the node.
 // Complements stores/regional_claim_test.go by adding the post-terminal
 // row-count assertion — invariant 4 (claimant-guarded release) end to
 // end through the §7.3 atomic path.
-func TestLockHolderRowDeletedAfterTerminal(t *testing.T) {
+func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{

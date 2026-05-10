@@ -78,8 +78,10 @@ export const userdataSchema = {
 
 /**
  * Names of events claude-agent may emit via the NamedEvent wire type.
- * Initially empty — rate-limit handling uses ParkRequested, not events.
- * Update this when J12 or future work adds emission points.
+ * Empty: rate-limit handling uses ParkRequested, not events. Reachable
+ * from `Capabilities.declared_events` (server.ts + observability.ts);
+ * keeping it as an exported symbol means future emission points land in
+ * one place rather than scattered constants.
  */
 export const declaredEvents: string[] = [];
 

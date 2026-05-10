@@ -8,7 +8,7 @@
 // the configured endpoint with those bare paths.
 //
 // Field names on request/response structs match the JSON shapes returned
-// by the corresponding handlers under core/controlapi/. Field shapes were
+// by the corresponding handlers under modeling/controlapi/. Field shapes were
 // extracted from the live handlers — do not invent fields.
 package cli
 

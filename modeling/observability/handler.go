@@ -33,7 +33,7 @@ func inTx(ctx context.Context, store persistence.Store, fn func(ctx context.Cont
 // The persistence layer is consumed via the typed Store/Queue
 // interfaces; no driver-specific subpackages are imported here. The
 // peer specs reflect the rimsky.yml `executors:` and `stores:` blocks
-// projected via PeerSpec — keeps the package free of core/config.
+// projected via PeerSpec — keeps the package free of modeling/config.
 type Deps struct {
 	Store     persistence.Store
 	Queue     persistence.Queue
@@ -64,7 +64,7 @@ func Routes(r chi.Router, deps Deps) {
 	r.Get("/dispatches/{id}", handleGetDispatch(deps))
 
 	r.Get("/lock-holders", handleListLockHolders(deps))
-	r.Get("/lock-holders/{id}", handleGetLockHolder(deps))
+	r.Get("/lock-holders/{id}", handleGetClaimHandle(deps))
 
 	r.Get("/events", handleListEvents(deps))
 	r.Get("/system/health", handleSystemHealth(deps))
@@ -477,9 +477,9 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			notFound(w, "node not found")
 			return
 		}
-		var holdings []persistence.LockHolderRow
+		var holdings []persistence.ClaimHandleRow
 		_ = inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
-			h, err := deps.Store.LockHolders().ListByHolderNode(ctx, match.ID, tx)
+			h, err := deps.Store.ClaimHandles().ListByHolderNode(ctx, match.ID, tx)
 			holdings = h
 			return err
 		})
@@ -576,7 +576,7 @@ func handleGetDispatch(deps Deps) http.HandlerFunc {
 		var instanceID *shared.UUID
 		var nodeType string
 		_ = inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
-			if holder, err := deps.Store.LockHolders().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
+			if holder, err := deps.Store.ClaimHandles().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
 				claimID = &holder.ID
 			}
 			// Also surface instance_id and node_type so the dashboard can
@@ -637,9 +637,9 @@ func handleListLockHolders(deps Deps) http.HandlerFunc {
 			}
 			filter.InstanceID = &id
 		}
-		var res persistence.PaginatedListResult[persistence.LockHolderRow]
+		var res persistence.PaginatedListResult[persistence.ClaimHandleRow]
 		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
-			r2, err := deps.Store.LockHolders().ListForObservability(ctx, filter, pag, tx)
+			r2, err := deps.Store.ClaimHandles().ListForObservability(ctx, filter, pag, tx)
 			res = r2
 			return err
 		}); err != nil {
@@ -653,7 +653,7 @@ func handleListLockHolders(deps Deps) http.HandlerFunc {
 	}
 }
 
-func handleGetLockHolder(deps Deps) http.HandlerFunc {
+func handleGetClaimHandle(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
 		id, err := uuid.Parse(idStr)
@@ -661,10 +661,10 @@ func handleGetLockHolder(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid lock-holder id")
 			return
 		}
-		var row *persistence.LockHolderRow
+		var row *persistence.ClaimHandleRow
 		var holders []persistence.ClaimHolderRow
 		if err := inTx(r.Context(), deps.Store, func(ctx context.Context, tx persistence.Tx) error {
-			r2, err := deps.Store.LockHolders().Get(ctx, id, tx)
+			r2, err := deps.Store.ClaimHandles().Get(ctx, id, tx)
 			if err != nil {
 				return err
 			}
@@ -672,7 +672,7 @@ func handleGetLockHolder(deps Deps) http.HandlerFunc {
 			if row == nil {
 				return nil
 			}
-			h, err := deps.Store.ClaimHolders().ListByLockHolderID(ctx, id, tx)
+			h, err := deps.Store.ClaimHolders().ListByClaimHandleID(ctx, id, tx)
 			if err == nil {
 				holders = h
 			}

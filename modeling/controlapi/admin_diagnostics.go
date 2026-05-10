@@ -182,49 +182,25 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// parkedDiagnosticRow is the internal shape used by both diagnostic
-// endpoints. Held in this file so we don't add a public read-projection
-// to the persistence interface for an admin-only view.
-type parkedDiagnosticRow struct {
-	InstanceID string
-	NodeID     string
-	FrameID    string
-	ParkedAt   time.Time
-	ResumeAt   time.Time
-	Reason     string
-}
-
 // listParkedDiagnostic queries the read projection directly via the
-// shared persistence Tx. The queries are dialect-aware via the
-// persistence Driver's diagnosticParkedReader hook (see helper below).
-func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps, reasonFilter string) ([]parkedDiagnosticRow, error) {
-	if r := deps.DiagnosticReader; r != nil {
-		return r.ListParkedNodes(ctx, tx, reasonFilter)
+// persistence.Queue accessor. The query joins rimsky_nodes for
+// instance_id so the endpoint can group by frame without a second read.
+func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+	if deps.Queue == nil {
+		return nil, nil
 	}
-	// No reader wired — return empty rather than 500. The router will
-	// expose an empty list, which is the correct behavior for tests
-	// that don't exercise the diagnostic surface.
-	return nil, nil
-}
-
-// DiagnosticReader is the operator-supplied accessor for parked-node
-// diagnostics. The persistence layer drivers ship a default impl in
-// modeling/observability/diagnostics.go (or postgres/sqlite-specific
-// reader file) — controlapi only needs the interface so it can stay
-// driver-agnostic.
-type DiagnosticReader interface {
-	ListParkedNodes(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]parkedDiagnosticRow, error)
+	return deps.Queue.ListParkedDiagnostic(ctx, tx, reasonFilter)
 }
 
 // handleAdminInvalidateNode is POST /admin/instances/{instance}/nodes/{node_id}/invalidate.
 //
-// Dispatches by node state:
-//   - parked → wake (set phase='active', mark ready for dispatch with
-//     resume_reason='external_invalidate'). Implementation is
-//     stubbed: at this layer we mark the row pending and let the
-//     foundation runner build the ResumeContext on next dispatch.
-//   - fresh  → standard invalidate (state → stale; cascade engine handles).
-//   - running | failed → 409 Conflict.
+// Dispatches by node state (per foundation/integration.UnifiedInvalidate):
+//   - parked        → wake (worker_request returns to phase='pending';
+//     the next supervisor tick re-dispatches with
+//     resume_reason='external_invalidate').
+//   - running       → 409 Conflict (cannot preempt in-flight work).
+//   - fresh / stale / failed → frame-engine invalidate (state → stale;
+//     cascade engine handles propagation).
 //
 // The unified-handler shape (per plan G3) is delegated to the wired
 // InvalidateHandler on AppDeps. When unset, returns 503.

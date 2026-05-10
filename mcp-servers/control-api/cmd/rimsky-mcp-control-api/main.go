@@ -22,16 +22,16 @@ import (
 )
 
 func main() {
-	url := os.Getenv("CONTROL_API_URL")
+	url := os.Getenv(controlapimcp.EnvControlAPIURL)
 	if url == "" {
 		url = "http://127.0.0.1:8080"
 	}
-	token := os.Getenv("CONTROL_API_TOKEN")
-	bind := os.Getenv("BIND_ADDR")
+	token := os.Getenv(controlapimcp.EnvControlAPIToken)
+	bind := os.Getenv(controlapimcp.EnvBindAddr)
 	if bind == "" {
 		bind = "0.0.0.0"
 	}
-	port, _ := strconv.Atoi(os.Getenv("PORT"))
+	port, _ := strconv.Atoi(os.Getenv(controlapimcp.EnvPort))
 	if port == 0 {
 		port = 8081
 	}

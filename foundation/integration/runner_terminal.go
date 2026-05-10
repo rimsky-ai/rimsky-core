@@ -166,10 +166,7 @@ func applyTerminalComplete(
 		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
 			return fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
 		}
-		// Use ReasonHandlerComplete for the new code path. Both
-		// ReasonHandlerComplete and the legacy ReasonWorkCompleted
-		// transition running → fresh; the new name expresses the
-		// lifecycle-handler dispatch.
+		// running → fresh via the on_executor_complete handler.
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
 			shared.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
 			return err

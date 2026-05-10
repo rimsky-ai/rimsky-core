@@ -97,7 +97,7 @@ type DispatchListFilter struct {
 // is the running-window primitive).
 //
 // SelectCandidates and ClaimDispatchRow are building-block helpers used by
-// core/supervisor/runner.go to orchestrate the §7.3 atomic-acquisition
+// foundation/integration/runner.go to orchestrate the §7.3 atomic-acquisition
 // transaction. The runner owns the persistence.Tx; the queue helpers
 // participate in it.
 type Queue interface {
@@ -201,6 +201,14 @@ type Queue interface {
 	// Limit caps the per-tick batch. Used by E3's SweepParkedNodes.
 	ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]ParkedRow, error)
 
+	// ListParkedDiagnostic returns currently-parked rows for the admin
+	// diagnostics endpoints (G1 / G2). When reasonFilter is non-empty,
+	// only rows whose parked_reason equals the filter are returned.
+	// Includes the joined instance_id (via rimsky_nodes) so the
+	// diagnostics endpoint can group by instance/frame without a second
+	// query. Ordered by parked_at ascending.
+	ListParkedDiagnostic(ctx context.Context, tx Tx, reasonFilter string) ([]ParkedDiagnosticRow, error)
+
 	// ListParkedOverdue returns parked rows whose
 	// parked_at + max_park_duration_seconds has elapsed. The watchdog
 	// path (SweepParkedNodes) uses this to force a park_timeout failure.
@@ -224,13 +232,13 @@ type Queue interface {
 	// handler (G3) for handler-emitted wakes. Returns resumed=true when
 	// exactly one row was updated.
 	//
-	// supervisorID is recorded in audit-log rows by callers; the row
-	// goes back to claimed_by=NULL so any supervisor can pick it up.
 	// wakeReason is persisted on rimsky_worker_request.wake_reason so
 	// the resume-dispatch path (LoadResumeMetadataInTx) can attach it
 	// to ResumeContext.resume_reason ("deadline_elapsed" |
-	// "external_invalidate"). Empty wakeReason persists NULL.
-	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID, wakeReason string) (resumed bool, err error)
+	// "external_invalidate"). Empty wakeReason persists NULL. Callers
+	// record their supervisor id in the parked_resume_started audit
+	// event directly — this method does not touch claimed_by.
+	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, wakeReason string) (resumed bool, err error)
 
 	// GetRetryNoProgress returns the current counter value plus the
 	// per-row max_retries_without_progress override (NULL → use deployment
@@ -306,22 +314,34 @@ type ParkActiveInput struct {
 	PayloadHandleBackend string
 }
 
+// ParkedDiagnosticRow is the read-projection used by the admin
+// diagnostics endpoints (G1 / G2). Trims the per-row fields to the
+// columns the endpoints actually surface.
+type ParkedDiagnosticRow struct {
+	InstanceID string
+	NodeID     string
+	FrameID    string
+	ParkedAt   time.Time
+	ResumeAt   time.Time
+	Reason     string
+}
+
 // ParkedRow is a row returned by ListParkedReadyForResume,
 // ListParkedOverdue, and GetParkedByNode. Carries the persisted park
 // metadata so the resume-dispatch path (E4) can build ResumeContext.
 type ParkedRow struct {
-	DispatchID                shared.UUID
-	NodeID                    shared.UUID
-	ExecutorName              string
-	RequiredStores            []string
-	FrameID                   shared.UUID
-	ParkedAt                  time.Time
-	ResumeAt                  *time.Time
-	Reason                    string
-	SessionToken              string
-	PayloadInline             []byte
-	PayloadHandle             string
-	PayloadHandleBackend      string
-	MaxParkDurationSeconds    *int
-	ConsecutiveRetriesNoProg  int
+	DispatchID               shared.UUID
+	NodeID                   shared.UUID
+	ExecutorName             string
+	RequiredStores           []string
+	FrameID                  shared.UUID
+	ParkedAt                 time.Time
+	ResumeAt                 *time.Time
+	Reason                   string
+	SessionToken             string
+	PayloadInline            []byte
+	PayloadHandle            string
+	PayloadHandleBackend     string
+	MaxParkDurationSeconds   *int
+	ConsecutiveRetriesNoProg int
 }

@@ -17,7 +17,6 @@ import (
 var allReasons = []TransitionReason{
 	ReasonInvalidateReceived,
 	ReasonDispatchClaimed,
-	ReasonWorkCompleted,
 	ReasonPolicyRetry,
 	ReasonPolicyInvalidate,
 	ReasonPolicyGiveUp,

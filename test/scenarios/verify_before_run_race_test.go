@@ -14,12 +14,12 @@
 // pre-claimed by a different supervisor, RunNode finds no eligible
 // candidates and returns Ran=false; the node remains stale. The
 // verify-before-run separate-read complement is unit-tested in
-// `core/supervisor` (verifyBeforeRun is unexported); preserving that
+// `foundation/integration` (verifyBeforeRun is unexported); preserving that
 // invariant here as a higher-level integration check that ownership
 // gates execution end to end.
 //
 // Migrated to the stores-redesign template grammar (spec §11): no
-// resource wiring; the runner is driven through `core/integration.RunNode`
+// resource wiring; the runner is driven through `foundation/integration.RunNode`
 // directly with a stub-store registry from the harness.
 package scenarios
 
@@ -79,7 +79,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	args := integration.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
-		LockHolders:       h.Persist.LockHolders(),
+		ClaimHandles:      h.Persist.ClaimHandles(),
 		AdvisoryLocker:    h.Driver.AdvisoryLocker(),
 		StoreRegistry:     locks.NewRegistry(),
 		Clock:             shared.SystemClock{},

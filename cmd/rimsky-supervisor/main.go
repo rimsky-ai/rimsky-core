@@ -169,7 +169,7 @@ func main() {
 	// write/read path consults the driver-installed backend directly;
 	// the named-event / parked-payload write paths receive it via
 	// SupervisorConfig.Blob (threaded through to RunArgs).
-	blobBackend, err := config.OpenBlobBackend(ctx, rimskyCfg.Blob, driver)
+	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		_ = driver.Close()
@@ -224,6 +224,20 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
+
+	// Plan I2: launch the gauge refresher so node-state, parked-by-reason,
+	// held-frames, and dispatch-queue-depth gauges reflect live persistence
+	// state. The refresher polls every 5s by default; cancel on shutdown.
+	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
+	defer cancelGauges()
+	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
+		mhook.StartGaugeRefresher(gaugeCtx, driver.Store(), driver.Queue(), 0, log)
+	}
+
+	// Plan F6/F7: refresh the executor capability cache periodically so
+	// the userdata-schema validator sees healed peers without a process
+	// restart.
+	go disc.RefreshLoop(gaugeCtx, config.ObservabilityRefreshInterval(), slog.Default())
 
 	metricsHost := os.Getenv("RIMSKY_METRICS_HOST")
 	if metricsHost == "" {

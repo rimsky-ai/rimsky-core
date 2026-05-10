@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // queue.go is the SQLite implementation of persistence.Queue. Mirrors
-// core/persistence/postgres/queue.go method-for-method with SQLite
+// foundation/persistence/postgres/queue.go method-for-method with SQLite
 // dialect translations per spec §6.3.
 //
 // @blessed-invariant 2: dispatch claim brackets the running window.

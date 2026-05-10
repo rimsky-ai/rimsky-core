@@ -110,7 +110,7 @@ func (f *invTestQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) 
 func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _, _ string) (bool, error) {
+func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
 	return false, nil
 }
 func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
@@ -130,6 +130,9 @@ func (f *invTestQueue) CountParkedByReason(_ context.Context) (map[string]int, e
 }
 func (f *invTestQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
 	return nil
+}
+func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, _ string) ([]persistence.ParkedDiagnosticRow, error) {
+	return nil, nil
 }
 
 func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID) {

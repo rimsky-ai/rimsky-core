@@ -32,7 +32,7 @@ var _ persistence.NodeEventsStore = (*nodeEventsImpl)(nil)
 // Insert appends a row and returns its auto-generated id.
 //
 // FrameID may be empty; when empty the column is left NULL (the cast
-// `NULLIF($_, '')::uuid` keeps the SQL simple and avoids two code paths).
+// `NULLIF($_, ”)::uuid` keeps the SQL simple and avoids two code paths).
 func (b *nodeEventsImpl) Insert(ctx context.Context, evt persistence.NodeEvent, tx persistence.Tx) (int64, error) {
 	var id int64
 	err := b.q(tx).QueryRow(ctx,

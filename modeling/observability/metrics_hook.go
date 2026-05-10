@@ -17,26 +17,7 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
-// MetricsHook is the foundation/integration.MetricsHook surface,
-// re-exported here so callers don't have to import foundation just to
-// reference the type. Method set is identical.
-type MetricsHook interface {
-	IncDispatch(executor, terminalClass string)
-	IncTerminal(terminalClass, errorClass string)
-	IncInvalidate(sourceKind string)
-	IncClaimAcquisition(producer, intent string)
-	IncNamedEvent(executor, eventName string)
-	ObserveDispatchLatency(executor string, seconds float64)
-	ObserveClaimAcquisitionLatency(producer string, seconds float64)
-	ObserveFrameDuration(seconds float64)
-	ObserveParkedDurationOnResume(seconds float64)
-	SetNodesByState(state string, count float64)
-	SetParkedByReason(reason string, count float64)
-	SetHeldFrames(count float64)
-	SetDispatchQueueDepth(count float64)
-}
-
-// MetricsHookOf returns a MetricsHook backed by the supplied
+// MetricsHookOf returns a *RegistryHook backed by the supplied
 // MetricsRegistry. Returns nil when registry is nil so call sites can
 // pass nil through to integration unchanged.
 func MetricsHookOf(reg *MetricsRegistry) *RegistryHook {

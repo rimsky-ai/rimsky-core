@@ -116,7 +116,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 //
 // The §11.5 example carries a `quality_rules` entry with type
 // `must_match_regex`. v1 only ships `row_count_ratio` / `no_nulls` /
-// `nullable_fields_present` (see core/qualityrule/rules.go); the smoke
+// `nullable_fields_present` (see modeling/qualityrule/eval/rules.go); the smoke
 // fixture omits the rule from the deployed template body so the
 // supervisor's per-commit evaluator does not error on an unregistered
 // type. The fixtures/template.yml file documents the spec'd rule alongside.
@@ -650,7 +650,7 @@ func scopeNode() map[string]any {
 // Stub returns an empty attributes_delta.
 //
 // `quality_rules` from §11.5 (must_match_regex) is intentionally omitted —
-// the rule type isn't registered in v1 (see core/qualityrule/rules.go);
+// the rule type isn't registered in v1 (see modeling/qualityrule/eval/rules.go);
 // the YAML fixture file documents what the spec example carries.
 func draftNode() map[string]any {
 	return map[string]any{

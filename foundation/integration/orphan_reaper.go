@@ -14,7 +14,7 @@
 //     `claimed_by IS NULL` so the SQL predicate excludes them, and
 //     auto-terminal handles their resolution.
 //
-//   - SweepLockHolders (this file): stale rimsky_claim_handle rows
+//   - SweepClaimHandles (this file): stale rimsky_claim_handle rows
 //     whose `expires_at < now()`. Hard-deletes the row claimant-
 //     guarded. Held claim handles whose owning worker-request was
 //     already deleted (worker_request_id NULL via the FK SET NULL)
@@ -52,14 +52,14 @@ import (
 	"github.com/fallguy/rimsky/modeling/shared"
 )
 
-// OrphanReaperArgs bundles the dependencies for SweepLockHolders.
+// OrphanReaperArgs bundles the dependencies for SweepClaimHandles.
 type OrphanReaperArgs struct {
-	Persist     persistence.Store
-	LockHolders persistence.LockHoldersStore
-	Logger      shared.Logger
+	Persist      persistence.Store
+	ClaimHandles persistence.ClaimHandlesStore
+	Logger       shared.Logger
 }
 
-// SweepLockHolders implements the v3 orphan-reap. For each
+// SweepClaimHandles implements the v3 orphan-reap. For each
 // rimsky_claim_handle row whose expires_at < now(), open a tx, DELETE
 // the row claimant-guarded on holder_supervisor_id, emit a
 // `lock_orphan_reaped` event, COMMIT. Cascade FK on
@@ -68,21 +68,21 @@ type OrphanReaperArgs struct {
 // One tx per row so a single failure doesn't block the rest of the
 // sweep. The store's TTL/sweep is responsible for any internal state
 // the killed claim left behind.
-func SweepLockHolders(ctx context.Context, args OrphanReaperArgs) error {
+func SweepClaimHandles(ctx context.Context, args OrphanReaperArgs) error {
 	log := args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	var expired []persistence.LockHolderRow
+	var expired []persistence.ClaimHandleRow
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.LockHolders.ListExpired(ctx, tx)
+		rows, err := args.ClaimHandles.ListExpired(ctx, tx)
 		expired = rows
 		return err
 	}); err != nil {
 		return fmt.Errorf("tick: list expired lock-holders: %w", err)
 	}
 	for _, lh := range expired {
-		if err := reapOneLockHolder(ctx, args, lh, log); err != nil {
+		if err := reapOneClaimHandle(ctx, args, lh, log); err != nil {
 			log.Warn("tick: reap lock-holder failed",
 				"claim_handle_id", lh.ID.String(),
 				"kind", string(lh.LockKind),
@@ -92,7 +92,7 @@ func SweepLockHolders(ctx context.Context, args OrphanReaperArgs) error {
 	return nil
 }
 
-// reapOneLockHolder runs the per-row reap in its own transaction. No
+// reapOneClaimHandle runs the per-row reap in its own transaction. No
 // store verb is fired; the store's TTL is the source of truth for
 // its own state.
 //
@@ -101,9 +101,9 @@ func SweepLockHolders(ctx context.Context, args OrphanReaperArgs) error {
 // and DeleteIfExpired), the function returns early without emitting
 // `lock_orphan_reaped`. This avoids false-positive observability noise
 // when the reaper loses the race.
-func reapOneLockHolder(ctx context.Context, args OrphanReaperArgs, lh persistence.LockHolderRow, log shared.Logger) error {
+func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persistence.ClaimHandleRow, log shared.Logger) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		deleted, err := args.LockHolders.DeleteIfExpired(ctx, lh.ID, lh.HolderSupervisorID, tx)
+		deleted, err := args.ClaimHandles.DeleteIfExpired(ctx, lh.ID, lh.HolderSupervisorID, tx)
 		if err != nil {
 			return fmt.Errorf("delete lock-holder row: %w", err)
 		}
@@ -139,15 +139,15 @@ func reapOneLockHolder(ctx context.Context, args OrphanReaperArgs, lh persistenc
 // Per blessed invariant 20, this payload MUST NOT include claim
 // content (scope_data, address). We surface only operator-relevant
 // identifiers.
-func lockReapPayload(lh persistence.LockHolderRow) map[string]any {
+func lockReapPayload(lh persistence.ClaimHandleRow) map[string]any {
 	payload := map[string]any{
 		"claim_handle_id": lh.ID.String(),
-		"lock_kind":      string(lh.LockKind),
-		"supervisor_id":  lh.HolderSupervisorID,
-		"holder_node_id": lh.HolderNodeID.String(),
-		"expires_at":     lh.ExpiresAt,
-		"claimed_at":     lh.ClaimedAt,
-		"last_heartbeat": lh.LastHeartbeatAt,
+		"lock_kind":       string(lh.LockKind),
+		"supervisor_id":   lh.HolderSupervisorID,
+		"holder_node_id":  lh.HolderNodeID.String(),
+		"expires_at":      lh.ExpiresAt,
+		"claimed_at":      lh.ClaimedAt,
+		"last_heartbeat":  lh.LastHeartbeatAt,
 	}
 	if lh.LockName != nil {
 		payload["lock_name"] = *lh.LockName

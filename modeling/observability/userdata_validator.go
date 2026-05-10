@@ -14,9 +14,12 @@ package observability
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
@@ -27,11 +30,10 @@ import (
 // "validation disabled" (typical of unit tests).
 //
 // The closure performs a Discovery cache read on every dispatch and
-// runs jsonschema.Validate against the advertised userdata_schema. The
-// jsonschema compiler is recreated per invocation; for very high
-// dispatch throughput a per-executor compiled-schema cache may be
-// added later (the cache is keyed by schema bytes; cache invalidation
-// follows the Discovery refresh).
+// runs jsonschema.Validate against the advertised userdata_schema.
+// Compiled schemas are cached by the SHA-256 of the schema bytes so a
+// schema-bytes change (handshake refresh) automatically evicts the
+// stale entry on next dispatch.
 //
 // Fall-through behavior: when the Discovery cache has no entry for the
 // executor (handshake hasn't landed) or the executor advertises no
@@ -45,6 +47,32 @@ import (
 func NewUserdataValidator(disc *Discovery) func(executorName string, merged map[string]any) error {
 	if disc == nil {
 		return nil
+	}
+	var (
+		cacheMu sync.RWMutex
+		cache   = map[string]*jsonschema.Schema{}
+	)
+	compileSchema := func(schemaBytes []byte) (*jsonschema.Schema, error) {
+		sum := sha256.Sum256(schemaBytes)
+		key := hex.EncodeToString(sum[:])
+		cacheMu.RLock()
+		s, ok := cache[key]
+		cacheMu.RUnlock()
+		if ok {
+			return s, nil
+		}
+		compiler := jsonschema.NewCompiler()
+		if err := compiler.AddResource("inline://schema.json", bytes.NewReader(schemaBytes)); err != nil {
+			return nil, err
+		}
+		s, err := compiler.Compile("inline://schema.json")
+		if err != nil {
+			return nil, err
+		}
+		cacheMu.Lock()
+		cache[key] = s
+		cacheMu.Unlock()
+		return s, nil
 	}
 	return func(executorName string, merged map[string]any) error {
 		entry, ok := disc.GetExecutor(executorName)
@@ -72,13 +100,9 @@ func NewUserdataValidator(disc *Discovery) func(executorName string, merged map[
 				"reason", "executor_advertised_no_userdata_schema")
 			return nil
 		}
-		compiler := jsonschema.NewCompiler()
-		if err := compiler.AddResource("inline://schema.json", bytes.NewReader(schemaBytes)); err != nil {
-			return fmt.Errorf("executor %q advertised invalid userdata_schema: %w", executorName, err)
-		}
-		schema, err := compiler.Compile("inline://schema.json")
+		schema, err := compileSchema(schemaBytes)
 		if err != nil {
-			return fmt.Errorf("executor %q userdata_schema does not compile: %w", executorName, err)
+			return fmt.Errorf("executor %q advertised invalid userdata_schema: %w", executorName, err)
 		}
 		var doc any = map[string]any{}
 		if len(merged) > 0 {

@@ -381,13 +381,27 @@ func tryAcquire(
 	// ExecuteRequest.resume_context.
 	if rm, rerr := args.Queue.LoadResumeMetadataInTx(ctx, tx, cand.DispatchID); rerr == nil && rm != nil {
 		payload := rm.PayloadInline
-		if rm.PayloadHandle != "" && args.Blob != nil && args.Blob.Name() == rm.PayloadHandleBackend {
-			if b, berr := args.Blob.Read(ctx, persistence.Handle(rm.PayloadHandle)); berr == nil {
-				payload = b
-			} else {
-				args.Logger.Warn("tryAcquire: blob fetch for resume payload failed; passing empty payload to executor",
-					"node_id", cand.NodeID.String(), "error", berr.Error())
+		if rm.PayloadHandle != "" {
+			switch {
+			case args.Blob == nil:
+				args.Logger.Warn("tryAcquire: spilled resume payload but no BlobBackend configured; passing empty payload to executor",
+					"node_id", cand.NodeID.String(),
+					"handle_backend", rm.PayloadHandleBackend)
 				payload = nil
+			case args.Blob.Name() != rm.PayloadHandleBackend:
+				args.Logger.Warn("tryAcquire: blob backend mismatch on resume; passing empty payload to executor",
+					"node_id", cand.NodeID.String(),
+					"current_backend", args.Blob.Name(),
+					"handle_backend", rm.PayloadHandleBackend)
+				payload = nil
+			default:
+				if b, berr := args.Blob.Read(ctx, persistence.Handle(rm.PayloadHandle)); berr == nil {
+					payload = b
+				} else {
+					args.Logger.Warn("tryAcquire: blob fetch for resume payload failed; passing empty payload to executor",
+						"node_id", cand.NodeID.String(), "error", berr.Error())
+					payload = nil
+				}
 			}
 		}
 		// resume_reason is read from the persisted wake_reason column,
@@ -471,7 +485,7 @@ func acquireNamedLock(
 	spec locks.NamedLockSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 ) (AcquiredLock, bool, error) {
 	if cfg, ok := args.NamedLocks.Get(spec.Name); ok {
-		count, err := args.LockHolders.CountByNamedLock(ctx, spec.Name, tx)
+		count, err := args.ClaimHandles.CountByNamedLock(ctx, spec.Name, tx)
 		if err != nil {
 			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
 		}
@@ -483,7 +497,7 @@ func acquireNamedLock(
 	frameID := cand.FrameID
 	dispatchID := cand.DispatchID
 	nameCopy := spec.Name
-	in := persistence.LockHolderInsertInput{
+	in := persistence.ClaimHandleInsertInput{
 		ID:                 rowID,
 		WorkerRequestID:    &dispatchID,
 		LockKind:           persistence.LockKindNamed,
@@ -496,12 +510,12 @@ func acquireNamedLock(
 		// at the worker-request's active-phase terminal.
 		IsHeld: false,
 	}
-	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
+	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)
 	}
 	return AcquiredLock{
-		Spec:         spec,
-		LockHolderID: rowID,
+		Spec:          spec,
+		ClaimHandleID: rowID,
 	}, true, nil
 }
 
@@ -566,7 +580,7 @@ func acquireClaim(
 	// auto-terminal resolution.
 	subgraph, hasSubgraph := findHoldingSubgraphForAcquirer(heldSubgraphs, cand.NodeType, spec.Alias)
 	isHeld := hasSubgraph && subgraph.IsHeld()
-	in := persistence.LockHolderInsertInput{
+	in := persistence.ClaimHandleInsertInput{
 		ID:                 rowID,
 		WorkerRequestID:    &dispatchID,
 		LockKind:           persistence.LockKindScope,
@@ -579,7 +593,7 @@ func acquireClaim(
 		FrameID:            &frameID,
 		IsHeld:             isHeld,
 	}
-	if err := args.LockHolders.Insert(ctx, in, tx); err != nil {
+	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
@@ -602,13 +616,13 @@ func acquireClaim(
 	}
 	cr := outcome.Result
 
-	if err := args.LockHolders.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
+	if err := args.ClaimHandles.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
 	// Pick-policy claims have store-chosen scope; scoped claims
 	// keep the substituted selector (already written above).
 	if len(cr.Scope) > 0 && string(cr.Scope) != string(scopeInitial) {
-		if err := args.LockHolders.UpdateScope(ctx, rowID, args.SupervisorID, cr.Scope, tx); err != nil {
+		if err := args.ClaimHandles.UpdateScope(ctx, rowID, args.SupervisorID, cr.Scope, tx); err != nil {
 			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateScope: %w", err)
 		}
 	}
@@ -617,7 +631,7 @@ func acquireClaim(
 	// subsequent acquisitions; per the uniformity invariant (§2.5) all
 	// byte-equal-Scope claims must share this value.
 	if cr.RealizedWriteSemantics != "" {
-		if err := args.LockHolders.UpdateRealizedWriteSemantics(ctx, rowID, args.SupervisorID, string(cr.RealizedWriteSemantics), tx); err != nil {
+		if err := args.ClaimHandles.UpdateRealizedWriteSemantics(ctx, rowID, args.SupervisorID, string(cr.RealizedWriteSemantics), tx); err != nil {
 			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateRealizedWriteSemantics: %w", err)
 		}
 	}
@@ -630,11 +644,11 @@ func acquireClaim(
 	metricsOf(args).ObserveClaimAcquisitionLatency(spec.StoreName, args.Clock.Now().Sub(acquireStart).Seconds())
 
 	return AcquiredLock{
-		Spec:         spec,
-		LockHolderID: rowID,
-		ClaimResult:  cr,
-		Store:        s,
-		Alias:        spec.Alias,
+		Spec:          spec,
+		ClaimHandleID: rowID,
+		ClaimResult:   cr,
+		Store:         s,
+		Alias:         spec.Alias,
 	}, openResultAcquired, nil
 }
 
@@ -657,7 +671,7 @@ func evaluateScopeConflict(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.ClaimSpec, cand persistence.Candidate,
 ) (bool, error) {
-	holders, err := args.LockHolders.ListByStoreScope(ctx, spec.StoreName, tx)
+	holders, err := args.ClaimHandles.ListByStoreScope(ctx, spec.StoreName, tx)
 	if err != nil {
 		return false, fmt.Errorf("evaluateScopeConflict: ListByStoreScope: %w", err)
 	}
@@ -665,7 +679,6 @@ func evaluateScopeConflict(
 	if err != nil {
 		return false, err
 	}
-	_ = ctx // ctx no longer used post-envelope refactor; retained for symmetry.
 	for _, h := range holders {
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID == args.SupervisorID {
 			continue
@@ -717,10 +730,10 @@ func insertHeldClaimHoldersAtAcquire(
 			continue
 		}
 		err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:           uuid.New(),
-			LockHolderID: lockHolderID,
-			HolderNodeID: sib.ID,
-			FrameID:      &frameID,
+			ID:            uuid.New(),
+			ClaimHandleID: lockHolderID,
+			HolderNodeID:  sib.ID,
+			FrameID:       &frameID,
 		}, tx)
 		if err != nil {
 			return fmt.Errorf("insertHeldClaimHoldersAtAcquire: Insert: %w", err)
@@ -762,7 +775,7 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // claimant-guarded, then emits orphaned_claim_lost_race.
 //
 // This is NOT the periodic orphan reaper. The periodic reaper at
-// `core/scheduler/sweep_locks.go::sweepLockHolders` deletes expired
+// `modeling/scheduler/sweep_locks.go::sweepClaimHandles` deletes expired
 // lock-holder rows WITHOUT firing Abandon, per v3 spec §7.5: the
 // store's own TTL/sweep handles internal state for owners that
 // crashed without unwinding. The two paths are deliberately distinct:
@@ -774,14 +787,14 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 		if lk.Store != nil {
 			scope := claimScope(lk)
 			address := claimAddress(lk)
-			claimID := locks.ClaimID(lk.LockHolderID.String())
+			claimID := locks.ClaimID(lk.ClaimHandleID.String())
 			if err := lk.Store.Abandon(ctx, claimID, scope, address); err != nil {
 				args.Logger.Warn("handleOrphanedClaim: Abandon failed",
 					"store", storeNameForSpec(lk.Spec), "error", err.Error())
 			}
 		}
 		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx)
+			return args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx)
 		})
 	}
 	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -814,7 +827,7 @@ func emitLockAcquired(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq acquisition, lk AcquiredLock,
 ) error {
 	payload := map[string]any{
-		"holder_id":     lk.LockHolderID.String(),
+		"holder_id":     lk.ClaimHandleID.String(),
 		"supervisor_id": args.SupervisorID,
 	}
 	switch sp := lk.Spec.(type) {

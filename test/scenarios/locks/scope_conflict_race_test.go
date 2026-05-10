@@ -117,7 +117,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		return integration.RunArgs{
 			Persist:           h.Persist,
 			Queue:             h.Queue,
-			LockHolders:       h.Persist.LockHolders(),
+			ClaimHandles:      h.Persist.ClaimHandles(),
 			AdvisoryLocker:    h.Driver.AdvisoryLocker(),
 			StoreRegistry:     reg,
 			Clock:             shared.SystemClock{},

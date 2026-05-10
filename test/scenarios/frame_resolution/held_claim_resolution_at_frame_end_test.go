@@ -50,7 +50,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	lockHolderID := shared.UUID(uuid.New())
 	holderID := shared.UUID(uuid.New())
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := h.Persist.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+		if err := h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindScope,
 			StoreName:          &storeName,
@@ -63,9 +63,9 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 			return err
 		}
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:           holderID,
-			LockHolderID: lockHolderID,
-			HolderNodeID: worker.ID,
+			ID:            holderID,
+			ClaimHandleID: lockHolderID,
+			HolderNodeID:  worker.ID,
 		}, tx)
 	}))
 
@@ -76,7 +76,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row)
-	require.Equal(t, lockHolderID, row.LockHolderID)
+	require.Equal(t, lockHolderID, row.ClaimHandleID)
 	require.Equal(t, worker.ID, row.HolderNodeID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
@@ -84,9 +84,9 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	// per the §12.11 unique index.
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-			ID:           shared.UUID(uuid.New()),
-			LockHolderID: lockHolderID,
-			HolderNodeID: worker.ID,
+			ID:            shared.UUID(uuid.New()),
+			ClaimHandleID: lockHolderID,
+			HolderNodeID:  worker.ID,
 		}, tx)
 	})
 	require.Error(t, err)

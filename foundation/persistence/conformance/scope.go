@@ -83,7 +83,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 	insert := func(t *testing.T, scope json.RawMessage) {
 		t.Helper()
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return store.LockHolders().Insert(ctx, persistence.LockHolderInsertInput{
+			return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 				ID:                 uuid.New(),
 				LockKind:           persistence.LockKindScope,
 				StoreName:          &storeName,
@@ -106,10 +106,10 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 	insert(t, scopeA)
 	insert(t, scopeA)
 
-	var rows []persistence.LockHolderRow
+	var rows []persistence.ClaimHandleRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.LockHolders().ListByStoreScope(ctx, storeName, tx)
+		rows, err = store.ClaimHandles().ListByStoreScope(ctx, storeName, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("ListByStoreScope: %v", err)
@@ -134,7 +134,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.LockHolders().ListByStoreScope(ctx, storeName, tx)
+		rows, err = store.ClaimHandles().ListByStoreScope(ctx, storeName, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("ListByStoreScope #2: %v", err)

@@ -155,7 +155,7 @@ func stripScheme(s string) string {
 // PeerSpec is one row from rimsky.yml's executors: or stores: blocks,
 // projected for the observability handshake. config.StartControlAPI
 // builds a slice of these from RimskyConfig and passes them in,
-// keeping this package's import graph free of core/config.
+// keeping this package's import graph free of modeling/config.
 type PeerSpec struct {
 	Name                  string
 	Endpoint              string

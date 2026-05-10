@@ -113,9 +113,9 @@ func findInheritedAliasesForNode(
 	}
 	out := make([]inheritedAlias, 0, len(rows))
 	for _, r := range rows {
-		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, tx)
+		lh, err := args.ClaimHandles.Get(ctx, r.ClaimHandleID, tx)
 		if err != nil {
-			return nil, fmt.Errorf("findInheritedAliasesForNode: LockHolders.Get: %w", err)
+			return nil, fmt.Errorf("findInheritedAliasesForNode: ClaimHandles.Get: %w", err)
 		}
 		if lh == nil {
 			continue // already auto-terminated by a sibling
@@ -131,20 +131,20 @@ func findInheritedAliasesForNode(
 		if !ok || len(picks) == 0 {
 			continue
 		}
-		alias := pickAliasForLockHolder(ctx, args, tx, instanceID, acquirerNode.NodeType, picks, lh)
+		alias := pickAliasForClaimHandle(ctx, args, tx, instanceID, acquirerNode.NodeType, picks, lh)
 		if alias == "" {
 			continue
 		}
 		out = append(out, inheritedAlias{
-			AcquirerType: acquirerNode.NodeType,
-			Alias:        alias,
-			LockHolderID: r.LockHolderID,
+			AcquirerType:  acquirerNode.NodeType,
+			Alias:         alias,
+			ClaimHandleID: r.ClaimHandleID,
 		})
 	}
 	return out, nil
 }
 
-// pickAliasForLockHolder picks the alias for an inherited lock-holder
+// pickAliasForClaimHandle picks the alias for an inherited lock-holder
 // row when the acquirer declares one or more aliases that name this
 // locks. Single-candidate case: return that alias. Multi-candidate
 // case: walk the acquirer's NodeDef and match each alias's substituted
@@ -153,9 +153,9 @@ func findInheritedAliasesForNode(
 // have been inserted before the store-chosen scope was written).
 //
 // Reuses the caller's tx (option C / no-nil-tx). See findInheritedAliasesForNode.
-func pickAliasForLockHolder(
+func pickAliasForClaimHandle(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	acquirerType string, picks []aliasCandidate, lh *persistence.LockHolderRow,
+	acquirerType string, picks []aliasCandidate, lh *persistence.ClaimHandleRow,
 ) string {
 	if len(picks) == 1 {
 		return picks[0].alias
@@ -189,7 +189,7 @@ func pickAliasForLockHolder(
 }
 
 // aliasCandidate is the per-acquirer alias-search element used by
-// pickAliasForLockHolder.
+// pickAliasForClaimHandle.
 type aliasCandidate struct {
 	acquirerType string
 	alias        string
@@ -212,9 +212,9 @@ func matchesScope(scopeData []byte, selector string) bool {
 // inheritedAlias bundles the per-aliased-claim metadata an
 // inheritor terminal needs.
 type inheritedAlias struct {
-	AcquirerType string
-	Alias        string
-	LockHolderID shared.UUID
+	AcquirerType  string
+	Alias         string
+	ClaimHandleID shared.UUID
 }
 
 // memberOf reports whether nodeType is in subgraph.Members.

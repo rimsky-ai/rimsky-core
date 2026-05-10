@@ -18,7 +18,7 @@
 //
 // The dispatch row's frame_id is preserved across async handoff; the
 // callback resolution path commits cascade message-passes that inherit
-// the parent's frame_id (see core/supervisor/runner_terminal.go and
+// the parent's frame_id (see foundation/integration/runner_terminal.go and
 // docs/history/2026-04-26-frame-resolution-design.md §9).
 package integration
 
@@ -77,7 +77,7 @@ func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 
 // CallbackServer is the supervisor's HTTP endpoint for async executor callbacks.
 //
-// Persist, Queue, AdvisoryLocker, LockHolders, and ResumeGrace are required
+// Persist, Queue, AdvisoryLocker, ClaimHandles, and ResumeGrace are required
 // for driving the terminal-handling tx in `runner_terminal.go::applyTerminal*`
 // (per spec §7.6 / §7.3 step 6c). They are populated by the supervisor at
 // startup and threaded through here so the callback handler can run
@@ -92,7 +92,7 @@ type CallbackServer struct {
 	Persist        persistence.Store
 	Queue          persistence.Queue
 	AdvisoryLocker persistence.AdvisoryLocker
-	LockHolders    persistence.LockHoldersStore
+	ClaimHandles   persistence.ClaimHandlesStore
 	Clock          shared.Clock
 	Logger         shared.Logger
 	SupervisorID   string
@@ -119,8 +119,14 @@ type CallbackServer struct {
 	// async-callback-driven re-dispatch (resume after park, retry) hits
 	// the same validator the synchronous path runs. Nil → skipped.
 	UserdataValidator func(executorName string, merged map[string]any) error
-	addr              string
-	srv               *http.Server
+	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
+	// hook (plan I1/I2/I3). Threaded into RunArgs at driveTerminal time
+	// so async-callback-driven terminals contribute to the same
+	// `rimsky_terminal_verdicts_total` / `rimsky_invalidates_total`
+	// counters as the sync path. Optional; nil → no-op everywhere.
+	Metrics MetricsHook
+	addr    string
+	srv     *http.Server
 }
 
 // Start listens on host:port (port=0 for OS-assigned). Safe to call before
@@ -442,7 +448,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		Persist:                          c.Persist,
 		Queue:                            c.Queue,
 		AdvisoryLocker:                   c.AdvisoryLocker,
-		LockHolders:                      c.LockHolders,
+		ClaimHandles:                     c.ClaimHandles,
 		StoreRegistry:                    ac.StoreRegistry,
 		Clock:                            c.Clock,
 		Logger:                           c.Logger,
@@ -453,6 +459,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		InvalidateHandler:                c.InvalidateHandler,
 		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
 		UserdataValidator:                c.UserdataValidator,
+		Metrics:                          c.Metrics,
 	}
 	acq := &acquisition{
 		DispatchID:     ac.DispatchID,
@@ -482,7 +489,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 // Token shape mirrors `runner_dispatch.go`'s `cancelToken` builder. Any
 // shape, supervisor-mismatch, ownership-mismatch, or node-mismatch
 // returns ErrUnauthorizedCallback so the handler maps to HTTP 401 (per
-// `core/attributes/callback.go` semantics).
+// `modeling/attribute/callback.go` semantics).
 func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error {
 	// `c.Logger` is defaulted to SilentLogger{} in Start() before this
 	// handler is mounted, so it is never nil here — same convention as
@@ -570,8 +577,8 @@ func truncForLog(s string, max int) string {
 // the callback handler depends on. The two row shapes carry the same
 // fields; the adapter copies between them.
 //
-// The split exists because `core/attributes` cannot import
-// `core/persistence` without a cycle.
+// The split exists because `modeling/attribute` cannot import
+// `foundation/persistence` without a cycle.
 type attributesStoreAdapter struct {
 	store persistence.Store
 }

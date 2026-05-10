@@ -55,11 +55,11 @@ const (
 // UnifiedInvalidate is the entry point shared by all sources of an
 // invalidate request. The function:
 //
-//   1. Loads the target's current state via Nodes().Get.
-//   2. If parked: dispatches the wakeParkedNode path.
-//   3. If running: returns ErrInvalidateRunning so the caller can
-//      surface a 409 (admin) or log-and-skip (handler).
-//   4. Otherwise: routes to InvalidateNode (the standard frame engine).
+//  1. Loads the target's current state via Nodes().Get.
+//  2. If parked: dispatches the wakeParkedNode path.
+//  3. If running: returns ErrInvalidateRunning so the caller can
+//     surface a 409 (admin) or log-and-skip (handler).
+//  4. Otherwise: routes to InvalidateNode (the standard frame engine).
 //
 // The supervisorID is required for the parked branch (claims the row);
 // the standard InvalidateNode path leaves the SupervisorID empty
@@ -121,7 +121,7 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 		return nil
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, supervisorID, string(reason))
+		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, string(reason))
 		if err != nil {
 			return err
 		}
@@ -159,7 +159,7 @@ func loadTargetNode(ctx context.Context, persist persistence.Store, id shared.UU
 	return out, err
 }
 
-// InvalidateHandler is a thin adapter that wraps UnifiedInvalidate
+// InvalidateAdapter is a thin adapter that wraps UnifiedInvalidate
 // in the {InvalidateNode(ctx, instanceID, nodeID) (any, error)} shape
 // the control-api admin handler (G3) uses. Returned values are
 // human-readable result objects; on a parked-state invalidate, the
@@ -167,8 +167,10 @@ func loadTargetNode(ctx context.Context, persist persistence.Store, id shared.UU
 //
 // Wiring: the control-api process constructs one of these at startup
 // with its persistence + queue handles and the operator-id, then sets
-// it as AppDeps.InvalidateHandler before mounting routes.
-type InvalidateHandler struct {
+// it as AppDeps.InvalidateHandler before mounting routes. Renamed from
+// InvalidateHandler so it doesn't collide with the
+// RunArgs.InvalidateHandler function field of the same package.
+type InvalidateAdapter struct {
 	Persist      persistence.Store
 	Queue        persistence.Queue
 	Clock        shared.Clock
@@ -183,7 +185,7 @@ type InvalidateHandler struct {
 // InvalidateNode implements the modeling/controlapi.InvalidateHandler
 // interface (without taking the import — the structural type-match
 // shape kicks in at the modeling-layer wire site).
-func (h *InvalidateHandler) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
+func (h *InvalidateAdapter) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
 	id, err := parseNodeUUID(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("invalidate: parse node_id: %w", err)

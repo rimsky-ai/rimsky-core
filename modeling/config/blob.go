@@ -5,7 +5,6 @@
 package config
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
@@ -29,7 +28,7 @@ import (
 // depguard rule prevents this package from importing pgx directly, so
 // the postgres driver exposes a NewBlobBackendForDriver constructor we
 // call here.
-func OpenBlobBackend(ctx context.Context, cfg persistence.BlobConfig, drv persistence.Driver) (persistence.BlobBackend, error) {
+func OpenBlobBackend(cfg persistence.BlobConfig, drv persistence.Driver) (persistence.BlobBackend, error) {
 	if err := persistence.ValidateBlobConfig(cfg); err != nil {
 		return nil, err
 	}

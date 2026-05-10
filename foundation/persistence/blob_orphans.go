@@ -33,6 +33,14 @@ type BlobOrphanRow struct {
 // Insert is idempotent on Handle (PK conflict is treated as already-queued).
 // DueBefore returns rows ordered by reap_after ascending; the sweep can
 // page through results to bound per-tick work.
+//
+// Tx-passing convention: Insert takes the caller's tx so the orphan
+// queueing is atomic with the row that overwrote the handle. DueBefore
+// and Delete are intentionally tx-less — the sweep runs each
+// reap-and-delete as an independent unit (a per-row failure should not
+// hold a long sweep transaction open) and the cross-step atomicity
+// requirement is "delete tracker only after backend.Delete succeeds,"
+// which the sweep enforces in the application layer.
 type BlobOrphansStore interface {
 	Insert(ctx context.Context, row BlobOrphanRow, tx Tx) error
 	DueBefore(ctx context.Context, cutoff time.Time, limit int) ([]BlobOrphanRow, error)

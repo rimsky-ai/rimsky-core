@@ -56,7 +56,7 @@ func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	lockHolderID shared.UUID,
 ) error {
-	row, err := args.LockHolders.LockForUpdate(ctx, lockHolderID, tx)
+	row, err := args.ClaimHandles.LockForUpdate(ctx, lockHolderID, tx)
 	if err != nil {
 		return err
 	}
@@ -74,9 +74,9 @@ func CheckAndFireResolution(
 		return nil
 	}
 
-	holders, err := args.Persist.ClaimHolders().ListByLockHolderID(ctx, lockHolderID, tx)
+	holders, err := args.Persist.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)
 	if err != nil {
-		return fmt.Errorf("CheckAndFireResolution: ListByLockHolderID: %w", err)
+		return fmt.Errorf("CheckAndFireResolution: ListByClaimHandleID: %w", err)
 	}
 	if len(holders) == 0 {
 		// No claim-holder rows — non-held claim. Caller should not
@@ -122,6 +122,6 @@ func CheckAndFireResolution(
 	return nil
 }
 
-// (lockLockHolderRow + scanLockHolderForResolution were retired when
-// the persistence layer landed `LockHoldersStore.LockForUpdate`. The
+// (lockClaimHandleRow + scanClaimHandleForResolution were retired when
+// the persistence layer landed `ClaimHandlesStore.LockForUpdate`. The
 // auto-terminal flow above calls that method directly.)

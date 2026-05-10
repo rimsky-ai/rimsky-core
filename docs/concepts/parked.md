@@ -19,14 +19,16 @@ emits the `ParkRequested` terminal event; it exits via one of three
 paths:
 
 1. **Time-based wake** — when `ParkRequested.resume_at` is set, the
-   `SweepParkedNodes` sweep transitions the node back to `running`
-   when `resume_at` has passed and re-dispatches the executor with a
-   `ResumeContext` carrying back the original `payload` and
-   `session_token` plus `resume_reason: "deadline_elapsed"`.
+   `SweepParkedNodes` sweep transitions the node back to `stale`
+   (and the worker_request row from `parked` to `pending`) when
+   `resume_at` has passed; the next supervisor tick re-dispatches the
+   executor with a `ResumeContext` carrying back the original
+   `payload` and `session_token` plus `resume_reason:
+   "deadline_elapsed"`.
 2. **Signal-based wake** — an in-graph or admin invalidate against
-   the parked node transitions it back to `running` and re-dispatches
-   with `resume_reason: "external_invalidate"`. Both paths run
-   through the unified invalidate handler.
+   the parked node transitions it back to `stale` and re-dispatches
+   on the next tick with `resume_reason: "external_invalidate"`.
+   Both paths run through the unified invalidate handler.
 3. **Watchdog timeout** — when the node's `max_park_duration` is set
    and `parked_at + max_park_duration < now()`, the watchdog forces
    the node to `failed` with `error_class: "park_timeout"`.

@@ -70,7 +70,7 @@ func releaseAcquiredLock(
 	switch sp := lk.Spec.(type) {
 	case locks.NamedLockSpec:
 		_ = sp
-		if err := args.LockHolders.Delete(ctx, lk.LockHolderID, args.SupervisorID, tx); err != nil {
+		if err := args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx); err != nil {
 			return fmt.Errorf("releaseAcquiredLock: named Delete: %w", err)
 		}
 		return emitLockReleased(ctx, args, tx, acq, lk, releaseActionString(success))
@@ -94,7 +94,7 @@ func releaseClaim(
 ) error {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, spec.Alias)
 	if held {
-		if err := markClaimHolderForNode(ctx, args, tx, lk.LockHolderID, acq.NodeID, success); err != nil {
+		if err := markClaimHolderForNode(ctx, args, tx, lk.ClaimHandleID, acq.NodeID, success); err != nil {
 			return err
 		}
 		// Held-claim acquirer-failure semantics: when the acquirer
@@ -108,16 +108,16 @@ func releaseClaim(
 		// fire at the first natural completion point; the acquirer's
 		// failure IS that point for the entire held subgraph.
 		if !success {
-			if err := args.Persist.ClaimHolders().FailAllActiveByLockHolder(ctx, lk.LockHolderID, args.SupervisorID, tx); err != nil {
+			if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, lk.ClaimHandleID, args.SupervisorID, tx); err != nil {
 				return fmt.Errorf("releaseClaim: fail inheritors: %w", err)
 			}
 		}
-		if err := CheckAndFireResolution(ctx, args, tx, lk.LockHolderID); err != nil {
+		if err := CheckAndFireResolution(ctx, args, tx, lk.ClaimHandleID); err != nil {
 			return err
 		}
 		return emitLockReleased(ctx, args, tx, acq, lk, "held_marked")
 	}
-	row, err := args.LockHolders.Get(ctx, lk.LockHolderID, tx)
+	row, err := args.ClaimHandles.Get(ctx, lk.ClaimHandleID, tx)
 	if err != nil {
 		return fmt.Errorf("releaseClaim: load scope/address: %w", err)
 	}
@@ -135,7 +135,7 @@ func releaseClaim(
 		outcome = AggregateAbandon
 	}
 	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
-		ClaimHandleID: lk.LockHolderID,
+		ClaimHandleID: lk.ClaimHandleID,
 		SupervisorID:  args.SupervisorID,
 		Source:        ActiveTerminal,
 		Outcome:       outcome,
@@ -161,10 +161,10 @@ func releaseInheritedClaimsInTx(
 		return err
 	}
 	for _, ia := range inherited {
-		if err := markClaimHolderForNode(ctx, args, tx, ia.LockHolderID, acq.NodeID, success); err != nil {
+		if err := markClaimHolderForNode(ctx, args, tx, ia.ClaimHandleID, acq.NodeID, success); err != nil {
 			return err
 		}
-		if err := CheckAndFireResolution(ctx, args, tx, ia.LockHolderID); err != nil {
+		if err := CheckAndFireResolution(ctx, args, tx, ia.ClaimHandleID); err != nil {
 			return err
 		}
 	}
@@ -194,7 +194,7 @@ func emitLockReleased(
 	acq *acquisition, lk AcquiredLock, action string,
 ) error {
 	payload := map[string]any{
-		"holder_id":     lk.LockHolderID.String(),
+		"holder_id":     lk.ClaimHandleID.String(),
 		"supervisor_id": args.SupervisorID,
 		"action":        action,
 	}

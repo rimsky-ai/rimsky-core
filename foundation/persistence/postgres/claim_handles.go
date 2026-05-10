@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lock_holders.go is the postgres accessor for `rimsky_claim_handle`
-// (v3 spec §12). Lifts the SQL from core/store/lockholders.go (which
+// claim_handles.go is the postgres accessor for `rimsky_claim_handle`
+// (v3 spec §12). Lifts the SQL from foundation/persistence/postgres/claim_handles.go (which
 // the persistence refactor folds away — the lock-holder mechanism lives
 // here now).
 //
@@ -17,7 +17,7 @@
 // against rimsky_claim_handle carries `AND holder_supervisor_id =
 // supervisor_id`. Stale orphan sweeps cannot null or delete live ownership.
 //
-// FrameID handling: LockHolderInsertInput carries an optional FrameID
+// FrameID handling: ClaimHandleInsertInput carries an optional FrameID
 // that is plumbed through into the postgres row. Per v3 spec §12, frame_id
 // on rimsky_claim_handle is observability-only — no algorithm consults
 // it; population is the supervisor's contract.
@@ -50,7 +50,7 @@ const lockHolderCols = `
 // transaction. The dispatch-acquisition transaction (§7.3) holds the tx;
 // every per-spec lock-holder row is inserted via this method so the row
 // commits atomically with the dispatch claim.
-func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderInsertInput, tx persistence.Tx) error {
+func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := time.Now().UTC()
 	var rws *string
 	if in.RealizedWriteSemantics != "" {
@@ -82,7 +82,7 @@ func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderI
 
 // UpdateAddress sets the address column on an existing scope-kind row.
 // Claimant-guarded on supervisorID; mismatches are a no-op (returns nil).
-func (s *lockHoldersImpl) UpdateAddress(
+func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).Exec(ctx,
@@ -101,7 +101,7 @@ func (s *lockHoldersImpl) UpdateAddress(
 // on an existing scope-kind row. Claimant-guarded on supervisorID;
 // mismatches are a no-op (returns nil). Called by the supervisor's
 // acquireClaim path after Open returns its per-claim verdict.
-func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
+func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	ctx context.Context, id shared.UUID, supervisorID string, ws string, tx persistence.Tx,
 ) error {
 	var v *string
@@ -124,7 +124,7 @@ func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
 // UpdateScope sets the scope_data column on an existing scope-kind
 // row. Claimant-guarded on supervisorID; mismatches are a no-op
 // (returns nil).
-func (s *lockHoldersImpl) UpdateScope(
+func (s *claimHandlesImpl) UpdateScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).Exec(ctx,
@@ -140,11 +140,11 @@ func (s *lockHoldersImpl) UpdateScope(
 }
 
 // Get returns the row identified by id, or (nil, nil) when no row exists.
-func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = $1`, id,
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -155,13 +155,13 @@ func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 }
 
 // LockForUpdate runs SELECT ... FOR UPDATE on the lock-holder row. Used
-// by core/supervisor/auto_terminal.go to serialize auto-terminal
+// by foundation/integration/auto_terminal.go to serialize auto-terminal
 // resolution per @blessed-invariant 13.
-func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = $1 FOR UPDATE`, id,
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -172,7 +172,7 @@ func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx 
 }
 
 // ListByHolderNode returns every row anchored to holderNodeID.
-func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = $1
@@ -182,20 +182,20 @@ func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sha
 		return nil, fmt.Errorf("lockholders.ListByHolderNode: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // GetByFrameAndNode returns the lock-holder row for (nodeID, frameID),
 // or (nil, nil) when no matching row exists. Used by the observability
 // dispatch-detail endpoint to follow dispatch → claim_id directly.
-func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = $1 AND frame_id = $2
 		 LIMIT 1`,
 		nodeID, frameID,
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -206,7 +206,7 @@ func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.U
 }
 
 // ListBySupervisor returns every row owned by supervisorID.
-func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_supervisor_id = $1
@@ -216,14 +216,14 @@ func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID str
 		return nil, fmt.Errorf("lockholders.ListBySupervisor: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
 // owned by supervisorID whose lifetime should currently be active. Per
 // spec §7.5; the heartbeat keeps lock-holder rows alive against the
 // orphan reaper.
-func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
+func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	heartbeatSeconds := int(time.Until(expiresAt).Seconds())
 	if heartbeatSeconds < 1 {
 		heartbeatSeconds = 1
@@ -256,7 +256,7 @@ func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID stri
 
 // ListExpired returns rows whose expires_at < now(). The scheduler's
 // orphan-reap sweep iterates these.
-func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE expires_at < now()
@@ -266,12 +266,12 @@ func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([
 		return nil, fmt.Errorf("lockholders.ListExpired: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // Delete removes the row keyed by id. Claimant-guarded on
 // expectedSupervisorID; mismatch is a no-op (returns nil).
-func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
+func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = $1 AND holder_supervisor_id = $2`,
@@ -287,7 +287,7 @@ func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSu
 // lockName. Used inside the supervisor's acquisition tx after taking
 // pg_advisory_xact_lock(hashtext('rimsky_lock:'||lockName)) to enforce
 // the named-lock counting-mode limit.
-func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
+func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT count(*) FROM rimsky_claim_handle
@@ -304,7 +304,7 @@ func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string,
 // ListByStoreScope returns every unexpired scope-kind row for
 // storeName. Used by the supervisor's scope-conflict re-check (§7.3
 // step 4a/4b).
-func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE lock_kind = 'scope' AND store_name = $1
@@ -316,14 +316,14 @@ func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string
 		return nil, fmt.Errorf("lockholders.ListByStoreScope: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // DeleteIfExpired removes the row keyed by id, claimant-guarded on
 // supervisor_id AND only when expires_at is still in the past. Used by
 // the orphan reaper. Returns deleted=true on success; false on no-op
 // (claimant mismatch or fresh heartbeat extended the row).
-func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
+func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	tag, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = $1
@@ -343,7 +343,7 @@ func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, s
 // supports the spec's documented surface plus the previously
 // per-method options (holder_node, holder_supervisor) so a single
 // generic browse endpoint can replace the prior per-anchor methods.
-func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.LockHolderRow], error) {
+func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ClaimHandleRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 50
@@ -370,7 +370,7 @@ func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persi
 	if pag.Cursor != "" {
 		c, id, err := decodeLockHolderCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
 		}
 		cursorClaimed = &c
 		cursorID = &id
@@ -406,19 +406,19 @@ func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persi
 		storeArg, supArg, nodeArg, instArg, nodeTypeArg, cArg, cIDArg, limit,
 	)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: %w", err)
+		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: %w", err)
 	}
 	defer rows.Close()
-	out, err := collectLockHolders(rows)
+	out, err := collectClaimHandles(rows)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, err
+		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, err
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
 		nextCursor = encodeLockHolderCursor(last.ClaimedAt, last.ID)
 	}
-	return persistence.PaginatedListResult[persistence.LockHolderRow]{Rows: out, NextCursor: nextCursor}, nil
+	return persistence.PaginatedListResult[persistence.ClaimHandleRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 type lockHolderCursor struct {
@@ -445,9 +445,9 @@ func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
 
 // ---- helpers ----
 
-func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
+func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	var (
-		r               persistence.LockHolderRow
+		r               persistence.ClaimHandleRow
 		kind            string
 		lockName        *string
 		storeName       *string
@@ -467,7 +467,7 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
 		&workerRequestID, &isHeld,
 	); err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	r.LockKind = persistence.LockKind(kind)
 	r.LockName = lockName
@@ -484,10 +484,10 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 	return r, nil
 }
 
-func collectLockHolders(rows pgx.Rows) ([]persistence.LockHolderRow, error) {
-	var out []persistence.LockHolderRow
+func collectClaimHandles(rows pgx.Rows) ([]persistence.ClaimHandleRow, error) {
+	var out []persistence.ClaimHandleRow
 	for rows.Next() {
-		r, err := scanLockHolder(rows)
+		r, err := scanClaimHandle(rows)
 		if err != nil {
 			return nil, err
 		}

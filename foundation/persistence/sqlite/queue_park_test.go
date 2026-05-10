@@ -103,7 +103,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	// inside the runner's per-candidate acquisition tx). The wake_reason
 	// arg is the WakeReason enum string.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		ok, err := queue.ResumeParkedInTx(ctx, tx, dispatchID, "sup-2", "deadline_elapsed")
+		ok, err := queue.ResumeParkedInTx(ctx, tx, dispatchID, "deadline_elapsed")
 		if err != nil {
 			return err
 		}

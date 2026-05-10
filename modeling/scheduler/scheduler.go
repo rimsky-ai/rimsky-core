@@ -25,7 +25,7 @@
 //  5. integration.SweepOrphanedClaims — dispatch rows whose
 //     `last_heartbeat_at` is older than the cutoff are released
 //     claimant-guarded so a fresh supervisor can pick them up.
-//  6. integration.SweepLockHolders — `rimsky_claim_handle` rows whose
+//  6. integration.SweepClaimHandles — `rimsky_claim_handle` rows whose
 //     `expires_at < now()` are deleted claimant-guarded. Per v3 spec
 //     §7.5, Store.Abandon is NOT called — the store's own TTL/sweep
 //     handles its internal state. Cascade FK on
@@ -49,7 +49,7 @@ import (
 
 // Config bundles everything the scheduler loop needs.
 //
-// LockHolders is required for the orphan-reap sweep. When nil the
+// ClaimHandles is required for the orphan-reap sweep. When nil the
 // corresponding sweep is skipped — this keeps tests that exercise only
 // the dispatch-claim / heartbeat / ready sweeps from being forced into
 // store wiring.
@@ -72,7 +72,7 @@ type Config struct {
 	TickInterval         time.Duration
 	HeartbeatTimeout     time.Duration
 	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
-	LockHolders          persistence.LockHoldersStore
+	ClaimHandles         persistence.ClaimHandlesStore
 	// SupervisorID is the scheduler's own supervisor id. Used by the
 	// parked-nodes sweep (E3) to claim wakes against — every wake
 	// transitions phase parked → pending so any executor-running
@@ -276,11 +276,11 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	// 6. Lock-holder sweep. Skipped when wiring is incomplete. No
 	// store verb fired — store's own TTL handles internal state
 	// (per v3 spec §7.5).
-	if cfg.LockHolders != nil {
-		if err := integration.SweepLockHolders(ctx, integration.OrphanReaperArgs{
-			Persist:     cfg.Persist,
-			LockHolders: cfg.LockHolders,
-			Logger:      log,
+	if cfg.ClaimHandles != nil {
+		if err := integration.SweepClaimHandles(ctx, integration.OrphanReaperArgs{
+			Persist:      cfg.Persist,
+			ClaimHandles: cfg.ClaimHandles,
+			Logger:       log,
 		}); err != nil {
 			return err
 		}
@@ -310,7 +310,7 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			Clock:          cfg.Clock,
 			Logger:         log,
 			SupervisorID:   cfg.SupervisorID,
-			LockHolders:    cfg.LockHolders,
+			ClaimHandles:   cfg.ClaimHandles,
 			AdvisoryLocker: cfg.AdvisoryLocker,
 			StoreRegistry:  cfg.StoreRegistry,
 			Metrics:        cfg.Metrics,

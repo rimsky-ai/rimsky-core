@@ -148,6 +148,75 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	return out, nil
 }
 
+// ListParkedDiagnostic returns currently-parked rows for the admin
+// diagnostic endpoints. Joins rimsky_nodes for the instance_id needed
+// by the endpoints' frame/instance grouping.
+func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
+	if tx == nil {
+		return nil, errors.New("sqlite.ListParkedDiagnostic: tx required")
+	}
+	var reasonArg any
+	if reasonFilter != "" {
+		reasonArg = reasonFilter
+	}
+	rows, err := q.q(tx).QueryContext(ctx,
+		`SELECT n.instance_id, d.node_id, d.frame_id,
+		        d.parked_at, d.resume_at, d.parked_reason
+		   FROM rimsky_worker_request d
+		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
+		  WHERE d.phase = 'parked'
+		    AND (? IS NULL OR d.parked_reason = ?)
+		  ORDER BY d.parked_at ASC`,
+		reasonArg, reasonArg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.ParkedDiagnosticRow
+	for rows.Next() {
+		var (
+			r           persistence.ParkedDiagnosticRow
+			instID      sql.NullString
+			frameID     sql.NullString
+			parkedAtStr string
+			resumeAtStr sql.NullString
+			reason      sql.NullString
+			nodeID      string
+		)
+		if err := rows.Scan(&instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason); err != nil {
+			return nil, err
+		}
+		if instID.Valid {
+			r.InstanceID = instID.String
+		}
+		r.NodeID = nodeID
+		if frameID.Valid {
+			r.FrameID = frameID.String
+		}
+		t, err := parseTime(parkedAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: parse parked_at: %w", err)
+		}
+		r.ParkedAt = t
+		if resumeAtStr.Valid {
+			rt, err := parseTime(resumeAtStr.String)
+			if err != nil {
+				return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: parse resume_at: %w", err)
+			}
+			r.ResumeAt = rt
+		}
+		if reason.Valid {
+			r.Reason = reason.String
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetParkedByNode returns the parked row for a node, or nil.
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
@@ -172,18 +241,17 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 
 // ResumeParkedInTx transitions parked→pending so the next
 // SelectCandidates tick picks the row up. Park metadata is preserved
-// for the resume-dispatch path. supervisorID is recorded by the caller
-// in audit-log rows but NOT written to claimed_by — the row goes back
-// to claimed_by=NULL so any eligible supervisor can pick it up. The
-// wakeReason is persisted on rimsky_worker_request.wake_reason so the
-// resume-dispatch path's LoadResumeMetadataInTx can attach it to
+// for the resume-dispatch path. The row goes back to claimed_by=NULL
+// so any eligible supervisor can pick it up; the wake-source supervisor
+// id is recorded by callers in the parked_resume_started audit event.
+// The wakeReason is persisted on rimsky_worker_request.wake_reason so
+// the resume-dispatch path's LoadResumeMetadataInTx can attach it to
 // ResumeContext.resume_reason. enqueued_at is preserved across the
 // resume — see the postgres mirror for the rationale.
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, supervisorID, wakeReason string) (bool, error) {
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, wakeReason string) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.ResumeParkedInTx: tx required")
 	}
-	_ = supervisorID
 	var wakeReasonArg any
 	if wakeReason != "" {
 		wakeReasonArg = wakeReason
@@ -389,17 +457,17 @@ type rowScanner interface {
 
 func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 	var (
-		idStr, nodeIDStr        string
-		executor                sql.NullString
-		storesStr               string
-		frameIDStr              string
-		parkedAtStr             string
-		resumeAtStr             sql.NullString
-		reason, sessionToken    sql.NullString
-		payloadInline           []byte
-		payloadHandle, backend  sql.NullString
-		maxParkSec              sql.NullInt64
-		consecutiveRetries      int
+		idStr, nodeIDStr       string
+		executor               sql.NullString
+		storesStr              string
+		frameIDStr             string
+		parkedAtStr            string
+		resumeAtStr            sql.NullString
+		reason, sessionToken   sql.NullString
+		payloadInline          []byte
+		payloadHandle, backend sql.NullString
+		maxParkSec             sql.NullInt64
+		consecutiveRetries     int
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &executor, &storesStr, &frameIDStr,

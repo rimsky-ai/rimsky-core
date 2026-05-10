@@ -24,7 +24,7 @@ import (
 )
 
 // pgSchedulerTickLockKey mirrors the constant in
-// core/persistence/postgres/coordinator.go, duplicated here so the
+// foundation/persistence/postgres/coordinator.go, duplicated here so the
 // scheduler-tests package does not need to import the postgres driver
 // package directly. Kept in sync via the conformance suite (any drift
 // would surface as a test passing here while the postgres coordinator's

@@ -38,7 +38,7 @@ func TestRunNode_NoCandidate(t *testing.T) {
 		Persist:           d.Store(),
 		Queue:             d.Queue(),
 		AdvisoryLocker:    d.AdvisoryLocker(),
-		LockHolders:       d.Store().LockHolders(),
+		ClaimHandles:      d.Store().ClaimHandles(),
 		StoreRegistry:     reg,
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},

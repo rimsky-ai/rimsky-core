@@ -50,7 +50,9 @@ export interface GrpcServerConfig {
    * handler:
    *   - records `step_started` on receipt, keyed by the supervisor's
    *     `dispatch_id` (or the locally minted ackId when absent)
-   *   - records `step_completed` / `step_failed` from the outcome path
+   *   - records one of `step_completed` / `step_failed` /
+   *     `step_blocked` / `step_parked` from the outcome path so each
+   *     terminal kind shows up distinctly in dashboards
    * The same ledger instance is normally shared with the HTTP bridge so
    * dashboards can fetch traces via either transport.
    */
@@ -398,14 +400,24 @@ async function runAndCallback(
     });
     const body = outcomeToCallbackBody(outcome);
     if (config.observability) {
-      const cat = outcome.kind === "complete"
-        ? "step_completed"
-        : outcome.kind === "errored"
-        ? "step_failed"
-        : "step_completed";
       const attrs: Record<string, unknown> = { step_id: "dispatch" };
-      if (outcome.kind === "errored") {
-        attrs.error = outcome.errorClass;
+      let cat: string;
+      switch (outcome.kind) {
+        case "complete":
+          cat = "step_completed";
+          break;
+        case "errored":
+          cat = "step_failed";
+          attrs.error = outcome.errorClass;
+          break;
+        case "blocked":
+          cat = "step_blocked";
+          attrs.reason = outcome.reason;
+          break;
+        case "park_requested":
+          cat = "step_parked";
+          attrs.reason = outcome.reason;
+          break;
       }
       config.observability.recordEvent(traceId, { category: cat, attributes: attrs });
       config.observability.markComplete(traceId);

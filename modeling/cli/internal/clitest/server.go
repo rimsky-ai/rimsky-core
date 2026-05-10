@@ -7,7 +7,7 @@
 // canonical-hash and template-spec packages to mirror the production
 // hashing predicate exactly — that coupling is sanctioned because
 // clitest exists to validate the CLI against rimsky internals, not as
-// a public test fixture. Only packages under core/cli/ may import it.
+// a public test fixture. Only packages under modeling/cli/ may import it.
 //
 // Usage:
 //
@@ -592,7 +592,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 			limit = v
 		}
 	}
-	// Mirror the live control-api (`core/persistence/postgres/events.go`):
+	// Mirror the live control-api (`foundation/persistence/postgres/events.go`):
 	// next_cursor is set only when the page is full (len == limit). A
 	// partial page returns next_cursor="" so clients know to wait
 	// rather than continue paging.

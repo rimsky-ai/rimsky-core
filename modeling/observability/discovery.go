@@ -9,10 +9,10 @@
 //
 // Per docs/specs/2026-05-02-dashboard-and-observability-design.md.
 //
-// Import rules: this package may import core/persistence/, core/store/
-// for shared types. It MUST NOT import core/config/, core/persistence/
-// postgres/, core/persistence/sqlite/, core/scheduler/, core/supervisor/,
-// or core/controlapi/. (Avoids a cycle through config.StartControlAPI,
+// Import rules: this package may import foundation/persistence/, foundation/locks/
+// for shared types. It MUST NOT import modeling/config/, foundation/persistence/
+// postgres/, foundation/persistence/sqlite/, modeling/scheduler/, foundation/integration/,
+// or modeling/controlapi/. (Avoids a cycle through config.StartControlAPI,
 // which composes RunHandshake + Routes itself.)
 package observability
 

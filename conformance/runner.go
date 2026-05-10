@@ -101,6 +101,12 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 // probeStubMode sends a stub-probe Execute and returns true iff the resulting
 // terminal carries `attributes_delta = {stub: true}`. AwaitTerminal handles
 // async executors by following the callback when AsyncAccepted is observed.
+//
+// Callers that depend on a definite stub-mode answer (e.g.
+// `--require-stub-mode`) MUST inspect the returned error. A nil error +
+// false means "executor responded but did not advertise stub mode"; a
+// non-nil error means we never got a clean answer (connection failure,
+// timeout) and the result is indeterminate.
 func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -117,7 +123,12 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 	defer stream.Close()
 	ev, err := AwaitTerminal(pctx, stream, env)
 	if err != nil {
-		return false, nil
+		// AwaitTerminal failures are indeterminate — the caller
+		// (`--require-stub-mode`) MUST treat this as a probe failure
+		// rather than "executor isn't stubbed". Returning (false, nil)
+		// here would let a non-stub executor pass the require gate when
+		// the probe RPC merely timed out.
+		return false, err
 	}
 	if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
 		m := ce.Complete.GetAttributesDelta().AsMap()

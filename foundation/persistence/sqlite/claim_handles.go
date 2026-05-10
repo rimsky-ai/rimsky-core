@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lock_holders.go — SQLite-backed persistence.LockHoldersStore.
+// claim_handles.go — SQLite-backed persistence.ClaimHandlesStore.
 //
 // @blessed-invariant 9a: lock state lives only in the persistence layer.
 // @blessed-invariant 4: claimant-guarded release.
@@ -31,7 +31,7 @@ const lockHolderCols = `
   worker_request_id, is_held
 `
 
-func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderInsertInput, tx persistence.Tx) error {
+func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := nowUTC()
 	var rws *string
 	if in.RealizedWriteSemantics != "" {
@@ -65,7 +65,7 @@ func (s *lockHoldersImpl) Insert(ctx context.Context, in persistence.LockHolderI
 	return nil
 }
 
-func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
+func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	ctx context.Context, id shared.UUID, supervisorID string, ws string, tx persistence.Tx,
 ) error {
 	var v *string
@@ -85,7 +85,7 @@ func (s *lockHoldersImpl) UpdateRealizedWriteSemantics(
 	return nil
 }
 
-func (s *lockHoldersImpl) UpdateAddress(
+func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).ExecContext(ctx,
@@ -100,7 +100,7 @@ func (s *lockHoldersImpl) UpdateAddress(
 	return nil
 }
 
-func (s *lockHoldersImpl) UpdateScope(
+func (s *claimHandlesImpl) UpdateScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).ExecContext(ctx,
@@ -115,11 +115,11 @@ func (s *lockHoldersImpl) UpdateScope(
 	return nil
 }
 
-func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = ?`, id.String(),
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -131,11 +131,11 @@ func (s *lockHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistenc
 
 // LockForUpdate omits FOR UPDATE under SQLite; the surrounding
 // BEGIN IMMEDIATE writer-slot hold subsumes per-row locking.
-func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = ?`, id.String(),
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -145,7 +145,7 @@ func (s *lockHoldersImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx 
 	return &out, nil
 }
 
-func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = ?
@@ -155,19 +155,19 @@ func (s *lockHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sha
 		return nil, fmt.Errorf("lockholders.ListByHolderNode: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // GetByFrameAndNode returns the lock-holder row for (nodeID, frameID),
 // or (nil, nil) when no matching row exists.
-func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_node_id = ? AND frame_id = ?
 		 LIMIT 1`,
 		nodeID.String(), frameID.String(),
 	)
-	out, err := scanLockHolder(row)
+	out, err := scanClaimHandle(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -177,7 +177,7 @@ func (s *lockHoldersImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.U
 	return &out, nil
 }
 
-func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE holder_supervisor_id = ?
@@ -187,12 +187,12 @@ func (s *lockHoldersImpl) ListBySupervisor(ctx context.Context, supervisorID str
 		return nil, fmt.Errorf("lockholders.ListBySupervisor: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
 // ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
 // owned by supervisorID whose lifetime should currently be active.
-func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
+func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handle
@@ -220,7 +220,7 @@ func (s *lockHoldersImpl) ExtendHeartbeat(ctx context.Context, supervisorID stri
 	return nil
 }
 
-func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE expires_at < ?
@@ -230,10 +230,10 @@ func (s *lockHoldersImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([
 		return nil, fmt.Errorf("lockholders.ListExpired: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
-func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
+func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = ? AND holder_supervisor_id = ?`,
@@ -245,7 +245,7 @@ func (s *lockHoldersImpl) Delete(ctx context.Context, id shared.UUID, expectedSu
 	return nil
 }
 
-func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
+func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT count(*) FROM rimsky_claim_handle
@@ -259,7 +259,7 @@ func (s *lockHoldersImpl) CountByNamedLock(ctx context.Context, lockName string,
 	return n, nil
 }
 
-func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LockHolderRow, error) {
+func (s *claimHandlesImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
 		 WHERE lock_kind = 'scope' AND store_name = ?
@@ -271,10 +271,10 @@ func (s *lockHoldersImpl) ListByStoreScope(ctx context.Context, storeName string
 		return nil, fmt.Errorf("lockholders.ListByStoreScope: %w", err)
 	}
 	defer rows.Close()
-	return collectLockHolders(rows)
+	return collectClaimHandles(rows)
 }
 
-func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
+func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	res, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handle
 		 WHERE id = ?
@@ -295,7 +295,7 @@ func (s *lockHoldersImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, s
 // ListForObservability returns lock-holder rows matching filter,
 // cursor-paginated by claimed_at DESC. Used by the observability
 // /v1/observability/lock-holders endpoint (spec §1.2.4).
-func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.LockHolderRow], error) {
+func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter persistence.LockHolderListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.ClaimHandleRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 50
@@ -320,7 +320,7 @@ func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persi
 	if pag.Cursor != "" {
 		c, id, err := decodeLockHolderCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: bad cursor: %w", err)
 		}
 		cursorClaimed = formatTime(c)
 		cursorID = id.String()
@@ -351,19 +351,19 @@ func (s *lockHoldersImpl) ListForObservability(ctx context.Context, filter persi
 		cursorClaimed, cursorClaimed, cursorID, limit,
 	)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, fmt.Errorf("lockholders.list: %w", err)
+		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: %w", err)
 	}
 	defer rows.Close()
-	out, err := collectLockHolders(rows)
+	out, err := collectClaimHandles(rows)
 	if err != nil {
-		return persistence.PaginatedListResult[persistence.LockHolderRow]{}, err
+		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, err
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
 		nextCursor = encodeLockHolderCursor(last.ClaimedAt, last.ID)
 	}
-	return persistence.PaginatedListResult[persistence.LockHolderRow]{Rows: out, NextCursor: nextCursor}, nil
+	return persistence.PaginatedListResult[persistence.ClaimHandleRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 type lockHolderCursor struct {
@@ -388,9 +388,9 @@ func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
 	return c.C, c.I, nil
 }
 
-func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
+func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	var (
-		r                  persistence.LockHolderRow
+		r                  persistence.ClaimHandleRow
 		idStr              string
 		kind               string
 		lockName           sql.NullString
@@ -416,15 +416,15 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 		&claimedAtStr, &lastHeartbeatAtStr, &expiresAtStr, &frameIDStr,
 		&workerRequestIDStr, &isHeldInt,
 	); err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	holderNodeID, err := uuid.Parse(holderNodeIDStr)
 	if err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	r.ID = id
 	r.LockKind = persistence.LockKind(kind)
@@ -453,31 +453,31 @@ func scanLockHolder(sc scannable) (persistence.LockHolderRow, error) {
 	}
 	frameID, err := scanNullableUUID(frameIDStr)
 	if err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	r.FrameID = frameID
 	workerRequestID, err := scanNullableUUID(workerRequestIDStr)
 	if err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	r.WorkerRequestID = workerRequestID
 	r.IsHeld = isHeldInt != 0
 	if r.ClaimedAt, err = parseTime(claimedAtStr); err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	if r.LastHeartbeatAt, err = parseTime(lastHeartbeatAtStr); err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	if r.ExpiresAt, err = parseTime(expiresAtStr); err != nil {
-		return persistence.LockHolderRow{}, err
+		return persistence.ClaimHandleRow{}, err
 	}
 	return r, nil
 }
 
-func collectLockHolders(rows *sql.Rows) ([]persistence.LockHolderRow, error) {
-	var out []persistence.LockHolderRow
+func collectClaimHandles(rows *sql.Rows) ([]persistence.ClaimHandleRow, error) {
+	var out []persistence.ClaimHandleRow
 	for rows.Next() {
-		r, err := scanLockHolder(rows)
+		r, err := scanClaimHandle(rows)
 		if err != nil {
 			return nil, err
 		}

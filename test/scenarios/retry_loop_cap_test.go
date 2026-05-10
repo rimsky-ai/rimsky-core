@@ -27,10 +27,10 @@ import (
 // test runs quickly.
 func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 	t.Parallel()
-	cap := 3
+	maxRetries := 3
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Stub returns an error class with a retry policy. The retry counter
-	// increments each retry; after cap+1 retries the runner forces
+	// increments each retry; after maxRetries+1 retries the runner forces
 	// retry_loop_no_progress → give_up.
 	h.Stub.WhenType("worker").Error("flaky", map[string]any{"why": "nondeterministic"})
 
@@ -41,7 +41,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:                      "worker",
 				Executor:                  "stub",
-				MaxRetriesWithoutProgress: &cap,
+				MaxRetriesWithoutProgress: &maxRetries,
 				ErrorTypes: map[string]node.ErrorTypePolicy{
 					"flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 1000}}},
 				},

@@ -89,7 +89,7 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	}
 	// Plan I3: classify invalidate sources by Reason for the metric.
 	// Reasons today: "admin_invalidate" (G3), "policy_invalidate"
-	// (handler/error_types), "schedule_fire" (cron), "cascade" (post-
+	// (handler/error_types), "schedule_fired" (cron), "cascade" (post-
 	// commit), and bespoke event-handler reasons. The metric label uses
 	// a coarse bucket so high-cardinality reasons don't blow up
 	// Prometheus storage.
@@ -235,22 +235,33 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 	})
 }
 
-
 // invalidateSourceBucket classifies the Reason string into a small
 // fixed set of metric labels (admin / scheduler / handler / cascade /
 // other) so the Prometheus invalidate counter has bounded cardinality.
+//
+// The case list MUST stay in lockstep with the Reason values fired by
+// the integration layer. Today those are:
+//
+//   - "admin_invalidate"            (runner_lifecycle.go admin path,
+//     wake_parked.go::InvalidateNode)
+//   - "schedule_fired"              (modeling/scheduler/schedule_ticker.go)
+//   - "policy_invalidate"           (on_error.go, runner_terminal_errors.go)
+//   - "handler_invalidate"          (runner_lifecycle.go on_event handler)
+//   - "cascade"                     (cascade_invalidate.go)
+//   - "parked_resume_deadline_elapsed" (sweep_parked.go)
+//
+// Anything else is bucketed as "other" so a missing entry surfaces as
+// label drift rather than silent metric loss.
 func invalidateSourceBucket(reason string) string {
 	switch reason {
 	case "admin_invalidate":
 		return "admin"
-	case "schedule_fire":
+	case "schedule_fired", "parked_resume_deadline_elapsed":
 		return "scheduler"
-	case "policy_invalidate":
+	case "policy_invalidate", "handler_invalidate":
 		return "handler"
-	case "cascade", "cascade_changed", "cascade_unchanged":
+	case "cascade":
 		return "cascade"
-	case "parked_resume_deadline_elapsed":
-		return "scheduler"
 	}
 	return "other"
 }

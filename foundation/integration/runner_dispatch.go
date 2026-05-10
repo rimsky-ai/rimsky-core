@@ -437,13 +437,32 @@ func lookupEventPayload(
 			found = true
 			return nil
 		}
-		if evt.PayloadHandle != "" && args.Blob != nil && args.Blob.Name() == evt.PayloadHandleBackend {
+		if evt.PayloadHandle == "" {
+			return nil
+		}
+		switch {
+		case args.Blob == nil:
+			args.Logger.Warn("namedEventPayload: spilled payload but no BlobBackend configured; substitution will see empty",
+				"event_name", eventName,
+				"emitter_node_id", emitterID,
+				"handle_backend", evt.PayloadHandleBackend)
+		case args.Blob.Name() != evt.PayloadHandleBackend:
+			args.Logger.Warn("namedEventPayload: blob backend mismatch; substitution will see empty",
+				"event_name", eventName,
+				"emitter_node_id", emitterID,
+				"current_backend", args.Blob.Name(),
+				"handle_backend", evt.PayloadHandleBackend)
+		default:
 			b, ferr := args.Blob.Read(ctx, persistence.Handle(evt.PayloadHandle))
 			if ferr == nil {
 				out = json.RawMessage(b)
 				found = true
 				return nil
 			}
+			args.Logger.Warn("namedEventPayload: blob fetch failed; substitution will see empty",
+				"event_name", eventName,
+				"emitter_node_id", emitterID,
+				"error", ferr.Error())
 		}
 		return nil
 	})
@@ -726,7 +745,7 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 // decodes the store-supplied Address and Payload bytes via
 // json.Unmarshal solely to project them into a `google.protobuf.Struct`
 // for the wire. This is the SOLE sanctioned wire-encoding site outside
-// `core/attributes/substitution.go::walkPath` (which is the sole
+// `modeling/attribute/substitution.go::walkPath` (which is the sole
 // sanctioned substitution-leaf extraction site). No transformation,
 // logging, normalization, validation, or pattern-matching happens
 // here — the bytes round-trip through structpb and are reconstituted
@@ -746,17 +765,23 @@ func makeStoreHandle(lk AcquiredLock, spec locks.ClaimSpec) (*genv1.StoreHandle,
 	fields := map[string]any{}
 	if len(lk.ClaimResult.Address) > 0 {
 		var addrAny any
-		if err := json.Unmarshal(lk.ClaimResult.Address, &addrAny); err == nil {
-			fields["address"] = addrAny
-		} else {
-			fields["address"] = string(lk.ClaimResult.Address)
+		if err := json.Unmarshal(lk.ClaimResult.Address, &addrAny); err != nil {
+			// Producer-supplied bytes did not round-trip as JSON. Per
+			// @blessed-invariant 20 we MUST NOT mangle, log, or
+			// transform the bytes — refuse to dispatch instead so the
+			// failure is visible at the supervisor (rather than letting
+			// a non-UTF-8 byte sequence travel through structpb as a
+			// silently-corrupted Go string field downstream).
+			return nil, fmt.Errorf("makeStoreHandle: claim address bytes are not JSON-decodable (producer invariant); refusing to dispatch: %w", err)
 		}
+		fields["address"] = addrAny
 	}
 	if len(lk.ClaimResult.Payload) > 0 {
 		var payloadAny any
-		if err := json.Unmarshal(lk.ClaimResult.Payload, &payloadAny); err == nil {
-			fields["payload"] = payloadAny
+		if err := json.Unmarshal(lk.ClaimResult.Payload, &payloadAny); err != nil {
+			return nil, fmt.Errorf("makeStoreHandle: claim payload bytes are not JSON-decodable (producer invariant); refusing to dispatch: %w", err)
 		}
+		fields["payload"] = payloadAny
 	}
 	fields["alias"] = spec.Alias
 	fields["intent"] = string(spec.Intent)

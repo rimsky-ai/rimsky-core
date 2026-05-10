@@ -154,7 +154,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	}
 	out := map[string]locks.ClaimResult{}
 	for _, r := range rows {
-		lh, err := args.LockHolders.Get(ctx, r.LockHolderID, tx)
+		lh, err := args.ClaimHandles.Get(ctx, r.ClaimHandleID, tx)
 		if err != nil || lh == nil {
 			continue
 		}
@@ -181,7 +181,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 // aliasFromAcquirerStores resolves the alias-name on the acquirer
 // NodeDef whose store_name matches the lock-holder row, preferring an
 // alias whose substituted selector matches the row's scope_data.
-func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *persistence.LockHolderRow) string {
+func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *persistence.ClaimHandleRow) string {
 	if def == nil || lh == nil || lh.StoreName == nil {
 		return ""
 	}

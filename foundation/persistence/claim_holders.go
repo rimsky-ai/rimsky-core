@@ -22,31 +22,31 @@ const (
 
 // ClaimHolderRow mirrors a row of rimsky_claim_holders.
 type ClaimHolderRow struct {
-	ID           shared.UUID      `json:"id"`
-	LockHolderID shared.UUID      `json:"claim_handle_id"`
-	HolderNodeID shared.UUID      `json:"holder_node_id"`
-	State        ClaimHolderState `json:"state"`
-	CompletedAt  *time.Time       `json:"completed_at,omitempty"`
+	ID            shared.UUID      `json:"id"`
+	ClaimHandleID shared.UUID      `json:"claim_handle_id"`
+	HolderNodeID  shared.UUID      `json:"holder_node_id"`
+	State         ClaimHolderState `json:"state"`
+	CompletedAt   *time.Time       `json:"completed_at,omitempty"`
 }
 
 // ClaimHolderInsertInput is the per-row input for Insert.
 type ClaimHolderInsertInput struct {
-	ID           shared.UUID
-	LockHolderID shared.UUID
-	HolderNodeID shared.UUID
-	FrameID      *shared.UUID
+	ID            shared.UUID
+	ClaimHandleID shared.UUID
+	HolderNodeID  shared.UUID
+	FrameID       *shared.UUID
 }
 
 // ClaimHoldersStore is the rimsky_claim_holders accessor.
 type ClaimHoldersStore interface {
 	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
-	ListByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
+	ListByClaimHandleID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
-	ListActiveByLockHolderID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
+	ListActiveByClaimHandleID(ctx context.Context, lockHolderID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
 	CompleteByLockHolderAndNode(ctx context.Context, lockHolderID, holderNodeID shared.UUID, state ClaimHolderState, tx Tx) error
-	// FailAllActiveByLockHolder marks every still-'active' row for the
+	// FailAllActiveByClaimHandle marks every still-'active' row for the
 	// given claim_handle as 'failed'. Used by the held-claim
 	// acquirer-failure path (on_executor_blocked: pass / errored: pass
 	// / on_acquire_unavailable: error) so auto-terminal can fire
@@ -59,5 +59,5 @@ type ClaimHoldersStore interface {
 	// Defense-in-depth — today's call site is the legitimate owner by
 	// construction (it just acquired the handle), but the guard prevents
 	// a future refactor from acting on rows whose ownership has moved.
-	FailAllActiveByLockHolder(ctx context.Context, lockHolderID shared.UUID, supervisorID string, tx Tx) error
+	FailAllActiveByClaimHandle(ctx context.Context, lockHolderID shared.UUID, supervisorID string, tx Tx) error
 }

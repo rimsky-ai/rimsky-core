@@ -7,7 +7,7 @@
 //
 // Migrated to the stores-redesign template grammar (spec §11): the cron
 // node is built via scenario.MakeNode. Schedule semantics are unchanged
-// (see `core/scheduler/schedule_ticker.go`).
+// (see `modeling/scheduler/schedule_ticker.go`).
 package scenarios
 
 import (
