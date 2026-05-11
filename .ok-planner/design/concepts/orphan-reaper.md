@@ -1,0 +1,41 @@
+---
+concept: orphan-reaper
+status: as-is
+aliases: []
+references:
+  - _discover/2026-05-10-orphan-reaper-no-producer-abandon.md
+  - _discover/orphan-claim-cutoff-five-heartbeats.md
+  - _discover/2026-05-10-claimant-guarded-release.md
+  - _discover/2026-05-10-verify-before-run-guard.md
+---
+
+# Orphan reaper
+
+## What it is
+
+A periodic sweep that hard-deletes stale rows from `rimsky_worker_request` and `rimsky_claim_handle`. Five sweep functions in `foundation/integration/`: `SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepReady`, `SweepLockHolders`, plus `orphan_reaper.go::SweepClaimHandles`. Cutoff: `5 × heartbeat_interval`. Claimant-guarded `DELETE` predicate so live owners are never clobbered.
+
+## Purpose
+
+When a supervisor crashes mid-run, its heartbeat stops; somebody has to clean up the rimsky-side rows so the same scope/dispatch becomes claimable again. The reaper does the rimsky-side delete; the producer's own TTL handles producer-side cleanup.
+
+## Boundaries
+
+Owns: the periodic sweep, the cutoff, the claimant-guarded delete. Does NOT own: producer-side state cleanup (producer's TTL), the bail path's explicit `Abandon` call (that's `handleOrphanedClaim`). Adjacent: `claim-handle`, `worker-request`, `supervisor`, `parked-state` (rows skipped), `auto-terminal` (held handles).
+
+## Invariants
+
+- The reaper does NOT call `ClaimProducer.Abandon`. The bail path in `handleOrphanedClaim` IS the deliberate exception that does.
+- Sweep cutoff is `5 × heartbeat_interval` (`@blessed-invariant 6`). Same cutoff for both row types.
+- All DELETEs are claimant-guarded (`@blessed-invariant 4`).
+- `phase='parked'` rows are explicitly skipped (parked nodes don't heartbeat).
+
+## Aliases and historical names
+
+None live.
+
+## Open within this concept
+
+- Heartbeat cutoff representation differs between worker-request (`last_heartbeat_at + interval`) and claim-handle (computed `expires_at`) — see `tensions/heartbeat-cutoff-asymmetry.md`.
+- "Reaper doesn't Abandon" vs "bail path does Abandon" annotated asymmetry, easy to miss — see `tensions/reaper-vs-bail-abandon-asymmetry.md`.
+

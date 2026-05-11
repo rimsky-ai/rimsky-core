@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Bootstrap design log via discover-design
+
+Adds `.ok-planner/design/` — the as-is design catalog for rimsky,
+produced by `ok-planner:discover-design` (two-phase autonomous
+discovery + agentic review loops, with a phase-2 → phase-1
+back-edge that filled five thin areas). The catalog is intended
+to be consulted by review skills as the design oracle: a finding
+that contradicts a documented concept's stated boundary needs to
+either flag the code or reconcile the concept, not free-flag.
+
+- 53 `_discover/<slug>.md` entries: raw scaffolding with code +
+  prose citations covering every annotated blessed-invariant,
+  every Postgres migration, every top-level interface in shared
+  infrastructure packages, and the bundled producers/executors.
+- 46 `concepts/<slug>.md` files: load-bearing nouns with
+  definitions, purposes, boundaries, and invariants. Covers
+  claim / claim-handle / claim-producer / scope / named-lock /
+  frame / cascade / invalidate / instance / template / tag /
+  worker-request / supervisor / executor / lifecycle-handler /
+  error-policy / terminal-resolution / parked-state / userdata /
+  attribute / quality-rule / blob-backend / opacity /
+  advisory-lock / event-log / observability / persistence-driver
+  / module-layout / and others.
+- 39 `tensions/<slug>.md` files cataloging muddiness across six
+  categories (inconsistent 14, unclear 6, overloaded 4,
+  unspecified 8, muddy-boundary 4, vestigial 3). Notable items:
+  `Store` vs `ClaimProducer` vocabulary, two `events` tables
+  sharing the noun, `frame_resolution` vs `mode` vocabulary
+  mismatch, sqlite-vs-memory reject asymmetry, `compose:` prefix
+  client-side-only reservation.
+- `concepts.md`: 52-line auto-generated catalog summary —
+  one-shot readable; consulted first by any design-aware skill
+  before drilling into individual concept files.
+- `review-notes.md`: agent-confessed uncertainty surfaced during
+  discovery (judgment calls, suspected concepts, possible
+  merges/splits) — input to an upcoming `/refine-design`
+  session.
+
+The `@concept: <slug>` annotation convention is established
+(parallel in shape to `@blessed-invariant`) but not yet applied
+to source. Annotations will accrete via the "consult and
+annotate" rule documented in `.ok-planner/CLAUDE.md` as
+`execute-plan` and `review-cleanup` touch load-bearing sites; no
+greenfield annotation pass is planned. No source-code changes
+in this commit.
+
 ### Holistic-review cycle 2: J10 wiring, dialect bucket fixes, post-Phase-5 renames
 
 Second cycle over the holistic-review findings. Closes the genuine new
