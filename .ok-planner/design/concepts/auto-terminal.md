@@ -28,7 +28,7 @@ Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fi
 - Aggregate-outcome rule: any-failed → `Abandon`; all-completed → `Commit`.
 - The producer verb fires before the surrounding rimsky tx commits — verb-then-tx-fail leak path is mitigated by requiring terminal verbs to be idempotent in `claim_id`.
 - Delete of the `rimsky_claim_handle` row is claimant-guarded (`AND holder_supervisor_id = supervisor_id`).
-- Unified `ResolveClaimHandleTerminal` is also the entry point for orphan-reaper bail paths and error-policy `pass`/`error` resolutions on already-Open'd claims.
+- Unified `ResolveClaimHandleTerminal` is the audited post-dispatch entry point for error-policy `pass`/`error` resolutions on already-Open'd claims. Two carve-outs route through the shared `abandonOpenedClaim` helper (`foundation/integration/abandon_claim.go`) instead of the unified engine: (a) the pre-dispatch `OnAcquireUnavailable` `pass`/`error` path (`runner_lifecycle.go::abandonPartialLocks`), where the `rimsky_claim_handle` rows are already gone (rolled back by the acquisition tx) so the unified engine's delete step has nothing to do; and (b) the post-commit verify-before-run race-detection bail path (`runner_acquire.go::handleOrphanedClaim`), where the cleanup is per-acquired-claim Abandon + its own claimant-guarded `ClaimHandles.Delete` outside the unified engine's verb-then-delete tx sequence. All three sites share the helper, so any future audit / telemetry hook there fires uniformly.
 
 ## Aliases and historical names
 

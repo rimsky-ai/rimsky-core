@@ -4,36 +4,31 @@ status: as-is
 aliases: []
 references:
   - _discover/2026-05-10-observability-optional-protocols.md
-  - _discover/observability-cascade-graph-endpoint.md
-  - _discover/observability-handshake-discovery-cache.md
 ---
 
 # Observability
 
 ## What it is
 
-A multi-surface observability system: (a) two optional gRPC protocols per peer (`ExecutorObservability`, `StoreObservability`) with `Capabilities`/`GetTrace`/`StreamTrace`; (b) rimsky-side HTTP routes mounted on the control-api (`/observability/*`, `/events`, `/frames`, `/nodes/{instance}/{type}`, `/dispatches`, ...); (c) a startup handshake (`modeling/observability/handshake.go`) that probes each peer's observability endpoint in parallel and populates the in-memory `Discovery` cache.
+The peer-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols per peer (`ExecutorObservability`, `StoreObservability`) exposing `Capabilities` / `GetTrace` / `StreamTrace`. The handshake (`modeling/observability/handshake.go`) probes each declared peer in parallel at rimsky startup, populating the `discovery-cache`. Also the canonical site for the per-peer `userdata_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
 
 ## Purpose
 
-Operators need to see what's running, what's wedged, and what each peer reports about itself. A protocol-side observability surface keeps the operator dashboard project-agnostic; a control-api side cascade-graph endpoint lets it query rimsky's own state.
+Peers declare their own capabilities and trace surfaces; rimsky should learn them once, cache the result, and consult the cache at validation gates. Keeping the protocol-side concept separate from the cache it populates (`discovery-cache`) and the operator-dashboard backplane (`cascade-graph`) keeps each concept's boundary sharp.
 
 ## Boundaries
 
-Owns: the optional peer protocols, the handshake/refresh loop, the `Discovery` cache, the HTTP routes, the `userdata_schema` validation site, the `declared_events` cross-check site. Does NOT own: per-event audit (see `event-log`), executor protocol (see `executor`), claim-producer protocol (see `claim-producer`). Adjacent: `executor`, `claim-producer`, `event-log`, `named-event`, and the cascade-graph endpoint (a sub-endpoint owned by this concept that surfaces rimsky's own runtime state to the operator dashboard).
+Owns: the optional peer protocols, the handshake mechanism, the refresh-loop policy, the per-peer `userdata_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `named-event`.
 
 ## Invariants
 
-- The handshake is best-effort: unreachable peers are recorded as `Unreachable` and never abort startup.
+- The handshake is best-effort: unreachable peers recorded as `Unreachable` in `discovery-cache`; never aborts startup.
 - Per-peer `userdata_schema` validates at template registration AND at dispatch post-merge/post-substitution.
-- `declared_events` is the source of truth for `on_event` template-registration cross-check; runtime treats unknown event names as no-ops if the executor was unreachable at registration.
-- All observability HTTP handlers run inside `inTx` (a short fresh transaction per handler).
 
 ## Aliases and historical names
 
-None live.
+Pre-`2026-05-11-design-log-convergence`, this concept also covered the cascade-graph HTTP routes and the discovery cache; those are now `cascade-graph` and `discovery-cache` respectively.
 
 ## Open within this concept
 
-- `userdata_schema` placement on the observability protocol (read by rimsky) sits in tension with `@blessed-invariant 11` opacity — schema-only is a sanctioned exception but not explicitly named in CLAUDE.md — see `tensions/userdata-schema-as-opacity-exception.md`.
-
+- `userdata_schema` placement on the observability protocol (read by rimsky to validate userdata bytes at template-registration and dispatch time) sits in tension with `@blessed-invariant 11` opacity — see `tensions/userdata-schema-as-opacity-exception.md`.

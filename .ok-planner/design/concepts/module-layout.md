@@ -27,7 +27,7 @@ Layered import-budget discipline. An external implementer of `ClaimProducer` imp
 
 ## Boundaries
 
-Owns: per-module `go.mod`, `go.work`, depguard lint rules, the alias pattern (`foundation/locks/` aliases protocols types). Does NOT own: package-internal layout (that's per-feature), proto wire content (lives in `protocols/proto/v1/`). Adjacent: `persistence-driver`, `claim-producer`, `executor`, `lifecycle-subscriber`, `licensing-boundary`.
+Owns: per-module `go.mod`, `go.work`, depguard lint rules, the alias pattern (`foundation/locks/` aliases protocols types). Does NOT own: package-internal layout (that's per-feature), proto wire content (lives in `protocols/proto/v1/`). Adjacent: `persistence-driver`, `claim-producer`, `executor`, `lifecycle-subscriber`.
 
 ## Invariants
 
@@ -40,7 +40,13 @@ Owns: per-module `go.mod`, `go.work`, depguard lint rules, the alias pattern (`f
 
 Pre-layer-crystallization (`.ok-planner/specs/2026-05-04-layer-crystallization-design.md`), the codebase was a single Go module.
 
+## Licensing boundary
+
+Per-directory Apache-2.0-vs-AGPL-3.0 mapping in `licensing.yml`, enforced by `rimsky-license-check` with longest-prefix-match-wins. Apache surface covers protocols, foundation, modeling (excluding `eval/`), CLI binaries; AGPL surface covers `modeling/qualityrule/eval/` and any directories explicitly mapped under AGPL. Repo-organization concern; not a runtime noun. The check is build-step enforcement, not runtime.
+
+(Adjacent: previously documented as a standalone concept; folded here under `2026-05-11-design-log-convergence`.)
+
 ## Open within this concept
 
-(no specific live tensions distinct from `persistence-driver` and `licensing-boundary`)
+(no specific live tensions distinct from `persistence-driver`)
 

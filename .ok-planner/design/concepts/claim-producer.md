@@ -16,7 +16,7 @@ references:
 
 ## What it is
 
-A claim producer is an out-of-process peer service that implements the gRPC `ClaimProducer` protocol (5 methods: `Open`, `Commit`, `Abandon`, `Release`, `Capabilities`). Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `foundation/integration/remote/`.
+A claim producer is an out-of-process peer service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `foundation/integration/remote/`.
 
 ## Purpose
 
@@ -28,7 +28,7 @@ Owns: the producer-side resource state (filesystem stagings, items-table flips, 
 
 ## Invariants
 
-- The five-method protocol plus `Capabilities()` startup handshake is the only contract. Type assertions to a concrete producer from any rimsky package are forbidden (`foundation/locks/interface.go:9-13`).
+- The 4-verb protocol (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake is the only contract. Type assertions to a concrete producer from any rimsky package are forbidden (`foundation/locks/interface.go:9-13`).
 - Producers do not persist lock state (`@blessed-invariant 9a`) and do not internally serialize on lock-shaped predicates (`@blessed-invariant 9b`).
 - Producers MUST satisfy byte-equal-scope uniformity: two `Open` calls returning byte-equal scope MUST also return the same `realized_write_semantics`.
 - Terminal verbs (`Commit`/`Abandon`/`Release`) must be idempotent in `claim_id` so the verb-then-tx-fail leak path is recoverable.
@@ -36,6 +36,8 @@ Owns: the producer-side resource state (filesystem stagings, items-table flips, 
 ## Aliases and historical names
 
 `store` is the colloquial bundled-services term and the directory name (`stores/`). `ClaimProducer` is the protocol-level canonical name. The two coexist; CLAUDE.md "Vocabulary" notes the split. YAML config key `claim_producers:` aliases the legacy `stores:` key.
+
+The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a sixth method, `Name()`, alongside the 4 verbs + `Capabilities()`. `Name()` is a rimsky-side identifier (used for logging, metrics labels, and registry lookup); it is not transported on the wire and not part of the cross-language gRPC protocol. Test doubles must implement it to satisfy the interface.
 
 ## Open within this concept
 

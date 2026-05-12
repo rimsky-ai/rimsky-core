@@ -21,7 +21,7 @@ A small, exhaustively-enumerated state vocabulary keeps "is this node eligible t
 
 ## Boundaries
 
-`node-state` owns: legal transitions, the rejection of illegal ones (no idempotent shortcuts), the runtime predicate for dispatch eligibility. It does NOT own: cascade-firing decisions (those live on `last-outcome`), audit metadata (those live in `transition-reason`), claim disposition (those live on the claim handle row). Adjacent: `last-outcome`, `frame`, `parked-state`, `cascade`.
+`node-state` owns: legal transitions, the rejection of illegal ones (no idempotent shortcuts), the runtime predicate for dispatch eligibility. It does NOT own: cascade-firing decisions (those live on `last-outcome`), audit metadata (those live in `transition-reason`), claim disposition (those live on the claim handle row). Adjacent: `last-outcome`, `transition-reason`, `frame`, `parked-state`, `cascade`.
 
 ## Invariants
 

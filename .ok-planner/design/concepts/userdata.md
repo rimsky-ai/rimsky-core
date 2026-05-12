@@ -19,13 +19,26 @@ Templates need a channel for "stuff the executor needs to read but rimsky should
 
 ## Boundaries
 
-Owns: the bytes, the per-instance override merge mechanism, the routing-key validation. Does NOT own: substitution (see `attribute`), executor-side schema enforcement (see `executor.userdata_schema`), claim payload (see `claim`). Adjacent: `userdata-overrides`, `executor`, `opacity`.
+Owns: the bytes, the per-instance override merge mechanism, the routing-key validation. Does NOT own: substitution (see `attribute`), executor-side schema enforcement (see `executor.userdata_schema`), claim payload (see `claim`). Adjacent: `executor`, `opacity`.
 
 ## Invariants
 
 - Userdata is opaque (`@blessed-invariant 11`). No substitution pass. No inspection. No validation beyond the executor-side schema check.
 - `{{...}}` directives in userdata are literal text reaching the executor verbatim; the substitution grammar does not include a `{{userdata.*}}` source kind.
 - Per-instance `userdata_overrides` validate only routing keys (`by_executor`, `by_node`, plus the executor/node names). Fragment values are never inspected.
+
+## Per-instance overrides
+
+Templates declare a per-node userdata blob; some operations (tracing, synthetic-blocker scenarios, ad-hoc tuning, per-run artifacts) need to alter that blob for one instance without forking the template. Per-instance overrides handle that.
+
+Shape: `{by_executor: {<executor-name>: {...}}, by_node: {<node-name>: {...}}}`. Stored on `rimsky_instances.userdata_overrides`. Deep-merged at dispatch time in the order `template → by_executor[<executor>] → by_node[<node>]` (more specific wins). Merge helper is `modeling/shared.DeepMergeJSON`.
+
+Validation discipline (preserves `@blessed-invariant 11`):
+- Inspects only routing keys (`by_executor`, `by_node`, plus the executor/node names which must be declared in the template). Fragment values never inspected.
+- Unknown top-level keys are rejected at create-time.
+- Nodes whose `executor_name` is null (claim-only path) get only `by_node[name]` overrides.
+
+(Previously documented as a standalone concept `userdata-overrides`; folded here under `2026-05-11-design-log-convergence`. Added under the platform-extensions design 2026-05-08.)
 
 ## Aliases and historical names
 

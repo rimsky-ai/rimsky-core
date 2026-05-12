@@ -20,7 +20,7 @@ Templates declare the graph shape; instances are the live runtimes. Instances ar
 
 ## Boundaries
 
-Owns: the per-deployment runtime state, params, userdata_overrides, the binding to a template hash. Does NOT own: the template spec (see `template`), live node rows (those have their own `instance_id` FK), claim conflict (those scope to the supervisor). Adjacent: `template`, `tag`, `frame`, `node`, `userdata-overrides`.
+Owns: the per-deployment runtime state, params, userdata_overrides, the binding to a template hash. Does NOT own: the template spec (see `template`), live node rows (those have their own `instance_id` FK), claim conflict (those scope to the supervisor). Adjacent: `template`, `tag`, `frame`, `node`, `userdata`.
 
 ## Invariants
 

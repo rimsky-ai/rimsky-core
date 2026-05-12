@@ -20,7 +20,7 @@ Different errors warrant different responses. A declarative policy spares every 
 
 ## Boundaries
 
-Owns: the action vocabulary, the policy chain entry point, the retry-counter cap. Does NOT own: the four lifecycle handlers (those run first; see `lifecycle-handler`), the `Blocked` route (handled by `on_executor_blocked`, not error-types), cascade firing (see `cascade`), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `lifecycle-handler`, `last-outcome` (changes reset the retry counter), `frame-stuck` (sibling observe-only mechanism), `terminal-resolution`.
+Owns: the action vocabulary, the policy chain entry point, the retry-counter cap. Does NOT own: the four lifecycle handlers (those run first; see `lifecycle-handler`), the `Blocked` route (handled by `on_executor_blocked`, not error-types), cascade firing (see `cascade`), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `lifecycle-handler`, `last-outcome` (changes reset the retry counter), `frame` (sibling observe-only mechanism — `frame.stuck.observed` slog warning fires for no-progress windows), `terminal-resolution`.
 
 ## Invariants
 

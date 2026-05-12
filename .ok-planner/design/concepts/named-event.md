@@ -28,11 +28,19 @@ Owns: the emission protocol surface, the persistence ledger, the two consumption
 - Most-recent emission of `(emitter, name)` wins at substitution time; full history retained in the ledger.
 - `on_event` keys are cross-checked against the executor's `Capabilities.declared_events` at template registration when the executor is reachable; unknown event names at runtime are treated as no-ops.
 
+## Ledger storage
+
+The persisted form of named events is `rimsky_node_events`, an append-only ledger with columns `emitter_node_type`, `event_name`, `payload_inline` / `payload_handle` / `payload_handle_backend`, `seq`. Payloads can be spilled via the configured `BlobBackend` (per `persistence.blob.backend` ∈ {`inline` | `pg-largeobject` | `filesystem` | `memory`}). Read by attribute substitution `{{nodes.<emitter>.event.<name>.<path>}}` and by `on_event` handlers (see `on-event-handler`).
+
+Opacity discipline (`@blessed-invariant 21`): the payload bytes are inert in rimsky — read only via `walkPath` substitution and the persistence-layer fetch on event consumption. Never logged, formatted with `%v`, validated beyond schema gates, transformed, attached to traces, or included in error messages.
+
+Most-recent emission of `(emitter, event_name)` wins at substitution time. No built-in retention; operator-managed.
+
 ## Aliases and historical names
 
 None live.
 
 ## Open within this concept
 
-- The word "events" covers two unrelated tables (`rimsky_events` audit log and `rimsky_node_events` named events) — see `tensions/events-table-name-overlap.md`.
+(no live tensions.)
 

@@ -23,7 +23,6 @@ import (
 	"context"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/modeling/node"
 	"github.com/fallguy/rimsky/modeling/shared"
@@ -64,6 +63,8 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 // abandonPartialLocks calls Abandon on every already-Open'd ClaimSpec
 // in the partial-acquired list. Mirrors handleOrphanedClaim's release
 // branch (the tx-side rollback already removed the lock-holder rows).
+//
+// @concept: terminal-resolution
 func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLock) {
 	for _, lk := range partial {
 		if lk.Store == nil {
@@ -71,8 +72,7 @@ func abandonPartialLocks(ctx context.Context, args RunArgs, partial []AcquiredLo
 		}
 		scope := claimScope(lk)
 		address := claimAddress(lk)
-		claimID := locks.ClaimID(lk.ClaimHandleID.String())
-		if err := lk.Store.Abandon(ctx, claimID, scope, address); err != nil {
+		if err := abandonOpenedClaim(ctx, lk.Store, lk.ClaimHandleID, scope, address); err != nil {
 			args.Logger.Warn("handleAcquireUnavailable: Abandon failed",
 				"store", storeNameForSpec(lk.Spec), "error", err.Error())
 		}

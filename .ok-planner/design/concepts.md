@@ -9,29 +9,30 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `auto-terminal` (aliases: held-claim resolution) — Mechanism that fires `Commit` or `Abandon` exactly once at completion of a held claim's holding-subgraph.
 - `blob-backend` — Pluggable byte-stream backend for spilled attribute values, parked payloads, and named-event payloads (inline, pg-largeobject, filesystem, memory).
 - `cascade` (aliases: reactive-cascade) — Engine that propagates "this node changed" downstream via stale-marking walks and pure-cascade fresh-rolls.
+- `cascade-graph` (aliases: operator dashboard backplane) — Operator-dashboard HTTP-route backplane on control-api (`/observability/*`, `/events`, `/frames`, ...) serving rimsky's own runtime state as JSON.
 - `claim` — A node's request to access a producer-managed resource, declared as a `ClaimSpec` and resolved at runtime by the producer's `Open`.
 - `claim-handle` (aliases: lock-holder (legacy)) — Rimsky-side ledger row in `rimsky_claim_handle` representing one acquired claim or named-lock.
-- `claim-producer` (aliases: store (legacy / colloquial), claim-store) — Out-of-process peer service that implements the gRPC ClaimProducer protocol (Open, Commit, Abandon, Release, Capabilities).
+- `claim-producer` (aliases: store (legacy / colloquial), claim-store) — Out-of-process peer service that implements the gRPC ClaimProducer protocol (4 verbs Open / Commit / Abandon / Release plus the Capabilities() startup handshake).
 - `conformance` — Four standalone binaries that exercise third-party executor, claim-producer, and blob-backend implementations against rimsky's protocol expectations.
-- `control-api` — HTTP+JSON operator interface served by `rimsky-control-api` at bare paths; also fires LifecycleSubscriber events synchronously.
+- `control-api` — HTTP+JSON operator interface served by `rimsky-control-api` at bare paths; also fires LifecycleSubscriber events synchronously, and hosts the agentic MCP shim.
+- `discovery-cache` (aliases: capabilities cache) — In-memory per-peer Capabilities cache populated by the observability handshake at startup and consulted at template-registration gates.
 - `error-policy` (aliases: error-types policy chain) — Template-level `error_types:` block mapping per-error_class strings to retry/invalidate/give_up/pass actions, with a retry-loop cap.
-- `event-log` (aliases: audit log) — Two append-only tables: `rimsky_events` (rimsky's audit log) and `rimsky_node_events` (executor-emitted NamedEvents).
+- `event-log` (aliases: audit log, rimsky_events table) — Rimsky's internal append-only audit log (`rimsky_events`) with free-form `kind` TEXT and rimsky-readable JSONB payload, feeding the cascade-graph `/events` route.
 - `executor` (aliases: peer executor, node-executor) — Out-of-process peer service that implements `NodeExecutor.Execute`, streaming heartbeats and events and exactly one terminal.
 - `frame` (aliases: cascade-frame) — One cascade resolution, tracked as a row in `rimsky_frames` and stamped on every dispatched run via `frame_id`.
 - `held-claim` (aliases: holding-subgraph) — A claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph (acquirer plus inheritors).
 - `instance` — One live deployment of a template, identified by UUID, bound to a `template_hash`, carrying `params` and optional `userdata_overrides`.
 - `invalidate` — Sole graph-level message that marks a node `stale`, emitted by operator API, error-types policy, or lifecycle handler.
 - `last-outcome` — TEXT column on `rimsky_nodes` carrying one of fresh_changed, fresh_unchanged, passed, pure_cascade, failed; gates cascade firing.
-- `licensing-boundary` — Per-directory Apache-2.0-vs-AGPL-3.0 map in `licensing.yml`, enforced by `rimsky-license-check` (longest-prefix-match wins).
 - `lifecycle-handler` (aliases: reactive handler) — Per-node template declarations that route executor and acquisition events into resolve+invalidate actions across four slots plus `on_event`.
 - `lifecycle-subscriber` — Opt-in peer protocol with six methods for template/instance lifecycle events, fired synchronously by control-api with DB-tracked idempotency.
-- `mcp-server` (aliases: control-api MCP shim) — Standalone Go module wrapping rimsky's HTTP control-api as MCP tools over `POST /mcp` using stdlib JSON and chi.
-- `module-layout` (aliases: three-go-modules) — Three-Go-module workspace (protocols, foundation, root) plus MCP-server module, with depguard-enforced import boundaries.
+- `module-layout` (aliases: three-go-modules) — Three-Go-module workspace (protocols, foundation, root) plus MCP-server module, with depguard-enforced import boundaries and a per-directory Apache/AGPL licensing map.
 - `named-event` — Non-terminal executor emission with a name and opaque payload, persisted to `rimsky_node_events` and consumable via substitution or `on_event`.
 - `named-lock` — Producer-independent capacity-counter primitive declared in `rimsky.yml` with mode mutex or counting, persisted as `lock_kind='named'`.
 - `node` (aliases: graph-node) — One declarative unit of work in a template's graph, materialized at runtime as a row in `rimsky_nodes`.
 - `node-state` (aliases: state (column)) — Small enum on `rimsky_nodes.state` describing where a node is: fresh, stale, running, failed, parked, with an explicit transition table.
-- `observability` — Multi-surface system: optional per-peer gRPC observability protocols, control-api HTTP routes, and a startup handshake populating an in-memory discovery cache.
+- `observability` — Peer-facing optional observability protocols (ExecutorObservability / StoreObservability) plus the startup handshake that probes them and populates the discovery cache.
+- `on-event-handler` — Per-node `on_event` map (key-indexed `{event_name → handler}`) that dispatches per executor-emitted named event, sharing the resolve+invalidate vocabulary with the four lifecycle handlers.
 - `opacity` (aliases: inert bytes) — Uniform discipline making four byte streams (userdata, claim payload/address/scope, blob content, named-event payloads) inert in rimsky.
 - `orphan-reaper` — Periodic sweep that hard-deletes stale `rimsky_worker_request` and `rimsky_claim_handle` rows past `5 × heartbeat_interval`, claimant-guarded.
 - `parked-state` (aliases: park, parked node) — Fifth legal node-state entered from `running` when the executor emits `ParkRequested`; not running and not failed.
@@ -39,14 +40,13 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `quality-rule` — Template-node-level declarative content validation against a node's writeback, partitioned by severity and fired adjacent to the schema gate.
 - `rimsky-cli` — Thin HTTP+JSON client over the control-api; every CLI verb is one or more HTTP calls, with a `compose` subcommand for manifest deployments.
 - `rimsky-yml` (aliases: unified config) — Single YAML file read by all three runtime processes plus migrate, declaring persistence, named_locks, claim_producers, and executors.
-- `scenario-harness` — In-repo test entry point that spins up real Postgres via testcontainers and launches peer services plus rimsky processes wired together.
 - `schedule` (aliases: scheduled-node) — Node-level cron expression stored in `rimsky_schedules`, advanced by the scheduler tick under an advisory lock so replicas don't double-fire.
 - `scope` (aliases: region (deprecated)) — Opaque byte stream that `ClaimProducer.Open` returns to identify what was acquired, compared byte-equally by the conflict predicate.
 - `supervisor` — Runtime binary that implements the acquisition transaction, dispatch, terminal handling, and auto-terminal; registers in `rimsky_supervisors`.
 - `tag` (aliases: template-tag) — Movable string alias pointing at a `template_hash`, stored in `rimsky_template_tags` and reassignable without changing template identity.
 - `template` (aliases: canonical-spec) — Static artifact a consumer registers, keyed by `sha256-<hex>` over the JCS-canonicalized spec bytes, with a four-state lifecycle.
 - `terminal-resolution` (aliases: executor-terminal-spine) — End-to-end spine that takes one executor terminal and decides last_outcome, dispatch row fate, producer verb, and claim-handle release.
-- `userdata` — Opaque per-node JSON blob attached by the template author and consumed verbatim by the executor; never substituted or inspected by rimsky.
-- `userdata-overrides` — Per-instance overrides for template-declared userdata, deep-merged at dispatch in template → by_executor → by_node order.
+- `transition-reason` — Audit-vocabulary enum carried on every node-state transition (`ReasonHandlerComplete`, `ReasonPureCascade`, etc.); sibling to `last_outcome` for the cascade-fire predicate.
+- `userdata` — Opaque per-node JSON blob attached by the template author and consumed verbatim by the executor; never substituted or inspected by rimsky, with per-instance overrides supported.
 - `worker-request` (aliases: dispatch (legacy)) — Parent row `rimsky_worker_request` for one dispatched run of one node, with `phase` driving the active and held lifecycle.
 - `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal scope.

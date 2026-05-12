@@ -32,7 +32,7 @@ JSON Schema gates shape; quality rules gate content. "The new row count must be 
 
 ## Boundaries
 
-Owns: the per-rule declarative spec, the `Evaluator` interface, the severity partition, the commit-time evaluation site, the in-process registry. Does NOT own: schema shape validation (see `attribute`), executor-side checks (those are the executor's), the partition's downstream policy routing (see `error-policy`). Adjacent: `attribute`, `node`, `licensing-boundary`, `error-policy`.
+Owns: the per-rule declarative spec, the `Evaluator` interface, the severity partition, the commit-time evaluation site, the in-process registry. Does NOT own: schema shape validation (see `attribute`), executor-side checks (those are the executor's), the partition's downstream policy routing (see `error-policy`). Adjacent: `attribute`, `node`, `module-layout`, `error-policy`.
 
 ## Invariants
 
@@ -48,7 +48,7 @@ None live.
 
 ## Open within this concept
 
-- The licensing split inside `modeling/qualityrule/` (spec Apache, eval AGPL) is unusual within a single concept — adjacent to `licensing-boundary`.
+- The licensing split inside `modeling/qualityrule/` (spec Apache, eval AGPL) is unusual within a single concept — adjacent to `module-layout` (Licensing boundary subsection).
 - Severity-as-string-equality partition: only `"warning"` diverts; typos silently block — see `tensions/quality-rule-severity-string-footgun.md`.
 - Custom-handler registration ordering relative to template load — see `tensions/quality-rule-custom-handler-ordering.md`.
 

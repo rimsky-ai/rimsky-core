@@ -21,7 +21,7 @@ Content-addressing gives a template stable identity. Two semantically-identical 
 
 ## Boundaries
 
-Owns: the spec bytes, the canonical hash, the lifecycle states, the registration entry point. Does NOT own: deployment routing (see `tag`), per-deployment overrides (see `instance`, `userdata-overrides`), runtime state (see `node`). Adjacent: `tag`, `instance`, `lifecycle-subscriber`, and the JCS canonicalization step (a sub-detail of template hashing inside this concept; pinned via the `modeling/template/canonical/jcs.go` library version).
+Owns: the spec bytes, the canonical hash, the lifecycle states, the registration entry point. Does NOT own: deployment routing (see `tag`), per-deployment overrides (see `instance`, `userdata`), runtime state (see `node`). Adjacent: `tag`, `instance`, `lifecycle-subscriber`, and the JCS canonicalization step (a sub-detail of template hashing inside this concept; pinned via the `modeling/template/canonical/jcs.go` library version).
 
 ## Invariants
 

@@ -23,7 +23,12 @@ The end-to-end spine that takes a single executor terminal event off the wire an
 4. **Error policy chain** — `runner_terminal_errors.go::applyTerminalAppError` (lines 40-144). Guards with the retry-loop cap, looks up `acq.NodeDef.ErrorTypes[errorClass]`, calls `node.Evaluate(policy, state, errorClass, nil)` → `ResolvedAction{Kind, Targets, Frame, DelayMs, NewState}`, then `applyResolvedAction` maps Kind to state + queue mutation.
 5. **Claim-handle resolution** — `runner_terminal_release.go::releaseLocksInTx` walks `acq.Locks`. NamedLockSpec → claimant-guarded `ClaimHandles.Delete` only. Non-held `ClaimSpec` → `ResolveClaimHandleTerminal` directly with `Source: ActiveTerminal`. Held `ClaimSpec` → mark `rimsky_claim_holders` row + `CheckAndFireResolution`; if the holding subgraph is complete, that engine computes aggregate outcome (any failed → Abandon; else Commit) and calls `ResolveClaimHandleTerminal` with `Source: HeldTerminal`. The unified `terminal_decision.go::ResolveClaimHandleTerminal` (lines 110-135) fires the producer verb and deletes the `rimsky_claim_handle` row claimant-guarded — the single audited site for both call paths.
 
-The `OnAcquireUnavailable` handler is the upstream sibling (`runner_lifecycle.go::handleAcquireUnavailable`): it runs *before* dispatch when `tryAcquire` returns the `errAcquireUnavailable` sentinel, and on `pass`/`error` it Abandons already-Open'd claims by direct producer call rather than routing through `releaseLocksInTx`.
+Two upstream siblings sit outside the unified engine but share the same `abandonOpenedClaim` helper (`foundation/integration/abandon_claim.go`):
+
+- `OnAcquireUnavailable` (`runner_lifecycle.go::handleAcquireUnavailable`) runs *before* dispatch when `tryAcquire` returns the `errAcquireUnavailable` sentinel, and on `pass`/`error` it Abandons already-Open'd partial claims via the helper. The carve-out exists because the acquisition tx has already rolled back — the `rimsky_claim_handle` rows are gone, so there is no claimant-guarded delete to fold into the unified engine.
+- The verify-before-run bail path (`runner_acquire.go::handleOrphanedClaim`) runs *after* the acquisition tx committed but before the executor was dispatched. Its per-claim Abandon (via the helper) is followed by a claimant-guarded `ClaimHandles.Delete` owned by the caller, outside the unified engine's verb-then-delete tx sequence.
+
+Post-dispatch terminal paths (`OnExecutorBlocked`/`OnExecutorErrored` `pass`) route through `releaseLocksInTx` → `ResolveClaimHandleTerminal`, which calls the same helper for its Abandon branch (and adds the claimant-guarded `rimsky_claim_handle` delete after the verb).
 
 ### Terminal kind → producer verb
 
@@ -36,7 +41,8 @@ The `OnAcquireUnavailable` handler is the upstream sibling (`runner_lifecycle.go
 | `Errored` | `pass` | false | `Abandon` (via `applyTerminalPass`) | mark + check |
 | `Infra` | n/a | false | `Abandon` | mark failed + check |
 | `Park` | n/a | n/a | none — claims retained | none — claims retained |
-| `OnAcquireUnavailable` pass/error | n/a | n/a | `Abandon` (direct producer call) | n/a |
+| `OnAcquireUnavailable` pass/error | n/a | n/a | `Abandon` (via `abandonOpenedClaim` helper) | n/a |
+| `handleOrphanedClaim` (verify-before-run race) | n/a | n/a | `Abandon` (via `abandonOpenedClaim` helper) | n/a |
 
 ## Purpose
 
@@ -60,6 +66,5 @@ The "auto-terminal" name applies specifically to the held-claim branch of Stage 
 
 ## Open within this concept
 
-- The producer-Abandon-on-pass-or-error path is implemented twice — once in `runner_lifecycle.go::handleAcquireUnavailable` for pre-dispatch unavailability, once in `applyTerminalPass` for the post-executor case. Neither routes through `ResolveClaimHandleTerminal`. See `tensions/abandon-on-pass-duplicated-path.md`.
 - `Blocked` and `Errored` differ only cosmetically in this spine — both flow through `applyTerminalBlockedOrErrored` and both Abandon and both increment the retry counter — see `tensions/blocked-vs-errored-routing.md`.
 

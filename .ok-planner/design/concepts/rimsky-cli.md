@@ -19,7 +19,7 @@ Operator tool of first resort. Thin pass-through means there's no client-side bu
 
 ## Boundaries
 
-Owns: command-line UX, request building, the `compose:` prefix reservation discipline (client-side only). Does NOT own: control-api routes (server-side), authentication (it just passes a bearer token through). Adjacent: `control-api`, `tag`, `instance`, `mcp-server`.
+Owns: command-line UX, request building, the `compose:` prefix reservation discipline (client-side only). Does NOT own: control-api routes (server-side), authentication (it just passes a bearer token through). Adjacent: `control-api`, `tag`, `instance`.
 
 ## Invariants
 

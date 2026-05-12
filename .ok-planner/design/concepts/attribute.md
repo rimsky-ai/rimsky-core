@@ -19,7 +19,7 @@ Attributes give nodes a typed, validated contract for their inputs and outputs. 
 
 ## Boundaries
 
-Owns: the schema, the substitution grammar, the two validation gates, the writeback ledger. Does NOT own: userdata (separate opaque stream), claim payload (lives on `claim`), quality rules (semantic validation lives in `quality-rule`). Adjacent: `substitution`, `node`, `quality-rule`, `userdata` (deliberately separate), `named-event`.
+Owns: the schema, the substitution grammar, the two validation gates, the writeback ledger. Does NOT own: userdata (separate opaque stream), claim payload (lives on `claim`), quality rules (semantic validation lives in `quality-rule`). Adjacent: `node`, `quality-rule`, `userdata` (deliberately separate), `named-event`.
 
 ## Invariants
 

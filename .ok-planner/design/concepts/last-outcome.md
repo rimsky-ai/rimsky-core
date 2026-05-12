@@ -19,7 +19,7 @@ Splits "did this node change in a way that propagates" out of `state`. The casca
 
 ## Boundaries
 
-Owns: the cascade-firing gate, the audit-readable "what happened" string. Does NOT own: dispatch eligibility (that's `state`), audit reason (that's `TransitionReason`). Adjacent: `node-state`, `cascade`, `lifecycle-handler` (the four `on_executor_complete` resolutions feed this value).
+Owns: the cascade-firing gate, the audit-readable "what happened" string. Does NOT own: dispatch eligibility (that's `state`), audit reason (that's `transition-reason`). Adjacent: `node-state`, `transition-reason`, `cascade`, `lifecycle-handler` (the four `on_executor_complete` resolutions feed this value).
 
 ## Invariants
 

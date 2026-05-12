@@ -771,8 +771,9 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // commit and the second-read guard. The supervisor knows it just
 // opened the store state and is now unwinding the in-progress
 // acquisition; it owns the cleanup and calls Abandon on the store
-// to release any partial state, then deletes its own lock-holder row
-// claimant-guarded, then emits orphaned_claim_lost_race.
+// to release any partial state (via the shared abandonOpenedClaim
+// helper — see @concept terminal-resolution), then deletes its own
+// lock-holder row claimant-guarded, then emits orphaned_claim_lost_race.
 //
 // This is NOT the periodic orphan reaper. The periodic reaper at
 // `modeling/scheduler/sweep_locks.go::sweepClaimHandles` deletes expired
@@ -782,13 +783,14 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // the bail path fires Abandon because the supervisor knows what it
 // just did; the reaper does NOT fire Abandon because it can't
 // distinguish a crashed-supervisor state from any other.
+//
+// @concept: terminal-resolution
 func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	for _, lk := range acq.Locks {
 		if lk.Store != nil {
 			scope := claimScope(lk)
 			address := claimAddress(lk)
-			claimID := locks.ClaimID(lk.ClaimHandleID.String())
-			if err := lk.Store.Abandon(ctx, claimID, scope, address); err != nil {
+			if err := abandonOpenedClaim(ctx, lk.Store, lk.ClaimHandleID, scope, address); err != nil {
 				args.Logger.Warn("handleOrphanedClaim: Abandon failed",
 					"store", storeNameForSpec(lk.Spec), "error", err.Error())
 			}

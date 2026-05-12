@@ -26,7 +26,7 @@ A third-party implementer downloads a conformance binary and points it at their 
 
 ## Boundaries
 
-Owns: the standalone binaries, the two shared fixture packages, the stub-mode probe. Does NOT own: in-repo `*_test.go` unit tests (those live with the source), scenario harness (see `scenario-harness`), the lifecycle-subscriber protocol's own conformance (no dedicated binary; `--check-lifecycle` flag on `rimsky-conformance` is the documented escape hatch). Adjacent: `executor`, `claim-producer`, `blob-backend`, `scenario-harness`.
+Owns: the standalone binaries, the two shared fixture packages, the stub-mode probe. Does NOT own: in-repo `*_test.go` unit tests (those live with the source), the in-repo scenario harness under `modeling/scenario.Start` (documented in CLAUDE.md "Build & test"), the lifecycle-subscriber protocol's own conformance (no dedicated binary; `--check-lifecycle` flag on `rimsky-conformance` is the documented escape hatch). Adjacent: `executor`, `claim-producer`, `blob-backend`.
 
 ## Invariants
 

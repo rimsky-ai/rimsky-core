@@ -1,9 +1,24 @@
 ---
 tension: handler-slot-count-drift
 category: inconsistent
-status: open
+status: resolved
+spec: 2026-05-11-design-log-convergence
 affects:
   - lifecycle-handler
+  - on-event-handler
+resolution:
+  shape: four-plus-on-event-handler-promoted
+  doc-sweep:
+    - concepts/lifecycle-handler.md (Aliases and historical names reworded; "5 slots" hedge dropped)
+    - concepts/on-event-handler.md (existing concept absorbs the on_event surface)
+  summary: |
+    The catalog formally separates the surfaces: lifecycle-handler owns
+    four single-slot handlers (on_acquire_unavailable, on_executor_complete,
+    on_executor_blocked, on_executor_errored); on-event-handler owns the
+    key-indexed on_event map. The "5 slots" framing was a prose collapse
+    of structurally distinct shapes; the resolution makes the structural
+    distinction the catalog convention. CLAUDE.md's "4 handlers + on_event
+    map" framing was the more precise one and is the catalog's now.
 ---
 
 # Handler slot count: "4 handlers + on_event map" vs "5 slots" across prose

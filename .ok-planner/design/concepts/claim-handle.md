@@ -15,6 +15,8 @@ references:
 
 ## What it is
 
+`claim` is the protocol-layer noun returned by `ClaimProducer.Open`; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
+
 `rimsky_claim_handle` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, scope}`, `lock_name`, `scope_data`, `holder_supervisor_id`, `expires_at`, `is_held`, `realized_write_semantics`, optional `worker_request_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
 
 ## Purpose

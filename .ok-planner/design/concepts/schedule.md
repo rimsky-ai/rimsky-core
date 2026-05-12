@@ -32,7 +32,7 @@ Periodic recomputation without an external scheduler. The cron-no-backfill disci
 
 ## Boundaries
 
-Owns: cron parsing, `next_fire_at` advancement, the schedule-ticker loop, the `force-fire` admin endpoint. Does NOT own: frame creation (the fire calls `frame.EnqueueOrCoalesce`; see `frame`), cascade walks. Adjacent: `frame`, `invalidate`, `scheduler` (the process), `cascade`.
+Owns: cron parsing, `next_fire_at` advancement, the schedule-ticker loop, the `force-fire` admin endpoint. Does NOT own: frame creation (the fire calls `frame.EnqueueOrCoalesce`; see `frame`), cascade walks. Adjacent: `frame`, `invalidate`, `advisory-lock` (the tick gate), `cascade`.
 
 ## Invariants
 

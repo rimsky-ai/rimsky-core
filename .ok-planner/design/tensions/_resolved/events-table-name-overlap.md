@@ -1,10 +1,18 @@
 ---
 tension: events-table-name-overlap
 category: overloaded
-status: open
+status: resolved
 affects:
   - event-log
   - named-event
+resolution:
+  shape: superseded
+  superseded-by: event-log-split-into-two
+  summary: |
+    The two-tables-under-one-noun overlap is resolved by splitting
+    event-log into an audit-log-only concept and folding the named-event
+    ledger material into concepts/named-event.md. See event-log-split-into-two
+    in _resolved/ for the picked shape and outcome.
 ---
 
 # Two distinct tables (`rimsky_events`, `rimsky_node_events`) share the noun "events" but serve different consumers

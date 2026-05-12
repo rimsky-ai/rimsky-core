@@ -14,6 +14,8 @@ references:
 
 ## What it is
 
+`claim` is the protocol-layer noun returned by `ClaimProducer.Open`; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
+
 A claim is a node's request to access a producer-managed resource: an items-table row, a filesystem path, a queue head, an MVCC snapshot. Declared in templates as a `ClaimSpec{StoreName, Selector, Intent, Alias}`. At runtime, the producer's `Open` returns an `Acquired{address, payload, scope, realized_write_semantics}` (or `Unavailable`). The resolved scope bytes are persisted as `lock_kind='scope'` rows in `rimsky_claim_handle`.
 
 ## Purpose

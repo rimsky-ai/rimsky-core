@@ -120,7 +120,7 @@ func ResolveClaimHandleTerminal(
 	case AggregateCommit:
 		verbErr = td.Producer.Commit(ctx, claimID, td.Scope, td.Address)
 	case AggregateAbandon:
-		verbErr = td.Producer.Abandon(ctx, claimID, td.Scope, td.Address)
+		verbErr = abandonOpenedClaim(ctx, td.Producer, td.ClaimHandleID, td.Scope, td.Address)
 	default:
 		return fmt.Errorf("ResolveClaimHandleTerminal: unknown outcome %v", td.Outcome)
 	}

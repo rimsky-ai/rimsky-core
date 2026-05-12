@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+### Design log convergence + abandonOpenedClaim helper extraction
+
+Per `.ok-planner/specs/2026-05-11-design-log-convergence.md`: converges
+the `.ok-planner/design/` catalog by resolving 13 tensions (plus one
+superseded), promoting 4 new concepts, dropping 4, slimming 2, and
+extracting one paired Go helper.
+
+- **Code refactor:** New `foundation/integration/abandon_claim.go`
+  with `abandonOpenedClaim` helper. Both the pre-dispatch carve-out
+  (`runner_lifecycle.go::abandonPartialLocks`) and the post-dispatch
+  unified-engine Abandon branch (`terminal_decision.go::
+  ResolveClaimHandleTerminal`) now call the helper instead of
+  `producer.Abandon` directly. Preserves `@blessed-invariant 4`
+  (claimant-guarded release) and `@blessed-invariant 20` (claim
+  content inert). No behavior change.
+- **New concepts:** `transition-reason`, `on-event-handler`,
+  `cascade-graph`, `discovery-cache`.
+- **Dropped concepts (folded or scoped out):** `licensing-boundary`
+  → `module-layout` (Licensing boundary subsection); `mcp-server`
+  → `control-api` (Agentic MCP shim subsection); `scenario-harness`
+  (no fold; remains documented in CLAUDE.md "Build & test");
+  `userdata-overrides` → `userdata` (Per-instance overrides
+  subsection).
+- **Slimmed concepts:** `observability` (now covers only peer
+  protocols + handshake + userdata_schema; cascade-graph routes
+  and discovery cache split out); `event-log` (audit-log-only;
+  named-event ledger material moved to `named-event` "Ledger
+  storage" subsection).
+- **Concept doc rewords:** `claim-producer` unified on "4 verbs +
+  Capabilities() startup handshake"; `claim` and `claim-handle`
+  carry matching layer annotations (protocol-layer vs
+  rimsky-persistence-layer); `error-policy` Adjacent points at
+  `frame` (not `frame-stuck`); `lifecycle-handler` strips backticks
+  around the invariant phrase `claimant-guarded`.
+- **TOC regenerated:** `.ok-planner/design/concepts.md` lists the
+  current 46 concepts.
+- All 13 resolving tensions plus the superseded
+  `events-table-name-overlap` moved to
+  `.ok-planner/design/tensions/_resolved/` with `status: resolved`
+  and a `resolution:` block.
+- **Review cleanup cycle 3:** Migrated the third
+  `producer.Abandon`-on-already-Open'd-claim call site
+  (`runner_acquire.go::handleOrphanedClaim`, the verify-before-run
+  race-detection bail path) to call the shared `abandonOpenedClaim`
+  helper instead of `lk.Store.Abandon` directly. Updated
+  `abandon_claim.go` docstring, `concepts/auto-terminal.md`
+  invariant 5, and `concepts/terminal-resolution.md` (prose +
+  kind→verb table) to reflect the third site. Closes a doc-vs-code
+  drift the reviewer flagged on the second pass. Also fixed:
+  stale `tensions/abandon-on-pass-duplicated-path.md` reference in
+  `terminal-resolution.md` "Open within this concept" (now removed);
+  `concepts/transition-reason.md` constant count (~10 → ~18) and the
+  `state.go:28-44` line cite (widened to the whole file; constants
+  actually span ~lines 19-99) and the "exhaustively enumerated as
+  Go constants" framing (now accurately describes the `var
+  TransitionReason{Kind string}` shape + `NextState` runtime guard);
+  `concepts/lifecycle-handler.md` "Aliases and historical names"
+  drops the "5 slots is also correct" hedge in favor of pointing
+  at the sibling `on-event-handler` concept;
+  `tensions/handler-slot-count-drift.md` moved to `_resolved/`
+  with shape `four-plus-on-event-handler-promoted`; test
+  docstring in `abandon_claim_test.go` aligned with the concept
+  doc's "4 verbs + Capabilities() startup handshake" wording, and
+  `concepts/claim-producer.md` notes the sixth Go interface method
+  `Name()` is a rimsky-side identifier not transported on the wire.
+  Additional dangling-Adjacent-slug sweep (Task 17 thoroughness
+  pass): dropped four dangling Adjacent slugs across four concept
+  files — `substitution` from `concepts/attribute.md` (the
+  substitution grammar lives inline in `attribute`'s Owns block;
+  no separate concept file exists); `scheduler` and `migrate`
+  from `concepts/advisory-lock.md` (rewired to `schedule` and
+  `persistence-driver`, which own the scheduler-tick and migration-
+  runner respectively); `scheduler` from `concepts/schedule.md`
+  Adjacent (rewired to `advisory-lock`, the tick gate); and
+  `(see scheduler)` → `(see schedule)` in `concepts/supervisor.md`'s
+  Does-NOT-own clause. Concept catalog still lists 46 concepts.
+  Broader sweep confirms zero dangling Adjacent slugs across all
+  46 concept files.
+
 ### Bootstrap design log via discover-design
 
 Adds `.ok-planner/design/` — the as-is design catalog for rimsky,

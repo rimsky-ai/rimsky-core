@@ -21,7 +21,7 @@ Declarative reactive policy. Templates express "what does this node want to happ
 
 ## Boundaries
 
-Owns: the four slots and the `on_event` map; the resolve verdicts per slot; the unconditional `invalidate` slot. Does NOT own: error-types policy chain (see `error-policy`), cascade firing (see `cascade`, `last-outcome`), claim release (see `auto-terminal`, `claimant-guarded`), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `cascade`, `last-outcome`, `error-policy`, `on-event-handler`, `invalidate`, `terminal-resolution`.
+Owns: the four slots and the `on_event` map; the resolve verdicts per slot; the unconditional `invalidate` slot. Does NOT own: error-types policy chain (see `error-policy`), cascade firing (see `cascade`, `last-outcome`), claim release (see `auto-terminal`; the claimant-guarded release discipline per `@blessed-invariant 4` governs every `rimsky_claim_handle` delete and worker-request `claimed_by` null), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `cascade`, `last-outcome`, `error-policy`, `on-event-handler`, `invalidate`, `terminal-resolution`.
 
 ## Invariants
 
@@ -32,10 +32,9 @@ Owns: the four slots and the `on_event` map; the resolve verdicts per slot; the 
 
 ## Aliases and historical names
 
-The slot list is sometimes counted as "4 handlers + on_event map" (CLAUDE.md "Vocabulary") and sometimes as "5 slots" (`docs/concepts/handlers.md`). Both framings are correct; the `on_event` map is shaped differently (key-indexed) but uses the same resolve+invalidate vocabulary.
+This concept owns four single-slot handlers (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_blocked`, `on_executor_errored`). The sibling `on_event` map is structurally different (key-indexed `{event_name → handler}`, not a single slot) and is its own concept — see `on-event-handler`. Older prose that counted the surface as "5 slots" (e.g. `docs/concepts/handlers.md`) collapses the two shapes; the catalog now keeps them distinct.
 
 ## Open within this concept
 
-- Handler-slot-count framing drift (4 vs 5) — see `tensions/handler-slot-count-drift.md`.
 - Error-action count drift (3 vs 5) across CLAUDE.md and `docs/concepts/error-policy.md` — see `tensions/error-action-count-drift.md`.
 

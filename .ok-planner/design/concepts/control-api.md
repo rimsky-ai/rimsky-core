@@ -21,13 +21,21 @@ The operator and the `rimsky-cli` thin client both speak to this surface. HTTP+J
 
 ## Boundaries
 
-Owns: the chi route mounts, the per-route handlers, the lifecycle-subscriber fan-out, observability handlers (`inTx`-wrapped). Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), peer protocols (those are gRPC). Adjacent: `rimsky-cli`, `mcp-server`, `lifecycle-subscriber`, `observability`, `instance`, `template`.
+Owns: the chi route mounts, the per-route handlers, the lifecycle-subscriber fan-out, observability handlers (`inTx`-wrapped). Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), peer protocols (those are gRPC). Adjacent: `rimsky-cli`, `lifecycle-subscriber`, `observability`, `cascade-graph`, `instance`, `template`.
 
 ## Invariants
 
 - Bare paths only; v1 does not version the wire format. Rolling upgrades are operator-managed.
 - Lifecycle events fire from control-api (not the supervisor) synchronously at state transitions. A slow subscriber holds up the response.
 - The `compose:<project>:<...>` tag/instance-key prefix is reserved for `rimsky-cli compose` but enforcement is client-side only; the server accepts any string.
+
+## Agentic MCP shim
+
+The standalone Go module under `mcp-servers/control-api/` wraps the HTTP control-api surface as MCP (Model Context Protocol) tools. Implements `initialize` / `tools/list` / `tools/call` over `POST /mcp` using stdlib `encoding/json` + `go-chi/chi` (no third-party MCP SDK). Catalog covers templates, tags, instances, nodes, diagnostics. Strict pass-through: no validation, no caching, no synthesis. Forwards `Authorization: Bearer <CONTROL_API_TOKEN>` to the underlying control-api. Independent Go module with no runtime dependency on modeling/foundation; catalog is hand-curated in `tools.go`.
+
+Note: `executors/claude-agent/` embeds a separate per-run *internal* MCP server (`internal-mcp-server.ts`) — same protocol, different role (per-dispatch executor-local tools vs operator control-plane). The dual-MCP-role observation is part of this subsection; do not confuse the two.
+
+(Previously documented as a standalone concept `mcp-server`; folded here under `2026-05-11-design-log-convergence`.)
 
 ## Aliases and historical names
 
