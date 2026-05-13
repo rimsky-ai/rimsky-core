@@ -50,3 +50,4 @@ Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `p
 - Save project-specific notes to project-local paths (`./CLAUDE.md`, `./docs/`, `./CHANGELOG.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
 - Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (e.g. `docs/2026-04-25-stores-redesign.md`).
+- When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, CHANGELOG entries, or commit messages.
