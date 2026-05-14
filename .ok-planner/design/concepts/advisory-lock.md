@@ -20,7 +20,7 @@ Cross-process coordination through Postgres (or `sync.Mutex` in single-process d
 
 ## Boundaries
 
-Owns: the four primitives, the two pinned long-lived keys (`SCHEDULER_TICK_KEY`, `advisoryMigrationLockKey`), the session-vs-transaction scope difference. Does NOT own: the conflict matrix (`ModeCoexists`), heartbeat cutoffs, the claim-handle ledger. Adjacent: `schedule` (scheduler-tick lock), `persistence-driver` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
+Owns: the four primitives, the two pinned long-lived keys (`SCHEDULER_TICK_KEY`, `advisoryMigrationLockKey`), the session-vs-transaction scope difference. Does NOT own: the conflict matrix (`ModeCoexists`), heartbeat cutoffs, the claim-handle ledger. Adjacent: `schedule` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
 
 ## Invariants
 

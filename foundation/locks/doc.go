@@ -6,9 +6,7 @@
 // docs/history/2026-04-27-stores-redesign-v3-design.md as amended by
 // docs/history/2026-04-30-stores-protocol-cleanup-design.md (store-
 // internal-vocabulary excision) and the layer-crystallization Phase 2
-// rename, the Go interface is `ClaimProducer`. The legacy alias
-// `Store = ClaimProducer` is kept temporarily for source-level
-// compatibility; new code should use `ClaimProducer`.
+// rename, the Go interface is `ClaimProducer`.
 //
 // Standard claim-producer implementations live in standalone binaries
 // under stores/ and rimsky talks to them via the gRPC client in
@@ -20,7 +18,7 @@
 //     OpenOutcome, NamedLockSpec, Capabilities, WriteSemantics.
 //   - Registry (registry.go) — a simple name→ClaimProducer map populated
 //     externally by the rimsky cmd binaries at startup.
-//   - rimsky_claim_handle postgres helpers (lockholders.go) — the
+//   - rimsky_claim_handles postgres helpers (lockholders.go) — the
 //     bookkeeping table that backs invariant 9a.
 //   - Pure rimsky-side comparators (conflict.go) — ModeCoexists for
 //     the C3.1 mode-coexistence matrix; ScopesByteEqual for v3's
@@ -38,14 +36,14 @@
 //
 // # Two primitives
 //
-//   - Claim — producer-bound. ClaimSpec carries (StoreName, Selector,
+//   - Claim — producer-bound. ClaimSpec carries (ProducerName, Selector,
 //     Intent, Alias). The producer parses Selector and decides what it
 //     means (scoped access vs. an items-table queue convention).
 //
 //   - Named lock — producer-independent. NamedLockSpec carries (Name) only.
 //     Limit lives in operator config.
 //
-// Both are persisted as rows in rimsky_claim_handle but the two specs
+// Both are persisted as rows in rimsky_claim_handles but the two specs
 // are distinct types with no common interface.
 //
 // # Four protocol verbs (spec §4.1)
@@ -62,7 +60,8 @@
 //
 // # write_semantics (spec §4.8)
 //
-// Per-producer: direct | staged_blocking | staged_async. Baked
-// into the producer's own config; rimsky validates strict equality
-// against the operator-declared block in rimsky.yml.
+// Per-producer enum: sync | staged_async | blocking_async | read_only.
+// Producers advertise an `allowed` SET via `Capabilities`; the
+// operator-declared `write_semantics_allowed` envelope in rimsky.yml
+// MUST be a subset. Realized semantics are returned per claim on `Open`.
 package locks

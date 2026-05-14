@@ -5,7 +5,7 @@
 // orphan.go — OrphanCutoffTime conformance area.
 //
 // Inv 6: orphan-claim cutoff (5× heartbeat). Here we validate that
-// ClaimHandlesStore.ListExpired returns rows with expires_at < now() and
+// ClaimHandleTable.ListExpired returns rows with expires_at < now() and
 // not those with future expires_at.
 package conformance
 
@@ -19,10 +19,10 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testOrphanCutoffTime(t *testing.T, d persistence.Driver) {
+func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 	supID := "orphan-supervisor"
 	lockNamePast := "orphan-past"
 	lockNameFuture := "orphan-future"

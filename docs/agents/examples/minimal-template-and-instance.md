@@ -17,7 +17,7 @@ Save as `minimal.yml`:
 ```yaml
 name: minimal
 version: "1.0"
-frame_resolution: serial_queue
+frame_resolution_mode: serial_queue
 nodes:
   - type: hello
     executor: stub

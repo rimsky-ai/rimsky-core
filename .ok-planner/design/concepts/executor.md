@@ -1,9 +1,7 @@
 ---
 concept: executor
 status: as-is
-aliases:
-  - peer executor
-  - node-executor
+aliases: []
 references:
   - _discover/2026-05-10-executor-streamed-execute.md
   - _discover/2026-05-10-typescript-executor-claude-agent.md
@@ -16,7 +14,7 @@ references:
 
 ## What it is
 
-An executor is an out-of-process peer service that implements the gRPC `NodeExecutor.Execute` server-streaming RPC plus optional `ExecutorObservability`. Bundled reference impls: `executors/http-node` (Go), `executors/stub` (Go), `executors/claude-agent` (TypeScript). Receives one `ExecuteRequest`, streams zero-or-more `Heartbeat`/`NamedEvent`, and exactly one terminal: `Complete | Blocked | Errored | AsyncAccepted | ParkRequested`.
+An executor is an out-of-process service that implements the gRPC `proto:executor.proto::Executor.Execute` server-streaming RPC plus optional `proto:executor_observability.proto::ExecutorObservability`. Bundled reference impls: `executors/http-node` (Go), `executors/stub` (Go), `executors/claude-agent` (TypeScript). Receives one `ExecuteRequest`, streams zero-or-more `Heartbeat`/`NamedEvent`, and exactly one `StreamClose` event carrying an outcome `oneof` (`Success | Error | Snooze | AwaitAsyncCallback`).
 
 ## Purpose
 
@@ -24,23 +22,25 @@ Executors are where actual work happens. Out-of-process gives language-portabili
 
 ## Boundaries
 
-Owns: the per-dispatch work, the terminal-event vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `userdata`, `attribute`, `named-event`, `parked-state`, `lifecycle-handler`, `observability`, `terminal-resolution`.
+Owns: the per-dispatch work, the stream-close outcome vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `userdata`, `attribute`, `named-event`, `parked-state`, `lifecycle-handler`, `observability`, `terminal-resolution`, `service`.
 
 ## Invariants
 
-- The five terminal-event variants close the stream exactly once.
-- `AsyncAccepted` switches to expecting POST to `${callback_url}/v1/callback/{async_ack_id}` with body keyed `type` (not `kind`) — chi route enforced.
-- `Heartbeat` events refresh `rimsky_worker_request.last_heartbeat_at`; cadence is executor-defined.
+- Exactly one `StreamClose` closes the stream; the executor MUST close the stream immediately after.
+- `AwaitAsyncCallback` switches to expecting POST to `${callback_url}/v1/callback/{async_ack_id}` with body keyed `type` (not `kind`) — chi route enforced.
+- `Heartbeat` events refresh `col:rimsky_node_runs.last_heartbeat_at`; cadence is executor-defined.
 - `userdata_schema` reported via `ExecutorObservability.Capabilities` is the only place rimsky reads userdata-adjacent metadata (schema-only, not content).
 - `declared_events` reported via observability is the source of truth for `on_event` template validation.
 
 ## Aliases and historical names
 
-The Go interface name is `NodeExecutor`; the operator/binary vocabulary just uses `executor`.
+Pre-`spec:2026-05-12-nomenclature-resolution` Group E.1, the proto service name was `NodeExecutor`; the rename drops the `Node` prefix. The operator/binary vocabulary always used "executor" so no operator-visible churn. The pre-E.2 wire shape exposed per-terminal messages (`Complete | Blocked | Errored | AsyncAccepted | ParkRequested`); post-E.2 the wire shape is `StreamClose{outcome: Success | Error | Snooze | AwaitAsyncCallback}` with the historical `Blocked` collapsed into `Error{error_class: "executor_blocked"}`.
 
 ## Open within this concept
 
-- `AsyncAccepted` is "stream-terminal but logically-non-terminal"; `ParkRequested` is "terminal-but-resumable". Different parallel semantics under one "terminal" word — see `tensions/terminal-event-overloaded.md`.
-- Body key `type` vs `kind` async-callback footgun — see `tensions/async-callback-body-key.md`.
 - Two distinct callback hostnames (bind vs advertise) — see `tensions/callback-hostname-split.md`.
+
+## Notes
+
+- Proto service renamed `NodeExecutor` → `Executor` per `spec:2026-05-12-nomenclature-resolution` Group E.1. Wire-event shape rewritten to channel-mechanics (`StreamClose` + outcome oneof) per Group E.2; `Blocked` collapsed into `Error{error_class}`; `ParkRequested` renamed `Snooze` (the state-machine value `'parked'` is unchanged). Capabilities RPC renamed `GetCapabilities` → `Capabilities` per Group E.11. Resolves `tension:_resolved/terminal-event-overloaded` and `tension:_resolved/async-callback-body-key`.
 

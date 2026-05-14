@@ -31,12 +31,12 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDriver(d)
+	rawDB := sqlitedrv.DBFromDatabase(d)
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour) // spill above 256 bytes
 
-	store := d.Store()
+	store := d.Tables()
 	attrs := store.NodeAttributes()
 	orphans := store.BlobOrphans()
 
@@ -137,12 +137,12 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
 	ctx := context.Background()
-	rawDB := sqlitedrv.DBFromDriver(d)
+	rawDB := sqlitedrv.DBFromDatabase(d)
 
 	mem := persistence.NewMemoryBackend()
 	d.SetBlobBackend(mem, 256, time.Hour)
 
-	store := d.Store()
+	store := d.Tables()
 	attrs := store.NodeAttributes()
 	nodeID := seedFixtureNode(t, rawDB)
 
@@ -225,10 +225,10 @@ func seedFixtureNode(t *testing.T, rawDB *sql.DB) uuid.UUID {
 	return nodeID
 }
 
-// readSpillHandle is a SQL escape hatch — the public NodeAttributesStore
+// readSpillHandle is a SQL escape hatch — the public NodeAttributeTable
 // API does not surface the value_handle/value_handle_backend columns
 // directly (the read path dereferences them transparently). The test
-// peeks at the row via the test-only DBFromDriver accessor.
+// peeks at the row via the test-only DBFromDatabase accessor.
 func readSpillHandle(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID) (string, string) {
 	t.Helper()
 	row := rawDB.QueryRowContext(context.Background(),
@@ -254,7 +254,7 @@ func readSpillHandle(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID) (string, str
 }
 
 // readData returns the materialized data map for nodeID.
-func readData(t *testing.T, store persistence.Store, nodeID uuid.UUID) map[string]any {
+func readData(t *testing.T, store persistence.Tables, nodeID uuid.UUID) map[string]any {
 	t.Helper()
 	var out *persistence.NodeAttributesRow
 	if err := store.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

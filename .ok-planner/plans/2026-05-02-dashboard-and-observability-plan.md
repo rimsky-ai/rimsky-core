@@ -58,7 +58,7 @@ stores/filesystem/store/observability_test.go
 stores/postgres/store/observability.go                  # NB: under store/ subpkg; admin views: pick_policies + items_queue
 stores/postgres/store/observability_test.go
 
-core/cmd/rimsky-conformance/observability_check.go      # invoked when --check-observability
+core/cmd/rimsky-executor-conformance/observability_check.go      # invoked when --check-observability
 core/cmd/rimsky-store-conformance/observability_check.go
 
 dashboards/rimsky-dashboard/                            # NEW: React+Vite+TS SPA + Hono server
@@ -147,7 +147,7 @@ core/controlapi/app.go                                  # mount /v1/observabilit
 core/persistence/store.go                               # additive: KindIn/Since on EventListFilter, InstanceID on dispatch list, Count() on sub-stores as needed
 core/persistence/postgres/events.go, queue.go, ...      # backend impls of any persistence-interface extensions
 core/persistence/sqlite/events.go, queue.go, ...        # parallel sqlite impls
-core/cmd/rimsky-conformance/main.go                     # add --check-observability flag wiring
+core/cmd/rimsky-executor-conformance/main.go                     # add --check-observability flag wiring
 core/cmd/rimsky-store-conformance/main.go               # add --check-observability flag wiring
 deploy/rimsky.yml                                       # example observability_endpoint comment
 deploy/docker-compose.yml                               # add rimsky-dashboard service (dev profile on by default)
@@ -915,9 +915,9 @@ go test ./stores/postgres/...
 
 ## Section F — Conformance extensions
 
-### Task F1 — `--check-observability` for `rimsky-conformance`
+### Task F1 — `--check-observability` for `rimsky-executor-conformance`
 
-**Files:** `core/cmd/rimsky-conformance/main.go`, `core/cmd/rimsky-conformance/observability_check.go`
+**Files:** `core/cmd/rimsky-executor-conformance/main.go`, `core/cmd/rimsky-executor-conformance/observability_check.go`
 
 **Steps:**
 
@@ -932,8 +932,8 @@ go test ./stores/postgres/...
 **Verify:**
 
 ```sh
-go build ./core/cmd/rimsky-conformance/...
-go test ./core/cmd/rimsky-conformance/...
+go build ./core/cmd/rimsky-executor-conformance/...
+go test ./core/cmd/rimsky-executor-conformance/...
 ```
 
 ### Task F2 — `--check-observability` for `rimsky-store-conformance`
@@ -2059,7 +2059,7 @@ grep -q "StoreObservability" docs/claim-producer-author-guide.md && echo OK
 - Three public observability protocols (Rimsky observability API on control-api, executor observability protocol per executor, store observability protocol per store). Specified in `docs/specs/2026-05-02-dashboard-and-observability-design.md`.
 - Reference dashboard at `dashboards/rimsky-dashboard/` (React + Vite + TypeScript SPA + Hono Node server). Bundled with the dev compose stack on the `default` and `dashboard` profiles.
 - `observability_endpoint:` optional field on each executor and store entry in `rimsky.yml`; defaults to the dispatch endpoint when omitted.
-- `--check-observability` flag on `rimsky-conformance` and `rimsky-store-conformance`.
+- `--check-observability` flag on `rimsky-executor-conformance` and `rimsky-store-conformance`.
 ```
 
 **Verify:**
@@ -2115,8 +2115,8 @@ All four exit 0.
 2. Run conformance with observability checks:
 
 ```sh
-go run ./core/cmd/rimsky-conformance --endpoint http://localhost:<http-node-port> --transport http --check-observability --require-stub-mode
-go run ./core/cmd/rimsky-conformance --endpoint <claude-agent-grpc> --transport grpc --check-observability --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:<http-node-port> --transport http --check-observability --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint <claude-agent-grpc> --transport grpc --check-observability --require-stub-mode
 go run ./core/cmd/rimsky-store-conformance --endpoint <filesystem-store> --check-observability
 go run ./core/cmd/rimsky-store-conformance --endpoint <postgres-store> --check-observability
 ```

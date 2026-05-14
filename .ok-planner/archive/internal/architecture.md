@@ -124,7 +124,7 @@ rimsky/                              # repo root
 │   ├── rimsky-control-api/
 │   ├── rimsky-migrate/
 │   ├── rimsky-cli/
-│   ├── rimsky-conformance/
+│   ├── rimsky-executor-conformance/
 │   ├── rimsky-conformance-probe/
 │   ├── rimsky-claim-producer-conformance/
 │   └── rimsky-entrypoint/           # Unified-image PID-1 entrypoint.
@@ -211,8 +211,8 @@ Lifecycle events fire from `modeling/controlapi/lifecycle.go` and `modeling/cont
 ### 5.4 Supporting binaries
 
 - `cmd/rimsky-migrate/` — runs pending migrations under a session-level advisory lock.
-- `cmd/rimsky-conformance/` — covers Executor + LifecycleSubscriber conformance suite. Flags: `--check-executor`, `--check-lifecycle`, `--require-stub-mode`.
-- `cmd/rimsky-conformance-probe/` — utility, used by `rimsky-conformance --require-stub-mode` to verify executor stub-mode at startup.
+- `cmd/rimsky-executor-conformance/` — covers Executor + LifecycleSubscriber conformance suite. Flags: `--check-executor`, `--check-lifecycle`, `--require-stub-mode`.
+- `cmd/rimsky-conformance-probe/` — utility, used by `rimsky-executor-conformance --require-stub-mode` to verify executor stub-mode at startup.
 - `cmd/rimsky-claim-producer-conformance/` — covers ClaimProducer conformance suite (renamed from `rimsky-store-conformance`).
 - `cmd/rimsky-cli/` — operator-facing CLI; thin client over the control-api with a `compose` subcommand.
 - `cmd/rimsky-entrypoint/` — PID-1 wrapper for the unified `rimsky/all` Docker image; supervises the three runtime processes inside one container.
@@ -336,7 +336,7 @@ Three Go modules are independently importable:
 
 One image per binary, plus one per reference executor and per reference claim-producer. Per-component Dockerfiles in `deploy/Dockerfile.*`:
 
-- `rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`, `rimsky-migrate`, `rimsky-conformance`, `rimsky-claim-producer-conformance`, `rimsky-cli`.
+- `rimsky-scheduler`, `rimsky-supervisor`, `rimsky-control-api`, `rimsky-migrate`, `rimsky-executor-conformance`, `rimsky-claim-producer-conformance`, `rimsky-cli`.
 - `rimsky-http-node`, `rimsky-claude-agent`.
 - `rimsky-store-filesystem`, `rimsky-store-postgres`, `rimsky-store-stub`.
 - `rimsky/all` — the unified image bundling the three runtime processes under a single PID-1 entrypoint (`rimsky-entrypoint`); defaults to `driver: sqlite` for solo development. NOT for multi-replica deployments — running with replicas > 1 creates independent SQLite databases.
@@ -399,7 +399,7 @@ The smoke fixture in `test/smoke/setup.go` is the reference example.
 
 ### 12.4 Protocol conformance
 
-- `cmd/rimsky-conformance/` — Executor + LifecycleSubscriber.
+- `cmd/rimsky-executor-conformance/` — Executor + LifecycleSubscriber.
 - `cmd/rimsky-claim-producer-conformance/` — ClaimProducer.
 
 Both are shipped as Docker images so external authors can run them in CI.

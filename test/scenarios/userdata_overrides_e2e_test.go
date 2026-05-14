@@ -21,15 +21,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("worker").Complete(map[string]any{"ok": true}, true, "ok")
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "userdata-overrides-e2e", Version: "1",
@@ -74,7 +74,7 @@ func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
 	// Find the stub's record of the worker dispatch and assert the

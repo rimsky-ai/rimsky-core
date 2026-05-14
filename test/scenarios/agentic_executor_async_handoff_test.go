@@ -2,14 +2,14 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 9 — agentic-style async handoff. Executor returns AsyncAccepted
-// with an ack; node stays running. The test then POSTs a Complete body to
-// the supervisor's callback endpoint with the same ack; the node reaches
-// fresh.
+// Scenario 9 — agentic-style async handoff. Executor returns
+// AwaitAsyncCallback with an ack; node stays running. The test then
+// POSTs a Success body to the supervisor's callback endpoint with the
+// same ack; the node reaches fresh.
 //
 // Migrated to the stores-redesign template grammar (spec §11): the agent
 // node is built via scenario.MakeNode + scenario.WithAttributes. The
-// executor's terminal Complete carries an attributes_delta the supervisor
+// executor's terminal Success carries an attributes_delta the supervisor
 // merges into the node's resolved attributes; the per-node attribute
 // schema declares the field that delta lands in.
 package scenarios
@@ -23,17 +23,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("agent").AsyncAccepted("ack-1", 5000)
+	h.Stub.WhenType("agent").AwaitAsyncCallback("ack-1", 5000)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async", Version: "1",
@@ -55,17 +55,21 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	require.NotNil(t, n)
 
 	// Wait for node to enter running (supervisor holds pending claim).
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateRunning, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
 		"agent did not reach running")
 
 	// POST callback with matching ackID. Retry briefly so we don't race the
 	// supervisor's registerAsync that runs after state→running.
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-1"
+	// Callback body uses the AsyncCallbackBody outcome-oneof shape
+	// (success / error / park) rather than the legacy {type: ...}
+	// discriminator.
 	body, _ := json.Marshal(map[string]any{
-		"type":             "complete",
-		"attributes_delta": map[string]any{"done": true},
-		"changed":          true,
-		"change_summary":   "async-ok",
+		"success": map[string]any{
+			"attributes_delta": map[string]any{"done": true},
+			"changed":          true,
+			"change_summary":   "async-ok",
+		},
 	})
 	deadline := time.Now().Add(10 * time.Second)
 	var status int
@@ -82,7 +86,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "callback did not become available")
 
 	// Node reaches fresh via the callback path.
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"agent did not reach fresh after async callback")
 
 	// Verify the callback's attributes_delta landed in

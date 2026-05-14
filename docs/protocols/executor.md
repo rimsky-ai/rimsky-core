@@ -3,7 +3,7 @@
 This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `protocols/proto/v1/executor.proto` (the required dispatch protocol) and `protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); this guide is the practical companion.
 
 <!-- @source: concepts/executor.md -->
-> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
+> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
 
@@ -14,7 +14,7 @@ This guide is for developers implementing an executor — in any language — an
 The executor surface is split across two service definitions. The required dispatch protocol carries one method:
 
 ```protobuf
-service NodeExecutor {
+service Executor {
   rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
 }
 ```
@@ -25,7 +25,7 @@ The optional read-only observability protocol carries three:
 
 ```protobuf
 service ExecutorObservability {
-  rpc GetCapabilities(GetCapabilitiesRequest) returns (ObservabilityCapabilities);
+  rpc Capabilities(CapabilitiesRequest) returns (ObservabilityCapabilities);
   rpc GetTrace(GetTraceRequest) returns (Trace);
   rpc StreamTrace(StreamTraceRequest) returns (stream TraceEvent);
 }
@@ -33,13 +33,13 @@ service ExecutorObservability {
 
 Source: `protocols/proto/v1/executor_observability.proto`.
 
-Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Peers MUST implement `NodeExecutor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
+Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
 
-`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes plus opaque userdata, and streams back zero or more events ending in one of: `Complete`, `Blocked`, `Errored`, `AsyncAccepted`.
+`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes plus opaque userdata, and streams back zero or more events ending in one of: `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`.
 
 ## 2. The methods
 
-### `NodeExecutor.Execute(ExecuteRequest) → stream<ExecuteEvent>`
+### `Executor.Execute(ExecuteRequest) → stream<ExecuteEvent>`
 
 Dispatch a node. Inside `ExecuteRequest`:
 
@@ -56,10 +56,10 @@ Stream back any number of these events:
     - `bool changed` — producer-declared verdict on whether this run produced a different value than the previous run. A `false` value halts cascade propagation at this node.
     - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
     - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run (see spec §12.5).
-- **`Blocked`** — terminal: I produced output but explicitly chose not to claim success. Use `Blocked` (rather than `Errored`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
-- **`Errored`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
-- **`AsyncAccepted`** — non-streaming terminal: I'll send the final event later via callback (see §4).
-- **`ParkRequested`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
+- **`Error{error_class: "executor_blocked"}`** — terminal: I produced output but explicitly chose not to claim success. Use `Error{error_class: "executor_blocked"}` (rather than `Error{error_class}`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
+- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
+- **`AwaitAsyncCallback`** — non-streaming terminal: I'll send the final event later via callback (see §4).
+- **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
 
 ### `ExecutorObservability.StreamTrace(StreamTraceRequest) → stream<TraceEvent>`
 
@@ -69,9 +69,9 @@ Streaming trace of executor activity for observability dashboards. Keyed by `dis
 
 Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past invocations from dashboards.
 
-### `ExecutorObservability.GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`
+### `ExecutorObservability.Capabilities(CapabilitiesRequest) → ObservabilityCapabilities`
 
-Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per peer at process startup.
+Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
 
 `userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `on_event` handlers in registering templates; references to undeclared events reject the registration.
 
@@ -88,7 +88,7 @@ This means:
 
 ## 4. The async-callback path
 
-For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AsyncAccepted` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor.
+For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AwaitAsyncCallback` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor.
 
 Two callback body shapes are accepted; the supervisor parses the new shape first and falls back to the legacy shape on a parse error.
 
@@ -125,7 +125,7 @@ Important wire details:
 - The callback path is `${callback_url}/v1/callback/{async_ack_id}` — the supervisor's callback hostname (advertised via the `callback.advertise_host` config) plus the async_ack_id.
 - For the legacy shape, the body is keyed `type` (not `kind`). The supervisor's callback route enforces this exact key.
 - Valid legacy `type` values mirror the streaming-event terminal types: `complete`, `blocked`, `errored`.
-- New-shape bodies that include `park_requested` map onto the `ParkRequested` terminal event.
+- New-shape bodies that include `park_requested` map onto the `Park` terminal event.
 
 The TS claude-agent reference impl's test suite (under `executors/claude-agent/`) covers this exact wire shape; refer to those tests when implementing async-callback in a different language.
 
@@ -133,7 +133,7 @@ The TS claude-agent reference impl's test suite (under `executors/claude-agent/`
 
 When the supervisor resumes a parked node, the dispatch's `ExecuteRequest.resume_context` is populated with three fields:
 
-- `bytes payload` — the original `ParkRequested.payload`.
+- `bytes payload` — the original `Park.payload`.
 - `string session_token` — the original `session_token` (executor-side correlation identifier).
 - `string resume_reason` — `"deadline_elapsed"` (time-based via `resume_at`) or `"external_invalidate"` (admin or in-graph invalidate).
 
@@ -141,21 +141,21 @@ When `resume_context` is empty, this is a fresh dispatch. Executors that do not 
 
 ## 5. Conformance
 
-The `cmd/rimsky-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
+The `cmd/rimsky-executor-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
 
 ```
-rimsky-conformance --endpoint <your-executor-host:port> --transport grpc
+rimsky-executor-conformance --endpoint <your-executor-host:port> --transport grpc
 ```
 
-For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed peers are rejected. This prevents accidental real-LLM calls during conformance.
+For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance.
 
 ## 6. Reference impls
 
 Three reference executors ship under `executors/`:
 
-- `executors/http-node/` — Go executor that calls an external HTTP endpoint.
-- `executors/claude-agent/` — TypeScript / npm executor that calls Anthropic's API. Uses the async-callback path.
-- `executors/stub/` — Go test fixture; returns canned responses.
+- `executors/http-node/` — Go executor that calls an external HTTP endpoint. Production-shaped; the right starting point if you are writing your own executor.
+- `executors/claude-agent/` — TypeScript / npm executor that runs the Claude Code CLI. Production-shaped; demonstrates the async-callback path end-to-end.
+- `executors/stub/` — Test double (Meszaros sense) for scenario tests, conformance, and no-op smoke deployments. **Not a skeleton template** — see `executors/stub/README.md`.
 
 Each is runnable as a standalone process plus a Dockerfile.
 

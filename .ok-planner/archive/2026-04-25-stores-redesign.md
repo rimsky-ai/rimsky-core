@@ -850,7 +850,7 @@ The supervisor's runner still uses the old executor protocol at this point; stor
 - Update reference executors:
   - `claude-agent`: receive `attributes` in spawn, expose as MCP tools (read + set), persist back via callback. Drop the result-passing MCP callback. Surface `userdata` opaquely as before.
   - `http-node`: receive `attributes` in the request body, allow target endpoint to specify how to use them.
-- Update conformance suite (`cmd/rimsky-conformance/`) to validate against the new protocol.
+- Update conformance suite (`cmd/rimsky-executor-conformance/`) to validate against the new protocol.
 - Update `protocol.md` and `executor-author-guide.md`.
 - Old protocol path removed; old executors that haven't been updated will fail.
 

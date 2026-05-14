@@ -29,13 +29,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/fallguy/rimsky/control/config"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/runtime/executor"
 	"github.com/fallguy/rimsky/stores/common/action"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
 	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
@@ -49,7 +49,7 @@ type SmokeStack struct {
 	// Pool is the test-only escape hatch for raw SQL fixtures.
 	// Production code goes through Driver / Persist / Queue.
 	Pool   *pgxpool.Pool
-	Driver persistence.Driver
+	Driver persistence.Database
 
 	// ControlBase is "http://127.0.0.1:<port>" of the in-process
 	// control-api.
@@ -114,12 +114,12 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		Stores: map[string]config.StoreEntry{
 			"content": {
 				Endpoint:     "grpc://" + fsEndpoint,
-				Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				Protocols:    []string{config.ProtocolClaimProducer},
 			},
 			"topics-ring": {
 				Endpoint:     "grpc://" + pgsEndpoint,
-				Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+				Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				Protocols:    []string{config.ProtocolClaimProducer},
 			},
 		},
@@ -295,7 +295,7 @@ var _ = bytes.NewReader
 // ----------------------------------------------------------------------
 
 type smokeExecutor struct {
-	genv1.UnimplementedNodeExecutorServer
+	genv1.UnimplementedExecutorServer
 	srv *grpc.Server
 }
 
@@ -308,7 +308,7 @@ func (s *smokeExecutor) listen(t *testing.T) (*grpc.Server, string) {
 		t.Fatalf("smokeExecutor: listen: %v", err)
 	}
 	s.srv = grpc.NewServer()
-	genv1.RegisterNodeExecutorServer(s.srv, s)
+	genv1.RegisterExecutorServer(s.srv, s)
 	go func() { _ = s.srv.Serve(lis) }()
 	return s.srv, lis.Addr().String()
 }
@@ -326,16 +326,18 @@ func (s *smokeExecutor) stop() {
 	}
 }
 
-func (s *smokeExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_ExecuteServer) error {
+func (s *smokeExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	delta, err := structpb.NewStruct(stubAttributesFor(req.GetNodeType()))
 	if err != nil {
 		return err
 	}
-	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-		AttributesDelta: delta,
-		Changed:         true,
-		ChangeSummary:   "smoke-stub",
-	}}})
+	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			Changed:         true,
+			ChangeSummary:   "smoke-stub",
+		}}},
+	}})
 }
 
 func stubAttributesFor(nodeType string) map[string]any {
@@ -362,9 +364,9 @@ func (s *SmokeStack) AssertUUID(v string) shared.UUID {
 }
 
 // openDriverWithMigrations spins up a throwaway Postgres container,
-// opens a persistence.Driver against it, applies migrations, and
+// opens a persistence.Database against it, applies migrations, and
 // extracts the underlying *pgxpool.Pool for raw-SQL fixture seeding.
-func openDriverWithMigrations(ctx context.Context, t *testing.T) (persistence.Driver, *pgxpool.Pool, func()) {
+func openDriverWithMigrations(ctx context.Context, t *testing.T) (persistence.Database, *pgxpool.Pool, func()) {
 	t.Helper()
 	container, err := pgmodule.Run(ctx,
 		"postgres:14-alpine",
@@ -397,11 +399,11 @@ func openDriverWithMigrations(ctx context.Context, t *testing.T) (persistence.Dr
 		_ = container.Terminate(context.Background())
 		t.Fatalf("openDriverWithMigrations: migrate: %v", err)
 	}
-	pool, ok := pgpersist.PoolFromDriverForTest(driver)
+	pool, ok := pgpersist.PoolFromDatabaseForTest(driver)
 	if !ok {
 		_ = driver.Close()
 		_ = container.Terminate(context.Background())
-		t.Fatalf("openDriverWithMigrations: PoolFromDriverForTest returned !ok")
+		t.Fatalf("openDriverWithMigrations: PoolFromDatabaseForTest returned !ok")
 	}
 	teardown := func() {
 		_ = driver.Close()

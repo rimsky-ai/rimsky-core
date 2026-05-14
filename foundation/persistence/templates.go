@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/node"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
@@ -32,7 +32,7 @@ const (
 // renders directly.
 type TemplateRow struct {
 	ID           string            `json:"id"`
-	Spec         node.TemplateSpec `json:"spec"`
+	Spec         spec.TemplateSpec `json:"spec"`
 	State        TemplateState     `json:"state"`
 	RegisteredAt time.Time         `json:"registered_at"`
 	Source       string            `json:"source"` // "direct" | future package-manager values
@@ -41,13 +41,13 @@ type TemplateRow struct {
 // TemplateInsertInput carries the per-row input for Insert.
 type TemplateInsertInput struct {
 	ID     string
-	Spec   node.TemplateSpec
+	Spec   spec.TemplateSpec
 	State  TemplateState
 	Source string
 }
 
-// TemplateStore is the rimsky_templates accessor.
-type TemplateStore interface {
+// TemplateTable is the rimsky_templates accessor.
+type TemplateTable interface {
 	Insert(ctx context.Context, in TemplateInsertInput, tx Tx) error
 	GetByHash(ctx context.Context, hash string, tx Tx) (*TemplateRow, error)
 	List(ctx context.Context, filter TemplateListFilter, pag ListPagination, tx Tx) (PaginatedListResult[TemplateRow], error)
@@ -75,8 +75,8 @@ type TemplateTagRow struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// TemplateTagsStore is the rimsky_template_tags accessor.
-type TemplateTagsStore interface {
+// TemplateTagTable is the rimsky_template_tags accessor.
+type TemplateTagTable interface {
 	Upsert(ctx context.Context, tag, templateID string, tx Tx) error
 	Get(ctx context.Context, tag string, tx Tx) (*TemplateTagRow, error)
 	ListByTemplate(ctx context.Context, templateID string, tx Tx) ([]TemplateTagRow, error)

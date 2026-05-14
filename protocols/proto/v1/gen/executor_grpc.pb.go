@@ -22,38 +22,38 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NodeExecutor_Execute_FullMethodName = "/rimsky.v1.NodeExecutor/Execute"
+	Executor_Execute_FullMethodName = "/rimsky.v1.Executor/Execute"
 )
 
-// NodeExecutorClient is the client API for NodeExecutor service.
+// ExecutorClient is the client API for Executor service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// NodeExecutor is the protocol rimsky supervisors use to dispatch work to
+// Executor is the protocol rimsky supervisors use to dispatch work to
 // external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
 // for the full contract (transports, async handoff, attributes, stores,
 // versioning, auth).
-type NodeExecutorClient interface {
-	// Execute is called by the rimsky supervisor when dispatching a node. The
-	// response stream carries zero or more Heartbeat events followed by EXACTLY
-	// ONE terminal event (Complete | Blocked | Errored | AsyncAccepted); the
-	// executor MUST close the stream immediately after the terminal event.
-	// Stream close without a terminal event is treated by the supervisor as an
-	// infrastructure error.
+type ExecutorClient interface {
+	// Execute is called by the rimsky supervisor when dispatching a node.
+	// The response stream carries zero or more `Heartbeat` events, zero or
+	// more `NamedEvent` records, and exactly ONE `StreamClose` event; the
+	// executor MUST close the stream immediately after the `StreamClose`
+	// event. Stream close without a `StreamClose` event is treated by the
+	// supervisor as an infrastructure error.
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error)
 }
 
-type nodeExecutorClient struct {
+type executorClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewNodeExecutorClient(cc grpc.ClientConnInterface) NodeExecutorClient {
-	return &nodeExecutorClient{cc}
+func NewExecutorClient(cc grpc.ClientConnInterface) ExecutorClient {
+	return &executorClient{cc}
 }
 
-func (c *nodeExecutorClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error) {
+func (c *executorClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NodeExecutor_ServiceDesc.Streams[0], NodeExecutor_Execute_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Executor_ServiceDesc.Streams[0], Executor_Execute_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -68,80 +68,80 @@ func (c *nodeExecutorClient) Execute(ctx context.Context, in *ExecuteRequest, op
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NodeExecutor_ExecuteClient = grpc.ServerStreamingClient[ExecuteEvent]
+type Executor_ExecuteClient = grpc.ServerStreamingClient[ExecuteEvent]
 
-// NodeExecutorServer is the server API for NodeExecutor service.
-// All implementations must embed UnimplementedNodeExecutorServer
+// ExecutorServer is the server API for Executor service.
+// All implementations must embed UnimplementedExecutorServer
 // for forward compatibility.
 //
-// NodeExecutor is the protocol rimsky supervisors use to dispatch work to
+// Executor is the protocol rimsky supervisors use to dispatch work to
 // external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
 // for the full contract (transports, async handoff, attributes, stores,
 // versioning, auth).
-type NodeExecutorServer interface {
-	// Execute is called by the rimsky supervisor when dispatching a node. The
-	// response stream carries zero or more Heartbeat events followed by EXACTLY
-	// ONE terminal event (Complete | Blocked | Errored | AsyncAccepted); the
-	// executor MUST close the stream immediately after the terminal event.
-	// Stream close without a terminal event is treated by the supervisor as an
-	// infrastructure error.
+type ExecutorServer interface {
+	// Execute is called by the rimsky supervisor when dispatching a node.
+	// The response stream carries zero or more `Heartbeat` events, zero or
+	// more `NamedEvent` records, and exactly ONE `StreamClose` event; the
+	// executor MUST close the stream immediately after the `StreamClose`
+	// event. Stream close without a `StreamClose` event is treated by the
+	// supervisor as an infrastructure error.
 	Execute(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error
-	mustEmbedUnimplementedNodeExecutorServer()
+	mustEmbedUnimplementedExecutorServer()
 }
 
-// UnimplementedNodeExecutorServer must be embedded to have
+// UnimplementedExecutorServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedNodeExecutorServer struct{}
+type UnimplementedExecutorServer struct{}
 
-func (UnimplementedNodeExecutorServer) Execute(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error {
+func (UnimplementedExecutorServer) Execute(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error {
 	return status.Error(codes.Unimplemented, "method Execute not implemented")
 }
-func (UnimplementedNodeExecutorServer) mustEmbedUnimplementedNodeExecutorServer() {}
-func (UnimplementedNodeExecutorServer) testEmbeddedByValue()                      {}
+func (UnimplementedExecutorServer) mustEmbedUnimplementedExecutorServer() {}
+func (UnimplementedExecutorServer) testEmbeddedByValue()                  {}
 
-// UnsafeNodeExecutorServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to NodeExecutorServer will
+// UnsafeExecutorServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ExecutorServer will
 // result in compilation errors.
-type UnsafeNodeExecutorServer interface {
-	mustEmbedUnimplementedNodeExecutorServer()
+type UnsafeExecutorServer interface {
+	mustEmbedUnimplementedExecutorServer()
 }
 
-func RegisterNodeExecutorServer(s grpc.ServiceRegistrar, srv NodeExecutorServer) {
-	// If the following call panics, it indicates UnimplementedNodeExecutorServer was
+func RegisterExecutorServer(s grpc.ServiceRegistrar, srv ExecutorServer) {
+	// If the following call panics, it indicates UnimplementedExecutorServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&NodeExecutor_ServiceDesc, srv)
+	s.RegisterService(&Executor_ServiceDesc, srv)
 }
 
-func _NodeExecutor_Execute_Handler(srv interface{}, stream grpc.ServerStream) error {
+func _Executor_Execute_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ExecuteRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(NodeExecutorServer).Execute(m, &grpc.GenericServerStream[ExecuteRequest, ExecuteEvent]{ServerStream: stream})
+	return srv.(ExecutorServer).Execute(m, &grpc.GenericServerStream[ExecuteRequest, ExecuteEvent]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NodeExecutor_ExecuteServer = grpc.ServerStreamingServer[ExecuteEvent]
+type Executor_ExecuteServer = grpc.ServerStreamingServer[ExecuteEvent]
 
-// NodeExecutor_ServiceDesc is the grpc.ServiceDesc for NodeExecutor service.
+// Executor_ServiceDesc is the grpc.ServiceDesc for Executor service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var NodeExecutor_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "rimsky.v1.NodeExecutor",
-	HandlerType: (*NodeExecutorServer)(nil),
+var Executor_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "rimsky.v1.Executor",
+	HandlerType: (*ExecutorServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Execute",
-			Handler:       _NodeExecutor_Execute_Handler,
+			Handler:       _Executor_Execute_Handler,
 			ServerStreams: true,
 		},
 	},

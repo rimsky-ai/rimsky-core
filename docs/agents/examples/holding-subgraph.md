@@ -17,7 +17,7 @@ Save as `holding.yml`:
 ```yaml
 name: holding-subgraph
 version: "1.0"
-frame_resolution: serial_queue
+frame_resolution_mode: serial_queue
 params_schema:
   type: object
   additionalProperties: true

@@ -72,8 +72,8 @@ type PickPolicyConfig struct {
 // async staging is involved.
 func New(cfg Config) *Store {
 	caps := cfg.Capabilities
-	if len(caps.WriteSemanticsEnvelope) == 0 {
-		caps.WriteSemanticsEnvelope = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
+	if len(caps.WriteSemanticsAllowed) == 0 {
+		caps.WriteSemanticsAllowed = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
 	}
 	s := &Store{
 		caps:         caps,
@@ -148,10 +148,10 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 // declares a singleton envelope, so the returned value is fixed across
 // claims (satisfies the uniformity invariant trivially).
 func (s *Store) realizedSemantics() corestore.WriteSemantics {
-	if len(s.caps.WriteSemanticsEnvelope) == 0 {
+	if len(s.caps.WriteSemanticsAllowed) == 0 {
 		return corestore.WriteSemanticsSync
 	}
-	return s.caps.WriteSemanticsEnvelope[0]
+	return s.caps.WriteSemanticsAllowed[0]
 }
 
 // Commit records the call and applies the on_commit action. Lookup is

@@ -53,7 +53,7 @@
 - `core/migrations/embed.go` — registers `003-template-registry-and-lifecycle.sql`.
 - `go.mod`, `go.sum` — vendor `github.com/cyberphone/json-canonicalization`.
 - `stores/postgres/main.go`, `stores/filesystem/main.go`, `stores/stub/main.go` — implement six methods.
-- `core/cmd/rimsky-conformance/` — six new no-op-passing checks.
+- `core/cmd/rimsky-executor-conformance/` — six new no-op-passing checks.
 
 ### Modified files (deploy)
 
@@ -1248,16 +1248,16 @@ The bridge is shared infrastructure used by every store-service binary (filesyst
 
 ---
 
-## Task 20 — Add lifecycle conformance checks to rimsky-conformance
+## Task 20 — Add lifecycle conformance checks to rimsky-executor-conformance
 
-**Files:** `core/cmd/rimsky-conformance/`.
+**Files:** `core/cmd/rimsky-executor-conformance/`.
 
 ### Steps
 
 1. Inspect existing conformance check structure:
    ```bash
-   ls core/cmd/rimsky-conformance/
-   cat core/cmd/rimsky-conformance/main.go
+   ls core/cmd/rimsky-executor-conformance/
+   cat core/cmd/rimsky-executor-conformance/main.go
    ```
 
 2. Add six new conformance checks, one per lifecycle event. Each check:
@@ -1269,10 +1269,10 @@ The bridge is shared infrastructure used by every store-service binary (filesyst
 
 4. Verify the conformance binary builds:
    ```bash
-   go build ./core/cmd/rimsky-conformance/...
+   go build ./core/cmd/rimsky-executor-conformance/...
    ```
 
-5. Add a unit test in `core/cmd/rimsky-conformance/` (or its existing test file) that brings up an in-process stub store via `stores/stub/testfixture.Start` (which returns a dialer and ephemeral port), runs the conformance suite programmatically against it, and asserts all six new lifecycle checks pass. This replaces an end-to-end shell-based smoke run for autonomous executability — no manual port wiring, no background processes, no `sleep`. Pattern:
+5. Add a unit test in `core/cmd/rimsky-executor-conformance/` (or its existing test file) that brings up an in-process stub store via `stores/stub/testfixture.Start` (which returns a dialer and ephemeral port), runs the conformance suite programmatically against it, and asserts all six new lifecycle checks pass. This replaces an end-to-end shell-based smoke run for autonomous executability — no manual port wiring, no background processes, no `sleep`. Pattern:
 
    ```go
    func TestConformance_LifecycleEvents(t *testing.T) {
@@ -1293,7 +1293,7 @@ The bridge is shared infrastructure used by every store-service binary (filesyst
 
 6. Verify the conformance test passes:
    ```bash
-   go test ./core/cmd/rimsky-conformance/... -count=1
+   go test ./core/cmd/rimsky-executor-conformance/... -count=1
    ```
 
 ---

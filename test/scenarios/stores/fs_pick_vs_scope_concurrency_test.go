@@ -16,11 +16,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
@@ -47,13 +47,13 @@ func TestFsPickVsScopeConcurrency(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"docs": {
 					Endpoint:     "grpc://" + grpcEndpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("pick-worker").Complete(map[string]any{}, true, "scenario")
-	h.Stub.WhenType("scope-worker").Complete(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("pick-worker").Success(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("scope-worker").Success(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fs-pick-vs-scope", Version: "1",
@@ -75,8 +75,8 @@ func TestFsPickVsScopeConcurrency(t *testing.T) {
 	require.NotNil(t, np)
 	require.NotNil(t, nr)
 
-	require.True(t, h.WaitForNodeState(np.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(np.ID, cascade.NodeStateFresh, 30*time.Second),
 		"pick-worker did not reach fresh")
-	require.True(t, h.WaitForNodeState(nr.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(nr.ID, cascade.NodeStateFresh, 30*time.Second),
 		"scope-worker did not reach fresh")
 }

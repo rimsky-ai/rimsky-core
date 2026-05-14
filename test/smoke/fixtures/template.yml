@@ -26,7 +26,7 @@
 #     example calls it "illustrative — set high in the smoke fixture").
 #     Limits live in operator config (`named_locks:` per spec §6.1);
 #     templates reference locks by name only.
-frame_resolution: serial_queue
+frame_resolution_mode: serial_queue
 frame_timeout_ms: 600000
 nodes:
   # Pure-infra node: no executor, just claims from a ring buffer via the

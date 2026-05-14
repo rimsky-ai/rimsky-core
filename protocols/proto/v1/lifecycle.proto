@@ -10,7 +10,7 @@
 // simply don't implement the service.
 //
 // Idempotency: rimsky tracks per-peer idempotency in the
-// rimsky_lifecycle_idempotency table; subscribers can assume each
+// rimsky_lifecycle_idempotencies table; subscribers can assume each
 // (peer, event) pair fires exactly once on the rimsky side. Subscribers
 // SHOULD also be idempotent against duplicate calls in case of network
 // retries.

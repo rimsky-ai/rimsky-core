@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// events.go — SQLite-backed persistence.EventStore.
+// events.go — SQLite-backed persistence.EventTable.
 package sqlite
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {

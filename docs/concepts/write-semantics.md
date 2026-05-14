@@ -26,7 +26,7 @@ The four values:
 - **`blocking_async`** — staging area; reads block until commit. Two writers conflict; reads and writers also serialize.
 - **`read_only`** — read-only access (no writes possible). Two readers coexist trivially.
 
-The producer's `Capabilities()` startup handshake returns the **write-semantics envelope** — the set of values it may return on `Open`. The operator declares a subset envelope per peer in `rimsky.yml`; the capability handshake validates operator-declared ⊆ producer-declared.
+The producer's `Capabilities()` startup handshake returns the **write-semantics envelope** — the set of values it may return on `Open`. The operator declares a subset envelope per service in `rimsky.yml`; the capability handshake validates operator-declared ⊆ producer-declared.
 
 ## Per-claim vs. per-producer
 
@@ -37,7 +37,7 @@ Producers that support multiple values choose per-claim based on the claim's int
 ## How you encounter it
 
 - **Wire**: `OpenResponse.acquired.realized_write_semantics` carries the per-claim verdict.
-- **Operator config**: `claim_producers.<name>.write_semantics_envelope:` declares the operator's allowed subset (must be ⊆ producer-advertised).
+- **Operator config**: `claim_producers.<name>.write_semantics_allowed:` declares the operator's allowed subset (must be ⊆ producer-advertised).
 - **Capability handshake failure**: if the operator's declared envelope is not a subset of the producer's advertised envelope, the supervisor refuses to start.
 
 ## Consumer-visible guarantees
@@ -49,7 +49,7 @@ Producers that support multiple values choose per-claim based on the claim's int
 ## Common mistakes
 
 - Confusing the producer's envelope with the per-claim realized value. Envelope is the set of possible values; realized is the value for one specific claim.
-- Declaring a `write_semantics_envelope` for a peer that exceeds the producer's advertised envelope. The capability handshake will fail at startup.
+- Declaring a `write_semantics_allowed` for a service that exceeds the producer's advertised envelope. The capability handshake will fail at startup.
 - Expecting `staged_async` to give you producer-internal serialization for free. Producers must offer real concurrent-read access to deliver `staged_async` honestly.
 
 ## See also

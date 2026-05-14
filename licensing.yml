@@ -17,17 +17,17 @@ apache:
   - foundation/locks/
   - foundation/integration/remote/
   - foundation/shared/
-  - modeling/cli/
-  - modeling/executor/
-  - modeling/node/
-  - modeling/shared/
-  - modeling/template/canonical/
-  - modeling/qualityrule/  # spec types only; runtime is at modeling/qualityrule/eval/ (AGPL)
+  - control/cli/
+  - graph/executor/
+  - graph/node/
+  - graph/shared/
+  - graph/template/canonical/
+  - graph/qualityrule/  # spec types only; runtime is at graph/qualityrule/eval/ (AGPL)
   - conformance/
   - stores/
   - executors/
   - cmd/rimsky-cli/
-  - cmd/rimsky-conformance/
+  - cmd/rimsky-executor-conformance/
   - cmd/rimsky-claim-producer-conformance/
   - cmd/rimsky-conformance-probe/
   - cmd/rimsky-license-check/
@@ -48,15 +48,15 @@ agpl:
   - foundation/integration/  # excludes foundation/integration/remote/ (override above)
   - foundation/persistence/
   - foundation/internal/
-  - modeling/attribute/
-  - modeling/config/
-  - modeling/controlapi/
-  - modeling/frame/
-  - modeling/internal/
-  - modeling/observability/
-  - modeling/qualityrule/eval/  # runtime evaluators + registry
-  - modeling/scenario/
-  - modeling/scheduler/
+  - graph/attribute/
+  - control/config/
+  - control/controlapi/
+  - graph/frame/
+  - internal/
+  - control/observability/
+  - graph/qualityrule/eval/  # runtime evaluators + registry
+  - graph/scenario/
+  - graph/scheduler/
   - cmd/rimsky-scheduler/
   - cmd/rimsky-supervisor/
   - cmd/rimsky-control-api/

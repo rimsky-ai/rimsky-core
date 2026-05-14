@@ -11,7 +11,7 @@ import (
 
 // InlineBackend is the degenerate BlobBackend used when Backend="inline".
 // All values are written into the existing inline column on
-// rimsky_node_attributes / rimsky_worker_request / rimsky_node_events
+// rimsky_node_attributes / rimsky_node_runs / rimsky_node_events
 // rather than spilled.
 //
 // The attribute write path checks

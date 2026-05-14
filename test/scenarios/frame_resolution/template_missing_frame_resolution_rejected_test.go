@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
@@ -53,27 +53,27 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 		"nodes":   baseNodes,
 	})
 	require.Equal(t, http.StatusBadRequest, status, "missing frame_resolution should be 400; body=%s", body)
-	require.Contains(t, strings.ToLower(body), "frame_resolution",
+	require.Contains(t, strings.ToLower(body), "frame_resolution_mode",
 		"error body should mention frame_resolution; got %s", body)
 
 	// Invalid frame_resolution value.
 	status, body = post(map[string]any{
-		"name":             "invalid-frame-res",
-		"version":          "1",
-		"frame_resolution": "abort",
-		"nodes":            baseNodes,
+		"name":                  "invalid-frame-res",
+		"version":               "1",
+		"frame_resolution_mode": "abort",
+		"nodes":                 baseNodes,
 	})
 	require.Equal(t, http.StatusBadRequest, status, "invalid frame_resolution should be 400; body=%s", body)
-	require.Contains(t, strings.ToLower(body), "frame_resolution",
+	require.Contains(t, strings.ToLower(body), "frame_resolution_mode",
 		"error body should mention frame_resolution; got %s", body)
 
 	// frame_timeout_ms below the 60000 hard floor.
 	status, body = post(map[string]any{
-		"name":             "below-floor",
-		"version":          "1",
-		"frame_resolution": "serial_queue",
-		"frame_timeout_ms": 30000,
-		"nodes":            baseNodes,
+		"name":                  "below-floor",
+		"version":               "1",
+		"frame_resolution_mode": "serial_queue",
+		"frame_timeout_ms":      30000,
+		"nodes":                 baseNodes,
 	})
 	require.Equal(t, http.StatusBadRequest, status, "frame_timeout_ms < 60000 should be 400; body=%s", body)
 	require.Contains(t, strings.ToLower(body), "frame_timeout",
@@ -81,10 +81,10 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 
 	// Valid: serial_queue, no frame_timeout_ms (should default).
 	status, body = post(map[string]any{
-		"name":             "valid-serial",
-		"version":          "1",
-		"frame_resolution": "serial_queue",
-		"nodes":            baseNodes,
+		"name":                  "valid-serial",
+		"version":               "1",
+		"frame_resolution_mode": "serial_queue",
+		"nodes":                 baseNodes,
 	})
 	require.Equal(t, http.StatusCreated, status, "valid serial_queue template should be 201; body=%s", body)
 }

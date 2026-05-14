@@ -31,21 +31,21 @@ import (
 )
 
 // MountObservability registers the observability HTTP routes on mux,
-// dispatching through the supplied genv1.StoreObservabilityServer.
-func MountObservability(mux *http.ServeMux, srv genv1.StoreObservabilityServer) {
+// dispatching through the supplied genv1.ClaimProducerObservabilityServer.
+func MountObservability(mux *http.ServeMux, srv genv1.ClaimProducerObservabilityServer) {
 	mux.HandleFunc("/observability/v1/capabilities", obsCapabilitiesHandler(srv))
 	mux.HandleFunc("/observability/v1/claims", obsListClaimsHandler(srv))
 	mux.HandleFunc("/observability/v1/claims/", obsClaimsHandler(srv))
 	mux.HandleFunc("/observability/v1/admin/", obsAdminHandler(srv))
 }
 
-func obsCapabilitiesHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
+func obsCapabilitiesHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		resp, err := srv.GetCapabilities(r.Context(), &genv1.GetStoreCapabilitiesRequest{})
+		resp, err := srv.Capabilities(r.Context(), &genv1.GetClaimProducerCapabilitiesRequest{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -54,7 +54,7 @@ func obsCapabilitiesHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc
 	}
 }
 
-func obsListClaimsHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
+func obsListClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -86,7 +86,7 @@ func obsListClaimsHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
 	}
 }
 
-func obsClaimsHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
+func obsClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -113,7 +113,7 @@ func obsClaimsHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
 	}
 }
 
-func obsAdminHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
+func obsAdminHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -149,7 +149,7 @@ func obsAdminHandler(srv genv1.StoreObservabilityServer) http.HandlerFunc {
 // calls the gRPC server's StreamClaim with a synthetic stream that
 // writes events out as `data:` SSE frames. Per spec §3.5 the bridge
 // honors the underlying server's idle close behavior.
-func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.StoreObservabilityServer, claimID string) {
+func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.ClaimProducerObservabilityServer, claimID string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -167,7 +167,7 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Sto
 }
 
 // sseClaimStream adapts an http.ResponseWriter to the
-// StoreObservability_StreamClaimServer interface so we can call the
+// ClaimProducerObservability_StreamClaimServer interface so we can call the
 // gRPC server in-process. Send returns the wrapped fmt.Fprintf error
 // so disconnected clients propagate the error up to the SSE handler
 // loop and exit cleanly.

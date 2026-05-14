@@ -1,3 +1,14 @@
+---
+concept: operational-health
+definition: |
+  How operators observe and maintain a running rimsky deployment: lifecycle subscribers for audit and per-tenant rollups, retry-loop detection, parked-node watchdogs, frame-stuck warnings.
+proto_symbol: (none)
+config_field: (none)
+api_surface: GET /v1/observability/summary
+related: [lifecycle-subscriber, parked, frame, retry-no-progress]
+deprecated_terms: []
+---
+
 # Operational health
 
 Rimsky is a long-running platform; operators who run it need
@@ -7,14 +18,15 @@ operational patterns that compose them.
 
 ## Surfaces
 
-### Lifecycle-subscriber peers
+### Lifecycle-subscriber services
 
-Any peer registered with `protocols: [claim_producer, lifecycle_subscriber]`
+Any service registered with `protocols: [claim_producer, lifecycle_subscriber]`
 in `rimsky.yml` receives the six lifecycle events at the points they
 fire (template registered/deployed/undeployed/deregistered, instance
 created/terminated). Wire a domain-shaped audit log to a
 LifecycleSubscriber and the audit trail composes for free. The events
-are persistently idempotent (`rimsky_lifecycle_idempotency`); a
+are persistently idempotent (rimsky records each `(producer,
+scope_kind, scope_id)` triple it has already fired); a
 re-fire under the same `(producer, scope_kind, scope_id)` is a no-op
 on the consumer side.
 
@@ -73,10 +85,10 @@ something to investigate.
 
 ### Per-tenant SLA observability
 
-Templates can be tagged (`rimsky_template_tags`) with the consumer
-they belong to. The lifecycle-subscriber peer receives that tag at
-template-deployed time and can surface per-tenant rollups in the
-operator's monitoring stack.
+Templates can be tagged with the consumer they belong to. The
+lifecycle-subscriber service receives that tag at template-deployed
+time and can surface per-tenant rollups in the operator's monitoring
+stack.
 
 ### Detect retry loops with no progress
 

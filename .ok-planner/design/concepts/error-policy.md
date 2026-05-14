@@ -12,7 +12,19 @@ references:
 
 ## What it is
 
-The template-level `error_types:` block maps per-`error_class` strings to actions: `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, `give_up`, `pass`. The runtime's error-class resolver lives in `foundation/integration/runner_terminal_errors.go` + `on_error.go`. Cap: every dispatch tracks `consecutive_retries_no_progress`; when it exceeds the effective cap (`max_retries_without_progress` per-node or `scheduler.max_retries_without_progress` deployment-level), the runtime forces `Errored { error_class: "retry_loop_no_progress" }`.
+The template-level `error_types:` block maps per-`error_class` strings to actions: `retry`, `invalidate(targets)`, `give_up`, `pass`. The runtime's error-class resolver lives in `runtime/runner_error_policy.go::applyErrorPolicy` + `on_error.go`. Cap: every dispatch tracks `consecutive_retries_no_progress`; when it exceeds the effective cap (`max_retries_without_progress` per-node or `scheduler.max_retries_without_progress` deployment-level), the runtime forces `Error { error_class: "retry_loop_no_progress" }`.
+
+## Three-name relationship
+
+Three vocabulary surfaces describe the same mechanism — distinguish them by context:
+
+- **Design-log noun** — `concept:error-policy` (this file).
+- **Operator-facing YAML field** — `error_types:` (the map of `error_class` → action declared inside a template).
+- **Implementation** — `code:runtime/runner_error_policy.go::applyErrorPolicy` (the policy-chain entry called from the terminal-error dispatch).
+
+The four runtime actions are `retry`, `invalidate(targets)`, `give_up`, and `pass`. The pre-2026-05-12 vocabulary included `discard_then_retry` and `resume_then_retry` as separate retry flavors; under the post-E.2 proto restructure, retry semantics are uniform (claims are abandoned and retried) and the two-flavor split is retired.
+
+Per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #9, Group E.2): the wire-level `Blocked` event collapsed into `Error{error_class}`. The lifecycle-handler slot `on_executor_blocked` is retired. As a consequence, `error_types:` is now the SINGLE decision surface for runtime error routing — every error variant arrives via `Error{error_class}` and is dispatched through the policy chain. Templates that previously declared `on_executor_blocked` migrate to `on_executor_errored` with an explicit `error_types: { executor_blocked: ... }` entry.
 
 ## Purpose
 
@@ -20,7 +32,7 @@ Different errors warrant different responses. A declarative policy spares every 
 
 ## Boundaries
 
-Owns: the action vocabulary, the policy chain entry point, the retry-counter cap. Does NOT own: the four lifecycle handlers (those run first; see `lifecycle-handler`), the `Blocked` route (handled by `on_executor_blocked`, not error-types), cascade firing (see `cascade`), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `lifecycle-handler`, `last-outcome` (changes reset the retry counter), `frame` (sibling observe-only mechanism — `frame.stuck.observed` slog warning fires for no-progress windows), `terminal-resolution`.
+Owns: the action vocabulary, the policy chain entry point, the retry-counter cap. Does NOT own: the three lifecycle handlers (those run first; see `lifecycle-handler`), cascade firing (see `cascade`), the end-to-end stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `lifecycle-handler`, `last-outcome` (changes reset the retry counter), `frame` (sibling observe-only mechanism — `frame.stuck.observed` slog warning fires for no-progress windows), `terminal-resolution`.
 
 ## Invariants
 
@@ -31,10 +43,13 @@ Owns: the action vocabulary, the policy chain entry point, the retry-counter cap
 
 ## Aliases and historical names
 
-CLAUDE.md "Vocabulary" cites 3 error actions (`retry`, `invalidate(targets)`, `give_up`); `docs/concepts/error-policy.md` enumerates 5+1 (`retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, `give_up`, `pass`). The doc is the current authority.
+Pre-2026-05-12 the policy vocabulary included `discard_then_retry` and `resume_then_retry` as separate retry flavors; under the post-E.2 proto restructure, retry semantics are uniform (claims are abandoned and retried) and the two-flavor split is retired. The four actions are now `retry`, `invalidate(targets)`, `give_up`, `pass`. Implementation file renamed from `runner_terminal_errors.go::applyTerminalAppError` to `runner_error_policy.go::applyErrorPolicy` per `spec:2026-05-12-nomenclature-resolution` (audit ride-along I.2).
 
 ## Open within this concept
 
-- Error-action count drift between CLAUDE.md "Vocabulary" (3) and `docs/concepts/error-policy.md` (5+1) — see `tensions/error-action-count-drift.md`.
-- `Blocked` vs `Errored` confusion potential — see `tensions/blocked-vs-errored-routing.md`.
+(none live; the previously open tensions on action-count drift and `Blocked`-vs-`Errored` routing were resolved by `spec:2026-05-12-nomenclature-resolution` Groups E.2 / E.9 / E.10 / I.2.)
+
+## Notes
+
+- Action vocabulary consolidated to four (`retry`, `invalidate(targets)`, `give_up`, `pass`) per `spec:2026-05-12-nomenclature-resolution` audit cross-layer #9. Implementation renamed to `code:runtime/runner_error_policy.go::applyErrorPolicy` (ride-along I.2). Wire-level `Blocked` event collapsed into `Error{error_class: "executor_blocked"}` (Group E.2); `on_executor_blocked` lifecycle-handler slot retired (E.10). Resolves `tension:_resolved/error-action-count-drift` and `tension:_resolved/blocked-vs-errored-routing`.
 

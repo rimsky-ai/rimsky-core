@@ -2,10 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// InstanceStore — Postgres-backed persistence.InstanceStore. Per docs/specs/
-// 2026-05-01-control-plane-and-store-lifecycle-design.md §2:
-// rimsky_instances binds to template_hash (TEXT) instead of template_id
-// (UUID); consumer_key renamed to instance_key (nullable).
+// InstanceTable — Postgres-backed persistence.InstanceTable.
+// rimsky_instances binds to template_hash (TEXT); instance_key is nullable.
 package postgres
 
 import (
@@ -20,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	foundationshared "github.com/fallguy/rimsky/foundation/shared"
 )
 
 // errInstanceIDRequired is returned by Create when in.ID is the zero UUID.
@@ -49,7 +47,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal userdata_overrides: %w", err)
 	}
-	if in.ID == (shared.UUID{}) {
+	if in.ID == (foundationshared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 	id := in.ID
@@ -62,7 +60,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	out, err := scanInstance(row)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return persistence.InstanceRow{}, shared.Wrap(shared.ErrInstanceKeyConflict,
+			return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
 				"instance_key already registered for template",
 				map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
 		}
@@ -71,7 +69,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	return out, nil
 }
 
-func (s *instancesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.InstanceRow, error) {
+func (s *instancesImpl) Get(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
 		`SELECT `+instanceCols+` FROM rimsky_instances WHERE id = $1`, id)
@@ -136,7 +134,7 @@ func (s *instancesImpl) List(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor *shared.UUID
+	var cursor *foundationshared.UUID
 	if pag.Cursor != "" {
 		u, err := uuid.Parse(pag.Cursor)
 		if err != nil {
@@ -199,7 +197,7 @@ func (s *instancesImpl) List(
 	return persistence.PaginatedListResult[persistence.InstanceRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-func (s *instancesImpl) Delete(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_instances WHERE id = $1`, id)
 	if err != nil {
@@ -210,7 +208,7 @@ func (s *instancesImpl) Delete(ctx context.Context, id shared.UUID, tx persisten
 
 // MarkTerminated sets terminated_at = now() if currently NULL. Idempotent
 // — repeated calls do not move the timestamp.
-func (s *instancesImpl) MarkTerminated(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *instancesImpl) MarkTerminated(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_instances SET terminated_at = now()
@@ -257,7 +255,7 @@ func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (i
 
 // ListTerminatedWithLifecycleRows returns up to limit instances with
 // terminated_at IS NOT NULL that still have at least one matching
-// rimsky_lifecycle_idempotency row at scope_kind='instance'.
+// rimsky_lifecycle_idempotencies row at scope_kind='instance'.
 func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx persistence.Tx) ([]persistence.InstanceRow, error) {
 	ex := s.q(tx)
 	if limit <= 0 {
@@ -268,7 +266,7 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 		 FROM rimsky_instances i
 		 WHERE i.terminated_at IS NOT NULL
 		   AND EXISTS (
-		     SELECT 1 FROM rimsky_lifecycle_idempotency l
+		     SELECT 1 FROM rimsky_lifecycle_idempotencies l
 		     WHERE l.scope_kind = 'instance' AND l.scope_id = i.id::text
 		   )
 		 ORDER BY i.terminated_at ASC
@@ -300,7 +298,7 @@ type scannable interface {
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		id           shared.UUID
+		id           foundationshared.UUID
 		templateHash string
 		instanceKey  *string
 		params       []byte

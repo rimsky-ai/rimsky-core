@@ -28,9 +28,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameTimeoutProgressingLoop(t *testing.T) {
@@ -39,7 +39,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "frame-timeout-progressing", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -49,7 +49,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frames so we have full control.
-	h.ExecSQL(`DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
@@ -58,7 +58,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	const timeoutMs = 60000
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '5 minutes', now() - interval '5 minutes', now(), $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID), int64(timeoutMs)}, &frameID)
@@ -72,7 +72,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	progressLogger := slog.New(slog.NewTextHandler(&progressBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	for i := 0; i < 5; i++ {
 		h.ExecSQL(`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`, frameID)
-		require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), progressLogger))
+		require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), progressLogger))
 		var state string
 		h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
 			[]any{frameID}, &state)
@@ -90,7 +90,7 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	var stuckBuf bytes.Buffer
 	stuckLogger := slog.New(slog.NewTextHandler(&stuckBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	h.ExecSQL(`UPDATE rimsky_frames SET last_progress_at = NOW() - interval '5 minutes' WHERE frame_id = $1`, frameID)
-	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), stuckLogger))
+	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), stuckLogger))
 	require.Contains(t, stuckBuf.String(), "frame.stuck.observed",
 		"once last_progress_at falls outside the timeout window, the observer must warn; got logger output: %q",
 		stuckBuf.String())

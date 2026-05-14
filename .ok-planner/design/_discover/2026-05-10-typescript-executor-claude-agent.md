@@ -28,7 +28,7 @@ The MCP dependency is the load-bearing pin to TypeScript: `@modelcontextprotocol
 
 The async-handoff-always pattern is structural: every `Execute` call responds with `AsyncAccepted` immediately and runs the agent in the background. A long agent run doesn't tie up a gRPC stream through load-balancer / restart events. The supervisor's in-memory callback registry holds the `async_ack_id → AsyncContext` map; if the supervisor restarts, the registry is lost and the dispatch falls to the orphan reaper.
 
-Conformance: `cmd/rimsky-conformance` treats claude-agent as just another gRPC endpoint. The `--require-stub-mode` flag uses `cmd/rimsky-conformance-probe` to verify the executor is running in stub mode before issuing real API calls.
+Conformance: `cmd/rimsky-executor-conformance` treats claude-agent as just another gRPC endpoint. The `--require-stub-mode` flag uses `cmd/rimsky-conformance-probe` to verify the executor is running in stub mode before issuing real API calls.
 
 ## Code surface
 

@@ -2,11 +2,25 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// Package stub is a scripted NodeExecutor implementation. The
-// executors/stub/cmd binary wraps it as a standalone gRPC server (used
-// by the quickstart and by smoke deployments that need a no-op
-// executor); the executors/stub/stubtest package wraps it for in-process
-// scenario tests.
+// Package stub is a test-double Executor implementation in the
+// Meszaros sense — scripted canned outcomes for tests, conformance,
+// and no-op demos. NOT a skeleton template for writing your own
+// executor; see executors/http-node and executors/claude-agent for
+// reference implementations.
+//
+// Three primary uses:
+//   - executors/stub/cmd — standalone gRPC binary used by the
+//     quickstart and smoke deployments as a no-op executor.
+//   - executors/stub/stubtest — wrapper for in-process scenario tests
+//     in test/scenarios/. Tests script per-node-type behavior via
+//     Stub.WhenType("…").Success/Error/Park/… and assert on the
+//     supervisor's reaction.
+//   - rimsky-executor-conformance — known-good target for protocol
+//     conformance checks (when run with --require-stub-mode).
+//
+// EnableStubMode shortcuts scripted behavior with immediate-success
+// outcomes plus StubAttributesFor(node_type)-shaped attributes_delta;
+// the quickstart and conformance harness use this mode.
 package stub
 
 import (
@@ -23,19 +37,18 @@ import (
 type terminalKind int
 
 const (
-	termComplete terminalKind = iota
+	termSuccess terminalKind = iota
 	termError
-	termBlocked
 	termAsync
-	// termPark scripts a ParkRequested terminal event. Used by L2
-	// conformance and by E6 / H3 scenario tests.
+	// termPark scripts a Park terminal event (parking the node until
+	// resume_at). Used by L2 conformance and by E6 / H3 scenario tests.
 	termPark
 )
 
 // namedEventEmit captures one NamedEvent emission scripted before a
 // terminal verdict. Per plan L2/H1, the stub may emit zero or more
 // NamedEvent records before the terminal so test fixtures and the
-// rimsky-conformance binary can exercise the streaming-events path.
+// rimsky-executor-conformance binary can exercise the streaming-events path.
 type namedEventEmit struct {
 	Name    string
 	Payload []byte
@@ -48,7 +61,6 @@ type script struct {
 	changeSum         string
 	errorClass        string
 	payload           any
-	reason            string
 	asyncAckID        string
 	asyncCompletionMs int64
 	heartbeats        int
@@ -63,9 +75,9 @@ type script struct {
 	namedEvents []namedEventEmit
 }
 
-// Stub is a scripted NodeExecutor server for tests.
+// Stub is a scripted Executor server for tests.
 type Stub struct {
-	genv1.UnimplementedNodeExecutorServer
+	genv1.UnimplementedExecutorServer
 	mu       sync.Mutex
 	scripts  map[string]*script
 	stubMode bool
@@ -93,12 +105,12 @@ type ObservedRequest struct {
 // New constructs a Stub with no scripted node types registered.
 func New() *Stub { return &Stub{scripts: map[string]*script{}} }
 
-// EnableStubMode switches the Stub into immediate-Complete mode. In this mode
+// EnableStubMode switches the Stub into immediate-success mode. In this mode
 // every Execute call short-circuits scripted behavior and returns a single
-// Complete event with `changed: true` and `attributes_delta` populated from
-// StubAttributesFor(node_type). Used by conformance probes and end-to-end
-// stack tests where the executor surface is exercised but not the application
-// logic.
+// terminal StreamClose with Success outcome carrying `changed: true` and
+// `attributes_delta` populated from StubAttributesFor(node_type). Used by
+// conformance probes and end-to-end stack tests where the executor surface is
+// exercised but not the application logic.
 func (s *Stub) EnableStubMode() *Stub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,25 +135,29 @@ type TypeBuilder struct {
 }
 
 // WhenType begins scripting behavior for the given node_type. Default
-// terminal is a Complete with changed=true.
+// terminal is a Success outcome with changed=true.
 func (s *Stub) WhenType(t string) *TypeBuilder {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sc := &script{terminal: termComplete, changed: true}
+	sc := &script{terminal: termSuccess, changed: true}
 	s.scripts[t] = sc
 	return &TypeBuilder{s: s, typ: t}
 }
 
-// Complete configures the scripted terminal as a Complete event.
-func (b *TypeBuilder) Complete(result any, changed bool, changeSummary string) *TypeBuilder {
+// Success configures the scripted terminal as a StreamClose with a
+// Success outcome on the wire.
+func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
 	sc := b.s.scripts[b.typ]
-	sc.terminal, sc.result, sc.changed, sc.changeSum = termComplete, result, changed, changeSummary
+	sc.terminal, sc.result, sc.changed, sc.changeSum = termSuccess, result, changed, changeSummary
 	return b
 }
 
-// Error configures the scripted terminal as an Errored event.
+// Error configures the scripted terminal as a StreamClose with an Error
+// outcome on the wire. The `class` argument becomes the wire-level
+// error_class. To script the executor-blocked path, pass
+// "executor_blocked" as the class.
 func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -150,17 +166,8 @@ func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	return b
 }
 
-// Blocked configures the scripted terminal as a Blocked event.
-func (b *TypeBuilder) Blocked(reason string, ctxv any) *TypeBuilder {
-	b.s.mu.Lock()
-	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
-	sc.terminal, sc.reason, sc.payload = termBlocked, reason, ctxv
-	return b
-}
-
-// AsyncAccepted configures the scripted terminal as an AsyncAccepted event.
-func (b *TypeBuilder) AsyncAccepted(ackID string, completionMs int64) *TypeBuilder {
+// AwaitAsyncCallback configures the scripted terminal as an AwaitAsyncCallback event.
+func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
 	sc := b.s.scripts[b.typ]
@@ -168,7 +175,7 @@ func (b *TypeBuilder) AsyncAccepted(ackID string, completionMs int64) *TypeBuild
 	return b
 }
 
-// Park configures the scripted terminal as a ParkRequested event.
+// Park configures the scripted terminal as a Park event.
 // resumeAt may be zero (indefinite park; resumes only via external
 // invalidate). reason may be empty (permitted but logged WARN supervisor-
 // side per plan E1). sessionToken is opaque to rimsky and round-tripped
@@ -215,11 +222,11 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	return b
 }
 
-// Execute implements genv1.NodeExecutorServer by streaming scripted events.
+// Execute implements genv1.ExecutorServer by streaming scripted events.
 // Records the incoming request (id/type/attributes/userdata) for test
 // inspection. If stub mode is enabled, short-circuits to an immediate
-// Complete event keyed by node_type via StubAttributesFor.
-func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_ExecuteServer) error {
+// StreamClose with Success outcome keyed by node_type via StubAttributesFor.
+func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	s.mu.Lock()
 	s.observed = append(s.observed, ObservedRequest{
 		NodeID:      req.GetNodeId(),
@@ -239,11 +246,13 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 		if err != nil {
 			return err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-			AttributesDelta: delta,
-			Changed:         true,
-			ChangeSummary:   "stub",
-		}}})
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+				AttributesDelta: delta,
+				Changed:         true,
+				ChangeSummary:   "stub",
+			}}},
+		}})
 	}
 
 	if !ok {
@@ -279,43 +288,40 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 
 	// terminal
 	switch sc.terminal {
-	case termComplete:
-		// Spec §12.2: Complete now carries `attributes_delta` (a Struct)
-		// instead of the legacy `result` field. The stub's `result` API
-		// is preserved for test convenience and mapped to an
-		// AttributesDelta map when the value is a map[string]any (the
-		// only realistic shape post-redesign — the supervisor merges it
-		// into the resolved attribute object). Non-map / nil values are
+	case termSuccess:
+		// Success carries `attributes_delta` (a Struct). The stub's
+		// `result` API is preserved for test convenience and mapped
+		// to an AttributesDelta map when the value is a map[string]any
+		// (the only realistic shape — the supervisor merges it into
+		// the resolved attribute object). Non-map / nil values are
 		// dropped; the executor side has no other field to emit them on.
 		delta, err := toStruct(sc.result)
 		if err != nil {
 			return err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-			AttributesDelta: delta, Changed: sc.changed, ChangeSummary: sc.changeSum,
-		}}})
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+				AttributesDelta: delta, Changed: sc.changed, ChangeSummary: sc.changeSum,
+			}}},
+		}})
 	case termError:
 		v, err := toStruct(sc.payload)
 		if err != nil {
 			return err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Errored{Errored: &genv1.Errored{
-			ErrorClass: sc.errorClass, Payload: v,
-		}}})
-	case termBlocked:
-		v, err := toStruct(sc.payload)
-		if err != nil {
-			return err
-		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Blocked{Blocked: &genv1.Blocked{
-			Reason: sc.reason, Context: v,
-		}}})
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
+				ErrorClass: sc.errorClass, Payload: v,
+			}}},
+		}})
 	case termAsync:
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: sc.asyncAckID, ExpectedCompletionMs: sc.asyncCompletionMs,
-		}}})
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+				AsyncAckId: sc.asyncAckID, ExpectedCompletionMs: sc.asyncCompletionMs,
+			}}},
+		}})
 	case termPark:
-		park := &genv1.ParkRequested{
+		park := &genv1.Park{
 			Reason:       sc.parkReason,
 			Payload:      sc.parkPayload,
 			SessionToken: sc.parkSessionToken,
@@ -323,7 +329,9 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_Exec
 		if !sc.parkResumeAt.IsZero() {
 			park.ResumeAt = timestamppb.New(sc.parkResumeAt)
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_ParkRequested{ParkRequested: park}})
+		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
+		}})
 	}
 	return nil
 }
@@ -358,8 +366,8 @@ func StubAttributesFor(nodeType string) map[string]any {
 }
 
 // toStruct converts an arbitrary input into a structpb.Struct for use as
-// AttributesDelta / Errored.Payload / Blocked.Context. Nil inputs return
-// nil — the supervisor treats nil delta as "no writeback".
+// Success.AttributesDelta or Error.Payload on the StreamClose outcome.
+// Nil inputs return nil — the supervisor treats nil delta as "no writeback".
 // map[string]any inputs are converted directly via structpb.NewStruct.
 // Other non-nil inputs are wrapped as `{value: <fmt.Sprint(v)>}` so the
 // test fixture can still observe scalar values without adding fields to

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// supervisors.go — SQLite-backed persistence.SupervisorStore.
+// supervisors.go — SQLite-backed persistence.SupervisorTable.
 package sqlite
 
 import (

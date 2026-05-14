@@ -15,10 +15,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestRetryLoopCapForcesGiveUp covers E6 retry case (a). When the
@@ -36,7 +36,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "retry-loop-cap", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:                      "worker",
@@ -54,7 +54,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 
 	// Should reach failed with error_class=retry_loop_no_progress within
 	// some seconds (each retry round-trips the executor + policy chain).
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFailed, 60*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
 		"worker should land in failed once retry-loop cap is reached")
 
 	// Confirm the LastOutcome is failed (give_up's outcome).
@@ -65,7 +65,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row)
-	require.Equal(t, shared.LastOutcomeFailed, row.LastOutcome,
+	require.Equal(t, cascade.LastOutcomeFailed, row.LastOutcome,
 		"give_up should record last_outcome=failed")
 }
 
@@ -85,7 +85,7 @@ func TestRetryLoopCapDisabledWithZero(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "retry-loop-cap-zero", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:                      "worker",

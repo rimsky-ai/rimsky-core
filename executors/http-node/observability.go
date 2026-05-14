@@ -121,10 +121,10 @@ func (s *ObservabilityServer) RegisterDispatch(dispatchID string) {
 	rec.registered = true
 }
 
-// GetCapabilities reports the http-node observability surface:
+// Capabilities reports the http-node observability surface:
 // supports both GetTrace and StreamTrace, retention 1 hour, no custom
 // UI.
-func (s *ObservabilityServer) GetCapabilities(_ context.Context, _ *genv1.GetCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	s.mu.RLock()
 	url := s.httpBridgeURL
 	s.mu.RUnlock()

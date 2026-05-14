@@ -15,28 +15,28 @@ references:
 
 ## What it is
 
-The end-to-end spine that takes a single executor terminal event off the wire and converges it onto exactly four decisions: (1) what `last_outcome` to stamp on the node and therefore whether cascade fires, (2) what to do with the dispatch row (delete vs retry-enqueue vs invalidate-targets), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the `rimsky_claim_handle` rows claimant-guarded. Five stages stitched across `foundation/integration/`:
+The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions: (1) what `last_outcome` to stamp on the node and therefore whether cascade fires, (2) what to do with the node-run row (delete vs retry-enqueue vs invalidate-targets), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the `rimsky_claim_handles` rows claimant-guarded. Five stages stitched across `runtime/`:
 
-1. **Wire to internal terminal event** — `runner_dispatch.go::readExecutorStream` (lines 235-326) maps each proto-level `ExecuteEvent` variant to a `terminalEvent{Kind, ...}` struct: `Complete | Blocked | Errored | ParkRequested | AsyncAccepted | Infra`. Named events emitted before the terminal accumulate into `terminalEvent.NamedEvents` and persist before the terminal verdict is applied.
-2. **Dispatch on terminal kind** — `runner_terminal.go::applyTerminal` (lines 43-70) routes the five kinds (`Complete`, `Blocked`, `Errored`, `Infra`, `Park`) to their per-kind handlers and increments `rimsky_terminal_verdicts_total{class, error_class}`.
-3. **Lifecycle handler** — `runner_terminal_handlers.go::applyTerminalBlockedOrErrored` (lines 33-73) checks `acq.NodeDef.OnExecutorBlocked` / `OnExecutorErrored`; resolves to `pass` (→ `applyTerminalPass`, Abandon + clear + running→fresh), `error` (→ `applyTerminalAppError` with handler-declared error_class), or fall-through to `applyTerminalAppError` with the executor-supplied class.
-4. **Error policy chain** — `runner_terminal_errors.go::applyTerminalAppError` (lines 40-144). Guards with the retry-loop cap, looks up `acq.NodeDef.ErrorTypes[errorClass]`, calls `node.Evaluate(policy, state, errorClass, nil)` → `ResolvedAction{Kind, Targets, Frame, DelayMs, NewState}`, then `applyResolvedAction` maps Kind to state + queue mutation.
-5. **Claim-handle resolution** — `runner_terminal_release.go::releaseLocksInTx` walks `acq.Locks`. NamedLockSpec → claimant-guarded `ClaimHandles.Delete` only. Non-held `ClaimSpec` → `ResolveClaimHandleTerminal` directly with `Source: ActiveTerminal`. Held `ClaimSpec` → mark `rimsky_claim_holders` row + `CheckAndFireResolution`; if the holding subgraph is complete, that engine computes aggregate outcome (any failed → Abandon; else Commit) and calls `ResolveClaimHandleTerminal` with `Source: HeldTerminal`. The unified `terminal_decision.go::ResolveClaimHandleTerminal` (lines 110-135) fires the producer verb and deletes the `rimsky_claim_handle` row claimant-guarded — the single audited site for both call paths.
+> **Vocabulary note (post-`spec:2026-05-12-nomenclature-resolution` Group E.2):** "Terminal" is no longer a wire-protocol term. The proto layer carries a single `StreamClose` event with an outcome `oneof` (`Success | Error | Snooze | AwaitAsyncCallback`); the executor closes the stream immediately after `StreamClose`. The word "terminal" persists in two narrower senses: (a) the state-machine sense — `node-state` terminal states (`fresh`, `failed`) and the `code:runtime/terminal_decision.go::ResolveClaimHandleTerminal` decision-engine entry point; and (b) this concept's name as the convergence-spine umbrella. The internal classification kind `terminalKind` is a supervisor-internal categorization, not a wire shape.
 
-Two upstream siblings sit outside the unified engine but share the same `abandonOpenedClaim` helper (`foundation/integration/abandon_claim.go`):
+1. **Wire to internal terminal kind** — `runner_dispatch.go::readExecutorStream` maps each `StreamClose` outcome variant to an internal `terminalEvent{Kind, ...}` struct: `Complete | Errored | Park | Infra`. Named events emitted before stream-close accumulate into `terminalEvent.NamedEvents` and persist before the verdict is applied.
+2. **Dispatch on terminal kind** — `runner_terminal.go::applyTerminal` routes the four kinds (`Complete`, `Errored`, `Infra`, `Park`) to their per-kind handlers and increments `rimsky_terminal_verdicts_total{class, error_class}`.
+3. **Lifecycle handler** — `runner_terminal_handlers.go::applyTerminalError` checks `acq.NodeDef.OnExecutorErrored`; resolves to `pass` (→ `applyTerminalPass`, Abandon + clear + running→fresh), `error` (→ `applyErrorPolicy` with handler-declared error_class), or fall-through to `applyErrorPolicy` with the executor-supplied class. (Post-E.10, the `on_executor_blocked` slot is retired; every error variant — including the `executor_blocked` error_class synthesized from the legacy "Blocked" pattern — routes through `on_executor_errored`.)
+4. **Error policy chain** — `runner_error_policy.go::applyErrorPolicy`. Guards with the retry-loop cap, looks up `acq.NodeDef.ErrorTypes[errorClass]`, calls `node.Evaluate(policy, state, errorClass, nil)` → `ResolvedAction{Kind, Targets, Frame, DelayMs, NewState}`, then `applyResolvedAction` maps Kind to state + queue mutation.
+5. **Claim-handle resolution** — `runner_terminal_release.go::releaseLocksInTx` walks `acq.Locks`. NamedLockSpec → claimant-guarded `ClaimHandles.Delete` only. Non-held `ClaimSpec` → `ResolveClaimHandleTerminal` directly with `Source: ActiveTerminal`. Held `ClaimSpec` → mark `rimsky_claim_holders` row + `CheckAndFireResolution`; if the holding subgraph is complete, that engine computes aggregate outcome (any failed → Abandon; else Commit) and calls `ResolveClaimHandleTerminal` with `Source: HeldTerminal`. The unified `terminal_decision.go::ResolveClaimHandleTerminal` fires the producer verb and deletes the `rimsky_claim_handles` row claimant-guarded — the single audited site for both call paths.
 
-- `OnAcquireUnavailable` (`runner_lifecycle.go::handleAcquireUnavailable`) runs *before* dispatch when `tryAcquire` returns the `errAcquireUnavailable` sentinel, and on `pass`/`error` it Abandons already-Open'd partial claims via the helper. The carve-out exists because the acquisition tx has already rolled back — the `rimsky_claim_handle` rows are gone, so there is no claimant-guarded delete to fold into the unified engine.
+Two upstream siblings sit outside the unified engine but share the same `abandonOpenedClaim` helper (`runtime/abandon_claim.go`):
+
+- `OnAcquireUnavailable` (`runner_lifecycle.go::handleAcquireUnavailable`) runs *before* dispatch when `tryAcquire` returns the `errAcquireUnavailable` sentinel, and on `pass`/`error` it Abandons already-Open'd partial claims via the helper. The carve-out exists because the acquisition tx has already rolled back — the `rimsky_claim_handles` rows are gone, so there is no claimant-guarded delete to fold into the unified engine.
 - The verify-before-run bail path (`runner_acquire.go::handleOrphanedClaim`) runs *after* the acquisition tx committed but before the executor was dispatched. Its per-claim Abandon (via the helper) is followed by a claimant-guarded `ClaimHandles.Delete` owned by the caller, outside the unified engine's verb-then-delete tx sequence.
 
-Post-dispatch terminal paths (`OnExecutorBlocked`/`OnExecutorErrored` `pass`) route through `releaseLocksInTx` → `ResolveClaimHandleTerminal`, which calls the same helper for its Abandon branch (and adds the claimant-guarded `rimsky_claim_handle` delete after the verb).
+Post-dispatch terminal paths (`OnExecutorErrored` `pass`) route through `releaseLocksInTx` → `ResolveClaimHandleTerminal`, which calls the same helper for its Abandon branch (and adds the claimant-guarded `rimsky_claim_handles` delete after the verb).
 
 ### Terminal kind → producer verb
 
 | Terminal kind | Lifecycle handler | success → release | Active-claim verb | Held-claim aggregate |
 |---|---|---|---|---|
 | `Complete` | `OnExecutorComplete` | true | `Commit` | `Commit` if all completed |
-| `Blocked` | nil / `error` | false | `Abandon` | `Abandon` if any failed |
-| `Blocked` | `pass` | false | `Abandon` (via `applyTerminalPass`) | mark + check |
 | `Errored` | nil / `error` | false | `Abandon` | `Abandon` if any failed |
 | `Errored` | `pass` | false | `Abandon` (via `applyTerminalPass`) | mark + check |
 | `Infra` | n/a | false | `Abandon` | mark failed + check |
@@ -54,17 +54,21 @@ Owns: the five-stage flow as one coherent narrative, the kind→verb table, the 
 
 ## Invariants
 
-- Exactly one terminal event closes the executor stream (`protocols/proto/v1/executor.proto:131-141`).
-- Every kind except `Park` and `AsyncAccepted` flows through `applyTerminal` and ends in `releaseLocksInTx` for the dispatch's acquired locks.
-- `ResolveClaimHandleTerminal` is the single audited site that fires `Producer.Commit` / `Abandon` *and* deletes the `rimsky_claim_handle` row claimant-guarded (`@blessed-invariant 4`). Both the active-terminal and held-terminal paths converge here.
+- Exactly one `StreamClose` event closes the executor stream (`proto:executor.proto::Execute`); the executor MUST close the stream immediately after.
+- Every kind except `Park` and `AwaitAsyncCallback` flows through `applyTerminal` and ends in `releaseLocksInTx` for the dispatch's acquired locks.
+- `ResolveClaimHandleTerminal` is the single audited site that fires `Producer.Commit` / `Abandon` *and* deletes the `rimsky_claim_handles` row claimant-guarded (`@blessed-invariant 4`). Both the active-terminal and held-terminal paths converge here.
 - The retry-loop cap (`shouldForceRetryLoopGiveUp`) at Stage 4 short-circuits before policy lookup; `resolve: pass` at Stage 3 bypasses Stage 4 entirely, so a `pass` handler is not subject to the retry-loop cap by design.
-- `AsyncAccepted` re-enters the spine through `foundation/integration/callback.go`; the final `terminalEvent` produced there feeds back into `applyTerminal`.
+- `AwaitAsyncCallback` re-enters the spine through `runtime/callback.go`; the final `terminalEvent` produced there feeds back into `applyTerminal`.
 
 ## Aliases and historical names
 
-The "auto-terminal" name applies specifically to the held-claim branch of Stage 5 (`auto-terminal-aggregate-resolution`). The spine as a whole has no canonical name in the source; this concept introduces "terminal resolution" as the umbrella.
+The "auto-terminal" name applies specifically to the held-claim branch of Stage 5 (`auto-terminal-aggregate-resolution`). The spine as a whole has no canonical name in the source; this concept introduces "terminal resolution" as the umbrella. Pre-2026-05-12 the wire proto had separate `Complete`, `Blocked`, `Errored`, `ParkRequested`, `AsyncAccepted` per-terminal messages; post-E.2 the wire shape is `StreamClose{outcome: Success | Error | Snooze | AwaitAsyncCallback}` and the supervisor's internal `terminalKind` synthesizes the legacy `executor_blocked` error_class from the new `Error.error_class` field.
 
 ## Open within this concept
 
-- `Blocked` and `Errored` differ only cosmetically in this spine — both flow through `applyTerminalBlockedOrErrored` and both Abandon and both increment the retry counter — see `tensions/blocked-vs-errored-routing.md`.
+(none live; the `Blocked`-vs-`Errored` routing tension was resolved by `spec:2026-05-12-nomenclature-resolution` Group E.2 / E.9 / E.10.)
+
+## Notes
+
+- Wire-event vocabulary updated for the post-`spec:2026-05-12-nomenclature-resolution` Group E.2 proto restructure (`StreamClose` + outcome oneof; `applyTerminalError` replaces `applyTerminalBlockedOrErrored`; `applyErrorPolicy` replaces `applyTerminalAppError`). The five-stage spine narrative survives unchanged at the supervisor-internal level; only the wire shape and the error-handler function names move.
 

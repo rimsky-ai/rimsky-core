@@ -14,10 +14,10 @@ import * as grpc from "@grpc/grpc-js";
  * `@grpc/proto-loader`. Both proto files live two directories up from
  * this package (`executors/claude-agent/` → `protocols/proto/v1/`).
  */
-export interface NodeExecutorPackage {
+export interface ExecutorPackage {
   rimsky: {
     v1: {
-      NodeExecutor: grpc.ServiceClientConstructor & {
+      Executor: grpc.ServiceClientConstructor & {
         service: grpc.ServiceDefinition;
       };
       ExecutorObservability: grpc.ServiceClientConstructor & {
@@ -42,7 +42,7 @@ function resolveProtoPath(filename: string): string {
   return found;
 }
 
-export function loadNodeExecutorProto(): NodeExecutorPackage {
+export function loadExecutorProto(): ExecutorPackage {
   const definition = protoLoader.loadSync(
     [
       resolveProtoPath("executor.proto"),
@@ -58,6 +58,6 @@ export function loadNodeExecutorProto(): NodeExecutorPackage {
   );
   const pkg = grpc.loadPackageDefinition(
     definition,
-  ) as unknown as NodeExecutorPackage;
+  ) as unknown as ExecutorPackage;
   return pkg;
 }

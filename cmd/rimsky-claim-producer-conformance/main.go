@@ -8,7 +8,7 @@
 // uniformity invariant (byte-equal Scope ⇒ identical
 // RealizedWriteSemantics), and the four runtime verbs.
 //
-// Lifecycle conformance lives in `rimsky-conformance --check-lifecycle`
+// Lifecycle conformance lives in `rimsky-executor-conformance --check-lifecycle`
 // per the layer-crystallization plan (Phase 4 / Task 29).
 //
 // Usage:
@@ -28,14 +28,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/integration/remote"
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/runtime/remote"
 )
 
 func main() {
 	endpoint := flag.String("endpoint", "", "claim-producer-service gRPC endpoint (e.g. grpc://localhost:9101)")
 	timeout := flag.Duration("timeout", 10*time.Second, "per-check timeout")
-	checkObs := flag.Bool("check-observability", false, "additionally probe StoreObservability")
+	checkObs := flag.Bool("check-observability", false, "additionally probe ClaimProducerObservability")
 	retentionSec := flag.Int("retention-test-seconds", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted")
 	flag.Parse()
 	obsRetentionTestSeconds = *retentionSec
@@ -96,10 +96,10 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 		return results
 	}
 	results = append(results, CheckResult{Name: "Capabilities"})
-	if len(caps.WriteSemanticsEnvelope) == 0 {
+	if len(caps.WriteSemanticsAllowed) == 0 {
 		results = append(results, CheckResult{
 			Name: "EnvelopeNonEmpty",
-			Err:  fmt.Errorf("write_semantics_envelope is empty"),
+			Err:  fmt.Errorf("write_semantics_allowed is empty"),
 		})
 		return results
 	}
@@ -109,10 +109,10 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 	// identical specs and assert returned RealizedWriteSemantics is in
 	// the envelope and identical across calls. Selectors are synthetic.
 	spec := locks.ClaimSpec{
-		StoreName: "conformance-target",
-		Selector:  "rimsky/conformance/uniformity",
-		Intent:    locks.IntentRead,
-		Alias:     "conformance",
+		ProducerName: "conformance-target",
+		Selector:     "rimsky/conformance/uniformity",
+		Intent:       locks.IntentRead,
+		Alias:        "conformance",
 	}
 	out1, err := c.Open(ctx, locks.ClaimID(uuid.New().String()), spec)
 	if err != nil {
@@ -136,7 +136,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 	if !caps.Contains(out1.Result.RealizedWriteSemantics) {
 		results = append(results, CheckResult{
 			Name: "OpenFirst",
-			Err:  fmt.Errorf("RealizedWriteSemantics %q not in advertised envelope %v", out1.Result.RealizedWriteSemantics, caps.WriteSemanticsEnvelope),
+			Err:  fmt.Errorf("RealizedWriteSemantics %q not in advertised envelope %v", out1.Result.RealizedWriteSemantics, caps.WriteSemanticsAllowed),
 		})
 		return results
 	}

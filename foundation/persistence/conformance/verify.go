@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testVerifyBeforeRunRead(t *testing.T, d persistence.Driver) {
+func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
@@ -33,7 +33,7 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Driver) {
 
 	supID := "verify-supervisor"
 	var dispatchID shared.UUID
-	if err := d.Store().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"test-executor"},
 			AcceptedStores:    []string{},

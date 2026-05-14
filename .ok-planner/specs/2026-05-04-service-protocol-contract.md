@@ -274,7 +274,7 @@ Control-api tracks idempotency in `rimsky_lifecycle_idempotency` (renamed from `
 
 ### 3.6 Conformance
 
-`rimsky-conformance --check-lifecycle` mode (combined with executor conformance into one binary).
+`rimsky-executor-conformance --check-lifecycle` mode (combined with executor conformance into one binary).
 
 ### 3.7 Out of scope
 
@@ -361,7 +361,7 @@ Modeling-layer invariant 11 re-asserted: executors MUST receive `userdata` verba
 
 ### 4.7 Conformance
 
-`rimsky-conformance --check-executor` mode. Test categories:
+`rimsky-executor-conformance --check-executor` mode. Test categories:
 
 - Capabilities handshake.
 - Execute sync terminal (success).
@@ -392,9 +392,9 @@ The handshake is one-shot at startup. Capabilities are cached for the process's 
 
 Three binaries:
 
-- **`rimsky-conformance`** — covers Executor and LifecycleSubscriber. Flags: `--endpoint`, `--transport grpc|http+json`, `--check-executor`, `--check-lifecycle`, `--retention-test-seconds`, `--require-stub-mode`.
+- **`rimsky-executor-conformance`** — covers Executor and LifecycleSubscriber. Flags: `--endpoint`, `--transport grpc|http+json`, `--check-executor`, `--check-lifecycle`, `--retention-test-seconds`, `--require-stub-mode`.
 - **`rimsky-claim-producer-conformance`** — renamed from `rimsky-store-conformance`. Covers ClaimProducer.
-- **`rimsky-conformance-probe`** — utility helper, retained as-is. Used by `rimsky-conformance --require-stub-mode` to verify executor stub-mode at startup.
+- **`rimsky-conformance-probe`** — utility helper, retained as-is. Used by `rimsky-executor-conformance --require-stub-mode` to verify executor stub-mode at startup.
 
 ## 7. Migration & vocabulary
 

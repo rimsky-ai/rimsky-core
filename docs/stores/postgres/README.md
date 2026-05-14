@@ -24,7 +24,7 @@ claim_producers:
   analytics_production:
     kind: postgres
     endpoint: dns:postgres-producer.svc.cluster.local:9000
-    write_semantics_envelope: [exclusive]
+    write_semantics_allowed: [exclusive]
     config:
       dsn: "postgres://rimsky:secret@db:5432/analytics"
       schema: production
@@ -51,12 +51,12 @@ as inert (`@blessed-invariant 20`).
 
 ## Operating
 
-Run the binary as a peer service. It connects to the operator's
+Run the binary as a service. It connects to the operator's
 Postgres via the configured DSN. Producer-internal state lives in a
 small set of tables (`rimsky_pg_claim_state` and similar) that the
-producer manages; rimsky's `rimsky_claim_handle` is the sole
+producer manages; rimsky's `rimsky_claim_handles` is the sole
 authority for lock state on rimsky's side.
 
 Per-claim TTL and orphan sweeps run inside the producer; the rimsky-
-side orphan-claim reaper handles abandoned `rimsky_claim_handle` rows
+side orphan-claim reaper handles abandoned `rimsky_claim_handles` rows
 in coordination with `Release` calls on the producer.

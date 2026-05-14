@@ -3,8 +3,10 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package persistence is the runtime-state-storage protocol for rimsky.
-// The Driver interface (driver.go) aggregates Queue, Store, and AdvisoryLocker
-// sub-interfaces. Two impls live under postgres/ and sqlite/.
+// The Database interface (database.go) aggregates Queue, Tables, and AdvisoryLocker
+// sub-interfaces. Two impls live under postgres/ and sqlite/. (The adapter
+// selector string Config.Driver = "postgres"/"sqlite" is distinct from the
+// runtime Database interface.)
 //
 // Spec: docs/history/2026-05-02-persistence-pluggable-and-unified-image-design.md
 package persistence
@@ -14,7 +16,7 @@ import (
 	"time"
 )
 
-// ErrNotFound is the driver-agnostic sentinel for "row does not exist".
+// ErrNotFound is the database-agnostic sentinel for "row does not exist".
 // Methods that distinguish absence from other failure modes (e.g.
 // MergeDelta's "row required") wrap this. Callers can use
 // `errors.Is(err, persistence.ErrNotFound)` regardless of driver — pgx's
@@ -45,7 +47,7 @@ type SQLiteConfig struct {
 }
 
 // Tx is the transaction handle threaded through Queue and per-feature
-// *Store methods. Driver-implemented; opaque to callers. Concrete carriers
+// *Table methods. Driver-implemented; opaque to callers. Concrete carriers
 // embed TxMarker so they satisfy Tx without being forgeable from outside
 // the persistence package tree.
 type Tx interface{ isTx() }

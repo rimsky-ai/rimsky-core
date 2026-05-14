@@ -61,9 +61,9 @@ The full userdata schema is documented in
   Failures up to `max_schema_corrections` (default 3) drive a
   corrective resume-prompt; the next call to `report_complete` is
   expected to fix it. Beyond the cap, claude-agent emits
-  `Errored { error_class: "schema_validation_failed" }`.
+  `Error { error_class: "schema_validation_failed" }`.
 - **Auto rate-limit parking** — when the Claude CLI surfaces a 429,
-  claude-agent emits `ParkRequested { reason: "rate_limit",
+  claude-agent emits `Park { reason: "rate_limit",
   resume_at: <reset_ts>, session_token: <session_id> }` and exits
   cleanly. The supervisor parks the node; the rimsky scheduler
   resumes it at `resume_at`, claude-agent restarts the CLI with
@@ -104,5 +104,5 @@ The executor is reachable via gRPC (default port from environment or
 the Helm chart). Operators wire its endpoint into rimsky's
 `executors:` block in `rimsky.yml`. It does not require a database;
 state lives entirely in the dispatching supervisor's
-`rimsky_worker_request` row plus the rimsky-side blob backend if
+`rimsky_node_runs` row plus the rimsky-side blob backend if
 spilling is enabled.

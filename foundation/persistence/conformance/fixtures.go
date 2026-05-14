@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // fixtures.go — shared seed helpers for the cross-driver conformance
-// suite. Each helper takes a persistence.Driver so it works against both
+// suite. Each helper takes a persistence.Database so it works against both
 // Postgres and SQLite without driver-specific cruft.
 package conformance
 
@@ -14,13 +14,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // seedFixtureSet creates the minimum chain of rows needed to satisfy
-// the FK chain rimsky_worker_request -> rimsky_nodes -> rimsky_instances ->
-// rimsky_templates AND rimsky_worker_request -> rimsky_frames. Returns the
+// the FK chain rimsky_node_runs -> rimsky_nodes -> rimsky_instances ->
+// rimsky_templates AND rimsky_node_runs -> rimsky_frames. Returns the
 // (nodeID, frameID) pair for tests to enqueue against.
 //
 // The template carries frame_resolution = "serial_queue" + a node-typed
@@ -34,11 +34,11 @@ type fixtureSet struct {
 	FrameID      shared.UUID
 }
 
-func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Driver) fixtureSet {
+func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) fixtureSet {
 	t.Helper()
-	store := d.Store()
+	store := d.Tables()
 	if store == nil {
-		t.Fatalf("seedFixtureSet: driver.Store() returned nil")
+		t.Fatalf("seedFixtureSet: driver.Tables() returned nil")
 	}
 
 	templateHash := "sha256-" + uuid.NewString()
@@ -46,12 +46,12 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Driver) fix
 	nodeID := uuid.New()
 	frameID := uuid.New()
 
-	spec := nodepkg.TemplateSpec{
-		Name:            "conformance-fixture",
-		Version:         "1",
-		FrameResolution: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:  600000,
-		Nodes: []nodepkg.TemplateNodeDef{
+	spec := spec.TemplateSpec{
+		Name:                "conformance-fixture",
+		Version:             "1",
+		FrameResolutionMode: spec.FrameResolutionSerialQueue,
+		FrameTimeoutMs:      600000,
+		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
 	}
@@ -112,7 +112,7 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Driver) fix
 
 // inTx wraps fn in a fresh Persist.Transaction for use in test-helper
 // reads under option C (every Store method requires an explicit tx).
-func inTx(ctx context.Context, store persistence.Store, fn func(tx persistence.Tx) error) error {
+func inTx(ctx context.Context, store persistence.Tables, fn func(tx persistence.Tx) error) error {
 	return store.Transaction(ctx, func(_ context.Context, tx persistence.Tx) error {
 		return fn(tx)
 	})

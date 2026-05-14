@@ -17,9 +17,18 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-func TestParseCallbackBody_NewShape_Complete(t *testing.T) {
+func extractStreamCloseOutcome(t *testing.T, ev *genv1.ExecuteEvent) any {
+	t.Helper()
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		t.Fatalf("expected StreamClose, got %T", ev.Event)
+	}
+	return sc.StreamClose.Outcome
+}
+
+func TestParseCallbackBody_NewShape_Success(t *testing.T) {
 	body := map[string]any{
-		"complete": map[string]any{
+		"success": map[string]any{
 			"attributes_delta": map[string]any{"k": "v"},
 			"changed":          true,
 			"change_summary":   "applied",
@@ -29,47 +38,25 @@ func TestParseCallbackBody_NewShape_Complete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	c, ok := ev.Event.(*genv1.ExecuteEvent_Complete)
+	oc := extractStreamCloseOutcome(t, ev)
+	c, ok := oc.(*genv1.StreamClose_Success)
 	if !ok {
-		t.Fatalf("expected Complete, got %T", ev.Event)
+		t.Fatalf("expected Success, got %T", oc)
 	}
-	if !c.Complete.Changed {
+	if !c.Success.Changed {
 		t.Errorf("changed not propagated")
 	}
-	if c.Complete.ChangeSummary != "applied" {
-		t.Errorf("change_summary=%q want=applied", c.Complete.ChangeSummary)
+	if c.Success.ChangeSummary != "applied" {
+		t.Errorf("change_summary=%q want=applied", c.Success.ChangeSummary)
 	}
-	if got := c.Complete.GetAttributesDelta().AsMap(); got["k"] != "v" {
+	if got := c.Success.GetAttributesDelta().AsMap(); got["k"] != "v" {
 		t.Errorf("attributes_delta=%v want k=v", got)
 	}
 }
 
-func TestParseCallbackBody_NewShape_Blocked(t *testing.T) {
+func TestParseCallbackBody_NewShape_Error(t *testing.T) {
 	body := map[string]any{
-		"blocked": map[string]any{
-			"reason":  "missing-input",
-			"context": map[string]any{"hint": "wait"},
-		},
-	}
-	ev, err := parseCallbackBody(body)
-	if err != nil {
-		t.Fatalf("parseCallbackBody: %v", err)
-	}
-	b, ok := ev.Event.(*genv1.ExecuteEvent_Blocked)
-	if !ok {
-		t.Fatalf("expected Blocked, got %T", ev.Event)
-	}
-	if b.Blocked.Reason != "missing-input" {
-		t.Errorf("reason=%q want missing-input", b.Blocked.Reason)
-	}
-	if got := b.Blocked.GetContext().AsMap(); got["hint"] != "wait" {
-		t.Errorf("context=%v", got)
-	}
-}
-
-func TestParseCallbackBody_NewShape_Errored(t *testing.T) {
-	body := map[string]any{
-		"errored": map[string]any{
+		"error": map[string]any{
 			"error_class": "boom",
 			"payload":     map[string]any{"detail": "x"},
 		},
@@ -78,20 +65,21 @@ func TestParseCallbackBody_NewShape_Errored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	e, ok := ev.Event.(*genv1.ExecuteEvent_Errored)
+	oc := extractStreamCloseOutcome(t, ev)
+	e, ok := oc.(*genv1.StreamClose_Error)
 	if !ok {
-		t.Fatalf("expected Errored, got %T", ev.Event)
+		t.Fatalf("expected Error, got %T", oc)
 	}
-	if e.Errored.ErrorClass != "boom" {
-		t.Errorf("error_class=%q want boom", e.Errored.ErrorClass)
+	if e.Error.ErrorClass != "boom" {
+		t.Errorf("error_class=%q want boom", e.Error.ErrorClass)
 	}
 }
 
-func TestParseCallbackBody_NewShape_ParkRequested_Base64Payload(t *testing.T) {
+func TestParseCallbackBody_NewShape_Park_Base64Payload(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString([]byte("opaque-bytes"))
 	resumeAt := time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC).Format(time.RFC3339)
 	body := map[string]any{
-		"park_requested": map[string]any{
+		"park": map[string]any{
 			"reason":        "rate_limit",
 			"payload":       encoded,
 			"session_token": "sess-1",
@@ -102,28 +90,29 @@ func TestParseCallbackBody_NewShape_ParkRequested_Base64Payload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	p, ok := ev.Event.(*genv1.ExecuteEvent_ParkRequested)
+	oc := extractStreamCloseOutcome(t, ev)
+	p, ok := oc.(*genv1.StreamClose_Park)
 	if !ok {
-		t.Fatalf("expected ParkRequested, got %T", ev.Event)
+		t.Fatalf("expected Park, got %T", oc)
 	}
-	if string(p.ParkRequested.Payload) != "opaque-bytes" {
-		t.Errorf("payload=%q want opaque-bytes", string(p.ParkRequested.Payload))
+	if string(p.Park.Payload) != "opaque-bytes" {
+		t.Errorf("payload=%q want opaque-bytes", string(p.Park.Payload))
 	}
-	if p.ParkRequested.SessionToken != "sess-1" {
-		t.Errorf("session_token=%q", p.ParkRequested.SessionToken)
+	if p.Park.SessionToken != "sess-1" {
+		t.Errorf("session_token=%q", p.Park.SessionToken)
 	}
-	if p.ParkRequested.ResumeAt == nil {
+	if p.Park.ResumeAt == nil {
 		t.Fatalf("resume_at not propagated")
 	}
-	if got := p.ParkRequested.ResumeAt.AsTime(); !got.Equal(time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC)) {
+	if got := p.Park.ResumeAt.AsTime(); !got.Equal(time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC)) {
 		t.Errorf("resume_at=%v", got)
 	}
 }
 
-func TestParseCallbackBody_NewShape_ParkRequested_LiteralPayload(t *testing.T) {
+func TestParseCallbackBody_NewShape_Park_LiteralPayload(t *testing.T) {
 	// Non-base64 payload is tolerated as a literal string.
 	body := map[string]any{
-		"park_requested": map[string]any{
+		"park": map[string]any{
 			"reason":        "rate_limit",
 			"payload":       "!!! not base64 !!!",
 			"session_token": "sess-2",
@@ -133,69 +122,44 @@ func TestParseCallbackBody_NewShape_ParkRequested_LiteralPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	p, ok := ev.Event.(*genv1.ExecuteEvent_ParkRequested)
+	oc := extractStreamCloseOutcome(t, ev)
+	p, ok := oc.(*genv1.StreamClose_Park)
 	if !ok {
-		t.Fatalf("expected ParkRequested, got %T", ev.Event)
+		t.Fatalf("expected Park, got %T", oc)
 	}
-	if string(p.ParkRequested.Payload) != "!!! not base64 !!!" {
-		t.Errorf("payload=%q", string(p.ParkRequested.Payload))
+	if string(p.Park.Payload) != "!!! not base64 !!!" {
+		t.Errorf("payload=%q", string(p.Park.Payload))
 	}
-	if p.ParkRequested.ResumeAt != nil {
-		t.Errorf("resume_at should be nil when absent, got %v", p.ParkRequested.ResumeAt)
-	}
-}
-
-func TestParseCallbackBody_LegacyShape_Complete(t *testing.T) {
-	body := map[string]any{
-		"type":             "complete",
-		"attributes_delta": map[string]any{"x": float64(1)},
-		"changed":          false,
-	}
-	ev, err := parseCallbackBody(body)
-	if err != nil {
-		t.Fatalf("parseCallbackBody: %v", err)
-	}
-	c, ok := ev.Event.(*genv1.ExecuteEvent_Complete)
-	if !ok {
-		t.Fatalf("expected Complete, got %T", ev.Event)
-	}
-	if c.Complete.Changed {
-		t.Errorf("changed=true want false")
-	}
-	if got := c.Complete.GetAttributesDelta().AsMap(); got["x"] != float64(1) {
-		t.Errorf("attributes_delta=%v", got)
+	if p.Park.ResumeAt != nil {
+		t.Errorf("resume_at should be nil when absent, got %v", p.Park.ResumeAt)
 	}
 }
 
-func TestParseCallbackBody_LegacyShape_Errored(t *testing.T) {
+func TestParseCallbackBody_RejectsMultipleOutcomes(t *testing.T) {
 	body := map[string]any{
-		"type":        "errored",
-		"error_class": "ec",
-		"payload":     map[string]any{"why": "x"},
-	}
-	ev, err := parseCallbackBody(body)
-	if err != nil {
-		t.Fatalf("parseCallbackBody: %v", err)
-	}
-	if _, ok := ev.Event.(*genv1.ExecuteEvent_Errored); !ok {
-		t.Fatalf("expected Errored, got %T", ev.Event)
-	}
-}
-
-func TestParseCallbackBody_RejectsMultipleTerminals(t *testing.T) {
-	// Two terminal fields → reject. Mirrors the supervisor's parser.
-	body := map[string]any{
-		"complete": map[string]any{},
-		"errored":  map[string]any{"error_class": "x"},
+		"success": map[string]any{},
+		"error":   map[string]any{"error_class": "x"},
 	}
 	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for multi-terminal body, got nil")
+		t.Fatal("expected error for multi-outcome body, got nil")
 	}
 }
 
-func TestParseCallbackBody_NoTerminal(t *testing.T) {
+func TestParseCallbackBody_NoOutcome(t *testing.T) {
 	if _, err := parseCallbackBody(map[string]any{"events": []any{}}); err == nil {
-		t.Fatal("expected error for body with no terminal field")
+		t.Fatal("expected error for body with no outcome field")
+	}
+}
+
+func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
+	// The legacy {type: "complete"|"blocked"|"errored"} shape is no
+	// longer accepted post-2026-05-12.
+	body := map[string]any{
+		"type":             "complete",
+		"attributes_delta": map[string]any{},
+	}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for legacy type-discriminator body, got nil")
 	}
 }
 
@@ -210,7 +174,7 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 	ch := r.Register(ackID)
 
 	postCallback(t, r.URL(), ackID, map[string]any{
-		"complete": map[string]any{"changed": true},
+		"success": map[string]any{"changed": true},
 	})
 
 	select {
@@ -218,8 +182,9 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 		if ev == nil {
 			t.Fatal("nil ev")
 		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Complete); !ok {
-			t.Fatalf("expected Complete, got %T", ev.Event)
+		oc := extractStreamCloseOutcome(t, ev)
+		if _, ok := oc.(*genv1.StreamClose_Success); !ok {
+			t.Fatalf("expected Success, got %T", oc)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for callback")
@@ -227,9 +192,6 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 }
 
 func TestReceiver_HandleThenRegister(t *testing.T) {
-	// Late-registration path: the POST arrives first; handle() buffers
-	// the synthesized event on the channel; Register() then returns the
-	// already-buffered channel.
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)
@@ -238,18 +200,17 @@ func TestReceiver_HandleThenRegister(t *testing.T) {
 
 	ackID := "ack-hr"
 	postCallback(t, r.URL(), ackID, map[string]any{
-		"complete": map[string]any{"changed": false},
+		"success": map[string]any{"changed": false},
 	})
 
-	// Tiny pause to ensure the POST handler has finished buffering before
-	// Register pulls the channel out of the map.
 	time.Sleep(100 * time.Millisecond)
 
 	ch := r.Register(ackID)
 	select {
 	case ev := <-ch:
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Complete); !ok {
-			t.Fatalf("expected Complete, got %T", ev.Event)
+		oc := extractStreamCloseOutcome(t, ev)
+		if _, ok := oc.(*genv1.StreamClose_Success); !ok {
+			t.Fatalf("expected Success, got %T", oc)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for buffered callback")
@@ -267,17 +228,18 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 	ch := r.Register(ackID)
 
 	postCallback(t, r.URL(), ackID, map[string]any{
-		"complete": map[string]any{"changed": true},
+		"success": map[string]any{"changed": true},
 	})
 	postCallback(t, r.URL(), ackID, map[string]any{
-		"errored": map[string]any{"error_class": "later"},
+		"error": map[string]any{"error_class": "later"},
 	})
 
 	first := <-ch
-	if _, ok := first.Event.(*genv1.ExecuteEvent_Complete); !ok {
-		t.Fatalf("expected first=Complete, got %T", first.Event)
+	oc := extractStreamCloseOutcome(t, first)
+	if _, ok := oc.(*genv1.StreamClose_Success); !ok {
+		t.Fatalf("expected first=Success, got %T", oc)
 	}
-	// Channel buffer is 1; the second POST must be silently discarded.
+
 	select {
 	case extra, ok := <-ch:
 		if ok && extra != nil {
@@ -289,8 +251,6 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 }
 
 func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
-	// Race detector should be clean: many goroutines Register & POST in
-	// parallel, every ackID must yield exactly one delivered event.
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)
@@ -305,12 +265,10 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			ackID := fmt.Sprintf("ack-%d", i)
-			// Half register first, half post first — exercises both
-			// branches of the register/handle cooperation.
 			if i%2 == 0 {
 				ch := r.Register(ackID)
 				postCallback(t, r.URL(), ackID, map[string]any{
-					"complete": map[string]any{"changed": false},
+					"success": map[string]any{"changed": false},
 				})
 				select {
 				case <-ch:
@@ -319,7 +277,7 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 				}
 			} else {
 				postCallback(t, r.URL(), ackID, map[string]any{
-					"complete": map[string]any{"changed": true},
+					"success": map[string]any{"changed": true},
 				})
 				ch := r.Register(ackID)
 				select {
@@ -334,9 +292,6 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 }
 
 func TestReceiver_AdvertiseHostFallback(t *testing.T) {
-	// When AdvertiseHost is "0.0.0.0" the receiver must NOT advertise that
-	// to executors (it isn't a routable peer address). Falls back to
-	// 127.0.0.1.
 	r, err := StartCallbackReceiver(ReceiverOptions{
 		BindHost:      "127.0.0.1",
 		AdvertiseHost: "0.0.0.0",
@@ -367,10 +322,7 @@ func TestReceiver_HandleRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestReceiver_HandleRejectsMultiTerminal(t *testing.T) {
-	// The HTTP layer should propagate parseCallbackBody's rejection of
-	// multi-terminal bodies as 400 — surfacing executor defects to the
-	// conformance suite the same way the supervisor would in production.
+func TestReceiver_HandleRejectsMultiOutcome(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)
@@ -378,8 +330,8 @@ func TestReceiver_HandleRejectsMultiTerminal(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	body, _ := json.Marshal(map[string]any{
-		"complete": map[string]any{},
-		"blocked":  map[string]any{"reason": "x"},
+		"success": map[string]any{},
+		"error":   map[string]any{"error_class": "x"},
 	})
 	resp, err := http.Post(r.URL()+"/v1/callback/x", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -387,7 +339,7 @@ func TestReceiver_HandleRejectsMultiTerminal(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for multi-terminal body", resp.StatusCode)
+		t.Errorf("status=%d want 400 for multi-outcome body", resp.StatusCode)
 	}
 }
 

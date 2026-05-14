@@ -5,14 +5,14 @@ This page walks Rimsky's vocabulary in learning order. Each section names the co
 ## 1. Nodes and node states
 
 <!-- @source: concepts/node.md -->
-> The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of four states.
+> The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 
-The four states are exhaustive — every node, at every moment, is in one of them.
+The five states are exhaustive — every node, at every moment, is in one of them.
 
 <!-- @source: concepts/node-state.md -->
-> The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled).
+> The five named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`, `parked`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled) and the `parked` distinction (non-terminal hold awaiting time-based wake or external invalidate).
 
-Transitions are explicit. A `running` node moves to `fresh` (success) or `failed` (failure with no auto-recovery scheduled); the system does not silently coerce same-state transitions.
+Transitions are explicit. A `running` node moves to `fresh` (success), `failed` (failure with no auto-recovery scheduled), or `parked` (non-terminal hold); the system does not silently coerce same-state transitions.
 
 See [`concepts/node.md`](../concepts/node.md) and [`concepts/node-state.md`](../concepts/node-state.md).
 
@@ -49,7 +49,7 @@ Cascade is a pure reachability walk; it does no I/O and no executor dispatch on 
 <!-- @source: concepts/invalidate.md -->
 > Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and cascades the same message to dependents. The cascade engine is a pure reachability walk over the dependency graph rooted at the invalidated node.
 
-There is no second message. "Recalculate" is a verb describing what the scheduler does to a stale node — not a peer message that travels alongside `invalidate`.
+There is no second message. "Recalculate" is a verb describing what the scheduler does to a stale node — not a service message that travels alongside `invalidate`.
 
 See [`concepts/cascade.md`](../concepts/cascade.md), [`concepts/invalidate.md`](../concepts/invalidate.md).
 
@@ -106,10 +106,10 @@ External services integrate with Rimsky via three wire protocols.
 > The protocol-level term for a service that produces claim handles for Rimsky's lock-and-claim primitives. Implements five methods (`Open`, `Commit`, `Abandon`, `Release`, `Capabilities`). Out-of-process; rimsky talks to claim producers over gRPC.
 
 <!-- @source: concepts/executor.md -->
-> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
+> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 <!-- @source: concepts/lifecycle-subscriber.md -->
-> An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+> An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 For implementation guides, see [`protocols/`](../protocols/).
 

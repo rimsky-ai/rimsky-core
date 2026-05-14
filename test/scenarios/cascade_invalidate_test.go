@@ -26,10 +26,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestCascadeInvalidate(t *testing.T) {
@@ -39,9 +39,9 @@ func TestCascadeInvalidate(t *testing.T) {
 	// Each executor returns an attributes_delta carrying the field that
 	// downstream nodes pull in via their `source: {{deps.<n>.<f>}}`
 	// directives.
-	h.Stub.WhenType("a").Complete(map[string]any{"a": 1}, true, "a")
-	h.Stub.WhenType("b").Complete(map[string]any{"b": 1}, true, "b")
-	h.Stub.WhenType("c").Complete(map[string]any{"c": 1}, true, "c")
+	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, true, "a")
+	h.Stub.WhenType("b").Success(map[string]any{"b": 1}, true, "b")
+	h.Stub.WhenType("c").Success(map[string]any{"c": 1}, true, "c")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "chain", Version: "1",
@@ -90,9 +90,9 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.NotNil(t, c)
 
 	// All three reach fresh on first run.
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 15*time.Second))
-	require.True(t, h.WaitForNodeState(b.ID, shared.NodeStateFresh, 15*time.Second))
-	require.True(t, h.WaitForNodeState(c.ID, shared.NodeStateFresh, 15*time.Second))
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 15*time.Second))
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 15*time.Second))
+	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 15*time.Second))
 
 	// Verify the new data-flow path: b's attributes.data should contain
 	// the `a` field (substituted from deps.a.a) and the `b` field
@@ -115,10 +115,10 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// Expect B and C to eventually return to fresh (A runs again and cascades).
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 20*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 20*time.Second),
 		"a did not re-reach fresh")
-	require.True(t, h.WaitForNodeState(b.ID, shared.NodeStateFresh, 20*time.Second),
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 20*time.Second),
 		"b did not re-reach fresh")
-	require.True(t, h.WaitForNodeState(c.ID, shared.NodeStateFresh, 20*time.Second),
+	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 20*time.Second),
 		"c did not re-reach fresh")
 }

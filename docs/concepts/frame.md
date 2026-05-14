@@ -38,7 +38,7 @@ A template may declare `frame_timeout_ms:` (default 600_000 = 10 minutes; hard f
 
 Trips a `frame.stuck.observed` slog warning and nothing else. There is no destructive action; the frame stays `running`. Operators are expected to investigate via the dashboard / event log and decide whether to issue an operator invalidate, mark a node failed manually, or wait. (Pre-v1 design choice: no blanket "frame too old; kill it" policy. We will revisit destructive timeout behavior, if any, post-v1.)
 
-This is distinct from per-run executor silence-timeout (which lives on the executor peer): `frame_timeout_ms` is the scheduler-level "is the frame making progress" observation; per-executor silence is the executor-side "did this run go silent" metric. Neither auto-fails a frame.
+This is distinct from per-run executor silence-timeout (which lives on the executor service): `frame_timeout_ms` is the scheduler-level "is the frame making progress" observation; per-executor silence is the executor-side "did this run go silent" metric. Neither auto-fails a frame.
 
 ## How you encounter it
 
@@ -56,7 +56,7 @@ This is distinct from per-run executor silence-timeout (which lives on the execu
 
 ## Held frames
 
-A frame is **held** when one or more of its nodes is in a non-terminal pause state — typically `parked` (the node emitted `ParkRequested` waiting for a time-based or signal-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via `GET /admin/diagnostics/held-frames` (see `docs/concepts/operational-health.md`). They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Auto-terminal of held claims fires once every node in the holding subgraph completes, so the held-claim release happens at the end of the holding subgraph, not at park boundary.
+A frame is **held** when one or more of its nodes is in a non-terminal pause state — typically `parked` (the node emitted `Park` waiting for a time-based or signal-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via `GET /admin/diagnostics/held-frames` (see `docs/concepts/operational-health.md`). They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Auto-terminal of held claims fires once every node in the holding subgraph completes, so the held-claim release happens at the end of the holding subgraph, not at park boundary.
 
 ## Common mistakes
 

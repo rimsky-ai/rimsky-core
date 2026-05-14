@@ -11,11 +11,11 @@ references:
 
 ## What it is
 
-A peer service that implements the gRPC `LifecycleSubscriber` protocol (six methods: `OnTemplateRegistered/Deployed/Undeployed/Deregistered`, `OnInstanceCreated/Terminated`). Opt-in per peer via `protocols: [claim_producer, lifecycle_subscriber]` in `rimsky.yml`. Idempotency tracked in `rimsky_lifecycle_idempotency`.
+A service that implements the gRPC `LifecycleSubscriber` protocol (six methods: `OnTemplateRegistered/Deployed/Undeployed/Deregistered`, `OnInstanceCreated/Terminated`). Opt-in per service via `protocols: [claim_producer, lifecycle_subscriber]` in `rimsky.yml`. Idempotency tracked in `rimsky_lifecycle_idempotencies`.
 
 ## Purpose
 
-Some peers need to react to control-plane state transitions — e.g. the bundled postgres store wants to apply per-template DDL on `OnTemplateDeployed`. A separate optional protocol on the same peer binary keeps producer-only impls simple and lets reactive impls subscribe explicitly.
+Some peers need to react to control-plane state transitions — e.g. the bundled postgres store wants to apply per-template DDL on `OnTemplateDeployed`. A separate optional protocol on the same service binary keeps producer-only impls simple and lets reactive impls subscribe explicitly.
 
 ## Boundaries
 
@@ -24,7 +24,7 @@ Owns: the six event types, the synchronous fan-out timing, the opt-in subscripti
 ## Invariants
 
 - Events fire from control-api (not the supervisor), synchronously at state-transition time. A slow subscriber holds up the operator-facing response.
-- Idempotency at the rimsky side: each `(peer, event)` pair fires exactly once.
+- Idempotency at the rimsky side: each `(service, event)` pair fires exactly once.
 - Peers referenced by a template but not subscribed silently skip fan-out (non-subscription is the default).
 - `OnTemplateRegistered.spec` carries the canonical JCS bytes (deterministically re-hashable).
 

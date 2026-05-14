@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // EventRow mirrors a row of rimsky_events.
@@ -48,8 +48,8 @@ type EventListResult struct {
 	NextCursor string
 }
 
-// EventStore is the rimsky_events accessor.
-type EventStore interface {
+// EventTable is the rimsky_events accessor.
+type EventTable interface {
 	Append(ctx context.Context, in EventAppendInput, tx Tx) error
 	List(ctx context.Context, filter EventListFilter, pag ListPagination, tx Tx) (EventListResult, error)
 	// LastTerminalByNodes returns the most-recent dispatch-terminal event

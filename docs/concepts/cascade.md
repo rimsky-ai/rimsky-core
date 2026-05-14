@@ -19,7 +19,7 @@ The propagation of `invalidate` through the node graph. When a node loses or rep
 
 A workflow whose steps depend on each other faces a natural problem: when an upstream input changes, every downstream step that consumed it is now stale. Rimsky models this directly. Each node declares its dependencies; when a node's value changes (or is explicitly invalidated), the cascade engine walks the dependency graph and marks every dependent stale. The scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their executors.
 
-`invalidate` is Rimsky's only graph-level message. Recalculation is not a peer message — it's a scheduler action. The dispatch loop sees a node in `stale`, checks eligibility (claims and locks acquirable, dependencies fresh), and runs the node's executor. The clean separation lets the cascade engine be a pure reachability computation while the scheduler handles all the I/O concerns (claim acquisition, lock contention, executor dispatch, async callbacks).
+`invalidate` is Rimsky's only graph-level message. Recalculation is not a service message — it's a scheduler action. The dispatch loop sees a node in `stale`, checks eligibility (claims and locks acquirable, dependencies fresh), and runs the node's executor. The clean separation lets the cascade engine be a pure reachability computation while the scheduler handles all the I/O concerns (claim acquisition, lock contention, executor dispatch, async callbacks).
 
 A cascade always happens in the context of a frame. The frame ID stamps every cascade-affected row, so observability tooling can answer "show me everything that happened as a result of this invalidate."
 
@@ -52,7 +52,7 @@ A node's executor commits with a `changed: bool` declaration. `changed: true` (t
 ## Common mistakes
 
 - **Rimsky's cascade ≠ CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through a directed acyclic dependency graph.
-- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a peer message that travels alongside.
+- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
 - Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is dependency-driven, not value-diff-driven; the executor commits `changed: false` if it wants to halt propagation at itself.
 - Confusing cascade reach with executor invocation. Cascade marks nodes stale; the scheduler decides which stale nodes are eligible for dispatch (after acquiring any required claims and locks).
 

@@ -12,7 +12,7 @@ affects:
 
 ## What is muddy
 
-Under `frame_resolution: coalesce`, a schedule firing N times before its first frame completes deduplicates the source node into a single queued row (`array_append` guard at `foundation/persistence/postgres/frames.go:312-315`). The supervisor's audit log faithfully records N `schedule_fired` events (one per row processed by `ProcessSchedules`, emitted at `schedule_ticker.go:116-127`) — but there is no companion event that says "this fire was coalesced into an existing pending frame" or "this fire created a fresh queued frame".
+Under `frame_resolution_mode: coalesce`, a schedule firing N times before its first frame completes deduplicates the source node into a single queued row (`array_append` guard at `foundation/persistence/postgres/frames.go`). The supervisor's audit log faithfully records N `schedule_fired` events (one per row processed by `ProcessSchedules`, emitted at `graph/scheduler/schedule_ticker.go`) — but there is no companion event that says "this fire was coalesced into an existing pending frame" or "this fire created a fresh queued frame".
 
 An operator tracing why a schedule fired 6 times during an outage but the dependent recompute only ran once cannot distinguish the cases from the event log alone:
 
@@ -35,6 +35,6 @@ The information is inferable by joining `rimsky_schedules.last_fired_at` against
 ## Evidence
 
 - `_discover/2026-05-10-cron-no-backfill.md` Observations bullet "no observability of coalesced fires".
-- `foundation/persistence/postgres/frames.go:303-323` — `EnqueueCoalesceFrame` body.
-- `modeling/scheduler/schedule_ticker.go:116-127` — the `schedule_fired` event emit.
+- `foundation/persistence/postgres/frames.go` — `EnqueueCoalesceFrame` body.
+- `graph/scheduler/schedule_ticker.go` — the `schedule_fired` event emit.
 

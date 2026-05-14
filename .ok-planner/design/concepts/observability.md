@@ -10,20 +10,21 @@ references:
 
 ## What it is
 
-The peer-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols per peer (`ExecutorObservability`, `StoreObservability`) exposing `Capabilities` / `GetTrace` / `StreamTrace`. The handshake (`modeling/observability/handshake.go`) probes each declared peer in parallel at rimsky startup, populating the `discovery-cache`. Also the canonical site for the per-peer `userdata_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
+The service-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols per service (`ExecutorObservability`, `ClaimProducerObservability`) exposing `Capabilities` / `GetTrace` / `StreamTrace`. The handshake (`control/observability/handshake.go`) probes each declared service in parallel at rimsky startup, populating the `discovery-cache`. Also the canonical site for the per-service `userdata_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
 
 ## Purpose
 
-Peers declare their own capabilities and trace surfaces; rimsky should learn them once, cache the result, and consult the cache at validation gates. Keeping the protocol-side concept separate from the cache it populates (`discovery-cache`) and the operator-dashboard backplane (`cascade-graph`) keeps each concept's boundary sharp.
+Services declare their own capabilities and trace surfaces; rimsky should learn them once, cache the result, and consult the cache at validation gates. Keeping the protocol-side concept separate from the cache it populates (`discovery-cache`) and the operator-dashboard backplane (`cascade-graph`) keeps each concept's boundary sharp.
 
 ## Boundaries
 
-Owns: the optional peer protocols, the handshake mechanism, the refresh-loop policy, the per-peer `userdata_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `named-event`.
+Owns: the optional service protocols, the handshake mechanism, the refresh-loop policy, the per-service `userdata_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `named-event`.
 
 ## Invariants
 
-- The handshake is best-effort: unreachable peers recorded as `Unreachable` in `discovery-cache`; never aborts startup.
-- Per-peer `userdata_schema` validates at template registration AND at dispatch post-merge/post-substitution.
+- The handshake is best-effort: unreachable services recorded as `Unreachable` in `discovery-cache`; never aborts startup.
+- The Capabilities RPC is named `Capabilities` uniformly across `ExecutorObservability` and `ClaimProducerObservability` (per `spec:2026-05-12-nomenclature-resolution` Group E.11 / B.4); pre-2026-05-12 the executor side was `GetCapabilities` and the store side was `Capabilities`.
+- Per-service `userdata_schema` validates at template registration AND at dispatch post-merge/post-substitution.
 
 ## Aliases and historical names
 

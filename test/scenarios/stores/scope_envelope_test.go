@@ -21,14 +21,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/control/config"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/locks/storetest"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/executor"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -45,7 +45,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	// below substitutes its own in-process Fake registry so we can
 	// observe TemplateID/InstanceID directly on the recorded call.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -55,12 +55,12 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "scope-envelope", Version: "1",
@@ -80,11 +80,11 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
 	reg := locks.NewRegistry()
 	reg.Add("content", fake)
 
-	args := integration.RunArgs{
+	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		ClaimHandles:      h.Persist.ClaimHandles(),
@@ -101,7 +101,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
-	out, err := integration.RunNode(h.Ctx, args, nil)
+	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should have dispatched the node")
 

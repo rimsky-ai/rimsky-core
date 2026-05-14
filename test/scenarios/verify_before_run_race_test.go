@@ -19,7 +19,7 @@
 // gates execution end to end.
 //
 // Migrated to the stores-redesign template grammar (spec §11): no
-// resource wiring; the runner is driven through `foundation/integration.RunNode`
+// resource wiring; the runner is driven through `foundation/runtime.RunNode`
 // directly with a stub-store registry from the harness.
 package scenarios
 
@@ -30,13 +30,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 func TestVerifyBeforeRunRace(t *testing.T) {
@@ -58,13 +59,13 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// a different integration. ClaimDispatchRow is claimant-guarded and
 	// SelectCandidates filters claimed_by IS NULL — neither path will
 	// admit our runner.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_worker_request WHERE node_id = $1`, n.ID)
+	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 	// Reuse the frame_id from the node row (seeded by frame.RunTick).
 	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
 	dispatchID := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id)
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), NOW(), $3)`,
 		dispatchID, n.ID, *n.FrameID,
 	)
@@ -76,7 +77,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// RunNode with our SupervisorID should find no eligible candidate
 	// (the row's claimed_by is set), return Ran=false, and leave the
 	// node unchanged.
-	args := integration.RunArgs{
+	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		ClaimHandles:      h.Persist.ClaimHandles(),
@@ -92,7 +93,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
-	out, err := integration.RunNode(h.Ctx, args, nil)
+	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.False(t, out.Ran,
 		"runner should not execute when another supervisor holds the claim")
@@ -104,7 +105,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		got = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateStale, got.State)
+	require.Equal(t, cascade.NodeStateStale, got.State)
 
 	own, err := h.Queue.GetClaimedBy(h.Ctx, dispatchID)
 	require.NoError(t, err)

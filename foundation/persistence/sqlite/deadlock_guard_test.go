@@ -32,14 +32,13 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
-
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // openMigratedSQLite returns a 1-conn SQLite-backed driver with
 // migrations applied. The driver is closed on test cleanup.
-func openMigratedSQLite(t *testing.T) persistence.Driver {
+func openMigratedSQLite(t *testing.T) persistence.Database {
 	t.Helper()
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{
@@ -83,7 +82,7 @@ func expectPanic(fn func()) (panicked bool) {
 // an explicit tx.
 func TestStoreMethodsRejectNilTx(t *testing.T) {
 	d := openMigratedSQLite(t)
-	store := d.Store()
+	store := d.Tables()
 	ctx := context.Background()
 	someID := uuid.New()
 	someHash := "sha256-deadbeef"
@@ -215,7 +214,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_, _ = store.Nodes().CountByState(ctx, nil)
 		}},
 		{"Nodes.UpdateState", func() {
-			_ = store.Nodes().UpdateState(ctx, someID, shared.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
+			_ = store.Nodes().UpdateState(ctx, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
 		}},
 		{"Nodes.UpdateHeartbeat", func() {
 			_ = store.Nodes().UpdateHeartbeat(ctx, someID, time.Now(), "sup", nil)
@@ -260,8 +259,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.CountByNamedLock", func() {
 			_, _ = store.ClaimHandles().CountByNamedLock(ctx, "n", nil)
 		}},
-		{"ClaimHandles.ListByStoreScope", func() {
-			_, _ = store.ClaimHandles().ListByStoreScope(ctx, "s", nil)
+		{"ClaimHandles.ListByProducerScope", func() {
+			_, _ = store.ClaimHandles().ListByProducerScope(ctx, "s", nil)
 		}},
 		{"ClaimHandles.DeleteIfExpired", func() {
 			_, _ = store.ClaimHandles().DeleteIfExpired(ctx, someID, "sup", nil)
@@ -310,8 +309,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHolders.Complete", func() {
 			_ = store.ClaimHolders().Complete(ctx, someID, persistence.ClaimHolderStateCompleted, nil)
 		}},
-		{"ClaimHolders.CompleteByLockHolderAndNode", func() {
-			_ = store.ClaimHolders().CompleteByLockHolderAndNode(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
+		{"ClaimHolders.CompleteByClaimHandleAndNode", func() {
+			_ = store.ClaimHolders().CompleteByClaimHandleAndNode(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
 		}},
 		// Events
 		{"Events.Append", func() {
@@ -389,8 +388,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Frames.ListOrphanFrameDispatches", func() {
 			_, _ = store.Frames().ListOrphanFrameDispatches(ctx, nil)
 		}},
-		{"Frames.LookupFrameMode", func() {
-			_, _, _ = store.Frames().LookupFrameMode(ctx, someID, nil)
+		{"Frames.LookupFrameResolutionMode", func() {
+			_, _, _ = store.Frames().LookupFrameResolutionMode(ctx, someID, nil)
 		}},
 		{"Frames.EnqueueSerialFrame", func() {
 			_, _ = store.Frames().EnqueueSerialFrame(ctx, someID, someID, 1000, nil)
@@ -433,7 +432,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 // runner_locks.go bug pattern.
 func TestNilTxFromInsideTransactionDoesNotDeadlock(t *testing.T) {
 	d := openMigratedSQLite(t)
-	store := d.Store()
+	store := d.Tables()
 
 	// 2 s is generous: the panic-recovery path returns in milliseconds.
 	// A real deadlock (pre-option-C) would block forever and only

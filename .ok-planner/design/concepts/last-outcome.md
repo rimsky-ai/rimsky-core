@@ -23,9 +23,17 @@ Owns: the cascade-firing gate, the audit-readable "what happened" string. Does N
 
 ## Invariants
 
-- The cascade gate is `last_outcome == fresh_changed`, not the raw `Complete.changed` bool (`CLAUDE.md "Non-obvious gotchas"`, `foundation/integration/cascade_invalidate.go`).
+- The cascade gate is `last_outcome == fresh_changed`, not the raw `Complete.changed` bool (`CLAUDE.md "Non-obvious gotchas"`, `runtime/cascade_invalidate.go`).
 - Under `on_executor_complete: by_changed` (default), `last_outcome` mirrors `Complete.changed`; under `always_propagate` it's forced to `fresh_changed`; under `never_propagate` it's forced to `fresh_unchanged`.
 - `pure_cascade` marks the no-executor-invocation path: a node going `stale → fresh` because all upstream values resolved `fresh_unchanged`.
+
+## Relationship to sibling concept
+
+`concept:last-outcome` is the cascade-firing gate (read by the supervisor's terminal-complete path to decide whether to fire cascade propagation). Sibling concept `concept:transition-reason` is the audit-grade enum carried on every node-state transition.
+
+The cascade-fire predicate is `last_outcome == fresh_changed`, regardless of `transition_reason`. The two enums describe different facets of the same transition: `transition_reason` records "what kind of transition this was" (HandlerComplete, OperatorReset, Invalidate, etc.); `last_outcome` records "what cascade effect, if any, this transition has."
+
+See `concept:transition-reason` for the typical pairing table (`HandlerComplete` + handler resolution → outcome mapping).
 
 ## Aliases and historical names
 

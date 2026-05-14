@@ -13,7 +13,7 @@ references:
 
 ## What it is
 
-A periodic sweep that hard-deletes stale rows from `rimsky_worker_request` and `rimsky_claim_handle`. Five sweep functions in `foundation/integration/`: `SweepStaleHeartbeats`, `SweepOrphanedClaims`, `SweepReady`, `SweepLockHolders`, plus `orphan_reaper.go::SweepClaimHandles`. Cutoff: `5 × heartbeat_interval`. Claimant-guarded `DELETE` predicate so live owners are never clobbered.
+A periodic sweep that hard-deletes stale rows from `table:rimsky_node_runs` and `table:rimsky_claim_handles`. Sweep functions in `runtime/`: `SweepStaleHeartbeats`, `SweepOrphanedNodeRuns` (formerly `SweepOrphanedClaims`), `SweepReady`, plus `orphan_reaper.go::SweepOrphanedClaimHandles` (formerly `SweepClaimHandles`). Cutoff: `5 × heartbeat_interval`. Claimant-guarded `DELETE` predicate so live owners are never clobbered.
 
 ## Purpose
 
@@ -21,7 +21,7 @@ When a supervisor crashes mid-run, its heartbeat stops; somebody has to clean up
 
 ## Boundaries
 
-Owns: the periodic sweep, the cutoff, the claimant-guarded delete. Does NOT own: producer-side state cleanup (producer's TTL), the bail path's explicit `Abandon` call (that's `handleOrphanedClaim`). Adjacent: `claim-handle`, `worker-request`, `supervisor`, `parked-state` (rows skipped), `auto-terminal` (held handles).
+Owns: the periodic sweep, the cutoff, the claimant-guarded delete. Does NOT own: producer-side state cleanup (producer's TTL), the bail path's explicit `Abandon` call (that's `handleOrphanedClaim`). Adjacent: `claim-handle`, `node-run`, `supervisor`, `parked-state` (rows skipped), `auto-terminal` (held handles).
 
 ## Invariants
 
@@ -32,10 +32,14 @@ Owns: the periodic sweep, the cutoff, the claimant-guarded delete. Does NOT own:
 
 ## Aliases and historical names
 
-None live.
+Pre-`spec:2026-05-12-nomenclature-resolution` the sweep functions were named `SweepOrphanedClaims` (now `SweepOrphanedNodeRuns`) and `SweepClaimHandles` (now `SweepOrphanedClaimHandles`). The shared cutoff constant `OrphanedClaimTimeout` keeps its name; both reapers consult it.
 
 ## Open within this concept
 
-- Heartbeat cutoff representation differs between worker-request (`last_heartbeat_at + interval`) and claim-handle (computed `expires_at`) — see `tensions/heartbeat-cutoff-asymmetry.md`.
+- Heartbeat cutoff representation differs between node-run (`last_heartbeat_at + interval`) and claim-handle (computed `expires_at`) — see `tensions/heartbeat-cutoff-asymmetry.md`.
 - "Reaper doesn't Abandon" vs "bail path does Abandon" annotated asymmetry, easy to miss — see `tensions/reaper-vs-bail-abandon-asymmetry.md`.
+
+## Notes
+
+- Sweep-function renames per `spec:2026-05-12-nomenclature-resolution` Group D.4 / D.5 (`SweepOrphanedClaims` → `SweepOrphanedNodeRuns`; `SweepClaimHandles` → `SweepOrphanedClaimHandles`).
 

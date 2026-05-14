@@ -24,9 +24,10 @@ func init() {
 	})
 }
 
-// runAsyncHandoff asserts the executor can emit an AsyncAccepted terminal
-// when prompted via userdata.probe_async, AND that the executor follows
-// through with a callback POST resolving to a real terminal verdict at the
+// runAsyncHandoff asserts the executor can emit an AwaitAsyncCallback
+// terminal StreamClose outcome when prompted via userdata.probe_async,
+// AND that the executor follows through with a callback POST resolving
+// to a real terminal verdict (Success / Error / Park) at the
 // conformance receiver.
 func runAsyncHandoff(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
@@ -53,16 +54,18 @@ func runAsyncHandoff(ctx context.Context, env conformance.Env) error {
 			}
 			return fmt.Errorf("recv: %w", err)
 		}
-		if a, ok := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted); ok {
-			asyncAckID = a.AsyncAccepted.GetAsyncAckId()
-			continue
-		}
-		if conformance.IsTerminal(ev) && asyncAckID == "" {
-			return fmt.Errorf("expected AsyncAccepted, got %T", ev.Event)
+		if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
+			if aw, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_AwaitAsync); ok {
+				asyncAckID = aw.AwaitAsync.GetAsyncAckId()
+				continue
+			}
+			if asyncAckID == "" {
+				return fmt.Errorf("expected AwaitAsyncCallback, got %T", sc.StreamClose.Outcome)
+			}
 		}
 	}
 	if asyncAckID == "" {
-		return errors.New("stream ended without AsyncAccepted")
+		return errors.New("stream ended without AwaitAsyncCallback")
 	}
 	ch := env.Callbacks.Register(asyncAckID)
 	select {

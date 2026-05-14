@@ -20,8 +20,12 @@ import {
  *     for the terminal-final writeback pattern (empty for the
  *     incremental-via-callback pattern). The legacy `result` field has
  *     been retired.
- *   - `report_blocked` — terminal `Blocked`.
- *   - `report_error`   — terminal `Errored`.
+ *   - `report_blocked` — emits a StreamClose `Error{error_class:
+ *     "executor_blocked"}` outcome on the wire (post-E.2 the pre-rename
+ *     Blocked variant collapsed into Error with the reserved
+ *     `executor_blocked` class).
+ *   - `report_error`   — emits a StreamClose `Error{error_class}` outcome
+ *     on the wire.
  *   - `attributes_read` / `attributes_set` — per spec §12.5; defined in
  *     `attributes-tools.ts` and re-exported here.
  */

@@ -2,14 +2,15 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 10 — executor emits Blocked; supervisor classifies the outcome
-// as error_class="executor_blocked" and evaluates policy.
+// Scenario 10 — executor emits Error with error_class="executor_blocked";
+// the supervisor evaluates the matching error_types policy.
 //
 // Migrated to the stores-redesign template grammar (spec §11): the gated
 // node is built via scenario.MakeNode. The node has no stores, locks, or
-// attributes wiring — Blocked terminates without writing back attributes,
-// so a schema-less node is the right shape; the redesign retains the
-// per-error-class policy chain (spec §11.6) the test exercises.
+// attributes wiring — the executor-blocked path terminates without
+// writing back attributes, so a schema-less node is the right shape;
+// the redesign retains the per-error-class policy chain (spec §11.6)
+// the test exercises.
 package scenarios
 
 import (
@@ -18,17 +19,20 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestExecutorBlocked(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("gated").Blocked("stuck", map[string]any{"need": "input"})
+	h.Stub.WhenType("gated").Error("executor_blocked", map[string]any{
+		"reason": "stuck",
+		"need":   "input",
+	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "blocked", Version: "1",
@@ -51,7 +55,7 @@ func TestExecutorBlocked(t *testing.T) {
 	require.NotNil(t, n)
 
 	// give_up on executor_blocked → node fails.
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFailed, 20*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 20*time.Second),
 		"gated did not reach failed")
 
 	// Verify error event carries executor_blocked class.

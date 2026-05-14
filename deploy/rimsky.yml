@@ -2,12 +2,15 @@
 # by rimsky-scheduler / rimsky-supervisor / rimsky-control-api / rimsky-migrate
 # at startup via RIMSKY_CONFIG.
 #
-# Layer-crystallization Phase 4 changes (2026-05-04):
-#   - block `stores:` renamed `claim_producers:`.
-#   - per-peer `protocols: [...]` list (defaults: [claim_producer] /
-#     [executor]; add `lifecycle_subscriber` for peers that opt in).
-#   - per-producer `write_semantics_envelope: [...]` set (operator-
-#     declared subset of the producer-advertised envelope).
+# 2026-05-12 nomenclature resolution:
+#   - block `stores:` retired (was renamed `claim_producers:` in
+#     Phase 4); the alias is no longer accepted.
+#   - per-service `protocols: [...]` list (defaults: [claim_producer] /
+#     [executor]; add `lifecycle_subscriber` for services that opt in).
+#   - per-producer `write_semantics_allowed: [...]` set (operator-
+#     declared subset of the producer-advertised allowed values).
+#     Renamed from `write_semantics_envelope` in the 2026-05-12 pass;
+#     the single-value `write_semantics:` shortcut was also retired.
 #
 # Reference stack ships:
 #   - content        : filesystem store-service (sync).
@@ -42,11 +45,11 @@ claim_producers:
     # protocol plus the Capabilities startup handshake.
     endpoint: "grpc://store-filesystem:9100"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
   topics-ring:
     endpoint: "grpc://store-postgres:9101"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 
 named_locks:
   "topics-ring:concurrent-claims": { limit: 5 }

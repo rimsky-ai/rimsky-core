@@ -4,7 +4,7 @@
 
 // claim_handles_update_scope.go — ClaimHandlesUpdateScope conformance area.
 //
-// Covers ClaimHandlesStore.UpdateScope: writes the new scope_data inside
+// Covers ClaimHandleTable.UpdateScope: writes the new scope_data inside
 // a tx, then verifies (a) the new bytes round-trip via Get, and (b) the
 // claimant guard turns a mismatched supervisorID into a no-op.
 package conformance
@@ -20,14 +20,14 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testClaimHandlesUpdateScope(t *testing.T, d persistence.Driver) {
+func testClaimHandlesUpdateScope(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	lockHolderID := uuid.New()
 	supID := "update-scope-supervisor"
-	storeName := "update-scope-store"
+	producerName := "update-scope-store"
 	intent := "rw"
 	scopeA := json.RawMessage(`{"path":"/data/initial"}`)
 	scopeB := json.RawMessage(`{"path":"/data/updated"}`)
@@ -37,7 +37,7 @@ func testClaimHandlesUpdateScope(t *testing.T, d persistence.Driver) {
 		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindScope,
-			StoreName:          &storeName,
+			ProducerName:       &producerName,
 			ScopeData:          scopeA,
 			Intent:             &intent,
 			HolderSupervisorID: supID,

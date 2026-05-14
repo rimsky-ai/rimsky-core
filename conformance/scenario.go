@@ -4,13 +4,13 @@
 
 // Package conformance provides the rimsky node-executor protocol conformance
 // suite. Any executor speaking the protocol (gRPC canonical + HTTP+JSON bridge)
-// can be validated against this suite via `rimsky-conformance` CLI.
+// can be validated against this suite via `rimsky-executor-conformance` CLI.
 package conformance
 
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/modeling/executor"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 // Env is the per-run environment a Scenario receives. It bundles the dialed

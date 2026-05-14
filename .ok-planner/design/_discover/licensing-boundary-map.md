@@ -21,7 +21,7 @@ The current map (from `licensing.yml`):
 - `foundation/shared/` — Apache shared types.
 - `modeling/cli/`, `modeling/executor/`, `modeling/node/`, `modeling/shared/`, `modeling/template/canonical/`, `modeling/qualityrule/` (spec types only).
 - `conformance/`, `stores/`, `executors/` — bundled reference impls.
-- `cmd/rimsky-cli/`, `cmd/rimsky-conformance/`, `cmd/rimsky-claim-producer-conformance/`, `cmd/rimsky-conformance-probe/`, `cmd/rimsky-license-check/`, `cmd/rimsky-docs-*/`.
+- `cmd/rimsky-cli/`, `cmd/rimsky-executor-conformance/`, `cmd/rimsky-claim-producer-conformance/`, `cmd/rimsky-conformance-probe/`, `cmd/rimsky-license-check/`, `cmd/rimsky-docs-*/`.
 - `dashboards/`, `deploy/`, `docs/`, `cold-read/`.
 
 **AGPL-3.0-or-later**:

@@ -11,8 +11,8 @@
 import type {
   ClaimDetail,
   ClaimList,
-  DispatchDetail,
-  DispatchListResponse,
+  NodeRunDetail,
+  NodeRunListResponse,
   EventListResponse,
   FrameListResponse,
   InstanceDetail,
@@ -82,9 +82,9 @@ export const api = {
   getNode: (instanceId: string, nodeType: string) =>
     get<NodeDetail>(`/api/control/nodes/${instanceId}/${nodeType}`),
 
-  listDispatches: (filters: Record<string, string | undefined> = {}, cursor?: string) =>
-    get<DispatchListResponse>(`/api/control/dispatches${qs({ ...filters, cursor })}`),
-  getDispatch: (id: string) => get<DispatchDetail>(`/api/control/dispatches/${id}`),
+  listNodeRuns: (filters: Record<string, string | undefined> = {}, cursor?: string) =>
+    get<NodeRunListResponse>(`/api/control/node-runs${qs({ ...filters, cursor })}`),
+  getNodeRun: (id: string) => get<NodeRunDetail>(`/api/control/node-runs/${id}`),
 
   listLockHolders: (filters: Record<string, string | undefined> = {}) =>
     get<LockHolderListResponse>(`/api/control/lock-holders${qs(filters)}`),

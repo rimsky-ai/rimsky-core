@@ -9,9 +9,9 @@ kind: discipline
 
 LLM-calling executors (notably `executors/claude-agent/`) can be configured to run against real Claude APIs or against a stub that returns canned responses. Conformance runs would naturally hit real APIs unless the operator is careful; for an executor that costs real money per call, this is a budget risk.
 
-`cmd/rimsky-conformance` accepts the `--require-stub-mode` flag. When set, it issues a startup probe via the companion binary `cmd/rimsky-conformance-probe` against the target executor's `NodeExecutor.Execute` with a sentinel input. The probe verifies the executor returns the documented stub-mode signature in its response. If the probe fails or the response indicates non-stub mode, conformance refuses to proceed.
+`cmd/rimsky-executor-conformance` accepts the `--require-stub-mode` flag. When set, it issues a startup probe via the companion binary `cmd/rimsky-conformance-probe` against the target executor's `NodeExecutor.Execute` with a sentinel input. The probe verifies the executor returns the documented stub-mode signature in its response. If the probe fails or the response indicates non-stub mode, conformance refuses to proceed.
 
-The pattern is captured in CLAUDE.md "Non-obvious gotchas": "Stub mode is required for conformance runs of LLM-calling executors. `rimsky-conformance --require-stub-mode` issues a probe via `rimsky-conformance-probe` at startup; non-stubbed executors will fail."
+The pattern is captured in CLAUDE.md "Non-obvious gotchas": "Stub mode is required for conformance runs of LLM-calling executors. `rimsky-executor-conformance --require-stub-mode` issues a probe via `rimsky-conformance-probe` at startup; non-stubbed executors will fail."
 
 The probe is a separate binary so the same probe logic can be invoked outside conformance (e.g. as a Kubernetes init container that verifies an executor pod is configured for stub mode before letting it accept production traffic). Conformance itself shells out to the probe binary.
 
@@ -29,7 +29,7 @@ A conformance run without `--require-stub-mode` is allowed (no probe fires); the
 
 ## Code surface
 
-- `cmd/rimsky-conformance/main.go` — `--require-stub-mode` flag + probe invocation.
+- `cmd/rimsky-executor-conformance/main.go` — `--require-stub-mode` flag + probe invocation.
 - `cmd/rimsky-conformance-probe/main.go` — entire probe (typically small).
 - `executors/claude-agent/src/cli-runner.ts` — stub-mode env var check.
 - `executors/claude-agent/src/cli-env.ts` — auth config (real vs stub).
@@ -37,7 +37,7 @@ A conformance run without `--require-stub-mode` is allowed (no probe fires); the
 ## Prose surface
 
 - `CLAUDE.md` "Non-obvious gotchas" — full description.
-- `CLAUDE.md` "Build & test" — `rimsky-conformance --require-stub-mode` example.
+- `CLAUDE.md` "Build & test" — `rimsky-executor-conformance --require-stub-mode` example.
 
 ## Adjacent topics
 

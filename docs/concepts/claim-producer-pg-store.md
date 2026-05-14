@@ -1,3 +1,14 @@
+---
+concept: claim-producer-pg-store
+definition: |
+  The bundled reference claim-producer that treats rows in an operator-owned items table as the resource each claim acquires. Implements scope-conflict and items-table queue semantics store-internally.
+proto_symbol: ClaimProducer in protocols/proto/v1/claim_producer.proto
+config_field: rimsky.yml:claim_producers
+api_surface: (none)
+related: [claim-producer, claim, scope, write-semantics]
+deprecated_terms: [postgres-store-bundle]
+---
+
 # Postgres store (`stores/postgres/`)
 
 The bundled postgres store is a reference [claim producer](claim-producer.md) that treats rows in an operator-owned items table as the resource each [claim](claim.md) acquires.

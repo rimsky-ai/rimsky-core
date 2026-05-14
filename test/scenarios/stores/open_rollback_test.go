@@ -12,7 +12,7 @@
 // which exercises the identical property end-to-end through the
 // `foundation/locks/storetest.Fake` error-injection knob: it deploys a
 // claim-bearing template, drives RunNode with a Fake whose ErrorFunc
-// returns on `open`, and asserts (a) zero rimsky_claim_handle rows for
+// returns on `open`, and asserts (a) zero rimsky_claim_handles rows for
 // the node, (b) the dispatch row's claimed_by reverts to NULL, (c)
 // exactly one open call was observed.
 //
@@ -32,6 +32,6 @@ import "testing"
 func TestOpenErrorRollsBackRimskySideInsertsDelegated(t *testing.T) {
 	t.Skip("delegated to test/scenarios/locks/atomic_acquisition_test.go::" +
 		"TestAtomicAcquisitionRollsBackOnOpenError — same property (rimsky-side " +
-		"INSERTs must roll back when Store.Open errors), exercised via " +
+		"INSERTs must roll back when ClaimProducer.Open errors), exercised via " +
 		"foundation/locks/storetest.Fake error injection")
 }

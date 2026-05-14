@@ -27,11 +27,12 @@ func init() {
 // writeback (nested maps, lists, mixed scalar types) round-trips through the
 // protocol unchanged across encoder boundaries (proto wire ↔ HTTP+JSON
 // bridge). After the §12 protocol rewrite the scenario exercises
-// `Complete.attributes_delta` (a *structpb.Struct) instead of the removed
-// `Complete.result` (a *structpb.Value); the top-level value must therefore
-// be a JSON object — list / scalar stub_response payloads are no longer
-// first-class for this scenario. AwaitTerminal handles async executors by
-// following the callback after AsyncAccepted.
+// `StreamClose.Success.attributes_delta` (a *structpb.Struct) instead of the
+// removed standalone `Complete.result` (a *structpb.Value); the top-level
+// value must therefore be a JSON object — list / scalar stub_response
+// payloads are no longer first-class for this scenario. AwaitTerminal handles
+// async executors by following the callback after the AwaitAsyncCallback
+// outcome.
 func runAttributesSerialization(ctx context.Context, env conformance.Env) error {
 	expected := map[string]any{
 		"nested": map[string]any{
@@ -54,15 +55,19 @@ func runAttributesSerialization(ctx context.Context, env conformance.Env) error 
 	if err != nil {
 		return err
 	}
-	if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-		got := ce.Complete.GetAttributesDelta().AsMap()
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		return fmt.Errorf("unexpected terminal: %T", ev.Event)
+	}
+	switch oc := sc.StreamClose.Outcome.(type) {
+	case *genv1.StreamClose_Success:
+		got := oc.Success.GetAttributesDelta().AsMap()
 		if !reflect.DeepEqual(got, expected) {
 			return fmt.Errorf("attributes_delta mismatch: got=%#v want=%#v", got, expected)
 		}
 		return nil
+	case *genv1.StreamClose_Error:
+		return fmt.Errorf("unexpected Error: class=%s", oc.Error.ErrorClass)
 	}
-	if er, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-		return fmt.Errorf("unexpected Errored: class=%s", er.Errored.ErrorClass)
-	}
-	return fmt.Errorf("unexpected terminal: %T", ev.Event)
+	return fmt.Errorf("unexpected StreamClose outcome: %T", sc.StreamClose.Outcome)
 }

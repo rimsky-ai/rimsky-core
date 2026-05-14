@@ -31,12 +31,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -46,7 +46,7 @@ func TestAcquirePassInvalidateEmit(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -62,17 +62,17 @@ func TestAcquirePassInvalidateEmit(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "should-not-run")
-	h.Stub.WhenType("monitor").Complete(map[string]any{"m": 1}, true, "monitored")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("monitor").Success(map[string]any{"m": 1}, true, "monitored")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acquire-pass-invalidate-emit", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -102,7 +102,7 @@ func TestAcquirePassInvalidateEmit(t *testing.T) {
 	require.NotNil(t, monitor)
 
 	// Worker should pass.
-	require.True(t, waitForLastOutcome(t, h, worker.ID, shared.LastOutcomePassed, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
 		"worker should record last_outcome=passed")
 
 	// Deterministic assertion: the handler.invalidate emit produces a
@@ -156,5 +156,5 @@ func TestAcquirePassInvalidateEmit(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFresh, wRow.State)
+	require.Equal(t, cascade.NodeStateFresh, wRow.State)
 }

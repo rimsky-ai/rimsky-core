@@ -325,11 +325,11 @@ ahead of the Go-side runtime when the TS team has bandwidth.
 ## Task L2/L3 — NOT done
 
 **Deviation:** Implemented L1 (rimsky-blob-backend-conformance binary)
-but not L2 (extending rimsky-conformance for new executor surfaces) or
+but not L2 (extending rimsky-executor-conformance for new executor surfaces) or
 L3 (ledger-semantics scenario test).
 
 **Reason:** L2 requires modifying the existing
-`cmd/rimsky-conformance/` test runner to exercise NamedEvent emission
+`cmd/rimsky-executor-conformance/` test runner to exercise NamedEvent emission
 + ParkRequested + new-shape async-callback paths against a stub
 executor that needs corresponding extensions. L3 requires the H1
 event-emission runtime to be in place before the scenario can verify
@@ -422,7 +422,7 @@ write-path spill wiring), all of section E (parked-state runtime
 plumbing), all of section H (event-emission processing in the
 supervisor terminal pipeline), J4–J11 (the four MCP transport
 handlers, validate-on-`report_complete`, auto rate-limit park, resume,
-end-to-end test), L2/L3 (rimsky-conformance + ledger semantics
+end-to-end test), L2/L3 (rimsky-executor-conformance + ledger semantics
 scenario test), and N2–N5 (final scenario / race / conformance /
 claude-agent verification suites).
 
@@ -585,7 +585,7 @@ on_event handler dispatch path) is still TODO.
 ## Tasks L2/L3 — NOT done
 
 **Deviation:** Same as the second-dispatch deferral. L2 requires
-modifying `cmd/rimsky-conformance/` to exercise NamedEvent,
+modifying `cmd/rimsky-executor-conformance/` to exercise NamedEvent,
 ParkRequested, and the new-shape async-callback paths against a stub
 executor that needs corresponding extensions. L3 requires the H1
 event-emission runtime to be in place before the scenario can verify
@@ -639,7 +639,7 @@ interlocked block (E + H + the unified invalidate path) plus the
 diagnostic regression and the J4–J7/J9 portion of the claude-agent
 work. It did NOT land J8 (validate-on-`report_complete`), J10 (resume
 with `ResumeContext` in the CLI runner), J11 (end-to-end test for the
-new lifecycle), L2/L3 (rimsky-conformance + ledger semantics scenario
+new lifecycle), L2/L3 (rimsky-executor-conformance + ledger semantics scenario
 test), N2/N3/N4 (final scenario / race / conformance suites), or
 D6/D7/D9 (attribute write-path spill wiring).
 
@@ -1107,7 +1107,7 @@ the typed shape `runAgent` consumes via the new
 
 ## Task L2 (partial) — Capabilities validation in conformance
 
-**Done:** Extended `cmd/rimsky-conformance/observability_check.go`
+**Done:** Extended `cmd/rimsky-executor-conformance/observability_check.go`
 to validate the new `userdata_schema` and `declared_events` fields
 on `ObservabilityCapabilities`. When `userdata_schema` is non-empty,
 the bytes must parse as JSON (smoke check; the schema's draft 2020-12
@@ -1159,7 +1159,7 @@ and `npm run build` both pass.
 - L2 (residual) — extended the stub executor (`executors/stub/`) with
   `TypeBuilder.Park(reason, payload, resumeAt, sessionToken)` and
   `TypeBuilder.EmitNamedEvent(name, payload)`, threaded through
-  Execute. `cmd/rimsky-conformance` already validated
+  Execute. `cmd/rimsky-executor-conformance` already validated
   Capabilities.userdata_schema / declared_events in the prior dispatch;
   the stub-executor scripting paths are now exercised by the scenario
   suite. (Adding a flag-driven mode to the existing stub-mode CLI was
@@ -1274,7 +1274,7 @@ then queued NamedEvents are emitted in order, then the scripted
 terminal (Complete / Errored / Blocked / AsyncAccepted /
 ParkRequested). Used by the scenario tests landed this dispatch.
 
-The `cmd/rimsky-conformance` Capabilities checks
+The `cmd/rimsky-executor-conformance` Capabilities checks
 (`looksLikeJSON(userdata_schema)`, declared_events string-validation)
 landed in the fifth dispatch and are unchanged; the stub executor
 already returns these via observability.go.
@@ -1526,7 +1526,7 @@ path does.
 
 ### Gaps #2 / #3 — conformance suite couldn't validate async-handoff terminals
 
-`rimsky-conformance` and `rimsky-conformance-probe` read terminals
+`rimsky-executor-conformance` and `rimsky-conformance-probe` read terminals
 only from the gRPC stream. Async executors (claude-agent) reply
 with `AsyncAccepted` then POST the actual terminal to a callback
 URL. Result: `--require-stub-mode` always failed against
@@ -1594,10 +1594,10 @@ After all five fixes, run:
 docker compose -f deploy/docker-compose.yml up -d \
   postgres migrate init-items store-filesystem store-postgres \
   scheduler supervisor control-api http-node claude-agent
-go run ./cmd/rimsky-conformance --endpoint localhost:9090 --transport grpc \
+go run ./cmd/rimsky-executor-conformance --endpoint localhost:9090 --transport grpc \
   --require-stub-mode --check-observability \
   --callback-bind 0.0.0.0 --callback-host host.docker.internal
-go run ./cmd/rimsky-conformance --endpoint localhost:9091 --transport grpc \
+go run ./cmd/rimsky-executor-conformance --endpoint localhost:9091 --transport grpc \
   --check-observability \
   --callback-bind 0.0.0.0 --callback-host host.docker.internal
 go run ./cmd/rimsky-claim-producer-conformance \

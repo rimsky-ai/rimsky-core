@@ -72,10 +72,10 @@ export default function SystemPage() {
               <div className="font-medium">{summary.data.instances_active}</div>
               <div>terminated instances</div>
               <div className="font-medium">{summary.data.instances_terminated}</div>
-              <div>dispatches claimed</div>
-              <div className="font-medium">{summary.data.dispatches_claimed ?? 0}</div>
-              <div>dispatches pending</div>
-              <div className="font-medium">{summary.data.dispatches_pending ?? 0}</div>
+              <div>node-runs claimed</div>
+              <div className="font-medium">{summary.data.node_runs_claimed ?? 0}</div>
+              <div>node-runs pending</div>
+              <div className="font-medium">{summary.data.node_runs_pending ?? 0}</div>
               <div className="col-span-2 mt-3 font-medium">node states</div>
               {Object.entries(summary.data.node_counts ?? {}).map(([k, v]) => (
                 <div key={k} className="contents">

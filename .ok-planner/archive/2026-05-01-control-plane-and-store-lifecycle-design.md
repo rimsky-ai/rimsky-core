@@ -675,7 +675,7 @@ Each rimsky process at startup:
 - Unit tests on lifecycle-event fan-out and idempotency (`core/controlapi/lifecycle_test.go`): deduplication; partial-failure retry; skip-if-already-acked.
 - Integration tests under `core/storage/postgres/` for schema migration: round-trip insert/read for `rimsky_templates`, `rimsky_template_tags`, `rimsky_store_lifecycle`; FK refusals.
 - Scenario tests under `test/scenarios/lifecycle/` exercising end-to-end flows: register → deploy → instantiate → terminate → undeploy → deregister, with assertions on `rimsky_store_lifecycle` row deltas at each step. The fake store (`storetest`) records event invocations.
-- Conformance suite (`core/cmd/rimsky-conformance/`) gains six no-op-passing checks: a conforming store accepts each lifecycle event without error and produces the empty response.
+- Conformance suite (`core/cmd/rimsky-executor-conformance/`) gains six no-op-passing checks: a conforming store accepts each lifecycle event without error and produces the empty response.
 - Smoke fixture (`test/smoke/`) — at minimum, validate that the new env var works end-to-end (bring up the stack via the unified `rimsky.yml`).
 
 ### 7.4 Documentation

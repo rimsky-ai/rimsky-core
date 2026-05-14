@@ -1,3 +1,14 @@
+---
+concept: design-philosophy
+definition: |
+  Rimsky's project-agnostic principles: domain-agnostic core, out-of-process services, content-addressed templates, opacity of producer/executor payloads, and consumer-shaped public docs.
+proto_symbol: (none)
+config_field: (none)
+api_surface: (none)
+related: [claim-producer, executor, template]
+deprecated_terms: []
+---
+
 # Design philosophy
 
 Rimsky is a domain-agnostic orchestration platform. The codebase ships
@@ -26,10 +37,11 @@ Rimsky owns:
 - **Frames.** The unit of cascade resolution. Operators see frames
   start, hold, and complete; the platform never inspects what the
   frame is about.
-- **Error policy.** `retry / invalidate / give_up`, the consecutive-
-  retries-without-progress cap, the four lifecycle handler slots,
-  `on_event` handlers. Any domain-shaped retry semantics live in the
-  policy declarations; rimsky executes them.
+- **Error policy.** `retry / invalidate / give_up / pass`, the
+  consecutive-retries-without-progress cap, three declarable lifecycle
+  handler slots plus the `on_event` handler map. Any domain-shaped
+  retry semantics live in the policy declarations; rimsky executes
+  them.
 - **Persistence.** Every state mutation goes through the persistence
   driver; Postgres and SQLite are the shipped reference impls. No
   in-memory state crosses a process boundary except through that
@@ -114,7 +126,7 @@ The concept pages (`docs/concepts/*.md`) are the canonical reference.
 Each is one noun in the platform's vocabulary, with a tight
 description, the wire shape if relevant, and the mechanics. The
 protocol pages (`docs/protocols/*.md`) walk a builder through
-implementing a peer. The executor and producer per-component pages
+implementing a service. The executor and producer per-component pages
 (`docs/executors/*`, `docs/stores/*`, `docs/blob-backends/*`) cover
 the shipped reference impls in operator-facing detail. The narrative
 pages (`docs/humans/*`) and the design-philosophy page (this one) set

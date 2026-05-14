@@ -1,3 +1,14 @@
+---
+concept: claim-producer-fs-store
+definition: |
+  The bundled reference claim-producer that treats folders under a configured root as the resource each claim acquires. Concrete-paths only; scope-conflict is byte-equal on the path bytes.
+proto_symbol: ClaimProducer in protocols/proto/v1/claim_producer.proto
+config_field: rimsky.yml:claim_producers
+api_surface: (none)
+related: [claim-producer, claim, scope, write-semantics]
+deprecated_terms: [filesystem-store-bundle]
+---
+
 # Filesystem store (`stores/filesystem/`)
 
 The bundled filesystem store is a reference [claim producer](claim-producer.md) that treats folders under a configured root as the resource each [claim](claim.md) acquires.

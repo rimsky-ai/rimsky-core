@@ -128,7 +128,7 @@ Format: one section per task using `## Task <id> — <short title>` followed by 
 
 ## Conformance probe (Task L3) — deferred to user
 
-**Deviation:** Did not bring up the dev compose stack and run `rimsky-conformance --check-observability` and `rimsky-store-conformance --check-observability` against bundled stub-mode peers. The conformance binaries themselves are wired (Section F landed in dispatch 1), the ports are documented, but starting the compose stack from inside this execution is a long-running operation that would gate the final report.
+**Deviation:** Did not bring up the dev compose stack and run `rimsky-executor-conformance --check-observability` and `rimsky-store-conformance --check-observability` against bundled stub-mode peers. The conformance binaries themselves are wired (Section F landed in dispatch 1), the ports are documented, but starting the compose stack from inside this execution is a long-running operation that would gate the final report.
 **Reason:** Compose orchestration during a single subagent execution is awkward; the manual checks at the end of the plan call this out as appropriate for the user to run.
 **Surfaced for:** user-action — `docker compose -f deploy/docker-compose.yml up -d --wait`, then run the four `--check-observability` commands documented in plan §L3, then `docker compose down -v`.
 

@@ -7,7 +7,7 @@ surfaced_to: operator
 
 ## What it means
 
-The operator-declared `write_semantics_envelope` for a claim producer is not a subset of the envelope the producer advertised at startup via `Capabilities()`. Rimsky refuses to start.
+The operator-declared `write_semantics_allowed` for a claim producer is not a subset of the envelope the producer advertised at startup via `Capabilities()`. Rimsky refuses to start.
 
 ## When it happens
 
@@ -15,7 +15,7 @@ At supervisor / scheduler / control-api startup, after the `Capabilities()` hand
 
 ## What to do
 
-Either narrow the operator's declared envelope (`rimsky.yml: claim_producers.<name>.write_semantics_envelope`) to be a subset of what the producer advertises, or upgrade the producer to advertise the operator's intended envelope. Run `Capabilities()` against the producer manually (e.g., via the conformance binary) to see the producer's current declaration.
+Either narrow the operator's declared envelope (`rimsky.yml: claim_producers.<name>.write_semantics_allowed`) to be a subset of what the producer advertises, or upgrade the producer to advertise the operator's intended envelope. Run `Capabilities()` against the producer manually (e.g., via the conformance binary) to see the producer's current declaration.
 
 ## See also
 

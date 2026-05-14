@@ -58,10 +58,10 @@ func mountFake(t *testing.T, srv *fakeServer) *httptest.Server {
 func postOpen(t *testing.T, ts *httptest.Server) []byte {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"claim_id":   "00000000-0000-0000-0000-000000000001",
-		"store_name": "fake",
-		"selector":   "items/x",
-		"intent":     "rw",
+		"claim_id":      "00000000-0000-0000-0000-000000000001",
+		"producer_name": "fake",
+		"selector":      "items/x",
+		"intent":        "rw",
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)

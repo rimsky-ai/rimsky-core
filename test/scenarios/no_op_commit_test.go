@@ -20,10 +20,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestNoOpCommit(t *testing.T) {
@@ -31,8 +31,8 @@ func TestNoOpCommit(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
 	// First producer run commits real data so the dependent reaches fresh.
-	h.Stub.WhenType("producer").Complete(map[string]any{"x": 1}, true, "initial")
-	h.Stub.WhenType("dependent").Complete(map[string]any{"y": 2}, true, "downstream")
+	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, true, "initial")
+	h.Stub.WhenType("dependent").Success(map[string]any{"y": 2}, true, "downstream")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "noop", Version: "1",
@@ -68,9 +68,9 @@ func TestNoOpCommit(t *testing.T) {
 	require.NotNil(t, producer)
 	require.NotNil(t, dep)
 
-	require.True(t, h.WaitForNodeState(producer.ID, shared.NodeStateFresh, 60*time.Second),
+	require.True(t, h.WaitForNodeState(producer.ID, cascade.NodeStateFresh, 60*time.Second),
 		"producer did not reach fresh")
-	require.True(t, h.WaitForNodeState(dep.ID, shared.NodeStateFresh, 60*time.Second),
+	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 60*time.Second),
 		"dependent did not reach fresh on first cascade")
 
 	// Capture the dependent's last-updated time so we can later assert the
@@ -85,7 +85,7 @@ func TestNoOpCommit(t *testing.T) {
 	// Swap the stub to changed=false and invalidate the producer; the
 	// supervisor should re-run it, emit `no_op_commit`, NOT emit
 	// `attributes_committed`, and NOT cascade.
-	h.Stub.WhenType("producer").Complete(map[string]any{"x": 1}, false, "noop")
+	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, false, "noop")
 
 	// Snapshot the producer's existing attributes_committed event count so a
 	// pre-existing committed event from the first run doesn't false-positive
@@ -144,7 +144,7 @@ func TestNoOpCommit(t *testing.T) {
 	// state unchanged since first cascade.
 	var depDispatchCount int
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_worker_request WHERE node_id = $1`, dep.ID,
+		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, dep.ID,
 	).Scan(&depDispatchCount)
 	require.NoError(t, err)
 	require.Equal(t, 0, depDispatchCount,
@@ -156,7 +156,7 @@ func TestNoOpCommit(t *testing.T) {
 		depAfter = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFresh, depAfter.State,
+	require.Equal(t, cascade.NodeStateFresh, depAfter.State,
 		"dependent should still be fresh (never cascaded)")
 	require.Equal(t, depBefore.UpdatedAt, depAfter.UpdatedAt,
 		"dependent's updated_at should not advance on a producer no_op commit")

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// TemplateStore — Postgres-backed persistence.TemplateStore. Per docs/specs/
+// TemplateTable — Postgres-backed persistence.TemplateTable. Per docs/specs/
 // 2026-05-01-control-plane-and-store-lifecycle-design.md §1.2:
 // rimsky_templates.id is the content hash ("sha256-<64-hex>"); state
 // has three persisted values (registered, deployed, undeployed) —
@@ -20,11 +20,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
-// TemplateStore is the Postgres-backed persistence.TemplateStore.
+// TemplateTable is the Postgres-backed persistence.TemplateTable.
 
 const templateCols = `id, spec, state, registered_at, source`
 
@@ -188,14 +188,14 @@ func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState p
 // template, this returns the underlying Postgres FK violation. Callers
 // should pre-check those constraints and produce a more useful error.
 //
-// Per spec §1.6: rimsky_lifecycle_idempotency rows for the (template-scope,
+// Per spec §1.6: rimsky_lifecycle_idempotencies rows for the (template-scope,
 // hash) tuple are cleaned up here transactionally so a follow-on
 // re-register starts with empty bookkeeping. The caller's tx (when
 // supplied) participates in the same atomic step.
 func (s *templatesImpl) DeleteByHash(ctx context.Context, hash string, tx persistence.Tx) error {
 	ex := s.q(tx)
 	if _, err := ex.Exec(ctx,
-		`DELETE FROM rimsky_lifecycle_idempotency
+		`DELETE FROM rimsky_lifecycle_idempotencies
 		 WHERE scope_kind = 'template' AND scope_id = $1`, hash); err != nil {
 		return fmt.Errorf("templates.deleteByHash: cleanup lifecycle rows: %w", err)
 	}
@@ -226,7 +226,7 @@ func scanTemplate(sc scannable) (persistence.TemplateRow, error) {
 	if err := sc.Scan(&id, &specBytes, &stateStr, &registeredAt, &source); err != nil {
 		return persistence.TemplateRow{}, err
 	}
-	var spec nodepkg.TemplateSpec
+	var spec spec.TemplateSpec
 	if err := json.Unmarshal(specBytes, &spec); err != nil {
 		return persistence.TemplateRow{}, fmt.Errorf("unmarshal spec: %w", err)
 	}

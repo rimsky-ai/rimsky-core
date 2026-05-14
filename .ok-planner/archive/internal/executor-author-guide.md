@@ -311,7 +311,7 @@ executors:
 ### 3.1 Running the conformance suite against the Python example
 
 ```bash
-rimsky-conformance \
+rimsky-executor-conformance \
   --endpoint http://localhost:9091/v1/Execute \
   --transport http \
   --check-executor \
@@ -536,7 +536,7 @@ Stub mode is a **process-level** property, controlled by the operator running th
 ## 10. Running the conformance suite
 
 ```bash
-rimsky-conformance --endpoint <url> --transport <grpc|http+json> --check-executor [--require-stub-mode]
+rimsky-executor-conformance --endpoint <url> --transport <grpc|http+json> --check-executor [--require-stub-mode]
 ```
 
 Scenarios include:
@@ -620,7 +620,7 @@ Before shipping your executor, verify:
 - [ ] `error_class` names are documented and stable.
 - [ ] Async handoff (if used): `AsyncAccepted` only when `callback_url` is non-empty; terminal POST to `${callback_url}/v1/callback/{async_ack_id}` with body keyed `type` (not `kind`) and `Authorization: Bearer <cancel_token>`.
 - [ ] Incremental attribute writeback (if used): POST to `${callback_url}/v1/attributes/{node_id}` with `Authorization: Bearer <cancel_token>` and `{"delta": {...}}` body.
-- [ ] `rimsky-conformance --check-executor --require-stub-mode` passes all scenarios.
+- [ ] `rimsky-executor-conformance --check-executor --require-stub-mode` passes all scenarios.
 - [ ] Metrics/health endpoint exposed.
 - [ ] Docker image published at `rimsky/executor-<name>:<version>`.
 - [ ] README documents the userdata schema and error classes.
@@ -680,6 +680,6 @@ The executor's trace is not constrained by blessed invariant 11. The executor kn
 
 ### Capabilities probe
 
-`rimsky-conformance --check-observability` calls `GetCapabilities`, validates the proto shape, and (when retention ≤ 60s) probes the eviction sub-shape.
+`rimsky-executor-conformance --check-observability` calls `GetCapabilities`, validates the proto shape, and (when retention ≤ 60s) probes the eviction sub-shape.
 
 Reference: `protocols/proto/v1/executor.proto`, `executors/http-node/observability.go`, `executors/stub/observability.go`.

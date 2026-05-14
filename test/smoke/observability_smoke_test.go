@@ -38,7 +38,7 @@ func TestObservabilitySmoke(t *testing.T) {
 		{"/v1/observability/stores", "stores"},
 		{"/v1/observability/executors", "executors"},
 		{"/v1/observability/frames", "frames"},
-		{"/v1/observability/dispatches", "dispatches"},
+		{"/v1/observability/node-runs", "node_runs"},
 		{"/v1/observability/schedules", "schedules"},
 		{"/v1/observability/events", "events"},
 	}

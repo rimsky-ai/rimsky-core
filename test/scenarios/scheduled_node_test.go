@@ -7,7 +7,7 @@
 //
 // Migrated to the stores-redesign template grammar (spec §11): the cron
 // node is built via scenario.MakeNode. Schedule semantics are unchanged
-// (see `modeling/scheduler/schedule_ticker.go`).
+// (see `graph/scheduler/schedule_ticker.go`).
 package scenarios
 
 import (
@@ -16,16 +16,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestScheduledNode(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("cron_job").Complete(map[string]any{"ran": true}, true, "ok")
+	h.Stub.WhenType("cron_job").Success(map[string]any{"ran": true}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cron", Version: "1",
@@ -82,6 +82,6 @@ func TestScheduledNode(t *testing.T) {
 
 	// Node should eventually return to fresh after the schedule-triggered
 	// invalidate + re-run.
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 20*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 20*time.Second),
 		"scheduled node did not reach fresh")
 }

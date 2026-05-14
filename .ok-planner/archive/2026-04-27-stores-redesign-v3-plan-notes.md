@@ -715,7 +715,7 @@ exercises.
   `{"status":"ok",...}` envelope. Tear down with
   `docker compose -f deploy/docker-compose.yml down -v`.
 - **T57 — Conformance probe**: with the stack up, `go run
-  ./core/cmd/rimsky-conformance --endpoint http://localhost:9090
+  ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:9090
   --transport grpc --require-stub-mode` (and similar against the
   http-node executor at :9091). Exercises the executor surface, not
   the store surface — store-side conformance is deferred per spec

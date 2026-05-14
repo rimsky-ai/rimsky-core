@@ -16,9 +16,9 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testSortOrderCoordination(t *testing.T, d persistence.Driver) {
+func testSortOrderCoordination(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
-	store := d.Store()
+	store := d.Tables()
 	coord := d.AdvisoryLocker()
 	if coord == nil {
 		t.Fatalf("driver.Coordinator() returned nil")

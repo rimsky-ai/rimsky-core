@@ -1,7 +1,7 @@
 ---
 concept: lifecycle-subscriber
 definition: |
-  An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+  An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 proto_symbol: LifecycleSubscriber in protocols/proto/v1/lifecycle.proto
 config_field: (none)
 api_surface: (none)
@@ -13,15 +13,15 @@ deprecated_terms: []
 
 ## Definition
 
-An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 ## Why it exists
 
-Some peers need to know when templates and instances change state — a postgres claim producer might want to provision a queue table when a template is deployed; an external observability system might want to record instance creations. Without a protocol, these peers would poll the control-api or scrape state from elsewhere.
+Some services need to know when templates and instances change state — a postgres claim producer might want to provision a queue table when a template is deployed; an external observability system might want to record instance creations. Without a protocol, these services would poll the control-api or scrape state from elsewhere.
 
-The lifecycle protocol formalizes the hooks. The control-api fires events synchronously at each state transition; idempotency is tracked in the persistence layer so replays are no-ops. Peers that want the events declare `lifecycle_subscriber` in their `protocols: [...]` config; peers that don't subscribe silently skip fan-out.
+The lifecycle protocol formalizes the hooks. The control-api fires events synchronously at each state transition; idempotency is tracked in the persistence layer so replays are no-ops. Services that want the events declare `lifecycle_subscriber` in their `protocols: [...]` config; services that don't subscribe silently skip fan-out.
 
-The protocol is opt-in because most peers don't need it. A pure executor or a pure claim producer that wraps stateless storage has no use for state-transition hooks. Forcing every peer to implement six methods would be friction without benefit.
+The protocol is opt-in because most services don't need it. A pure executor or a pure claim producer that wraps stateless storage has no use for state-transition hooks. Forcing every service to implement six methods would be friction without benefit.
 
 ## The six methods
 
@@ -32,20 +32,20 @@ The protocol is opt-in because most peers don't need it. A pure executor or a pu
 - **`OnInstanceCreated`** — a new instance was created against a deployed template.
 - **`OnInstanceTerminated`** — an instance moved to its terminal state (success or failure) or was deleted by an operator.
 
-All subscribed peers implement all six methods; peers that don't react to a particular event return `nil` from that method.
+All subscribed services implement all six methods; services that don't react to a particular event return `nil` from that method.
 
 Bundled producer binaries can ship a no-op `LifecycleSubscriber` via `enable_lifecycle: true` config without forking the binary.
 
 ## How you encounter it
 
-- **Operator config**: peers that want lifecycle events list `lifecycle_subscriber` in their `protocols: [...]` config under `rimsky.yml`. Without that, the peer is silently skipped during fan-out.
-- **Implementing a subscriber**: speak gRPC against `protocols/proto/v1/lifecycle.proto`. The protocol is implementable separately from `ClaimProducer` and `Executor` — a peer can opt into one, two, or three protocols by listing them.
+- **Operator config**: services that want lifecycle events list `lifecycle_subscriber` in their `protocols: [...]` config under `rimsky.yml`. Without that, the service is silently skipped during fan-out.
+- **Implementing a subscriber**: speak gRPC against `protocols/proto/v1/lifecycle.proto`. The protocol is implementable separately from `ClaimProducer` and `Executor` — a service can opt into one, two, or three protocols by listing them.
 
 ## Consumer-visible guarantees
 
 - Lifecycle events fire from the control-api process at the moment of state transition. Synchronous fan-out means a slow subscriber slows down the transition; subscribers should be fast.
-- Idempotency is tracked per (peer, event-type, object-id). Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side. Subscribers should still write idempotent handlers because their own internal effects may not be idempotent by default.
-- Peers referenced by a template but not subscribed silently skip fan-out. There's no error — non-subscription is the default.
+- Idempotency is tracked per (service, event-type, object-id). Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side. Subscribers should still write idempotent handlers because their own internal effects may not be idempotent by default.
+- Services referenced by a template but not subscribed silently skip fan-out. There's no error — non-subscription is the default.
 
 ## Common mistakes
 

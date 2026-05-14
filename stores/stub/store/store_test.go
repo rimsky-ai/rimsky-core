@@ -16,7 +16,7 @@ import (
 func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp action.Action) *Store {
 	t.Helper()
 	cfg := Config{
-		Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}},
+		Capabilities: corestore.Capabilities{WriteSemanticsAllowed: []corestore.WriteSemantics{corestore.WriteSemanticsSync}},
 		PickPolicies: map[string]PickPolicyConfig{
 			selector: {
 				OnCommit:     onCommit,
@@ -153,7 +153,7 @@ func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 }
 
 func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
-	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
+	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsAllowed: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
 	ctx := context.Background()
 	o, err := st.Open(ctx, "c1", "concrete/path")
 	if err != nil {
@@ -192,7 +192,7 @@ func TestSeedPickPolicyItemUnknownSelector(t *testing.T) {
 }
 
 func TestCallsRecorded(t *testing.T) {
-	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
+	st := New(Config{Capabilities: corestore.Capabilities{WriteSemanticsAllowed: []corestore.WriteSemantics{corestore.WriteSemanticsSync}}})
 	ctx := context.Background()
 	_, _ = st.Open(ctx, "c1", "x")
 	_ = st.Commit(ctx, "c1", []byte(`"x"`), []byte(`"x"`))
@@ -208,7 +208,7 @@ func TestCallsRecorded(t *testing.T) {
 func TestCapabilitiesDefaultsToSyncEnvelope(t *testing.T) {
 	st := New(Config{})
 	caps := st.Capabilities()
-	if len(caps.WriteSemanticsEnvelope) != 1 || caps.WriteSemanticsEnvelope[0] != corestore.WriteSemanticsSync {
-		t.Fatalf("default envelope = %v, want [%q]", caps.WriteSemanticsEnvelope, corestore.WriteSemanticsSync)
+	if len(caps.WriteSemanticsAllowed) != 1 || caps.WriteSemanticsAllowed[0] != corestore.WriteSemanticsSync {
+		t.Fatalf("default envelope = %v, want [%q]", caps.WriteSemanticsAllowed, corestore.WriteSemanticsSync)
 	}
 }

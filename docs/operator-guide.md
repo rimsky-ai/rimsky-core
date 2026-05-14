@@ -96,7 +96,7 @@ Each rimsky binary can expose a `/metrics` endpoint:
   (default `127.0.0.1`).
 - `rimsky-supervisor` — same as scheduler.
 
-The metric set is documented in `modeling/observability/metrics.go`.
+The metric set is documented in `control/observability/metrics.go`.
 Counters cover dispatches, terminal verdicts, invalidates, claim
 acquisitions. Gauges cover nodes-by-state, parked-by-reason, held
 frames, dispatch queue depth. Histograms cover dispatch latency,
@@ -124,7 +124,7 @@ general-purpose admin invalidation surface for any node state.
 
 Three conformance binaries ship under `cmd/`:
 
-- `rimsky-conformance` — exercises an executor against the protocol.
+- `rimsky-executor-conformance` — exercises an executor against the protocol.
   Stub mode is mandatory for LLM-calling executors
   (`--require-stub-mode`).
 - `rimsky-claim-producer-conformance` — exercises a claim-producer.

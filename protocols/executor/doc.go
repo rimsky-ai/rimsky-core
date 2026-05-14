@@ -12,6 +12,6 @@
 //
 // This package carries the lightweight Go-level interface and value
 // types that mirror the proto messages. The supervisor's gRPC + HTTP
-// client wrapper lives in modeling/executor/ (it caches connections
-// and provides a transport-agnostic stream abstraction).
+// client wrapper lives in runtime/executor/ (it caches connections and
+// provides a transport-agnostic stream abstraction).
 package executor

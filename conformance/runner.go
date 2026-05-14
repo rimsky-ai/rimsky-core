@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 // Result is the outcome of running a single Scenario.
@@ -99,8 +99,9 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 }
 
 // probeStubMode sends a stub-probe Execute and returns true iff the resulting
-// terminal carries `attributes_delta = {stub: true}`. AwaitTerminal handles
-// async executors by following the callback when AsyncAccepted is observed.
+// terminal StreamClose Success outcome carries `attributes_delta = {stub: true}`.
+// AwaitTerminal handles async executors by following the callback when the
+// AwaitAsyncCallback outcome is observed.
 //
 // Callers that depend on a definite stub-mode answer (e.g.
 // `--require-stub-mode`) MUST inspect the returned error. A nil error +
@@ -130,20 +131,22 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 		// the probe RPC merely timed out.
 		return false, err
 	}
-	if ce, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-		m := ce.Complete.GetAttributesDelta().AsMap()
-		if v, ok := m["stub"].(bool); ok && v {
-			return true, nil
+	if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
+		if succ, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Success); ok {
+			m := succ.Success.GetAttributesDelta().AsMap()
+			if v, ok := m["stub"].(bool); ok && v {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
 }
 
 // probeAsyncSupport sends an Execute with userdata.probe_async=true and
-// returns true iff the executor responds with AsyncAccepted on the gRPC
-// stream. Unlike the regular terminal-await flow, this probe deliberately
-// stops at the gRPC terminal — receipt of AsyncAccepted IS the signal we are
-// looking for.
+// returns true iff the executor responds with a StreamClose whose outcome is
+// AwaitAsyncCallback on the gRPC stream. Unlike the regular terminal-await
+// flow, this probe deliberately stops at the gRPC terminal — receipt of
+// AwaitAsyncCallback IS the signal we are looking for.
 func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool {
 	pctx, cancel := context.WithTimeout(ctx, timeout/3)
 	defer cancel()
@@ -163,14 +166,13 @@ func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool
 		if err != nil {
 			break
 		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted); ok {
-			return true
-		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-			return false
-		}
-		if _, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-			return false
+		if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
+			switch sc.StreamClose.Outcome.(type) {
+			case *genv1.StreamClose_AwaitAsync:
+				return true
+			case *genv1.StreamClose_Success, *genv1.StreamClose_Error, *genv1.StreamClose_Park:
+				return false
+			}
 		}
 	}
 	return false

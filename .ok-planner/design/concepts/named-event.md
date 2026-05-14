@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-A `NamedEvent` is a non-terminal executor emission carrying a name (string from `Capabilities.declared_events`) and an opaque payload. Persisted to `rimsky_node_events` (with inline/handle spill via `BlobBackend`). Two consumption paths: attribute substitution (`{{nodes.<emitter>.event.<name>.<json_path>}}`) and the per-node `on_event:` handler map.
+A `NamedEvent` is a non-terminal executor emission carrying a name (string from `Capabilities.declared_events`) and an inert payload. Persisted to `table:rimsky_node_events` (with inline/handle spill via `BlobBackend`). Two consumption paths: attribute substitution (`{{nodes.<emitter>.event.<name>.<json_path>}}`) and the per-node `on_event:` handler map. Inertness discipline cross-linked at `concept:inertness`.
 
 ## Purpose
 
@@ -32,7 +32,7 @@ Owns: the emission protocol surface, the persistence ledger, the two consumption
 
 The persisted form of named events is `rimsky_node_events`, an append-only ledger with columns `emitter_node_type`, `event_name`, `payload_inline` / `payload_handle` / `payload_handle_backend`, `seq`. Payloads can be spilled via the configured `BlobBackend` (per `persistence.blob.backend` ∈ {`inline` | `pg-largeobject` | `filesystem` | `memory`}). Read by attribute substitution `{{nodes.<emitter>.event.<name>.<path>}}` and by `on_event` handlers (see `on-event-handler`).
 
-Opacity discipline (`@blessed-invariant 21`): the payload bytes are inert in rimsky — read only via `walkPath` substitution and the persistence-layer fetch on event consumption. Never logged, formatted with `%v`, validated beyond schema gates, transformed, attached to traces, or included in error messages.
+Inertness discipline (`@blessed-invariant 21`, see `concept:inertness`): the payload bytes are inert in rimsky — read only via `walkPath` substitution and the persistence-layer fetch on event consumption. Never logged, formatted with `%v`, validated beyond schema gates, transformed, attached to traces, or included in error messages.
 
 Most-recent emission of `(emitter, event_name)` wins at substitution time. No built-in retention; operator-managed.
 

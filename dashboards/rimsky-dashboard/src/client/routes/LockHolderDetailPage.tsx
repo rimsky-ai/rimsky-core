@@ -31,7 +31,7 @@ export default function LockHolderDetailPage() {
             <dt className="text-muted-foreground">name</dt>
             <dd className="font-mono text-xs">{r.lock_name ?? '—'}</dd>
             <dt className="text-muted-foreground">store</dt>
-            <dd>{r.store_name ? <Link to={`/stores/${r.store_name}`} className="hover:underline">{r.store_name}</Link> : '—'}</dd>
+            <dd>{r.producer_name ? <Link to={`/stores/${r.producer_name}`} className="hover:underline">{r.producer_name}</Link> : '—'}</dd>
             <dt className="text-muted-foreground">supervisor</dt>
             <dd className="font-mono text-xs">{r.holder_supervisor_id}</dd>
             <dt className="text-muted-foreground">node</dt>
@@ -43,10 +43,10 @@ export default function LockHolderDetailPage() {
             <dt className="text-muted-foreground">frame_id</dt>
             <dd className="font-mono text-xs">{r.frame_id ?? '—'}</dd>
           </dl>
-          {r.store_name && (
+          {r.producer_name && (
             <p className="mt-3 text-sm">
-              <Link className="underline" to={`/stores/${r.store_name}?claim=${r.claim_id}`}>
-                View claim on {r.store_name} →
+              <Link className="underline" to={`/stores/${r.producer_name}?claim=${r.claim_id}`}>
+                View claim on {r.producer_name} →
               </Link>
             </p>
           )}

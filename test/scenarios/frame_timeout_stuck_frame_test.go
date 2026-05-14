@@ -25,9 +25,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameTimeoutStuckFrame(t *testing.T) {
@@ -36,7 +36,7 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "frame-timeout-stuck", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -46,7 +46,7 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frames so we have full control.
-	h.ExecSQL(`DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
@@ -56,7 +56,7 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	const timeoutMs = 60000
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '5 minutes', $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID), int64(timeoutMs)}, &frameID)
@@ -68,7 +68,7 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Drive the frame engine.
-	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), logger))
+	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), logger))
 
 	// The observer should have fired the warning.
 	logged := buf.String()

@@ -5,8 +5,8 @@
 // Atomic-acquisition scenario coverage — invariants 10 and 15.
 //
 // Invariant 10 (rimsky-side, v3 §4.10): the §7.3 acquisition transaction
-// either claims dispatch AND inserts every required `rimsky_claim_handle`
-// row AND records the `Store.Open`-returned address, or none of these.
+// either claims dispatch AND inserts every required `rimsky_claim_handles`
+// row AND records the `ClaimProducer.Open`-returned address, or none of these.
 // The store's own state mutations run in a decoupled tx; rimsky-side
 // atomicity is independent.
 //
@@ -23,7 +23,7 @@
 //     coverage of invariant 10's all-or-nothing INSERT semantics.
 //   - TestClaimHandleRowDeletedAfterTerminal complements the loopback wire
 //     coverage in stores/regional_claim_test.go by also asserting the
-//     post-terminal `rimsky_claim_handle` row count is zero — invariant
+//     post-terminal `rimsky_claim_handles` row count is zero — invariant
 //     4 (claimant-guarded release) end-to-end.
 package locks
 
@@ -33,14 +33,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/locks/storetest"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/executor"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -66,7 +67,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Loopback stub for control-api and scheduler startup. The Fake
 	// shadows it inside the runner-local registry built below.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -76,7 +77,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -104,7 +105,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Build a runner-local registry with the error-injecting Fake. This
 	// registry shadows the harness control-api's registry — the runner
 	// uses what we hand it via RunArgs.
-	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
 	openErr := errOpenInjected{}
 	fake.ErrorFunc = func(verb string, _ locks.ClaimID) error {
 		if verb == "open" {
@@ -115,7 +116,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	reg := locks.NewRegistry()
 	reg.Add("content", fake)
 
-	args := integration.RunArgs{
+	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		ClaimHandles:      h.Persist.ClaimHandles(),
@@ -132,7 +133,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
-	out, err := integration.RunNode(h.Ctx, args, nil)
+	out, err := runtime.RunNode(h.Ctx, args, nil)
 	// Open errors surface as the RunNode error (the per-candidate tx
 	// rolls back deferred-style). The load-bearing assertion is that
 	// the rollback actually happened — see the row-count checks below.
@@ -143,15 +144,15 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Invariant 10 (rimsky-side): zero lock-holder rows for the node.
 	var lhCount int
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle WHERE holder_node_id = $1`, n.ID,
+		`SELECT count(*) FROM rimsky_claim_handles WHERE holder_node_id = $1`, n.ID,
 	).Scan(&lhCount)
 	require.NoError(t, err)
-	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_claim_handle rows")
+	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_claim_handles rows")
 
 	// Invariant 10 (rimsky-side): dispatch row's claimed_by is NULL again.
 	var claimedBy *string
 	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT claimed_by FROM rimsky_worker_request WHERE node_id = $1`, n.ID,
+		`SELECT claimed_by FROM rimsky_node_runs WHERE node_id = $1`, n.ID,
 	).Scan(&claimedBy)
 	require.NoError(t, err)
 	require.Nil(t, claimedBy, "rollback must release the dispatch claim")
@@ -177,7 +178,7 @@ func (errOpenInjected) Error() string { return "injected open error" }
 
 // TestClaimHandleRowDeletedAfterTerminal drives one scope claim
 // through the loopback gRPC fixture and asserts that after the worker
-// reaches `fresh`, zero `rimsky_claim_handle` rows remain for the node.
+// reaches `fresh`, zero `rimsky_claim_handles` rows remain for the node.
 // Complements stores/regional_claim_test.go by adding the post-terminal
 // row-count assertion — invariant 4 (claimant-guarded release) end to
 // end through the §7.3 atomic path.
@@ -185,7 +186,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -194,12 +195,12 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "release-after-terminal", Version: "1",
@@ -214,7 +215,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
 	// Invariant 4 / 10: post-terminal lock-holder row count is zero
@@ -223,7 +224,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	var lhCount int
 	for time.Now().Before(deadline) {
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_claim_handle WHERE holder_node_id = $1`, n.ID,
+			`SELECT count(*) FROM rimsky_claim_handles WHERE holder_node_id = $1`, n.ID,
 		).Scan(&lhCount)
 		require.NoError(t, err)
 		if lhCount == 0 {

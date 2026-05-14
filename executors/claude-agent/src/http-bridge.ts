@@ -82,8 +82,9 @@ interface ExecuteBody {
   // Field number 10 (`resumed`) is reserved on the wire under
   // stores-redesign-v2. Resume is universal — substrate-detected.
   run_attempt?: number;
-  // J10 plan: when this is a resume after ParkRequested, the supervisor
-  // populates resume_context with the original session_token + payload
+  // J10 plan: when this is a resume after the `Park` terminal, the
+  // supervisor populates resume_context with the original
+  // session_token + payload
   // and a resume_reason ("deadline_elapsed" | "external_invalidate").
   // The bridge extracts session_token and passes it to the CLI's
   // `--resume <id>` arg; payload + reason are exposed to the prompt

@@ -18,10 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestParamsSubstitutionAtDispatch verifies the supervisor substitutes
@@ -31,7 +31,7 @@ import (
 func TestParamsSubstitutionAtDispatch(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("greeter").Complete(map[string]any{"executor_field": "from-executor"}, true, "ok")
+	h.Stub.WhenType("greeter").Success(map[string]any{"executor_field": "from-executor"}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "substitution-dispatch", Version: "1",
@@ -53,7 +53,7 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 
 	g := h.FindNode(iid, "greeter")
 	require.NotNil(t, g)
-	require.True(t, h.WaitForNodeState(g.ID, shared.NodeStateFresh, 15*time.Second))
+	require.True(t, h.WaitForNodeState(g.ID, cascade.NodeStateFresh, 15*time.Second))
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -103,6 +103,6 @@ func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
 
 	n := h.FindNode(iid, "needs-param")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 15*time.Second),
 		"missing required substitution should drive node to failed via give_up")
 }

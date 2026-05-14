@@ -24,14 +24,14 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// ObservabilityServer is the filesystem store's StoreObservability
+// ObservabilityServer is the filesystem store's ClaimProducerObservability
 // implementation. It declares two admin views (`pick_policies` and
 // `policy_items`) that the dashboard surfaces as tabs on the store
 // detail page. Per-claim history is not retained in-memory in v1; the
 // store's claim ledger lives transiently in pick_policies/in_progress
 // directories on disk and is exposed via the policy_items admin view.
 type ObservabilityServer struct {
-	genv1.UnimplementedStoreObservabilityServer
+	genv1.UnimplementedClaimProducerObservabilityServer
 	store *fsstore.Store
 	// pickPolicies is indexed at construction time so the observability
 	// surface can iterate them without taking the store's mu.
@@ -51,7 +51,7 @@ func NewObservabilityServer(store *fsstore.Store, root string, pickPolicies map[
 }
 
 // SetHTTPBridgeURL records the URL the store advertises in
-// StoreObservabilityCapabilities.http_bridge_url. Set-once at startup;
+// ClaimProducerObservabilityCapabilities.http_bridge_url. Set-once at startup;
 // subsequent calls are ignored. Empty value disables.
 func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
 	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
@@ -63,11 +63,11 @@ func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = 
 // defaultObsIdleTimeout mirrors the postgres store's default per spec §3.5.
 const defaultObsIdleTimeout = 5 * time.Minute
 
-// GetCapabilities reports the v1 filesystem observability surface:
+// Capabilities reports the v1 filesystem observability surface:
 // admin views for pick_policies and policy_items, plus per-claim get /
 // stream / list backed by the in-memory ledger.
-func (s *ObservabilityServer) GetCapabilities(_ context.Context, _ *genv1.GetStoreCapabilitiesRequest) (*genv1.StoreObservabilityCapabilities, error) {
-	return &genv1.StoreObservabilityCapabilities{
+func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
+	return &genv1.ClaimProducerObservabilityCapabilities{
 		SupportsClaimGet:              true,
 		SupportsClaimStream:           true,
 		SupportsListClaims:            true,
@@ -107,7 +107,7 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 // see stores/postgres/server/observability.go::StreamClaim.
 //
 //	@source: stores/postgres/server/observability.go:StreamClaim
-func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.StoreObservability_StreamClaimServer) error {
+func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
 	defer unsub()
 	if rec == nil {
@@ -385,6 +385,6 @@ func trimAt(s string) string {
 // (bridge.MountObservability) and wire SetHTTPBridgeURL.
 func (s *Server) RegisterObservability(grpcSrv *grpc.Server, root string, pickPolicies map[string]*fsstore.PickPolicy) *ObservabilityServer {
 	o := NewObservabilityServer(s.store, root, pickPolicies)
-	genv1.RegisterStoreObservabilityServer(grpcSrv, o)
+	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, o)
 	return o
 }

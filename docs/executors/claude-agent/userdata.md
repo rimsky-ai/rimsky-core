@@ -71,12 +71,12 @@ corrective prompt and waits for the next `report_complete`.
 
 Default `true`. When true, claude-agent intercepts CLI rate-limit
 errors (HTTP 429) and emits
-`ParkRequested { reason: "rate_limit", resume_at: <reset_ts>, session_token: <session_id> }`.
+`Park { reason: "rate_limit", resume_at: <reset_ts>, session_token: <session_id> }`.
 Rimsky parks the node; on `resume_at` claude-agent resumes the CLI
 with `--resume <session_id>`.
 
 When false, rate-limit errors flow through as
-`Errored { error_class: "rate_limit" }`.
+`Error { error_class: "rate_limit" }`.
 
 ### `cli.mcpServers`
 
@@ -184,7 +184,7 @@ intercepts CLI rate-limit reports and:
 
 1. Captures the CLI's session_id (already tracked for resume-with-prompt).
 2. Captures the rate-limit reset timestamp from the CLI's error output.
-3. Emits `ParkRequested { reason: "rate_limit", resume_at: <reset_ts>, session_token: <session_id>, payload: {} }`.
+3. Emits `Park { reason: "rate_limit", resume_at: <reset_ts>, session_token: <session_id>, payload: {} }`.
 4. Exits cleanly.
 
 Rimsky parks the node. At `resume_at` the supervisor's parked-node

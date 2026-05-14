@@ -27,12 +27,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -42,7 +42,7 @@ func TestReactiveLoopSelfInvalidateNextFrame(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -62,16 +62,16 @@ func TestReactiveLoopSelfInvalidateNextFrame(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{"v": 1}, true, "ran")
+	h.Stub.WhenType("worker").Success(map[string]any{"v": 1}, true, "ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "reactive-loop-next-frame", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -98,7 +98,7 @@ func TestReactiveLoopSelfInvalidateNextFrame(t *testing.T) {
 
 	// Wait until the queue is fully drained AND the on_acquire_unavailable
 	// path has fired pass (last_outcome=passed).
-	require.True(t, waitForLastOutcome(t, h, worker.ID, shared.LastOutcomePassed, 60*time.Second),
+	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 60*time.Second),
 		"worker should land in fresh+passed once the queue is drained")
 
 	// Verify final node state.
@@ -108,7 +108,7 @@ func TestReactiveLoopSelfInvalidateNextFrame(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFresh, wRow.State,
+	require.Equal(t, cascade.NodeStateFresh, wRow.State,
 		"worker should be fresh after the loop terminates via pass")
 
 	// Stub producer should have observed at least 4 Open calls

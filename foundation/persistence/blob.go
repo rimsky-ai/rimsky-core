@@ -60,7 +60,7 @@ type BlobBackend interface {
 // (filesystem) or future content-hash deduplication. Both fields are
 // optional — empty strings are valid for callers that do not have node
 // or attribute context (e.g. parked-payload writes are keyed by
-// worker-request id rather than node id).
+// node-run id rather than node id).
 type BlobKey struct {
 	NodeID        string
 	AttributeName string

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instances.go — SQLite-backed persistence.InstanceStore.
+// instances.go — SQLite-backed persistence.InstanceTable.
 package sqlite
 
 import (
@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	foundationshared "github.com/fallguy/rimsky/foundation/shared"
 )
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
@@ -37,7 +37,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal userdata_overrides: %w", err)
 	}
-	if in.ID == (shared.UUID{}) {
+	if in.ID == (foundationshared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 
@@ -50,7 +50,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	out, err := scanInstance(row)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return persistence.InstanceRow{}, shared.Wrap(shared.ErrInstanceKeyConflict,
+			return persistence.InstanceRow{}, foundationshared.Wrap(foundationshared.ErrInstanceKeyConflict,
 				"instance_key already registered for template",
 				map[string]any{"template_hash": in.TemplateHash, "instance_key": in.InstanceKey})
 		}
@@ -59,7 +59,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	return out, nil
 }
 
-func (s *instancesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.InstanceRow, error) {
+func (s *instancesImpl) Get(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*persistence.InstanceRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+instanceCols+` FROM rimsky_instances WHERE id = ?`, id.String(),
 	)
@@ -185,7 +185,7 @@ func (s *instancesImpl) List(
 	return persistence.PaginatedListResult[persistence.InstanceRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
-func (s *instancesImpl) Delete(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_instances WHERE id = ?`, id.String())
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -193,7 +193,7 @@ func (s *instancesImpl) Delete(ctx context.Context, id shared.UUID, tx persisten
 	return nil
 }
 
-func (s *instancesImpl) MarkTerminated(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *instancesImpl) MarkTerminated(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_instances SET terminated_at = ?
 		 WHERE id = ? AND terminated_at IS NULL`,
@@ -242,7 +242,7 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 		 FROM rimsky_instances i
 		 WHERE i.terminated_at IS NOT NULL
 		   AND EXISTS (
-		     SELECT 1 FROM rimsky_lifecycle_idempotency l
+		     SELECT 1 FROM rimsky_lifecycle_idempotencies l
 		     WHERE l.scope_kind = 'instance' AND l.scope_id = i.id
 		   )
 		 ORDER BY i.terminated_at ASC

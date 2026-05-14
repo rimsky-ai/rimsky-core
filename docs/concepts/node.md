@@ -1,7 +1,7 @@
 ---
 concept: node
 definition: |
-  The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of four states.
+  The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 proto_symbol: (none)
 config_field: (none)
 api_surface: GET /nodes/{id}
@@ -13,7 +13,7 @@ deprecated_terms: []
 
 ## Definition
 
-The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of four states.
+The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 
 ## Why it exists
 
@@ -44,12 +44,12 @@ In a template's `nodes:` list, each entry has:
 
 ### Lifecycle handlers
 
-Each node may declare up to four lifecycle handler blocks that customize the supervisor's behavior at terminal events. All four are optional; absent slots use today's hardcoded defaults.
+Each node may declare three declarable lifecycle handler slots plus the `on_event` map that customize the supervisor's behavior at terminal events. All four are optional; absent slots use today's hardcoded defaults.
 
 - `on_acquire_unavailable: { resolve: pass | retry | error, error_class?, invalidate? }` — runs when any required claim's `Open` returned `Available=false`. Default (or explicit `retry`) is silent retry; `pass` transitions the node to `fresh+passed` without invoking the executor; `error` routes through the named `error_types[error_class]` policy.
-- `on_executor_complete: { resolve: by_changed | always_propagate | never_propagate, invalidate? }` — runs at a Complete terminal. Default `by_changed` mirrors today's behavior; `always_propagate` forces the cascade gate to fire even on `changed:false`; `never_propagate` suppresses the cascade gate even on `changed:true`.
-- `on_executor_blocked: { resolve: error | pass, error_class?, invalidate? }` — runs at a Blocked terminal. Default routes through `error_types`; `pass` transitions to `fresh+passed` without error routing.
-- `on_executor_errored: { resolve: error | pass, error_class?, invalidate? }` — runs at an Errored terminal. Default routes through `error_types[<executor-class>]`; `pass` transitions to `fresh+passed`; `error` overrides the routed class.
+- `on_executor_complete: { resolve: by_changed | always_propagate | never_propagate, invalidate? }` — runs at a `Complete` terminal (the StreamClose `Success` outcome on the wire). Default `by_changed` mirrors today's behavior; `always_propagate` forces the cascade gate to fire even on `changed:false`; `never_propagate` suppresses the cascade gate even on `changed:true`.
+- `on_executor_errored: { resolve: error | pass, error_class?, invalidate? }` — runs at an `Error{error_class}` terminal (the StreamClose `Error` outcome on the wire, including the reserved `executor_blocked` class that collapsed into this slot post-2026-05-12). Default routes through `error_types[<executor-class>]`; `pass` transitions to `fresh+passed`; `error` overrides the routed class.
+- `on_event: { <event_name>: { resolve, invalidate? } }` — a per-event-name map keyed by names declared in the executor's `Capabilities.declared_events`. Non-terminal: a node may emit any number of named events between start and its terminal event.
 
 Each handler may declare an optional `invalidate: { targets: [...], frame: in | next }` block that fires unconditionally when the handler runs (orthogonal to `resolve`). Targets resolve to node types within the same instance; the literal `self` resolves to the source node's type. `frame: in` joins the source's frame; `frame: next` (default) buffers through `frame.EnqueueOrCoalesce` as a new frame.
 

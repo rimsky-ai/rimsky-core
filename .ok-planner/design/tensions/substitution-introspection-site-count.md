@@ -11,13 +11,13 @@ affects:
 
 ## What is muddy
 
-`modeling/attribute/substitution.go:18-19` and the casual reading of `@blessed-invariant 20` can suggest there is exactly one sanctioned site where rimsky reads opaque bytes. The actual count is three:
+`graph/attribute/substitution.go` and the casual reading of `@blessed-invariant 20` can suggest there is exactly one sanctioned site where rimsky reads opaque bytes. The actual count is three:
 
-- `walkPath` (`modeling/attribute/substitution.go:189-310`) — substitution leaf.
-- `stringifyRaw` (`substitution.go` around line 280) — top-level address/scope flattening.
-- `makeStoreHandle` (`foundation/integration/runner_dispatch.go:710-770`) — wire-encoding into `google.protobuf.Struct`.
+- `walkPath` (`graph/attribute/substitution.go`) — substitution leaf.
+- `stringifyRaw` (`graph/attribute/substitution.go`) — top-level address/scope flattening.
+- `makeStoreHandle` (`foundation/integration/runner_dispatch.go`) — wire-encoding into `google.protobuf.Struct`.
 
-The third site is in a different package and is the most easily missed. `substitution.go:33-37` does call it out as "one additional sanctioned exception" but the headline "single introspection site" framing is misleading.
+The third site is in a different package and is the most easily missed. `graph/attribute/substitution.go` does call it out as "one additional sanctioned exception" but the headline "single introspection site" framing is misleading.
 
 ## Why it matters
 

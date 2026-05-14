@@ -16,9 +16,9 @@ import (
 
 func TestObservability_Capabilities_NoObservability(t *testing.T) {
 	s := NewObservabilityServer()
-	caps, err := s.GetCapabilities(context.Background(), &genv1.GetCapabilitiesRequest{})
+	caps, err := s.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
 	if err != nil {
-		t.Fatalf("GetCapabilities: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if caps.GetSupportsTraceGet() {
 		t.Errorf("supports_trace_get = true, want false")

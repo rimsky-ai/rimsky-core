@@ -5,12 +5,12 @@
 // nodes_list_running_by_supervisor.go — NodesListRunningBySupervisor
 // conformance area.
 //
-// Covers NodeStore.ListRunningBySupervisor — the supervisor-scoped
+// Covers NodeTable.ListRunningBySupervisor — the supervisor-scoped
 // running-nodes query the supervisor's heartbeat tick uses to refresh
 // rimsky_nodes.last_heartbeat_at and to compute the supervisor's
 // active_node_count. The DB is the source of truth (replacing an
 // in-memory `activeNodes` map that missed async dispatches between
-// AsyncAccepted and the terminal callback). Both drivers must
+// AwaitAsyncCallback and the terminal callback). Both drivers must
 // implement the predicate identically: state='running' AND
 // assigned_supervisor_id = $1.
 package conformance
@@ -24,13 +24,13 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testNodesListRunningBySupervisor(t *testing.T, d persistence.Driver) {
+func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	// Four sibling nodes against the same instance:
 	//   - runningSelf:   state=running, supervisor=sup-A — must surface for sup-A.
@@ -65,11 +65,11 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Driver) {
 		t.Helper()
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			if err := store.Nodes().UpdateState(ctx, id,
-				shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+				cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 				return err
 			}
 			if err := store.Nodes().UpdateState(ctx, id,
-				shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
+				cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
 				return err
 			}
 			return store.Nodes().UpdateHeartbeat(ctx, id, time.Now(), supervisorID, tx)
@@ -84,7 +84,7 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Driver) {
 	// staleSelf: fresh -> stale (no run), supervisor stamped via heartbeat.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Nodes().UpdateState(ctx, staleSelfID,
-			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 			return err
 		}
 		return store.Nodes().UpdateHeartbeat(ctx, staleSelfID, time.Now(), "sup-A", tx)
@@ -104,7 +104,7 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Driver) {
 	if len(got) != 1 || got[0].ID != runningSelfID {
 		t.Fatalf("ListRunningBySupervisor(sup-A): got %v, want exactly [%s]", nodeIDStrings(got), runningSelfID)
 	}
-	if got[0].State != shared.NodeStateRunning {
+	if got[0].State != cascade.NodeStateRunning {
 		t.Fatalf("ListRunningBySupervisor(sup-A): row state=%q want running", got[0].State)
 	}
 	if got[0].AssignedSupervisorID != "sup-A" {

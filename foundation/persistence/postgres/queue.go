@@ -4,7 +4,7 @@
 
 // queue.go is the Postgres implementation of persistence.Queue.
 //
-// Under the stores redesign (spec §7), this surface owns rimsky_worker_request
+// Under the stores redesign (spec §7), this surface owns rimsky_node_runs
 // only. The §7.3 atomic-acquisition transaction is orchestrated by
 // foundation/integration/runner.go; the helpers below (SelectCandidates,
 // ClaimDispatchRow) are the building blocks the runner calls inside the
@@ -27,7 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // defaultCandidateLimit caps the candidate batch returned by
@@ -42,7 +42,7 @@ func newQueue(pool *pgxpool.Pool) *queueImpl { return &queueImpl{pool: pool} }
 
 var _ persistence.Queue = (*queueImpl)(nil)
 
-// q returns the right querier for tx. Same convention as storeImpl.q.
+// q returns the right querier for tx. Same convention as tablesImpl.q.
 func (q *queueImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
 		return q.pool
@@ -74,16 +74,16 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		return fmt.Errorf("postgres.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
 	}
 	_, err := q.q(tx).Exec(ctx,
-		`INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
 		 VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pending', $5)
 		 ON CONFLICT (node_id) DO UPDATE
 		   SET enqueued_at = EXCLUDED.enqueued_at,
 		       executor_name = EXCLUDED.executor_name,
 		       required_stores = EXCLUDED.required_stores,
 		       frame_id = EXCLUDED.frame_id
-		   WHERE rimsky_worker_request.claimed_by IS NULL
-		     AND rimsky_worker_request.phase = 'pending'
-		     AND rimsky_worker_request.enqueued_at <= NOW()`,
+		   WHERE rimsky_node_runs.claimed_by IS NULL
+		     AND rimsky_node_runs.phase = 'pending'
+		     AND rimsky_node_runs.enqueued_at <= NOW()`,
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID,
 	)
 	return err
@@ -123,7 +123,7 @@ func (q *queueImpl) SelectCandidates(
 	// extensions plan E2/E3.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
@@ -180,7 +180,7 @@ func (q *queueImpl) ClaimDispatchRow(
 		return false, errors.New("postgres.ClaimDispatchRow: tx required")
 	}
 	cmd, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET claimed_by = $1, claimed_at = NOW(), last_heartbeat_at = NOW(), phase = 'active'
 		  WHERE id = $2 AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, dispatchID,
@@ -194,13 +194,13 @@ func (q *queueImpl) ClaimDispatchRow(
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
-			`DELETE FROM rimsky_worker_request WHERE id = $1 AND claimed_by = $2`,
+			`DELETE FROM rimsky_node_runs WHERE id = $1 AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.pool.Exec(ctx,
-		`DELETE FROM rimsky_worker_request WHERE id = $1`, dispatchID,
+		`DELETE FROM rimsky_node_runs WHERE id = $1`, dispatchID,
 	)
 	return err
 }
@@ -214,24 +214,24 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).Exec(ctx,
-			`DELETE FROM rimsky_worker_request WHERE node_id = $1 AND claimed_by = $2`,
+			`DELETE FROM rimsky_node_runs WHERE node_id = $1 AND claimed_by = $2`,
 			nodeID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).Exec(ctx,
-		`DELETE FROM rimsky_worker_request WHERE node_id = $1`, nodeID,
+		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
 	)
 	return err
 }
 
 // ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
 // older than cutoff. @blessed-invariant 6 (5× heartbeat cutoff).
-func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]shared.DispatchRow, error) {
+func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]persistence.DispatchRow, error) {
 	rows, err := q.pool.Query(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, last_heartbeat_at, frame_id
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND last_heartbeat_at < $1`,
 		cutoff,
@@ -241,9 +241,9 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 	}
 	defer rows.Close()
 
-	var out []shared.DispatchRow
+	var out []persistence.DispatchRow
 	for rows.Next() {
-		var r shared.DispatchRow
+		var r persistence.DispatchRow
 		if err := rows.Scan(
 			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
@@ -267,7 +267,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
-			`UPDATE rimsky_worker_request
+			`UPDATE rimsky_node_runs
 			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 			  WHERE id = $1 AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
@@ -275,7 +275,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 		return err
 	}
 	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 		  WHERE id = $1`,
 		dispatchID,
@@ -291,7 +291,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 		claimedBy *string
 	)
 	err := q.pool.QueryRow(ctx,
-		`SELECT node_id, claimed_by FROM rimsky_worker_request WHERE id = $1`,
+		`SELECT node_id, claimed_by FROM rimsky_node_runs WHERE id = $1`,
 		dispatchID,
 	).Scan(&nodeID, &claimedBy)
 	if err != nil {
@@ -310,7 +310,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
 	var claimedBy *string
 	err := q.pool.QueryRow(ctx,
-		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`,
+		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`,
 		dispatchID,
 	).Scan(&claimedBy)
 	if err != nil {
@@ -327,7 +327,7 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 
 func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
 	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_worker_request SET last_heartbeat_at = NOW() WHERE claimed_by = $1`,
+		`UPDATE rimsky_node_runs SET last_heartbeat_at = NOW() WHERE claimed_by = $1`,
 		supervisorID,
 	)
 	if err != nil {
@@ -346,7 +346,7 @@ func nullableText(s string) any {
 
 // ListLive returns currently-live dispatch rows for the observability
 // browse endpoint. Cursor pagination over (enqueued_at DESC, id DESC).
-func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 50
@@ -356,7 +356,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if pag.Cursor != "" {
 		oc, id, err := decodeDispatchCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[shared.DispatchRow]{}, fmt.Errorf("postgres.ListLive: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, fmt.Errorf("postgres.ListLive: bad cursor: %w", err)
 		}
 		cursorEnq = &oc
 		cursorID = &id
@@ -376,7 +376,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
@@ -389,17 +389,17 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		limit,
 	)
 	if err != nil {
-		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 	}
 	defer rows.Close()
-	var out []shared.DispatchRow
+	var out []persistence.DispatchRow
 	for rows.Next() {
-		var r shared.DispatchRow
+		var r persistence.DispatchRow
 		if err := rows.Scan(
 			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
 			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
 		); err != nil {
-			return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
 		if r.RequiredStores == nil {
 			r.RequiredStores = []string{}
@@ -407,14 +407,14 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
 		nextCursor = encodeDispatchCursor(last.EnqueuedAt, last.ID)
 	}
-	return persistence.PaginatedListResult[shared.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
+	return persistence.PaginatedListResult[persistence.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 // CountLive counts currently-live dispatch rows matching filter.
@@ -434,7 +434,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	var n int
 	err := q.pool.QueryRow(ctx,
 		`SELECT COUNT(*)
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
@@ -447,14 +447,14 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	return n, nil
 }
 
-// CountParkedByReason returns currently-parked rimsky_worker_request
+// CountParkedByReason returns currently-parked rimsky_node_runs
 // counts grouped by parked_reason. Buckets NULL reason under "" so
 // callers can distinguish "no rows for this reason" (key absent) from
 // "parked rows with no reason recorded" (key="").
 func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
 	rows, err := q.pool.Query(ctx,
 		`SELECT COALESCE(parked_reason, ''), COUNT(*)
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE phase = 'parked'
 		  GROUP BY COALESCE(parked_reason, '')`)
 	if err != nil {
@@ -475,14 +475,14 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 
 // GetByID returns the live dispatch row for id, or (nil, nil) when no
 // such row exists. Used by the observability dispatch-detail handler.
-func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error) {
+func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.id = $1`, id,
 	)
-	var r shared.DispatchRow
+	var r persistence.DispatchRow
 	if err := row.Scan(
 		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
 		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,

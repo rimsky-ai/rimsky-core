@@ -76,7 +76,7 @@ type Store struct {
 	// sweep responsibility is satisfied trivially.
 	claims map[string]string
 
-	// ledger is the per-claim history surfaced via the StoreObservability
+	// ledger is the per-claim history surfaced via the ClaimProducerObservability
 	// protocol. Bounded; nil when observability isn't wired up. Per
 	// spec §3.2: stores choose what to expose.
 	ledger *ClaimLedger
@@ -138,7 +138,7 @@ func trimAtPrefix(selector string) string {
 // envelope value.
 func (s *Store) Capabilities() corestore.Capabilities {
 	return corestore.Capabilities{
-		WriteSemanticsEnvelope: []corestore.WriteSemantics{corestore.WriteSemanticsSync},
+		WriteSemanticsAllowed: []corestore.WriteSemantics{corestore.WriteSemanticsSync},
 	}
 }
 

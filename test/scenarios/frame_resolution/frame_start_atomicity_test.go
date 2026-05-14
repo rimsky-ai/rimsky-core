@@ -21,9 +21,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameStartAtomicity(t *testing.T) {
@@ -32,7 +32,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "frame-start-atomicity", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -42,13 +42,13 @@ func TestFrameStartAtomicity(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Reset to a clean queued frame state for full control.
-	h.ExecSQL(`DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), 600000)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
@@ -60,7 +60,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			_ = frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), slog.Default())
+			_ = frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), slog.Default())
 		}()
 	}
 	wg.Wait()

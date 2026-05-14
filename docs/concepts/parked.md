@@ -2,8 +2,8 @@
 concept: parked
 definition: |
   A non-terminal node state representing "work paused; will resume on time, signal, or watchdog." Distinct from `failed` (no auto-recovery) and `running` (work in flight). Held claims persist across the park boundary; cascade does not propagate from parked nodes.
-proto_symbol: ParkRequested (ExecuteEvent variant)
-config_field: max_park_duration (per-node), persistence.blob.* (for spilled payloads)
+proto_symbol: Park in protocols/proto/v1/executor.proto
+config_field: rimsky.yml:nodes
 api_surface: POST /admin/instances/{i}/nodes/{n}/invalidate
 related: [node-state, executor, frame, holding-subgraph, claim-handle]
 deprecated_terms: []
@@ -15,12 +15,12 @@ deprecated_terms: []
 
 A non-terminal node state representing "work paused; will resume on
 time, signal, or watchdog." A node enters `parked` when its executor
-emits the `ParkRequested` terminal event; it exits via one of three
+emits the `Park` terminal event; it exits via one of three
 paths:
 
-1. **Time-based wake** — when `ParkRequested.resume_at` is set, the
+1. **Time-based wake** — when `Park.resume_at` is set, the
    `SweepParkedNodes` sweep transitions the node back to `stale`
-   (and the worker_request row from `parked` to `pending`) when
+   (and the node_run row from `parked` to `pending`) when
    `resume_at` has passed; the next supervisor tick re-dispatches the
    executor with a `ResumeContext` carrying back the original
    `payload` and `session_token` plus `resume_reason:
@@ -49,9 +49,9 @@ Claims acquired before the park stay live across the park boundary:
 - The orphan-claim reaper (foundation invariant 6) skips
   `phase='parked'` rows because heartbeating is paused during park.
 - The held-claim auto-terminal mechanism still fires correctly: a
-  parked node remains an `active` row in
-  `rimsky_claim_holders`, and resolution waits for it to complete or
-  fail just like any other holding-subgraph member.
+  parked node remains an `active` member of the holding subgraph, and
+  resolution waits for it to complete or fail just like any other
+  holding-subgraph member.
 - On resume, the node re-acquires its dispatch slot but does not
   re-Open the claims — it still owns them.
 
@@ -62,8 +62,8 @@ is populated:
 
 ```protobuf
 message ResumeContext {
-  bytes  payload        = 1;  // verbatim from ParkRequested.payload
-  string session_token  = 2;  // verbatim from ParkRequested.session_token
+  bytes  payload        = 1;  // verbatim from Park.payload
+  string session_token  = 2;  // verbatim from Park.session_token
   string resume_reason  = 3;  // "deadline_elapsed" | "external_invalidate"
 }
 ```

@@ -11,7 +11,7 @@ affects:
 
 ## What is muddy
 
-`rimsky-conformance` and `rimsky-conformance-probe` share fixtures via the repo-root `conformance/` package (wire scenarios + `CallbackReceiver`). `rimsky-claim-producer-conformance` calls `RunClaimProducerConformance` exposed as a library function. Both of these patterns also serve in-repo `*_test.go` paths — the foundation persistence drivers (postgres + sqlite) share `foundation/persistence/conformance/` fixtures (21 .go files) between their driver-internal tests and any external suite.
+`rimsky-executor-conformance` and `rimsky-conformance-probe` share fixtures via the repo-root `conformance/` package (wire scenarios + `CallbackReceiver`). `rimsky-claim-producer-conformance` calls `RunClaimProducerConformance` exposed as a library function. Both of these patterns also serve in-repo `*_test.go` paths — the foundation persistence drivers (postgres + sqlite) share `foundation/persistence/conformance/` fixtures (21 .go files) between their driver-internal tests and any external suite.
 
 `rimsky-blob-backend-conformance/main.go` (251 lines) breaks the pattern. The six checks (round-trip 1KB, round-trip 10MB, range read, delete-then-read-returns-`ErrBlobNotFound`, idempotent delete, concurrent writes) are inlined directly into `main.go:115-138` rather than residing in a shared fixture package that the binary and the driver-internal tests both consume.
 

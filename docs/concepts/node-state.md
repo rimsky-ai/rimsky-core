@@ -1,7 +1,7 @@
 ---
 concept: node-state
 definition: |
-  The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled).
+  The five named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`, `parked`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled) and the `parked` distinction (non-terminal hold awaiting time-based wake or external invalidate).
 proto_symbol: (none)
 config_field: (none)
 api_surface: GET /nodes/{id}
@@ -13,11 +13,11 @@ deprecated_terms: []
 
 ## Definition
 
-The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled).
+The five named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`, `parked`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled) and the `parked` distinction (non-terminal hold awaiting time-based wake or external invalidate).
 
 ## Why it exists
 
-Rimsky's reactive model rests on a small, exhaustive state vocabulary. The four named states are the names operators read in dashboards, log lines, control-api responses, and error messages. Internally they're derived from a `(has_value, has_outstanding_request, auto_recovers)` triple — that detail is rarely useful to consumers, but the steady-state mapping is:
+Rimsky's reactive model rests on a small, exhaustive state vocabulary. The five named states are the names operators read in dashboards, log lines, control-api responses, and error messages. Four of them derive from a `(has_value, has_outstanding_request, auto_recovers)` triple — that detail is rarely useful to consumers, but the steady-state mapping is:
 
 | has_value | has_outstanding_request | auto_recovers | name      |
 |-----------|-------------------------|---------------|-----------|
@@ -25,6 +25,8 @@ Rimsky's reactive model rests on a small, exhaustive state vocabulary. The four 
 | false     | false                   | true          | `stale`   |
 | false     | true                    | n/a           | `running` |
 | false     | false                   | false         | `failed`  |
+
+The fifth state, `parked`, sits outside that triple: it is a non-terminal hold entered when an executor emits the `Park` terminal event. A parked node is not running (heartbeating is paused, so the orphan-claim reaper skips it) and not failed (held claims persist across the park boundary). It exits via time-based wake (`resume_at`), in-graph or admin invalidate, or watchdog timeout (`max_park_duration` → `failed` with `error_class: "park_timeout"`). Cascade does not propagate from `parked`.
 
 A note on the genesis case: a freshly-created node carries the named state `fresh` but has no value yet. Once the node runs at least once and emits a value, the steady-state mapping above applies.
 
@@ -42,7 +44,7 @@ Alongside `state`, every node row carries a `last_outcome` column capturing the 
 
 `last_outcome` is **observability metadata, not a dispatch gate**. The cascade-firing predicate is now expressed as `last_outcome == fresh_changed`; under the default `by_changed` resolution this is functionally identical to the prior `t.Changed` gate.
 
-The four named states (`fresh`, `stale`, `running`, `failed`) are unchanged. `last_outcome` is an additional column written by the same transition that lands the node in `fresh` or `failed`.
+The five named states (`fresh`, `stale`, `running`, `failed`, `parked`) are unchanged. `last_outcome` is an additional column written by the same transition that lands the node in `fresh` or `failed`.
 
 ## How you encounter it
 

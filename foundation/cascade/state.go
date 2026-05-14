@@ -5,11 +5,63 @@
 package cascade
 
 import (
+	"errors"
 	"fmt"
-
-	"github.com/fallguy/rimsky/modeling/shared"
 )
 
+// NodeState: fresh | stale | running | failed | parked
+//
+// `parked` is a non-terminal hold state distinct from `failed`. A node
+// enters parked when its executor emits Park as a terminal event; it
+// leaves parked via either time-based wake (SweepParkedNodes processes
+// resume_at), in-graph or admin invalidate, or watchdog timeout
+// (max_park_duration → failed). Cascade does NOT propagate from parked;
+// held claims are retained across the park boundary; the orphan-claim
+// reaper skips phase='parked' rows because heartbeating is paused
+// during park.
+type NodeState string
+
+const (
+	NodeStateFresh   NodeState = "fresh"
+	NodeStateStale   NodeState = "stale"
+	NodeStateRunning NodeState = "running"
+	NodeStateFailed  NodeState = "failed"
+	NodeStateParked  NodeState = "parked"
+)
+
+// LastOutcome is the resolution flavor recorded on rimsky_nodes for
+// terminal-for-this-frame transitions. Distinct from NodeState; the
+// node's state machine is unchanged. last_outcome lives on the
+// rimsky_nodes row alongside state and is written by the same
+// transition that lands the node in fresh or failed.
+//
+// Values are persisted as TEXT under both Postgres and SQLite. NULL
+// means "no outcome recorded yet" (legacy fresh nodes pre-migration).
+//
+// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §2.2.
+type LastOutcome string
+
+const (
+	LastOutcomeFreshChanged   LastOutcome = "fresh_changed"
+	LastOutcomeFreshUnchanged LastOutcome = "fresh_unchanged"
+	LastOutcomePassed         LastOutcome = "passed"
+	LastOutcomePureCascade    LastOutcome = "pure_cascade"
+	LastOutcomeFailed         LastOutcome = "failed"
+)
+
+// ErrIllegalTransition is the sentinel returned by NextState when a state
+// transition is not in the spec §4.1 transition table. blessed-invariant
+// (§17): NextState never silently accepts an illegal transition.
+var ErrIllegalTransition = errors.New("illegal state transition")
+
+// @concept: transition-reason
+//
+// Audit-grade enum carried on every node-state transition. Sibling to
+// `last_outcome` (see `.ok-planner/design/concepts/transition-reason.md`
+// Relationship section for the pairing table). The cascade-fire predicate
+// reads `last_outcome`, not `transition_reason` — the two enums describe
+// different facets of the same transition.
+//
 // TransitionReason identifies WHY a state transition was requested. Preserved
 // from TS v1's discriminated union plus the Go port's `pure_cascade` addition.
 type TransitionReason struct {
@@ -54,9 +106,9 @@ var (
 
 	// ReasonHandlerError — RESERVED NEGATIVE. The state machine
 	// deliberately does NOT accept this reason as a direct transition
-	// trigger; on_executor_blocked / on_executor_errored handlers must
-	// route through the error_types policy chain and emit one of
-	// policy_retry / policy_invalidate / policy_give_up.
+	// trigger; the on_executor_errored handler must route through the
+	// error_types policy chain and emit one of policy_retry /
+	// policy_invalidate / policy_give_up.
 	//
 	// The constant exists so this rejection is encoded in the
 	// transition-reason vocabulary and pinned by a negative test
@@ -71,12 +123,12 @@ var (
 	ReasonHandlerError = TransitionReason{Kind: "handler_error"}
 
 	// ReasonHandlerPass — running → fresh, last_outcome=passed.
-	// on_executor_blocked / on_executor_errored handler resolved pass
-	// (template explicitly opts to ignore the terminal).
+	// on_executor_errored handler resolved pass (template explicitly
+	// opts to ignore the terminal).
 	ReasonHandlerPass = TransitionReason{Kind: "handler_pass"}
 
 	// ReasonHandlerPark — running → parked.
-	// Executor emitted ParkRequested as its terminal event. The node's
+	// Executor emitted Park as its terminal event. The node's
 	// held claims are retained across the park boundary. See section B
 	// of .ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md.
 	ReasonHandlerPark = TransitionReason{Kind: "handler_park"}
@@ -115,24 +167,24 @@ var (
 // path re-dispatches); parked → failed under park_timeout. All other
 // transitions involving parked (including parked → fresh, parked →
 // running directly, parked → parked) are illegal.
-func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeState, error) {
+func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch current {
-	case shared.NodeStateFresh:
+	case NodeStateFresh:
 		if reason.Kind == "invalidate_received" || reason.Kind == "operator_invalidate" {
-			return shared.NodeStateStale, nil
+			return NodeStateStale, nil
 		}
-	case shared.NodeStateStale:
+	case NodeStateStale:
 		if reason.Kind == "dispatch_claimed" {
-			return shared.NodeStateRunning, nil
+			return NodeStateRunning, nil
 		}
 		if reason.Kind == "pure_cascade" {
-			return shared.NodeStateFresh, nil
+			return NodeStateFresh, nil
 		}
 		if reason.Kind == "dispatch_impossible" {
-			return shared.NodeStateFailed, nil
+			return NodeStateFailed, nil
 		}
 		if reason.Kind == "acquire_pass" {
-			return shared.NodeStateFresh, nil
+			return NodeStateFresh, nil
 		}
 		// policy_give_up from stale supports on_acquire_unavailable:
 		// { resolve: error } with an error_types[X].policy ending in
@@ -141,20 +193,20 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 		// fail it permanently instead of retrying. Mirrors the
 		// running → failed transition for the same reason kind.
 		if reason.Kind == "policy_give_up" {
-			return shared.NodeStateFailed, nil
+			return NodeStateFailed, nil
 		}
-	case shared.NodeStateRunning:
+	case NodeStateRunning:
 		if reason.Kind == "handler_complete" {
-			return shared.NodeStateFresh, nil
+			return NodeStateFresh, nil
 		}
 		if reason.Kind == "handler_pass" {
-			return shared.NodeStateFresh, nil
+			return NodeStateFresh, nil
 		}
 		// handler_park transitions running → parked. The held claim is
 		// retained across the park boundary; the orphan-claim reaper
 		// skips phase='parked' rows.
 		if reason.Kind == "handler_park" {
-			return shared.NodeStateParked, nil
+			return NodeStateParked, nil
 		}
 		// handler_error transitions follow the policy chain; expressed as
 		// policy_retry / policy_invalidate / policy_give_up at the call site
@@ -165,16 +217,16 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 			reason.Kind == "policy_invalidate" ||
 			reason.Kind == "heartbeat_lost" ||
 			reason.Kind == "infra_reenqueue" {
-			return shared.NodeStateStale, nil
+			return NodeStateStale, nil
 		}
 		if reason.Kind == "policy_give_up" {
-			return shared.NodeStateFailed, nil
+			return NodeStateFailed, nil
 		}
-	case shared.NodeStateFailed:
+	case NodeStateFailed:
 		if reason.Kind == "operator_reset" || reason.Kind == "operator_invalidate" {
-			return shared.NodeStateStale, nil
+			return NodeStateStale, nil
 		}
-	case shared.NodeStateParked:
+	case NodeStateParked:
 		// Parked nodes leave only via resume (deadline-elapsed wake or
 		// external invalidate) or via watchdog timeout. parked → fresh
 		// is explicitly rejected — a parked node re-enters work via
@@ -186,11 +238,11 @@ func NextState(current shared.NodeState, reason TransitionReason) (shared.NodeSt
 		// tick's SelectCandidates picks up the stale row and runs the
 		// standard atomic-acquisition path.
 		if reason.Kind == "handler_resume" {
-			return shared.NodeStateStale, nil
+			return NodeStateStale, nil
 		}
 		if reason.Kind == "park_timeout" {
-			return shared.NodeStateFailed, nil
+			return NodeStateFailed, nil
 		}
 	}
-	return "", fmt.Errorf("%w: from=%s reason=%s", shared.ErrIllegalTransition, current, reason.Kind)
+	return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
 }

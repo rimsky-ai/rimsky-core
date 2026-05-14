@@ -11,7 +11,7 @@ import (
 )
 
 // TestProtoSmoke_NamedEvent round-trips a NamedEvent message and asserts
-// the new fields land where expected.
+// the fields land where expected.
 func TestProtoSmoke_NamedEvent(t *testing.T) {
 	src := &NamedEvent{
 		Name:    "rate_limit_observed",
@@ -33,10 +33,10 @@ func TestProtoSmoke_NamedEvent(t *testing.T) {
 	}
 }
 
-// TestProtoSmoke_ParkRequested round-trips a ParkRequested terminal
-// event with all fields populated.
-func TestProtoSmoke_ParkRequested(t *testing.T) {
-	src := &ParkRequested{
+// TestProtoSmoke_Park round-trips a Park outcome with all fields
+// populated.
+func TestProtoSmoke_Park(t *testing.T) {
+	src := &Park{
 		Reason:       "rate_limit",
 		Payload:      []byte(`{"agent_state": "..."}`),
 		ResumeAt:     timestamppb.New(timestamppb.Now().AsTime()),
@@ -46,7 +46,7 @@ func TestProtoSmoke_ParkRequested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	var got ParkRequested
+	var got Park
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
@@ -91,14 +91,14 @@ func TestProtoSmoke_ResumeContext(t *testing.T) {
 }
 
 // TestProtoSmoke_AsyncCallbackBody round-trips an async callback body
-// containing both events and a terminal Complete verdict.
+// containing both events and a Success outcome.
 func TestProtoSmoke_AsyncCallbackBody(t *testing.T) {
 	src := &AsyncCallbackBody{
 		Events: []*NamedEvent{
 			{Name: "phase_observed", Payload: []byte(`{"phase":"warmup"}`)},
 			{Name: "phase_observed", Payload: []byte(`{"phase":"steady"}`)},
 		},
-		Complete: &Complete{Changed: true, ChangeSummary: "ok"},
+		Outcome: &AsyncCallbackBody_Success{Success: &Success{Changed: true, ChangeSummary: "ok"}},
 	}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
@@ -111,13 +111,13 @@ func TestProtoSmoke_AsyncCallbackBody(t *testing.T) {
 	if len(got.GetEvents()) != 2 {
 		t.Fatalf("events: got %d, want 2", len(got.GetEvents()))
 	}
-	if got.GetComplete() == nil || !got.GetComplete().GetChanged() {
-		t.Fatalf("complete missing or not changed")
+	if got.GetSuccess() == nil || !got.GetSuccess().GetChanged() {
+		t.Fatalf("success outcome missing or not changed")
 	}
 }
 
-// TestProtoSmoke_ObservabilityCapabilitiesNewFields round-trips the new
-// userdata_schema and declared_events fields on ObservabilityCapabilities.
+// TestProtoSmoke_ObservabilityCapabilitiesNewFields round-trips
+// userdata_schema and declared_events on ObservabilityCapabilities.
 func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	src := &ObservabilityCapabilities{
 		UserdataSchema: []byte(`{"type":"object"}`),
@@ -142,15 +142,23 @@ func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	}
 }
 
-// TestProtoSmoke_ExecuteEventOneofWithNewVariants verifies the new oneof
-// variants (named_event, park_requested) marshal and dispatch correctly.
-func TestProtoSmoke_ExecuteEventOneofWithNewVariants(t *testing.T) {
+// TestProtoSmoke_ExecuteEventOneofWithStreamClose verifies the
+// StreamClose oneof variants marshal and dispatch correctly.
+func TestProtoSmoke_ExecuteEventOneofWithStreamClose(t *testing.T) {
 	cases := []struct {
 		name string
 		evt  *ExecuteEvent
 	}{
 		{"named_event", &ExecuteEvent{Event: &ExecuteEvent_NamedEvent{NamedEvent: &NamedEvent{Name: "x"}}}},
-		{"park_requested", &ExecuteEvent{Event: &ExecuteEvent_ParkRequested{ParkRequested: &ParkRequested{Reason: "rate_limit"}}}},
+		{"park", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
+			StreamClose: &StreamClose{Outcome: &StreamClose_Park{Park: &Park{Reason: "rate_limit"}}},
+		}}},
+		{"success", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
+			StreamClose: &StreamClose{Outcome: &StreamClose_Success{Success: &Success{Changed: true}}},
+		}}},
+		{"error", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
+			StreamClose: &StreamClose{Outcome: &StreamClose_Error{Error: &Error{ErrorClass: "x"}}},
+		}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

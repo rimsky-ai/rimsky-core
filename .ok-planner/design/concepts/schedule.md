@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-A node-level cron expression declared in templates. Stored in `rimsky_schedules` with `cron_expr`, `next_fire_at`. The scheduler tick (`modeling/scheduler/scheduler.go::tick`, lines 216-353) runs ten ordered phases; `ProcessSchedules` is phase 2 (`schedule_ticker.go:64-131`). The whole tick is gated by an advisory lock (`TrySchedulerTick`) so multiple scheduler replicas don't double-fire.
+A node-level cron expression declared in templates. Stored in `rimsky_schedules` with `cron_expr`, `next_fire_at`. The scheduler tick (`graph/scheduler/scheduler.go::tick`, lines 216-353) runs ten ordered phases; `ProcessSchedules` is phase 2 (`schedule_ticker.go:64-131`). The whole tick is gated by an advisory lock (`TrySchedulerTick`) so multiple scheduler replicas don't double-fire.
 
 **Per-tick body:**
 
@@ -37,7 +37,7 @@ Owns: cron parsing, `next_fire_at` advancement, the schedule-ticker loop, the `f
 ## Invariants
 
 - `next_fire_at` advances from `row.NextFireAt`, NOT `clock.Now()`. Missed fires are NOT backfilled.
-- `POST /admin/scheduled-nodes/{id}/force-fire` (`modeling/controlapi/admin_force_fire.go:42-62`) bumps `rimsky_schedules.next_fire_at = now()` in a single SQL statement (`foundation/persistence/postgres/schedules.go:97-106`) and returns 204 immediately — it does not invoke the invalidate inline. The next scheduler tick picks the row up via the same `DueBefore` predicate.
+- `POST /admin/scheduled-nodes/{id}/force-fire` (`control/controlapi/admin_force_fire.go:42-62`) bumps `rimsky_schedules.next_fire_at = now()` in a single SQL statement (`foundation/persistence/postgres/schedules.go:97-106`) and returns 204 immediately — it does not invoke the invalidate inline. The next scheduler tick picks the row up via the same `DueBefore` predicate.
 - Frame-mode interaction: a schedule firing N times before its first frame completes produces N queued frames under `serial_queue` (arrival order) but exactly one queued row under `coalesce` (source node appended once via `array_append` guard at `foundation/persistence/postgres/frames.go:312-315`).
 - The advisory-lock-held window covers the entire tick (including the per-row tx loop): a slow row blocks subsequent rows on the same tick but does not block other replicas (they're skipped by `TrySchedulerTick`).
 - Robfig/cron/v3 5-field expressions; library version pinned.

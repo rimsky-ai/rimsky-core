@@ -14,8 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/fallguy/rimsky/conformance"
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 func main() {
@@ -73,26 +73,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)
 		os.Exit(1)
 	}
-	if c, ok := ev.Event.(*genv1.ExecuteEvent_Complete); ok {
-		// Stub mode signals via attributes_delta after the §12 protocol
-		// rewrite (Complete.Result was removed; terminal-final attribute
-		// writeback replaces it).
-		m := c.Complete.GetAttributesDelta().AsMap()
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "conformance: unexpected terminal type %T\n", ev.Event)
+		os.Exit(1)
+	}
+	switch oc := sc.StreamClose.Outcome.(type) {
+	case *genv1.StreamClose_Success:
+		// Stub mode signals via attributes_delta on Success.
+		m := oc.Success.GetAttributesDelta().AsMap()
 		if v, ok := m["stub"].(bool); !ok || !v {
 			fmt.Fprintf(os.Stderr, "conformance: stub-mode probe did not return {stub:true}, got %+v\n", m)
 			os.Exit(1)
 		}
 		fmt.Println("conformance: stub-mode probe OK")
 		return
-	}
-	if e, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-		fmt.Fprintf(os.Stderr, "conformance: got Errored %s (%v)\n", e.Errored.ErrorClass, e.Errored.GetPayload().AsMap())
+	case *genv1.StreamClose_Error:
+		fmt.Fprintf(os.Stderr, "conformance: got Error %s (%v)\n", oc.Error.ErrorClass, oc.Error.GetPayload().AsMap())
+		os.Exit(1)
+	case *genv1.StreamClose_AwaitAsync:
+		fmt.Fprintln(os.Stderr, "conformance: stub-mode probe ended at AwaitAsyncCallback but no callback arrived")
 		os.Exit(1)
 	}
-	if _, ok := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted); ok {
-		fmt.Fprintln(os.Stderr, "conformance: stub-mode probe ended at AsyncAccepted but no callback arrived")
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "conformance: unexpected terminal type %T\n", ev.Event)
+	fmt.Fprintf(os.Stderr, "conformance: unexpected StreamClose outcome %T\n", sc.StreamClose.Outcome)
 	os.Exit(1)
 }

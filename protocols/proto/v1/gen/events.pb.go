@@ -1505,11 +1505,11 @@ type LockAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"`             // "named" | "scope" | "claim"
 	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`             // populated for kind="named"
-	StoreName     string                 `protobuf:"bytes,3,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`          // populated for kind in ("scope","claim")
+	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"` // populated for kind in ("scope","claim")
 	ScopeData     *structpb.Struct       `protobuf:"bytes,4,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`          // populated for kind="scope"
 	ClaimId       string                 `protobuf:"bytes,5,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`                // populated for kind="claim"
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"` // holder_supervisor_id
-	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`             // rimsky_claim_handle.id (UUID as text; renamed from rimsky_lock_holders post-Phase-5)
+	HolderId      string                 `protobuf:"bytes,7,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`             // rimsky_claim_handles.id (UUID as text)
 	Resumed       bool                   `protobuf:"varint,8,opt,name=resumed,proto3" json:"resumed,omitempty"`                              // true when this acquisition rebound a preserve-for-resume row
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1559,9 +1559,9 @@ func (x *LockAcquiredPayload) GetLockName() string {
 	return ""
 }
 
-func (x *LockAcquiredPayload) GetStoreName() string {
+func (x *LockAcquiredPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -1607,7 +1607,7 @@ type LockReleasedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	LockKind      string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"` // "named" | "scope" | "claim"
 	LockName      string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
-	StoreName     string                 `protobuf:"bytes,3,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	ClaimId       string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	HolderId      string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
 	SupervisorId  string                 `protobuf:"bytes,6,opt,name=supervisor_id,json=supervisorId,proto3" json:"supervisor_id,omitempty"`
@@ -1660,9 +1660,9 @@ func (x *LockReleasedPayload) GetLockName() string {
 	return ""
 }
 
-func (x *LockReleasedPayload) GetStoreName() string {
+func (x *LockReleasedPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -1701,7 +1701,7 @@ type LockOrphanReapedPayload struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	LockKind          string                 `protobuf:"bytes,1,opt,name=lock_kind,json=lockKind,proto3" json:"lock_kind,omitempty"` // "named" | "scope" | "claim"
 	LockName          string                 `protobuf:"bytes,2,opt,name=lock_name,json=lockName,proto3" json:"lock_name,omitempty"`
-	StoreName         string                 `protobuf:"bytes,3,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	ProducerName      string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	ClaimId           string                 `protobuf:"bytes,4,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
 	HolderId          string                 `protobuf:"bytes,5,opt,name=holder_id,json=holderId,proto3" json:"holder_id,omitempty"`
 	PriorSupervisorId string                 `protobuf:"bytes,6,opt,name=prior_supervisor_id,json=priorSupervisorId,proto3" json:"prior_supervisor_id,omitempty"` // supervisor whose row was reaped
@@ -1754,9 +1754,9 @@ func (x *LockOrphanReapedPayload) GetLockName() string {
 	return ""
 }
 
-func (x *LockOrphanReapedPayload) GetStoreName() string {
+func (x *LockOrphanReapedPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -1980,7 +1980,7 @@ func (x *AttributesValidationFailedPayload) GetErrors() []*structpb.Struct {
 type ClaimAcquiredPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	StoreName     string                 `protobuf:"bytes,2,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	Hold          bool                   `protobuf:"varint,3,opt,name=hold,proto3" json:"hold,omitempty"`                          // §5.6.3
 	OnCommit      string                 `protobuf:"bytes,4,opt,name=on_commit,json=onCommit,proto3" json:"on_commit,omitempty"`   // "pop" | "pop_and_move" | "pop_and_delete" | "recycle"
 	OnGiveUp      string                 `protobuf:"bytes,5,opt,name=on_give_up,json=onGiveUp,proto3" json:"on_give_up,omitempty"` // same vocabulary as on_commit
@@ -2025,9 +2025,9 @@ func (x *ClaimAcquiredPayload) GetClaimId() string {
 	return ""
 }
 
-func (x *ClaimAcquiredPayload) GetStoreName() string {
+func (x *ClaimAcquiredPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -2057,9 +2057,9 @@ func (x *ClaimAcquiredPayload) GetOnGiveUp() string {
 // `hold: true` and `rimsky_claim_holders` rows are inserted, one per
 // terminal-leaf identified by the §11.4 DAG walk.
 type ClaimHeldPayload struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId   string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	StoreName string                 `protobuf:"bytes,2,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId      string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ProducerName string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	// Terminal-leaf node ids that participate in the held claim (one row per
 	// id was inserted into rimsky_claim_holders).
 	TerminalNodeIds []string `protobuf:"bytes,3,rep,name=terminal_node_ids,json=terminalNodeIds,proto3" json:"terminal_node_ids,omitempty"`
@@ -2104,9 +2104,9 @@ func (x *ClaimHeldPayload) GetClaimId() string {
 	return ""
 }
 
-func (x *ClaimHeldPayload) GetStoreName() string {
+func (x *ClaimHeldPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -2121,12 +2121,12 @@ func (x *ClaimHeldPayload) GetTerminalNodeIds() []string {
 // ClaimResolvedPayload is emitted when the §5.6.4 resolution algorithm
 // runs for a held claim — either at terminal-node release or via the
 // scheduler's claim-holder GC sweep (§13.5 step 3). Carries `action`,
-// `claim_id`, `store_name` per spec §9.8.
+// `claim_id`, `producer_name` per spec §9.8.
 type ClaimResolvedPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"` // "commit" | "abandon" — the rimsky-side verb fired at held-claim resolution
 	ClaimId       string                 `protobuf:"bytes,2,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	StoreName     string                 `protobuf:"bytes,3,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,3,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2175,9 +2175,9 @@ func (x *ClaimResolvedPayload) GetClaimId() string {
 	return ""
 }
 
-func (x *ClaimResolvedPayload) GetStoreName() string {
+func (x *ClaimResolvedPayload) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -2368,32 +2368,29 @@ const file_events_proto_rawDesc = "" +
 	"\rsupervisor_id\x18\x03 \x01(\tR\fsupervisorId\"N\n" +
 	"\x1dScheduleDispatchFailedPayload\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\x9d\x02\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xa3\x02\n" +
 	"\x13LockAcquiredPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
-	"\tlock_name\x18\x02 \x01(\tR\blockName\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x03 \x01(\tR\tstoreName\x126\n" +
+	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x126\n" +
 	"\n" +
 	"scope_data\x18\x04 \x01(\v2\x17.google.protobuf.StructR\tscopeData\x12\x19\n" +
 	"\bclaim_id\x18\x05 \x01(\tR\aclaimId\x12#\n" +
 	"\rsupervisor_id\x18\x06 \x01(\tR\fsupervisorId\x12\x1b\n" +
 	"\tholder_id\x18\a \x01(\tR\bholderId\x12\x18\n" +
-	"\aresumed\x18\b \x01(\bR\aresumed\"\xe3\x01\n" +
+	"\aresumed\x18\b \x01(\bR\aresumed\"\xe9\x01\n" +
 	"\x13LockReleasedPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
-	"\tlock_name\x18\x02 \x01(\tR\blockName\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x03 \x01(\tR\tstoreName\x12\x19\n" +
+	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12\x19\n" +
 	"\bclaim_id\x18\x04 \x01(\tR\aclaimId\x12\x1b\n" +
 	"\tholder_id\x18\x05 \x01(\tR\bholderId\x12#\n" +
 	"\rsupervisor_id\x18\x06 \x01(\tR\fsupervisorId\x12\x16\n" +
-	"\x06action\x18\a \x01(\tR\x06action\"\x95\x02\n" +
+	"\x06action\x18\a \x01(\tR\x06action\"\x9b\x02\n" +
 	"\x17LockOrphanReapedPayload\x12\x1b\n" +
 	"\tlock_kind\x18\x01 \x01(\tR\blockKind\x12\x1b\n" +
-	"\tlock_name\x18\x02 \x01(\tR\blockName\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x03 \x01(\tR\tstoreName\x12\x19\n" +
+	"\tlock_name\x18\x02 \x01(\tR\blockName\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\x12\x19\n" +
 	"\bclaim_id\x18\x04 \x01(\tR\aclaimId\x12\x1b\n" +
 	"\tholder_id\x18\x05 \x01(\tR\bholderId\x12.\n" +
 	"\x13prior_supervisor_id\x18\x06 \x01(\tR\x11priorSupervisorId\x129\n" +
@@ -2409,25 +2406,22 @@ const file_events_proto_rawDesc = "" +
 	"\x0eupdated_fields\x18\x02 \x03(\tR\rupdatedFields\x12%\n" +
 	"\x0echange_summary\x18\x03 \x01(\tR\rchangeSummary\"a\n" +
 	"!AttributesValidationFailedPayload\x12/\n" +
-	"\x06errors\x18\x02 \x03(\v2\x17.google.protobuf.StructR\x06errorsJ\x04\b\x01\x10\x02R\x05phase\"\x9f\x01\n" +
+	"\x06errors\x18\x02 \x03(\v2\x17.google.protobuf.StructR\x06errorsJ\x04\b\x01\x10\x02R\x05phase\"\xa5\x01\n" +
 	"\x14ClaimAcquiredPayload\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x02 \x01(\tR\tstoreName\x12\x12\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
+	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x12\n" +
 	"\x04hold\x18\x03 \x01(\bR\x04hold\x12\x1b\n" +
 	"\ton_commit\x18\x04 \x01(\tR\bonCommit\x12\x1c\n" +
 	"\n" +
-	"on_give_up\x18\x05 \x01(\tR\bonGiveUp\"x\n" +
+	"on_give_up\x18\x05 \x01(\tR\bonGiveUp\"~\n" +
 	"\x10ClaimHeldPayload\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x02 \x01(\tR\tstoreName\x12*\n" +
-	"\x11terminal_node_ids\x18\x03 \x03(\tR\x0fterminalNodeIds\"h\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
+	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12*\n" +
+	"\x11terminal_node_ids\x18\x03 \x03(\tR\x0fterminalNodeIds\"n\n" +
 	"\x14ClaimResolvedPayload\x12\x16\n" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x12\x19\n" +
-	"\bclaim_id\x18\x02 \x01(\tR\aclaimId\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x03 \x01(\tR\tstoreName\"\x81\x01\n" +
+	"\bclaim_id\x18\x02 \x01(\tR\aclaimId\x12#\n" +
+	"\rproducer_name\x18\x03 \x01(\tR\fproducerName\"\x81\x01\n" +
 	"\x1fTemplateResolutionFailedPayload\x12\x1c\n" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +

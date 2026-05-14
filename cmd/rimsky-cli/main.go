@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // main.go — rimsky-cli entry point. Dispatches subcommands to handlers
-// in modeling/cli/. Hand-rolled subcommand routing on os.Args[1].
+// in control/cli/. Hand-rolled subcommand routing on os.Args[1].
 package main
 
 import (
@@ -12,8 +12,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/fallguy/rimsky/modeling/cli"
-	"github.com/fallguy/rimsky/modeling/cli/compose"
+	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguy/rimsky/control/cli/compose"
 )
 
 func main() {

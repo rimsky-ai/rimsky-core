@@ -11,7 +11,7 @@ affects:
 
 ## What is muddy
 
-`rimsky-conformance --require-stub-mode` (and the standalone `rimsky-conformance-probe`) asserts that a "stub-mode" executor responds to a probe Execute (`userdata: {stub_probe: true}`) with a Complete event whose `attributes_delta` is exactly `{stub: true}` (`cmd/rimsky-conformance-probe/main.go:80-84`, runner's `probeStubMode` at `conformance/runner.go:110+`).
+`rimsky-executor-conformance --require-stub-mode` (and the standalone `rimsky-conformance-probe`) asserts that a "stub-mode" executor responds to a probe Execute (`userdata: {stub_probe: true}`) with a Complete event whose `attributes_delta` is exactly `{stub: true}` (`cmd/rimsky-conformance-probe/main.go:80-84`, runner's `probeStubMode` at `conformance/runner.go:110+`).
 
 Any executor that wants to be "stub-conformant" must hard-code this exact map shape. The agreement is not documented in `protocols/proto/v1/executor.proto`, not in `docs/protocols/executor.md`, not in `docs/concepts/conformance.md`, and has no shared constant in either the Go runner or the TS executor's source — both sides hard-code the literal `{stub: true}` independently.
 
@@ -19,7 +19,7 @@ A rename or shape change would require simultaneous edits in: the probe binary's
 
 ## Why it matters
 
-The stub-mode probe is the gating mechanism for `--require-stub-mode` — the safety net that prevents `rimsky-conformance` from issuing real LLM calls against a production endpoint. A protocol-defining handshake that lives only in test binary source code is the kind of thing that breaks silently when someone "tidies up" the literal: the only signal is "conformance fails" with no clear pointer to the agreed shape.
+The stub-mode probe is the gating mechanism for `--require-stub-mode` — the safety net that prevents `rimsky-executor-conformance` from issuing real LLM calls against a production endpoint. A protocol-defining handshake that lives only in test binary source code is the kind of thing that breaks silently when someone "tidies up" the literal: the only signal is "conformance fails" with no clear pointer to the agreed shape.
 
 This is the same shape as `async-callback-body-key` (the `type` vs `kind` issue) and `events-kind-no-enum`: a wire-level vocabulary that has no schema surface and lives only in code.
 

@@ -28,7 +28,7 @@ func TestVocabulary_DirtyFails(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "template_id") || !strings.Contains(msg, "consumer_key") || !strings.Contains(msg, "substrate") {
+	if !strings.Contains(msg, "template_id") || !strings.Contains(msg, "instance_key") || !strings.Contains(msg, "substrate") {
 		t.Errorf("expected all three terms flagged, got %s", msg)
 	}
 }

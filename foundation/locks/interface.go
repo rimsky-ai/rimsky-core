@@ -48,7 +48,7 @@ import (
 //	No ClaimProducer implementation persists lock state. Producers may
 //	persist *data* state (e.g. items-table flips, staging metadata), but
 //	the question "is anyone holding lock X" is answered exclusively by
-//	rimsky_claim_handle (managed via foundation/persistence/<driver>/
+//	rimsky_claim_handles (managed via foundation/persistence/<driver>/
 //	claim_handles.go).
 //
 // @blessed-invariant 9b: ClaimProducers do not internally serialize on
@@ -56,10 +56,3 @@ import (
 // a valid implementation choice for staged_async; honest support
 // requires snapshot delegation or native MVCC pass-through.
 type ClaimProducer = claimproducer.ClaimProducer
-
-// Store is a deprecated alias for ClaimProducer kept for transitional
-// compatibility during the layer-crystallization rollout. New code MUST
-// use ClaimProducer directly.
-//
-// Deprecated: use ClaimProducer.
-type Store = ClaimProducer

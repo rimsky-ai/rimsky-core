@@ -21,22 +21,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// worker commits no-op (changed=false). monitor commits truthy.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, false, "noop")
-	h.Stub.WhenType("monitor").Complete(map[string]any{"m": 1}, true, "monitored")
+	h.Stub.WhenType("worker").Success(map[string]any{}, false, "noop")
+	h.Stub.WhenType("monitor").Success(map[string]any{"m": 1}, true, "monitored")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "handler-invalidate-orthogonal", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -65,14 +66,14 @@ func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {
 	require.NotNil(t, monitor)
 
 	// Wait for both to reach fresh on first run.
-	require.True(t, h.WaitForNodeState(monitor.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
 		"monitor did not reach fresh on first run")
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker did not reach fresh on first run")
 
 	// worker's last_outcome must be fresh_unchanged (its commit was a
 	// no-op).
-	require.True(t, waitForLastOutcome(t, h, worker.ID, shared.LastOutcomeFreshUnchanged, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomeFreshUnchanged, 30*time.Second),
 		"worker should record last_outcome=fresh_unchanged on no-op commit")
 
 	// Despite worker's no-op commit, the handler.invalidate must have
@@ -90,9 +91,9 @@ func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, shared.LastOutcomeFreshUnchanged, wRow.LastOutcome,
+	require.Equal(t, cascade.LastOutcomeFreshUnchanged, wRow.LastOutcome,
 		"worker's last_outcome should remain fresh_unchanged")
-	require.Equal(t, shared.NodeStateFresh, wRow.State,
+	require.Equal(t, cascade.NodeStateFresh, wRow.State,
 		"worker should be fresh")
 }
 

@@ -10,8 +10,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/integration/remote"
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/runtime/remote"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -23,7 +23,7 @@ import (
 func TestClaimProducerConformance_StubStore(t *testing.T) {
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: locks.Capabilities{
-			WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync},
+			WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
 		},
 	})
 	t.Cleanup(teardown)

@@ -29,7 +29,8 @@ func init() {
 // executors skip delays — so in practice this may still PASS via the opening
 // heartbeat emitted by http-node, but the requirement is only "≥1 heartbeat".
 // This scenario is gRPC-stream-only: the heartbeat must appear on the stream
-// before the terminal (whether AsyncAccepted or a synchronous terminal).
+// before the terminal StreamClose (whether the outcome is AwaitAsyncCallback
+// or a synchronous Success/Error/Park).
 func runHeartbeats(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true, "delay_ms": 500})
 	req := &genv1.ExecuteRequest{

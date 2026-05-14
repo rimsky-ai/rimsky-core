@@ -460,7 +460,7 @@ Phases describe *what* gets built in what order. Each phase has defined delivera
 - `ClaimResult` gains `realized_write_semantics`. `CapabilitiesResult` gains `write_semantics_envelope` (supersedes the single `WriteSemantics` field).
 - `rimsky.yml` schema updated to Option II shape (§10): `stores:` block renamed to `claim_producers:`; entries gain `protocols:` list; `write_semantics_envelope` operator declaration replaces single value.
 - Bundled service reference impls updated: filesystem store, postgres store, stub store, claude-agent, http-node, stub executor — all updated to the new protocol shapes.
-- Conformance suites updated: `rimsky-conformance` (executor) renamed appropriately; `rimsky-store-conformance` renamed to `rimsky-claim-producer-conformance`. New conformance for `LifecycleSubscriber`.
+- Conformance suites updated: `rimsky-executor-conformance` (executor) renamed appropriately; `rimsky-store-conformance` renamed to `rimsky-claim-producer-conformance`. New conformance for `LifecycleSubscriber`.
 - Per-claim WriteSemantics conformance tests added (envelope + realized-value validation; uniformity-per-(producer,scope) conformance).
 
 **Verification gate:** All conformance suites pass against the bundled reference impls; scenario tests pass; protocol changes don't break the smoke test.
@@ -510,7 +510,7 @@ Each phase's verification gate (defined in §11) is the gate. No phase is consid
 ### 12.2 Test infrastructure leveraged
 
 - **Scenario tests** (`test/scenarios/`) — exercise blessed invariants against a real Postgres via testcontainers-go.
-- **Conformance suites** (`rimsky-conformance` and renamed `rimsky-claim-producer-conformance` plus new `rimsky-lifecycle-conformance`) — verify protocol implementations against the contract.
+- **Conformance suites** (`rimsky-executor-conformance` and renamed `rimsky-claim-producer-conformance` plus new `rimsky-lifecycle-conformance`) — verify protocol implementations against the contract.
 - **Integration tests** (`test/smoke/`) — end-to-end via the unified image.
 - **Per-package unit tests** — distributed across all modules.
 - **TS executor tests** (`executors/claude-agent/`) — vitest.
@@ -554,7 +554,7 @@ Items the spec acknowledges and the implementation work resolves:
 1. **Worker-request schema shape: Option I vs Option II.** §8.2 recommends Option I; Phase 5 finalizes during implementation if Option I turns out to be impractical.
 2. **Foundation `integration/` package's primary type name.** Settled: `Conductor`. The old `persistence.Coordinator` (advisory locks) is renamed `persistence.AdvisoryLocker` (per §5 #8) to free the `Coordinator`-shaped name space; the integration layer's primary type uses `Conductor` rather than `Coordinator` for clarity. Both renames land in Phase 2.
 3. **Lifecycle idempotency table rename.** Current: `rimsky_store_lifecycle`. Post-rename candidate: `rimsky_lifecycle_idempotency`. Decide in Phase 4.
-4. **Conformance binary name(s).** Current: `rimsky-conformance`, `rimsky-store-conformance`. Post-rename: `rimsky-conformance` (executor + lifecycle) vs. `rimsky-claim-producer-conformance` vs. `rimsky-protocol-conformance` covering all three. Decide in Phase 4.
+4. **Conformance binary name(s).** Current: `rimsky-executor-conformance`, `rimsky-store-conformance`. Post-rename: `rimsky-executor-conformance` (executor + lifecycle) vs. `rimsky-claim-producer-conformance` vs. `rimsky-protocol-conformance` covering all three. Decide in Phase 4.
 5. **Whether to ship a `protocols` module backwards-compat shim** for any external consumers. Default: no (pre-v1, no consumers). Confirm in Phase 2.
 6. **Whether `core/cmd/` flattens to root `cmd/`** as part of Phase 2's package reorg. Default: yes (one less directory level). Confirm in Phase 2.
 

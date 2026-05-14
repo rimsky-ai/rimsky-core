@@ -12,7 +12,7 @@ claim_producers:
   stub:
     endpoint: "grpc://store-stub:9100"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 
 named_locks:
   serial-lane: { limit: 1 }
@@ -38,7 +38,7 @@ Expected output: `{"status":"ok"}`.
 ## Notes
 
 - SQLite is dev-only. Multi-replica / multi-host deployments must use the postgres driver.
-- `write_semantics_envelope` must be a subset of what the producer advertises at startup. Misconfiguration fails startup with a `capability_envelope_mismatch` error.
+- `write_semantics_allowed` must be a subset of what the producer advertises at startup. Misconfiguration fails startup with a `capability_envelope_mismatch` error.
 - Real deployments swap SQLite for Postgres and add real producers/executors. The same blocks then look like:
 
 ```yaml
@@ -51,11 +51,11 @@ claim_producers:
   content:
     endpoint: "grpc://store-filesystem:9100"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
   topics-ring:
     endpoint: "grpc://store-postgres:9101"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 
 named_locks:
   "topics-ring:concurrent-claims": { limit: 5 }

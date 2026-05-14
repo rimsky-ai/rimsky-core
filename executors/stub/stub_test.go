@@ -26,19 +26,19 @@ func listenForTest(t testing.TB, s *Stub) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	srv := grpc.NewServer()
-	genv1.RegisterNodeExecutorServer(srv, s)
+	genv1.RegisterExecutorServer(srv, s)
 	RegisterObservability(srv)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 	return srv, lis.Addr().String()
 }
 
-func dial(t *testing.T, addr string) genv1.NodeExecutorClient {
+func dial(t *testing.T, addr string) genv1.ExecutorClient {
 	t.Helper()
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	return genv1.NewNodeExecutorClient(conn)
+	return genv1.NewExecutorClient(conn)
 }
 
 func drain(t *testing.T, stream grpc.ServerStreamingClient[genv1.ExecuteEvent]) []*genv1.ExecuteEvent {
@@ -56,7 +56,7 @@ func drain(t *testing.T, stream grpc.ServerStreamingClient[genv1.ExecuteEvent]) 
 
 func TestScriptedComplete(t *testing.T) {
 	s := New()
-	s.WhenType("t.complete").Complete(map[string]any{"ok": true}, true, "did the thing")
+	s.WhenType("t.complete").Success(map[string]any{"ok": true}, true, "did the thing")
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -65,7 +65,7 @@ func TestScriptedComplete(t *testing.T) {
 	events := drain(t, stream)
 	require.Len(t, events, 2)
 	require.NotNil(t, events[0].GetHeartbeat())
-	comp := events[1].GetComplete()
+	comp := events[1].GetStreamClose().GetSuccess()
 	require.NotNil(t, comp)
 	require.True(t, comp.GetChanged())
 	require.Equal(t, "did the thing", comp.GetChangeSummary())
@@ -84,7 +84,7 @@ func TestScriptedError(t *testing.T) {
 	events := drain(t, stream)
 	require.Len(t, events, 2)
 	require.NotNil(t, events[0].GetHeartbeat())
-	e := events[1].GetErrored()
+	e := events[1].GetStreamClose().GetError()
 	require.NotNil(t, e)
 	require.Equal(t, "CONFIG", e.GetErrorClass())
 	require.Equal(t, "bad", e.GetPayload().AsMap()["hint"])
@@ -92,7 +92,10 @@ func TestScriptedError(t *testing.T) {
 
 func TestScriptedBlocked(t *testing.T) {
 	s := New()
-	s.WhenType("t.blk").Blocked("waiting for review", map[string]any{"ticket": "Z-1"})
+	s.WhenType("t.blk").Error("executor_blocked", map[string]any{
+		"reason": "waiting for review",
+		"ticket": "Z-1",
+	})
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -101,15 +104,19 @@ func TestScriptedBlocked(t *testing.T) {
 	events := drain(t, stream)
 	require.Len(t, events, 2)
 	require.NotNil(t, events[0].GetHeartbeat())
-	b := events[1].GetBlocked()
+	b := events[1].GetStreamClose().GetError()
 	require.NotNil(t, b)
-	require.Equal(t, "waiting for review", b.GetReason())
-	require.Equal(t, "Z-1", b.GetContext().AsMap()["ticket"])
+	// Executor-blocked path: Error with error_class="executor_blocked".
+	// Tests construct the payload inline (reason + any context).
+	require.Equal(t, "executor_blocked", b.GetErrorClass())
+	pl := b.GetPayload().AsMap()
+	require.Equal(t, "waiting for review", pl["reason"])
+	require.Equal(t, "Z-1", pl["ticket"])
 }
 
-func TestScriptedAsyncAccepted(t *testing.T) {
+func TestScriptedAwaitAsyncCallback(t *testing.T) {
 	s := New()
-	s.WhenType("t.async").AsyncAccepted("ack-123", 5000)
+	s.WhenType("t.async").AwaitAsyncCallback("ack-123", 5000)
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -118,7 +125,7 @@ func TestScriptedAsyncAccepted(t *testing.T) {
 	events := drain(t, stream)
 	require.Len(t, events, 2)
 	require.NotNil(t, events[0].GetHeartbeat())
-	a := events[1].GetAsyncAccepted()
+	a := events[1].GetStreamClose().GetAwaitAsync()
 	require.NotNil(t, a)
 	require.Equal(t, "ack-123", a.GetAsyncAckId())
 	require.Equal(t, int64(5000), a.GetExpectedCompletionMs())
@@ -126,7 +133,7 @@ func TestScriptedAsyncAccepted(t *testing.T) {
 
 func TestHeartbeatsCount(t *testing.T) {
 	s := New()
-	s.WhenType("t.hb").Complete(nil, false, "").Heartbeats(3)
+	s.WhenType("t.hb").Success(nil, false, "").Heartbeats(3)
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -138,12 +145,12 @@ func TestHeartbeatsCount(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		require.NotNil(t, events[i].GetHeartbeat(), "event %d should be heartbeat", i)
 	}
-	require.NotNil(t, events[4].GetComplete())
+	require.NotNil(t, events[4].GetStreamClose().GetSuccess())
 }
 
 func TestDelayRespectsContextCancellation(t *testing.T) {
 	s := New()
-	s.WhenType("t.slow").Complete(nil, false, "").Delay(500 * time.Millisecond)
+	s.WhenType("t.slow").Success(nil, false, "").Delay(500 * time.Millisecond)
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -160,7 +167,7 @@ func TestDelayRespectsContextCancellation(t *testing.T) {
 		if err != nil {
 			break
 		}
-		if ev.GetComplete() != nil || ev.GetErrored() != nil || ev.GetBlocked() != nil || ev.GetAsyncAccepted() != nil {
+		if ev.GetStreamClose().GetSuccess() != nil || ev.GetStreamClose().GetError() != nil || ev.GetStreamClose().GetError() != nil || ev.GetStreamClose().GetAwaitAsync() != nil {
 			gotTerminal = true
 		}
 	}
@@ -185,7 +192,7 @@ func TestUnknownNodeTypeReturnsError(t *testing.T) {
 // supervisor / scenario tests can assert that rimsky wired them through.
 func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 	s := New()
-	s.WhenType("t.obs").Complete(map[string]any{}, false, "")
+	s.WhenType("t.obs").Success(map[string]any{}, false, "")
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
@@ -215,8 +222,9 @@ func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 }
 
 // TestStubModeReturnsImmediateComplete verifies stub mode short-circuits to
-// a single Complete event (no heartbeat, no scripted terminal) with
-// attributes_delta sourced from StubAttributesFor and changed=true.
+// a single terminal StreamClose with a Success outcome (no heartbeat, no
+// scripted terminal) carrying attributes_delta sourced from
+// StubAttributesFor and changed=true.
 func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	s := New().EnableStubMode()
 	_, addr := listenForTest(t, s)
@@ -227,7 +235,7 @@ func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	require.NoError(t, err)
 	events := drain(t, stream)
 	require.Len(t, events, 1)
-	comp := events[0].GetComplete()
+	comp := events[0].GetStreamClose().GetSuccess()
 	require.NotNil(t, comp)
 	require.True(t, comp.GetChanged())
 	require.Equal(t, "stub", comp.GetChangeSummary())
@@ -237,7 +245,8 @@ func TestStubModeReturnsImmediateComplete(t *testing.T) {
 
 // TestStubModeUnknownTypeReturnsEmptyDelta verifies stub mode tolerates
 // unknown node_types — StubAttributesFor returns `{}` and the executor
-// emits a Complete with an empty attributes_delta object.
+// emits a StreamClose with a Success outcome carrying an empty
+// attributes_delta object.
 func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	s := New().EnableStubMode()
 	_, addr := listenForTest(t, s)
@@ -247,7 +256,7 @@ func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	require.NoError(t, err)
 	events := drain(t, stream)
 	require.Len(t, events, 1)
-	comp := events[0].GetComplete()
+	comp := events[0].GetStreamClose().GetSuccess()
 	require.NotNil(t, comp)
 	require.True(t, comp.GetChanged())
 	require.Empty(t, comp.GetAttributesDelta().AsMap())

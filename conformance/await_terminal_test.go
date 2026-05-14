@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 package conformance
 
@@ -15,11 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
-// fakeStream implements executor.EventStream for unit testing AwaitTerminal.
 type fakeStream struct {
 	events []*genv1.ExecuteEvent
 	idx    int
@@ -38,40 +37,64 @@ func (f *fakeStream) Close() error { f.closed = true; return nil }
 
 var _ executor.EventStream = (*fakeStream)(nil)
 
+// successEvent builds an ExecuteEvent with a StreamClose{Success} terminal.
+func successEvent(changed bool, summary string) *genv1.ExecuteEvent {
+	return &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+			Changed: changed, ChangeSummary: summary,
+		}}},
+	}}
+}
+
+// awaitAsyncEvent builds an ExecuteEvent with a StreamClose{AwaitAsync} terminal.
+func awaitAsyncEvent(ackID string) *genv1.ExecuteEvent {
+	return &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+			AsyncAckId: ackID,
+		}}},
+	}}
+}
+
 func TestAwaitTerminal_SyncTerminalReturnedDirectly(t *testing.T) {
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
 		{Event: &genv1.ExecuteEvent_Heartbeat{Heartbeat: &genv1.Heartbeat{}}},
-		{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{Changed: true}}},
+		successEvent(true, ""),
 	}}
 	env := Env{}
 	ev, err := AwaitTerminal(context.Background(), stream, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}
-	c, ok := ev.Event.(*genv1.ExecuteEvent_Complete)
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
 	if !ok {
-		t.Fatalf("expected Complete, got %T", ev.Event)
+		t.Fatalf("expected StreamClose, got %T", ev.Event)
 	}
-	if !c.Complete.Changed {
+	succ, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Success)
+	if !ok {
+		t.Fatalf("expected Success outcome, got %T", sc.StreamClose.Outcome)
+	}
+	if !succ.Success.Changed {
 		t.Errorf("changed not propagated")
 	}
 }
 
 func TestAwaitTerminal_AsyncAccepted_NoCallbacksReturnsAsIs(t *testing.T) {
-	// env.Callbacks == nil → AsyncAccepted is returned as-is rather than
-	// being followed.
+	// env.Callbacks == nil → AwaitAsyncCallback is returned as-is rather
+	// than being followed.
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
-		{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: "ack-x",
-		}}},
+		awaitAsyncEvent("ack-x"),
 	}}
 	env := Env{Callbacks: nil}
 	ev, err := AwaitTerminal(context.Background(), stream, env)
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}
-	if _, ok := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted); !ok {
-		t.Fatalf("expected AsyncAccepted, got %T", ev.Event)
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		t.Fatalf("expected StreamClose, got %T", ev.Event)
+	}
+	if _, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_AwaitAsync); !ok {
+		t.Fatalf("expected AwaitAsync outcome, got %T", sc.StreamClose.Outcome)
 	}
 }
 
@@ -84,19 +107,16 @@ func TestAwaitTerminal_AsyncAccepted_FollowsCallbackToTerminal(t *testing.T) {
 
 	ackID := "ack-follow"
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
-		{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: ackID,
-		}}},
+		awaitAsyncEvent(ackID),
 	}}
 	env := Env{Callbacks: r}
 
 	// POST the synthesized terminal in the background once AwaitTerminal
-	// has started waiting on the receiver channel. Tiny pause is fine
-	// because Register is synchronous-mutex'd and the channel is buffered.
+	// has started waiting on the receiver channel.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		body, _ := json.Marshal(map[string]any{
-			"complete": map[string]any{"changed": true, "change_summary": "ok"},
+			"success": map[string]any{"changed": true, "change_summary": "ok"},
 		})
 		resp, err := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
 		if err != nil {
@@ -112,11 +132,15 @@ func TestAwaitTerminal_AsyncAccepted_FollowsCallbackToTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}
-	c, ok := ev.Event.(*genv1.ExecuteEvent_Complete)
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
 	if !ok {
-		t.Fatalf("expected synthesized Complete from callback, got %T", ev.Event)
+		t.Fatalf("expected synthesized StreamClose from callback, got %T", ev.Event)
 	}
-	if !c.Complete.Changed {
+	succ, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Success)
+	if !ok {
+		t.Fatalf("expected Success outcome, got %T", sc.StreamClose.Outcome)
+	}
+	if !succ.Success.Changed {
 		t.Errorf("changed not propagated through synthesized event")
 	}
 }
@@ -134,7 +158,7 @@ func TestAwaitTerminal_AsyncAccepted_PreRegisteredCallbackArrivesEarly(t *testin
 
 	ackID := "ack-early"
 	body, _ := json.Marshal(map[string]any{
-		"errored": map[string]any{"error_class": "boom"},
+		"error": map[string]any{"error_class": "boom"},
 	})
 	resp, err := http.Post(r.URL()+"/v1/callback/"+ackID, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -143,9 +167,7 @@ func TestAwaitTerminal_AsyncAccepted_PreRegisteredCallbackArrivesEarly(t *testin
 	_ = resp.Body.Close()
 
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
-		{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: ackID,
-		}}},
+		awaitAsyncEvent(ackID),
 	}}
 	env := Env{Callbacks: r}
 
@@ -155,14 +177,17 @@ func TestAwaitTerminal_AsyncAccepted_PreRegisteredCallbackArrivesEarly(t *testin
 	if err != nil {
 		t.Fatalf("AwaitTerminal: %v", err)
 	}
-	if e, ok := ev.Event.(*genv1.ExecuteEvent_Errored); !ok || e.Errored.ErrorClass != "boom" {
-		t.Fatalf("expected Errored.boom synthesized from buffered callback, got %T", ev.Event)
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		t.Fatalf("expected StreamClose, got %T", ev.Event)
+	}
+	e, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Error)
+	if !ok || e.Error.ErrorClass != "boom" {
+		t.Fatalf("expected Error.boom synthesized from buffered callback, got %T", sc.StreamClose.Outcome)
 	}
 }
 
 func TestAwaitTerminal_ContextCancelledWhileAwaiting(t *testing.T) {
-	// AsyncAccepted received, callback never arrives, ctx cancels →
-	// AwaitTerminal must return ctx.Err()-wrapped.
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)
@@ -170,9 +195,7 @@ func TestAwaitTerminal_ContextCancelledWhileAwaiting(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
-		{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: "ack-never",
-		}}},
+		awaitAsyncEvent("ack-never"),
 	}}
 	env := Env{Callbacks: r}
 
@@ -198,9 +221,7 @@ func TestAwaitTerminal_AsyncAcceptedEmptyAckIDIsError(t *testing.T) {
 	defer func() { _ = r.Close() }()
 
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
-		{Event: &genv1.ExecuteEvent_AsyncAccepted{AsyncAccepted: &genv1.AsyncAccepted{
-			AsyncAckId: "",
-		}}},
+		awaitAsyncEvent(""),
 	}}
 	env := Env{Callbacks: r}
 	if _, err := AwaitTerminal(context.Background(), stream, env); err == nil {

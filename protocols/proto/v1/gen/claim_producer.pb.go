@@ -16,7 +16,7 @@
 //     for that claim's lifecycle.
 //   - scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
-//   - selector, intent, alias, store_name are strings.
+//   - selector, intent, alias, producer_name are strings.
 //
 // Errors flow as gRPC status codes per spec §2.6.
 
@@ -46,7 +46,7 @@ const (
 // WriteSemantics declares how a claim handle's writes coexist with
 // concurrent claims on byte-equal scopes. Per spec §2.4. UNKNOWN is
 // the proto-default zero value; producers MUST NOT return it. The
-// envelope returned by Capabilities is a SET of permissible values;
+// set returned by Capabilities is the allowed values per producer;
 // each Open returns the realized value for that specific claim.
 type WriteSemantics int32
 
@@ -141,14 +141,14 @@ func (*CapabilitiesRequest) Descriptor() ([]byte, []int) {
 
 // CapabilitiesResponse advertises the set of WriteSemantics values the
 // producer may realize on Open. Operator config (rimsky.yml's
-// write_semantics_envelope: per claim_producers entry) declares an
-// envelope that MUST be a subset of this set; rimsky validates strict
-// subset at startup.
+// write_semantics_allowed: per claim_producers entry) declares a
+// permitted subset that MUST be a subset of this set; rimsky validates
+// strict subset at startup.
 type CapabilitiesResponse struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	WriteSemanticsEnvelope []WriteSemantics       `protobuf:"varint,1,rep,packed,name=write_semantics_envelope,json=writeSemanticsEnvelope,proto3,enum=rimsky.v1.WriteSemantics" json:"write_semantics_envelope,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	WriteSemanticsAllowed []WriteSemantics       `protobuf:"varint,1,rep,packed,name=write_semantics_allowed,json=writeSemanticsAllowed,proto3,enum=rimsky.v1.WriteSemantics" json:"write_semantics_allowed,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *CapabilitiesResponse) Reset() {
@@ -181,9 +181,9 @@ func (*CapabilitiesResponse) Descriptor() ([]byte, []int) {
 	return file_claim_producer_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *CapabilitiesResponse) GetWriteSemanticsEnvelope() []WriteSemantics {
+func (x *CapabilitiesResponse) GetWriteSemanticsAllowed() []WriteSemantics {
 	if x != nil {
-		return x.WriteSemanticsEnvelope
+		return x.WriteSemanticsAllowed
 	}
 	return nil
 }
@@ -197,7 +197,7 @@ func (x *CapabilitiesResponse) GetWriteSemanticsEnvelope() []WriteSemantics {
 type OpenRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	StoreName     string                 `protobuf:"bytes,2,opt,name=store_name,json=storeName,proto3" json:"store_name,omitempty"`
+	ProducerName  string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
 	Selector      string                 `protobuf:"bytes,3,opt,name=selector,proto3" json:"selector,omitempty"`
 	Intent        string                 `protobuf:"bytes,4,opt,name=intent,proto3" json:"intent,omitempty"`                           // "r" | "rw"
 	Alias         string                 `protobuf:"bytes,5,opt,name=alias,proto3" json:"alias,omitempty"`                             // template-side identifier; producer ignores
@@ -244,9 +244,9 @@ func (x *OpenRequest) GetClaimId() string {
 	return ""
 }
 
-func (x *OpenRequest) GetStoreName() string {
+func (x *OpenRequest) GetProducerName() string {
 	if x != nil {
-		return x.StoreName
+		return x.ProducerName
 	}
 	return ""
 }
@@ -379,7 +379,7 @@ func (*OpenResponse_Unavailable) isOpenResponse_Result() {}
 // any or all may be empty depending on the (write_semantics, intent)
 // combination. realized_write_semantics declares the per-claim
 // semantics; MUST be a member of the producer's
-// CapabilitiesResponse.write_semantics_envelope; MUST be uniform
+// CapabilitiesResponse.write_semantics_allowed; MUST be uniform
 // across byte-equal-scope claims (uniformity invariant per spec §2.5).
 type Acquired struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
@@ -779,13 +779,12 @@ var File_claim_producer_proto protoreflect.FileDescriptor
 const file_claim_producer_proto_rawDesc = "" +
 	"\n" +
 	"\x14claim_producer.proto\x12\trimsky.v1\"\x15\n" +
-	"\x13CapabilitiesRequest\"k\n" +
-	"\x14CapabilitiesResponse\x12S\n" +
-	"\x18write_semantics_envelope\x18\x01 \x03(\x0e2\x19.rimsky.v1.WriteSemanticsR\x16writeSemanticsEnvelope\"\xd3\x01\n" +
+	"\x13CapabilitiesRequest\"i\n" +
+	"\x14CapabilitiesResponse\x12Q\n" +
+	"\x17write_semantics_allowed\x18\x01 \x03(\x0e2\x19.rimsky.v1.WriteSemanticsR\x15writeSemanticsAllowed\"\xd9\x01\n" +
 	"\vOpenRequest\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1d\n" +
-	"\n" +
-	"store_name\x18\x02 \x01(\tR\tstoreName\x12\x1a\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
+	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x1a\n" +
 	"\bselector\x18\x03 \x01(\tR\bselector\x12\x16\n" +
 	"\x06intent\x18\x04 \x01(\tR\x06intent\x12\x14\n" +
 	"\x05alias\x18\x05 \x01(\tR\x05alias\x12\x1f\n" +
@@ -861,7 +860,7 @@ var file_claim_producer_proto_goTypes = []any{
 	(*ReleaseResponse)(nil),      // 12: rimsky.v1.ReleaseResponse
 }
 var file_claim_producer_proto_depIdxs = []int32{
-	0,  // 0: rimsky.v1.CapabilitiesResponse.write_semantics_envelope:type_name -> rimsky.v1.WriteSemantics
+	0,  // 0: rimsky.v1.CapabilitiesResponse.write_semantics_allowed:type_name -> rimsky.v1.WriteSemantics
 	5,  // 1: rimsky.v1.OpenResponse.acquired:type_name -> rimsky.v1.Acquired
 	6,  // 2: rimsky.v1.OpenResponse.unavailable:type_name -> rimsky.v1.Unavailable
 	0,  // 3: rimsky.v1.Acquired.realized_write_semantics:type_name -> rimsky.v1.WriteSemantics

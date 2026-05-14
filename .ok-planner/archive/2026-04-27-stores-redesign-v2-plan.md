@@ -1261,13 +1261,13 @@ for i in $(seq 1 30); do
 done
 
 # Run conformance against the http-node executor
-go run ./core/cmd/rimsky-conformance \
+go run ./core/cmd/rimsky-executor-conformance \
     --endpoint http://localhost:9090 \
     --transport grpc \
     --require-stub-mode
 
 # Run conformance against claude-agent (TypeScript)
-go run ./core/cmd/rimsky-conformance \
+go run ./core/cmd/rimsky-executor-conformance \
     --endpoint http://localhost:9091 \
     --transport http \
     --require-stub-mode

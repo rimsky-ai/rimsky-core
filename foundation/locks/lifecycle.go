@@ -13,7 +13,7 @@
 // implement the interface.
 //
 // Idempotency: control-api tracks per-peer idempotency in
-// rimsky_lifecycle_idempotency; subscribers can assume each (peer,
+// rimsky_lifecycle_idempotencies; subscribers can assume each (peer,
 // event) pair fires exactly once on the rimsky side. Subscribers SHOULD
 // also be idempotent against duplicate calls in case of network retries.
 //

@@ -5,7 +5,7 @@
 // Verifies spec §4.4: when a parent node commits with changed=false,
 // downstream cascade message-passes are skipped. The downstream nodes
 // remain fresh and never enter stale; the frame ends without them.
-// Pruning audit trail: rimsky_worker_request has no rows for the pruned
+// Pruning audit trail: rimsky_node_runs has no rows for the pruned
 // nodes for this frame_id.
 package frame_resolution
 
@@ -17,22 +17,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// source commits changed=true; middle commits changed=false → leaf is pruned.
-	h.Stub.WhenType("source").Complete(map[string]any{}, true, "ok")
-	h.Stub.WhenType("middle").Complete(map[string]any{}, false, "no-op")
-	h.Stub.WhenType("leaf").Complete(map[string]any{}, true, "ok")
+	h.Stub.WhenType("source").Success(map[string]any{}, true, "ok")
+	h.Stub.WhenType("middle").Success(map[string]any{}, false, "no-op")
+	h.Stub.WhenType("leaf").Success(map[string]any{}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pruned-node", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "source", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub", Dependencies: []string{"source"}}),
@@ -48,9 +48,9 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.NotNil(t, leaf)
 
 	// Wait for source and middle to finish.
-	require.True(t, h.WaitForNodeState(source.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(source.ID, cascade.NodeStateFresh, 15*time.Second),
 		"source did not finish")
-	require.True(t, h.WaitForNodeState(middle.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(middle.ID, cascade.NodeStateFresh, 15*time.Second),
 		"middle did not finish")
 
 	// Wait for the frame to end (leaf is pruned, so frame-end fires once
@@ -71,7 +71,7 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.Len(t, frames, 1)
 	var leafDispatchCount int
 	err = h.Pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM rimsky_worker_request
+		SELECT count(*) FROM rimsky_node_runs
 		WHERE frame_id = $1 AND node_id = $2
 	`, frames[0].FrameID, uuid.UUID(leaf.ID)).Scan(&leafDispatchCount)
 	require.NoError(t, err)

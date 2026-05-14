@@ -10,16 +10,16 @@ import { Button } from '../components/ui/button';
 import { Link } from 'react-router-dom';
 
 export default function LockHoldersPage() {
-  const [storeName, setStoreName] = useState('');
+  const [producerName, setProducerName] = useState('');
   const [holderNodeId, setHolderNodeId] = useState('');
   const [supId, setSupId] = useState('');
   const [instanceId, setInstanceId] = useState('');
   const [nodeType, setNodeType] = useState('');
   const { data, isLoading, error } = useQuery({
-    queryKey: ['lock-holders', storeName, holderNodeId, supId, instanceId, nodeType],
+    queryKey: ['lock-holders', producerName, holderNodeId, supId, instanceId, nodeType],
     queryFn: () => {
       const filters: Record<string, string> = {};
-      if (storeName) filters.store_name = storeName;
+      if (producerName) filters.producer_name = producerName;
       if (holderNodeId) filters.holder_node_id = holderNodeId;
       if (supId) filters.holder_supervisor_id = supId;
       if (instanceId) filters.instance_id = instanceId;
@@ -39,9 +39,9 @@ export default function LockHoldersPage() {
           <div className="grid grid-cols-2 gap-2">
             <input
               className="border rounded px-2 py-1 text-sm"
-              placeholder="store_name"
-              value={storeName}
-              onChange={(e) => setStoreName(e.target.value)}
+              placeholder="producer_name"
+              value={producerName}
+              onChange={(e) => setProducerName(e.target.value)}
             />
             <input
               className="border rounded px-2 py-1 text-sm"
@@ -95,7 +95,7 @@ export default function LockHoldersPage() {
                   <tr key={r.claim_id} className="border-b hover:bg-muted/30">
                     <td className="px-3 py-2"><Link to={`/lock-holders/${r.claim_id}`} className="hover:underline font-mono text-xs">{r.claim_id.slice(0, 8)}…</Link></td>
                     <td className="px-3 py-2">{r.lock_kind}</td>
-                    <td className="px-3 py-2">{r.store_name ?? '—'}</td>
+                    <td className="px-3 py-2">{r.producer_name ?? '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{r.lock_name ?? '—'}</td>
                     <td className="px-3 py-2">{new Date(r.claimed_at).toLocaleString()}</td>
                   </tr>
@@ -106,7 +106,7 @@ export default function LockHoldersPage() {
         </CardContent>
       </Card>
       <Button variant="ghost" size="sm" onClick={() => {
-        setStoreName('');
+        setProducerName('');
         setHolderNodeId('');
         setSupId('');
         setInstanceId('');

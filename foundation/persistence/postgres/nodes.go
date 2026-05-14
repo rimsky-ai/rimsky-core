@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// NodeStore — port of rimsky/src/storage/postgres/cell-store.ts, renamed for
+// NodeTable — port of rimsky/src/storage/postgres/cell-store.ts, renamed for
 // the cell→node rename (spec §11.1). The `kind` discriminator is gone; the
 // store manages `executor` and `schedule_cron` nullable TEXT columns instead.
 //
@@ -23,8 +23,8 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 const nodeCols = `
@@ -44,7 +44,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	ex := s.q(tx)
 	deps := in.Dependencies
 	if deps == nil {
-		deps = []shared.UUID{}
+		deps = []foundationshared.UUID{}
 	}
 	row := ex.QueryRow(ctx,
 		`INSERT INTO rimsky_nodes (
@@ -58,7 +58,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	return scanNode(row)
 }
 
-func (s *nodesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.NodeRow, error) {
+func (s *nodesImpl) Get(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes WHERE id = $1`, id)
@@ -72,7 +72,7 @@ func (s *nodesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) 
 	return &out, nil
 }
 
-func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
+func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes
@@ -87,7 +87,7 @@ func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID shared.UUID, 
 
 func (s *nodesImpl) ListByInstancePaged(
 	ctx context.Context,
-	instanceID shared.UUID,
+	instanceID foundationshared.UUID,
 	pag persistence.ListPagination,
 	tx persistence.Tx,
 ) (persistence.PaginatedListResult[persistence.NodeRow], error) {
@@ -96,7 +96,7 @@ func (s *nodesImpl) ListByInstancePaged(
 	if limit <= 0 {
 		limit = 100
 	}
-	var cursor *shared.UUID
+	var cursor *foundationshared.UUID
 	if pag.Cursor != "" {
 		u, err := uuid.Parse(pag.Cursor)
 		if err != nil {
@@ -147,7 +147,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		     WHERE d.state <> 'fresh'
 		   )
 		   AND NOT EXISTS (
-		     SELECT 1 FROM rimsky_worker_request x WHERE x.node_id = n.id
+		     SELECT 1 FROM rimsky_node_runs x WHERE x.node_id = n.id
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -207,7 +207,7 @@ func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID st
 	return collectNodes(rows)
 }
 
-func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
+func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes
@@ -233,7 +233,7 @@ func (s *nodesImpl) ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time
 	return collectNodes(rows)
 }
 
-func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[shared.NodeState]int, error) {
+func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[cascade.NodeState]int, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT state, count(*)::int FROM rimsky_nodes GROUP BY state`)
@@ -241,11 +241,11 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[shared.NodeState]int{
-		shared.NodeStateFresh:   0,
-		shared.NodeStateStale:   0,
-		shared.NodeStateRunning: 0,
-		shared.NodeStateFailed:  0,
+	out := map[cascade.NodeState]int{
+		cascade.NodeStateFresh:   0,
+		cascade.NodeStateStale:   0,
+		cascade.NodeStateRunning: 0,
+		cascade.NodeStateFailed:  0,
 	}
 	for rows.Next() {
 		var state string
@@ -253,7 +253,7 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 		if err := rows.Scan(&state, &count); err != nil {
 			return nil, err
 		}
-		out[shared.NodeState(state)] = count
+		out[cascade.NodeState(state)] = count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -270,10 +270,10 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 // (preserves the existing value via COALESCE).
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
-	id shared.UUID,
-	state shared.NodeState,
+	id foundationshared.UUID,
+	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome shared.LastOutcome,
+	lastOutcome cascade.LastOutcome,
 	tx persistence.Tx,
 ) error {
 	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason, lastOutcome)
@@ -282,13 +282,13 @@ func (s *nodesImpl) UpdateState(
 func (s *nodesImpl) enforceAndUpdate(
 	ctx context.Context,
 	ex querier,
-	id shared.UUID,
-	state shared.NodeState,
+	id foundationshared.UUID,
+	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome shared.LastOutcome,
+	lastOutcome cascade.LastOutcome,
 ) error {
-	var current shared.NodeState
-	var frameIDBefore *shared.UUID
+	var current cascade.NodeState
+	var frameIDBefore *foundationshared.UUID
 	err := ex.QueryRow(ctx,
 		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1 FOR UPDATE`, id,
 	).Scan(&current, &frameIDBefore)
@@ -305,7 +305,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		return err
 	}
 	if expected != state {
-		return shared.Wrap(shared.ErrIllegalTransition,
+		return foundationshared.Wrap(cascade.ErrIllegalTransition,
 			"illegal state transition target",
 			map[string]any{
 				"id": id, "from": current, "requested": state,
@@ -358,7 +358,7 @@ func (s *nodesImpl) enforceAndUpdate(
 	return nil
 }
 
-func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.EvaluatorState, tx persistence.Tx) error {
+func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes
@@ -372,7 +372,7 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.
 	return err
 }
 
-func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id shared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
+func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes
@@ -387,7 +387,7 @@ func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id shared.UUID, at time
 // SetFrameID writes (or clears) the frame_id column on a node. Used by the
 // scheduler's frame engine at frame-start (write) and the supervisor's
 // terminal-commit path on success (clear). Per spec §10.3.
-func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, frameID *foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET frame_id = $2, updated_at = NOW() WHERE id = $1`, id, frameID)
@@ -395,17 +395,17 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *sha
 }
 
 // ClearLastOutcome resets last_outcome to NULL on the row. Used by the
-// operator reset path (modeling/controlapi/nodes.go::handleResetNode)
+// operator reset path (control/controlapi/nodes.go::handleResetNode)
 // so the dashboard does not display a stale `failed` resolution flavor
 // while the node transitions back through stale → running → fresh.
-func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET last_outcome = NULL, updated_at = NOW() WHERE id = $1`, id)
 	return err
 }
 
-func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes
@@ -415,7 +415,7 @@ func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id shared.UUI
 	return err
 }
 
-func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_nodes WHERE instance_id = $1`, instanceID)
 	return err
@@ -426,7 +426,7 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID shared.UUID
 // (stale AND frame_id IS NULL). Used by the supervisor's terminal-
 // complete path so cascade children inherit the parent's frame_id
 // atomically with the commit.
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id shared.UUID, frameID shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes
@@ -452,7 +452,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		currentErrClass *string
 		lastHB          *time.Time
 		assignedSup     *string
-		frameID         *shared.UUID
+		frameID         *foundationshared.UUID
 	)
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
@@ -467,14 +467,14 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.Executor = derefString(executor)
 	r.ScheduleCron = derefString(scheduleCron)
 	if lastOutcome != nil {
-		r.LastOutcome = shared.LastOutcome(*lastOutcome)
+		r.LastOutcome = cascade.LastOutcome(*lastOutcome)
 	}
 	r.CurrentErrorClass = derefString(currentErrClass)
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB
 	r.FrameID = frameID
 	if r.Dependencies == nil {
-		r.Dependencies = []shared.UUID{}
+		r.Dependencies = []foundationshared.UUID{}
 	}
 	return r, nil
 }

@@ -19,13 +19,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Driver) {
+func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 	q := d.Queue()
 	if q == nil {
 		t.Fatalf("driver.Queue() returned nil")
@@ -178,7 +178,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Driver) {
 // no candidate row matches. The tx rolls back to release FOR UPDATE
 // locks; this is read-only from the test's perspective.
 func selectCandidateIDForNode(ctx context.Context, t *testing.T,
-	store persistence.Store, q persistence.Queue, nodeID shared.UUID,
+	store persistence.Tables, q persistence.Queue, nodeID shared.UUID,
 ) shared.UUID {
 	t.Helper()
 	probeErr := errors.New("rollback probe")

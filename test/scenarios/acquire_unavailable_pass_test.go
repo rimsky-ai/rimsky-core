@@ -14,12 +14,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -34,7 +34,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -50,17 +50,17 @@ func TestAcquireUnavailablePass(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
 	// Script the executor — but we expect it to never be called.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-pass", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -80,7 +80,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Node should record last_outcome=passed.
-	require.True(t, waitForLastOutcome(t, h, worker.ID, shared.LastOutcomePassed, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
 		"worker should record last_outcome=passed under on_acquire_unavailable: pass")
 
 	var wRow *persistence.NodeRow
@@ -89,7 +89,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFresh, wRow.State,
+	require.Equal(t, cascade.NodeStateFresh, wRow.State,
 		"worker should be fresh after resolve=pass")
 
 	// The stub producer must have seen at least one Open (the one that

@@ -9,29 +9,29 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // NodeRow mirrors a row of rimsky_nodes — the per-instance node-state
 // row driven by the cascade engine and the supervisor.
 type NodeRow struct {
-	ID                   shared.UUID        `json:"id"`
-	InstanceID           shared.UUID        `json:"instance_id"`
-	NodeType             string             `json:"node_type"`
-	Executor             string             `json:"executor"`
-	ScheduleCron         string             `json:"schedule_cron"`
-	State                shared.NodeState   `json:"state"`
-	LastOutcome          shared.LastOutcome `json:"last_outcome,omitempty"`
-	Dependencies         []shared.UUID      `json:"dependencies"`
-	CurrentErrorClass    string             `json:"current_error_class,omitempty"`
-	RetryCounter         int                `json:"retry_counter"`
-	ActionIndex          int                `json:"action_index"`
-	LastHeartbeatAt      *time.Time         `json:"last_heartbeat_at,omitempty"`
-	AssignedSupervisorID string             `json:"assigned_supervisor_id,omitempty"`
-	FrameID              *shared.UUID       `json:"frame_id,omitempty"`
-	CreatedAt            time.Time          `json:"created_at"`
-	UpdatedAt            time.Time          `json:"updated_at"`
+	ID                   shared.UUID         `json:"id"`
+	InstanceID           shared.UUID         `json:"instance_id"`
+	NodeType             string              `json:"node_type"`
+	Executor             string              `json:"executor"`
+	ScheduleCron         string              `json:"schedule_cron"`
+	State                cascade.NodeState   `json:"state"`
+	LastOutcome          cascade.LastOutcome `json:"last_outcome,omitempty"`
+	Dependencies         []shared.UUID       `json:"dependencies"`
+	CurrentErrorClass    string              `json:"current_error_class,omitempty"`
+	RetryCounter         int                 `json:"retry_counter"`
+	ActionIndex          int                 `json:"action_index"`
+	LastHeartbeatAt      *time.Time          `json:"last_heartbeat_at,omitempty"`
+	AssignedSupervisorID string              `json:"assigned_supervisor_id,omitempty"`
+	FrameID              *shared.UUID        `json:"frame_id,omitempty"`
+	CreatedAt            time.Time           `json:"created_at"`
+	UpdatedAt            time.Time           `json:"updated_at"`
 }
 
 // NodeCreateInput is the per-row input for Create.
@@ -44,8 +44,8 @@ type NodeCreateInput struct {
 	Dependencies []shared.UUID
 }
 
-// NodeStore is the rimsky_nodes accessor.
-type NodeStore interface {
+// NodeTable is the rimsky_nodes accessor.
+type NodeTable interface {
 	Create(ctx context.Context, in NodeCreateInput, tx Tx) (NodeRow, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*NodeRow, error)
 	ListByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]NodeRow, error)
@@ -64,14 +64,14 @@ type NodeStore interface {
 	ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx Tx) ([]NodeRow, error)
 	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
-	CountByState(ctx context.Context, tx Tx) (map[shared.NodeState]int, error)
+	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)
 	// UpdateState transitions the node to `state` under `reason`, validated
 	// against the cascade state machine. `lastOutcome` is the resolution
 	// flavor for terminal-for-this-frame transitions; the empty string
 	// "" means "do not write the column" (preserves the existing value).
-	// See modeling/shared/types.go for LastOutcome values.
-	UpdateState(ctx context.Context, id shared.UUID, state shared.NodeState, reason cascade.TransitionReason, lastOutcome shared.LastOutcome, tx Tx) error
-	UpdateError(ctx context.Context, id shared.UUID, es node.EvaluatorState, tx Tx) error
+	// See graph/shared/types.go for LastOutcome values.
+	UpdateState(ctx context.Context, id shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, lastOutcome cascade.LastOutcome, tx Tx) error
+	UpdateError(ctx context.Context, id shared.UUID, es spec.EvaluatorState, tx Tx) error
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
 	// ClearLastOutcome sets last_outcome = NULL. Used by the operator

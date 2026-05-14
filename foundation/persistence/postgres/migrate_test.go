@@ -11,7 +11,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/internal/pgtest"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // TestMigrateAgainstTestcontainers exercises persistence.Migrate end-to-

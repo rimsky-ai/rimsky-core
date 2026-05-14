@@ -384,7 +384,7 @@ The recursion is the joke. The demonstration value is real.
   documentation.
 - *Polyglot peers.* Web search (Go), idea generators and judge and
   reviewer (TS / claude-agent), tester (Go — validates YAML, runs
-  `rimsky-conformance` against the proposed cascade), publisher (Go).
+  `rimsky-executor-conformance` against the proposed cascade), publisher (Go).
 - *Named lock for LLM budget.* Speculative example generation can burn
   tokens fast; a counting named lock caps concurrent agent invocations.
 

@@ -3,7 +3,7 @@
 connection: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
 # write_semantics declares the single value this store-service realizes
 # on every Open. Operators may declare a different (non-empty) subset
-# of this in rimsky.yml's claim_producers[*].write_semantics_envelope.
+# of this in rimsky.yml's claim_producers[*].write_semantics_allowed.
 write_semantics: sync
 pick_policies:
   "@review-queue":

@@ -20,9 +20,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestFrameCoalesceSelfInvalidate verifies frame_resolution: coalesce
@@ -34,11 +34,11 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Slow stub so we have time for multiple self-invalidates to coalesce.
-	h.Stub.WhenType("worker").Complete(map[string]any{"v": 1}, true, "ok").Delay(500 * time.Millisecond)
+	h.Stub.WhenType("worker").Success(map[string]any{"v": 1}, true, "ok").Delay(500 * time.Millisecond)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "coalesce-self-invalidate", Version: "1",
-		FrameResolution: node.FrameResolutionCoalesce,
+		FrameResolutionMode: node.FrameResolutionCoalesce,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -58,7 +58,7 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 
 	// Wait for the worker to land in fresh at least once; the
 	// on_executor_complete invalidate fires immediately on each commit.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on first run")
 
 	// Allow time for the self-invalidate loop to coalesce: under
@@ -79,15 +79,15 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 		"coalesce should permit at most one queued frame at a time; got %d", maxQueued)
 
 	// Each frame should have at most one running terminal per worker.
-	// Verify no double-execute: count rimsky_worker_request rows per frame.
+	// Verify no double-execute: count rimsky_node_runs rows per frame.
 	var maxRunsPerFrame int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		SELECT COALESCE(MAX(c), 0) FROM (
-			SELECT count(*) AS c FROM rimsky_worker_request
+			SELECT count(*) AS c FROM rimsky_node_runs
 			WHERE node_id = $1
 			GROUP BY frame_id
 		) t
 	`, uuid.UUID(worker.ID)).Scan(&maxRunsPerFrame))
 	require.LessOrEqual(t, maxRunsPerFrame, 1,
-		"no double-execute: at most one worker_request per (frame, node); got max=%d", maxRunsPerFrame)
+		"no double-execute: at most one node-run per (frame, node); got max=%d", maxRunsPerFrame)
 }

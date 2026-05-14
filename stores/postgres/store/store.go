@@ -162,7 +162,7 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 // [sync] instead — operator's call.
 func (s *Store) Capabilities() corestore.Capabilities {
 	return corestore.Capabilities{
-		WriteSemanticsEnvelope: []corestore.WriteSemantics{s.writeSemantics},
+		WriteSemanticsAllowed: []corestore.WriteSemantics{s.writeSemantics},
 	}
 }
 

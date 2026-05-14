@@ -14,7 +14,7 @@ import (
 // RunSweep starts the store-internal visibility-timeout sweep.
 // Store-internal sweep — runs over the store's own data only,
 // by design. v3 spec §7.5 makes this independent of rimsky's
-// `rimsky_claim_handle` orphan reaper; no cross-database join is
+// `rimsky_claim_handles` orphan reaper; no cross-database join is
 // attempted (the store's pool may be on a separate database from
 // rimsky's control plane).
 //
@@ -49,7 +49,7 @@ func (s *Store) sweepOnce(ctx context.Context) error {
 		if pp.VisibilityTimeout <= 0 {
 			continue
 		}
-		// The "NOT EXISTS rimsky_claim_handle" predicate is dropped
+		// The "NOT EXISTS rimsky_claim_handles" predicate is dropped
 		// because the store's pool may be separate from rimsky's
 		// control-plane DB — and even when colocated, the store
 		// owns its own state. Per spec §7.5, the orphan reaper runs

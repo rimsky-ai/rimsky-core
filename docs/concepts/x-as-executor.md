@@ -1,3 +1,14 @@
+---
+concept: x-as-executor
+definition: |
+  The pattern of wrapping an existing system (a CI pipeline, an ETL job, a custom worker) inside an Executor protocol implementation so rimsky can dispatch to it. Often the lowest-friction path to adopting rimsky in an existing project.
+proto_symbol: Executor in protocols/proto/v1/executor.proto
+config_field: rimsky.yml:executors
+api_surface: (none)
+related: [executor, claim, template]
+deprecated_terms: []
+---
+
 # Pipelines as executors
 
 A common pattern for adopting rimsky in an existing system is to wrap an
@@ -17,16 +28,18 @@ From rimsky's perspective an executor is anything that:
 
 1. Implements the `Execute` RPC (gRPC stream or HTTP+JSON bridge).
 2. Returns one of the protocol's terminal events
-   (`Complete`, `Blocked`, `Errored`, `AsyncAccepted`, `ParkRequested`).
-3. Optionally implements `ExecutorObservability.GetCapabilities()` to
+   (`Success`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`, `Park`).
+3. Optionally implements `ExecutorObservability.Capabilities()` to
    declare its `userdata_schema` and `declared_events`.
 
 There is no requirement that an executor be implemented in any
 particular language or runtime. The reference implementations
-(`claude-agent` in TypeScript, `http-node` and `stub` in Go) are
-illustrative, not normative. A pipeline written in Python, a Lambda
-behind API Gateway, or a long-running service in Kubernetes can all
-satisfy the protocol with a thin wrapper.
+(`claude-agent` in TypeScript, `http-node` in Go) are illustrative,
+not normative. The `stub` Go package is a test double (canned-outcome
+scripting for tests and conformance), not a starting template. A
+pipeline written in Python, a Lambda behind API Gateway, or a
+long-running service in Kubernetes can all satisfy the protocol with
+a thin wrapper.
 
 ## Categories of integration
 
@@ -51,7 +64,7 @@ substitution.
 ### Webhook-driven flows
 
 The wrapper accepts an incoming webhook, kicks off the external work,
-and emits `AsyncAccepted` immediately. When the webhook return-payload
+and emits `AwaitAsyncCallback` immediately. When the webhook return-payload
 arrives the wrapper POSTs the new-shape async-callback body
 (`{events: [...], terminal: {...}}`) to the supervisor's
 callback URL. Events from the body are persisted before the terminal,
@@ -63,11 +76,11 @@ pure dispatcher.
 
 ### External-decision waits (parked)
 
-Use `ParkRequested` whenever the wrapper needs to pause the run for an
+Use `Park` whenever the wrapper needs to pause the run for an
 out-of-band signal — a human approval, a downstream system's
 completion, a rate-limit reset, a quorum vote.
 
-`ParkRequested.resume_at` schedules a time-based wake. Omit it for
+`Park.resume_at` schedules a time-based wake. Omit it for
 indefinite parks waiting on a signal. Resume happens via the admin
 endpoint `POST /admin/instances/{instance}/nodes/{node}/invalidate` or
 via an in-graph invalidate emitted by an `on_event` handler. The
@@ -118,7 +131,7 @@ nodes:
             source: nodes.review_gate.event.approved.payload
 ```
 
-`review_gate` emits `ParkRequested` on dispatch and waits. A human
+`review_gate` emits `Park` on dispatch and waits. A human
 approves through a project-built UI that calls
 `POST /admin/instances/.../nodes/review_gate/invalidate`; the executor
 resumes, emits `approved` (a named event with the reviewer payload),

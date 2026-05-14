@@ -1,0 +1,84 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
+package cli_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/fallguy/rimsky/control/cli"
+)
+
+func TestRunTagCreate_OK(t *testing.T) {
+	srv := setupClitest(t)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "", "")
+	if got := cli.RunTagCreate(context.Background(), []string{"--template", hash, "v1"}); got != 0 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagCreate_RejectComposePrefix(t *testing.T) {
+	_ = setupClitest(t)
+	if got := cli.RunTagCreate(context.Background(), []string{"--template", "foo", "compose:p:x"}); got != 2 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagList(t *testing.T) {
+	srv := setupClitest(t)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	srv.State.SetTagHash("v2", hash)
+	if got := cli.RunTagList(context.Background(), []string{"--prefix", "v"}); got != 0 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagGet_NotFound(t *testing.T) {
+	_ = setupClitest(t)
+	if got := cli.RunTagGet(context.Background(), []string{"missing"}); got != 1 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagGet_Found(t *testing.T) {
+	srv := setupClitest(t)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	_ = hash
+	if got := cli.RunTagGet(context.Background(), []string{"v1"}); got != 0 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagMv_OK(t *testing.T) {
+	srv := setupClitest(t)
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	hash2, _ := srv.State.RegisterTemplate(map[string]any{"name": "y", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "", "")
+	if got := cli.RunTagMv(context.Background(), []string{"--template", hash2, "v1"}); got != 0 {
+		t.Errorf("exit %d", got)
+	}
+	_ = hash
+}
+
+func TestRunTagRm_OK(t *testing.T) {
+	srv := setupClitest(t)
+	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	if got := cli.RunTagRm(context.Background(), []string{"v1"}); got != 0 {
+		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunTagMv_RejectComposePrefix(t *testing.T) {
+	_ = setupClitest(t)
+	if got := cli.RunTagMv(context.Background(), []string{"--template", "foo", "compose:p:x"}); got != 2 {
+		t.Errorf("exit %d, want 2 (compose-owned tag must not be movable through manual CLI)", got)
+	}
+}
+
+func TestRunTagRm_RejectComposePrefix(t *testing.T) {
+	_ = setupClitest(t)
+	if got := cli.RunTagRm(context.Background(), []string{"compose:p:x"}); got != 2 {
+		t.Errorf("exit %d, want 2 (compose-owned tag must not be deletable through manual CLI)", got)
+	}
+}

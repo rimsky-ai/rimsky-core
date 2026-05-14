@@ -14,7 +14,7 @@ use the trademarks; use of the trademarks is governed by this document.
   Rimsky" in plain prose.
 - Describing a third-party implementation, fork, or distribution as
   "Rimsky-compatible" if it passes the upstream conformance suite
-  (`rimsky-conformance`, `rimsky-claim-producer-conformance`).
+  (`rimsky-executor-conformance`, `rimsky-claim-producer-conformance`).
 - Linking to the upstream Rimsky repository or website.
 
 ## Restricted use
@@ -35,7 +35,7 @@ use the trademarks; use of the trademarks is governed by this document.
 A fork or derivative may describe itself as "Rimsky-compatible" if it
 passes the upstream conformance suites against the upstream protocol
 version it claims to implement. The conformance suites live under
-`cmd/rimsky-conformance/` and `cmd/rimsky-claim-producer-conformance/` and
+`cmd/rimsky-executor-conformance/` and `cmd/rimsky-claim-producer-conformance/` and
 are themselves Apache 2.0; running them against your implementation is
 encouraged.
 

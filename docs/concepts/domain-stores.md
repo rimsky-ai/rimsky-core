@@ -1,3 +1,14 @@
+---
+concept: domain-stores
+definition: |
+  Consumer-built MCP servers that hold project-specific resources (records, jobs, queue items) and expose them as claim producers. The colloquial "stores" terminology at the bundled-services layer.
+proto_symbol: ClaimProducer in protocols/proto/v1/claim_producer.proto
+config_field: rimsky.yml:claim_producers
+api_surface: (none)
+related: [claim-producer, claim, scope]
+deprecated_terms: []
+---
+
 # Domain stores
 
 A **domain store** is a project-built MCP server that holds

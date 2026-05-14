@@ -10,7 +10,7 @@
 //
 // Mechanism: stub returns Errored("test_failure") which, with no
 // matching policy entry, resolves to give_up (default for unknown
-// error class per modeling/node/policy.go::Evaluate). The runner takes
+// error class per graph/node/policy.go::Evaluate). The runner takes
 // the give-up path; node state ends 'failed'; frame ends 'failed'.
 // We then re-script the stub to Complete and fire a second invalidate
 // to verify the next frame proceeds.
@@ -24,9 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFailedNodeMarksFrameFailed(t *testing.T) {
@@ -36,7 +36,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "failed-node-marks-frame-failed", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -45,7 +45,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker did not reach failed on first fire")
 
 	// Wait for the frame engine's tick to record frame-end.
@@ -74,10 +74,10 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"failed node frame_id should match the failed frame")
 
 	// Fire a second invalidate after re-scripting the stub to succeed.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 	fireInvalidate(t, h, iid, worker.ID)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on second fire")
 
 	// Wait for the second frame to settle.

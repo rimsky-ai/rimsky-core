@@ -518,7 +518,7 @@ proto/v1 must matter more than the Go reference orchestrator does.
 
 Practical implications:
 
-- **Conformance is a first-class deliverable.** `rimsky-conformance` already
+- **Conformance is a first-class deliverable.** `rimsky-executor-conformance` already
   exists for executors. A `rimsky-store-conformance` binary should exist on
   the same footing for store-services. Any future commercial offering — by
   Rimsky's authors or anyone else — must pass conformance to call itself
@@ -587,7 +587,7 @@ the reader has been primed by one of the above framings.
 1. **License commitment.** What license, and what protocol-stability
    commitment, will land at v1 ship? Apache-2.0 is the default that
    matches the framing.
-2. **Conformance for store-services.** `rimsky-conformance` covers
+2. **Conformance for store-services.** `rimsky-executor-conformance` covers
    executors. A symmetric `rimsky-store-conformance` should exist before
    the "any-language store-service" framing is credible.
 3. **The third reference executor.** `http-node` (Go) and `claude-agent`

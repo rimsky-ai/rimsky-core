@@ -22,11 +22,11 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testAcquisitionTxAtomicity(t *testing.T, d persistence.Driver) {
+func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
-	store := d.Store()
+	store := d.Tables()
 
 	if err := q.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:         fix.NodeID,

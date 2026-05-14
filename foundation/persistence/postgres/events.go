@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// EventStore — port of rimsky/src/storage/postgres/event-store.ts.
+// EventTable — port of rimsky/src/storage/postgres/event-store.ts.
 //
 // The append-only event log. Tail/list use a (occurred_at, id) cursor
 // encoded as base64 JSON so clients can't naively trust the value but do
@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // Append inserts an event row. If Payload is nil we insert {} so the column's

@@ -12,25 +12,25 @@ import "google/protobuf/struct.proto";
 
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (node_executor.proto) is unchanged. See
+// The dispatch protocol (executor.proto) is unchanged. See
 // docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
 service ExecutorObservability {
-  rpc GetCapabilities(GetCapabilitiesRequest) returns (ObservabilityCapabilities);
+  rpc Capabilities(ExecutorCapabilitiesRequest) returns (ObservabilityCapabilities);
   rpc GetTrace(GetTraceRequest) returns (Trace);
   rpc StreamTrace(StreamTraceRequest) returns (stream TraceEvent);
 }
 
-message GetCapabilitiesRequest {}
+message ExecutorCapabilitiesRequest {}
 
 message ObservabilityCapabilities {
   bool supports_trace_get = 1;
   bool supports_trace_stream = 2;
   uint64 retention_after_terminal_seconds = 3;
   CustomUI custom_ui = 4;
-  // http_bridge_url, when non-empty, is the absolute base URL the peer
+  // http_bridge_url, when non-empty, is the absolute base URL the service
   // serves the HTTP+JSON observability bridge on. Dashboard clients
   // dial this URL directly for browser-friendly fetch/SSE access. When
-  // empty, peers expose only the gRPC surface.
+  // empty, services expose only the gRPC surface.
   string http_bridge_url = 5;
 
   // userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
@@ -40,17 +40,17 @@ message ObservabilityCapabilities {
   // Rimsky validates incoming template userdata against this schema at
   // template registration and at dispatch (post-merge,
   // post-substitution). Validation failures route through
-  // Errored { error_class: "userdata_validation_failed" }.
+  // Error { error_class: "userdata_validation_failed" }.
   bytes userdata_schema = 6;
 
   // declared_events is the set of event names this executor may emit
-  // via the non-terminal Event wire type on ExecuteEvent. Empty means
+  // via the NamedEvent wire type on ExecuteEvent. Empty means
   // "executor does not emit events."
   //
   // Rimsky validates that any on_event handlers in templates referencing
   // this executor name an event in declared_events. Reserved lifecycle
-  // slots (on_executor_complete/blocked/errored, on_acquire_unavailable)
-  // are not subject to this validation.
+  // slots (on_executor_complete/errored, on_acquire_unavailable) are
+  // not subject to this validation.
   repeated string declared_events = 7;
 }
 

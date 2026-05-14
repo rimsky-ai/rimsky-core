@@ -5,8 +5,8 @@ definition: |
   retry counters onto an action: retry, invalidate(targets),
   give_up, or pass. Templates declare error_types per node;
   rimsky's runtime resolves the policy at terminal time.
-proto_symbol: (none — declared in template DSL)
-config_field: scheduler.max_retries_without_progress
+proto_symbol: (none)
+config_field: rimsky.yml:scheduler.max_retries_without_progress
 api_surface: (none)
 related: [handlers, node, executor, parked]
 deprecated_terms: []
@@ -37,16 +37,19 @@ terminal time the runtime looks up the action for the executor-supplied
 `error_class` and dispatches:
 
 - `retry` — re-dispatch after a backoff.
-- `discard_then_retry` — release acquired claims, re-dispatch fresh.
-- `resume_then_retry` — preserve claims, re-dispatch with the same
-  acquisition.
 - `invalidate(targets)` — invalidate the named target nodes; the
   emitted invalidates respect the optional `frame: in | next` setting.
 - `give_up` — fail the node with the executor-supplied error class.
+- `pass` — treat the failure as a no-op for cascade; transitions to
+  `fresh+passed` without error routing.
 
-The four lifecycle handlers (`on_acquire_unavailable`,
-`on_executor_complete`, `on_executor_blocked`, `on_executor_errored`)
-override or extend this resolution. See `docs/concepts/handlers.md`.
+> The pre-2026-05-12 action flavors `discard_then_retry` and
+> `resume_then_retry` are retired; both now resolve to `retry`. The
+> supervisor releases acquired claims at terminal regardless.
+
+The three lifecycle handlers (`on_acquire_unavailable`,
+`on_executor_complete`, `on_executor_errored`) override or extend this
+resolution. See `docs/concepts/handlers.md`.
 
 ## `max_retries_without_progress` cap
 
@@ -85,10 +88,10 @@ surfaces retry loops before they exhaust budget.
 
 ## Common mistakes
 
-- Conflating `Blocked` and `Errored`. `Blocked` means "I produced
+- Conflating `Error{error_class: "executor_blocked"}` and `Error{error_class}`. `Error{error_class: "executor_blocked"}` means "I produced
   output but explicitly chose not to claim success" — typically routed
-  via `on_executor_blocked` to a downstream review or routing node.
-  `Errored` means a true failure.
+  via `on_executor_errored` to a downstream review or routing node.
+  `Error{error_class}` means a true failure.
 - Setting `max_retries_without_progress: 0` on every node. The cap
   exists to surface retry loops; disabling it broadly hides bugs.
 - Expecting `give_up` to terminate the instance. It fails the node;

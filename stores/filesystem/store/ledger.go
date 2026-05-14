@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package store: ledger.go is the in-memory per-claim history used by
-// the filesystem store's observability surface (StoreObservability).
+// the filesystem store's observability surface (ClaimProducerObservability).
 // Rimsky-side claim content invariants (blessed-invariant 20) do not
 // govern stores' *own* observability — the store decides what to expose
 // (spec §3.2). The ledger is bounded by a max claim count per state

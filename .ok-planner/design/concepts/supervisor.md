@@ -14,7 +14,7 @@ references:
 
 ## What it is
 
-One of the three rimsky runtime binaries (`cmd/rimsky-supervisor/`). Implements the acquisition transaction, dispatch, terminal handling, auto-terminal. Registers in `rimsky_supervisors` at startup with `accepted_executors` / `accepted_stores` / `concurrency` / `callback_host` / `callback_port`. Heartbeats are queryable timestamps on `rimsky_worker_request` and `rimsky_claim_handle`.
+One of the three rimsky runtime binaries (`cmd/rimsky-supervisor/`). Implements the acquisition transaction, dispatch, terminal handling, auto-terminal. Registers in `table:rimsky_supervisors` at startup with `accepted_executors` / `accepted_stores` / `concurrency` / `callback_host` / `callback_port`. Heartbeats are queryable timestamps on `table:rimsky_node_runs` and `table:rimsky_claim_handles`.
 
 ## Purpose
 
@@ -22,7 +22,7 @@ The supervisor is rimsky's worker side. It selects candidate work, performs the 
 
 ## Boundaries
 
-Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `worker-request`, `claim-handle`, `executor`, `frame`, `lifecycle-handler`, `auto-terminal`.
+Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `lifecycle-handler`, `auto-terminal`.
 
 ## Invariants
 
@@ -35,9 +35,9 @@ Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callba
 
 ## Aliases and historical names
 
-The supervisor's role was once split differently pre-phase-5; the unified runner under `foundation/integration/` is the current home.
+The supervisor's role was once split differently pre-phase-5; the unified runner under `runtime/` is the current home.
 
 ## Open within this concept
 
-(no live tensions distinct from `claim-handle`, `worker-request`, and the verify-before-run / acquisition-tx invariants)
+(no live tensions distinct from `claim-handle`, `node-run`, and the verify-before-run / acquisition-tx invariants)
 

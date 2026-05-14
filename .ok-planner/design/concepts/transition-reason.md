@@ -27,6 +27,22 @@ Owns: the closed enum, the write site at each state transition, the audit-event-
 - Reason values are enumerated as exported `var` values of type `TransitionReason{Kind string}` in `foundation/cascade/state.go`; the type is not a Go enum (a caller could in principle construct `TransitionReason{Kind: "anything"}`), but `NextState` rejects any reason whose `Kind` is not in the known per-state switch with `ErrIllegalTransition`. The runtime guard, not the type system, enforces the closed set.
 - Reason is written at every state transition; absence from the audit row is a defect.
 
+## Relationship to sibling concept
+
+`concept:transition-reason` is the audit-grade "why did this transition happen" enum carried on every node-state transition. Sibling concept `concept:last-outcome` is the cascade-firing gate enum carried on the row in `col:rimsky_nodes.last_outcome`. The two are complementary, not duplicative — they record different facets of the same transition.
+
+| transition_reason | typical last_outcome |
+|---|---|
+| `HandlerComplete` + handler resolved `by_changed` | `fresh_changed` or `fresh_unchanged` (depending on executor's `changed` verdict) |
+| `HandlerComplete` + handler resolved `always_propagate` | `fresh_changed` (forced) |
+| `HandlerComplete` + handler resolved `never_propagate` | `fresh_unchanged` (forced) |
+| `OperatorReset` | unchanged from prior run |
+| `Invalidate` (graph-level message) | no write (stale state has no outcome) |
+| `HeartbeatLost` | no write (transition is administrative) |
+| `AppErrorTerminal` (failed) | `failed` |
+
+See `concept:last-outcome` for the symmetric section on the sibling.
+
 ## Aliases and historical names
 
 None live. Pre-migration-004 code used `t.Changed` for the cascade-fire decision and a smaller reason vocabulary for audit; both surfaces were sharpened under the reactive-loops design (`.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md`).

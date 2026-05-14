@@ -23,11 +23,12 @@ func init() {
 	})
 }
 
-// runTerminalIsLast asserts that after a terminal event (Complete, Blocked,
-// Errored, or AsyncAccepted), the next Recv() returns io.EOF — no more events
-// follow. Per spec §7.2, terminals close the stream. This is gRPC-stream-only:
-// AsyncAccepted is itself a gRPC terminal, and the eventual callback POST is a
-// separate transport.
+// runTerminalIsLast asserts that after a terminal StreamClose event (with any
+// outcome: Success, Error, AwaitAsyncCallback, or Park) the next Recv()
+// returns io.EOF — no more events follow. Per spec §7.2, terminals close the
+// stream. This is gRPC-stream-only: a StreamClose with outcome
+// AwaitAsyncCallback is itself a gRPC terminal, and the eventual callback POST
+// is a separate transport.
 func runTerminalIsLast(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{

@@ -23,11 +23,11 @@ func newLedgerOnlyServer() *ObservabilityServer {
 	return &ObservabilityServer{store: pgsstore.NewForTest()}
 }
 
-func TestObservability_GetCapabilities_Postgres(t *testing.T) {
+func TestObservability_Capabilities_Postgres(t *testing.T) {
 	obs := newLedgerOnlyServer()
-	caps, err := obs.GetCapabilities(context.Background(), &genv1.GetStoreCapabilitiesRequest{})
+	caps, err := obs.Capabilities(context.Background(), &genv1.GetClaimProducerCapabilitiesRequest{})
 	if err != nil {
-		t.Fatalf("GetCapabilities: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("capabilities = %+v; want all three claim-* flags true", caps)
@@ -83,7 +83,7 @@ func TestObservability_ListClaims_Postgres(t *testing.T) {
 
 // fakeStreamServer adapts to the StreamClaim server interface for tests.
 type fakeStreamServer struct {
-	genv1.StoreObservability_StreamClaimServer
+	genv1.ClaimProducerObservability_StreamClaimServer
 	ctx    context.Context
 	events []*genv1.ClaimEvent
 }

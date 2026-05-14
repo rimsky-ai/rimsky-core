@@ -18,9 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/graph/shared"
 )
 
 func TestGiveUp(t *testing.T) {
@@ -52,6 +53,6 @@ func TestGiveUp(t *testing.T) {
 	require.NotNil(t, n)
 
 	// Eventually retries exhaust and node transitions to failed.
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFailed, 30*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
 		"flaky did not reach failed after exhausting retries")
 }

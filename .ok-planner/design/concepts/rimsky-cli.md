@@ -11,7 +11,7 @@ references:
 
 ## What it is
 
-Thin HTTP+JSON client over the control-api. `cmd/rimsky-cli/main.go` is small; `modeling/cli/` builds requests; `modeling/controlapi/` serves them. Every CLI verb is one or more HTTP calls. Includes a `compose` subcommand for manifest-driven deployments.
+Thin HTTP+JSON client over the control-api. `cmd/rimsky-cli/main.go` is small; `control/cli/` builds requests; `control/controlapi/` serves them. Every CLI verb is one or more HTTP calls. Includes a `compose` subcommand for manifest-driven deployments.
 
 ## Purpose
 

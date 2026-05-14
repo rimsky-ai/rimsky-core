@@ -1,3 +1,14 @@
+---
+concept: deterministic-transformations
+definition: |
+  Nodes whose work is a deterministic function of their inputs — pure data transforms, schema migrations, materialized-view rebuilds. Not all nodes are agents; deterministic transformations are the common case for the data-engineering shape of rimsky.
+proto_symbol: (none)
+config_field: rimsky.yml:nodes
+api_surface: (none)
+related: [executor, claim, handlers]
+deprecated_terms: []
+---
+
 # Deterministic transformations
 
 Not every node in a rimsky graph is an agent or an external service.
@@ -102,16 +113,16 @@ fires the appropriate downstream invalidate.
 
 Pattern: an agent reaches a state where it cannot continue without
 external input — a missing parameter, a required artifact, an
-ambiguity it cannot resolve from context. Use `Blocked` (not
-`Errored`) to signal "I produced output but explicitly chose not to
-claim success", paired with an `on_executor_blocked` handler that
+ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}` (not
+`Error{error_class}`) to signal "I produced output but explicitly chose not to
+claim success", paired with an `on_executor_errored` handler that
 routes the run downstream.
 
 ```yaml
 nodes:
   draft:
     executor: claude-agent
-    on_executor_blocked:
+    on_executor_errored:
       resolve: pass
       invalidate:
         targets: [routing]

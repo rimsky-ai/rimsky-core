@@ -133,26 +133,26 @@ func (Severity) EnumDescriptor() ([]byte, []int) {
 	return file_executor_observability_proto_rawDescGZIP(), []int{1}
 }
 
-type GetCapabilitiesRequest struct {
+type ExecutorCapabilitiesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetCapabilitiesRequest) Reset() {
-	*x = GetCapabilitiesRequest{}
+func (x *ExecutorCapabilitiesRequest) Reset() {
+	*x = ExecutorCapabilitiesRequest{}
 	mi := &file_executor_observability_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetCapabilitiesRequest) String() string {
+func (x *ExecutorCapabilitiesRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCapabilitiesRequest) ProtoMessage() {}
+func (*ExecutorCapabilitiesRequest) ProtoMessage() {}
 
-func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
+func (x *ExecutorCapabilitiesRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_executor_observability_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -164,8 +164,8 @@ func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetCapabilitiesRequest.ProtoReflect.Descriptor instead.
-func (*GetCapabilitiesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ExecutorCapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*ExecutorCapabilitiesRequest) Descriptor() ([]byte, []int) {
 	return file_executor_observability_proto_rawDescGZIP(), []int{0}
 }
 
@@ -175,10 +175,10 @@ type ObservabilityCapabilities struct {
 	SupportsTraceStream           bool                   `protobuf:"varint,2,opt,name=supports_trace_stream,json=supportsTraceStream,proto3" json:"supports_trace_stream,omitempty"`
 	RetentionAfterTerminalSeconds uint64                 `protobuf:"varint,3,opt,name=retention_after_terminal_seconds,json=retentionAfterTerminalSeconds,proto3" json:"retention_after_terminal_seconds,omitempty"`
 	CustomUi                      *CustomUI              `protobuf:"bytes,4,opt,name=custom_ui,json=customUi,proto3" json:"custom_ui,omitempty"`
-	// http_bridge_url, when non-empty, is the absolute base URL the peer
+	// http_bridge_url, when non-empty, is the absolute base URL the service
 	// serves the HTTP+JSON observability bridge on. Dashboard clients
 	// dial this URL directly for browser-friendly fetch/SSE access. When
-	// empty, peers expose only the gRPC surface.
+	// empty, services expose only the gRPC surface.
 	HttpBridgeUrl string `protobuf:"bytes,5,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
 	// userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
 	// the executor's accepted userdata shape. Empty means "no schema; accept
@@ -187,16 +187,16 @@ type ObservabilityCapabilities struct {
 	// Rimsky validates incoming template userdata against this schema at
 	// template registration and at dispatch (post-merge,
 	// post-substitution). Validation failures route through
-	// Errored { error_class: "userdata_validation_failed" }.
+	// Error { error_class: "userdata_validation_failed" }.
 	UserdataSchema []byte `protobuf:"bytes,6,opt,name=userdata_schema,json=userdataSchema,proto3" json:"userdata_schema,omitempty"`
 	// declared_events is the set of event names this executor may emit
-	// via the non-terminal Event wire type on ExecuteEvent. Empty means
+	// via the NamedEvent wire type on ExecuteEvent. Empty means
 	// "executor does not emit events."
 	//
 	// Rimsky validates that any on_event handlers in templates referencing
 	// this executor name an event in declared_events. Reserved lifecycle
-	// slots (on_executor_complete/blocked/errored, on_acquire_unavailable)
-	// are not subject to this validation.
+	// slots (on_executor_complete/errored, on_acquire_unavailable) are
+	// not subject to this validation.
 	DeclaredEvents []string `protobuf:"bytes,7,rep,name=declared_events,json=declaredEvents,proto3" json:"declared_events,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -593,8 +593,8 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
-	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x18\n" +
-	"\x16GetCapabilitiesRequest\"\xf2\x02\n" +
+	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x1d\n" +
+	"\x1bExecutorCapabilitiesRequest\"\xf2\x02\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
@@ -642,9 +642,9 @@ const file_executor_observability_proto_rawDesc = "" +
 	"\x05DEBUG\x10\x01\x12\b\n" +
 	"\x04INFO\x10\x02\x12\b\n" +
 	"\x04WARN\x10\x03\x12\t\n" +
-	"\x05ERROR\x10\x042\xf4\x01\n" +
-	"\x15ExecutorObservability\x12Z\n" +
-	"\x0fGetCapabilities\x12!.rimsky.v1.GetCapabilitiesRequest\x1a$.rimsky.v1.ObservabilityCapabilities\x128\n" +
+	"\x05ERROR\x10\x042\xf6\x01\n" +
+	"\x15ExecutorObservability\x12\\\n" +
+	"\fCapabilities\x12&.rimsky.v1.ExecutorCapabilitiesRequest\x1a$.rimsky.v1.ObservabilityCapabilities\x128\n" +
 	"\bGetTrace\x12\x1a.rimsky.v1.GetTraceRequest\x1a\x10.rimsky.v1.Trace\x12E\n" +
 	"\vStreamTrace\x12\x1d.rimsky.v1.StreamTraceRequest\x1a\x15.rimsky.v1.TraceEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
@@ -663,17 +663,17 @@ func file_executor_observability_proto_rawDescGZIP() []byte {
 var file_executor_observability_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_executor_observability_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_executor_observability_proto_goTypes = []any{
-	(EmbedMode)(0),                    // 0: rimsky.v1.EmbedMode
-	(Severity)(0),                     // 1: rimsky.v1.Severity
-	(*GetCapabilitiesRequest)(nil),    // 2: rimsky.v1.GetCapabilitiesRequest
-	(*ObservabilityCapabilities)(nil), // 3: rimsky.v1.ObservabilityCapabilities
-	(*CustomUI)(nil),                  // 4: rimsky.v1.CustomUI
-	(*GetTraceRequest)(nil),           // 5: rimsky.v1.GetTraceRequest
-	(*StreamTraceRequest)(nil),        // 6: rimsky.v1.StreamTraceRequest
-	(*Trace)(nil),                     // 7: rimsky.v1.Trace
-	(*TraceEvent)(nil),                // 8: rimsky.v1.TraceEvent
-	(*timestamppb.Timestamp)(nil),     // 9: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),           // 10: google.protobuf.Struct
+	(EmbedMode)(0),                      // 0: rimsky.v1.EmbedMode
+	(Severity)(0),                       // 1: rimsky.v1.Severity
+	(*ExecutorCapabilitiesRequest)(nil), // 2: rimsky.v1.ExecutorCapabilitiesRequest
+	(*ObservabilityCapabilities)(nil),   // 3: rimsky.v1.ObservabilityCapabilities
+	(*CustomUI)(nil),                    // 4: rimsky.v1.CustomUI
+	(*GetTraceRequest)(nil),             // 5: rimsky.v1.GetTraceRequest
+	(*StreamTraceRequest)(nil),          // 6: rimsky.v1.StreamTraceRequest
+	(*Trace)(nil),                       // 7: rimsky.v1.Trace
+	(*TraceEvent)(nil),                  // 8: rimsky.v1.TraceEvent
+	(*timestamppb.Timestamp)(nil),       // 9: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),             // 10: google.protobuf.Struct
 }
 var file_executor_observability_proto_depIdxs = []int32{
 	4,  // 0: rimsky.v1.ObservabilityCapabilities.custom_ui:type_name -> rimsky.v1.CustomUI
@@ -682,10 +682,10 @@ var file_executor_observability_proto_depIdxs = []int32{
 	9,  // 3: rimsky.v1.TraceEvent.timestamp:type_name -> google.protobuf.Timestamp
 	1,  // 4: rimsky.v1.TraceEvent.severity:type_name -> rimsky.v1.Severity
 	10, // 5: rimsky.v1.TraceEvent.attributes:type_name -> google.protobuf.Struct
-	2,  // 6: rimsky.v1.ExecutorObservability.GetCapabilities:input_type -> rimsky.v1.GetCapabilitiesRequest
+	2,  // 6: rimsky.v1.ExecutorObservability.Capabilities:input_type -> rimsky.v1.ExecutorCapabilitiesRequest
 	5,  // 7: rimsky.v1.ExecutorObservability.GetTrace:input_type -> rimsky.v1.GetTraceRequest
 	6,  // 8: rimsky.v1.ExecutorObservability.StreamTrace:input_type -> rimsky.v1.StreamTraceRequest
-	3,  // 9: rimsky.v1.ExecutorObservability.GetCapabilities:output_type -> rimsky.v1.ObservabilityCapabilities
+	3,  // 9: rimsky.v1.ExecutorObservability.Capabilities:output_type -> rimsky.v1.ObservabilityCapabilities
 	7,  // 10: rimsky.v1.ExecutorObservability.GetTrace:output_type -> rimsky.v1.Trace
 	8,  // 11: rimsky.v1.ExecutorObservability.StreamTrace:output_type -> rimsky.v1.TraceEvent
 	9,  // [9:12] is the sub-list for method output_type

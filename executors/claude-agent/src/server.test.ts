@@ -7,7 +7,7 @@ import * as grpc from "@grpc/grpc-js";
 import pino from "pino";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { loadNodeExecutorProto } from "./proto-loader.js";
+import { loadExecutorProto } from "./proto-loader.js";
 import {
   startGrpcServer,
   type RunningServer,
@@ -29,7 +29,12 @@ const logger = pino({ level: "silent" });
 
 interface ExecuteEvent {
   heartbeat?: { timestamp_ms: number; note: string };
-  async_accepted?: { async_ack_id: string; expected_completion_ms: number };
+  stream_close?: {
+    await_async?: { async_ack_id: string; expected_completion_ms: number };
+    success?: { attributes_delta: unknown; changed: boolean; change_summary: string };
+    error?: { error_class: string; payload: unknown };
+    park?: { reason: string; payload: unknown; resume_at?: string; session_token?: string };
+  };
   complete?: {
     attributes_delta: unknown;
     changed: boolean;
@@ -75,9 +80,9 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     await cb.close();
   });
 
-  it("emits Heartbeat + AsyncAccepted, then POSTs Complete outcome with attributes_delta", async () => {
-    const pkg = loadNodeExecutorProto();
-    const Client = pkg.rimsky.v1.NodeExecutor as unknown as new (
+  it("emits Heartbeat + AwaitAsyncCallback, then POSTs Success outcome with attributes_delta", async () => {
+    const pkg = loadExecutorProto();
+    const Client = pkg.rimsky.v1.Executor as unknown as new (
       addr: string,
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
@@ -111,8 +116,11 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     expect(events.length).toBeGreaterThanOrEqual(2);
     expect(events[0]!.heartbeat).toBeDefined();
     const terminal = events[events.length - 1]!;
-    expect(terminal.async_accepted).toBeDefined();
-    const ackId = terminal.async_accepted!.async_ack_id;
+    // Post-spec:2026-05-12 (Group E.4): the stream-close event uses
+    // StreamClose + outcome oneof; AwaitAsyncCallback replaces AsyncAccepted.
+    expect(terminal.stream_close).toBeDefined();
+    expect(terminal.stream_close!.await_async).toBeDefined();
+    const ackId = terminal.stream_close!.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
     // Wait for the background agent run + callback POST. Stub is ~50ms.
@@ -123,11 +131,13 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
       `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
-    expect(body.type).toBe("complete");
-    // Spec §12.2/§12.3: Complete callbacks carry `attributes_delta`
-    // (the legacy `result` field has been retired).
-    expect(body.attributes_delta).toEqual({ stub: true });
-    expect(body.changed).toBe(true);
+    // Post-2026-05-12 (spec E.2/E.6): the callback body uses the
+    // AsyncCallbackBody outcome-oneof shape — `success: { ... }` —
+    // rather than the legacy `{type: "complete", ...}` discriminator.
+    expect(body.success).toBeDefined();
+    const success = body.success as Record<string, unknown>;
+    expect(success.attributes_delta).toEqual({ stub: true });
+    expect(success.changed).toBe(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();
@@ -186,8 +196,8 @@ describe("gRPC Execute observability ledger", () => {
   });
 
   it("records step_started + step_completed and markComplete keyed by dispatch_id", async () => {
-    const pkg = loadNodeExecutorProto();
-    const Client = pkg.rimsky.v1.NodeExecutor as unknown as new (
+    const pkg = loadExecutorProto();
+    const Client = pkg.rimsky.v1.Executor as unknown as new (
       addr: string,
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
@@ -311,8 +321,8 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   });
 
   it("POSTs to /v1/callback/{ackID} with a body keyed by `type`", async () => {
-    const pkg = loadNodeExecutorProto();
-    const Client = pkg.rimsky.v1.NodeExecutor as unknown as new (
+    const pkg = loadExecutorProto();
+    const Client = pkg.rimsky.v1.Executor as unknown as new (
       addr: string,
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
@@ -338,7 +348,9 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
 
     interface ExecuteEventLocal {
       heartbeat?: { timestamp_ms: number; note: string };
-      async_accepted?: { async_ack_id: string; expected_completion_ms: number };
+      stream_close?: {
+        await_async?: { async_ack_id: string; expected_completion_ms: number };
+      };
     }
     const events: ExecuteEventLocal[] = [];
     await new Promise<void>((resolve, reject) => {
@@ -347,7 +359,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       call.on("end", resolve);
     });
     const terminal = events[events.length - 1]!;
-    const ackId = terminal.async_accepted!.async_ack_id;
+    const ackId = terminal.stream_close!.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
     await waitFor(() => received.length > 0, 3000);
@@ -356,11 +368,16 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       `/v1/callback/${encodeURIComponent(ackId)}`,
     );
     expect(received[0]!.ackId).toBe(ackId);
-    expect(received[0]!.body.type).toBe("complete");
-    // Ensure we did NOT use the legacy `kind` key.
+    // Post-2026-05-12 (spec E.2/E.6): AsyncCallbackBody outcome-oneof
+    // shape — `success: { ... }` — rather than the legacy
+    // `{type: "complete", ...}` discriminator.
+    expect(received[0]!.body.success).toBeDefined();
+    // Ensure we did NOT use the legacy `kind` or `type` keys.
     expect(received[0]!.body.kind).toBeUndefined();
+    expect(received[0]!.body.type).toBeUndefined();
     // Spec §12.2: stub round-trips its synthetic delta.
-    expect(received[0]!.body.attributes_delta).toEqual({ stub: true });
+    const success = received[0]!.body.success as Record<string, unknown>;
+    expect(success.attributes_delta).toEqual({ stub: true });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();

@@ -65,7 +65,7 @@ Settled sub-decisions (from spec §14, locked in by this plan):
 | Foundation `integration/` primary type | `Conductor`. |
 | `persistence.Coordinator` rename | → `persistence.AdvisoryLocker`. |
 | `rimsky_store_lifecycle` table rename | → `rimsky_lifecycle_idempotency` (Task 31). |
-| Conformance binary names | Three binaries: `rimsky-conformance` (executor + lifecycle); `rimsky-claim-producer-conformance`; existing `rimsky-conformance-probe` retained. |
+| Conformance binary names | Three binaries: `rimsky-executor-conformance` (executor + lifecycle); `rimsky-claim-producer-conformance`; existing `rimsky-conformance-probe` retained. |
 | Backwards-compat shim for protocols module | None. |
 | `core/cmd/` → root `cmd/` | Yes (Task 14). |
 
@@ -369,7 +369,7 @@ The loop should print nothing.
    - 3.3 Go interface — full Go signature in `protocols/lifecycle/lifecycle.go`.
    - 3.4 Implementation pattern — return `nil` from any method the binary doesn't react to. Binaries that don't react at all simply don't implement the service.
    - 3.5 Idempotency — control-api tracks idempotency in `rimsky_lifecycle_idempotency` (renamed from `rimsky_store_lifecycle` in Task 31). Each event keyed by (peer-name, event-type, object-id).
-   - 3.6 Conformance — `rimsky-conformance` binary's `--check-lifecycle` mode (combined with executor conformance into one binary per the binary-name decision).
+   - 3.6 Conformance — `rimsky-executor-conformance` binary's `--check-lifecycle` mode (combined with executor conformance into one binary per the binary-name decision).
    - 3.7 Out of scope — bidirectional events from peer back to Rimsky (peer can't initiate); cross-peer event ordering guarantees.
 
 5. Add `## 4. Executor` section per spec §7.3:
@@ -379,13 +379,13 @@ The loop should print nothing.
    - 4.4 Async-callback path — wire requirement: executor POSTs `${callback_url}/v1/callback/{async_ack_id}` with body keyed `type` (not `kind`). The supervisor's chi route binds this exactly. Diagram the request/response sequence for both sync and async terminal cases.
    - 4.5 Capabilities response — includes `http_bridge_url` for dashboard discoverability.
    - 4.6 Userdata-is-opaque — modeling-layer invariant 11 re-asserted: executors MUST receive `userdata` verbatim (no substitution); rimsky doesn't introspect.
-   - 4.7 Conformance — `rimsky-conformance --check-executor` mode.
+   - 4.7 Conformance — `rimsky-executor-conformance --check-executor` mode.
    - 4.8 Out of scope — observability protocol (separate spec); execution semantics (executor-internal).
 
 6. Add `## 5. Capability handshake protocol` section. Document the startup flow: control-api/supervisor probes each declared peer's `Capabilities()` per protocol it claims to implement; equality-checks operator-declared properties against producer-declared envelope; fails fast on mismatch.
 
 7. Add `## 6. Conformance binaries` section. Three binaries per the binary-name sub-decision:
-   - `rimsky-conformance` — covers Executor and LifecycleSubscriber. Flags: `--endpoint`, `--transport grpc|http+json`, `--check-executor`, `--check-lifecycle`, `--retention-test-seconds`, `--require-stub-mode`.
+   - `rimsky-executor-conformance` — covers Executor and LifecycleSubscriber. Flags: `--endpoint`, `--transport grpc|http+json`, `--check-executor`, `--check-lifecycle`, `--retention-test-seconds`, `--require-stub-mode`.
    - `rimsky-claim-producer-conformance` — renamed from `rimsky-store-conformance`. Covers ClaimProducer.
    - `rimsky-conformance-probe` — utility helper, retained as-is.
 
@@ -1841,8 +1841,8 @@ If `modeling/config/` has no test that loads `deploy/rimsky.yml` end-to-end, add
 
 **Files:**
 - Move: `cmd/rimsky-store-conformance/` → `cmd/rimsky-claim-producer-conformance/` (rename the binary directory and Go files inside).
-- Edit: `cmd/rimsky-conformance/main.go` — restructure to support `--check-executor`, `--check-lifecycle`, and reorganize per the new protocols.
-- New: under `cmd/rimsky-conformance/` add a `lifecycle_check.go` file implementing the LifecycleSubscriber conformance.
+- Edit: `cmd/rimsky-executor-conformance/main.go` — restructure to support `--check-executor`, `--check-lifecycle`, and reorganize per the new protocols.
+- New: under `cmd/rimsky-executor-conformance/` add a `lifecycle_check.go` file implementing the LifecycleSubscriber conformance.
 - New: under `cmd/rimsky-claim-producer-conformance/` add per-claim WriteSemantics conformance: envelope conformance, uniformity-per-(producer,scope).
 
 **Steps:**
@@ -1858,9 +1858,9 @@ If `modeling/config/` has no test that loads `deploy/rimsky.yml` end-to-end, add
    - Add envelope-conformance check: drives `Capabilities()`, then drives `Open()`, asserts that every returned `RealizedWriteSemantics` is a member of the envelope.
    - Add uniformity-per-(producer,scope) check: drives `Open()` twice with payloads/specs that produce byte-equal scope; asserts identical `RealizedWriteSemantics` returned.
 
-3. Update `cmd/rimsky-conformance/main.go`:
+3. Update `cmd/rimsky-executor-conformance/main.go`:
    - Add `--check-lifecycle` flag.
-   - Add `cmd/rimsky-conformance/lifecycle_check.go` that drives a stub-mode dispatch through control-api, then asserts the LifecycleSubscriber receives expected events with idempotency-key uniqueness.
+   - Add `cmd/rimsky-executor-conformance/lifecycle_check.go` that drives a stub-mode dispatch through control-api, then asserts the LifecycleSubscriber receives expected events with idempotency-key uniqueness.
 
 4. Update Makefile / Dockerfile binary references that mention `rimsky-store-conformance`.
 
@@ -1868,9 +1868,9 @@ If `modeling/config/` has no test that loads `deploy/rimsky.yml` end-to-end, add
 
 **Verification:**
 ```sh
-go build ./cmd/rimsky-conformance/... ./cmd/rimsky-claim-producer-conformance/...
+go build ./cmd/rimsky-executor-conformance/... ./cmd/rimsky-claim-producer-conformance/...
 test -d cmd/rimsky-claim-producer-conformance && test ! -d cmd/rimsky-store-conformance
-go test ./cmd/rimsky-conformance/... ./cmd/rimsky-claim-producer-conformance/... -count=1
+go test ./cmd/rimsky-executor-conformance/... ./cmd/rimsky-claim-producer-conformance/... -count=1
 ```
 
 The conformance binaries should have unit tests that run the conformance logic against the bundled stub services using the in-process `testfixture.Start` pattern (per CLAUDE.md: `stores/<kind>/testfixture.Start` exists for the loopback gRPC fixture). If such tests do not yet exist, add them as part of this task — the existing scenario suite provides patterns to copy. Do NOT verify by spinning up real services on hostnames the agent cannot reach.
@@ -1997,7 +1997,7 @@ go test ./modeling/controlapi/... -count=1
      two `Open` calls returning byte-equal `scope` MUST return identical
      `RealizedWriteSemantics`.
    - **Conformance suites split.** `rimsky-store-conformance` renamed
-     `rimsky-claim-producer-conformance`. `rimsky-conformance` covers
+     `rimsky-claim-producer-conformance`. `rimsky-executor-conformance` covers
      executor + lifecycle (new `--check-lifecycle` mode). New per-claim
      WriteSemantics conformance (envelope + uniformity).
    - **YAML config shape updated** to Option II: `stores:` block renamed
@@ -2775,4 +2775,4 @@ These items require human judgment or environments the implementer cannot reach.
 
 5. **Sanity check on Helm chart**: `helm template deploy/kubernetes/rimsky-chart > /tmp/rendered.yaml`; visually inspect the output for any stale env vars or paths.
 
-6. **Run `rimsky-conformance --check-executor` and `rimsky-claim-producer-conformance`** against each bundled service (`stores/{filesystem,postgres,stub}`, `executors/{http-node,claude-agent,stub}`). Confirm clean passes.
+6. **Run `rimsky-executor-conformance --check-executor` and `rimsky-claim-producer-conformance`** against each bundled service (`stores/{filesystem,postgres,stub}`, `executors/{http-node,claude-agent,stub}`). Confirm clean passes.

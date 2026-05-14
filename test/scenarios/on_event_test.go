@@ -18,10 +18,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestOnEventGRPCStreamPath covers H3 case (a). Node A emits a NamedEvent
@@ -34,12 +35,12 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 
 	h.Stub.WhenType("a").
 		EmitNamedEvent("ready", []byte(`{"go":true,"score":42}`)).
-		Complete(map[string]any{}, true, "a-done")
-	h.Stub.WhenType("b").Complete(map[string]any{}, true, "b-done")
+		Success(map[string]any{}, true, "a-done")
+	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-done")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "on-event-stream", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -59,7 +60,7 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
 	// Wait for the named-event audit log on A.
@@ -80,7 +81,7 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 	require.Contains(t, string(evt.PayloadInline), `"go":true`)
 
 	// B should have re-fired (the on_event handler invalidated it).
-	require.True(t, h.WaitForNodeState(b.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should re-run after on_event handler invalidate")
 }
 
@@ -95,11 +96,11 @@ func TestOnEventMultipleEmissionsLatestWins(t *testing.T) {
 		EmitNamedEvent("progress", []byte(`{"step":1}`)).
 		EmitNamedEvent("progress", []byte(`{"step":2}`)).
 		EmitNamedEvent("progress", []byte(`{"step":3}`)).
-		Complete(map[string]any{}, true, "a-done")
+		Success(map[string]any{}, true, "a-done")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "on-event-latest", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 		},
@@ -108,7 +109,7 @@ func TestOnEventMultipleEmissionsLatestWins(t *testing.T) {
 	a := h.FindNode(iid, "a")
 	require.NotNil(t, a)
 
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
 	require.Eventually(t, func() bool {
@@ -137,9 +138,9 @@ func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 	// rejects this at registration before the deploy step.
 	body := map[string]any{
 		"template": map[string]any{
-			"name":             "on-event-undeclared",
-			"version":          "1",
-			"frame_resolution": "serial_queue",
+			"name":                  "on-event-undeclared",
+			"version":               "1",
+			"frame_resolution_mode": "serial_queue",
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

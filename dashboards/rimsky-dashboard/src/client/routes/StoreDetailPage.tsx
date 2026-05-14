@@ -73,7 +73,7 @@ export default function StoreDetailPage() {
         <CustomUIPanel
           customUi={caps.custom_ui}
           template={caps.custom_ui.dispatch_url_template}
-          substitutions={{ store_name: name, claim_id: claimId }}
+          substitutions={{ producer_name: name, claim_id: claimId }}
         />
       ),
     });

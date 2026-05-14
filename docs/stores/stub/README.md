@@ -21,7 +21,7 @@ claim_producers:
   test_fixture:
     kind: stub
     endpoint: dns:stub-producer.svc.cluster.local:9002
-    write_semantics_envelope: [exclusive, staged_async]
+    write_semantics_allowed: [exclusive, staged_async]
     config:
       stub_mode: true
 ```
@@ -33,7 +33,7 @@ running LLM-calling tests.
 
 ## Wire shape
 
-The stub advertises whatever `write_semantics_envelope` the operator
+The stub advertises whatever `write_semantics_allowed` the operator
 declares. Open/Commit/Abandon/Release are no-ops on producer-side
 state; the only side effect is the in-memory claim ledger that
 enforces conflicts.

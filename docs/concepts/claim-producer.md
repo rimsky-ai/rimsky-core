@@ -19,7 +19,7 @@ The protocol-level term for a service that produces claim handles for Rimsky's l
 
 Rimsky's coordination primitives (claims, named locks) need to know about state outside the orchestrator: the filesystem holding workflow outputs, the postgres database queue, the S3 bucket of artifacts. But Rimsky cannot know the structure of every possible state — there are too many.
 
-The claim-producer protocol is the contract. A peer service implements five methods; Rimsky calls them at acquisition (`Open`), at executor terminal (`Commit`/`Abandon`/`Release`), and at startup (`Capabilities`). The producer is the source of truth for the structure of its underlying state; Rimsky is the source of truth for which claims are currently held.
+The claim-producer protocol is the contract. A service implements five methods; Rimsky calls them at acquisition (`Open`), at executor terminal (`Commit`/`Abandon`/`Release`), and at startup (`Capabilities`). The producer is the source of truth for the structure of its underlying state; Rimsky is the source of truth for which claims are currently held.
 
 This split keeps the protocol minimal. Producers don't internally persist lock state — they're stateless servers that know how to translate their selectors into scope bytes and how to mutate their underlying state on commit/abandon. Rimsky owns the claim-handle table; producers own everything else.
 
@@ -29,7 +29,7 @@ This split keeps the protocol minimal. Producers don't internally persist lock s
 - **`Commit(CommitRequest) → CommitResponse`**: signals that the consumer of the claim succeeded. The producer decides what to do with its own state per its own configuration.
 - **`Abandon(AbandonRequest) → AbandonResponse`**: signals that the consumer of the claim failed. The producer decides what to do with its own state per its own configuration.
 - **`Release(ReleaseRequest) → ReleaseResponse`**: tear down producer-side read state (snapshot, MVCC transaction) for a read claim. Distinct from `Commit`/`Abandon`, which are write-claim-shaped.
-- **`Capabilities(CapabilitiesRequest) → CapabilitiesResponse`**: startup handshake. Returns the producer's `WriteSemanticsEnvelope`. Probed once per protocol per peer at process startup.
+- **`Capabilities(CapabilitiesRequest) → CapabilitiesResponse`**: startup handshake. Returns the producer's `WriteSemanticsEnvelope`. Probed once per protocol per service at process startup.
 
 ## A note on naming: "claim producer" vs "store"
 
@@ -37,11 +37,11 @@ In protocol-level prose — wire protocols, conformance suites, the Go interface
 
 In casual operator parlance and in the reference-implementation tree (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`), the colloquial name **store** survives. "The filesystem store," "the postgres store," "the stub store" are normal ways to talk about data-backed reference impls.
 
-The two names refer to the same thing — a peer service that implements the five-method `ClaimProducer` protocol. Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is fine in casual contexts about the bundled reference impls.
+The two names refer to the same thing — a service that implements the five-method `ClaimProducer` protocol. Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is fine in casual contexts about the bundled reference impls.
 
 ## How you encounter it
 
-- **Operator config**: the `claim_producers:` block in `rimsky.yml`. Each entry has an `endpoint` (gRPC URL), an optional `protocols: [...]` list, and a required `write_semantics_envelope: [...]`.
+- **Operator config**: the `claim_producers:` block in `rimsky.yml`. Each entry has an `endpoint` (gRPC URL), an optional `protocols: [...]` list, and a required `write_semantics_allowed: [...]`.
 - **Implementing a producer**: speak gRPC against `protocols/proto/v1/claim_producer.proto`. The reference impls (filesystem, postgres, stub) live under `stores/` and are runnable as standalone binaries.
 - **Conformance**: `cmd/rimsky-claim-producer-conformance` exercises a producer against the wire-protocol contract.
 

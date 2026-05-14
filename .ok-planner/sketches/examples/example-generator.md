@@ -88,7 +88,7 @@ artifact.
                            ▼
                 ┌──────────────────────┐
                 │ tester               │  validates YAML, runs
-                │                      │  rimsky-conformance on cascade
+                │                      │  rimsky-executor-conformance on cascade
                 └──────────┬───────────┘
                            │
                            ▼   (yaml errors)
@@ -252,7 +252,7 @@ demonstrative shortcut.)
 | `judge-candidates` | TS (claude-agent) | Structured-output rubric scoring |
 | `pick-top-n` | Go | Deterministic |
 | `scaffold-example` | TS (claude-agent) | Long-form writing |
-| `tester` | Go | Runs `rimsky-conformance` and YAML validation |
+| `tester` | Go | Runs `rimsky-executor-conformance` and YAML validation |
 | `reviewer` | TS (claude-agent) | Adversarial critique |
 | `open-pr` | Go | gh CLI or octokit |
 
@@ -351,7 +351,7 @@ examples/
       docs-indexer/               # Go, reads docs/examples/, computes embeddings
       candidate-judge/            # TS, claude-agent with rubric prompt
       example-scaffolder/         # TS, claude-agent with structured-output schema
-      cascade-tester/             # Go, validates YAML + runs rimsky-conformance
+      cascade-tester/             # Go, validates YAML + runs rimsky-executor-conformance
       adversarial-reviewer/       # TS, claude-agent
       pr-opener/                  # Go, octokit/gh
     fixtures/

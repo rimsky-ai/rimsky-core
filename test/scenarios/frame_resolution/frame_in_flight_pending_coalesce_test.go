@@ -14,18 +14,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameInFlightPendingCoalesce(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok").Delay(3 * time.Second)
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok").Delay(3 * time.Second)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pending-coalesce", Version: "1",
-		FrameResolution: node.FrameResolutionCoalesce,
+		FrameResolutionMode: node.FrameResolutionCoalesce,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

@@ -101,15 +101,6 @@ func (r *Registry) Get(name string) (ClaimProducer, bool) {
 	return p, ok
 }
 
-// Stores returns a snapshot of every registered producer keyed by name.
-// The returned map is a fresh copy.
-//
-// Deprecated: kept for backwards compatibility during the
-// layer-crystallization rollout; new code should call Producers().
-func (r *Registry) Stores() map[string]ClaimProducer {
-	return r.Producers()
-}
-
 // Producers returns a snapshot of every registered ClaimProducer keyed
 // by name. The returned map is a fresh copy; callers may mutate it
 // without affecting the Registry.

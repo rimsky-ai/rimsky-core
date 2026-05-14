@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // ScheduleRow mirrors a row of rimsky_schedules.
@@ -26,8 +26,8 @@ type ScheduleRegisterInput struct {
 	NextFireAt time.Time
 }
 
-// ScheduleStore is the rimsky_schedules accessor.
-type ScheduleStore interface {
+// ScheduleTable is the rimsky_schedules accessor.
+type ScheduleTable interface {
 	Register(ctx context.Context, in ScheduleRegisterInput, tx Tx) error
 	DueBefore(ctx context.Context, cutoff time.Time, tx Tx) ([]ScheduleRow, error)
 	RecordFired(ctx context.Context, nodeID shared.UUID, nextFireAt, firedAt time.Time, tx Tx) error

@@ -24,7 +24,7 @@ Owns: the message itself, the three emit sites, the `frame: in | next` disciplin
 
 ## Invariants
 
-- Only one graph-level message exists: `invalidate` (recalculation is a scheduler action, not a peer message — CLAUDE.md "Vocabulary").
+- Only one graph-level message exists: `invalidate` (recalculation is a scheduler action, not a service message — CLAUDE.md "Vocabulary").
 - Operator-originated invalidates do not preempt running work; they enqueue or coalesce into a frame.
 - `frame: in | next` default is `next`; the three emit sites configurable in templates are operator-API, error-types policy, lifecycle-handler.
 

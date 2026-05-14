@@ -13,8 +13,8 @@ import InstanceDetailPage from './routes/InstanceDetailPage';
 import FramesPage from './routes/FramesPage';
 import FrameDetailPage from './routes/FrameDetailPage';
 import NodeDetailPage from './routes/NodeDetailPage';
-import DispatchesPage from './routes/DispatchesPage';
-import DispatchDetailPage from './routes/DispatchDetailPage';
+import NodeRunsPage from './routes/NodeRunsPage';
+import NodeRunDetailPage from './routes/NodeRunDetailPage';
 import LockHoldersPage from './routes/LockHoldersPage';
 import LockHolderDetailPage from './routes/LockHolderDetailPage';
 import SchedulesPage from './routes/SchedulesPage';
@@ -36,8 +36,8 @@ export default function App() {
         <Route path="/instances/:instanceId/nodes/:nodeType" element={<NodeDetailPage />} />
         <Route path="/frames" element={<FramesPage />} />
         <Route path="/frames/:id" element={<FrameDetailPage />} />
-        <Route path="/dispatches" element={<DispatchesPage />} />
-        <Route path="/dispatches/:id" element={<DispatchDetailPage />} />
+        <Route path="/node-runs" element={<NodeRunsPage />} />
+        <Route path="/node-runs/:id" element={<NodeRunDetailPage />} />
         <Route path="/lock-holders" element={<LockHoldersPage />} />
         <Route path="/lock-holders/:id" element={<LockHolderDetailPage />} />
         <Route path="/schedules" element={<SchedulesPage />} />

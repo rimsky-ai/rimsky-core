@@ -2,7 +2,8 @@
 
 Reference rimsky node executor for the `http.request@1` node type. Runs an
 outbound HTTP request based on `userdata` and emits a single terminal
-`ExecuteEvent` (Complete on 2xx JSON or binary, Errored otherwise).
+StreamClose `ExecuteEvent` carrying a `Success` outcome on 2xx JSON or
+binary, otherwise an `Error{error_class}` outcome.
 
 ## Transports
 
@@ -44,11 +45,11 @@ is an explicit override useful for fixture tests; when set it wins and
 
 ## Response → attributes_delta
 
-The upstream response body is the executor's `Complete.attributes_delta`
-writeback (spec §12.2). It must be a JSON object — JSON arrays/scalars are
-rejected as `http_response_parse_failed`. Non-JSON Content-Types are wrapped
-as `{ "body_base64": "...", "content_type": "..." }` so the bytes are still
-visible to downstream nodes.
+The upstream response body is the executor's terminal-StreamClose
+`Success.attributes_delta` writeback (spec §12.2). It must be a JSON object
+— JSON arrays/scalars are rejected as `http_response_parse_failed`. Non-JSON
+Content-Types are wrapped as `{ "body_base64": "...", "content_type": "..." }`
+so the bytes are still visible to downstream nodes.
 
 ## Error classes
 
@@ -62,9 +63,10 @@ visible to downstream nodes.
 ## Stub mode
 
 Set `RIMSKY_EXECUTOR_STUB_MODE=1` to short-circuit the network path. Execute
-always returns `{"stub": true}` as the `Complete.attributes_delta`, or
-`userdata.stub_response` if supplied (must be a JSON object). Required for
-offline scenario tests (spec §14.4, Plan B Phase 3).
+always returns `{"stub": true}` as the terminal-StreamClose
+`Success.attributes_delta`, or `userdata.stub_response` if supplied (must be
+a JSON object). Required for offline scenario tests (spec §14.4, Plan B
+Phase 3).
 
 ## Env vars
 

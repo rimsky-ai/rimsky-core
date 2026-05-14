@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_attributes.go — SQLite-backed persistence.NodeAttributesStore.
+// node_attributes.go — SQLite-backed persistence.NodeAttributeTable.
 //
 // `data` is a TEXT (JSON) column. Upsert replaces it outright; MergeDelta
 // performs a SHALLOW merge by reading the existing row, merging in Go,
@@ -29,7 +29,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
@@ -66,7 +66,7 @@ func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx per
 		UpdatedAt:  updatedAt,
 	}
 
-	bb := (*storeImpl)(s).blob
+	bb := (*tablesImpl)(s).blob
 	if handle.Valid && handle.String != "" && bb != nil && handleBkend.Valid && handleBkend.String == bb.Name() {
 		bytes, err := bb.Read(ctx, persistence.Handle(handle.String))
 		if err != nil {
@@ -106,7 +106,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 		return fmt.Errorf("node_attributes.Upsert: marshal: %w", err)
 	}
 
-	si := (*storeImpl)(s)
+	si := (*tablesImpl)(s)
 	priorHandle, priorBkend, err := readPriorBlobHandle(ctx, si.q(tx), nodeID)
 	if err != nil {
 		return fmt.Errorf("node_attributes.Upsert: read prior handle: %w", err)
@@ -197,7 +197,7 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 		return nil
 	}
 
-	si := (*storeImpl)(s)
+	si := (*tablesImpl)(s)
 
 	priorHandle, _, err := readPriorBlobHandle(ctx, si.q(tx), nodeID)
 	if err != nil {

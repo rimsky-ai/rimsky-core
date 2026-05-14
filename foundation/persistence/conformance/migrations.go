@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testMigrationIdempotency(t *testing.T, d persistence.Driver) {
+func testMigrationIdempotency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	// Driver was already migrated in factory; second Migrate is a no-op.
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
@@ -48,7 +48,7 @@ func testMigrationIdempotency(t *testing.T, d persistence.Driver) {
 	if d.Queue() == nil {
 		t.Fatalf("Queue() nil after re-migrate")
 	}
-	if d.Store() == nil {
+	if d.Tables() == nil {
 		t.Fatalf("Store() nil after re-migrate")
 	}
 }

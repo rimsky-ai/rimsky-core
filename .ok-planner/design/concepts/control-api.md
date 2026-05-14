@@ -13,7 +13,7 @@ references:
 
 ## What it is
 
-The HTTP+JSON operator interface exposed by `cmd/rimsky-control-api` (binary). Implementation lives under `modeling/controlapi/`. Mounted by `go-chi/chi` at bare paths (no `/v1/` prefix): `/templates`, `/instances`, `/observability/*`, `/admin/diagnostics/*`, `/admin/scheduled-nodes/{id}/force-fire`, etc. Fires `LifecycleSubscriber` events at state transitions (synchronously).
+The HTTP+JSON operator interface exposed by `cmd/rimsky-control-api` (binary). Implementation lives under `control/controlapi/`. Mounted by `go-chi/chi` at bare paths (no `/v1/` prefix): `/templates`, `/instances`, `/observability/*`, `/admin/diagnostics/*`, `/admin/scheduled-nodes/{id}/force-fire`, etc. Fires `LifecycleSubscriber` events at state transitions (synchronously).
 
 ## Purpose
 
@@ -21,7 +21,7 @@ The operator and the `rimsky-cli` thin client both speak to this surface. HTTP+J
 
 ## Boundaries
 
-Owns: the chi route mounts, the per-route handlers, the lifecycle-subscriber fan-out, observability handlers (`inTx`-wrapped). Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), peer protocols (those are gRPC). Adjacent: `rimsky-cli`, `lifecycle-subscriber`, `observability`, `cascade-graph`, `instance`, `template`.
+Owns: the chi route mounts, the per-route handlers, the lifecycle-subscriber fan-out, observability handlers (`inTx`-wrapped). Does NOT own: dispatch (supervisor's job), scheduling (scheduler's job), service protocols (those are gRPC). Adjacent: `rimsky-cli`, `lifecycle-subscriber`, `observability`, `cascade-graph`, `instance`, `template`.
 
 ## Invariants
 
@@ -31,7 +31,7 @@ Owns: the chi route mounts, the per-route handlers, the lifecycle-subscriber fan
 
 ## Agentic MCP shim
 
-The standalone Go module under `mcp-servers/control-api/` wraps the HTTP control-api surface as MCP (Model Context Protocol) tools. Implements `initialize` / `tools/list` / `tools/call` over `POST /mcp` using stdlib `encoding/json` + `go-chi/chi` (no third-party MCP SDK). Catalog covers templates, tags, instances, nodes, diagnostics. Strict pass-through: no validation, no caching, no synthesis. Forwards `Authorization: Bearer <CONTROL_API_TOKEN>` to the underlying control-api. Independent Go module with no runtime dependency on modeling/foundation; catalog is hand-curated in `tools.go`.
+The standalone Go module under `mcp-servers/control-api/` wraps the HTTP control-api surface as MCP (Model Context Protocol) tools. Implements `initialize` / `tools/list` / `tools/call` over `POST /mcp` using stdlib `encoding/json` + `go-chi/chi` (no third-party MCP SDK). Catalog covers templates, tags, instances, nodes, diagnostics. Strict pass-through: no validation, no caching, no synthesis. Forwards `Authorization: Bearer <CONTROL_API_TOKEN>` to the underlying control-api. Independent Go module with no runtime dependency on graph/control/foundation; catalog is hand-curated in `tools.go`.
 
 Note: `executors/claude-agent/` embeds a separate per-run *internal* MCP server (`internal-mcp-server.ts`) — same protocol, different role (per-dispatch executor-local tools vs operator control-plane). The dual-MCP-role observation is part of this subsection; do not confuse the two.
 

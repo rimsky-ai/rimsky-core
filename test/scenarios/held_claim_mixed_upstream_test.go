@@ -23,12 +23,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -38,7 +38,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -54,18 +54,18 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("a").Complete(map[string]any{}, true, "a-should-not-run")
-	h.Stub.WhenType("c").Complete(map[string]any{"c": 1}, true, "c-ran")
-	h.Stub.WhenType("b").Complete(map[string]any{}, true, "b-should-not-run")
+	h.Stub.WhenType("a").Success(map[string]any{}, true, "a-should-not-run")
+	h.Stub.WhenType("c").Success(map[string]any{"c": 1}, true, "c-ran")
+	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-mixed-upstream", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -116,13 +116,13 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.NotNil(t, c)
 
 	// A passes (last_outcome=passed); C commits (last_outcome=fresh_changed).
-	require.True(t, waitForLastOutcome(t, h, a.ID, shared.LastOutcomePassed, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, a.ID, cascade.LastOutcomePassed, 30*time.Second),
 		"a should record last_outcome=passed")
-	require.True(t, waitForLastOutcome(t, h, c.ID, shared.LastOutcomeFreshChanged, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, c.ID, cascade.LastOutcomeFreshChanged, 30*time.Second),
 		"c should record last_outcome=fresh_changed")
 
 	// B should land in failed via template_resolution_failed → give_up.
-	require.True(t, h.WaitForNodeState(bNode.ID, shared.NodeStateFailed, 30*time.Second),
+	require.True(t, h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed, 30*time.Second),
 		"b should land in failed via template_resolution_failed → give_up")
 
 	var bRow *persistence.NodeRow
@@ -131,6 +131,6 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 		bRow = r
 		return err
 	}))
-	require.Equal(t, shared.LastOutcomeFailed, bRow.LastOutcome,
+	require.Equal(t, cascade.LastOutcomeFailed, bRow.LastOutcome,
 		"b's give_up should record last_outcome=failed")
 }

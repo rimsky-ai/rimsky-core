@@ -14,16 +14,16 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // openSQLite opens an in-process SQLite driver, runs migrations, and
 // registers cleanup. The observability extensions (Queue.ListLive /
-// CountLive, EventListFilter.KindIn, InstanceStore.CountByActive,
-// FrameStore.{ListForObservability, GetForObservability}) all run
+// CountLive, EventListFilter.KindIn, InstanceTable.CountByActive,
+// FrameTable.{ListForObservability, GetForObservability}) all run
 // against this driver per persistence-conformance, but they're new
 // surface area so we exercise them here directly.
-func openSQLite(t *testing.T) persistence.Driver {
+func openSQLite(t *testing.T) persistence.Database {
 	t.Helper()
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{
@@ -43,7 +43,7 @@ func openSQLite(t *testing.T) persistence.Driver {
 func TestSQLite_EventListFilter_KindIn(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
-	store := d.Store()
+	store := d.Tables()
 	events := store.Events()
 	for _, kind := range []string{"work_started", "error", "work_completed"} {
 		k := kind
@@ -90,8 +90,8 @@ func TestSQLite_QueueListLive_Empty(t *testing.T) {
 func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
 	d := openSQLite(t)
 	var active, terminated int
-	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		a, ter, err := d.Store().Instances().CountByActive(ctx, tx)
+	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		a, ter, err := d.Tables().Instances().CountByActive(ctx, tx)
 		active, terminated = a, ter
 		return err
 	}); err != nil {
@@ -105,8 +105,8 @@ func TestSQLite_InstanceCountByActive_Empty(t *testing.T) {
 func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
 	d := openSQLite(t)
 	var res persistence.PaginatedListResult[persistence.FrameRow]
-	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := d.Store().Frames().ListForObservability(ctx,
+	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Tables().Frames().ListForObservability(ctx,
 			persistence.FrameListFilter{}, persistence.ListPagination{Limit: 10}, tx)
 		res = r
 		return err
@@ -121,8 +121,8 @@ func TestSQLite_FrameListForObservability_Empty(t *testing.T) {
 func TestSQLite_FrameGetForObservability_NotFound(t *testing.T) {
 	d := openSQLite(t)
 	var row *persistence.FrameRow
-	if err := d.Store().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := d.Store().Frames().GetForObservability(ctx, uuid.New(), tx)
+	if err := d.Tables().Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		r, err := d.Tables().Frames().GetForObservability(ctx, uuid.New(), tx)
 		row = r
 		return err
 	}); err != nil {

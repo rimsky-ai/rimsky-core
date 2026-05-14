@@ -16,7 +16,7 @@
 //     for that claim's lifecycle.
 //   - scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
-//   - selector, intent, alias, store_name are strings.
+//   - selector, intent, alias, producer_name are strings.
 //
 // Errors flow as gRPC status codes per spec §2.6.
 

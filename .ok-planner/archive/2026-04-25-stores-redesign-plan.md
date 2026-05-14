@@ -578,7 +578,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 - `core/cmd/rimsky-supervisor/main.go`
 - `core/cmd/rimsky-control-api/main.go`
 - `core/cmd/rimsky-scheduler/main.go`
-- `core/cmd/rimsky-conformance/main.go`
+- `core/cmd/rimsky-executor-conformance/main.go`
 - `core/config/supervisor.go`
 - `core/config/controlapi.go`
 - `core/config/scheduler.go`
@@ -590,7 +590,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 4. `core/cmd/rimsky-supervisor/main.go` — drop resource registry wiring; load `RIMSKY_STORES_CONFIG` (default `/etc/rimsky/stores.yml`); build `*store.Registry` via `Registry.BuildAll`; pass through to supervisor handle.
 5. `core/cmd/rimsky-control-api/main.go` — same.
 6. `core/cmd/rimsky-scheduler/main.go` — same.
-7. `core/cmd/rimsky-conformance/main.go` — update CLI flags / surface for the new protocol shape (drop result-passing flags, etc.).
+7. `core/cmd/rimsky-executor-conformance/main.go` — update CLI flags / surface for the new protocol shape (drop result-passing flags, etc.).
 8. Drop `core/shared/types.go`'s `ConcurrencyTag` type if defined there.
 
 **Verification:** `go build ./core/cmd/... ./core/config/...` passes.
@@ -667,7 +667,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 5. `terminal_is_last.go` — preserve, update.
 6. `execute_happy_path.go` — update for new request fields.
 
-**Verification:** `go build ./conformance/... ./core/cmd/rimsky-conformance/...` passes; running the conformance binary against the stub executor `go run ./core/cmd/rimsky-conformance --endpoint <stub-addr> --transport grpc` succeeds.
+**Verification:** `go build ./conformance/... ./core/cmd/rimsky-executor-conformance/...` passes; running the conformance binary against the stub executor `go run ./core/cmd/rimsky-executor-conformance --endpoint <stub-addr> --transport grpc` succeeds.
 
 ---
 

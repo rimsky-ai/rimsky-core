@@ -19,7 +19,7 @@ Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and
 
 Rimsky's reactive model is grounded in a single message because the system needs precisely one verb at the graph level: "this node's value is no longer current." That verb is `invalidate`. Every other propagation effect (recalculation, error handling, schedule firing) reduces to "node X is invalidated; the cascade engine handles the rest."
 
-The single-message design keeps the cascade engine small and auditable. The state machine has four states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
+The single-message design keeps the cascade engine small and auditable. The state machine has five states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
 
 `invalidate` can originate from three places:
 
@@ -29,7 +29,7 @@ The single-message design keeps the cascade engine small and auditable. The stat
 
 In all three cases, the propagation rule is identical.
 
-A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the four lifecycle handler slots may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
+A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the three declarable lifecycle handler slots plus the `on_event` map may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
 
 ## `frame: in | next` — per-emit frame discipline
 
@@ -50,7 +50,7 @@ Default is `next` everywhere except the cascade-on-commit and pure-cascade sched
 
 - **Control API**: `POST /nodes/{id}/invalidate` is the operator-facing trigger.
 - **Templates**: the `dependencies:` list of each node declaration determines the cascade target set.
-- **Error handling**: when an executor's terminal `Errored` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
+- **Error handling**: when an executor's terminal `Error{error_class}` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
 
 ## Consumer-visible guarantees
 

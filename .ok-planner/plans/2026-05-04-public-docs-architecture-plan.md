@@ -2490,7 +2490,7 @@ go run ./cmd/rimsky-docs-lint glossary-parity
    - The four methods (`Execute`, `StreamTrace`, `GetTrace`, `GetCapabilities`).
    - The async-callback path (executor → supervisor callback URL with the `${callback_url}/v1/callback/{async_ack_id}` shape).
    - The userdata-is-opaque guarantee (`<!-- @source: concepts/userdata.md -->`).
-   - The conformance binary: `cmd/rimsky-conformance` and how to run it against a non-bundled executor.
+   - The conformance binary: `cmd/rimsky-executor-conformance` and how to run it against a non-bundled executor.
    - Reference proto file paths: `protocols/proto/v1/executor.proto`.
 
 4. Create `docs/protocols/lifecycle-subscriber.md`. New writing (no internal predecessor file). Cover:

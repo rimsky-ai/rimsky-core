@@ -3,7 +3,7 @@ tension: sqlite-vs-memory-reject-asymmetry
 category: inconsistent
 status: open
 affects:
-  - persistence-driver
+  - persistence-database
   - blob-backend
 ---
 

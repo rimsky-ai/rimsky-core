@@ -7,7 +7,7 @@ surfaced_to: operator
 
 ## What it means
 
-`rimsky-conformance --require-stub-mode` probed the executor at startup and found it not running in stub mode. Conformance refuses to issue real LLM calls.
+`rimsky-executor-conformance --require-stub-mode` probed the executor at startup and found it not running in stub mode. Conformance refuses to issue real LLM calls.
 
 ## When it happens
 

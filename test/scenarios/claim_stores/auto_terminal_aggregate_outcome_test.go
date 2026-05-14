@@ -10,7 +10,7 @@
 // stub fixture and asserts that:
 //   - exactly one store `commit` verb fires for the held claim
 //     (aggregate-completed → Commit per spec §4.10 invariant 13).
-//   - zero `rimsky_claim_handle` rows remain for the instance after
+//   - zero `rimsky_claim_handles` rows remain for the instance after
 //     both nodes reach `fresh`.
 //   - zero `rimsky_claim_holders` rows remain (cascade FK cleans them
 //     when the lock-holder row is deleted).
@@ -32,11 +32,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -48,7 +48,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -57,13 +57,13 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("acquirer").Complete(map[string]any{}, true, "acquired")
-	h.Stub.WhenType("inheritor").Complete(map[string]any{}, true, "inherited")
+	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
+	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inherited")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "auto-terminal-commit", Version: "1",
@@ -85,9 +85,9 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.NotNil(t, acquirer)
 	require.NotNil(t, inheritor)
 
-	require.True(t, h.WaitForNodeState(acquirer.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 15*time.Second),
 		"acquirer did not reach fresh")
-	require.True(t, h.WaitForNodeState(inheritor.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh, 15*time.Second),
 		"inheritor did not reach fresh")
 
 	// Collect store verb counts. Auto-terminal must fire exactly
@@ -117,7 +117,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	// Lock-holder + claim-holder rows are gone.
 	var lhCount, chCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle lh
+		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1`, iid,
 	).Scan(&lhCount))

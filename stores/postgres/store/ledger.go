@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package store: ledger.go is the in-memory per-claim history surfaced
-// by the postgres store's StoreObservability protocol. The store's
+// by the postgres store's ClaimProducerObservability protocol. The store's
 // authoritative record of in-flight pick-policy claims is the items
 // table's claim_token column; the ledger is an additive, observability-
 // only artifact populated from each Open/Commit/Abandon/Release call.

@@ -12,21 +12,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // testInstancesFindAnyByInstanceKey verifies the cross-driver behavior
-// of InstanceStore.FindAnyByInstanceKey: returns (nil, nil) when no
+// of InstanceTable.FindAnyByInstanceKey: returns (nil, nil) when no
 // matching row exists; resolves a row inserted via Create.
-func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Driver) {
+func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	var row *persistence.InstanceRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -46,11 +46,11 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Driver) {
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "find-key", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -80,16 +80,16 @@ func testInstancesFindAnyByInstanceKey(t *testing.T, d persistence.Driver) {
 	}
 }
 
-// testStoreLifecycleListByStore verifies LifecycleIdempotencyStore.ListByStore
+// testStoreLifecycleListByStore verifies LifecycleIdempotencyTable.ListByStore
 // returns rows for any scope when filtered by store registration name.
-func testStoreLifecycleListByStore(t *testing.T, d persistence.Driver) {
+func testStoreLifecycleListByStore(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	var rows []persistence.LifecycleIdempotencyRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -137,25 +137,25 @@ func testStoreLifecycleListByStore(t *testing.T, d persistence.Driver) {
 
 // testEventsListDescending checks that events are returned newest-first
 // per spec §1.2.5.
-func testEventsListDescending(t *testing.T, d persistence.Driver) {
+func testEventsListDescending(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()
 	id := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "events-desc", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -208,14 +208,14 @@ func testEventsListDescending(t *testing.T, d persistence.Driver) {
 // driver's tie-breaking. We register multiple schedules with the same
 // next_fire_at, page through with Limit=2, and assert all rows surface
 // across pages with no drops, no duplicates.
-func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Driver) {
+func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	// Seed a template + instance so the FK on rimsky_schedules.node_id
 	// is satisfied. The frame seeded by seedFixtureSet is unused here —
@@ -225,11 +225,11 @@ func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Drive
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "schedules-dense", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",

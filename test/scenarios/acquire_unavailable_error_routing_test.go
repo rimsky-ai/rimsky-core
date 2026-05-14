@@ -14,12 +14,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -32,7 +32,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -48,16 +48,16 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-error-routing", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -83,7 +83,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// give_up should drive the node to failed.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFailed, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should land in failed via on_acquire_unavailable: error → give_up")
 
 	var wRow *persistence.NodeRow
@@ -92,7 +92,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, shared.LastOutcomeFailed, wRow.LastOutcome,
+	require.Equal(t, cascade.LastOutcomeFailed, wRow.LastOutcome,
 		"give_up should record last_outcome=failed")
 
 	// Executor must not have been invoked.

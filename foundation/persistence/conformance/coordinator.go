@@ -19,7 +19,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testCoordinatorSchedulerTick(t *testing.T, d persistence.Driver) {
+func testCoordinatorSchedulerTick(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	c := d.AdvisoryLocker()
 	if c == nil {

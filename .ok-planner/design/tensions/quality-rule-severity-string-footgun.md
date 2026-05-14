@@ -10,7 +10,7 @@ affects:
 
 ## What is muddy
 
-`modeling/qualityrule/eval/rules.go:39-67::EvaluateAll` partitions `Failure` slices into `warnings` and `errors` by comparing `Spec.Severity` to the literal string `"warning"`. The default at `spec.go:19` is the string `error`, but nothing in the type system or validator constrains the field to that pair. An operator who writes `severity: warn` (typo), `severity: Warning` (case), `severity: info` (different policy), or leaves it empty in a YAML where `error` was intended all get the same behavior: the failure goes into the blocking `errors` slice and the commit fails.
+`graph/qualityrule/eval/rules.go::EvaluateAll` partitions `Failure` slices into `warnings` and `errors` by comparing `Spec.Severity` to the literal string `"warning"`. The default in `graph/qualityrule/spec.go` is the string `error`, but nothing in the type system or validator constrains the field to that pair. An operator who writes `severity: warn` (typo), `severity: Warning` (case), `severity: info` (different policy), or leaves it empty in a YAML where `error` was intended all get the same behavior: the failure goes into the blocking `errors` slice and the commit fails.
 
 The severity vocabulary lives only in this single comparison plus the default constant. There is no `shared.Severity` type, no enum validator at template registration, no documented allowed-values list.
 
@@ -22,11 +22,11 @@ Two cold-read problems: (1) a reader inspecting `Spec.Severity string` cannot te
 
 - Introduce a `shared.Severity` type with `SeverityError | SeverityWarning` constants; require `Spec.Severity` to be one of them at template registration.
 - Validate the severity string at template registration with a constant allowed-set check.
-- Document the allowed values inline at `spec.go:19` and in `docs/concepts/quality-rule.md`.
+- Document the allowed values inline at `graph/qualityrule/spec.go` and in `docs/concepts/quality-rule.md`.
 
 ## Evidence
 
 - `_discover/quality-rules-and-attribute-validation.md` Observations bullet "severity defaults to `error`".
-- `modeling/qualityrule/eval/rules.go:56-63` — the partition predicate.
-- `modeling/qualityrule/spec.go:19` — the default `error`.
+- `graph/qualityrule/eval/rules.go` — the partition predicate.
+- `graph/qualityrule/spec.go` — the default `error`.
 

@@ -3,6 +3,6 @@ go 1.25.0
 use (
 	.
 	./foundation
-	./protocols
 	./mcp-servers/control-api
+	./protocols
 )

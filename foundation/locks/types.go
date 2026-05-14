@@ -6,7 +6,7 @@
 //
 // Two primitives split (spec §2.1 / glossary):
 //
-//   - Claim — producer-bound; ClaimSpec carries (StoreName, Selector,
+//   - Claim — producer-bound; ClaimSpec carries (ProducerName, Selector,
 //     Intent, Alias). The producer parses Selector and decides what it
 //     means (scoped access vs. configured pick policy).
 //
@@ -38,7 +38,7 @@ import (
 // ClaimID is the rimsky-generated UUID (textual form) that identifies a
 // single claim across every protocol verb in its lifecycle. Generated
 // client-side immediately before Open; persisted in
-// rimsky_claim_handle.id; passed unchanged to Commit / Abandon /
+// rimsky_claim_handles.id; passed unchanged to Commit / Abandon /
 // Release.
 type ClaimID = claimproducer.ClaimID
 
@@ -83,10 +83,10 @@ type NamedLockSpec struct {
 // ClaimResult bundles the four producer-supplied outputs of a claim
 // acquisition. Address, Payload, and Scope are opaque-bytes from rimsky's
 // perspective; the substitution engine extracts named-field paths only at
-// the leaf extraction site (modeling/attribute/substitution.go::walkPath).
+// the leaf extraction site (graph/attribute/substitution.go::walkPath).
 //
 // RealizedWriteSemantics declares the per-claim semantics; MUST be a
-// member of the producer's Capabilities.WriteSemanticsEnvelope; MUST be
+// member of the producer's Capabilities.WriteSemanticsAllowed; MUST be
 // uniform across byte-equal-Scope claims (uniformity invariant per spec
 // §2.5).
 //
@@ -94,7 +94,7 @@ type NamedLockSpec struct {
 //
 //	Address, Payload, Scope are producer-supplied opaque bytes.
 //	Rimsky reads them by named-field path only at substitution-leaf
-//	extraction (modeling/attribute/substitution.go::walkPath); does not
+//	extraction (graph/attribute/substitution.go::walkPath); does not
 //	log, validate, transform, normalize, decrypt, hash, index,
 //	pattern-match, attach to traces, include in errors, or otherwise
 //	act on the content. Distinct from store-config bytes (operator-
@@ -153,9 +153,9 @@ func ParseWriteSemantics(s string) (WriteSemantics, bool) {
 
 // Capabilities describes what a ClaimProducer advertises.
 //
-// WriteSemanticsEnvelope is a SET of permissible WriteSemantics values
+// WriteSemanticsAllowed is a SET of permissible WriteSemantics values
 // the producer may realize on Open. Operator config (rimsky.yml's
-// claim_producers[*].write_semantics_envelope) declares an envelope that
+// claim_producers[*].write_semantics_allowed) declares an envelope that
 // MUST be a subset of the advertised set; rimsky validates strict subset
 // at startup.
 type Capabilities = claimproducer.Capabilities

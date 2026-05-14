@@ -29,8 +29,9 @@ func init() {
 
 // runMalformedUserdata sends userdata that should fail validation for any
 // conforming executor (missing url, empty stub_response not applied, etc.)
-// and asserts an Errored terminal with some error class. AwaitTerminal
-// transparently follows the callback for async executors.
+// and asserts a terminal StreamClose with an Error outcome carrying some
+// error class. AwaitTerminal transparently follows the callback for async
+// executors.
 //
 // Reserved-key contract: scenario authors MUST use `_`-prefixed keys
 // (`_invalid`, `_missing_url`, …) for intentional malformed-shape
@@ -58,11 +59,16 @@ func runMalformedUserdata(ctx context.Context, env conformance.Env) error {
 	if err != nil {
 		return err
 	}
-	if er, ok := ev.Event.(*genv1.ExecuteEvent_Errored); ok {
-		if er.Errored.ErrorClass == "" {
-			return errors.New("Errored terminal had empty error_class")
-		}
-		return nil
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		return fmt.Errorf("expected StreamClose, got %T", ev.Event)
 	}
-	return fmt.Errorf("expected Errored, got %T", ev.Event)
+	er, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Error)
+	if !ok {
+		return fmt.Errorf("expected Error outcome, got %T", sc.StreamClose.Outcome)
+	}
+	if er.Error.ErrorClass == "" {
+		return errors.New("Error outcome had empty error_class")
+	}
+	return nil
 }

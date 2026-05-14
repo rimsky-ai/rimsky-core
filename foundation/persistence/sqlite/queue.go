@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // defaultCandidateLimit caps the candidate batch returned by
@@ -36,7 +36,7 @@ func newQueue(db *sql.DB) *queueImpl { return &queueImpl{db: db} }
 
 var _ persistence.Queue = (*queueImpl)(nil)
 
-// q returns the right querier for tx. Same convention as storeImpl.q.
+// q returns the right querier for tx. Same convention as tablesImpl.q.
 func (q *queueImpl) q(tx persistence.Tx) querier {
 	if tx == nil {
 		return q.db
@@ -62,16 +62,16 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	now := nowUTC()
 	_, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
 		 VALUES (?, ?, ?, ?, ?, 'pending', ?)
 		 ON CONFLICT(node_id) DO UPDATE
 		   SET enqueued_at = excluded.enqueued_at,
 		       executor_name = excluded.executor_name,
 		       required_stores = excluded.required_stores,
 		       frame_id = excluded.frame_id
-		   WHERE rimsky_worker_request.claimed_by IS NULL
-		     AND rimsky_worker_request.phase = 'pending'
-		     AND rimsky_worker_request.enqueued_at <= ?`,
+		   WHERE rimsky_node_runs.claimed_by IS NULL
+		     AND rimsky_node_runs.phase = 'pending'
+		     AND rimsky_node_runs.enqueued_at <= ?`,
 		uuid.New().String(), req.NodeID.String(),
 		nullableString(req.ExecutorName), marshalStringArray(stores),
 		formatTime(req.EnqueuedAt), req.FrameID.String(),
@@ -116,7 +116,7 @@ func (q *queueImpl) SelectCandidates(
 	// plan E2/E3.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
@@ -220,7 +220,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	}
 	now := nowUTC()
 	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?, phase = 'active'
 		  WHERE id = ? AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, now, now, dispatchID.String(),
@@ -238,13 +238,13 @@ func (q *queueImpl) ClaimDispatchRow(
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
-			`DELETE FROM rimsky_worker_request WHERE id = ? AND claimed_by = ?`,
+			`DELETE FROM rimsky_node_runs WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
-		`DELETE FROM rimsky_worker_request WHERE id = ?`, dispatchID.String(),
+		`DELETE FROM rimsky_node_runs WHERE id = ?`, dispatchID.String(),
 	)
 	return err
 }
@@ -256,24 +256,24 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).ExecContext(ctx,
-			`DELETE FROM rimsky_worker_request WHERE node_id = ? AND claimed_by = ?`,
+			`DELETE FROM rimsky_node_runs WHERE node_id = ? AND claimed_by = ?`,
 			nodeID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_worker_request WHERE node_id = ?`, nodeID.String(),
+		`DELETE FROM rimsky_node_runs WHERE node_id = ?`, nodeID.String(),
 	)
 	return err
 }
 
 // ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
 // older than cutoff. @blessed-invariant 6 (5× heartbeat cutoff).
-func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]shared.DispatchRow, error) {
+func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]persistence.DispatchRow, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
 		        claimed_by, claimed_at, last_heartbeat_at, frame_id
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
 		    AND last_heartbeat_at < ?`,
 		formatTime(cutoff),
@@ -283,9 +283,9 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 	}
 	defer rows.Close()
 
-	var out []shared.DispatchRow
+	var out []persistence.DispatchRow
 	for rows.Next() {
-		var r shared.DispatchRow
+		var r persistence.DispatchRow
 		var (
 			idStr             string
 			nodeIDStr         string
@@ -357,7 +357,7 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
-			`UPDATE rimsky_worker_request
+			`UPDATE rimsky_node_runs
 			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 			  WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
@@ -365,7 +365,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
 		  WHERE id = ?`,
 		dispatchID.String(),
@@ -379,7 +379,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 		claimedBy sql.NullString
 	)
 	err := q.db.QueryRowContext(ctx,
-		`SELECT node_id, claimed_by FROM rimsky_worker_request WHERE id = ?`,
+		`SELECT node_id, claimed_by FROM rimsky_node_runs WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&nodeIDStr, &claimedBy)
 	if err != nil {
@@ -402,7 +402,7 @@ func (q *queueImpl) GetDispatchNode(ctx context.Context, dispatchID shared.UUID)
 func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (persistence.ClaimOwnership, error) {
 	var claimedBy sql.NullString
 	err := q.db.QueryRowContext(ctx,
-		`SELECT claimed_by FROM rimsky_worker_request WHERE id = ?`,
+		`SELECT claimed_by FROM rimsky_node_runs WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&claimedBy)
 	if err != nil {
@@ -419,7 +419,7 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 
 func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
 	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_worker_request SET last_heartbeat_at = ? WHERE claimed_by = ?`,
+		`UPDATE rimsky_node_runs SET last_heartbeat_at = ? WHERE claimed_by = ?`,
 		nowUTC(), supervisorID,
 	)
 	if err != nil {
@@ -430,7 +430,7 @@ func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) e
 
 // ListLive returns currently-live dispatch rows for the observability
 // browse endpoint. Cursor pagination over (enqueued_at DESC, id DESC).
-func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[shared.DispatchRow], error) {
+func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.DispatchRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 50
@@ -443,7 +443,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if pag.Cursor != "" {
 		oc, id, err := decodeDispatchCursor(pag.Cursor)
 		if err != nil {
-			return persistence.PaginatedListResult[shared.DispatchRow]{}, fmt.Errorf("sqlite.ListLive: bad cursor: %w", err)
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, fmt.Errorf("sqlite.ListLive: bad cursor: %w", err)
 		}
 		cursorClause = " AND (d.enqueued_at, d.id) < (?, ?)"
 		args = append(args, formatTime(oc), id.String())
@@ -451,7 +451,7 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	args = append(args, limit)
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-	   FROM rimsky_worker_request d
+	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE 1=1` +
 		stateClause +
@@ -462,33 +462,33 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	  LIMIT ?`
 	rows, err := q.db.QueryContext(ctx, q1, args...)
 	if err != nil {
-		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 	}
 	defer rows.Close()
-	var out []shared.DispatchRow
+	var out []persistence.DispatchRow
 	for rows.Next() {
 		row, err := scanDispatchRow(rows)
 		if err != nil {
-			return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
-		return persistence.PaginatedListResult[shared.DispatchRow]{}, err
+		return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 	}
 	var nextCursor string
 	if len(out) == limit && len(out) > 0 {
 		last := out[len(out)-1]
 		nextCursor = encodeDispatchCursor(last.EnqueuedAt, last.ID)
 	}
-	return persistence.PaginatedListResult[shared.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
+	return persistence.PaginatedListResult[persistence.DispatchRow]{Rows: out, NextCursor: nextCursor}, nil
 }
 
 // CountLive counts currently-live dispatch rows matching filter.
 func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchListFilter) (int, error) {
 	stateClause, executor, instanceID := buildLiveDispatchFilters(filter)
 	q1 := `SELECT COUNT(*)
-	   FROM rimsky_worker_request d
+	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE 1=1` +
 		stateClause +
@@ -503,12 +503,12 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 }
 
 // CountParkedByReason mirrors the postgres impl: groups currently-parked
-// worker_request rows by parked_reason for the metrics gauge. Empty /
+// node-run rows by parked_reason for the metrics gauge. Empty /
 // NULL reason buckets under "".
 func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT COALESCE(parked_reason, ''), COUNT(*)
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE phase = 'parked'
 		  GROUP BY COALESCE(parked_reason, '')`)
 	if err != nil {
@@ -530,11 +530,11 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 // GetByID returns the live dispatch row for id, or (nil, nil) when no
 // such row exists. Mirrors the postgres impl for the observability
 // dispatch-detail handler.
-func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.DispatchRow, error) {
+func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.id = ?`, id.String(),
 	)
 	var (
@@ -557,7 +557,7 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*shared.Dispat
 		}
 		return nil, err
 	}
-	var r shared.DispatchRow
+	var r persistence.DispatchRow
 	var err error
 	if r.ID, err = uuid.Parse(idStr); err != nil {
 		return nil, err
@@ -620,7 +620,7 @@ func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClaus
 	return stateClause, executor, instanceID
 }
 
-func scanDispatchRow(rows *sql.Rows) (shared.DispatchRow, error) {
+func scanDispatchRow(rows *sql.Rows) (persistence.DispatchRow, error) {
 	var (
 		idStr             string
 		nodeIDStr         string
@@ -631,20 +631,20 @@ func scanDispatchRow(rows *sql.Rows) (shared.DispatchRow, error) {
 		claimedAtStr      sql.NullString
 		lastHeartbeatStr  sql.NullString
 		frameIDStr        string
-		r                 shared.DispatchRow
+		r                 persistence.DispatchRow
 	)
 	if err := rows.Scan(
 		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
 		&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
 	); err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	var err error
 	if r.ID, err = uuid.Parse(idStr); err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	if executorName.Valid {
 		v := executorName.String
@@ -652,11 +652,11 @@ func scanDispatchRow(rows *sql.Rows) (shared.DispatchRow, error) {
 	}
 	stores, err := unmarshalStringArray(requiredStoresStr)
 	if err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	r.RequiredStores = stores
 	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	if claimedBy.Valid {
 		v := claimedBy.String
@@ -665,19 +665,19 @@ func scanDispatchRow(rows *sql.Rows) (shared.DispatchRow, error) {
 	if claimedAtStr.Valid {
 		t, err := parseTime(claimedAtStr.String)
 		if err != nil {
-			return shared.DispatchRow{}, err
+			return persistence.DispatchRow{}, err
 		}
 		r.ClaimedAt = &t
 	}
 	if lastHeartbeatStr.Valid {
 		t, err := parseTime(lastHeartbeatStr.String)
 		if err != nil {
-			return shared.DispatchRow{}, err
+			return persistence.DispatchRow{}, err
 		}
 		r.LastHeartbeatAt = &t
 	}
 	if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
-		return shared.DispatchRow{}, err
+		return persistence.DispatchRow{}, err
 	}
 	if r.RequiredStores == nil {
 		r.RequiredStores = []string{}

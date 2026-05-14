@@ -24,9 +24,10 @@ func init() {
 }
 
 // runStreamCloseWithoutTerminal asserts that an Execute stream MUST emit a
-// terminal event before EOF. If the stream closes cleanly with zero terminals,
-// the executor violates spec §7.2. (For async executors AsyncAccepted IS a
-// gRPC-side terminal — the spec is satisfied at the gRPC layer.)
+// terminal StreamClose event before EOF. If the stream closes cleanly with
+// zero terminals, the executor violates spec §7.2. (For async executors a
+// StreamClose with outcome AwaitAsyncCallback IS the gRPC-side terminal —
+// the spec is satisfied at the gRPC layer.)
 func runStreamCloseWithoutTerminal(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{

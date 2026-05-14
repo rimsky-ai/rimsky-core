@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// schedules.go — SQLite-backed persistence.ScheduleStore.
+// schedules.go — SQLite-backed persistence.ScheduleTable.
 package sqlite
 
 import (
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // scheduleCursor encodes (next_fire_at, node_id) so duplicate

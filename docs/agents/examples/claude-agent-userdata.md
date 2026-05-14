@@ -1,4 +1,4 @@
-# Userdata is opaque to Rimsky
+# Userdata is inert in Rimsky
 
 A single-node template whose `userdata:` block contains literal `{{...}}` text. Rimsky must NOT substitute it. The executor receives the bytes verbatim. The verification observes that Rimsky's `attributes_substituted` events list only the schema's `source:` fields — `userdata` is never touched.
 
@@ -17,7 +17,7 @@ Save as `userdata-demo.yml`:
 ```yaml
 name: userdata-demo
 version: "1.0"
-frame_resolution: serial_queue
+frame_resolution_mode: serial_queue
 nodes:
   - type: summarize
     executor: stub

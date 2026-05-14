@@ -116,7 +116,7 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 //
 // The §11.5 example carries a `quality_rules` entry with type
 // `must_match_regex`. v1 only ships `row_count_ratio` / `no_nulls` /
-// `nullable_fields_present` (see modeling/qualityrule/eval/rules.go); the smoke
+// `nullable_fields_present` (see graph/qualityrule/eval/rules.go); the smoke
 // fixture omits the rule from the deployed template body so the
 // supervisor's per-commit evaluator does not error on an unregistered
 // type. The fixtures/template.yml file documents the spec'd rule alongside.
@@ -220,8 +220,8 @@ func fireOnceAndWait(
 // are simultaneously true:
 //
 //  1. count(rimsky_events kind='work_completed' payload->>'node_type'='review') >= 100
-//  2. count(rimsky_worker_request claimed_by IS NOT NULL) = 0
-//  3. count(rimsky_claim_handle) = 0
+//  2. count(rimsky_node_runs claimed_by IS NOT NULL) = 0
+//  3. count(rimsky_claim_handles) = 0
 //  4. count(rimsky_claim_holders state='active') = 0
 func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) bool {
 	t.Helper()
@@ -238,7 +238,7 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 
 	var inflightDispatch int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_worker_request WHERE claimed_by IS NOT NULL`,
+		`SELECT count(*) FROM rimsky_node_runs WHERE claimed_by IS NOT NULL`,
 	).Scan(&inflightDispatch); err != nil {
 		t.Fatalf("cascadeAtSteadyState: in-flight dispatch: %v", err)
 	}
@@ -248,7 +248,7 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 
 	var lockHolders int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_claim_handle`,
+		`SELECT count(*) FROM rimsky_claim_handles`,
 	).Scan(&lockHolders); err != nil {
 		t.Fatalf("cascadeAtSteadyState: lock holders: %v", err)
 	}
@@ -288,20 +288,20 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	rows, err = stack.Pool.Query(ctx,
 		`SELECT count(*) FILTER (WHERE claimed_by IS NULL),
 		        count(*) FILTER (WHERE claimed_by IS NOT NULL)
-		   FROM rimsky_worker_request`)
+		   FROM rimsky_node_runs`)
 	if err == nil && rows.Next() {
 		var unclaimed, claimed int
 		_ = rows.Scan(&unclaimed, &claimed)
-		t.Logf("rimsky_worker_request: unclaimed=%d claimed=%d", unclaimed, claimed)
+		t.Logf("rimsky_node_runs: unclaimed=%d claimed=%d", unclaimed, claimed)
 		rows.Close()
 	}
 
 	rows, err = stack.Pool.Query(ctx,
-		`SELECT count(*) FROM rimsky_claim_handle`)
+		`SELECT count(*) FROM rimsky_claim_handles`)
 	if err == nil && rows.Next() {
 		var n int
 		_ = rows.Scan(&n)
-		t.Logf("rimsky_claim_handle: %d", n)
+		t.Logf("rimsky_claim_handles: %d", n)
 		rows.Close()
 	}
 
@@ -451,14 +451,14 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		// Per-item: every rimsky_claim_holders row whose lock-holder
 		// row points at this item via scope_data. Under v2 the
 		// claim-holders rows key on claim_handle_id (FK to
-		// rimsky_claim_handle); we join both so the dump shows the
+		// rimsky_claim_handles); we join both so the dump shows the
 		// full ledger for items still held by some node's claim.
 		hrows, herr := stack.Pool.Query(ctx,
 			`SELECT ch.id, ch.claim_handle_id, ch.holder_node_id,
 			        ch.state, ch.completed_at,
-			        lh.store_name, lh.scope_data
+			        lh.producer_name, lh.scope_data
 			   FROM rimsky_claim_holders ch
-			   JOIN rimsky_claim_handle lh ON lh.id = ch.claim_handle_id
+			   JOIN rimsky_claim_handles lh ON lh.id = ch.claim_handle_id
 			  WHERE lh.scope_data::text = $1
 			  ORDER BY ch.id`,
 			fmt.Sprintf("%q", s.ItemID),
@@ -497,9 +497,9 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		// the holder nodes for this claim.
 		drows, derr := stack.Pool.Query(ctx,
 			`SELECT d.id, d.node_id, d.claimed_by, d.enqueued_at, d.frame_id
-			   FROM rimsky_worker_request d
+			   FROM rimsky_node_runs d
 			   JOIN rimsky_claim_holders ch ON ch.holder_node_id = d.node_id
-			   JOIN rimsky_claim_handle lh ON lh.id = ch.claim_handle_id
+			   JOIN rimsky_claim_handles lh ON lh.id = ch.claim_handle_id
 			  WHERE lh.scope_data::text = $1`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
@@ -531,7 +531,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		}
 		drows.Close()
 		if !anyDispatch {
-			t.Logf("  (no rimsky_worker_request rows referencing this claim's holders)")
+			t.Logf("  (no rimsky_node_runs rows referencing this claim's holders)")
 		}
 	}
 
@@ -564,10 +564,10 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 func smokeTemplateBody() map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":             "smoke-stores-redesign",
-			"version":          "1",
-			"frame_resolution": "serial_queue",
-			"frame_timeout_ms": 600000,
+			"name":                  "smoke-stores-redesign",
+			"version":               "1",
+			"frame_resolution_mode": "serial_queue",
+			"frame_timeout_ms":      600000,
 			"nodes": []map[string]any{
 				claimTopicNode(),
 				scopeNode(),
@@ -650,7 +650,7 @@ func scopeNode() map[string]any {
 // Stub returns an empty attributes_delta.
 //
 // `quality_rules` from §11.5 (must_match_regex) is intentionally omitted —
-// the rule type isn't registered in v1 (see modeling/qualityrule/eval/rules.go);
+// the rule type isn't registered in v1 (see graph/qualityrule/eval/rules.go);
 // the YAML fixture file documents what the spec example carries.
 func draftNode() map[string]any {
 	return map[string]any{

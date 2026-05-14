@@ -1040,12 +1040,12 @@ docker compose -f deploy/docker-compose.yml down -v
 ```sh
 docker compose -f deploy/docker-compose.yml up -d
 sleep 10
-go run ./core/cmd/rimsky-conformance --endpoint http://localhost:9091 --transport grpc --require-stub-mode
-go run ./core/cmd/rimsky-conformance --endpoint http://localhost:9090 --transport grpc --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:9091 --transport grpc --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:9090 --transport grpc --require-stub-mode
 docker compose -f deploy/docker-compose.yml down -v
 ```
 
-If `rimsky-conformance` doesn't exercise store-services in v3, this verifies the executors only. If a `rimsky-store-conformance` is added (out of scope for v3 itself but a natural follow-up), invoke it here too.
+If `rimsky-executor-conformance` doesn't exercise store-services in v3, this verifies the executors only. If a `rimsky-store-conformance` is added (out of scope for v3 itself but a natural follow-up), invoke it here too.
 
 ### T58: Vocabulary leakage grep
 

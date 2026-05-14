@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// nodes.go — SQLite-backed persistence.NodeStore.
+// nodes.go — SQLite-backed persistence.NodeTable.
 //
 // @blessed-invariant 1: state machine rejects illegal transitions.
 // UpdateState never short-circuits on from==to; the node-state machine
@@ -20,8 +20,8 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 const nodeCols = `
@@ -33,7 +33,7 @@ const nodeCols = `
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	deps := in.Dependencies
 	if deps == nil {
-		deps = []shared.UUID{}
+		deps = []foundationshared.UUID{}
 	}
 	now := nowUTC()
 	row := s.q(tx).QueryRowContext(ctx,
@@ -48,7 +48,7 @@ func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, 
 	return scanNode(row)
 }
 
-func (s *nodesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.NodeRow, error) {
+func (s *nodesImpl) Get(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes WHERE id = ?`, id.String())
 	out, err := scanNode(row)
@@ -61,7 +61,7 @@ func (s *nodesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) 
 	return &out, nil
 }
 
-func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
+func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes
 		 WHERE instance_id = ?
@@ -75,7 +75,7 @@ func (s *nodesImpl) ListByInstance(ctx context.Context, instanceID shared.UUID, 
 
 func (s *nodesImpl) ListByInstancePaged(
 	ctx context.Context,
-	instanceID shared.UUID,
+	instanceID foundationshared.UUID,
 	pag persistence.ListPagination,
 	tx persistence.Tx,
 ) (persistence.PaginatedListResult[persistence.NodeRow], error) {
@@ -136,7 +136,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		     WHERE d.state <> 'fresh'
 		   )
 		   AND NOT EXISTS (
-		     SELECT 1 FROM rimsky_worker_request x WHERE x.node_id = n.id
+		     SELECT 1 FROM rimsky_node_runs x WHERE x.node_id = n.id
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -192,7 +192,7 @@ func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID st
 // ListDependentsOf finds nodes that include nodeID in their JSON-array
 // dependencies column. SQLite has no ANY() so we json_each the column
 // against a literal id.
-func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
+func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes n
 		 WHERE EXISTS (
@@ -219,18 +219,18 @@ func (s *nodesImpl) ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time
 	return collectNodes(rows)
 }
 
-func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[shared.NodeState]int, error) {
+func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[cascade.NodeState]int, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT state, count(*) FROM rimsky_nodes GROUP BY state`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[shared.NodeState]int{
-		shared.NodeStateFresh:   0,
-		shared.NodeStateStale:   0,
-		shared.NodeStateRunning: 0,
-		shared.NodeStateFailed:  0,
+	out := map[cascade.NodeState]int{
+		cascade.NodeStateFresh:   0,
+		cascade.NodeStateStale:   0,
+		cascade.NodeStateRunning: 0,
+		cascade.NodeStateFailed:  0,
 	}
 	for rows.Next() {
 		var state string
@@ -238,7 +238,7 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 		if err := rows.Scan(&state, &count); err != nil {
 			return nil, err
 		}
-		out[shared.NodeState(state)] = count
+		out[cascade.NodeState(state)] = count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -255,10 +255,10 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[sh
 // via COALESCE.
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
-	id shared.UUID,
-	state shared.NodeState,
+	id foundationshared.UUID,
+	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome shared.LastOutcome,
+	lastOutcome cascade.LastOutcome,
 	tx persistence.Tx,
 ) error {
 	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason, lastOutcome)
@@ -267,12 +267,12 @@ func (s *nodesImpl) UpdateState(
 func (s *nodesImpl) enforceAndUpdate(
 	ctx context.Context,
 	ex querier,
-	id shared.UUID,
-	state shared.NodeState,
+	id foundationshared.UUID,
+	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome shared.LastOutcome,
+	lastOutcome cascade.LastOutcome,
 ) error {
-	var current shared.NodeState
+	var current cascade.NodeState
 	var frameIDBefore sql.NullString
 	err := ex.QueryRowContext(ctx,
 		`SELECT state, frame_id FROM rimsky_nodes WHERE id = ?`, id.String(),
@@ -288,7 +288,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		return err
 	}
 	if expected != state {
-		return shared.Wrap(shared.ErrIllegalTransition,
+		return foundationshared.Wrap(cascade.ErrIllegalTransition,
 			"illegal state transition target",
 			map[string]any{
 				"id": id, "from": current, "requested": state,
@@ -331,7 +331,7 @@ func (s *nodesImpl) enforceAndUpdate(
 	return nil
 }
 
-func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.EvaluatorState, tx persistence.Tx) error {
+func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, es spec.EvaluatorState, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET action_index = ?,
@@ -344,7 +344,7 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id shared.UUID, es nodepkg.
 	return err
 }
 
-func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id shared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
+func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET last_heartbeat_at = ?,
@@ -355,7 +355,7 @@ func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id shared.UUID, at time
 	return err
 }
 
-func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, frameID *foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
 		nullableUUID(frameID), nowUTC(), id.String())
@@ -366,14 +366,14 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id shared.UUID, frameID *sha
 // operator reset path so the dashboard does not display a stale
 // `failed` resolution flavor while the node transitions back through
 // stale → running → fresh.
-func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes SET last_outcome = NULL, updated_at = ? WHERE id = ?`,
 		nowUTC(), id.String())
 	return err
 }
 
-func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET assigned_supervisor_id = NULL,
@@ -382,12 +382,12 @@ func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id shared.UUI
 	return err
 }
 
-func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_nodes WHERE instance_id = ?`, instanceID.String())
 	return err
 }
 
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id shared.UUID, frameID shared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_nodes
 		   SET state = 'stale', frame_id = ?, updated_at = ?
@@ -450,9 +450,9 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	}
 	r.ID = id
 	r.InstanceID = instanceID
-	r.State = shared.NodeState(stateStr)
+	r.State = cascade.NodeState(stateStr)
 	if lastOutcomeStr.Valid {
-		r.LastOutcome = shared.LastOutcome(lastOutcomeStr.String)
+		r.LastOutcome = cascade.LastOutcome(lastOutcomeStr.String)
 	}
 	r.Dependencies = deps
 	r.Executor = executor.String

@@ -18,7 +18,7 @@ import "context"
 // No ClaimProducer implementation persists lock state; producers may
 // persist data state (items-table flips, staging metadata), but the
 // question "is anyone holding lock X" is answered exclusively by
-// rimsky_claim_handle on the rimsky side.
+// rimsky_claim_handles on the rimsky side.
 //
 // @blessed-invariant 9b: ClaimProducer implementations MUST NOT
 // internally serialize on lock-shaped predicates. The reader-lease

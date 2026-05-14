@@ -20,7 +20,7 @@ type BlobOrphanRow struct {
 	ReapAfter  time.Time
 }
 
-// BlobOrphansStore is the rimsky_blob_orphans accessor used by:
+// BlobOrphanTable is the rimsky_blob_orphans accessor used by:
 //   - the attribute write path (D6: queue an orphan when value_handle
 //     is overwritten on a row that already had one).
 //   - the parked-payload write path (E1: queue an orphan when a
@@ -41,7 +41,7 @@ type BlobOrphanRow struct {
 // hold a long sweep transaction open) and the cross-step atomicity
 // requirement is "delete tracker only after backend.Delete succeeds,"
 // which the sweep enforces in the application layer.
-type BlobOrphansStore interface {
+type BlobOrphanTable interface {
 	Insert(ctx context.Context, row BlobOrphanRow, tx Tx) error
 	DueBefore(ctx context.Context, cutoff time.Time, limit int) ([]BlobOrphanRow, error)
 	Delete(ctx context.Context, handle string) error

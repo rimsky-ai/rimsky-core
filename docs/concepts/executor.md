@@ -1,8 +1,8 @@
 ---
 concept: executor
 definition: |
-  The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
-proto_symbol: NodeExecutor in protocols/proto/v1/executor.proto
+  The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
+proto_symbol: Executor in protocols/proto/v1/executor.proto
 config_field: rimsky.yml:executors
 api_surface: (none)
 related: [node, attributes, userdata]
@@ -13,7 +13,7 @@ deprecated_terms: []
 
 ## Definition
 
-The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
+The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 ## Why it exists
 
@@ -21,26 +21,26 @@ Rimsky's role is orchestration: when to run a node, what claims and locks to acq
 
 The executor surface splits into two service definitions:
 
-- **`NodeExecutor`** in `protocols/proto/v1/executor.proto`. The required dispatch protocol. One method:
-    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `NamedEvent`, `Complete`, `Blocked`, `Errored`, `AsyncAccepted`, or `ParkRequested`. The supervisor's terminal handling is keyed on the final event type. `NamedEvent` is non-terminal (zero or more per run); `ParkRequested` is terminal-but-resumable (the node transitions to `parked` and can be re-dispatched with `ResumeContext`).
+- **`Executor`** in `protocols/proto/v1/executor.proto`. The required dispatch protocol. One method:
+    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `NamedEvent`, `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`, or `Park`. The supervisor's terminal handling is keyed on the final event type. `NamedEvent` is non-terminal (zero or more per run); `Park` is terminal-but-resumable (the node transitions to `parked` and can be re-dispatched with `ResumeContext`).
 - **`ExecutorObservability`** in `protocols/proto/v1/executor_observability.proto`. The optional read-only protocol every executor MAY implement to expose per-dispatch traces to dashboards. Three methods:
-    - **`GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`**: startup handshake; declares trace-get/trace-stream support and per-dispatch retention.
+    - **`Capabilities(CapabilitiesRequest) → ObservabilityCapabilities`**: startup handshake; declares trace-get/trace-stream support and per-dispatch retention.
     - **`GetTrace(GetTraceRequest) → Trace`**: pull a previously-streamed trace by `dispatch_id`.
     - **`StreamTrace(StreamTraceRequest) → stream<TraceEvent>`**: stream live trace events for an in-flight or recent dispatch.
 
-The async-callback path is for executors whose work outlives a streaming RPC: the executor responds with `AsyncAccepted` and later POSTs to the supervisor's callback URL — `${callback_url}/v1/callback/{async_ack_id}` — with the final event.
+The async-callback path is for executors whose work outlives a streaming RPC: the executor responds with `AwaitAsyncCallback` and later POSTs to the supervisor's callback URL — `${callback_url}/v1/callback/{async_ack_id}` — with the final event.
 
 An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 
 ## How you encounter it
 
 - **Operator config**: the `executors:` block in `rimsky.yml`. Each entry has `transport`, `endpoint`, `tls`, and an optional `protocols: [...]` list.
-- **Implementing an executor**: speak gRPC against `protocols/proto/v1/executor.proto` (required) and optionally `protocols/proto/v1/executor_observability.proto`. Reference impls live under `executors/`: `http-node` (Go), `claude-agent` (TypeScript / npm), `stub` (Go test fixture).
-- **Conformance**: `cmd/rimsky-conformance` exercises an executor against the wire-protocol contract. For LLM-calling executors, run with `--require-stub-mode` to ensure the conformance run uses stubs (real LLM calls during conformance are rejected by the stub-mode probe).
+- **Implementing an executor**: speak gRPC against `protocols/proto/v1/executor.proto` (required) and optionally `protocols/proto/v1/executor_observability.proto`. Reference impls live under `executors/`: `http-node` (Go, production-shaped) and `claude-agent` (TypeScript / npm, production-shaped). The `stub` directory is a test double in the Meszaros sense (canned-outcome scripting for tests, conformance, and no-op demos) — not a skeleton template; copy from `http-node` or `claude-agent` instead.
+- **Conformance**: `cmd/rimsky-executor-conformance` exercises an executor against the wire-protocol contract. For LLM-calling executors, run with `--require-stub-mode` to ensure the conformance run uses stubs (real LLM calls during conformance are rejected by the stub-mode probe).
 
-## Using `Blocked` as a routing signal
+## Using `Error{error_class: "executor_blocked"}` as a routing signal
 
-An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Errored` (which means the executor failed). Templates can wire `on_executor_blocked: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
+An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` (which means the executor failed). Templates can wire `on_executor_errored: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
 
 ## Consumer-visible guarantees
 
@@ -52,7 +52,7 @@ An executor may emit `Blocked { reason, payload }` when it produced output but e
 
 - Treating `userdata` as a structured input. It's not — Rimsky sends opaque bytes; the executor's contract with the template author is what gives it shape.
 - Posting async-callback events with body keyed `kind:` instead of `type:`. The supervisor route rejects the wrong key — the TS claude-agent test suite covers this.
-- Running conformance against a non-stubbed LLM-calling executor without `--require-stub-mode`. The probe rejects non-stubbed peers.
+- Running conformance against a non-stubbed LLM-calling executor without `--require-stub-mode`. The probe rejects non-stubbed services.
 
 ## See also
 

@@ -10,21 +10,25 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/fallguy/rimsky/modeling/executor"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
-// AwaitTerminal reads from the gRPC stream until it sees a terminal event:
-// Complete, Blocked, Errored, AsyncAccepted, or ParkRequested.
+// AwaitTerminal reads from the gRPC stream until it sees the terminal
+// StreamClose event. StreamClose carries one of four outcome variants:
+// Success, Error (with error_class — "executor_blocked" is the post-E.2
+// collapsed-Blocked path), AwaitAsyncCallback, or Park.
 //
-// When the gRPC terminal is AsyncAccepted AND env.Callbacks is configured,
-// AwaitTerminal extracts the executor-minted async_ack_id, registers it with
-// the receiver, and waits on the resulting channel for the eventual callback
-// POST. It returns a synthesized terminal ExecuteEvent (Complete, Blocked,
-// Errored, or ParkRequested) instead of the AsyncAccepted bridge event.
+// When the gRPC outcome is AwaitAsyncCallback AND env.Callbacks is
+// configured, AwaitTerminal extracts the executor-minted async_ack_id,
+// registers it with the receiver, and waits on the resulting channel for
+// the eventual callback POST. It returns a synthesized terminal
+// ExecuteEvent (Success, Error, or Park) instead of the
+// AwaitAsyncCallback bridge event.
 //
-// AwaitTerminal returns the gRPC AsyncAccepted as-is when env.Callbacks is
-// nil or no callback arrives within the context's deadline.
+// AwaitTerminal returns the gRPC AwaitAsyncCallback as-is when
+// env.Callbacks is nil or no callback arrives within the context's
+// deadline.
 func AwaitTerminal(ctx context.Context, stream executor.EventStream, env Env) (*genv1.ExecuteEvent, error) {
 	for {
 		ev, err := stream.Recv()
@@ -37,16 +41,20 @@ func AwaitTerminal(ctx context.Context, stream executor.EventStream, env Env) (*
 		if !IsTerminal(ev) {
 			continue
 		}
-		async, isAsync := ev.Event.(*genv1.ExecuteEvent_AsyncAccepted)
+		sc, isStreamClose := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+		if !isStreamClose {
+			return ev, nil
+		}
+		await, isAsync := sc.StreamClose.Outcome.(*genv1.StreamClose_AwaitAsync)
 		if !isAsync {
 			return ev, nil
 		}
 		if env.Callbacks == nil {
 			return ev, nil
 		}
-		ackID := async.AsyncAccepted.GetAsyncAckId()
+		ackID := await.AwaitAsync.GetAsyncAckId()
 		if ackID == "" {
-			return nil, errors.New("AsyncAccepted with empty async_ack_id; cannot route callback")
+			return nil, errors.New("AwaitAsyncCallback with empty async_ack_id; cannot route callback")
 		}
 		ch := env.Callbacks.Register(ackID)
 		select {
@@ -61,15 +69,11 @@ func AwaitTerminal(ctx context.Context, stream executor.EventStream, env Env) (*
 	}
 }
 
-// IsTerminal reports whether ev is a terminal event per spec §7.
+// IsTerminal reports whether ev is the stream-close terminal event per
+// the post-2026-05-12 protocol shape. Only ExecuteEvent_StreamClose is
+// terminal; the legacy per-terminal-type discriminants collapsed into
+// the outcome oneof on StreamClose.
 func IsTerminal(ev *genv1.ExecuteEvent) bool {
-	switch ev.Event.(type) {
-	case *genv1.ExecuteEvent_Complete,
-		*genv1.ExecuteEvent_Blocked,
-		*genv1.ExecuteEvent_Errored,
-		*genv1.ExecuteEvent_AsyncAccepted,
-		*genv1.ExecuteEvent_ParkRequested:
-		return true
-	}
-	return false
+	_, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	return ok
 }

@@ -38,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	grpcSrv := grpc.NewServer()
-	genv1.RegisterNodeExecutorServer(grpcSrv, s)
+	genv1.RegisterExecutorServer(grpcSrv, s)
 	obs := RegisterObservability(grpcSrv)
 	obs.SetHTTPBridgeURL(cfg.HTTPBridgeURL)
 	s.SetObservability(obs)

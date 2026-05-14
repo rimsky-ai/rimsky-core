@@ -13,9 +13,8 @@
 // is symmetric.
 //
 // Plus the rimsky-side scope-conflict comparison (per spec §7.7):
-// byte-equal on canonical scope bytes. v2's per-store RegionsConflict
-// / UnmarshalRegion methods are gone; canonicalization is the store's
-// responsibility, comparison is rimsky's.
+// byte-equal on canonical scope bytes. Canonicalization is the
+// producer's responsibility, comparison is rimsky's.
 
 package locks
 
@@ -34,7 +33,7 @@ import "bytes"
 //
 // Two claims on the same store share its write_semantics — cross-quadrant
 // cells are unreachable in normal acquisition (the caller filters by
-// store_name first). When this helper is called for two claims on the
+// producer_name first). When this helper is called for two claims on the
 // same store, semA == semB; the function nonetheless handles the
 // cross-quadrant inputs by returning true (no conflict) so callers don't
 // need to special-case.
@@ -64,7 +63,7 @@ func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB Writ
 // ScopesByteEqual reports whether two store-supplied scope byte
 // slices are equal under byte-wise comparison. The rimsky-side
 // implementation of the conflict comparison (per spec §7.7) — v2's
-// per-store Store.RegionsConflict is gone; stores canonicalize
+// per-producer scope conflict comparison is byte-equal; producers canonicalize
 // scope bytes such that byte-equal correctly indicates conflict.
 //
 // Empty scopes never conflict: an absent scope (e.g. a NamedLockSpec

@@ -8,7 +8,7 @@
 //
 // Sequence: register → deploy → instantiate → drive instance to terminal
 // → undeploy → deregister. After each control-api transition we assert
-// the rimsky_lifecycle_idempotency row counts match the spec's expected
+// the rimsky_lifecycle_idempotencies row counts match the spec's expected
 // invariants:
 //
 //   - registered:     one (template-scope) row at state='registered'.
@@ -32,23 +32,23 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
 // TestLifecycleE2E_FullSequence walks the full template/instance
-// lifecycle and asserts rimsky_lifecycle_idempotency row deltas at every
+// lifecycle and asserts rimsky_lifecycle_idempotencies row deltas at every
 // transition.
 func TestLifecycleE2E_FullSequence(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -62,7 +62,7 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"alpha": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 					Protocols:    []string{config.ProtocolClaimProducer, config.ProtocolLifecycleSubscriber},
 				},
 			},
@@ -74,7 +74,7 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	// Register + deploy: harness's DeployTemplate handles both steps.
 	spec := node.TemplateSpec{
 		Name: "lifecycle-e2e", Version: "v1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{{
 			Type:     "n1",
 			Executor: "stub",

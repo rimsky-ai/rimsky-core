@@ -14,16 +14,16 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-// BlobOrphans returns the sqlite BlobOrphansStore impl.
-func (s *storeImpl) BlobOrphans() persistence.BlobOrphansStore {
+// BlobOrphans returns the sqlite BlobOrphanTable impl.
+func (s *tablesImpl) BlobOrphans() persistence.BlobOrphanTable {
 	return (*blobOrphansImpl)(s)
 }
 
-type blobOrphansImpl storeImpl
+type blobOrphansImpl tablesImpl
 
-func (b *blobOrphansImpl) q(tx persistence.Tx) querier { return (*storeImpl)(b).q(tx) }
+func (b *blobOrphansImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-var _ persistence.BlobOrphansStore = (*blobOrphansImpl)(nil)
+var _ persistence.BlobOrphanTable = (*blobOrphansImpl)(nil)
 
 // Insert queues a handle for orphan reaping. PK conflict on `handle`
 // is silently swallowed (the handle is already queued). Times are

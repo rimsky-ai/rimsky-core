@@ -16,7 +16,7 @@
 //     for that claim's lifecycle.
 //   - scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
-//   - selector, intent, alias, store_name are strings.
+//   - selector, intent, alias, producer_name are strings.
 //
 // Errors flow as gRPC status codes per spec §2.6.
 
@@ -65,7 +65,7 @@ service ClaimProducer {
 // WriteSemantics declares how a claim handle's writes coexist with
 // concurrent claims on byte-equal scopes. Per spec §2.4. UNKNOWN is
 // the proto-default zero value; producers MUST NOT return it. The
-// envelope returned by Capabilities is a SET of permissible values;
+// set returned by Capabilities is the allowed values per producer;
 // each Open returns the realized value for that specific claim.
 enum WriteSemantics {
   WRITE_SEMANTICS_UNKNOWN = 0;
@@ -79,11 +79,11 @@ message CapabilitiesRequest {}
 
 // CapabilitiesResponse advertises the set of WriteSemantics values the
 // producer may realize on Open. Operator config (rimsky.yml's
-// write_semantics_envelope: per claim_producers entry) declares an
-// envelope that MUST be a subset of this set; rimsky validates strict
-// subset at startup.
+// write_semantics_allowed: per claim_producers entry) declares a
+// permitted subset that MUST be a subset of this set; rimsky validates
+// strict subset at startup.
 message CapabilitiesResponse {
-  repeated WriteSemantics write_semantics_envelope = 1;
+  repeated WriteSemantics write_semantics_allowed = 1;
 }
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
@@ -94,7 +94,7 @@ message CapabilitiesResponse {
 // trace correlation.
 message OpenRequest {
   string claim_id = 1;
-  string store_name = 2;
+  string producer_name = 2;
   string selector = 3;
   string intent = 4;  // "r" | "rw"
   string alias = 5;   // template-side identifier; producer ignores
@@ -120,7 +120,7 @@ message OpenResponse {
 // any or all may be empty depending on the (write_semantics, intent)
 // combination. realized_write_semantics declares the per-claim
 // semantics; MUST be a member of the producer's
-// CapabilitiesResponse.write_semantics_envelope; MUST be uniform
+// CapabilitiesResponse.write_semantics_allowed; MUST be uniform
 // across byte-equal-scope claims (uniformity invariant per spec §2.5).
 message Acquired {
   bytes address = 1;

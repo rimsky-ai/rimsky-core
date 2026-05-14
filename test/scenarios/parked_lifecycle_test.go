@@ -19,18 +19,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
 // TestParkedLifecycleResumeOnDeadline covers E6 case (a). Executor emits
-// ParkRequested with resume_at 2s in the future. SweepParkedNodes wakes
+// Park with resume_at 2s in the future. SweepParkedNodes wakes
 // the row when the deadline elapses.
 //
 // Note: the sweep transitions phase parked→pending and node state
@@ -47,7 +48,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-deadline", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -58,34 +59,34 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Wait for the park transition.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
 	// Verify the audit-log entry with the park reason.
 	require.True(t, h.WaitForEventKind(worker.ID, "park_requested", 5*time.Second),
 		"park_requested audit event should be recorded")
 
-	// Verify the worker_request row is in phase='parked' with the
+	// Verify the node-run row is in phase='parked' with the
 	// resume_at set as we requested.
 	var phase string
 	var resumeAtStored *time.Time
 	h.QueryRowSQL(
-		`SELECT phase, resume_at FROM rimsky_worker_request WHERE node_id = $1`,
+		`SELECT phase, resume_at FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{worker.ID},
 		&phase, &resumeAtStored,
 	)
-	require.Equal(t, "parked", phase, "worker_request should be in parked phase")
+	require.Equal(t, "parked", phase, "node-run should be in parked phase")
 	require.NotNil(t, resumeAtStored, "resume_at should be persisted")
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
 	// Reschedule so the resume can dispatch.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "resumed")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")
 	// Verify the persisted resume_reason is "deadline_elapsed" — the
-	// runner reads this from rimsky_worker_request.wake_reason and
+	// runner reads this from rimsky_node_runs.wake_reason and
 	// attaches it to the ExecuteRequest.resume_context so executors can
 	// distinguish deadline-elapsed wakes from external invalidates.
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
@@ -94,7 +95,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 			"got %v", row["resume_reason"])
 	// And the worker should ultimately reach fresh after the resume
 	// dispatch completes.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh after deadline-elapsed resume")
 }
 
@@ -109,7 +110,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-external", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -118,11 +119,11 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked (indefinite)")
 
 	// Reschedule the script so the resume completes.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "after-review")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-review")
 
 	// External admin invalidate.
 	body, _ := json.Marshal(map[string]any{})
@@ -139,7 +140,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "external_invalidate", row["resume_reason"])
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh after external resume")
 }
 
@@ -156,7 +157,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-overrun", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:            "worker",
@@ -169,14 +170,14 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
 	// Wait past the cap. SweepParkedNodes runs every tick (250ms), so
 	// within 5s the watchdog should force failure.
 	require.True(t, h.WaitForEventKind(worker.ID, "park_timeout", 15*time.Second),
 		"watchdog should fire park_timeout after max_park_duration")
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker should land in failed after park_timeout")
 }
 
@@ -190,7 +191,7 @@ func TestParkedLifecycleEmptyReasonPermitted(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-empty-reason", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -199,7 +200,7 @@ func TestParkedLifecycleEmptyReasonPermitted(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked even with empty reason")
 
 	// Confirm the audit-log row was emitted with empty reason permitted.
@@ -218,11 +219,11 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 	// handler invalidates A.
 	h.Stub.WhenType("a").Park("await_signal", nil, time.Time{}, "session-A")
 	h.Stub.WhenType("b").EmitNamedEvent("ready", []byte(`{"go":true}`)).
-		Complete(map[string]any{}, true, "b-done")
+		Success(map[string]any{}, true, "b-done")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-intra-invalidate", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
@@ -243,25 +244,25 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 	require.NotNil(t, b)
 
 	// Wait for A to park.
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateParked, 30*time.Second),
 		"a should reach parked")
 	// Wait for B to complete (emits the event before its terminal).
-	require.True(t, h.WaitForNodeState(b.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should complete after emitting the event")
 
 	// Reschedule A so the resume terminates normally.
-	h.Stub.WhenType("a").Complete(map[string]any{}, true, "a-resumed")
+	h.Stub.WhenType("a").Success(map[string]any{}, true, "a-resumed")
 
 	require.True(t, h.WaitForEventKind(a.ID, "parked_resume_started", 10*time.Second),
 		"on_event handler should have invalidated A through the unified wake path")
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should reach fresh after handler-driven resume")
 }
 
 // TestParkedLifecycleHeldClaimRetentionAcrossPark covers E6 case (e).
 // A node holds a claim, parks, then resumes. The claim handle row in
-// rimsky_claim_handle survives across the park boundary (its parent
-// worker_request's parked phase does not delete the handle), and the
+// rimsky_claim_handles survives across the park boundary (its parent
+// node-run's parked phase does not delete the handle), and the
 // resume runs the same handle through to the active terminal which
 // fires the auto-terminal Commit/Abandon.
 //
@@ -275,7 +276,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// Two-node scenario: `acquirer` holds a scope-claim with alias
 	// "held"; the held subgraph contains both itself and the
 	// downstream `inheritor`. The acquirer parks while the inheritor
-	// is still pending, exercising rimsky_claim_handle retention
+	// is still pending, exercising rimsky_claim_handles retention
 	// across the active → parked transition. After resume +
 	// completion of both nodes, auto-terminal fires Commit on the
 	// held claim and the claim-handle row is deleted.
@@ -284,7 +285,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// dispatch's fresh acquisition tx doesn't fight an exhausted
 	// queue.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -293,7 +294,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -303,11 +304,11 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 		Park("checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
 	// Inheritor is pre-scripted but won't be reached until the
 	// acquirer resumes and completes.
-	h.Stub.WhenType("inheritor").Complete(map[string]any{}, true, "inheritor-done")
+	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-held-retention", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -329,21 +330,21 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, h.WaitForNodeState(acq.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
-	// While parked, verify the worker_request row is in phase='parked'
-	// AND the rimsky_claim_handle row for the held claim survives
+	// While parked, verify the node-run row is in phase='parked'
+	// AND the rimsky_claim_handles row for the held claim survives
 	// (the auto-terminal Abandon must not fire while the inheritor
 	// hasn't run yet).
 	var phase string
 	var parkedReason *string
 	h.QueryRowSQL(
-		`SELECT phase, parked_reason FROM rimsky_worker_request WHERE node_id = $1`,
+		`SELECT phase, parked_reason FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{acq.ID},
 		&phase, &parkedReason,
 	)
-	require.Equal(t, "parked", phase, "worker_request must be in parked phase")
+	require.Equal(t, "parked", phase, "node-run must be in parked phase")
 	require.NotNil(t, parkedReason, "parked_reason must survive parked transition")
 	require.Equal(t, "checkpoint", *parkedReason)
 
@@ -352,7 +353,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// fire yet.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle lh
+		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1 AND lh.is_held = TRUE`, uuid.UUID(iid),
 	).Scan(&lhCount))
@@ -360,19 +361,19 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 		"held claim_handle row must survive across the active → parked transition")
 
 	// Reschedule the acquirer script so the resume can complete.
-	h.Stub.WhenType("acquirer").Complete(map[string]any{}, true, "resumed")
+	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
 	require.True(t, h.WaitForEventKind(acq.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked acquirer")
-	require.True(t, h.WaitForNodeState(acq.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFresh, 30*time.Second),
 		"acquirer should reach fresh after resume")
-	require.True(t, h.WaitForNodeState(inh.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(inh.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inheritor should reach fresh after acquirer commits")
 
 	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
-		"acquirer worker_request should be deleted after resume completes")
+		"acquirer node-run should be deleted after resume completes")
 	require.True(t, h.WaitForWorkerRequestDeleted(inh.ID, 30*time.Second),
-		"inheritor worker_request should be deleted after completion")
+		"inheritor node-run should be deleted after completion")
 
 	// Auto-terminal fires Commit (both held subgraph members completed
 	// successfully); claim_handle rows are then removed. Allow a
@@ -383,7 +384,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_claim_handle lh
+			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 			  WHERE n.instance_id = $1`, uuid.UUID(iid),
 		).Scan(&lhCount))
@@ -400,13 +401,13 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 // held-claim path. A held node parks indefinitely and overruns
 // max_park_duration; the watchdog must fail the row AND fire Abandon
 // on the held claim handle (blessed invariant 13). Without the
-// abandonHeldClaimsForOverdueNode path, the rimsky_claim_handle row
+// abandonHeldClaimsForOverdueNode path, the rimsky_claim_handles row
 // would survive and only be reaped by the orphan-claim sweep — without
 // firing the Abandon verb that the producer requires for cleanup.
 func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	t.Parallel()
 	endpoint, store, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -415,17 +416,17 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
 	h.Stub.WhenType("acquirer").Park("waiting_held", nil, time.Time{}, "")
-	h.Stub.WhenType("inheritor").Complete(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-timeout-held", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -451,7 +452,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	require.True(t, h.WaitForNodeState(acq.ID, shared.NodeStateParked, 30*time.Second),
+	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
 	// The watchdog branch in SweepParkedNodes runs failOverdueParkedRow,
@@ -461,16 +462,16 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	// invariant 13).
 	require.True(t, h.WaitForEventKind(acq.ID, "park_timeout", 15*time.Second),
 		"watchdog should fire park_timeout")
-	require.True(t, h.WaitForNodeState(acq.ID, shared.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 15*time.Second),
 		"acquirer should land in failed after park_timeout")
 	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 15*time.Second),
-		"worker_request should be deleted after timeout abandon")
+		"node-run should be deleted after timeout abandon")
 
-	// Auto-terminal Abandon: the rimsky_claim_handle row is removed
+	// Auto-terminal Abandon: the rimsky_claim_handles row is removed
 	// AND the producer's Abandon verb fired (visible on store.Calls()).
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle lh
+		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1`, uuid.UUID(iid),
 	).Scan(&lhCount))

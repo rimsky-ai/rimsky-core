@@ -20,10 +20,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestPureCascadeNode(t *testing.T) {
@@ -45,7 +45,7 @@ func TestPureCascadeNode(t *testing.T) {
 	require.NotNil(t, hub)
 	// Starts stale; pure-cascade sweep should promote it to fresh on the
 	// first scheduler tick.
-	require.True(t, h.WaitForNodeState(hub.ID, shared.NodeStateFresh, 10*time.Second),
+	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
 		"hub did not reach fresh via initial pure-cascade sweep")
 
 	// Invalidate via control API.
@@ -56,7 +56,7 @@ func TestPureCascadeNode(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// Expect fresh again after next tick.
-	require.True(t, h.WaitForNodeState(hub.ID, shared.NodeStateFresh, 10*time.Second),
+	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
 		"hub did not return to fresh after invalidate")
 
 	// Verify pure_cascade_commit event was emitted at some point.

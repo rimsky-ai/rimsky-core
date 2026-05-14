@@ -3,7 +3,7 @@
 ## Pre-v1 — break freely
 Rimsky is pre-v1. There is no production data to preserve and no consumer is locked into a particular schema. When a refactor would be cleaner without a migration path, take the clean path. Delete dead code rather than carrying it forward.
 
-- Migrations in `core/migrations/` are still numbered and append-only — that's how the migration runner works, not a backwards-compat guarantee. If a schema needs rethinking before v1 ships, write a new migration that drops + recreates rather than threading a compat shim.
+- Migrations in `foundation/persistence/{postgres,sqlite}/migrations/` are still numbered and append-only — that's how the migration runner works, not a backwards-compat guarantee. If a schema needs rethinking before v1 ships, write a new migration that drops + recreates rather than threading a compat shim.
 - No backwards-compat guarantees on the wire protocol, the YAML config shape, the event-log payloads, or the resource interface until v1 ships. If a change requires nuking a dev Postgres, say so explicitly.
 - When v1 ships, replace this section with deployed-stage rules.
 
@@ -15,11 +15,11 @@ Run **every** check that could be affected by the change. This is mandatory, not
 
 - **Any Go change:** `go build ./... && go test ./... && make lint`
 - **Proto changes (`proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
-- **Scenario or storage changes:** `go test ./test/scenarios/... ./core/storage/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
-- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./core/queue/... ./core/supervisor/... ./core/scheduler/... -race -count=3`.
+- **Scenario or storage changes:** `go test ./test/scenarios/... ./foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
+- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./foundation/persistence/postgres/... ./runtime/... ./graph/scheduler/... -race -count=3`.
 - **Reference-binary or deploy changes:** rebuild the Docker images touched by the change (`deploy/build-images.sh`) and bring up `deploy/docker-compose.yml` to verify the stack still reaches `/health`.
 - **TypeScript executor (`executors/claude-agent/`):** `cd executors/claude-agent && npm install && npm test && npm run build`.
-- **Conformance-relevant changes (protocol, executor surface):** `go run ./core/cmd/rimsky-conformance --endpoint <executor> --transport grpc` against the executors you touched.
+- **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky-executor-conformance --endpoint <executor> --transport grpc` against the executors you touched.
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation

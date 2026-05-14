@@ -17,16 +17,16 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-// NodeEvents returns the sqlite NodeEventsStore impl.
-func (s *storeImpl) NodeEvents() persistence.NodeEventsStore {
+// NodeEvents returns the sqlite NodeEventTable impl.
+func (s *tablesImpl) NodeEvents() persistence.NodeEventTable {
 	return (*nodeEventsImpl)(s)
 }
 
-type nodeEventsImpl storeImpl
+type nodeEventsImpl tablesImpl
 
-func (b *nodeEventsImpl) q(tx persistence.Tx) querier { return (*storeImpl)(b).q(tx) }
+func (b *nodeEventsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-var _ persistence.NodeEventsStore = (*nodeEventsImpl)(nil)
+var _ persistence.NodeEventTable = (*nodeEventsImpl)(nil)
 
 // Insert appends a row and returns its auto-generated id.
 func (b *nodeEventsImpl) Insert(ctx context.Context, evt persistence.NodeEvent, tx persistence.Tx) (int64, error) {

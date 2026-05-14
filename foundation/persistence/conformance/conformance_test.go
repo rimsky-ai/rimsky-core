@@ -14,7 +14,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/internal/pgtest"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	sqlitepersist "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 
 	// Driver registration for postgres. Pulled in so the suite test
 	// file can drive both drivers from one place; pgtest itself
@@ -24,13 +24,13 @@ import (
 )
 
 func TestConformancePostgres(t *testing.T) {
-	Suite(t, func(t *testing.T) persistence.Driver {
+	Suite(t, func(t *testing.T) persistence.Database {
 		return pgtest.OpenDriver(context.Background(), t)
 	}, postgresRawExec)
 }
 
 func TestConformanceSQLite(t *testing.T) {
-	Suite(t, func(t *testing.T) persistence.Driver {
+	Suite(t, func(t *testing.T) persistence.Database {
 		dir := t.TempDir()
 		cfg := persistence.Config{
 			Driver: "sqlite",
@@ -53,7 +53,7 @@ func TestConformanceSQLite(t *testing.T) {
 // file outside the pgx-isolation depguard rule). Translates `?`
 // placeholders to `$N` so the same SQL works against both drivers in
 // the conformance suite.
-func postgresRawExec(t *testing.T, d persistence.Driver, sql string, args ...any) {
+func postgresRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
 	t.Helper()
 	pgSQL := translatePlaceholders(sql)
 	pgtest.ExecForTest(context.Background(), t, d, pgSQL, args...)
@@ -61,9 +61,9 @@ func postgresRawExec(t *testing.T, d persistence.Driver, sql string, args ...any
 
 // sqliteRawExec runs raw SQL against the sqlite driver's *sql.DB. The
 // `?` placeholders pass through verbatim.
-func sqliteRawExec(t *testing.T, d persistence.Driver, sql string, args ...any) {
+func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
 	t.Helper()
-	db := sqlitepersist.DBFromDriver(d)
+	db := sqlitepersist.DBFromDatabase(d)
 	if _, err := db.ExecContext(context.Background(), sql, args...); err != nil {
 		t.Fatalf("sqliteRawExec: %v\nsql: %s", err, sql)
 	}

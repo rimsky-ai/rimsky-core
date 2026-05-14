@@ -12,13 +12,13 @@
 //   - One template with two nodes (worker-A, worker-B), both holding
 //     a scope rw claim against the same selector. NoSupervisor so we
 //     drive RunNode manually with two SupervisorIDs.
-//   - Two goroutines: each calls integration.RunNode with a distinct
+//   - Two goroutines: each calls runtime.RunNode with a distinct
 //     SupervisorID. A sync.WaitGroup releases both at the same instant;
 //     a shared sync.Mutex + counter records concurrent in-acquisition
 //     ownership.
 //
 // The load-bearing assertion: at no point during acquisition do TWO
-// `rimsky_claim_handle` rows for the contended scope exist
+// `rimsky_claim_handles` rows for the contended scope exist
 // simultaneously. The advisory lock on `(store, scope)` serializes
 // the two acquisition transactions; only one can pass
 // `evaluateScopeConflict` at a time. After the first commits, the
@@ -39,14 +39,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/integration"
-	"github.com/fallguy/rimsky/foundation/integration/remote"
+	"github.com/fallguy/rimsky/control/config"
 	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/executor"
+	"github.com/fallguy/rimsky/runtime/remote"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -59,7 +59,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -69,7 +69,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -113,8 +113,8 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	reg := locks.NewRegistry()
 	reg.Add("content", client)
 
-	makeArgs := func(supID string) integration.RunArgs {
-		return integration.RunArgs{
+	makeArgs := func(supID string) runtime.RunArgs {
+		return runtime.RunArgs{
 			Persist:           h.Persist,
 			Queue:             h.Queue,
 			ClaimHandles:      h.Persist.ClaimHandles(),
@@ -135,7 +135,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 
 	type result struct {
 		supID string
-		out   integration.RunnerResult
+		out   runtime.RunnerResult
 		err   error
 	}
 
@@ -147,10 +147,10 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	for _, supID := range []string{"sup-A", "sup-B"} {
 		wg.Add(1)
 		args := makeArgs(supID)
-		go func(id string, a integration.RunArgs) {
+		go func(id string, a runtime.RunArgs) {
 			defer wg.Done()
 			<-start
-			out, err := integration.RunNode(h.Ctx, a, nil)
+			out, err := runtime.RunNode(h.Ctx, a, nil)
 			results <- result{supID: id, out: out, err: err}
 		}(supID, args)
 	}
@@ -196,7 +196,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	require.GreaterOrEqual(t, wins, 1, "at least one supervisor must successfully acquire")
 
 	// Invariant 4b: single-writer-per-scope. After both goroutines
-	// returned, the count of scope-kind rimsky_claim_handle rows for
+	// returned, the count of scope-kind rimsky_claim_handles rows for
 	// the contended (store, scope) must be ≤ 1. (≤ rather than == because
 	// the winning runner's terminal handler may have already deleted the
 	// row before we sample.) The 0-case is the common observation (both
@@ -205,8 +205,8 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	// claimant-released yet at sample time.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle
-		  WHERE store_name = $1 AND lock_kind = 'scope'`,
+		`SELECT count(*) FROM rimsky_claim_handles
+		  WHERE producer_name = $1 AND lock_kind = 'scope'`,
 		"content",
 	).Scan(&lhCount))
 	require.LessOrEqual(t, lhCount, 1,

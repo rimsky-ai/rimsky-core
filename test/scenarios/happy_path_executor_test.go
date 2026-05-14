@@ -18,10 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestHappyPathExecutor(t *testing.T) {
@@ -29,7 +29,7 @@ func TestHappyPathExecutor(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Stub returns an attributes_delta containing {"ok": true}; the
 	// supervisor merges it into the node's resolved attributes.
-	h.Stub.WhenType("worker").Complete(map[string]any{"ok": true}, true, "initial")
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "initial")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "happy-path", Version: "1",
@@ -49,7 +49,7 @@ func TestHappyPathExecutor(t *testing.T) {
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
-	require.True(t, h.WaitForNodeState(n.ID, shared.NodeStateFresh, 15*time.Second),
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
 	// Verify a commit (or work_completed) event was appended.

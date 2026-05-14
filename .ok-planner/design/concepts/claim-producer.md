@@ -16,7 +16,7 @@ references:
 
 ## What it is
 
-A claim producer is an out-of-process peer service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `foundation/integration/remote/`.
+A claim producer is an out-of-process service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `runtime/remote/`.
 
 ## Purpose
 
@@ -24,7 +24,7 @@ Out-of-process producers let rimsky stay project-agnostic: the producer knows wh
 
 ## Boundaries
 
-Owns: the producer-side resource state (filesystem stagings, items-table flips, MVCC transactions), the canonical scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same peer).
+Owns: the producer-side resource state (filesystem stagings, items-table flips, MVCC transactions), the canonical scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
 
 ## Invariants
 

@@ -14,7 +14,7 @@ references:
 
 ## What it is
 
-`parked` is the fifth legal `node-state` value, entered from `running` when the executor emits `ParkRequested`. While parked, the node is not running and not failed; it carries a `parked_payload`, optional `session_token`, optional `resume_at`, and `parked_reason`. The corresponding `rimsky_worker_request.phase` is `'parked'`.
+`parked` is the fifth legal `node-state` value, entered from `running` when the executor emits `ParkRequested`. While parked, the node is not running and not failed; it carries a `parked_payload`, optional `session_token`, optional `resume_at`, and `parked_reason`. The corresponding `rimsky_node_runs.phase` is `'parked'`.
 
 ## Purpose
 
@@ -22,7 +22,7 @@ Some workloads (human review, scheduled wake, external event wait) cannot finish
 
 ## Boundaries
 
-Owns: the hold-state schema (park columns on `rimsky_worker_request`), the three exit paths (time-wake, external invalidate, watchdog timeout), the `ResumeContext` passed back on re-dispatch. Does NOT own: held-claim resolution (that's `auto-terminal`); orphan reaping (parked rows are explicitly skipped). Adjacent: `node-state`, `worker-request`, `auto-terminal`, `held-claim`, `blob-backend` (parked_payload spills via the same mechanism).
+Owns: the hold-state schema (park columns on `table:rimsky_node_runs`), the three exit paths (time-wake, external invalidate, watchdog timeout), the `ResumeContext` passed back on re-dispatch. Does NOT own: held-claim resolution (that's `auto-terminal`); orphan reaping (parked rows are explicitly skipped). Adjacent: `node-state`, `node-run`, `auto-terminal`, `claim-handle` (including its `### Held variant` subsection), `blob-backend` (parked_payload spills via the same mechanism).
 
 ## Invariants
 

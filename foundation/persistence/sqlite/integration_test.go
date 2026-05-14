@@ -19,11 +19,11 @@ import (
 )
 
 // TestSQLiteForeignKeysEnabled confirms the FK-enforcement PRAGMA is
-// active on driver-issued connections. Without it, the rimsky_claim_handle
+// active on driver-issued connections. Without it, the rimsky_claim_handles
 // → rimsky_claim_holders ON DELETE CASCADE wouldn't fire, which would
 // silently break auto-terminal cleanup.
 //
-// Queried against the *driver's* underlying sql.DB (via DBFromDriver) so
+// Queried against the *driver's* underlying sql.DB (via DBFromDatabase) so
 // the test can't pass against a parallel handle whose PRAGMA state happens
 // to be set independently — the contract under test is that the driver's
 // own connections boot with FKs on.
@@ -39,7 +39,7 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := pgsqlite.DBFromDriver(d)
+	db := pgsqlite.DBFromDatabase(d)
 	var fk int
 	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
 		t.Fatalf("pragma: %v", err)
@@ -51,7 +51,7 @@ func TestSQLiteForeignKeysEnabled(t *testing.T) {
 
 // TestSQLiteWALMode confirms _journal_mode=WAL takes effect on driver
 // connections. Queried against the *driver's* underlying sql.DB (via
-// DBFromDriver) so the test can't pass against a parallel handle.
+// DBFromDatabase) so the test can't pass against a parallel handle.
 func TestSQLiteWALMode(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "wal.db")
@@ -64,7 +64,7 @@ func TestSQLiteWALMode(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	db := pgsqlite.DBFromDriver(d)
+	db := pgsqlite.DBFromDatabase(d)
 	var mode string
 	if err := db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
 		t.Fatalf("pragma: %v", err)

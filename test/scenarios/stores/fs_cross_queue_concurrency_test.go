@@ -18,11 +18,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
 	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
@@ -54,15 +54,15 @@ func TestFsCrossQueueConcurrency(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"docs": {
 					Endpoint:     "grpc://" + grpcEndpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
 	// The stub executor's WhenType map is exact-match — one entry
 	// per distinct node Type, otherwise the executor errors out.
-	h.Stub.WhenType("worker-r1").Complete(map[string]any{}, true, "scenario")
-	h.Stub.WhenType("worker-r2").Complete(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("worker-r1").Success(map[string]any{}, true, "scenario")
+	h.Stub.WhenType("worker-r2").Success(map[string]any{}, true, "scenario")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fs-cross-queue", Version: "1",
@@ -87,8 +87,8 @@ func TestFsCrossQueueConcurrency(t *testing.T) {
 	// Both nodes must eventually reach fresh — the conflict only
 	// delays the loser, doesn't break it. 30s is generous for
 	// visibility-timeout / scheduler-tick combinations.
-	require.True(t, h.WaitForNodeState(n1.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(n1.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker-r1 did not reach fresh")
-	require.True(t, h.WaitForNodeState(n2.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(n2.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker-r2 did not reach fresh")
 }

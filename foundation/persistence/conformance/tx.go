@@ -18,10 +18,10 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testTxAtomicity(t *testing.T, d persistence.Driver) {
+func testTxAtomicity(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	// Roll back: insert a tag inside a tx that returns an error. After
 	// return the tag must not exist.

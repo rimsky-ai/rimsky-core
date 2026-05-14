@@ -21,7 +21,7 @@ export default function ExecutorDetailPage() {
   // executor `dispatch_url_template` substitution markers are
   // {dispatch_id} / {instance_id} / {node_type} — none of which are
   // known on a peer-detail page. The Custom UI surface lives on
-  // DispatchDetailPage, where those values are in scope.
+  // NodeRunDetailPage, where those values are in scope.
   const tabs: { id: string; label: string; content: React.ReactNode }[] = [
     {
       id: 'overview',

@@ -83,12 +83,12 @@ const (
 // per acquisition; producers parse Selector and decide what it means
 // (scoped access vs. configured pick policy).
 type ClaimSpec struct {
-	StoreName  string // operator-configured producer name
-	Selector   string // opaque text (post-substitution); producer parses
-	Intent     Intent // "r" | "rw"
-	Alias      string // per-claim name within node; defaults to StoreName
-	TemplateID string // content hash (template-scope envelope)
-	InstanceID string // instance UUID (instance-scope envelope)
+	ProducerName string // operator-configured producer name
+	Selector     string // opaque text (post-substitution); producer parses
+	Intent       Intent // "r" | "rw"
+	Alias        string // per-claim name within node; defaults to ProducerName
+	TemplateID   string // content hash (template-scope envelope)
+	InstanceID   string // instance UUID (instance-scope envelope)
 }
 
 // ClaimResult bundles the four producer-supplied outputs of a claim
@@ -117,18 +117,18 @@ type OpenOutcome struct {
 
 // Capabilities describes what a ClaimProducer advertises.
 //
-// WriteSemanticsEnvelope is a SET of permissible WriteSemantics values
+// WriteSemanticsAllowed is the SET of permissible WriteSemantics values
 // the producer may realize on Open. Operator config (rimsky.yml's
-// claim_producers[*].write_semantics_envelope) declares an envelope that
-// MUST be a subset of the advertised set; rimsky validates strict subset
-// at startup.
+// claim_producers[*].write_semantics_allowed) declares a permitted
+// subset that MUST be a subset of the advertised set; rimsky validates
+// strict subset at startup.
 type Capabilities struct {
-	WriteSemanticsEnvelope []WriteSemantics
+	WriteSemanticsAllowed []WriteSemantics
 }
 
-// Contains reports whether the advertised envelope includes w.
+// Contains reports whether the advertised allowed set includes w.
 func (c Capabilities) Contains(w WriteSemantics) bool {
-	for _, v := range c.WriteSemanticsEnvelope {
+	for _, v := range c.WriteSemanticsAllowed {
 		if v == w {
 			return true
 		}

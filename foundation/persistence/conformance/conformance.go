@@ -27,7 +27,7 @@ import (
 // native style (`$N` for postgres, `?` for sqlite). Pass nil to skip
 // tests that require it (none currently — both drivers must supply
 // one).
-func Suite(t *testing.T, factory func(*testing.T) persistence.Driver, rawExec func(t *testing.T, d persistence.Driver, sql string, args ...any)) {
+func Suite(t *testing.T, factory func(*testing.T) persistence.Database, rawExec func(t *testing.T, d persistence.Database, sql string, args ...any)) {
 	t.Helper()
 	t.Run("DispatchClaimRelease", func(t *testing.T) { testDispatchClaimRelease(t, factory(t)) })
 	t.Run("VerifyBeforeRunRead", func(t *testing.T) { testVerifyBeforeRunRead(t, factory(t)) })

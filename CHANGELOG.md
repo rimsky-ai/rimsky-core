@@ -2,6 +2,187 @@
 
 ## Unreleased
 
+- Foundation → graph back-import eliminated. The 2026-05-13 layer
+  restructure left one documented residual: nine files under
+  `foundation/persistence/` imported `graph/node` for `TemplateSpec`,
+  `TemplateNodeDef`, `EvaluatorState`, and frame-resolution constants
+  — a back-import from foundation up into graph that the depguard
+  config exempted with per-file rules. The residual is now gone: the
+  persistable row-type primitives moved into a new `foundation/spec/`
+  package (`TemplateSpec`, `TemplateNodeDef`, `NodeStoreRef`,
+  `NodeLockRef`, `NodeAttributesDef`, `InheritEntry`, `EventHandler`,
+  `HandlerInvalidate`, `OnAcquireUnavailableHandler`,
+  `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`,
+  `ErrorTypePolicy`, `PolicyAction`, `EvaluatorState`,
+  `ResolvedAction`, `QualityRuleSpec`/`Failure`/`EvalInput`,
+  `Severity`, `BackoffKind`, `JitterKind`, frame-resolution + resolve
+  constants, `SelfTarget`). The graph algorithms that operate on
+  these types (`Evaluate`, `HoldingSubgraphsForTemplate`,
+  `ValidateTemplate`, `RequiredStores`, etc.) remain in `graph/node/`;
+  `graph/node`, `graph/shared`, and `graph/qualityrule` keep
+  type-aliases pointing at `foundation/spec` so existing call sites
+  in graph/, runtime/, control/, cmd/, stores/, executors/, and tests
+  keep working without changing imports. Foundation is now fully
+  self-contained — `cd foundation && go mod tidy` is clean — and the
+  `foundation-purity` depguard rule applies unconditionally (the
+  per-file exemptions for `foundation/persistence/{templates,nodes}.go`
+  and the postgres/sqlite/conformance variants are retired).
+- Wire event rename revert: `Snooze` → `Park`. The 2026-05-12 spec
+  renamed the proto event from `ParkRequested` to `Snooze`, but the
+  state-machine value (`parked`), concept slug (`parked-state`), CLI
+  vocabulary, DB phase value, supervisor functions, and concept doc
+  all stayed park-flavored. The resulting layer-noun divergence proved
+  confusing in practice; reverting the wire-event rename brings the
+  protocol vocabulary back into alignment with the state-machine and
+  concept layers. Pre-v1; no consumer pin. Proto field numbers
+  preserved (binary wire compat); only field names + Go/TS symbols
+  change. Swept across proto, Go (`StreamClose_Park`,
+  `AsyncCallbackBody_Park`, `applyTerminalPark`,
+  `asyncCallbackPark`), TS (`park:` callback-body key), conformance
+  receiver/scenario doc comments, and public docs (`docs/concepts/`,
+  `docs/protocols/`, `docs/executors/`, `CLAUDE.md`, llms-roots).
+- Stub DSL cleanup. `TypeBuilder.Complete()` → `TypeBuilder.Success()`
+  (the DSL name now matches the wire `StreamClose.Success` outcome
+  variant). `TypeBuilder.Blocked()` is removed entirely; callers
+  construct the executor-blocked path inline as
+  `Error("executor_blocked", payload)`, where `payload` is whatever
+  `{reason, ...context}` shape the test wants to assert on. The
+  internal `mergeReasonIntoPayload` helper is deleted (was only used
+  by the removed `Blocked` sugar). `TypeBuilder.Park()` is unchanged
+  (and now wire-aligned again per the rename revert above).
+- Stub disambiguation. The `executors/stub/` directory remains, but
+  its package doc + a new `executors/stub/README.md` clarify that
+  this is a **test double** in the Meszaros sense (scripted canned
+  outcomes for tests, conformance, and no-op demos), **not** a
+  skeleton template for writing your own executor. Consumers writing
+  a real executor should start from `executors/http-node/` or
+  `executors/claude-agent/`. Concept doc citations in
+  `docs/concepts/executor.md`, `docs/concepts/x-as-executor.md`, and
+  `docs/protocols/executor.md` updated to call this out.
+- Layer restructure: `foundation/integration/` → `runtime/` at root module; `graph/executor/` → `runtime/executor/`; graph/shared primitives (`Clock`, `Logger`, `UUID`, `DeepMergeJSON`) → `foundation/shared/`; graph/shared state-machine enums (`NodeState`, `LastOutcome`, `ErrIllegalTransition`) → `foundation/cascade/`. Four-layer stack now strictly enforced: `foundation/` (largely graph-clean; one documented residual at `foundation/persistence` → `graph/node` for `TemplateSpec`/`NodeSpec`) → `graph/` → `runtime/` → `control/`. New depguard rules: `foundation-purity`, `graph-purity`, `runtime-purity`. `graph-control-isolation` retired (subsumed by `graph-purity`). `foundation/go.mod` no longer carries `replace github.com/fallguy/rimsky => ..` — foundation is self-contained. Pre-v1; no consumer pin. Binary-API users update import paths: `foundation/integration` → `runtime`; `graph/executor` → `runtime/executor`.
+
+### Nomenclature resolution (cross-layer #1–#19)
+
+Per `.ok-planner/specs/2026-05-12-nomenclature-resolution-design.md`:
+applies 19 cross-layer nomenclature decisions plus per-concept
+ride-alongs from the 2026-05-12 audit walkthrough.
+
+- **Migration baseline rebase:** the numbered migration chain collapses
+  into a single `001-baseline.sql` reflecting the final post-rename
+  schema. Dev Postgres requires
+  `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` before
+  `rimsky-migrate` reapplies the baseline. Dev SQLite requires
+  `rm /var/lib/rimsky/state.db`. Pre-v1; no production pin.
+- **Schema renames absorbed by baseline:** `rimsky_worker_request` →
+  `rimsky_node_runs`; `rimsky_claim_handle` → `rimsky_claim_handles`
+  (plural); `rimsky_lifecycle_idempotency` →
+  `rimsky_lifecycle_idempotencies` (plural); `rimsky_frames.mode` →
+  `rimsky_frames.frame_resolution_mode`;
+  `rimsky_claim_handles.worker_request_id` → `node_run_id`.
+- **Vocabulary alignment:** `Store = ClaimProducer` alias retired;
+  `AcquiredLock.Store` → `.Producer`;
+  `ClaimSpec.StoreName` → `.ProducerName`; `StoreObservability` proto
+  service → `ClaimProducerObservability` (file rename);
+  `makeStoreHandle` → `makeClaimHandle`.
+- **Persistence interface rename (deferred B.7 follow-up):** top-tier
+  `persistence.Driver` interface → `persistence.Database` (file rename
+  `driver.go` → `database.go`); per-row-type umbrella
+  `persistence.Store` → `persistence.Tables` (file rename
+  `store.go` → `tables.go`); 14 sub-interfaces normalized to singular
+  `<RowKind>Table` form (`TemplateStore` → `TemplateTable`,
+  `TemplateTagsStore` → `TemplateTagTable`, `InstanceStore` →
+  `InstanceTable`, `LifecycleIdempotencyStore` →
+  `LifecycleIdempotencyTable`, `NodeStore` → `NodeTable`,
+  `ClaimHandlesStore` → `ClaimHandleTable`, `NodeAttributesStore` →
+  `NodeAttributeTable`, `ClaimHoldersStore` → `ClaimHolderTable`,
+  `EventStore` → `EventTable`, `ScheduleStore` → `ScheduleTable`,
+  `SupervisorStore` → `SupervisorTable`, `FrameStore` → `FrameTable`,
+  `BlobOrphansStore` → `BlobOrphanTable`, `NodeEventsStore` →
+  `NodeEventTable`). Accessor method `Database.Store()` → `.Tables()`.
+  Impl struct `driver` → `database` and `storeImpl` → `tablesImpl` in
+  both postgres + sqlite. Test-only helpers retitled:
+  `PoolFromDriverForTest` → `PoolFromDatabaseForTest`,
+  `StoreFromPoolForTest` → `TablesFromPoolForTest`, `DBFromDriver` →
+  `DBFromDatabase`, `NewBlobBackendForDriver` →
+  `NewBlobBackendForDatabase`. `concept:persistence-driver` renamed to
+  `concept:persistence-database`. Adapter-selector string config
+  `Config.Driver` ∈ `{"postgres","sqlite"}` is unchanged — it correctly
+  names the adapter shape.
+- **YAML cleanup:** `stores:` alias retired; `write_semantics:`
+  single-value shortcut retired; `write_semantics_envelope` →
+  `write_semantics_allowed`.
+- **`store_name` → `producer_name` sweep (B.1 follow-up):** the
+  surviving `store_name` noun in event payloads + persistence is
+  retired. `rimsky_claim_handles.store_name` column → `producer_name`
+  (absorbed into baseline; dev Postgres still requires the
+  `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` reset noted
+  above; dev SQLite still requires `rm /var/lib/rimsky/state.db`).
+  `protocols/proto/v1/events.proto`: the six payloads that carried a
+  `string store_name` field (`LockAcquiredPayload`,
+  `LockReleasedPayload`, `LockOrphanReapedPayload`,
+  `ClaimAcquiredPayload`, `ClaimHeldPayload`, `ClaimResolvedPayload`)
+  rename the field to `producer_name`; field numbers unchanged so wire
+  positions are preserved while the JSON-serialization surface changes.
+  `persistence.ClaimHandleRow.StoreName` → `.ProducerName`;
+  `ClaimHandleInsertInput.StoreName` → `.ProducerName`;
+  `LockHolderListFilter.StoreName` → `.ProducerName`;
+  `ClaimHandleTable.ListByStoreScope` → `.ListByProducerScope`. Audit-
+  log JSON keys synthesized by `runner_acquire.go::emitLockAcquired`,
+  `runner_terminal_release.go::emitLockReleased`, and
+  `orphan_reaper.go::lockReapPayload` shift from `store_name` to
+  `producer_name`. Observability filter query parameter
+  `?store_name=…` on `/v1/observability/lock-holders` →
+  `?producer_name=…`. Dashboard `LockHolderRow.store_name` field +
+  filter UI updated. Vocabulary-lint gains a `\bstore_name\b` entry
+  scoped to the public-surface globs.
+- **Code-side schema-rename residue swept:** `FrameMode` →
+  `FrameResolutionMode`; `TemplateSpec.FrameResolution` →
+  `.FrameResolutionMode`; `frame_resolution:` YAML key →
+  `frame_resolution_mode:`; `SweepOrphanedClaims` →
+  `SweepOrphanedNodeRuns`; `SweepClaimHandles` →
+  `SweepOrphanedClaimHandles`; `workerRequest*` identifier renames to
+  `nodeRun*`. HTTP route `/dispatches` → `/node-runs`.
+- **Proto restructure (wire-format-breaking; pre-v1, no consumer pin):**
+  `service NodeExecutor` → `service Executor`; `ExecuteEvent`
+  restructured to channel-mechanics (`StreamClose`) + outcome `oneof`
+  (`Success` / `Error` / `Snooze` / `AwaitAsyncCallback`); legacy
+  `{type: ...}` async-callback fallback parser dropped;
+  `ParkRequested` → `Snooze` (state-machine value `parked` stays);
+  `Blocked` collapses into `Error{error_class: "executor_blocked"}`;
+  lifecycle-handler slot count drops 4 → 3 (`on_executor_blocked`
+  retired); `ExecutorObservability.GetCapabilities` → `.Capabilities`.
+- **Cascade vocabulary:** three-word vocabulary adopted —
+  walk / propagation / fallthrough.
+- **Concept-doc reorganization:** `concept:held-claim` folded into
+  `concept:claim-handle#held-variant`; `concept:opacity` →
+  `concept:inertness` (two sub-disciplines: byte-opaque + structural);
+  `@blessed-invariant 11` reworded "Userdata is inert in Rimsky";
+  new `concept:service` umbrella for orchestrated gRPC binaries;
+  "peer" → "service" sweep across CLAUDE.md, glossary, concept docs.
+- **Layer reorganization:** root module's `modeling/` splits into
+  `graph/` (template, node, instance, frame, scheduler, attribute,
+  qualityrule, shared, scenario) and `control/` (controlapi, cli,
+  observability, config). The shared pgtest fixture moved to top-level
+  `internal/pgtest/` (rather than `graph/internal/pgtest/`) so both
+  `graph/` and `control/` tests can import it without tripping Go's
+  internal-package rule. New `graph-control-isolation` depguard rule
+  enforces one-way boundary (control → graph; graph never reads
+  control).
+- **Ride-along renames:** `cmd/rimsky-conformance` →
+  `cmd/rimsky-executor-conformance` (probe sidecar stays generic);
+  `runner_terminal_errors.go::applyTerminalAppError` →
+  `runner_error_policy.go::applyErrorPolicy`.
+- **Metric `rimsky_dispatch_queue_depth` → `rimsky_node_runs_pending`:**
+  the queue-depth gauge names a count of `rimsky_node_runs` rows in
+  pending phase (a row-at-rest concept), so it tracks the row-name
+  rename. The two dispatch-event metrics
+  `rimsky_dispatches_total` and `rimsky_dispatch_latency_seconds`
+  retain their names because they describe dispatch lifecycle events,
+  not row counts. Go-side: `MetricsRegistry.DispatchQueueDepth` →
+  `.NodeRunsPending`; `*RegistryHook.SetDispatchQueueDepth` →
+  `.SetNodeRunsPending`; help text refined to "Count of
+  rimsky_node_runs rows in pending phase awaiting dispatch."
+
 ### Design log convergence + abandonOpenedClaim helper extraction
 
 Per `.ok-planner/specs/2026-05-11-design-log-convergence.md`: converges
@@ -846,7 +1027,7 @@ spill testing.
 
 **Conformance — Capabilities validation (L2 partial):**
 
-- `cmd/rimsky-conformance/observability_check.go` now validates the
+- `cmd/rimsky-executor-conformance/observability_check.go` now validates the
   new `userdata_schema` (must parse as JSON when non-empty) and
   `declared_events` (each entry must be a non-empty string) fields
   on `ObservabilityCapabilities`. Reports both fields' values during
@@ -1069,7 +1250,7 @@ section H (event handler dispatch in supervisor terminal pipeline),
 section J runtime (claude-agent CLI integration of the new MCP catalog
 + resolver + auto rate-limit park + resume + `report_complete`
 schema validation with corrective retry), section L2/L3 (extending
-`rimsky-conformance` to exercise `userdata_schema` /
+`rimsky-executor-conformance` to exercise `userdata_schema` /
 `declared_events` / `ParkRequested` / async-callback new shape;
 ledger-semantics scenario test), and section E5 runtime
 (`max_retries_without_progress` cap wiring on the on_error path) are
@@ -1691,7 +1872,7 @@ The seven doc rewrites deferred from the dispatch-7 partial completion are now l
 - **Conformance suites split.** `cmd/rimsky-store-conformance` renamed
   `cmd/rimsky-claim-producer-conformance` and rewritten to cover
   Capabilities envelope + uniformity-per-(producer,scope) +
-  Open/Release verbs. `cmd/rimsky-conformance` covers executor
+  Open/Release verbs. `cmd/rimsky-executor-conformance` covers executor
   scenarios (default) plus a new `--check-lifecycle` mode that drives
   the six LifecycleSubscriber RPCs against a peer.
 - **YAML config shape Option II.** `stores:` block renamed
@@ -1853,7 +2034,7 @@ The seven doc rewrites deferred from the dispatch-7 partial completion are now l
   history then pumps the live channel until terminal-or-disconnect-
   or-idle-timeout (default 5min, `SetIdleTimeout` overridable).
 - **Conformance probes drive a canned dispatch and a retention
-  check.** `core/cmd/rimsky-conformance` `--retention-test-seconds=N`
+  check.** `core/cmd/rimsky-executor-conformance` `--retention-test-seconds=N`
   fires an Execute, verifies `GetTrace` + `StreamTrace` surface the
   events, then sleeps past the configured retention and verifies
   `evicted: true`. The store-side equivalent verifies UNKNOWN
@@ -2124,7 +2305,7 @@ The seven doc rewrites deferred from the dispatch-7 partial completion are now l
   `RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL`/
   `RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL` env vars on the
   executors), advertised through the capabilities handshake.
-- **`--check-observability` flag** on `rimsky-conformance` and
+- **`--check-observability` flag** on `rimsky-executor-conformance` and
   `rimsky-store-conformance`. Probes capabilities, validates the
   spec-§2.6/§3.6 missing-dispatch / missing-claim shape via
   `GetTrace`/`StreamTrace`/`GetClaim`/`StreamClaim`, exercises

@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import * as grpc from "@grpc/grpc-js";
 import type { Logger } from "pino";
-import { loadNodeExecutorProto } from "./proto-loader.js";
+import { loadExecutorProto } from "./proto-loader.js";
 import { runAgent, type AgentOutcome } from "./agent-run.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
@@ -16,9 +16,9 @@ import type { Observability, TraceEvent } from "./observability.js";
 import { userdataSchemaBytes, declaredEvents } from "./userdata-schema.js";
 
 /**
- * gRPC NodeExecutor implementation. Always responds with the async-handoff
- * pattern: one Heartbeat + AsyncAccepted, close stream, run agent in
- * background, POST final outcome to callback_url.
+ * gRPC Executor implementation. Always responds with the async-handoff
+ * pattern: one Heartbeat + StreamClose{AwaitAsyncCallback}, close stream,
+ * run agent in background, POST final outcome to callback_url.
  *
  * Spec: docs/specs/2026-04-27-stores-redesign-v2-design.md §12.
  */
@@ -58,7 +58,7 @@ export interface GrpcServerConfig {
    */
   observability?: Observability;
   /**
-   * When non-empty, advertised via `ExecutorObservability.GetCapabilities`
+   * When non-empty, advertised via `ExecutorObservability.Capabilities`
    * as the externally-reachable HTTP+JSON observability bridge URL.
    * Mirrors the value exposed by `mountObservability(...)`.
    */
@@ -102,7 +102,7 @@ interface ExecuteRequest {
   // executor observability ledger as the per-dispatch trace key.
   dispatch_id?: string;
   // J10 plan: resume context populated by the supervisor when this is a
-  // resume after ParkRequested. session_token feeds the CLI's `--resume`
+  // resume after Park. session_token feeds the CLI's `--resume`
   // arg; payload + reason are template-visible vars.
   resume_context?: {
     payload?: string; // base64 of bytes; optional, may be empty
@@ -115,28 +115,29 @@ type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
 
 /**
  * @agent-contract
- * what: Constructs the gRPC server hosting `NodeExecutor.Execute`, binds to
+ * what: Constructs the gRPC server hosting `Executor.Execute`, binds to
  *   `host:port`, and wires the async-handoff agent run path.
  * how: `await startGrpcServer(config)`; `shutdown()` stops the server
  *   gracefully.
  * handles: stub-mode short-circuit; JSON-Schema validation of
- *   `attributes_delta` writes; silence / subprocess-exit fault mapping →
- *   Errored outcome; bridging the supervisor's incremental writeback URL
- *   into the internal-MCP `attributes_set` tool.
+ *   `attributes_delta` writes; silence / subprocess-exit fault mapping
+ *   to a StreamClose Error outcome on the wire; bridging the
+ *   supervisor's incremental writeback URL into the internal-MCP
+ *   `attributes_set` tool.
  * does-not-handle: supervisor-side state transitions, commit, or on_error
  *   routing; those remain in the supervisor process.
  */
 export async function startGrpcServer(
   config: GrpcServerConfig,
 ): Promise<RunningServer> {
-  const pkg = loadNodeExecutorProto();
+  const pkg = loadExecutorProto();
   const server = new grpc.Server();
   const post = config.postCallback ?? defaultPostCallback;
   const cliRunner = config.cliRunner ?? createClaudeCliRunner({
     auth: requireAuth(config.cliAuth),
   });
 
-  server.addService(pkg.rimsky.v1.NodeExecutor.service, {
+  server.addService(pkg.rimsky.v1.Executor.service, {
     Execute: (call: GrpcCall) => handleExecute(call, config, cliRunner, post),
   });
 
@@ -147,7 +148,7 @@ export async function startGrpcServer(
   // silently falls through). The handlers bridge into the same
   // `Observability` ledger the HTTP+JSON routes expose.
   server.addService(pkg.rimsky.v1.ExecutorObservability.service, {
-    GetCapabilities: (
+    Capabilities: (
       _call: grpc.ServerUnaryCall<unknown, unknown>,
       cb: grpc.sendUnaryData<unknown>,
     ) => {
@@ -340,7 +341,9 @@ function handleExecute(
     });
   }
 
-  // 1) Heartbeat + AsyncAccepted terminal, then close the stream.
+  // 1) Heartbeat + StreamClose{AwaitAsyncCallback}, then close the stream.
+  // Post-spec:2026-05-12 (Group E.4): the wire is StreamClose + outcome
+  // oneof; AsyncAccepted is renamed AwaitAsyncCallback.
   call.write({
     heartbeat: {
       timestamp_ms: Date.now(),
@@ -348,9 +351,11 @@ function handleExecute(
     },
   });
   call.write({
-    async_accepted: {
-      async_ack_id: ackId,
-      expected_completion_ms: 0,
+    stream_close: {
+      await_async: {
+        async_ack_id: ackId,
+        expected_completion_ms: 0,
+      },
     },
   });
   call.end();
@@ -441,9 +446,10 @@ async function runAndCallback(
       await post(
         buildCallbackUrl(req.callback_url, ackId),
         {
-          type: "errored",
-          error_class: "executor_internal_error",
-          payload: { error: String(e) },
+          error: {
+            error_class: "executor_internal_error",
+            payload: { error: String(e) },
+          },
         },
         logger,
       ).catch(() => {});
@@ -474,33 +480,32 @@ function encodeBase64(bytes: Uint8Array): string {
 function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
+  // The callback body uses the AsyncCallbackBody outcome-oneof shape
+  // (success | error | park). The legacy `{type: ...}` discriminator
+  // is no longer accepted by the supervisor.
   if (outcome.kind === "complete") {
-    // Spec §12.2/§12.3: the Complete callback carries `attributes_delta`
-    // (a map merged into rimsky_node_attributes.data on commit). The
-    // legacy `result` field is retired.
     return {
-      type: "complete",
-      attributes_delta: outcome.attributesDelta,
-      changed: outcome.changed,
-      change_summary: outcome.changeSummary,
+      success: {
+        attributes_delta: outcome.attributesDelta,
+        changed: outcome.changed,
+        change_summary: outcome.changeSummary,
+      },
     };
   }
   if (outcome.kind === "blocked") {
+    // Post-E.2 collapse: `Blocked` maps to `Error{error_class: "executor_blocked"}`.
     return {
-      type: "blocked",
-      reason: outcome.reason,
-      context: outcome.context,
+      error: {
+        error_class: "executor_blocked",
+        payload: { reason: outcome.reason, context: outcome.context },
+      },
     };
   }
   if (outcome.kind === "park_requested") {
-    // Plan A5/J9: emit the new AsyncCallbackBody shape.
     // The proto-JSON convention for `bytes` fields is base64 — Go's
     // `encoding/json` decodes []byte fields from base64 strings.
-    // JSON.stringify on a Uint8Array would render as a sparse object
-    // ({0: 0x12, 1: 0x34, …}) which Go's json.Unmarshal into []byte
-    // cannot parse, so we encode explicitly here.
     return {
-      park_requested: {
+      park: {
         reason: outcome.reason,
         payload: encodeBase64(outcome.payload),
         ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
@@ -509,9 +514,10 @@ function outcomeToCallbackBody(
     };
   }
   return {
-    type: "errored",
-    error_class: outcome.errorClass,
-    payload: outcome.payload,
+    error: {
+      error_class: outcome.errorClass,
+      payload: outcome.payload,
+    },
   };
 }
 

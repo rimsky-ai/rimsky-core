@@ -8,12 +8,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// FrameStore is the persistence surface the frame engine (modeling/frame)
-// talks to. Methods mirror the SQL operations in modeling/frame/{engine,
-// producer}.go; the engine itself stays in modeling/frame/ and orchestrates
+// FrameTable is the persistence surface the frame engine (graph/frame)
+// talks to. Methods mirror the SQL operations in graph/frame/{engine,
+// producer}.go; the engine itself stays in graph/frame/ and orchestrates
 // these calls.
 //
 // Per spec §3.5.
@@ -28,12 +28,12 @@ const (
 	FrameStateFailed    FrameState = "failed"
 )
 
-// FrameMode mirrors the per-template `frame_resolution` setting.
-type FrameMode string
+// FrameResolutionMode mirrors the per-template `frame_resolution` setting.
+type FrameResolutionMode string
 
 const (
-	FrameModeCoalesce    FrameMode = "coalesce"
-	FrameModeSerialQueue FrameMode = "serial_queue"
+	FrameResolutionModeCoalesce    FrameResolutionMode = "coalesce"
+	FrameResolutionModeSerialQueue FrameResolutionMode = "serial_queue"
 )
 
 // FramePending identifies a running frame whose nodes have all left
@@ -72,13 +72,13 @@ type OrphanFrameDispatch struct {
 // FrameRow is the observability projection of one rimsky_frames row.
 // Used by the observability frames endpoint.
 type FrameRow struct {
-	FrameID        shared.UUID `json:"frame_id"`
-	InstanceID     shared.UUID `json:"instance_id"`
-	State          FrameState  `json:"state"`
-	Mode           FrameMode   `json:"mode"`
-	StartedAt      *time.Time  `json:"started_at,omitempty"`
-	EndedAt        *time.Time  `json:"ended_at,omitempty"`
-	FrameTimeoutMs int64       `json:"frame_timeout_ms"`
+	FrameID        shared.UUID         `json:"frame_id"`
+	InstanceID     shared.UUID         `json:"instance_id"`
+	State          FrameState          `json:"state"`
+	Mode           FrameResolutionMode `json:"mode"`
+	StartedAt      *time.Time          `json:"started_at,omitempty"`
+	EndedAt        *time.Time          `json:"ended_at,omitempty"`
+	FrameTimeoutMs int64               `json:"frame_timeout_ms"`
 }
 
 // FrameListFilter is the observability browse filter.
@@ -87,8 +87,8 @@ type FrameListFilter struct {
 	State      FrameState
 }
 
-// FrameStore is the rimsky_frames accessor.
-type FrameStore interface {
+// FrameTable is the rimsky_frames accessor.
+type FrameTable interface {
 	// ---- Frame-end detection (engine.runFrameEndDetection) ----
 
 	// ListRunningFramesNoPendingNodes returns running frames whose nodes
@@ -149,10 +149,10 @@ type FrameStore interface {
 
 	// ---- Producer (frame.EnqueueOrCoalesce) ----
 
-	// LookupFrameMode reads (frame_resolution, frame_timeout_ms) for the
+	// LookupFrameResolutionMode reads (frame_resolution, frame_timeout_ms) for the
 	// instance's template. Returns ("", 0, sql.ErrNoRows) when the instance
 	// is missing. Empty mode surfaces as a validation error in the caller.
-	LookupFrameMode(ctx context.Context, instanceID shared.UUID, tx Tx) (mode FrameMode, frameTimeoutMs int64, err error)
+	LookupFrameResolutionMode(ctx context.Context, instanceID shared.UUID, tx Tx) (mode FrameResolutionMode, frameTimeoutMs int64, err error)
 
 	// EnqueueSerialFrame inserts a queued serial_queue frame with one
 	// source node and returns the new frame_id.
@@ -184,7 +184,7 @@ type FrameStore interface {
 	RefreshProgress(ctx context.Context, frameID shared.UUID, tx Tx) error
 
 	// CountHeldFrames returns the number of running frames that have at
-	// least one parked rimsky_worker_request row attached via frame_id.
+	// least one parked rimsky_node_runs row attached via frame_id.
 	// Mirrors the held-frame notion used by
 	// /admin/diagnostics/held-frames. Used by the metrics gauge
 	// refresher (`rimsky_held_frames`). Tx must be open.

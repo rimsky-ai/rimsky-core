@@ -9,7 +9,7 @@
 - [Claim](concepts/claim.md): A node-declared assertion that the node will read or read-write a producer-defined slice of state for the duration of its run.
 - [Claim handle](concepts/claim-handle.md): The persistent row asserting "holder H has acquired scope S for purpose P."
 - [Claim producer](concepts/claim-producer.md): The protocol-level term for a service that produces claim handles; implements five methods over gRPC.
-- [Executor](concepts/executor.md): The protocol-level term for the service that runs a node's work; implements the `NodeExecutor` dispatch protocol (and optionally the paired read-only `ExecutorObservability` protocol) over gRPC.
+- [Executor](concepts/executor.md): The protocol-level term for the service that runs a node's work; implements the `Executor` dispatch protocol (and optionally the paired read-only `ExecutorObservability` protocol) over gRPC.
 - [Frame](concepts/frame.md): The unit of cascade resolution; `frame_resolution:` picks `serial_queue` or `coalesce` for handling concurrent invalidates.
 - [Holding subgraph](concepts/holding-subgraph.md): The set of nodes a held claim's lifetime spans; the claim resolves automatically at completion (commit on all-success, abandon on any-failure).
 - [Inheritance](concepts/inheritance.md): The DSL mechanism by which a downstream node declares it will use a live claim from an upstream acquirer.
@@ -28,7 +28,7 @@
 ## Protocols
 
 - [ClaimProducer](protocols/claim-producer.md): How to implement a claim producer (Open / Commit / Abandon / Release / Capabilities).
-- [Executor](protocols/executor.md): How to implement an executor — `NodeExecutor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (GetCapabilities / GetTrace / StreamTrace).
+- [Executor](protocols/executor.md): How to implement an executor — `Executor.Execute` (required dispatch protocol) and the optional `ExecutorObservability` protocol (Capabilities / GetTrace / StreamTrace).
 - [LifecycleSubscriber](protocols/lifecycle-subscriber.md): How to implement a lifecycle subscriber (six template/instance state-transition hooks).
 
 ## Examples
@@ -47,5 +47,4 @@
 ## Optional
 
 - [Glossary](glossary.md)
-- [Vocabulary discipline and deprecated terms](vocabulary.md)
 - [Dashboard UI guide](humans/dashboard.md)

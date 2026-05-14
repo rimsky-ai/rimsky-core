@@ -1558,7 +1558,7 @@ All three commands exit 0.
 
 1. Build the conformance binary:
    ```bash
-   go build -o bin/rimsky-conformance ./cmd/rimsky-conformance
+   go build -o bin/rimsky-executor-conformance ./cmd/rimsky-executor-conformance
    go build -o bin/rimsky-conformance-probe ./cmd/rimsky-conformance-probe
    ```
 2. Bring up the docker-compose stack with executors in stub mode (per the existing pattern in `deploy/docker-compose.yml`):
@@ -1567,8 +1567,8 @@ All three commands exit 0.
    ```
 3. Wait for `/health` to respond, then run conformance against the executors:
    ```bash
-   go run ./cmd/rimsky-conformance --endpoint claude-agent:9090 --transport grpc --require-stub-mode
-   go run ./cmd/rimsky-conformance --endpoint http-node:9091 --transport grpc --require-stub-mode
+   go run ./cmd/rimsky-executor-conformance --endpoint claude-agent:9090 --transport grpc --require-stub-mode
+   go run ./cmd/rimsky-executor-conformance --endpoint http-node:9091 --transport grpc --require-stub-mode
    ```
 4. Tear down:
    ```bash

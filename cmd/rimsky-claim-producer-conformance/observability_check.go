@@ -19,7 +19,7 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// runObservabilityCheck implements Task F2: GetCapabilities, the per-
+// runObservabilityCheck implements Task F2: Capabilities, the per-
 // admin-view GetAdminView round-trips, the missing-claim probes for
 // GetClaim and StreamClaim (when supported), and a structural ListClaims
 // round-trip (when supported).
@@ -31,14 +31,14 @@ func runObservabilityCheck(ctx context.Context, endpoint string) error {
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
-	client := genv1.NewStoreObservabilityClient(conn)
-	caps, err := client.GetCapabilities(ctx, &genv1.GetStoreCapabilitiesRequest{})
+	client := genv1.NewClaimProducerObservabilityClient(conn)
+	caps, err := client.Capabilities(ctx, &genv1.GetClaimProducerCapabilitiesRequest{})
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unimplemented {
-			fmt.Println("observability: GetCapabilities Unimplemented (store declares no observability)")
+			fmt.Println("observability: Capabilities Unimplemented (store declares no observability)")
 			return nil
 		}
-		return fmt.Errorf("GetCapabilities: %w", err)
+		return fmt.Errorf("Capabilities: %w", err)
 	}
 	fmt.Printf("observability: capabilities = supports_claim_get=%v supports_claim_stream=%v supports_list_claims=%v admin_views=%d http_bridge_url=%q\n",
 		caps.GetSupportsClaimGet(), caps.GetSupportsClaimStream(),

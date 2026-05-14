@@ -2,7 +2,7 @@
 # deterministic behavior. Mounts into the store-stub container at
 # /etc/store/config.yml via STORE_STUB_CONFIG.
 
-write_semantics_envelope: [sync]
+write_semantics_allowed: [sync]
 pick_policies: {}
 
 host: 0.0.0.0

@@ -13,7 +13,7 @@ A note on terminology: the protocol-level term is **claim producer** (the servic
 
 ## 1. The wire contract
 
-The producer is a peer service. Rimsky's processes dial it at startup, run a `Capabilities()` handshake, and issue four runtime verbs over gRPC:
+The producer is a service. Rimsky's processes dial it at startup, run a `Capabilities()` handshake, and issue four runtime verbs over gRPC:
 
 ```protobuf
 service ClaimProducer {
@@ -56,7 +56,7 @@ Inside `OpenRequest`:
 
 - `claim_id` — Rimsky-generated UUID; record it first (obligation 2).
 <!-- vocabulary-lint-ignore: template_id -->
-- `store_name`, `selector`, `intent`, `alias`, `template_id`, `instance_id` — the resolved claim spec. `selector` is post-substitution; the producer parses it. The proto field is named `template_id` (the wire-protocol field name) and carries the content hash; `instance_id` is the instance UUID. Both are opaque to rimsky and provided for namespace routing or trace correlation.
+- `producer_name`, `selector`, `intent`, `alias`, `template_id`, `instance_id` — the resolved claim spec. `selector` is post-substitution; the producer parses it. The proto field is named `template_id` (the wire-protocol field name) and carries the content hash; `instance_id` is the instance UUID. Both are opaque to rimsky and provided for namespace routing or trace correlation.
 
 Return one of two `oneof` variants in `OpenResponse`:
 
@@ -95,9 +95,9 @@ Not called for read-only claims (Rimsky calls `Release` instead). Idempotent in 
 
 ### `Capabilities(CapabilitiesRequest) → CapabilitiesResponse`
 
-`CapabilitiesRequest` has no fields. `CapabilitiesResponse` returns the `WriteSemanticsEnvelope` — the set of `WriteSemantics` values this producer may return from `Open`. Probed once per peer at process startup; cached for the process's lifetime.
+`CapabilitiesRequest` has no fields. `CapabilitiesResponse` returns the `WriteSemanticsEnvelope` — the set of `WriteSemantics` values this producer may return from `Open`. Probed once per service at process startup; cached for the process's lifetime.
 
-The operator declares a subset envelope per peer in `rimsky.yml` under `write_semantics_envelope:`. The capability handshake validates operator-declared ⊆ producer-declared; a mismatch fails Rimsky startup.
+The operator declares a subset envelope per service in `rimsky.yml` under `write_semantics_allowed:`. The capability handshake validates operator-declared ⊆ producer-declared; a mismatch fails Rimsky startup.
 
 ## 5. Verb-firing matrix per claim shape
 

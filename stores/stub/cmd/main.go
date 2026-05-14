@@ -30,17 +30,17 @@ import (
 const defaultConfigEnv = "STORE_STUB_CONFIG"
 
 type yamlConfig struct {
-	// WriteSemanticsEnvelope is the producer-advertised set of permissible
+	// WriteSemanticsAllowed is the producer-advertised set of permissible
 	// values reported via Capabilities. Defaults to ["sync"] when empty.
 	// Singular write_semantics: scalar (legacy) is also accepted as a
-	// shortcut for a single-element envelope.
-	WriteSemanticsEnvelope []string                  `yaml:"write_semantics_envelope"`
-	WriteSemantics         string                    `yaml:"write_semantics"`
-	PickPolicies           map[string]yamlPickPolicy `yaml:"pick_policies"`
-	Host                   string                    `yaml:"host"`
-	GRPCPort               int                       `yaml:"grpc_port"`
-	HTTPPort               int                       `yaml:"http_port"`
-	EnableLifecycle        bool                      `yaml:"enable_lifecycle"`
+	// shortcut for a single-element list.
+	WriteSemanticsAllowed []string                  `yaml:"write_semantics_allowed"`
+	WriteSemantics        string                    `yaml:"write_semantics"`
+	PickPolicies          map[string]yamlPickPolicy `yaml:"pick_policies"`
+	Host                  string                    `yaml:"host"`
+	GRPCPort              int                       `yaml:"grpc_port"`
+	HTTPPort              int                       `yaml:"http_port"`
+	EnableLifecycle       bool                      `yaml:"enable_lifecycle"`
 }
 
 type yamlPickPolicy struct {
@@ -66,8 +66,8 @@ func main() {
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	envelope := make([]corestore.WriteSemantics, 0, len(cfg.WriteSemanticsEnvelope)+1)
-	for _, ws := range cfg.WriteSemanticsEnvelope {
+	envelope := make([]corestore.WriteSemantics, 0, len(cfg.WriteSemanticsAllowed)+1)
+	for _, ws := range cfg.WriteSemanticsAllowed {
 		envelope = append(envelope, corestore.WriteSemantics(ws))
 	}
 	if cfg.WriteSemantics != "" && len(envelope) == 0 {
@@ -102,14 +102,14 @@ func main() {
 	slog.Info("store-stub started",
 		"grpc_addr", grpcLis.Addr().String(),
 		"http_addr", httpLis.Addr().String(),
-		"write_semantics_envelope", envelope,
+		"write_semantics_allowed", envelope,
 		"enable_lifecycle", cfg.EnableLifecycle)
 
 	ctx, cancel := signalContext()
 	defer cancel()
 	if err := server.Run(ctx, server.Config{
 		Substrate: stubstore.Config{
-			Capabilities: corestore.Capabilities{WriteSemanticsEnvelope: envelope},
+			Capabilities: corestore.Capabilities{WriteSemanticsAllowed: envelope},
 			PickPolicies: policies,
 		},
 		EnableLifecycle: cfg.EnableLifecycle,

@@ -18,18 +18,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFanOutPattern(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	h.Stub.WhenType("child_a").Complete(map[string]any{"a": 1}, true, "a")
-	h.Stub.WhenType("child_b").Complete(map[string]any{"b": 2}, true, "b")
-	h.Stub.WhenType("child_c").Complete(map[string]any{"c": 3}, true, "c")
+	h.Stub.WhenType("child_a").Success(map[string]any{"a": 1}, true, "a")
+	h.Stub.WhenType("child_b").Success(map[string]any{"b": 2}, true, "b")
+	h.Stub.WhenType("child_c").Success(map[string]any{"c": 3}, true, "c")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fan-out", Version: "1",
@@ -75,7 +75,7 @@ func TestFanOutPattern(t *testing.T) {
 	for _, typ := range []string{"child_a", "child_b", "child_c"} {
 		c := h.FindNode(iid, typ)
 		require.NotNil(t, c, "missing %s", typ)
-		require.True(t, h.WaitForNodeState(c.ID, shared.NodeStateFresh, 30*time.Second),
+		require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
 			"%s did not reach fresh", typ)
 	}
 }

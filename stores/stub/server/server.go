@@ -90,11 +90,11 @@ type Server struct {
 // Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.Store.Capabilities()
-	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsEnvelope))
-	for _, ws := range c.WriteSemanticsEnvelope {
+	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsAllowed))
+	for _, ws := range c.WriteSemanticsAllowed {
 		out = append(out, bridge.WriteSemanticsToProto(string(ws)))
 	}
-	return &genv1.CapabilitiesResponse{WriteSemanticsEnvelope: out}, nil
+	return &genv1.CapabilitiesResponse{WriteSemanticsAllowed: out}, nil
 }
 
 // Open delegates. Validates `intent` against the wire schema (only "r"

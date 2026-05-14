@@ -19,7 +19,7 @@ claim_producers:
   stub:
     endpoint: "grpc://store-stub:9102"
     protocols: [claim_producer]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 
 # A single named lock for examples that want to demonstrate
 # capacity-bounded coordination.

@@ -20,7 +20,7 @@ import { Observability } from "./observability.js";
  *
  * Configuration via env vars (see README). Binds:
  *   - internal MCP callback on 127.0.0.1:<random-port> (advertised to subprocess)
- *   - gRPC NodeExecutor on RIMSKY_EXECUTOR_HOST:RIMSKY_EXECUTOR_PORT_GRPC
+ *   - gRPC Executor on RIMSKY_EXECUTOR_HOST:RIMSKY_EXECUTOR_PORT_GRPC
  *   - HTTP+JSON bridge on RIMSKY_EXECUTOR_HOST:RIMSKY_EXECUTOR_PORT_HTTP
  */
 async function main(): Promise<void> {

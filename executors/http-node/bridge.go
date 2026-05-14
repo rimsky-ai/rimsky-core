@@ -60,9 +60,11 @@ func mountBridge(mux *http.ServeMux, s *Server) {
 			// Best-effort final errored event; the response may already be
 			// partially written, so errors here are logged by callers and
 			// otherwise ignored.
-			b, _ := protojson.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Errored{Errored: &genv1.Errored{
-				ErrorClass: "internal_server_error",
-			}}})
+			b, _ := protojson.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+				StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
+					ErrorClass: "internal_server_error",
+				}}},
+			}})
 			_, _ = w.Write(append(b, '\n'))
 			if flusher != nil {
 				flusher.Flush()

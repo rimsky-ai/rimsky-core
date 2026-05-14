@@ -23,9 +23,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
@@ -37,7 +37,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "reset-via-frame-engine", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -46,7 +46,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker did not reach failed on first fire")
 
 	// Wait for the first frame to settle to failed.
@@ -61,7 +61,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 		"failed node should preserve frame_id from the failed frame")
 
 	// Re-script the stub to succeed before resetting.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 
 	// POST /nodes/{id}/reset.
 	resp, err := http.Post(
@@ -72,7 +72,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// The node should reach fresh under the new frame.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 20*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 20*time.Second),
 		"worker did not reach fresh after reset; if reset bypassed the frame engine the node would be stuck stale with nil/old frame_id")
 
 	// Verify a second frame was created and ended completed.

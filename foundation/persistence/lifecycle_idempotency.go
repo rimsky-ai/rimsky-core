@@ -19,7 +19,7 @@ const (
 )
 
 // LifecycleIdempotencyState enumerates the four persisted lifecycle
-// states for the rimsky_lifecycle_idempotency table.
+// states for the rimsky_lifecycle_idempotencies table.
 type LifecycleIdempotencyState string
 
 const (
@@ -29,7 +29,7 @@ const (
 	LifecycleIdempotencyStateCreated    LifecycleIdempotencyState = "created"
 )
 
-// LifecycleIdempotencyRow mirrors a row of rimsky_lifecycle_idempotency.
+// LifecycleIdempotencyRow mirrors a row of rimsky_lifecycle_idempotencies.
 type LifecycleIdempotencyRow struct {
 	StoreRegistrationName string                        `json:"store_registration_name"`
 	ScopeKind             LifecycleIdempotencyScopeKind `json:"scope_kind"`
@@ -38,10 +38,10 @@ type LifecycleIdempotencyRow struct {
 	LastEventAt           time.Time                     `json:"last_event_at"`
 }
 
-// LifecycleIdempotencyStore is the rimsky_lifecycle_idempotency
+// LifecycleIdempotencyTable is the rimsky_lifecycle_idempotencies
 // accessor. Used by control-api's lifecycle fan-out helpers to record
 // per-peer progress and short-circuit re-fires that would be no-ops.
-type LifecycleIdempotencyStore interface {
+type LifecycleIdempotencyTable interface {
 	Get(ctx context.Context, storeName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) (*LifecycleIdempotencyRow, error)
 	Upsert(ctx context.Context, row LifecycleIdempotencyRow, tx Tx) error
 	Delete(ctx context.Context, storeName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error

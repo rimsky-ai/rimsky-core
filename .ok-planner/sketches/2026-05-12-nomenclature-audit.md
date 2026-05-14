@@ -371,7 +371,7 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 | Surface | Citation |
 |---|---|
-| Binary | `` `code:cmd/rimsky-conformance/main.go` `` |
+| Binary | `` `code:cmd/rimsky-executor-conformance/main.go` `` |
 | Binary | `` `code:cmd/rimsky-conformance-probe/main.go` `` |
 | Binary | `` `code:cmd/rimsky-claim-producer-conformance/main.go` `` |
 | Binary | `` `code:cmd/rimsky-blob-backend-conformance/main.go` `` |
@@ -380,17 +380,17 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 **Drift call:** rename artifact (binary name) — discuss
 
-**Notes:** The four binary names all follow `rimsky-<thing>-conformance` except the executor one which is just `rimsky-conformance` (no specifier). Pre-v1 cosmetic asymmetry. Adjacent: `tension:stub-mode-runtime-only-gate`, `tension:blob-backend-conformance-fixture-asymmetry`, `tension:stub-mode-signature-no-proto-surface`.
+**Notes:** The four binary names all follow `rimsky-<thing>-conformance` except the executor one which is just `rimsky-executor-conformance` (no specifier). Pre-v1 cosmetic asymmetry. Adjacent: `tension:stub-mode-runtime-only-gate`, `tension:blob-backend-conformance-fixture-asymmetry`, `tension:stub-mode-signature-no-proto-surface`.
 
 **Decision (2026-05-12 walkthrough):**
-  - Rename `code:cmd/rimsky-conformance/main.go` → `code:cmd/rimsky-executor-conformance/main.go`. The implicit "no-specifier means executor conformance" is a footgun for cold readers of the binary list; renaming makes the four-binary set self-documenting.
+  - Rename `code:cmd/rimsky-executor-conformance/main.go` → `code:cmd/rimsky-executor-conformance/main.go`. The implicit "no-specifier means executor conformance" is a footgun for cold readers of the binary list; renaming makes the four-binary set self-documenting.
   - All four binaries now follow the pattern `rimsky-<protocol>-conformance`:
     - `rimsky-executor-conformance` (renamed)
     - `rimsky-executor-conformance-probe` (consider renaming the probe sidecar for symmetry; OR keep `rimsky-conformance-probe` since the probe is a generic gate, not protocol-specific)
     - `rimsky-claim-producer-conformance`
     - `rimsky-blob-backend-conformance`
   - **Probe-binary naming:** the probe sidecar is currently `rimsky-conformance-probe`. Two options: rename to `rimsky-executor-conformance-probe` for full symmetry, OR keep as a generic gate name since the probe could plausibly be extended to other protocols later (e.g., a future ClaimProducer stub-mode probe). Lean keep-as-generic; revisit if/when other protocols need stub-mode probing.
-  - Touches: `file:Makefile` build target, `file:deploy/docker-compose.yml` (if any service references the binary), CI workflows that invoke `rimsky-conformance`, the rimsky CLAUDE.md "Build & test" section, and `concept:conformance.md` body.
+  - Touches: `file:Makefile` build target, `file:deploy/docker-compose.yml` (if any service references the binary), CI workflows that invoke `rimsky-executor-conformance`, the rimsky CLAUDE.md "Build & test" section, and `concept:conformance.md` body.
   - **Resolves the conformance binary asymmetry.** Adjacent open tensions (`tension:stub-mode-runtime-only-gate`, `tension:blob-backend-conformance-fixture-asymmetry`, `tension:stub-mode-signature-no-proto-surface`) are independent and stay open.
   - A future addition: `rimsky-lifecycle-subscriber-conformance` for the LifecycleSubscriber protocol — currently no conformance binary exists for that protocol. Out of scope for this rename pass; flagged for the brainstorm if useful.
 
@@ -701,13 +701,13 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 | Migrate | `cmd/rimsky-migrate` |
 | Unified entrypoint | `cmd/rimsky-entrypoint` |
 | CLI | `cmd/rimsky-cli` |
-| Conformance | `cmd/rimsky-conformance`, `cmd/rimsky-conformance-probe`, `cmd/rimsky-claim-producer-conformance`, `cmd/rimsky-blob-backend-conformance` |
+| Conformance | `cmd/rimsky-executor-conformance`, `cmd/rimsky-conformance-probe`, `cmd/rimsky-claim-producer-conformance`, `cmd/rimsky-blob-backend-conformance` |
 | Docs tools | `cmd/rimsky-docs-glossary`, `cmd/rimsky-docs-lint`, `cmd/rimsky-docs-llms-full` |
 | Licensing | `cmd/rimsky-license-check` |
 
 **Drift call:** aligned
 
-**Notes:** All binaries use the `rimsky-<thing>` prefix consistently. One minor sub-asymmetry already noted under `concept:conformance`: three of the four conformance binaries name their target (`-claim-producer-`, `-blob-backend-`, `-probe`), but the executor conformance is bare `rimsky-conformance`.
+**Notes:** All binaries use the `rimsky-<thing>` prefix consistently. One minor sub-asymmetry already noted under `concept:conformance`: three of the four conformance binaries name their target (`-claim-producer-`, `-blob-backend-`, `-probe`), but the executor conformance is bare `rimsky-executor-conformance`.
 
 ### MCP server (operator control-plane shim)
 
@@ -818,7 +818,7 @@ A flat list of nouns that span layers or have non-trivial drift independent of a
 
 ### 8. Proto service `NodeExecutor` vs Go interface `Executor` vs operator-vocabulary `executor`
 
-- **Where:** `proto:executor.proto::NodeExecutor` (service) vs `code:protocols/executor/executor.go::Executor` (Go interface) vs `concept:executor` (concept slug) vs `executors/` (directory) vs `cmd/rimsky-conformance` (binary). The `Node` prefix appears only at the proto service level.
+- **Where:** `proto:executor.proto::NodeExecutor` (service) vs `code:protocols/executor/executor.go::Executor` (Go interface) vs `concept:executor` (concept slug) vs `executors/` (directory) vs `cmd/rimsky-executor-conformance` (binary). The `Node` prefix appears only at the proto service level.
 - **Drift call:** unclear — discuss.
 - **Plan:** decide whether to rename `proto:executor.proto::NodeExecutor` → `Executor` for cross-surface symmetry, OR rename the Go interface to `NodeExecutor` for proto-symmetry. Adjacent tensions: `tension:terminal-event-overloaded`, `tension:async-callback-body-key`.
 - **Decision (2026-05-12 walkthrough):**
@@ -874,7 +874,7 @@ A flat list of nouns that span layers or have non-trivial drift independent of a
   - **Snooze is first-class.** `ParkRequested` → `Snooze`. Carries the non-error metaphor explicitly ("wake me later"). Node state `parked` → `snoozing`. CLAUDE.md "Vocabulary" updates accordingly.
   - **Lifecycle-handler slots drop from 4 to 3.** `on_executor_blocked` folds into `on_executor_errored` (all error_class variants go through one handler; error_types policy discriminates). Touches `concept:lifecycle-handler` Boundaries + Invariants; resolves `tension:blocked-vs-errored-routing`; effectively re-resolves `tension:_resolved/handler-slot-count-drift` (the slot-count claim drops from 4+on-event-handler to 3+on-event-handler).
   - **Resolves:** `tension:terminal-event-overloaded`, `tension:blocked-vs-errored-routing`. Touches `concept:executor`, `concept:terminal-resolution`, `concept:lifecycle-handler`, `concept:parked-state` (renamed), `concept:node-state` (state-name update), `concept:error-policy`.
-  - **Implementer churn:** every executor implementation updates to the new shape — `executors/claude-agent/`, `executors/http-node/`, `executors/stub/`, conformance fixtures at `cmd/rimsky-conformance`, smoke fixture at `test/smoke/`. Wire-format-breaking; pre-v1 no consumer pin.
+  - **Implementer churn:** every executor implementation updates to the new shape — `executors/claude-agent/`, `executors/http-node/`, `executors/stub/`, conformance fixtures at `cmd/rimsky-executor-conformance`, smoke fixture at `test/smoke/`. Wire-format-breaking; pre-v1 no consumer pin.
   - **Not yet decided here:** the precise field shape of each outcome message (e.g., what fields go on `Error` vs the existing per-variant fields). Brainstorm pass will detail.
 
 ### 10. `cascade` covers two distinct walks (cascade-on-terminal stale-mark vs pure-cascade fresh-roll)
@@ -1071,7 +1071,7 @@ All cross-layer concerns and concept-row entries received explicit decisions dur
   - **#15** renames executor `GetCapabilities` → `Capabilities`; optional Go-side `CapabilitiesProvider` factor flagged for brainstorm.
 - **5 concept-level unclear-discuss entries** — all resolved (4 collapse into cross-layer decisions; 1 — `concept:error-policy` — gets its own decision: rename code file + function, keep concept slug + YAML field).
 - **3 concept-level rename-artifact entries** — all collapse into cross-layer decisions (#1, #1, #4+#13).
-- **8 aligned-with-caveat entries** — 6 resolved by cross-layer decisions; 1 (`concept:terminal-resolution`) confirmed aligned by design as the umbrella concept; 1 (`concept:conformance`) gets its own decision: rename `rimsky-conformance` → `rimsky-executor-conformance` for symmetry; probe binary stays generic.
+- **8 aligned-with-caveat entries** — 6 resolved by cross-layer decisions; 1 (`concept:terminal-resolution`) confirmed aligned by design as the umbrella concept; 1 (`concept:conformance`) gets its own decision: rename `rimsky-executor-conformance` → `rimsky-executor-conformance` for symmetry; probe binary stays generic.
 
 **New tensions surfaced during walkthrough:**
 

@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// templates.go — SQLite-backed persistence.TemplateStore. Mirrors
+// templates.go — SQLite-backed persistence.TemplateTable. Mirrors
 // foundation/persistence/postgres/templates.go method-for-method with SQLite
 // dialect translations per spec §6.3.
 package sqlite
@@ -15,8 +15,8 @@ import (
 	"fmt"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 const templateCols = `id, spec, state, registered_at, source`
@@ -168,7 +168,7 @@ func (s *templatesImpl) UpdateState(ctx context.Context, hash string, newState p
 
 func (s *templatesImpl) DeleteByHash(ctx context.Context, hash string, tx persistence.Tx) error {
 	if _, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_lifecycle_idempotency
+		`DELETE FROM rimsky_lifecycle_idempotencies
 		 WHERE scope_kind = 'template' AND scope_id = ?`, hash); err != nil {
 		return fmt.Errorf("templates.deleteByHash: cleanup lifecycle rows: %w", err)
 	}
@@ -203,7 +203,7 @@ func scanTemplate(sc scannable) (persistence.TemplateRow, error) {
 	if err := sc.Scan(&id, &specStr, &stateStr, &registeredAtStr, &source); err != nil {
 		return persistence.TemplateRow{}, err
 	}
-	var spec nodepkg.TemplateSpec
+	var spec spec.TemplateSpec
 	if err := json.Unmarshal([]byte(specStr), &spec); err != nil {
 		return persistence.TemplateRow{}, fmt.Errorf("unmarshal spec: %w", err)
 	}

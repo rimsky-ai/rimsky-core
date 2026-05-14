@@ -10,7 +10,7 @@ The Rimsky service-protocol surface is three protocols carried in the `protocols
 
 Each protocol has a corresponding conformance binary:
 
-- `cmd/rimsky-conformance/` — Executor + LifecycleSubscriber.
+- `cmd/rimsky-executor-conformance/` — Executor + LifecycleSubscriber.
 - `cmd/rimsky-claim-producer-conformance/` — ClaimProducer.
 - `cmd/rimsky-conformance-probe/` — utility helper used by `--require-stub-mode`.
 

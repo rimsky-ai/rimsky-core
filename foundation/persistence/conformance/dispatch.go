@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testDispatchClaimRelease(t *testing.T, d persistence.Driver) {
+func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	q := d.Queue()
@@ -49,7 +49,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Driver) {
 	)
 	tryClaim := func(supID string) {
 		defer wg.Done()
-		err := d.Store().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 				AcceptedExecutors: []string{"test-executor"},
 				AcceptedStores:    []string{},

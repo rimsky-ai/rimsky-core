@@ -16,12 +16,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -36,7 +36,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -51,17 +51,17 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("worker").Complete(map[string]any{"ok": 1}, true, "ran")
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": 1}, true, "ran")
 
 	// Template has no on_acquire_unavailable handler — silent-retry default.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-default", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -101,7 +101,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.NotEqual(t, shared.NodeStateFresh, wRow.State,
+	require.NotEqual(t, cascade.NodeStateFresh, wRow.State,
 		"silent-retry must NOT transition the node on Unavailable")
 
 	// Seed an item — the next scheduler tick should pick it up.
@@ -109,6 +109,6 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	require.NoError(t, err, "seed item")
 
 	// The node should now reach fresh via the silent retry.
-	require.True(t, h.WaitForNodeState(worker.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker did not reach fresh after seeding the queue (silent-retry default)")
 }

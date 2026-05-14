@@ -68,8 +68,8 @@ export type SystemSummary = {
   node_counts: Record<string, number>;
   instances_active: number;
   instances_terminated: number;
-  dispatches_claimed?: number;
-  dispatches_pending?: number;
+  node_runs_claimed?: number;
+  node_runs_pending?: number;
 };
 
 export type SupervisorRow = {
@@ -168,7 +168,7 @@ export type FrameListResponse = {
   next_cursor: string;
 };
 
-export type DispatchRow = {
+export type NodeRunRow = {
   id: string;
   node_id: string;
   executor_name?: string | null;
@@ -180,12 +180,12 @@ export type DispatchRow = {
   frame_id: string;
 };
 
-export type DispatchListResponse = {
-  dispatches: DispatchRow[];
+export type NodeRunListResponse = {
+  node_runs: NodeRunRow[];
   next_cursor: string;
 };
 
-export type DispatchDetail = {
+export type NodeRunDetail = {
   id: string;
   claim_id?: string | null;
   node_id: string;
@@ -208,7 +208,7 @@ export type LockHolderRow = {
   claim_id: string;
   lock_kind: string;
   lock_name?: string | null;
-  store_name?: string | null;
+  producer_name?: string | null;
   region_data?: string;
   intent?: string | null;
   holder_supervisor_id: string;

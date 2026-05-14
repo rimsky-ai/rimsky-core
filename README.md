@@ -62,7 +62,7 @@ Reference binaries (under `cmd/`):
     rimsky-control-api
     rimsky-migrate
     rimsky-cli
-    rimsky-conformance
+    rimsky-executor-conformance
     rimsky-conformance-probe
     rimsky-claim-producer-conformance
     rimsky-entrypoint

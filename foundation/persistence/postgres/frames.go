@@ -3,9 +3,9 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // frames.go is the postgres accessor for `rimsky_frames` and the related
-// frame-engine SQL on `rimsky_nodes`, `rimsky_worker_request`, and
+// frame-engine SQL on `rimsky_nodes`, `rimsky_node_runs`, and
 // `rimsky_instances`. Owns the SQL the frame engine
-// (modeling/frame/{engine,producer}.go) calls through `persistence.FrameStore`.
+// (graph/frame/{engine,producer}.go) calls through `persistence.FrameTable`.
 
 package postgres
 
@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // ListRunningFramesNoPendingNodes returns running frames whose nodes in
@@ -200,7 +200,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
         WHERE f.state = 'running'
           AND f.last_progress_at + (f.frame_timeout_ms || ' milliseconds')::interval < now()
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_worker_request d
+              SELECT 1 FROM rimsky_node_runs d
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
           )
           AND EXISTS (
@@ -228,7 +228,7 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persistence.Tx) ([]persistence.OrphanFrameDispatch, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT d.id, d.claimed_by, d.frame_id
-        FROM rimsky_worker_request d
+        FROM rimsky_node_runs d
         JOIN rimsky_frames f ON f.frame_id = d.frame_id
         WHERE d.claimed_by IS NOT NULL
           AND f.state IN ('completed','failed')
@@ -248,16 +248,16 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 	return out, rows.Err()
 }
 
-// LookupFrameMode reads (frame_resolution, frame_timeout_ms) for the
+// LookupFrameResolutionMode reads (frame_resolution_mode, frame_timeout_ms) for the
 // instance's template. Returns (mode, timeoutMs, nil) on success;
 // ("", 0, sql.ErrNoRows) when the instance is missing.
-func (s *framesImpl) LookupFrameMode(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (persistence.FrameMode, int64, error) {
+func (s *framesImpl) LookupFrameResolutionMode(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (persistence.FrameResolutionMode, int64, error) {
 	var (
 		mode           string
 		frameTimeoutMs int64
 	)
 	err := s.q(tx).QueryRow(ctx, `
-        SELECT COALESCE(t.spec->>'frame_resolution', '') AS mode,
+        SELECT COALESCE(t.spec->>'frame_resolution_mode', '') AS mode,
                COALESCE(NULLIF((t.spec->>'frame_timeout_ms'),'')::bigint, 600000) AS frame_timeout_ms
         FROM rimsky_instances i
         JOIN rimsky_templates  t ON t.id = i.template_hash
@@ -265,14 +265,14 @@ func (s *framesImpl) LookupFrameMode(ctx context.Context, instanceID shared.UUID
     `, instanceID).Scan(&mode, &frameTimeoutMs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", 0, fmt.Errorf("frames.LookupFrameMode: instance %s not found", instanceID)
+			return "", 0, fmt.Errorf("frames.LookupFrameResolutionMode: instance %s not found", instanceID)
 		}
-		return "", 0, fmt.Errorf("frames.LookupFrameMode: %w", err)
+		return "", 0, fmt.Errorf("frames.LookupFrameResolutionMode: %w", err)
 	}
 	if frameTimeoutMs <= 0 {
 		frameTimeoutMs = 600000
 	}
-	return persistence.FrameMode(mode), frameTimeoutMs, nil
+	return persistence.FrameResolutionMode(mode), frameTimeoutMs, nil
 }
 
 // EnqueueSerialFrame inserts a queued serial_queue frame.
@@ -282,7 +282,7 @@ func (s *framesImpl) EnqueueSerialFrame(
 	var frameID shared.UUID
 	err := s.q(tx).QueryRow(ctx, `
         INSERT INTO rimsky_frames
-            (instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
+            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
         VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), $3)
         RETURNING frame_id
     `, instanceID, sourceNodeID, frameTimeoutMs).Scan(&frameID)
@@ -306,9 +306,9 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 	var frameID shared.UUID
 	err := s.q(tx).QueryRow(ctx, `
         INSERT INTO rimsky_frames
-            (instance_id, mode, state, source_node_ids, queued_at, frame_timeout_ms)
+            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
         VALUES ($1, 'coalesce', 'queued', ARRAY[$2]::UUID[], now(), $3)
-        ON CONFLICT (instance_id) WHERE state = 'queued' AND mode = 'coalesce'
+        ON CONFLICT (instance_id) WHERE state = 'queued' AND frame_resolution_mode = 'coalesce'
         DO UPDATE SET source_node_ids = (
             CASE WHEN $2 = ANY(rimsky_frames.source_node_ids) THEN rimsky_frames.source_node_ids
                  ELSE array_append(rimsky_frames.source_node_ids, $2)
@@ -355,7 +355,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		fArg = *cursorFrameID
 	}
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT frame_id, instance_id, state, mode, started_at, ended_at,
+		`SELECT frame_id, instance_id, state, frame_resolution_mode, started_at, ended_at,
 		        frame_timeout_ms, queued_at
 		   FROM rimsky_frames
 		  WHERE ($1::uuid IS NULL OR instance_id = $1)
@@ -382,7 +382,7 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
 		r.State = persistence.FrameState(state)
-		r.Mode = persistence.FrameMode(mode)
+		r.Mode = persistence.FrameResolutionMode(mode)
 		lastQueued = qAt
 		out = append(out, r)
 	}
@@ -436,14 +436,14 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 }
 
 // CountHeldFrames returns the number of running frames that have at
-// least one parked rimsky_worker_request row attached via frame_id.
+// least one parked rimsky_node_runs row attached via frame_id.
 // Mirrors the predicate in /admin/diagnostics/held-frames.
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRow(ctx,
 		`SELECT COUNT(DISTINCT f.frame_id)
 		   FROM rimsky_frames f
-		   JOIN rimsky_worker_request d ON d.frame_id = f.frame_id
+		   JOIN rimsky_node_runs d ON d.frame_id = f.frame_id
 		  WHERE f.state = 'running' AND d.phase = 'parked'`,
 	).Scan(&n)
 	if err != nil {
@@ -460,7 +460,7 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		mode  string
 	)
 	err := s.q(tx).QueryRow(ctx,
-		`SELECT frame_id, instance_id, state, mode, started_at, ended_at, frame_timeout_ms
+		`SELECT frame_id, instance_id, state, frame_resolution_mode, started_at, ended_at, frame_timeout_ms
 		   FROM rimsky_frames WHERE frame_id = $1`,
 		frameID,
 	).Scan(&r.FrameID, &r.InstanceID, &state, &mode, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs)
@@ -471,6 +471,6 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		return nil, err
 	}
 	r.State = persistence.FrameState(state)
-	r.Mode = persistence.FrameMode(mode)
+	r.Mode = persistence.FrameResolutionMode(mode)
 	return &r, nil
 }

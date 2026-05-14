@@ -11,7 +11,7 @@ affects:
 
 ## What is muddy
 
-`modeling/controlapi/admin_force_fire.go:42-62` exposes the operator escape hatch as a `POST` endpoint that returns `204 No Content` on success. Internally the route calls `foundation/persistence/postgres/schedules.go:97-106::ForceFire`, which is `UPDATE rimsky_schedules SET next_fire_at = now() WHERE node_id = $1` — a single SQL statement.
+`control/controlapi/admin_force_fire.go` exposes the operator escape hatch as a `POST` endpoint that returns `204 No Content` on success. Internally the route calls `foundation/persistence/postgres/schedules.go::ForceFire`, which is `UPDATE rimsky_schedules SET next_fire_at = now() WHERE node_id = $1` — a single SQL statement.
 
 The actual invalidate dispatch is not inline. The next scheduler tick (default `TickInterval = 1500ms`) observes the bumped row through `DueBefore`, computes the new `next_fire_at`, and emits the invalidate at that point. Under multi-replica scheduler the advisory-lock guard ensures exactly-once per slot, but the latency between the 204 response and the actual fire is bounded below by the tick interval, not by the request-response cycle.
 
@@ -29,12 +29,12 @@ The design choice (row-write rather than direct invalidate dispatch) is correct 
 ## Resolution candidates (do NOT pick)
 
 - Return 202 Accepted (with a `Retry-After` or polling hint) instead of 204.
-- Document the asynchrony inline in `admin_force_fire.go` and at `docs/concepts/operational-health.md`.
+- Document the asynchrony inline in `control/controlapi/admin_force_fire.go` and at `docs/concepts/operational-health.md`.
 - Synchronously wait for the next tick before returning (rejected by design — would block the request thread on tick latency).
 
 ## Evidence
 
 - `_discover/2026-05-10-cron-no-backfill.md` Observations bullet "force-fire is row-write, not invalidate-dispatch".
-- `modeling/controlapi/admin_force_fire.go:42-62`.
-- `foundation/persistence/postgres/schedules.go:97-106`.
+- `control/controlapi/admin_force_fire.go`.
+- `foundation/persistence/postgres/schedules.go`.
 

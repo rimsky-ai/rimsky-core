@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // testInstancesUserdataOverridesRoundTrip verifies that
@@ -21,14 +21,14 @@ import (
 // on every driver. The shape is opaque to rimsky, so the test asserts
 // byte-equivalence (after JSON unmarshal canonicalisation) of the
 // nested-map payload.
-func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Driver) {
+func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()
 	id := uuid.New()
@@ -51,11 +51,11 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Driver)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "userdata-overrides", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -101,11 +101,11 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Driver)
 // nil) so the test exercises the column DEFAULT, not the application-
 // layer default. The raw INSERT is dispatched to a driver-specific
 // helper provided by the test harness (drivers do not expose raw SQL
-// via the persistence.Driver interface).
+// via the persistence.Database interface).
 func testInstancesUserdataOverridesMigrationBackfill(
 	t *testing.T,
-	d persistence.Driver,
-	rawExec func(t *testing.T, d persistence.Driver, sql string, args ...any),
+	d persistence.Database,
+	rawExec func(t *testing.T, d persistence.Database, sql string, args ...any),
 ) {
 	t.Helper()
 	defer d.Close()
@@ -113,18 +113,18 @@ func testInstancesUserdataOverridesMigrationBackfill(
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()
 	id := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "userdata-overrides-backfill", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",
@@ -170,25 +170,25 @@ func testInstancesUserdataOverridesMigrationBackfill(
 // testInstancesUserdataOverridesDefaultsEmpty verifies that omitting
 // UserdataOverrides on Create persists as an empty map (not nil), so
 // dispatch-time reads can deep-merge unconditionally.
-func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Driver) {
+func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := d.Store()
+	store := d.Tables()
 
 	tmpl := "sha256-" + uuid.NewString()
 	id := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
-			Spec: nodepkg.TemplateSpec{
+			Spec: spec.TemplateSpec{
 				Name: "userdata-overrides-default", Version: "1",
-				FrameResolution: nodepkg.FrameResolutionSerialQueue,
-				FrameTimeoutMs:  600000,
-				Nodes:           []nodepkg.TemplateNodeDef{{Type: "n", Executor: "e"}},
+				FrameResolutionMode: spec.FrameResolutionSerialQueue,
+				FrameTimeoutMs:      600000,
+				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
 			},
 			State:  persistence.TemplateStateRegistered,
 			Source: "direct",

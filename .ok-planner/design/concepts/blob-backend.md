@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-`persistence.BlobBackend` (`foundation/persistence/blob.go`) is the abstraction that backs spilled byte streams from three surfaces: attribute values (`rimsky_node_attributes.data`), parked-node payloads (`rimsky_worker_request.parked_payload_*`), and named-event payloads (`rimsky_node_events.payload_*`). Five methods (`Write`, `Read`, `ReadRange`, `Delete`, `Name`). Four impls: `inline` (default; spill disabled), `pg-largeobject`, `filesystem`, `memory` (dev-only).
+`persistence.BlobBackend` (`foundation/persistence/blob.go`) is the abstraction that backs spilled byte streams from three surfaces: attribute values (`rimsky_node_attributes.data`), parked-node payloads (`rimsky_node_runs.parked_payload_*`), and named-event payloads (`rimsky_node_events.payload_*`). Five methods (`Write`, `Read`, `ReadRange`, `Delete`, `Name`). Four impls: `inline` (default; spill disabled), `pg-largeobject`, `filesystem`, `memory` (dev-only).
 
 ## Purpose
 
@@ -20,7 +20,7 @@ A 50KB attribute value, a 200MB parked payload, and a 10-byte event payload all 
 
 ## Boundaries
 
-Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledger and sweep. Does NOT own: substitution (see `attribute`), claim-payload bytes (those are claim-handle-owned), userdata (always inline). Adjacent: `attribute`, `parked-state`, `named-event`, `opacity`, `persistence-driver`.
+Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledger and sweep. Does NOT own: substitution (see `attribute`), claim-payload bytes (those are claim-handle-owned), userdata (always inline). Adjacent: `attribute`, `parked-state`, `named-event`, `inertness`, `persistence-database`.
 
 ## Invariants
 

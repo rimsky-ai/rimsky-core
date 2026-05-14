@@ -167,7 +167,7 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 func TestCapabilitiesIsSyncEnvelope(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	caps := st.Capabilities()
-	if len(caps.WriteSemanticsEnvelope) != 1 || string(caps.WriteSemanticsEnvelope[0]) != "sync" {
-		t.Fatalf("expected envelope [sync], got %v", caps.WriteSemanticsEnvelope)
+	if len(caps.WriteSemanticsAllowed) != 1 || string(caps.WriteSemanticsAllowed[0]) != "sync" {
+		t.Fatalf("expected envelope [sync], got %v", caps.WriteSemanticsAllowed)
 	}
 }

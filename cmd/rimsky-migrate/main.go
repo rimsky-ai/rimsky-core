@@ -10,12 +10,11 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/fallguy/rimsky/control/config"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/shared"
-
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"   // register driver
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 func main() {

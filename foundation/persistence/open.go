@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 )
 
-// Open constructs a Driver for the given config. Validates mutual
+// Open constructs a Database for the given config. Validates mutual
 // exclusion of postgres / sqlite sub-blocks (spec §8.2) and dispatches to
 // the per-driver constructor. Constructors live in postgres/ and sqlite/
 // and are wired in via package init().
-func Open(ctx context.Context, cfg Config) (Driver, error) {
+func Open(ctx context.Context, cfg Config) (Database, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("persistence: invalid config: %w", err)
 	}
@@ -76,18 +76,18 @@ var (
 	openSQLite   = stubOpenSQLite
 )
 
-func stubOpenPostgres(context.Context, PostgresConfig) (Driver, error) {
+func stubOpenPostgres(context.Context, PostgresConfig) (Database, error) {
 	return nil, errors.New("postgres driver not yet wired")
 }
-func stubOpenSQLite(context.Context, SQLiteConfig) (Driver, error) {
+func stubOpenSQLite(context.Context, SQLiteConfig) (Database, error) {
 	return nil, errors.New("sqlite driver not yet wired")
 }
 
 // RegisterPostgres / RegisterSQLite are called from each driver's init()
 // to install the constructor. Tests may also call these to install fakes.
-func RegisterPostgres(fn func(context.Context, PostgresConfig) (Driver, error)) {
+func RegisterPostgres(fn func(context.Context, PostgresConfig) (Database, error)) {
 	openPostgres = fn
 }
-func RegisterSQLite(fn func(context.Context, SQLiteConfig) (Driver, error)) {
+func RegisterSQLite(fn func(context.Context, SQLiteConfig) (Database, error)) {
 	openSQLite = fn
 }

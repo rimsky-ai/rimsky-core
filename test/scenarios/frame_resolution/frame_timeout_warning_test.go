@@ -26,16 +26,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameTimeoutWarning(t *testing.T) {
 	t.Parallel()
 	// NoSupervisor: true — this test pre-arranges the wedged frame
-	// state via direct DELETEs against rimsky_worker_request /
-	// rimsky_claim_handle / rimsky_frames and then drives
+	// state via direct DELETEs against rimsky_node_runs /
+	// rimsky_claim_handles / rimsky_frames and then drives
 	// frame.RunTick manually. A live supervisor poll-loop holds row
 	// locks on those tables (via SelectCandidates / acquisition tx /
 	// the new RefreshProgress UPDATE inside enforceAndUpdate) that
@@ -45,10 +45,10 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name:            "timeout-warning",
-		Version:         "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
-		FrameTimeoutMs:  60000,
+		Name:                "timeout-warning",
+		Version:             "1",
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		FrameTimeoutMs:      60000,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -58,7 +58,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frame for this instance so we have full control.
-	h.ExecSQL(`DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
@@ -70,7 +70,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	// is now compared against last_progress_at (not started_at).
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '3 minutes', now() - interval '2 minutes', now() - interval '2 minutes', 60000)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
@@ -85,7 +85,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Drive the frame engine.
-	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(), logger))
+	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), logger))
 
 	// Warning fires; references the frame_id.
 	logged := buf.String()

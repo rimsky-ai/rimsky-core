@@ -2,11 +2,16 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// main.go — executor-stub. Standalone gRPC server wrapping the
-// executors/stub Stub in stub mode. Used by the quickstart and any
-// deployment that needs a no-op executor: every Execute call returns a
-// single Complete with `changed: true` and `change_summary: "stub"`,
-// keyed only on `node_type` via stub.StubAttributesFor.
+// main.go — rimsky-executor-stub. Standalone gRPC server wrapping the
+// executors/stub test-double Executor in stub mode. Used by the
+// quickstart and any deployment that needs a no-op executor: every
+// Execute call returns a single Success outcome with `changed: true`
+// and `change_summary: "stub"`, keyed only on `node_type` via
+// stub.StubAttributesFor.
+//
+// NOT a skeleton template for writing your own executor — see
+// executors/stub/README.md and the reference impls
+// executors/http-node/ + executors/claude-agent/.
 package main
 
 import (
@@ -36,7 +41,7 @@ func main() {
 	}
 	srv := grpc.NewServer()
 	s := stub.New().EnableStubMode()
-	genv1.RegisterNodeExecutorServer(srv, s)
+	genv1.RegisterExecutorServer(srv, s)
 	stub.RegisterObservability(srv)
 
 	sigCh := make(chan os.Signal, 1)

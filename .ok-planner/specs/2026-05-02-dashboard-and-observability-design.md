@@ -586,7 +586,7 @@ What the dashboard exposes to the deployment layer (the *what*, not the *how* โ€
 
 Extend existing tooling additively; do not fork.
 
-- `rimsky-conformance` gains a `--check-observability` flag. When set, after the dispatch-protocol probes succeed, the binary additionally:
+- `rimsky-executor-conformance` gains a `--check-observability` flag. When set, after the dispatch-protocol probes succeed, the binary additionally:
   - Calls `ExecutorObservability.GetCapabilities()`. Validates the proto message shape.
   - If `supports_trace_get`, runs a canned dispatch (in stub mode) and calls `GetTrace(dispatch_id)`. Validates the `Trace` envelope, validates that any standard-vocabulary events have the required `attributes` keys, validates that `complete: true` is set after dispatch terminal-s.
   - If `supports_trace_stream`, runs a canned dispatch and consumes `StreamTrace`. Validates that the stream replays history, that `trace_complete` is sent at terminal, that the connection closes cleanly.
@@ -667,7 +667,7 @@ core/
     rimsky_yml.go                     # adds optional observability_endpoint field per executor
                                       # and per store entry (ยง4.1)
   cmd/
-    rimsky-conformance/
+    rimsky-executor-conformance/
       main.go                         # adds --check-observability flag
       observability_check.go          # NEW
     rimsky-store-conformance/

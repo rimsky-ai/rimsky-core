@@ -108,7 +108,7 @@ Two new test tiers, both rimsky-internal:
 
 These are useful both as CI assertions ("the resume retry actually fires") and as cost-bounded reproduction harnesses for new failure modes.
 
-Mechanically: a small `cmd/rimsky-synthetic-blocker/` binary (or a `--scenario synthetic-blocker-N` flag on `rimsky-conformance`) brings up the stack, dispatches the canned template, watches `/events/stream`, asserts the expected event sequence, and exits non-zero on deviation.
+Mechanically: a small `cmd/rimsky-synthetic-blocker/` binary (or a `--scenario synthetic-blocker-N` flag on `rimsky-executor-conformance`) brings up the stack, dispatches the canned template, watches `/events/stream`, asserts the expected event sequence, and exits non-zero on deviation.
 
 ## Open questions
 

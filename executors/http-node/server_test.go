@@ -97,9 +97,9 @@ func TestExecute_HappyPath_200JSON(t *testing.T) {
 	if term == nil {
 		t.Fatal("no terminal event")
 	}
-	cmp := term.GetComplete()
+	cmp := term.GetStreamClose().GetSuccess()
 	if cmp == nil {
-		t.Fatalf("expected Complete, got %T", term.GetEvent())
+		t.Fatalf("expected Success, got %T", term.GetEvent())
 	}
 	if !cmp.GetChanged() {
 		t.Error("expected changed=true")
@@ -126,9 +126,9 @@ func TestExecute_404_ReturnsHTTPUnexpectedStatus(t *testing.T) {
 	req := newRequest(t, map[string]any{"url": ts.URL})
 	_ = s.executeCore(context.Background(), req, c.send)
 
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored terminal, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "http_unexpected_status" {
 		t.Errorf("error_class=%q, want http_unexpected_status", errd.GetErrorClass())
@@ -142,9 +142,9 @@ func TestExecute_NetworkError_ReturnsHTTPRequestFailed(t *testing.T) {
 	req := newRequest(t, map[string]any{"url": "http://127.0.0.1:1/does-not-exist"})
 	_ = s.executeCore(context.Background(), req, c.send)
 
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored terminal, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "http_request_failed" {
 		t.Errorf("error_class=%q, want http_request_failed", errd.GetErrorClass())
@@ -157,9 +157,9 @@ func TestExecute_MalformedUserdata_MissingURL(t *testing.T) {
 	req := newRequest(t, map[string]any{"method": "GET"})
 	_ = s.executeCore(context.Background(), req, c.send)
 
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored terminal, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "invalid_userdata" {
 		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
@@ -175,9 +175,9 @@ func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 		t.Fatalf("executeCore: %v", err)
 	}
 
-	cmp := c.terminal().GetComplete()
+	cmp := c.terminal().GetStreamClose().GetSuccess()
 	if cmp == nil {
-		t.Fatalf("expected Complete, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Success, got %+v", c.terminal().GetEvent())
 	}
 	got := cmp.GetAttributesDelta().AsMap()
 	if got["stub"] != true {
@@ -201,9 +201,9 @@ func TestStubMode_RejectsMalformedUserdata(t *testing.T) {
 	if len(c.events) < 2 {
 		t.Fatalf("expected >=2 events (heartbeat + errored), got %d", len(c.events))
 	}
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored terminal, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "invalid_userdata" {
 		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
@@ -223,7 +223,7 @@ func TestStubMode_WithCustomStubResponse(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	got := c.terminal().GetComplete().GetAttributesDelta().AsMap()
+	got := c.terminal().GetStreamClose().GetSuccess().GetAttributesDelta().AsMap()
 	if got["id"] != "abc" || got["done"] != true {
 		t.Errorf("custom stub_response not returned: %+v", got)
 	}
@@ -246,9 +246,9 @@ func TestExecute_WithCustomExpectStatus(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	cmp := c.terminal().GetComplete()
+	cmp := c.terminal().GetStreamClose().GetSuccess()
 	if cmp == nil {
-		t.Fatalf("expected Complete, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Success, got %+v", c.terminal().GetEvent())
 	}
 	got := cmp.GetAttributesDelta().AsMap()
 	if got["brew"] != "done" {
@@ -307,10 +307,10 @@ func TestHTTPBridge_PostExecute_ReturnsNdjsonStream(t *testing.T) {
 		t.Fatalf("expected >=2 events (heartbeat + terminal), got %d", len(events))
 	}
 	last := events[len(events)-1]
-	if last.GetComplete() == nil {
-		t.Fatalf("expected Complete terminal, got %+v", last.GetEvent())
+	if last.GetStreamClose().GetSuccess() == nil {
+		t.Fatalf("expected Success terminal, got %+v", last.GetEvent())
 	}
-	got := last.GetComplete().GetAttributesDelta().AsMap()
+	got := last.GetStreamClose().GetSuccess().GetAttributesDelta().AsMap()
 	if got["hello"] != "world" {
 		t.Errorf("unexpected attributes_delta: %+v", got)
 	}
@@ -331,7 +331,7 @@ func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	got := c.terminal().GetComplete().GetAttributesDelta().AsMap()
+	got := c.terminal().GetStreamClose().GetSuccess().GetAttributesDelta().AsMap()
 	if _, ok := got["body_base64"]; !ok {
 		t.Errorf("expected body_base64, got %+v", got)
 	}
@@ -353,9 +353,9 @@ func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	c := &collector{}
 	req := newRequest(t, map[string]any{"url": ts.URL})
 	_ = s.executeCore(context.Background(), req, c.send)
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "http_response_parse_failed" {
 		t.Errorf("error_class=%q, want http_response_parse_failed", errd.GetErrorClass())
@@ -426,7 +426,7 @@ func TestExecute_AttributesAsRequestBody(t *testing.T) {
 	if !strings.Contains(gotCT, "json") {
 		t.Errorf("expected json Content-Type, got %q", gotCT)
 	}
-	delta := c.terminal().GetComplete().GetAttributesDelta().AsMap()
+	delta := c.terminal().GetStreamClose().GetSuccess().GetAttributesDelta().AsMap()
 	if delta["upstream_ack"] != true {
 		t.Errorf("expected attributes_delta to mirror upstream JSON body, got %+v", delta)
 	}
@@ -469,9 +469,9 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 	c := &collector{}
 	req := newRequest(t, map[string]any{"url": ts.URL})
 	_ = s.executeCore(context.Background(), req, c.send)
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "http_response_parse_failed" {
 		t.Errorf("error_class=%q, want http_response_parse_failed", errd.GetErrorClass())
@@ -491,9 +491,9 @@ func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
-	errd := c.terminal().GetErrored()
+	errd := c.terminal().GetStreamClose().GetError()
 	if errd == nil {
-		t.Fatalf("expected Errored, got %+v", c.terminal().GetEvent())
+		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
 	if errd.GetErrorClass() != "invalid_userdata" {
 		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())

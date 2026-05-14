@@ -24,7 +24,7 @@ claim_producers:
   workspace_files:
     kind: filesystem
     endpoint: dns:fs-producer.svc.cluster.local:9001
-    write_semantics_envelope: [exclusive]
+    write_semantics_allowed: [exclusive]
     config:
       root: /var/lib/rimsky/workspace
 ```
@@ -51,7 +51,7 @@ go test ./stores/filesystem/...
 ## Operating
 
 The producer is stateless on its own; the only persistent state is
-the held-claim metadata in rimsky's `rimsky_claim_handle`. The
+the held-claim metadata in rimsky's `rimsky_claim_handles`. The
 producer enforces TTL on its in-memory claim registry and exposes
 the standard `Capabilities()` handshake for the rimsky-side client to
 populate the per-producer metadata cache.

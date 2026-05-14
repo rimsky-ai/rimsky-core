@@ -130,13 +130,13 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.Intent)
 		}
 		return srv.Open(ctx, &genv1.OpenRequest{
-			ClaimId:    req.ClaimID,
-			StoreName:  req.StoreName,
-			Selector:   req.Selector,
-			Intent:     req.Intent,
-			Alias:      req.Alias,
-			TemplateId: req.TemplateID,
-			InstanceId: req.InstanceID,
+			ClaimId:      req.ClaimID,
+			ProducerName: req.ProducerName,
+			Selector:     req.Selector,
+			Intent:       req.Intent,
+			Alias:        req.Alias,
+			TemplateId:   req.TemplateID,
+			InstanceId:   req.InstanceID,
 		})
 	case "commit":
 		var req actionBody
@@ -226,13 +226,13 @@ func dispatchLifecycle(ctx context.Context, srv genv1.LifecycleSubscriberServer,
 
 // openBody is the JSON shape decoded from POST /v1/open.
 type openBody struct {
-	ClaimID    string `json:"claim_id"`
-	StoreName  string `json:"store_name"`
-	Selector   string `json:"selector"`
-	Intent     string `json:"intent"`
-	Alias      string `json:"alias"`
-	TemplateID string `json:"template_id"`
-	InstanceID string `json:"instance_id"`
+	ClaimID      string `json:"claim_id"`
+	ProducerName string `json:"producer_name"`
+	Selector     string `json:"selector"`
+	Intent       string `json:"intent"`
+	Alias        string `json:"alias"`
+	TemplateID   string `json:"template_id"`
+	InstanceID   string `json:"instance_id"`
 }
 
 // actionBody is the JSON shape decoded from POST /v1/{commit,abandon,

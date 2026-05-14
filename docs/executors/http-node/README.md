@@ -45,7 +45,7 @@ dispatch. `response.extract` uses JSONPath to populate
 - **`Complete`** is emitted on a status code in
   `response.success_codes` (default `[200]`). The extracted fields
   flow into `attributes_delta`.
-- **`Errored`** is emitted on a non-success code; the response body
+- **`Error{error_class}`** is emitted on a non-success code; the response body
   is included in the payload for debugging.
 - **`Errored { error_class: "transport" }`** is emitted on connection
   failure or timeout.

@@ -880,7 +880,7 @@ A short reference for terms specific to this design doc that the glossary doesn'
 - **Probe** — A node whose work writes its own scope while exercising upstream scopes realistically. Not a guard; its output is consumed downstream.
 - **Four-layer model** — The architectural separation of foundation, modeling, service protocols, and bundled services. See `docs/architecture.md` §1.
 - **Async handoff** — Protocol pattern where an executor returns `AsyncAccepted` immediately and later posts the terminal outcome to a callback URL. Lets executors with long-running internal work avoid holding the `Execute` stream open.
-- **Conformance suite** — The `rimsky-conformance` binary that validates a given executor endpoint against the protocol contract.
+- **Conformance suite** — The `rimsky-executor-conformance` binary that validates a given executor endpoint against the protocol contract.
 - **`@blessed-invariant`** — A source annotation marking a load-bearing property that implementation changes must preserve.
 - **`fresh` / `stale` / `running` / `failed`** — The four node states.
 - **`changed` (commit verdict)** — Boolean declared by the producer on every commit: true if the new output differs meaningfully from the previous version, false otherwise. Governs whether `recalculate` fans out.

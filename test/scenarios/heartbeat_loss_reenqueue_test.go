@@ -5,7 +5,7 @@
 // Scenario 12 — heartbeat loss: a node appears running with a stale
 // last_heartbeat_at. The scheduler's sweep transitions it running→stale,
 // emits heartbeat_lost, and re-enqueues. In addition, an expired
-// `rimsky_claim_handle` row owned by the same zombie supervisor is reaped
+// `rimsky_claim_handles` row owned by the same zombie supervisor is reaped
 // by the §7.5 step-2 lock-holder sweep.
 //
 // Migrated to the stores-redesign template grammar (spec §11): the worker
@@ -23,10 +23,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestHeartbeatLossReenqueue(t *testing.T) {
@@ -59,10 +59,10 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.NoError(t, err)
 
 	// Remove any auto-enqueued dispatch row so we can observe re-enqueue.
-	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_worker_request WHERE node_id = $1`, n.ID)
+	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
 
-	// Seed an expired `rimsky_claim_handle` row tied to the zombie node +
+	// Seed an expired `rimsky_claim_handles` row tied to the zombie node +
 	// supervisor so the §7.5 step-2 sweep has something to reap. We pick
 	// kind='named' to avoid pulling a real claim_store into the harness;
 	// the sweep's per-row reap path is identical for all three kinds modulo
@@ -91,7 +91,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 			got = r
 			return err
 		})
-		if got != nil && got.State == shared.NodeStateStale {
+		if got != nil && got.State == cascade.NodeStateStale {
 			sawStale = true
 			break
 		}
@@ -112,17 +112,17 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 
 	// A fresh dispatch row should exist (re-enqueued).
 	var dispatchID uuid.UUID
-	require.NoError(t, h.Pool.QueryRow(h.Ctx, `SELECT id FROM rimsky_worker_request WHERE node_id = $1`, n.ID).Scan(&dispatchID),
+	require.NoError(t, h.Pool.QueryRow(h.Ctx, `SELECT id FROM rimsky_node_runs WHERE node_id = $1`, n.ID).Scan(&dispatchID),
 		"expected re-enqueued dispatch row")
 	// And no claim is held against it (the dispatch row is a fresh
 	// re-enqueue from the scheduler, not a survival of the zombie's claim).
 	var claimedBy *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`, dispatchID).Scan(&claimedBy))
+		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`, dispatchID).Scan(&claimedBy))
 	require.Nil(t, claimedBy, "re-enqueued dispatch row should not be claimed")
 
 	// The §7.5 step-2 lock-holder sweep should reap the expired row we
-	// seeded above. Poll rimsky_claim_handle directly until the row is gone.
+	// seeded above. Poll rimsky_claim_handles directly until the row is gone.
 	deadline = time.Now().Add(25 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {

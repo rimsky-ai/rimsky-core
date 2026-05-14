@@ -39,14 +39,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/control/observability"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/observability"
-	"github.com/fallguy/rimsky/modeling/shared"
-
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite" // register driver
+	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"   // register driver
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
@@ -231,7 +230,7 @@ func main() {
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	defer cancelGauges()
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
-		mhook.StartGaugeRefresher(gaugeCtx, driver.Store(), driver.Queue(), 0, log)
+		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
 	}
 
 	// Plan F6/F7: refresh the executor capability cache periodically so

@@ -42,15 +42,15 @@ forbidden:
 
   # Spec §7.3 additions (obsolete table names — strict word-boundary match).
   - term: '\brimsky_dispatch\b'
-    replacement: rimsky_worker_request
+    replacement: rimsky_node_runs
     scope: *public_surface_md
 
   - term: '\brimsky_lock_holders\b'
-    replacement: rimsky_claim_handle
+    replacement: rimsky_claim_handles
     scope: *public_surface_md
 
   - term: '\brimsky_store_lifecycle\b'
-    replacement: rimsky_lifecycle_idempotency
+    replacement: rimsky_lifecycle_idempotencies
     scope: *public_surface_md
 
   # Protocol-layer interface name `Store`. The pattern matches only the
@@ -71,7 +71,7 @@ forbidden:
   # NOT matched here because they are pre-consolidation table names that
   # were never themselves in the public surface; this rule catches the
   # current-but-internal table names.
-  - term: '\brimsky_(claim_handle|worker_request|claim_holders|templates|nodes|template_tags|instances|schedules|lifecycle_idempotency|node_attributes|events)\b'
+  - term: '\brimsky_(claim_handles|node_runs|claim_holders|templates|nodes|template_tags|instances|schedules|lifecycle_idempotencies|node_attributes|events)\b'
     replacement: 'consumer-visible language (e.g. "the claim handle", "the per-run record", "the registered-template store")'
     scope: *public_surface_md
 
@@ -107,4 +107,166 @@ forbidden:
 
   - term: '\btemplate_hash TEXT\b'
     replacement: 'template_hash (without SQL type)'
+    scope: *public_surface_md
+
+  # 2026-05-12 nomenclature-resolution retirements (spec:2026-05-12-nomenclature-resolution).
+  # Each entry catches a retired term reappearing on the public surface.
+
+  # YAML key retirements (spec Group B.6 / C.1 / C.2).
+  - term: '^stores:'
+    replacement: 'claim_producers:'
+    scope: *public_surface_md
+
+  # Audit-log/event-payload + DB-column rename
+  # (spec:2026-05-12-nomenclature-resolution Group B.1 follow-up). The
+  # noun `store_name` was retired as a public-surface field name in event
+  # payloads, in `table:rimsky_claim_handles`, and in observability query
+  # parameters. The colloquial-prose use of "store" at the bundled-services
+  # layer is unaffected (this pattern is word-anchored on the snake_case
+  # token only).
+  - term: '\bstore_name\b'
+    replacement: producer_name
+    scope: *public_surface_md
+
+  - term: '^\s*write_semantics:\s'
+    replacement: 'write_semantics_allowed: [list]'
+    scope: *public_surface_md
+
+  - term: '\bwrite_semantics_envelope\b'
+    replacement: write_semantics_allowed
+    scope: *public_surface_md
+
+  # Template YAML field rename (spec D.1–D.3).
+  - term: '^\s*frame_resolution:\s'
+    replacement: 'frame_resolution_mode:'
+    scope: *public_surface_md
+
+  # Schema/Go-side rename residue (spec A / D / I).
+  - term: '\bworker_request\b'
+    replacement: node_run
+    scope: *public_surface_md
+
+  - term: '\bworker_request_id\b'
+    replacement: node_run_id
+    scope: *public_surface_md
+
+  - term: '\bWorkerRequest\b'
+    replacement: NodeRun
+    scope: *public_surface_md
+
+  # Proto service rename (spec E.1).
+  - term: '\bNodeExecutor\b'
+    replacement: Executor
+    scope: *public_surface_md
+
+  # Capabilities RPC harmonization (spec E.11 / B.4).
+  - term: '\bGetCapabilities\b'
+    replacement: Capabilities
+    scope: *public_surface_md
+
+  - term: '\bStoreObservability\b'
+    replacement: ClaimProducerObservability
+    scope: *public_surface_md
+
+  # Invariant 11 wording change (spec G.3).
+  - term: 'Userdata is opaque'
+    replacement: '"Userdata is inert in Rimsky" (per invariant 11)'
+    scope: *public_surface_md
+
+  # Lifecycle slot retirement (spec E.10).
+  - term: '\bon_executor_blocked\b'
+    replacement: 'on_executor_errored (with error_types: { executor_blocked: ... } mapping)'
+    scope: *public_surface_md
+
+  # 2026-05-13 persistence interface rename (deferred B.7 follow-up of
+  # spec:2026-05-12-nomenclature-resolution): persistence.Driver →
+  # persistence.Database; persistence.Store umbrella → persistence.Tables;
+  # 14 per-row-type sub-interfaces normalized to singular <RowKind>Table.
+  # The adapter-selector string Config.Driver ("postgres"/"sqlite") stays.
+  - term: '\bpersistence\.Driver\b'
+    replacement: persistence.Database
+    scope: *public_surface_md
+
+  - term: '\bpersistence\.Store\b'
+    replacement: persistence.Tables
+    scope: *public_surface_md
+
+  - term: '\bTemplateStore\b'
+    replacement: TemplateTable
+    scope: *public_surface_md
+
+  - term: '\bTemplateTagsStore\b'
+    replacement: TemplateTagTable
+    scope: *public_surface_md
+
+  - term: '\bInstanceStore\b'
+    replacement: InstanceTable
+    scope: *public_surface_md
+
+  - term: '\bLifecycleIdempotencyStore\b'
+    replacement: LifecycleIdempotencyTable
+    scope: *public_surface_md
+
+  - term: '\bNodeStore\b'
+    replacement: NodeTable
+    scope: *public_surface_md
+
+  - term: '\bClaimHandlesStore\b'
+    replacement: ClaimHandleTable
+    scope: *public_surface_md
+
+  - term: '\bNodeAttributesStore\b'
+    replacement: NodeAttributeTable
+    scope: *public_surface_md
+
+  - term: '\bClaimHoldersStore\b'
+    replacement: ClaimHolderTable
+    scope: *public_surface_md
+
+  - term: '\bEventStore\b'
+    replacement: EventTable
+    scope: *public_surface_md
+
+  - term: '\bScheduleStore\b'
+    replacement: ScheduleTable
+    scope: *public_surface_md
+
+  - term: '\bSupervisorStore\b'
+    replacement: SupervisorTable
+    scope: *public_surface_md
+
+  - term: '\bFrameStore\b'
+    replacement: FrameTable
+    scope: *public_surface_md
+
+  - term: '\bBlobOrphansStore\b'
+    replacement: BlobOrphanTable
+    scope: *public_surface_md
+
+  - term: '\bNodeEventsStore\b'
+    replacement: NodeEventTable
+    scope: *public_surface_md
+
+  # Wire-event renames (spec E.2). The literal proto-message words
+  # `Blocked`, `Errored`, `Complete`, `AsyncAccepted`, `ParkRequested` are
+  # retired as wire-event names. Bare English usages are unaffected
+  # because the patterns require backtick or capitalized-noun context.
+  - term: '`Blocked`'
+    replacement: '`Error{error_class: "executor_blocked"}` (post-E.2 collapse)'
+    scope: *public_surface_md
+
+  - term: '`Errored`'
+    replacement: '`Error{error_class}` (post-E.2 wire collapse)'
+    scope: *public_surface_md
+
+  - term: '`AsyncAccepted`'
+    replacement: '`AwaitAsyncCallback` (post-E.2 rename)'
+    scope: *public_surface_md
+
+  - term: '`ParkRequested`'
+    replacement: '`Park`'
+    scope: *public_surface_md
+
+  - term: '`Snooze`'
+    replacement: '`Park`'
     scope: *public_surface_md

@@ -22,10 +22,10 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Driver) {
+func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	lockHolderID := uuid.New()
 	supID := "autoterminal-supervisor"

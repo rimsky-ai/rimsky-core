@@ -22,9 +22,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ExecutorObservability_GetCapabilities_FullMethodName = "/rimsky.v1.ExecutorObservability/GetCapabilities"
-	ExecutorObservability_GetTrace_FullMethodName        = "/rimsky.v1.ExecutorObservability/GetTrace"
-	ExecutorObservability_StreamTrace_FullMethodName     = "/rimsky.v1.ExecutorObservability/StreamTrace"
+	ExecutorObservability_Capabilities_FullMethodName = "/rimsky.v1.ExecutorObservability/Capabilities"
+	ExecutorObservability_GetTrace_FullMethodName     = "/rimsky.v1.ExecutorObservability/GetTrace"
+	ExecutorObservability_StreamTrace_FullMethodName  = "/rimsky.v1.ExecutorObservability/StreamTrace"
 )
 
 // ExecutorObservabilityClient is the client API for ExecutorObservability service.
@@ -33,10 +33,10 @@ const (
 //
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (node_executor.proto) is unchanged. See
+// The dispatch protocol (executor.proto) is unchanged. See
 // docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
 type ExecutorObservabilityClient interface {
-	GetCapabilities(ctx context.Context, in *GetCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error)
+	Capabilities(ctx context.Context, in *ExecutorCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error)
 	GetTrace(ctx context.Context, in *GetTraceRequest, opts ...grpc.CallOption) (*Trace, error)
 	StreamTrace(ctx context.Context, in *StreamTraceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TraceEvent], error)
 }
@@ -49,10 +49,10 @@ func NewExecutorObservabilityClient(cc grpc.ClientConnInterface) ExecutorObserva
 	return &executorObservabilityClient{cc}
 }
 
-func (c *executorObservabilityClient) GetCapabilities(ctx context.Context, in *GetCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error) {
+func (c *executorObservabilityClient) Capabilities(ctx context.Context, in *ExecutorCapabilitiesRequest, opts ...grpc.CallOption) (*ObservabilityCapabilities, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ObservabilityCapabilities)
-	err := c.cc.Invoke(ctx, ExecutorObservability_GetCapabilities_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, ExecutorObservability_Capabilities_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +94,10 @@ type ExecutorObservability_StreamTraceClient = grpc.ServerStreamingClient[TraceE
 //
 // ExecutorObservability is the optional read-only protocol every
 // executor MAY implement to expose per-dispatch traces to dashboards.
-// The dispatch protocol (node_executor.proto) is unchanged. See
+// The dispatch protocol (executor.proto) is unchanged. See
 // docs/specs/2026-05-02-dashboard-and-observability-design.md §2.
 type ExecutorObservabilityServer interface {
-	GetCapabilities(context.Context, *GetCapabilitiesRequest) (*ObservabilityCapabilities, error)
+	Capabilities(context.Context, *ExecutorCapabilitiesRequest) (*ObservabilityCapabilities, error)
 	GetTrace(context.Context, *GetTraceRequest) (*Trace, error)
 	StreamTrace(*StreamTraceRequest, grpc.ServerStreamingServer[TraceEvent]) error
 	mustEmbedUnimplementedExecutorObservabilityServer()
@@ -110,8 +110,8 @@ type ExecutorObservabilityServer interface {
 // pointer dereference when methods are called.
 type UnimplementedExecutorObservabilityServer struct{}
 
-func (UnimplementedExecutorObservabilityServer) GetCapabilities(context.Context, *GetCapabilitiesRequest) (*ObservabilityCapabilities, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetCapabilities not implemented")
+func (UnimplementedExecutorObservabilityServer) Capabilities(context.Context, *ExecutorCapabilitiesRequest) (*ObservabilityCapabilities, error) {
+	return nil, status.Error(codes.Unimplemented, "method Capabilities not implemented")
 }
 func (UnimplementedExecutorObservabilityServer) GetTrace(context.Context, *GetTraceRequest) (*Trace, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTrace not implemented")
@@ -140,20 +140,20 @@ func RegisterExecutorObservabilityServer(s grpc.ServiceRegistrar, srv ExecutorOb
 	s.RegisterService(&ExecutorObservability_ServiceDesc, srv)
 }
 
-func _ExecutorObservability_GetCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetCapabilitiesRequest)
+func _ExecutorObservability_Capabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecutorCapabilitiesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ExecutorObservabilityServer).GetCapabilities(ctx, in)
+		return srv.(ExecutorObservabilityServer).Capabilities(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: ExecutorObservability_GetCapabilities_FullMethodName,
+		FullMethod: ExecutorObservability_Capabilities_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ExecutorObservabilityServer).GetCapabilities(ctx, req.(*GetCapabilitiesRequest))
+		return srv.(ExecutorObservabilityServer).Capabilities(ctx, req.(*ExecutorCapabilitiesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -195,8 +195,8 @@ var ExecutorObservability_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ExecutorObservabilityServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetCapabilities",
-			Handler:    _ExecutorObservability_GetCapabilities_Handler,
+			MethodName: "Capabilities",
+			Handler:    _ExecutorObservability_Capabilities_Handler,
 		},
 		{
 			MethodName: "GetTrace",

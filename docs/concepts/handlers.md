@@ -1,9 +1,9 @@
 ---
 concept: handlers
 definition: |
-  Per-node declarative slots that decide what the supervisor does with each terminal event from the executor protocol, plus the new on_event slot for non-terminal NamedEvents. Five slots in total: on_acquire_unavailable, on_executor_complete, on_executor_blocked, on_executor_errored, on_event.
-proto_symbol: ExecuteEvent (Complete | Blocked | Errored | ParkRequested | NamedEvent)
-config_field: nodes[*].on_*
+  Per-node declarative slots that decide what the supervisor does with each terminal event from the executor protocol, plus the on_event slot for non-terminal NamedEvents. Four slots in total: on_acquire_unavailable, on_executor_complete, on_executor_errored, on_event.
+proto_symbol: ExecuteEvent in protocols/proto/v1/executor.proto
+config_field: rimsky.yml:nodes
 api_surface: (none)
 related: [node-state, parked, invalidate, executor]
 deprecated_terms: []
@@ -23,16 +23,19 @@ matching handler. The handler's `resolve` decides the cascade
 behavior; the optional `invalidate` slot fires unconditionally
 alongside `resolve`.
 
-## The five slots
+## The slots
+
+Three declarable lifecycle handler slots plus the `on_event` map:
 
 - `on_acquire_unavailable` — when any required claim's `Open` returns
   `Unavailable`. Resolves: `pass | retry | error`.
 - `on_executor_complete` — when the executor emits `Complete`.
   Resolves: `by_changed | always_propagate | never_propagate`.
-- `on_executor_blocked` — when the executor emits `Blocked`. Resolves:
-  `pass | error`.
-- `on_executor_errored` — when the executor emits `Errored`. Resolves:
-  `pass | retry | error`.
+- `on_executor_errored` — when the executor emits `Error{error_class}`
+  (including the `executor_blocked` error class, which collapsed into
+  this slot post-2026-05-12). Resolves: `pass | retry | error`. Use
+  `error_types: { <error_class>: { action: ... } }` to discriminate by
+  the producer-declared `error_class`.
 - `on_event` — a per-event-name map keyed by names declared in the
   executor's `Capabilities.declared_events`. Each handler entry has
   the same shape as the others: `resolve` + optional `invalidate`.
@@ -47,11 +50,12 @@ nodes:
     executor: ml-classifier
     on_executor_complete:
       resolve: by_changed
-    on_executor_blocked:
-      resolve: pass
-      invalidate:
-        targets: [low_confidence_review]
-        frame: next
+    error_types:
+      executor_blocked:
+        action: pass
+        invalidate:
+          targets: [low_confidence_review]
+          frame: next
     on_executor_errored:
       resolve: retry
     on_event:
@@ -65,9 +69,9 @@ nodes:
 
 | Verdict             | Cascade behavior                                      | Valid in                                  |
 |---------------------|-------------------------------------------------------|-------------------------------------------|
-| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, blocked, errored, on_event |
+| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored, on_event |
 | `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored, on_event    |
-| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, blocked, errored, on_event |
+| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored, on_event |
 | `by_changed`        | Default for Complete: cascade fires iff `changed=true`. | complete                                |
 | `always_propagate`  | Force `fresh_changed`; cascade fires regardless of `changed`. | complete                          |
 | `never_propagate`   | Force `fresh_unchanged`; cascade does not fire even if `changed=true`. | complete                  |
@@ -91,14 +95,14 @@ invalidate handler wakes it the same way `POST
 - `invalidate.targets` must reference a declared node type or `self`.
 - `frame` must be `in` or `next`.
 
-When the executor's capabilities are not yet visible (e.g. peer is
+When the executor's capabilities are not yet visible (e.g. service is
 unreachable at template-deploy time), the cross-check is skipped
 silently — the runtime then defends against unknown event names by
 treating them as no-ops.
 
 ## Userdata vs. handlers
 
-Userdata is opaque to rimsky (`@blessed-invariant 11`); rimsky never
+Userdata is inert in Rimsky (`@blessed-invariant 11`); rimsky never
 inspects it. Handlers are rimsky-side and project-agnostic. Anything
 project-specific belongs in userdata; anything that drives
 state-machine behavior belongs in handlers.

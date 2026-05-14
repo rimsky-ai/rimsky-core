@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// LockKind enumerates the two flavours of rimsky_claim_handle row.
+// LockKind enumerates the two flavours of rimsky_claim_handles row.
 type LockKind string
 
 const (
@@ -20,13 +20,13 @@ const (
 	LockKindScope LockKind = "scope"
 )
 
-// ClaimHandleRow mirrors a row of rimsky_claim_handle.
+// ClaimHandleRow mirrors a row of rimsky_claim_handles.
 type ClaimHandleRow struct {
-	ID        shared.UUID     `json:"claim_id"`
-	LockKind  LockKind        `json:"lock_kind"`
-	LockName  *string         `json:"lock_name,omitempty"`
-	StoreName *string         `json:"store_name,omitempty"`
-	ScopeData json.RawMessage `json:"scope_data,omitempty"`
+	ID           shared.UUID     `json:"claim_id"`
+	LockKind     LockKind        `json:"lock_kind"`
+	LockName     *string         `json:"lock_name,omitempty"`
+	ProducerName *string         `json:"producer_name,omitempty"`
+	ScopeData    json.RawMessage `json:"scope_data,omitempty"`
 	// Address carries `json:"-"` so the observability handlers can
 	// pass *ClaimHandleRow to writeJSON without leaking store-supplied
 	// claim address bytes (spec §1.3 / blessed-invariant 20). Scope
@@ -47,11 +47,11 @@ type ClaimHandleRow struct {
 	// evaluateScopeConflict) can apply ModeCoexists without re-dialing
 	// the producer. Empty for named-lock rows.
 	RealizedWriteSemantics string `json:"realized_write_semantics,omitempty"`
-	// WorkerRequestID is the parent worker-request this claim handle
-	// belongs to (FK rimsky_claim_handle.worker_request_id; CASCADE
-	// delete on worker-request removal).
-	WorkerRequestID *shared.UUID `json:"worker_request_id,omitempty"`
-	// IsHeld marks claims that persist past the worker-request's
+	// NodeRunID is the parent node-run this claim handle
+	// belongs to (FK rimsky_claim_handles.node_run_id; CASCADE
+	// delete on node-run removal).
+	NodeRunID *shared.UUID `json:"node_run_id,omitempty"`
+	// IsHeld marks claims that persist past the node-run's
 	// active terminal until the holding-subgraph completes (auto-
 	// terminal mechanism per foundation contract §5.5).
 	IsHeld bool `json:"is_held"`
@@ -60,10 +60,10 @@ type ClaimHandleRow struct {
 // ClaimHandleInsertInput is the per-row input for Insert.
 type ClaimHandleInsertInput struct {
 	ID                     shared.UUID
-	WorkerRequestID        *shared.UUID // FK to rimsky_worker_request.id (nullable for legacy/orphan paths)
+	NodeRunID              *shared.UUID // FK to rimsky_node_runs.id (nullable for legacy/orphan paths)
 	LockKind               LockKind
 	LockName               *string
-	StoreName              *string
+	ProducerName           *string
 	ScopeData              json.RawMessage
 	Address                json.RawMessage
 	Intent                 *string
@@ -73,18 +73,18 @@ type ClaimHandleInsertInput struct {
 	FrameID                *shared.UUID
 	RealizedWriteSemantics string // empty for named-lock rows
 	// IsHeld marks claims that persist past the active terminal of
-	// the owning worker-request. Computed from the holding-subgraph
+	// the owning node-run. Computed from the holding-subgraph
 	// declarations at acquisition time; auto-terminal fires aggregate-
 	// outcome resolution when all rimsky_claim_holders rows for a held
 	// claim_handle reach a non-active state.
 	IsHeld bool
 }
 
-// ClaimHandlesStore is the rimsky_claim_handle accessor exposed on Store.
+// ClaimHandleTable is the rimsky_claim_handles accessor exposed on Store.
 // The supervisor / scheduler / control-api facing surface for the lock
-// ledger (per blessed-invariant 9a — `rimsky_claim_handle` is the sole
+// ledger (per blessed-invariant 9a — `rimsky_claim_handles` is the sole
 // authority for lock state).
-type ClaimHandlesStore interface {
+type ClaimHandleTable interface {
 	Insert(ctx context.Context, in ClaimHandleInsertInput, tx Tx) error
 	UpdateAddress(ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
@@ -99,10 +99,11 @@ type ClaimHandlesStore interface {
 	// counting-mode eligibility check inside the acquisition tx.
 	CountByNamedLock(ctx context.Context, lockName string, tx Tx) (int, error)
 
-	// ListByStoreScope returns all lock-holder rows for a given store
-	// name. The supervisor uses this for the in-Go scope-conflict check
-	// inside the acquisition tx (byte-equal on scope_data per spec §7.7).
-	ListByStoreScope(ctx context.Context, storeName string, tx Tx) ([]ClaimHandleRow, error)
+	// ListByProducerScope returns all lock-holder rows for a given
+	// producer name. The supervisor uses this for the in-Go scope-
+	// conflict check inside the acquisition tx (byte-equal on scope_data
+	// per spec §7.7).
+	ListByProducerScope(ctx context.Context, producerName string, tx Tx) ([]ClaimHandleRow, error)
 
 	// DeleteIfExpired claimant-guards a delete on (id, supervisor_id,
 	// expires_at). Returns true when the row was deleted; false otherwise.
@@ -137,16 +138,16 @@ type ClaimHandlesStore interface {
 
 	// GetByFrameAndNode returns the lock-holder row whose holder_node_id
 	// equals nodeID and frame_id equals frameID. Used by the
-	// observability /v1/observability/dispatches/{id} endpoint to
-	// resolve dispatch → claim_id without a full per-node scan. Returns
+	// observability /v1/observability/node-runs/{id} endpoint to
+	// resolve node-run → claim_id without a full per-node scan. Returns
 	// (nil, nil) when no matching row exists.
 	GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (*ClaimHandleRow, error)
 }
 
 // LockHolderListFilter is the observability browse filter for the
-// rimsky_claim_handle endpoint (spec §1.2.4).
+// rimsky_claim_handles endpoint (spec §1.2.4).
 type LockHolderListFilter struct {
-	StoreName        string
+	ProducerName     string
 	HolderNodeID     *shared.UUID
 	HolderSupervisor string
 	InstanceID       *shared.UUID

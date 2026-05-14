@@ -41,7 +41,7 @@ type NodeEvent struct {
 	FrameID              string
 }
 
-// NodeEventsStore is the rimsky_node_events accessor.
+// NodeEventTable is the rimsky_node_events accessor.
 //
 // Insert is append-only; the ledger never UPDATEs a row. The row's id
 // is auto-generated and returned via the persistence layer's ID alloc
@@ -54,10 +54,10 @@ type NodeEvent struct {
 //
 // DeleteByInstance is invoked at instance termination; it returns the
 // number of rows deleted plus a slice of (handle, backend) pairs that
-// were referenced by those rows. The caller (modeling/instance
+// were referenced by those rows. The caller (graph/instance
 // teardown) is responsible for queueing those handles into
-// rimsky_blob_orphans via BlobOrphansStore.Insert.
-type NodeEventsStore interface {
+// rimsky_blob_orphans via BlobOrphanTable.Insert.
+type NodeEventTable interface {
 	Insert(ctx context.Context, evt NodeEvent, tx Tx) (int64, error)
 	LatestByName(ctx context.Context, instanceID, emitterNodeID, eventName string, tx Tx) (*NodeEvent, error)
 	DeleteByInstance(ctx context.Context, instanceID string, tx Tx) (deleted int64, orphans []NodeEventOrphan, err error)

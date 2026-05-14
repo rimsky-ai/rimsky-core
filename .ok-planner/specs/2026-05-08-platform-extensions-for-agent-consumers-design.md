@@ -950,7 +950,7 @@ implementations.
 
 ## Testing and conformance strategy
 
-The existing rimsky conformance suites (`rimsky-conformance`,
+The existing rimsky conformance suites (`rimsky-executor-conformance`,
 `rimsky-claim-producer-conformance`, `rimsky-conformance-probe`) cover the
 existing executor and claim-producer protocols. The protocol additions in
 this spec extend them:

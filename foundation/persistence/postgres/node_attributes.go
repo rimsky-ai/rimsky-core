@@ -32,7 +32,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // Get returns the row for nodeID or (nil, nil) when no row exists.
@@ -72,7 +72,7 @@ func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx per
 	// preserves continuity for migrated deployments at the cost of
 	// silently downgrading the row's storage; the operator's migration
 	// tooling is responsible for re-spilling such rows.
-	bb := (*storeImpl)(s).blob
+	bb := (*tablesImpl)(s).blob
 	if handle != nil && *handle != "" && bb != nil && handleBkend != nil && *handleBkend == bb.Name() {
 		bytes, err := bb.Read(ctx, persistence.Handle(*handle))
 		if err != nil {
@@ -126,7 +126,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 		return fmt.Errorf("node_attributes.Upsert: marshal: %w", err)
 	}
 
-	si := (*storeImpl)(s)
+	si := (*tablesImpl)(s)
 	priorHandle, priorBkend, err := readPriorBlobHandle(ctx, si.q(tx), nodeID)
 	if err != nil {
 		return fmt.Errorf("node_attributes.Upsert: read prior handle: %w", err)
@@ -228,7 +228,7 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 		return nil
 	}
 
-	si := (*storeImpl)(s)
+	si := (*tablesImpl)(s)
 
 	// Spilled-row path: materialize, merge in Go, re-Upsert (which
 	// re-applies spill, queues orphans).

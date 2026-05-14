@@ -31,7 +31,7 @@ Instances bind to a specific template hash at creation. Tag movement does not mi
 
 - **Control API**: `POST /templates` to register; `POST /templates/{id}/deploy` to deploy; `GET /templates`, `GET /templates/{id}` for read; `DELETE /templates/{id}` to deregister.
 - **CLI**: `rimsky-cli template register`, `rimsky-cli template deploy`, `rimsky-cli template undeploy`, `rimsky-cli template rm`.
-- **Lifecycle**: registered → deployed → undeployed; deregistered is the absent state. Each transition fires a `LifecycleSubscriber.OnTemplate*` event to all subscribed peers.
+- **Lifecycle**: registered → deployed → undeployed; deregistered is the absent state. Each transition fires a `LifecycleSubscriber.OnTemplate*` event to all subscribed services.
 
 ## Consumer-visible guarantees
 

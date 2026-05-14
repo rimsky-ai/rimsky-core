@@ -3,7 +3,7 @@
 When an attribute, parked-state payload, or named-event payload exceeds
 the inline-spill threshold (default 64 KiB), rimsky stores the bytes in
 a configured `BlobBackend` rather than inline in `rimsky_node_attributes`
-/ `rimsky_worker_request` / `rimsky_node_events`.
+/ `rimsky_node_runs` / `rimsky_node_events`.
 
 Rimsky ships four reference backends:
 

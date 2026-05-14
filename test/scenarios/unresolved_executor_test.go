@@ -15,7 +15,7 @@
 // `action_taken=dispatch_impossible` shape is gone — the redesign routes
 // every error class (including unresolved_executor) through the same
 // policy-chain path (§7.3 / §11.6). The test runs the harness with
-// NoSupervisor and drives `integration.RunNode` directly so the dispatch
+// NoSupervisor and drives `runtime.RunNode` directly so the dispatch
 // row's executor_name lives in the supervisor's accept-list while the
 // resolver has no entry for it (the §7.3 step 4a resolver-miss branch).
 package scenarios
@@ -26,13 +26,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/integration"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/executor"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/executor"
 )
 
 func TestUnresolvedExecutor(t *testing.T) {
@@ -71,7 +72,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	// seconds in the past (so any clock skew between test host and the
 	// Postgres container can't push it past NOW()).
 	_, err = h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET executor_name = 'stub',
 		        required_stores = '{}',
 		        claimed_by = NULL,
@@ -86,7 +87,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	// Resolver has no entry for "does_not_exist_unknown" → §7.3 step 4a
 	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
 	// admits the candidate.
-	args := integration.RunArgs{
+	args := runtime.RunArgs{
 		Persist:           h.Persist,
 		Queue:             h.Queue,
 		ClaimHandles:      h.Persist.ClaimHandles(),
@@ -101,7 +102,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
 
-	out, err := integration.RunNode(h.Ctx, args, nil)
+	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
 
@@ -113,7 +114,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		got = r
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFailed, got.State)
+	require.Equal(t, cascade.NodeStateFailed, got.State)
 
 	// Verify event trail: unresolved_executor followed by an `error`
 	// event with error_class=unresolved_executor and action_taken=give_up.

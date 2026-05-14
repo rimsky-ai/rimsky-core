@@ -19,17 +19,17 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testForeignKeyCascade(t *testing.T, d persistence.Driver) {
+func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	lockHolderID := uuid.New()
 	claimHolderID := uuid.New()
 	supID := "fk-supervisor"
 	expires := time.Now().Add(1 * time.Hour)
 	lockName := "fk-test-lock"
-	// The address payload is opaque bytes returned by Store.Open; for
+	// The address payload is opaque bytes returned by ClaimProducer.Open; for
 	// the FK conformance test we just want a non-zero value to round-
 	// trip through the cascade-delete path. Pinning a real
 	// json.RawMessage keeps the column type honest without violating

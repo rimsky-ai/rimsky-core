@@ -18,7 +18,7 @@ import (
 )
 
 // Listen starts a gRPC server on an OS-assigned port and registers s as
-// the NodeExecutor handler plus the capabilities-only
+// the Executor handler plus the capabilities-only
 // ExecutorObservability surface. Registers cleanup via t.Cleanup to stop
 // the server. Returns the server and its listening address.
 func Listen(t testing.TB, s *stub.Stub) (*grpc.Server, string) {
@@ -28,7 +28,7 @@ func Listen(t testing.TB, s *stub.Stub) (*grpc.Server, string) {
 		t.Fatal(err)
 	}
 	srv := grpc.NewServer()
-	genv1.RegisterNodeExecutorServer(srv, s)
+	genv1.RegisterExecutorServer(srv, s)
 	stub.RegisterObservability(srv)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })

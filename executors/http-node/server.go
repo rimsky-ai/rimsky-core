@@ -23,10 +23,10 @@ import (
 // logic can drive both the gRPC stream transport and the HTTP+JSON bridge.
 type sendFunc func(*genv1.ExecuteEvent) error
 
-// Server implements genv1.NodeExecutorServer. It owns the http.Client used
+// Server implements genv1.ExecutorServer. It owns the http.Client used
 // for upstream requests and the stub-mode flag.
 type Server struct {
-	genv1.UnimplementedNodeExecutorServer
+	genv1.UnimplementedExecutorServer
 	cfg      Config
 	client   *http.Client
 	stubMode bool
@@ -52,15 +52,16 @@ func (s *Server) SetObservability(obs *ObservabilityServer) { s.obs = obs }
 
 // Execute is the gRPC-facing entrypoint. Adapts the streaming server to the
 // sendFunc-based core logic.
-func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.NodeExecutor_ExecuteServer) error {
+func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	return s.executeCore(stream.Context(), req, stream.Send)
 }
 
 // executeCore is the transport-independent execution body.
 //
 //	@agent-contract: executeCore
-//	what: runs the http-node cell's network request and emits one terminal
-//	      ExecuteEvent via send (Complete | Errored).
+//	what: runs the http-node cell's network request and emits one
+//	      terminal StreamClose ExecuteEvent via send, with a Success or
+//	      Error outcome on the wire.
 //	how:  called by the gRPC Execute method and by the HTTP+JSON bridge.
 //	handles: stub_mode (short-circuits before network), JSON and non-JSON
 //	         responses, custom expect_status lists, user-supplied headers,
@@ -93,35 +94,38 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 			map[string]any{"step_id": stepID, "node_type": req.GetNodeType()},
 		))
 	}
-	// Wrap send so executeCore's Complete/Errored events also update
-	// the trace + mark the dispatch terminal.
+	// Wrap send so executeCore's StreamClose events also update the
+	// trace + mark the dispatch terminal.
 	origSend := send
 	send = func(ev *genv1.ExecuteEvent) error {
 		if s.obs != nil && dispatchID != "" {
-			switch t := ev.GetEvent().(type) {
-			case *genv1.ExecuteEvent_Complete:
-				_ = t
-				s.obs.AppendEvent(dispatchID, MakeEvent(
-					"step-complete-"+stepID, "step-"+stepID, "step_completed",
-					"http-node dispatch completed",
-					genv1.Severity_INFO,
-					map[string]any{"step_id": stepID},
-				))
-				s.obs.MarkTerminal(dispatchID)
-			case *genv1.ExecuteEvent_Errored:
-				s.obs.AppendEvent(dispatchID, MakeEvent(
-					"step-failed-"+stepID, "step-"+stepID, "step_failed",
-					"http-node dispatch failed",
-					genv1.Severity_ERROR,
-					map[string]any{"step_id": stepID, "error": ev.GetErrored().GetErrorClass()},
-				))
-				s.obs.AppendEvent(dispatchID, MakeEvent(
-					"error-"+stepID, "step-"+stepID, "error",
-					ev.GetErrored().GetErrorClass(),
-					genv1.Severity_ERROR,
-					map[string]any{"error": ev.GetErrored().GetErrorClass()},
-				))
-				s.obs.MarkTerminal(dispatchID)
+			if sc := ev.GetStreamClose(); sc != nil {
+				switch oc := sc.Outcome.(type) {
+				case *genv1.StreamClose_Success:
+					_ = oc
+					s.obs.AppendEvent(dispatchID, MakeEvent(
+						"step-complete-"+stepID, "step-"+stepID, "step_completed",
+						"http-node dispatch completed",
+						genv1.Severity_INFO,
+						map[string]any{"step_id": stepID},
+					))
+					s.obs.MarkTerminal(dispatchID)
+				case *genv1.StreamClose_Error:
+					ec := oc.Error.GetErrorClass()
+					s.obs.AppendEvent(dispatchID, MakeEvent(
+						"step-failed-"+stepID, "step-"+stepID, "step_failed",
+						"http-node dispatch failed",
+						genv1.Severity_ERROR,
+						map[string]any{"step_id": stepID, "error": ec},
+					))
+					s.obs.AppendEvent(dispatchID, MakeEvent(
+						"error-"+stepID, "step-"+stepID, "error",
+						ec,
+						genv1.Severity_ERROR,
+						map[string]any{"error": ec},
+					))
+					s.obs.MarkTerminal(dispatchID)
+				}
 			}
 		}
 		return origSend(ev)
@@ -214,20 +218,23 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 
 	// Response → attributes_delta. The target's response body must be a
-	// JSON object so it can map directly to the spec §12.2 Complete
-	// `attributes_delta` Struct (which the supervisor merges into
-	// rimsky_node_attributes.data). Non-object JSON is rejected; non-JSON
-	// content types are wrapped in a base64 envelope under known keys.
+	// JSON object so it can map directly to the spec §12.2
+	// StreamClose-Success `attributes_delta` Struct (which the supervisor
+	// merges into rimsky_node_attributes.data). Non-object JSON is rejected;
+	// non-JSON content types are wrapped in a base64 envelope under known
+	// keys.
 	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
 		return sendErrored(send, "http_response_parse_failed", err.Error())
 	}
 
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-		AttributesDelta: delta,
-		Changed:         true,
-		ChangeSummary:   fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
-	}}})
+	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			Changed:         true,
+			ChangeSummary:   fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
+		}}},
+	}})
 }
 
 // buildRequestBody picks the upstream request body. `userdata.body` is an
@@ -258,10 +265,11 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 }
 
 // buildAttributesDelta turns the upstream response into a Struct suitable for
-// Complete.attributes_delta. JSON object responses are passed through as-is.
-// Non-JSON responses are wrapped as `{body_base64, content_type}` so the
-// caller still sees the bytes. JSON arrays / scalars are an error: the
-// attributes shape is by spec a JSON object.
+// StreamClose-Success.attributes_delta. JSON object responses are passed
+// through as-is. Non-JSON responses are wrapped as
+// `{body_base64, content_type}` so the caller still sees the bytes. JSON
+// arrays / scalars are an error: the attributes shape is by spec a JSON
+// object.
 func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, error) {
 	if !strings.Contains(contentType, "json") {
 		return structpb.NewStruct(map[string]any{
@@ -285,7 +293,8 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 
 // executeStub short-circuits the network path; used when RIMSKY_EXECUTOR_STUB_MODE=1.
 // Returns userdata.stub_response if provided, else {stub: true}. The response
-// becomes the Complete.attributes_delta — must be a JSON object per spec §12.2.
+// becomes the StreamClose-Success.attributes_delta — must be a JSON object
+// per spec §12.2.
 func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 	ud := req.GetUserdata().AsMap()
 	delta := map[string]any{"stub": true}
@@ -300,19 +309,23 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 	if err != nil {
 		return sendErrored(send, "invalid_userdata", "stub_response not JSON-representable: "+err.Error())
 	}
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Complete{Complete: &genv1.Complete{
-		AttributesDelta: v,
-		Changed:         true,
-		ChangeSummary:   "stub",
-	}}})
+	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
+			AttributesDelta: v,
+			Changed:         true,
+			ChangeSummary:   "stub",
+		}}},
+	}})
 }
 
 func sendErrored(send sendFunc, class, msg string) error {
 	payload, _ := structpb.NewStruct(map[string]any{"error": msg})
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Errored{Errored: &genv1.Errored{
-		ErrorClass: class,
-		Payload:    payload,
-	}}})
+	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
+			ErrorClass: class,
+			Payload:    payload,
+		}}},
+	}})
 }
 
 // defaultExpectStatus returns the default accepted status list (2xx).

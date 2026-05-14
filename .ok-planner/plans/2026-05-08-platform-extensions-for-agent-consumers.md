@@ -1530,10 +1530,10 @@ The TS executor lives at `executors/claude-agent/`. All work in this section is 
 
 **Verify:** `go run ./cmd/rimsky-blob-backend-conformance --backend filesystem --root /tmp/blob-test` passes all checks.
 
-### L2. Extend `rimsky-conformance` for new executor surfaces
+### L2. Extend `rimsky-executor-conformance` for new executor surfaces
 
 **Files:**
-- `cmd/rimsky-conformance/` (existing — extend)
+- `cmd/rimsky-executor-conformance/` (existing — extend)
 
 **Steps:**
 
@@ -1546,7 +1546,7 @@ The TS executor lives at `executors/claude-agent/`. All work in this section is 
    - Async-callback path (legacy shape): executor that POSTs `{type: "complete", ...}` is still accepted.
 2. Update the stub executor in `executors/stub/` to optionally emit events and `ParkRequested` based on input flags so the conformance suite can exercise these paths.
 
-**Verify:** `go run ./cmd/rimsky-conformance --endpoint <stub> --transport grpc` passes including the new checks. `go run ./cmd/rimsky-conformance --endpoint <stub> --transport http+json` (if the existing suite supports HTTP+JSON bridge) also passes the async-callback path checks.
+**Verify:** `go run ./cmd/rimsky-executor-conformance --endpoint <stub> --transport grpc` passes including the new checks. `go run ./cmd/rimsky-executor-conformance --endpoint <stub> --transport http+json` (if the existing suite supports HTTP+JSON bridge) also passes the async-callback path checks.
 
 ### L3. Conformance test for the new ledger semantics
 
@@ -1723,7 +1723,7 @@ The spec calls out specific doc files to create or update. This section batches 
    ```
 2. Run conformance against the bundled stub executor:
    ```
-   go run ./cmd/rimsky-conformance --endpoint stub --transport grpc
+   go run ./cmd/rimsky-executor-conformance --endpoint stub --transport grpc
    ```
 3. Run conformance against the bundled claim-producers:
    ```

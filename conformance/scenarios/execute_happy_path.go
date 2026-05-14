@@ -23,10 +23,11 @@ func init() {
 	})
 }
 
-// runExecuteHappyPath opens an Execute stream and asserts a non-AsyncAccepted
-// terminal event arrives. For async executors AwaitTerminal follows the
-// callback POST to the conformance receiver and surfaces the synthesized
-// terminal in place of the AsyncAccepted bridge event.
+// runExecuteHappyPath opens an Execute stream and asserts a terminal
+// StreamClose with outcome Success / Error / Park arrives. For async
+// executors AwaitTerminal follows the callback POST to the conformance
+// receiver and surfaces the synthesized terminal in place of the
+// AwaitAsyncCallback bridge event.
 func runExecuteHappyPath(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
@@ -44,14 +45,15 @@ func runExecuteHappyPath(ctx context.Context, env conformance.Env) error {
 	if err != nil {
 		return err
 	}
-	switch ev.Event.(type) {
-	case *genv1.ExecuteEvent_Complete,
-		*genv1.ExecuteEvent_Blocked,
-		*genv1.ExecuteEvent_Errored,
-		*genv1.ExecuteEvent_ParkRequested:
-		return nil
-	case *genv1.ExecuteEvent_AsyncAccepted:
-		return fmt.Errorf("happy-path terminal was AsyncAccepted but no callback arrived to resolve it")
+	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
+	if !ok {
+		return fmt.Errorf("unexpected terminal type: %T", ev.Event)
 	}
-	return fmt.Errorf("unexpected terminal type: %T", ev.Event)
+	switch sc.StreamClose.Outcome.(type) {
+	case *genv1.StreamClose_Success, *genv1.StreamClose_Error, *genv1.StreamClose_Park:
+		return nil
+	case *genv1.StreamClose_AwaitAsync:
+		return fmt.Errorf("happy-path outcome was AwaitAsyncCallback but no callback arrived to resolve it")
+	}
+	return fmt.Errorf("unexpected StreamClose outcome: %T", sc.StreamClose.Outcome)
 }

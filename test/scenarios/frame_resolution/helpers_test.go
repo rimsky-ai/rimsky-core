@@ -20,9 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 type frameRow struct {
@@ -43,7 +43,7 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 	t.Helper()
 	var out []frameRow
 	h.QuerySQL(`
-		SELECT frame_id, instance_id, mode, state, source_node_ids,
+		SELECT frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
 		       queued_at, started_at, ended_at, frame_timeout_ms
 		FROM rimsky_frames
 		WHERE instance_id = $1
@@ -77,8 +77,8 @@ func countFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUI
 func fireInvalidate(t *testing.T, h *scenario.Harness, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var fid uuid.UUID
-	require.NoError(t, h.Driver.Store().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		got, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Store(), tx,
+	require.NoError(t, h.Driver.Tables().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		got, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Tables(), tx,
 			uuid.UUID(instanceID), uuid.UUID(sourceNodeID))
 		if err != nil {
 			return err

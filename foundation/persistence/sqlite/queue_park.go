@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// ParkActiveInTx transitions a worker_request row from phase='active' to
+// ParkActiveInTx transitions a node-run row from phase='active' to
 // phase='parked' under the supplied claimant guard.
 func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in persistence.ParkActiveInput) error {
 	if tx == nil {
@@ -37,7 +37,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		payloadInline = in.PayloadInline
 	}
 	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET phase = 'parked',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
@@ -82,7 +82,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
 		    AND d.resume_at IS NOT NULL
 		    AND d.resume_at <= ?
@@ -109,7 +109,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
 		    AND d.max_park_duration_seconds IS NOT NULL
 		    AND d.parked_at IS NOT NULL
@@ -162,7 +162,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT n.instance_id, d.node_id, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.phase = 'parked'
 		    AND (? IS NULL OR d.parked_reason = ?)
@@ -224,7 +224,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.node_id = ?
 		    AND d.phase = 'parked'`,
 		nodeID.String(),
@@ -244,7 +244,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 // for the resume-dispatch path. The row goes back to claimed_by=NULL
 // so any eligible supervisor can pick it up; the wake-source supervisor
 // id is recorded by callers in the parked_resume_started audit event.
-// The wakeReason is persisted on rimsky_worker_request.wake_reason so
+// The wakeReason is persisted on rimsky_node_runs.wake_reason so
 // the resume-dispatch path's LoadResumeMetadataInTx can attach it to
 // ResumeContext.resume_reason. enqueued_at is preserved across the
 // resume — see the postgres mirror for the rationale.
@@ -257,7 +257,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 		wakeReasonArg = wakeReason
 	}
 	res, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET phase = 'pending',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
@@ -286,7 +286,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	)
 	err := q.db.QueryRowContext(ctx,
 		`SELECT consecutive_retries_no_progress, max_retries_without_progress
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&count, &override)
@@ -304,7 +304,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 }
 
 // SetRetryNoProgressForNodeInTx mirrors the postgres impl: writes the
-// carry-forward retry counter onto the current worker_request row keyed
+// carry-forward retry counter onto the current node-run row keyed
 // by node_id (used by the retry round-trip to accumulate the counter
 // across the remove-and-reinsert cycle).
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, count int) error {
@@ -312,7 +312,7 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 		return errors.New("sqlite.SetRetryNoProgressForNodeInTx: tx required")
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = ?
 		  WHERE node_id = ?`,
 		count, nodeID.String(),
@@ -333,7 +333,7 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 		retries = *maxRetriesWithoutProgress
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET max_park_duration_seconds = ?,
 		        max_retries_without_progress = ?
 		  WHERE id = ?`,
@@ -370,7 +370,7 @@ func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.T
 	err := q.q(tx).QueryRowContext(ctx,
 		`SELECT parked_payload_inline, parked_payload_handle, parked_payload_handle_backend,
 		        parked_reason, session_token, wake_reason, parked_at
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE id = ?`,
 		dispatchID.String(),
 	).Scan(&inline, &handle, &backend, &reason, &session, &wakeReason, &parkedAtStr)
@@ -416,7 +416,7 @@ func (q *queueImpl) ClearResumeMetadataInTx(ctx context.Context, tx persistence.
 		return errors.New("sqlite.ClearResumeMetadataInTx: tx required")
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET parked_at = NULL,
 		        parked_reason = NULL,
 		        parked_payload_inline = NULL,

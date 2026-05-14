@@ -13,19 +13,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Slow first frame; fast second frame.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok").Delay(3 * time.Second)
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok").Delay(3 * time.Second)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "blocks-next", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

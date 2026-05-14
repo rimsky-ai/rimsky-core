@@ -15,15 +15,15 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-func TestObservability_GetCapabilities(t *testing.T) {
+func TestObservability_Capabilities(t *testing.T) {
 	st, err := fsstore.New(fsstore.Config{Root: t.TempDir()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	obs := NewObservabilityServer(st, t.TempDir(), nil)
-	caps, err := obs.GetCapabilities(context.Background(), &genv1.GetStoreCapabilitiesRequest{})
+	caps, err := obs.Capabilities(context.Background(), &genv1.GetClaimProducerCapabilitiesRequest{})
 	if err != nil {
-		t.Fatalf("GetCapabilities: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("capabilities = %+v; want all three claim-* flags true", caps)
@@ -84,10 +84,10 @@ func TestObservability_ListClaims(t *testing.T) {
 	}
 }
 
-// fakeStreamServer adapts to the StoreObservability_StreamClaimServer
+// fakeStreamServer adapts to the ClaimProducerObservability_StreamClaimServer
 // interface for unit-test consumption.
 type fakeStreamServer struct {
-	genv1.StoreObservability_StreamClaimServer
+	genv1.ClaimProducerObservability_StreamClaimServer
 	ctx    context.Context
 	events []*genv1.ClaimEvent
 }

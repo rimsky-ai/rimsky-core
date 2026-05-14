@@ -11,10 +11,11 @@ import "context"
 // the in-process Go interface is useful for test fixtures and the
 // HTTP+JSON bridge.
 //
-// The Execute call returns a stream that yields zero or more Heartbeat
-// events followed by exactly one terminal event (Complete, Blocked,
-// Errored, or AsyncAccepted). Closing the stream without a terminal
-// event is treated by the supervisor as an infrastructure error.
+// The Execute call returns a stream that yields zero or more
+// Heartbeat events, zero or more NamedEvent records, and exactly one
+// StreamClose carrying one outcome variant (Success, Error, Park,
+// or AwaitAsyncCallback). Closing the stream without a StreamClose
+// is treated by the supervisor as an infrastructure error.
 type Executor interface {
 	Execute(ctx context.Context, req ExecuteRequest) (Stream, error)
 }

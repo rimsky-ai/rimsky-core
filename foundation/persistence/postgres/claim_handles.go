@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_handles.go is the postgres accessor for `rimsky_claim_handle`
+// claim_handles.go is the postgres accessor for `rimsky_claim_handles`
 // (v3 spec §12). Lifts the SQL from foundation/persistence/postgres/claim_handles.go (which
 // the persistence refactor folds away — the lock-holder mechanism lives
 // here now).
@@ -14,12 +14,12 @@
 //	managed in this file.
 //
 // @blessed-invariant 4: claimant-guarded release. Every DELETE / UPDATE
-// against rimsky_claim_handle carries `AND holder_supervisor_id =
+// against rimsky_claim_handles carries `AND holder_supervisor_id =
 // supervisor_id`. Stale orphan sweeps cannot null or delete live ownership.
 //
 // FrameID handling: ClaimHandleInsertInput carries an optional FrameID
 // that is plumbed through into the postgres row. Per v3 spec §12, frame_id
-// on rimsky_claim_handle is observability-only — no algorithm consults
+// on rimsky_claim_handles is observability-only — no algorithm consults
 // it; population is the supervisor's contract.
 
 package postgres
@@ -35,15 +35,15 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 const lockHolderCols = `
-  id, lock_kind, lock_name, store_name, scope_data, address, intent,
+  id, lock_kind, lock_name, producer_name, scope_data, address, intent,
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id,
-  worker_request_id, is_held
+  node_run_id, is_held
 `
 
 // Insert writes a new lock-holder row inside the caller-provided
@@ -58,21 +58,21 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		rws = &v
 	}
 	_, err := s.q(tx).Exec(ctx,
-		`INSERT INTO rimsky_claim_handle (
-		   id, lock_kind, lock_name, store_name, scope_data, address, intent,
+		`INSERT INTO rimsky_claim_handles (
+		   id, lock_kind, lock_name, producer_name, scope_data, address, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, last_heartbeat_at, expires_at, frame_id,
-		   worker_request_id, is_held
+		   node_run_id, is_held
 		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		in.ID, string(in.LockKind),
-		in.LockName, in.StoreName,
+		in.LockName, in.ProducerName,
 		nullableJSONB(in.ScopeData), nullableJSONB(in.Address),
 		in.Intent,
 		rws,
 		in.HolderSupervisorID, in.HolderNodeID,
 		now, now, in.ExpiresAt, in.FrameID,
-		in.WorkerRequestID, in.IsHeld,
+		in.NodeRunID, in.IsHeld,
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.Insert: %w", err)
@@ -86,7 +86,7 @@ func (s *claimHandlesImpl) UpdateAddress(
 	ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_claim_handle
+		`UPDATE rimsky_claim_handles
 		    SET address = $1
 		  WHERE id = $2 AND holder_supervisor_id = $3`,
 		nullableJSONB(address), id, supervisorID,
@@ -110,7 +110,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 		v = &s
 	}
 	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_claim_handle
+		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = $1
 		  WHERE id = $2 AND holder_supervisor_id = $3`,
 		v, id, supervisorID,
@@ -128,7 +128,7 @@ func (s *claimHandlesImpl) UpdateScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_claim_handle
+		`UPDATE rimsky_claim_handles
 		    SET scope_data = $1
 		  WHERE id = $2 AND holder_supervisor_id = $3`,
 		nullableJSONB(scope), id, supervisorID,
@@ -142,7 +142,7 @@ func (s *claimHandlesImpl) UpdateScope(
 // Get returns the row identified by id, or (nil, nil) when no row exists.
 func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = $1`, id,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles WHERE id = $1`, id,
 	)
 	out, err := scanClaimHandle(row)
 	if err != nil {
@@ -159,7 +159,7 @@ func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persisten
 // resolution per @blessed-invariant 13.
 func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle WHERE id = $1 FOR UPDATE`, id,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles WHERE id = $1 FOR UPDATE`, id,
 	)
 	out, err := scanClaimHandle(row)
 	if err != nil {
@@ -174,7 +174,7 @@ func (s *claimHandlesImpl) LockForUpdate(ctx context.Context, id shared.UUID, tx
 // ListByHolderNode returns every row anchored to holderNodeID.
 func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE holder_node_id = $1
 		 ORDER BY claimed_at ASC`, holderNodeID,
 	)
@@ -190,7 +190,7 @@ func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 // dispatch-detail endpoint to follow dispatch → claim_id directly.
 func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE holder_node_id = $1 AND frame_id = $2
 		 LIMIT 1`,
 		nodeID, frameID,
@@ -208,7 +208,7 @@ func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.
 // ListBySupervisor returns every row owned by supervisorID.
 func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE holder_supervisor_id = $1
 		 ORDER BY claimed_at ASC`, supervisorID,
 	)
@@ -229,7 +229,7 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 		heartbeatSeconds = 1
 	}
 	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_claim_handle lh
+		`UPDATE rimsky_claim_handles lh
 		   SET last_heartbeat_at = now(),
 		       expires_at = now() + ($2 * interval '1 second')
 		 WHERE lh.holder_supervisor_id = $1
@@ -258,7 +258,7 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 // orphan-reap sweep iterates these.
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE expires_at < now()
 		 ORDER BY expires_at ASC`,
 	)
@@ -273,7 +273,7 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 // expectedSupervisorID; mismatch is a no-op (returns nil).
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
-		`DELETE FROM rimsky_claim_handle
+		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1 AND holder_supervisor_id = $2`,
 		id, expectedSupervisorID,
 	)
@@ -290,7 +290,7 @@ func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedS
 func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_claim_handle
+		`SELECT count(*) FROM rimsky_claim_handles
 		 WHERE lock_kind = 'named' AND lock_name = $1
 		   AND expires_at > now()`,
 		lockName,
@@ -301,19 +301,19 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 	return n, nil
 }
 
-// ListByStoreScope returns every unexpired scope-kind row for
-// storeName. Used by the supervisor's scope-conflict re-check (§7.3
+// ListByProducerScope returns every unexpired scope-kind row for
+// producerName. Used by the supervisor's scope-conflict re-check (§7.3
 // step 4a/4b).
-func (s *claimHandlesImpl) ListByStoreScope(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
+func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handle
-		 WHERE lock_kind = 'scope' AND store_name = $1
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
+		 WHERE lock_kind = 'scope' AND producer_name = $1
 		   AND expires_at > now()
 		 ORDER BY claimed_at ASC`,
-		storeName,
+		producerName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByStoreScope: %w", err)
+		return nil, fmt.Errorf("lockholders.ListByProducerScope: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -325,7 +325,7 @@ func (s *claimHandlesImpl) ListByStoreScope(ctx context.Context, storeName strin
 // (claimant mismatch or fresh heartbeat extended the row).
 func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	tag, err := s.q(tx).Exec(ctx,
-		`DELETE FROM rimsky_claim_handle
+		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1
 		   AND holder_supervisor_id = $2
 		   AND expires_at < now()`,
@@ -348,10 +348,10 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	if limit <= 0 {
 		limit = 50
 	}
-	var storeArg, supArg, nodeTypeArg any
+	var producerArg, supArg, nodeTypeArg any
 	var nodeArg, instArg any
-	if filter.StoreName != "" {
-		storeArg = filter.StoreName
+	if filter.ProducerName != "" {
+		producerArg = filter.ProducerName
 	}
 	if filter.HolderSupervisor != "" {
 		supArg = filter.HolderSupervisor
@@ -382,8 +382,8 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 	}
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+`
-		   FROM rimsky_claim_handle lh
-		  WHERE ($1::text IS NULL OR lh.store_name = $1)
+		   FROM rimsky_claim_handles lh
+		  WHERE ($1::text IS NULL OR lh.producer_name = $1)
 		    AND ($2::text IS NULL OR lh.holder_supervisor_id = $2)
 		    AND ($3::uuid IS NULL OR lh.holder_node_id = $3)
 		    AND (
@@ -403,7 +403,7 @@ func (s *claimHandlesImpl) ListForObservability(ctx context.Context, filter pers
 		    AND ($6::timestamptz IS NULL OR (lh.claimed_at, lh.id) < ($6, $7))
 		  ORDER BY lh.claimed_at DESC, lh.id DESC
 		  LIMIT $8`,
-		storeArg, supArg, nodeArg, instArg, nodeTypeArg, cArg, cIDArg, limit,
+		producerArg, supArg, nodeArg, instArg, nodeTypeArg, cArg, cIDArg, limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.ClaimHandleRow]{}, fmt.Errorf("lockholders.list: %w", err)
@@ -450,7 +450,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		r               persistence.ClaimHandleRow
 		kind            string
 		lockName        *string
-		storeName       *string
+		producerName    *string
 		scopeData       []byte
 		address         []byte
 		intent          *string
@@ -461,7 +461,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	)
 	if err := sc.Scan(
 		&r.ID, &kind,
-		&lockName, &storeName, &scopeData, &address, &intent,
+		&lockName, &producerName, &scopeData, &address, &intent,
 		&rws,
 		&r.HolderSupervisorID, &r.HolderNodeID,
 		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
@@ -471,7 +471,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	}
 	r.LockKind = persistence.LockKind(kind)
 	r.LockName = lockName
-	r.StoreName = storeName
+	r.ProducerName = producerName
 	r.ScopeData = scopeData
 	r.Address = address
 	r.Intent = intent
@@ -479,7 +479,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		r.RealizedWriteSemantics = *rws
 	}
 	r.FrameID = frameID
-	r.WorkerRequestID = workerRequestID
+	r.NodeRunID = workerRequestID
 	r.IsHeld = isHeld
 	return r, nil
 }

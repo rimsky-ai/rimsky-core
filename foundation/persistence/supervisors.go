@@ -32,8 +32,8 @@ type SupervisorRegisterInput struct {
 	CallbackPort      int
 }
 
-// SupervisorStore is the rimsky_supervisors accessor.
-type SupervisorStore interface {
+// SupervisorTable is the rimsky_supervisors accessor.
+type SupervisorTable interface {
 	Register(ctx context.Context, in SupervisorRegisterInput, tx Tx) error
 	Heartbeat(ctx context.Context, id string, activeNodeCount int, tx Tx) error
 	Get(ctx context.Context, id string, tx Tx) (*SupervisorRow, error)

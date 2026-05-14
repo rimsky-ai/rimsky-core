@@ -14,19 +14,19 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// ObservabilityServer is the capabilities-only StoreObservability
+// ObservabilityServer is the capabilities-only ClaimProducerObservability
 // implementation registered on the stub store's gRPC server. The stub
 // keeps no per-claim history and declares no admin views.
 type ObservabilityServer struct {
-	genv1.UnimplementedStoreObservabilityServer
+	genv1.UnimplementedClaimProducerObservabilityServer
 }
 
 // NewObservabilityServer returns the capabilities-only stub.
 func NewObservabilityServer() *ObservabilityServer { return &ObservabilityServer{} }
 
-// GetCapabilities reports the no-observability shape.
-func (*ObservabilityServer) GetCapabilities(_ context.Context, _ *genv1.GetStoreCapabilitiesRequest) (*genv1.StoreObservabilityCapabilities, error) {
-	return &genv1.StoreObservabilityCapabilities{
+// Capabilities reports the no-observability shape.
+func (*ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
+	return &genv1.ClaimProducerObservabilityCapabilities{
 		SupportsClaimGet:              false,
 		SupportsClaimStream:           false,
 		SupportsListClaims:            false,
@@ -40,7 +40,7 @@ func (*ObservabilityServer) GetClaim(_ context.Context, _ *genv1.GetClaimRequest
 }
 
 // StreamClaim returns Unimplemented.
-func (*ObservabilityServer) StreamClaim(_ *genv1.StreamClaimRequest, _ genv1.StoreObservability_StreamClaimServer) error {
+func (*ObservabilityServer) StreamClaim(_ *genv1.StreamClaimRequest, _ genv1.ClaimProducerObservability_StreamClaimServer) error {
 	return status.Error(codes.Unimplemented, "stub store: StreamClaim not supported")
 }
 
@@ -56,5 +56,5 @@ func (*ObservabilityServer) GetAdminView(_ context.Context, _ *genv1.GetAdminVie
 
 // RegisterObservability registers the stub observability server on srv.
 func RegisterObservability(srv *grpc.Server) {
-	genv1.RegisterStoreObservabilityServer(srv, NewObservabilityServer())
+	genv1.RegisterClaimProducerObservabilityServer(srv, NewObservabilityServer())
 }

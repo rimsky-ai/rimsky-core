@@ -6,7 +6,7 @@
 // trips through the storage interface and the (claim_handle_id,
 // holder_node_id) uniqueness constraint holds.
 //
-// The pre-redesign test in this position exercised ClaimID/StoreName/
+// The pre-redesign test in this position exercised ClaimID/ProducerName/
 // OnCommit/OnGiveUp/FrameID columns on rimsky_claim_holders — all
 // removed by the redesign. Per-row resolution actions now live in
 // template metadata; rows simply record subgraph membership and
@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestHeldClaimRowRoundTrip(t *testing.T) {
@@ -33,7 +33,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-claim-roundtrip", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -45,7 +45,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	// Seed a scope-kind lock-holder anchored to worker; needed to
 	// satisfy the FK on rimsky_claim_holders.claim_handle_id. Both
 	// inserts run inside a single Tx — required by Insert per §7.3.
-	storeName := "scenario-store"
+	producerName := "scenario-store"
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
 	holderID := shared.UUID(uuid.New())
@@ -53,7 +53,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		if err := h.Persist.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindScope,
-			StoreName:          &storeName,
+			ProducerName:       &producerName,
 			ScopeData:          []byte(`"r-1"`),
 			Intent:             &intent,
 			HolderSupervisorID: "scenario-supervisor",

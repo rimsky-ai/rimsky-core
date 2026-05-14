@@ -4,7 +4,7 @@
 
 // node_attributes_merge_delta.go — NodeAttributesMergeDelta conformance area.
 //
-// Covers NodeAttributesStore.MergeDelta:
+// Covers NodeAttributeTable.MergeDelta:
 //
 //   - shallow merge with nested keys (top-level keys overwrite, but the
 //     value at each top-level key is replaced wholesale, not deep-merged)
@@ -24,10 +24,10 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func testNodeAttributesMergeDelta(t *testing.T, d persistence.Driver) {
+func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	// ---- Missing row: MergeDelta returns wrapped ErrNotFound ----
 	missingNodeID := uuid.New()

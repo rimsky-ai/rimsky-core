@@ -13,7 +13,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	sqlitedrv "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // TestSQLiteParkResumeRoundTrip exercises the SQLite park / load-resume /
@@ -30,9 +30,9 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
 
-	rawDB := sqlitedrv.DBFromDriver(d)
+	rawDB := sqlitedrv.DBFromDatabase(d)
 
-	// Seed the FK chain (template → instance → frame → node → worker_request).
+	// Seed the FK chain (template → instance → frame → node → node-run).
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	frameID := uuid.New()
@@ -55,7 +55,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	// minimum permitted value; the test never trips the timeout.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, mode, state, source_node_ids, frame_timeout_ms, started_at)
+		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
 		 VALUES (?, ?, 'serial_queue', 'running', '[]', 60000, datetime('now'))`,
 		frameID.String(), instanceID,
 	); err != nil {
@@ -68,18 +68,18 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// worker_request starts in phase='active' so ParkActiveInTx accepts it.
+	// node-run starts in phase='active' so ParkActiveInTx accepts it.
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_worker_request
+		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, phase, frame_id)
 		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'sup-1', datetime('now'), datetime('now'), 'active', ?)`,
 		uuid.UUID(dispatchID).String(), nodeID.String(), frameID.String(),
 	); err != nil {
-		t.Fatalf("seed worker_request: %v", err)
+		t.Fatalf("seed node-run: %v", err)
 	}
 
 	queue := d.Queue()
-	store := d.Store()
+	store := d.Tables()
 
 	parkedAt := time.Now().UTC().Truncate(time.Microsecond)
 	resumeAt := parkedAt.Add(2 * time.Second)

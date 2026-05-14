@@ -27,10 +27,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// ParkActiveInTx transitions a worker_request row from phase='active' to
+// ParkActiveInTx transitions a node-run row from phase='active' to
 // phase='parked' under the supplied claimant guard. Persists the
 // park metadata and clears claimed_by so the orphan-claim reaper
 // (`claimed_by IS NOT NULL` predicate) excludes the row.
@@ -47,7 +47,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 	payloadHandleBackend := nilIfEmptyStr(in.PayloadHandleBackend)
 
 	cmd, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET phase = 'parked',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
@@ -86,7 +86,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
 		    AND d.resume_at IS NOT NULL
 		    AND d.resume_at <= $1
@@ -119,7 +119,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
 		    AND d.max_park_duration_seconds IS NOT NULL
 		    AND d.parked_at IS NOT NULL
@@ -150,7 +150,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	rows, err := q.q(tx).Query(ctx,
 		`SELECT n.instance_id, d.node_id, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.phase = 'parked'
 		    AND ($1::text IS NULL OR d.parked_reason = $1)
@@ -196,14 +196,14 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 }
 
 // GetParkedByNode returns the parked row for a node, or (nil, nil) when
-// the node has no parked worker_request row.
+// the node has no parked node-run row.
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
-		   FROM rimsky_worker_request d
+		   FROM rimsky_node_runs d
 		  WHERE d.node_id = $1
 		    AND d.phase = 'parked'`,
 		nodeID,
@@ -234,7 +234,7 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 // supervisor id is recorded by the caller in the parked_resume_started
 // audit event.
 //
-// wakeReason is persisted on rimsky_worker_request.wake_reason. The
+// wakeReason is persisted on rimsky_node_runs.wake_reason. The
 // resume-dispatch path's LoadResumeMetadataInTx reads it back so the
 // executor's ResumeContext.resume_reason matches the actual wake source
 // (deadline_elapsed vs external_invalidate). Empty wakeReason persists
@@ -255,7 +255,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 		wakeReasonArg = wakeReason
 	}
 	cmd, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET phase = 'pending',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
@@ -287,7 +287,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	)
 	err := q.pool.QueryRow(ctx,
 		`SELECT consecutive_retries_no_progress, max_retries_without_progress
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE id = $1`,
 		dispatchID,
 	).Scan(&count, &override)
@@ -305,7 +305,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 }
 
 // SetRetryNoProgressForNodeInTx writes the carry-forward counter onto
-// the current worker_request row for nodeID. Used by the retry path to
+// the current node-run row for nodeID. Used by the retry path to
 // accumulate the counter across retry round-trips (each retry deletes
 // the prior row and inserts a new one with default counter=0).
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, count int) error {
@@ -313,7 +313,7 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 		return errors.New("postgres.SetRetryNoProgressForNodeInTx: tx required")
 	}
 	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = $2
 		  WHERE node_id = $1`,
 		nodeID, count,
@@ -327,7 +327,7 @@ func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persis
 // UpdateDispatchTuningInTx writes the per-row dispatch tuning columns.
 func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error {
 	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET max_park_duration_seconds = $2,
 		        max_retries_without_progress = $3
 		  WHERE id = $1`,
@@ -358,7 +358,7 @@ func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.T
 	err := q.q(tx).QueryRow(ctx,
 		`SELECT parked_payload_inline, parked_payload_handle, parked_payload_handle_backend,
 		        parked_reason, session_token, wake_reason, parked_at
-		   FROM rimsky_worker_request
+		   FROM rimsky_node_runs
 		  WHERE id = $1`,
 		dispatchID,
 	).Scan(&inline, &handle, &backend, &reason, &session, &wakeReason, &parkedAt)
@@ -405,7 +405,7 @@ func (q *queueImpl) ClearResumeMetadataInTx(ctx context.Context, tx persistence.
 		return errors.New("postgres.ClearResumeMetadataInTx: tx required")
 	}
 	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_worker_request
+		`UPDATE rimsky_node_runs
 		    SET parked_at = NULL,
 		        parked_reason = NULL,
 		        parked_payload_inline = NULL,

@@ -122,15 +122,15 @@ curl http://localhost:8080/health
 docker compose -f deploy/docker-compose.yml down -v
 ```
 
-**T56 — Conformance.** Run `rimsky-conformance` against the live http-node and claude-agent containers brought up by docker smoke. Catches:
+**T56 — Conformance.** Run `rimsky-executor-conformance` against the live http-node and claude-agent containers brought up by docker smoke. Catches:
 - Whether each executor honors every required RPC in the protocol
 - Whether the async-callback POST shape matches the supervisor's chi route exactly (CLAUDE.md gotcha: body keyed `type` not `kind`; route is `/v1/callback/{async_ack_id}`)
 - Whether stub mode actually short-circuits LLM calls (`--require-stub-mode` issues a probe via `rimsky-conformance-probe` at startup)
 
 Mechanical sequence (after T55 stack is up):
 ```
-go run ./core/cmd/rimsky-conformance --endpoint http://localhost:9091 --transport grpc --require-stub-mode
-go run ./core/cmd/rimsky-conformance --endpoint http://localhost:9090 --transport grpc --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:9091 --transport grpc --require-stub-mode
+go run ./core/cmd/rimsky-executor-conformance --endpoint http://localhost:9090 --transport grpc --require-stub-mode
 ```
 
 Both checks should land in the cleanup's final-verification phase. Sequence: cleanup → unit + scenario + smoke (in-process) green → docker smoke → conformance → done.

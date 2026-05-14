@@ -15,10 +15,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestConformanceEvents covers the L3 conformance shape. A emits two
@@ -34,14 +34,14 @@ func TestConformanceEvents(t *testing.T) {
 	h.Stub.WhenType("a").
 		EmitNamedEvent("ready", []byte(`{"value":"first"}`)).
 		EmitNamedEvent("ready", []byte(`{"value":"second"}`)).
-		Complete(map[string]any{}, true, "a-done")
-	h.Stub.WhenType("b").Complete(map[string]any{}, true, "b-done")
+		Success(map[string]any{}, true, "a-done")
+	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-done")
 
 	// B's attributes substitute from A's most-recent event payload via
 	// the F4 source kind `nodes.a.event.ready.value`.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "conformance-events", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -73,7 +73,7 @@ func TestConformanceEvents(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	require.True(t, h.WaitForNodeState(a.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
 	// Ledger should have at least one row for (a, ready); LatestByName
@@ -90,7 +90,7 @@ func TestConformanceEvents(t *testing.T) {
 		"LatestByName must return the most recent emission")
 
 	// B should run with the substituted value visible in its attributes.
-	require.True(t, h.WaitForNodeState(b.ID, shared.NodeStateFresh, 30*time.Second),
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should run after A's event invalidates it")
 
 	var attrs *persistence.NodeAttributesRow

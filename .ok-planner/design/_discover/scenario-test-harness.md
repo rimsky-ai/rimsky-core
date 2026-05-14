@@ -20,7 +20,7 @@ The harness's job:
 5. Start a supervisor, scheduler, and control-api wired to the test Postgres.
 6. Return a handle the test can use to drive operations (create templates, instances, force-fire schedules, observe events).
 
-The fixture is reused across `test/scenarios/`, `test/smoke/`, and `cmd/rimsky-conformance` (for conformance runs). Each scenario boots its own Postgres container; tests are not unit-test fast.
+The fixture is reused across `test/scenarios/`, `test/smoke/`, and `cmd/rimsky-executor-conformance` (for conformance runs). Each scenario boots its own Postgres container; tests are not unit-test fast.
 
 `test/scenarios/locks/` is the regression backstop for the locking invariants (claimant-guarded release, scope conflict, named-lock atomicity, deterministic ordering). `test/scenarios/stores/`, `test/scenarios/claim_stores/` exercise producer-side scenarios. `test/scenarios/frame_resolution/` covers frame semantics. `test/scenarios/lifecycle/` covers the LifecycleSubscriber protocol.
 

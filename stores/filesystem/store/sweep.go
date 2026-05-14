@@ -17,7 +17,7 @@ import (
 // RunSweep runs the visibility-timeout sweep. Returns when ctx is cancelled.
 //
 // Per spec §7.5: purely store-internal; does not consult
-// rimsky_claim_handle. Reclaimed in-progress sentinels also clear any
+// rimsky_claim_handles. Reclaimed in-progress sentinels also clear any
 // drained sentinel for the policy so on_drain mode picks the
 // recently-reclaimed work back up.
 func (s *Store) RunSweep(ctx context.Context, interval time.Duration) {

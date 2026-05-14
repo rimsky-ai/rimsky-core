@@ -24,9 +24,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
@@ -35,7 +35,7 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-instance-ordering", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -47,7 +47,7 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 
 	// CreateInstance auto-enqueues a frame for the root. Clear it so the
 	// test's own inserts have full control.
-	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_worker_request WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
+	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	require.NoError(t, err)
@@ -56,14 +56,14 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 
 	// First running insert: should succeed.
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
 	`, uuid.UUID(iid), uuid.UUID(worker.ID))
 	require.NoError(t, err, "first running insert should succeed")
 
 	// Second running insert: must fail (uq_rimsky_frames_running).
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
 	`, uuid.UUID(iid), uuid.UUID(worker.ID))
 	require.Error(t, err, "second running insert must fail")
@@ -74,11 +74,11 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok")
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-instance-ordering-concurrent", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

@@ -11,7 +11,7 @@ references:
 
 ## What it is
 
-Userdata is an opaque per-node JSON blob the template author attaches and the executor consumes verbatim. Carried on `ExecuteRequest.userdata`. Never substituted. Never inspected by rimsky. Validated executor-side against the executor's declared `userdata_schema` if any.
+Userdata is an inert per-node JSON blob the template author attaches and the executor consumes verbatim. Carried on `proto:executor.proto::ExecuteRequest.userdata`. Never substituted. Never inspected by rimsky. Validated executor-side against the executor's declared `userdata_schema` if any. Inertness discipline cross-linked at `concept:inertness`.
 
 ## Purpose
 
@@ -19,11 +19,22 @@ Templates need a channel for "stuff the executor needs to read but rimsky should
 
 ## Boundaries
 
-Owns: the bytes, the per-instance override merge mechanism, the routing-key validation. Does NOT own: substitution (see `attribute`), executor-side schema enforcement (see `executor.userdata_schema`), claim payload (see `claim`). Adjacent: `executor`, `opacity`.
+Owns: the bytes, the per-instance override merge mechanism, the routing-key validation. Does NOT own: substitution (see `attribute`), executor-side schema enforcement (see `executor.userdata_schema`), claim payload (see `claim`). Adjacent: `executor`, `inertness`.
+
+## Purpose (in practice)
+
+Escape-hatch for executor-specific config that rimsky should not need to learn about. Three primary uses:
+
+1. **Synthetic-blocker scenarios** — executor configures internal sleep / wait state via per-node tuning.
+2. **Per-run trace artifacts** — caller threads correlation IDs, span contexts, or audit hooks the executor consumes.
+3. **Ad-hoc tuning** — per-node knobs the executor recognizes that rimsky does not (e.g., retry budgets, output format flags).
+
+Per-instance overrides via `col:rimsky_instances.userdata_overrides` extend this with operator-level customization at instance-creation time (see `route:POST /instances`).
 
 ## Invariants
 
-- Userdata is opaque (`@blessed-invariant 11`). No substitution pass. No inspection. No validation beyond the executor-side schema check.
+- Userdata is inert (`@blessed-invariant 11`). No substitution pass. No inspection. No validation beyond the executor-side schema check.
+- Rimsky never substitutes, validates, or otherwise interprets userdata. The per-instance overrides merge is the only structural traversal of userdata content (handled by `code:graph/shared/jsonmerge.go::DeepMergeJSON`).
 - `{{...}}` directives in userdata are literal text reaching the executor verbatim; the substitution grammar does not include a `{{userdata.*}}` source kind.
 - Per-instance `userdata_overrides` validate only routing keys (`by_executor`, `by_node`, plus the executor/node names). Fragment values are never inspected.
 
@@ -31,7 +42,7 @@ Owns: the bytes, the per-instance override merge mechanism, the routing-key vali
 
 Templates declare a per-node userdata blob; some operations (tracing, synthetic-blocker scenarios, ad-hoc tuning, per-run artifacts) need to alter that blob for one instance without forking the template. Per-instance overrides handle that.
 
-Shape: `{by_executor: {<executor-name>: {...}}, by_node: {<node-name>: {...}}}`. Stored on `rimsky_instances.userdata_overrides`. Deep-merged at dispatch time in the order `template → by_executor[<executor>] → by_node[<node>]` (more specific wins). Merge helper is `modeling/shared.DeepMergeJSON`.
+Shape: `{by_executor: {<executor-name>: {...}}, by_node: {<node-name>: {...}}}`. Stored on `rimsky_instances.userdata_overrides`. Deep-merged at dispatch time in the order `template → by_executor[<executor>] → by_node[<node>]` (more specific wins). Merge helper is `graph/shared.DeepMergeJSON`.
 
 Validation discipline (preserves `@blessed-invariant 11`):
 - Inspects only routing keys (`by_executor`, `by_node`, plus the executor/node names which must be declared in the template). Fragment values never inspected.
@@ -46,5 +57,5 @@ CLAUDE.md "Common mistakes" calls out the confusion with cloud-init userdata (cl
 
 ## Open within this concept
 
-- The executor's `userdata_schema` (read by rimsky to validate userdata bytes at template-registration and dispatch time) is a sanctioned but unnamed exception to `@blessed-invariant 11` opacity — see `tensions/userdata-schema-as-opacity-exception.md`.
+- The executor's `userdata_schema` (read by rimsky to validate userdata bytes at template-registration and dispatch time) is a sanctioned but unnamed exception to `@blessed-invariant 11` inertness — see `tensions/userdata-schema-as-opacity-exception.md`.
 

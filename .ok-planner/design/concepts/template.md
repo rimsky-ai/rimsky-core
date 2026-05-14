@@ -21,12 +21,12 @@ Content-addressing gives a template stable identity. Two semantically-identical 
 
 ## Boundaries
 
-Owns: the spec bytes, the canonical hash, the lifecycle states, the registration entry point. Does NOT own: deployment routing (see `tag`), per-deployment overrides (see `instance`, `userdata`), runtime state (see `node`). Adjacent: `tag`, `instance`, `lifecycle-subscriber`, and the JCS canonicalization step (a sub-detail of template hashing inside this concept; pinned via the `modeling/template/canonical/jcs.go` library version).
+Owns: the spec bytes, the canonical hash, the lifecycle states, the registration entry point. Does NOT own: deployment routing (see `tag`), per-deployment overrides (see `instance`, `userdata`), runtime state (see `node`). Adjacent: `tag`, `instance`, `lifecycle-subscriber`, and the JCS canonicalization step (a sub-detail of template hashing inside this concept; pinned via the `graph/template/canonical/jcs.go` library version).
 
 ## Invariants
 
 - `rimsky_templates.id` is `sha256-` prefix + 64 hex chars over RFC 8785 JCS bytes.
-- The JCS library version is pinned in `go.mod` — a transitive bump that changes canonicalization output invalidates every existing template id (`modeling/template/canonical/jcs.go:13-15`).
+- The JCS library version is pinned in `go.mod` — a transitive bump that changes canonicalization output invalidates every existing template id (`graph/template/canonical/jcs.go:13-15`).
 - Instances bind to a specific `template_hash` at creation; tag movement does not migrate live instances.
 
 ## Aliases and historical names

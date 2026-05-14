@@ -25,9 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
@@ -36,11 +36,11 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	// Slow stub so the first frame is genuinely in flight while we fire
 	// the concurrent batch — we want the partial unique index actually
 	// guarding a queued row, not a freshly-completing race.
-	h.Stub.WhenType("worker").Complete(map[string]any{}, true, "ok").Delay(3 * time.Second)
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok").Delay(3 * time.Second)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "coalesce-concurrent", Version: "1",
-		FrameResolution: node.FrameResolutionCoalesce,
+		FrameResolutionMode: node.FrameResolutionCoalesce,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -64,8 +64,8 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			err := h.Driver.Store().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-				_, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Store(), tx,
+			err := h.Driver.Tables().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+				_, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Tables(), tx,
 					uuid.UUID(iid), uuid.UUID(worker.ID))
 				return err
 			})

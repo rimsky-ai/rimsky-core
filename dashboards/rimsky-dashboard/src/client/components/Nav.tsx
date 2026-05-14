@@ -23,7 +23,7 @@ const sections: { title: string; links: { path: string; label: string }[] }[] = 
     title: 'Runtime',
     links: [
       { path: '/frames', label: 'Frames' },
-      { path: '/dispatches', label: 'Dispatches' },
+      { path: '/node-runs', label: 'Node-runs' },
       { path: '/lock-holders', label: 'Lock holders' },
     ],
   },

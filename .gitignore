@@ -10,11 +10,12 @@ vendor/
 /rimsky-supervisor
 /rimsky-scheduler
 /rimsky-control-api
-/rimsky-conformance
 /rimsky-conformance-probe
 /rimsky-cli
 /rimsky-migrate
-/rimsky-store-conformance
+/rimsky-executor-conformance
+/rimsky-claim-producer-conformance
+/rimsky-blob-backend-conformance
 /rimsky-entrypoint
 /rimsky-docs-glossary
 /rimsky-docs-lint

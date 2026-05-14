@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // InstanceRow mirrors a row of rimsky_instances. An instance binds to a
@@ -30,8 +30,8 @@ type InstanceRow struct {
 	TerminatedAt      *time.Time     `json:"terminated_at"` // nullable; set at terminal-state detection
 }
 
-// InstanceStore is the rimsky_instances accessor.
-type InstanceStore interface {
+// InstanceTable is the rimsky_instances accessor.
+type InstanceTable interface {
 	Create(ctx context.Context, args InstanceCreateInput, tx Tx) (InstanceRow, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*InstanceRow, error)
 	GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx Tx) (*InstanceRow, error)

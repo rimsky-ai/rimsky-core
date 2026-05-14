@@ -4,7 +4,7 @@
 
 // nodes_mark_stale_for_cascade.go — NodesMarkStaleForCascade conformance area.
 //
-// Covers NodeStore.MarkStaleForCascade — the cascade target used by the
+// Covers NodeTable.MarkStaleForCascade — the cascade target used by the
 // supervisor's terminal-complete path. Asserts the gated predicate:
 //
 //   - fresh                       -> stale + frame_id (matches)
@@ -22,13 +22,13 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
+func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
 	// Seed three sibling nodes against the same instance: one fresh, one
 	// stale-with-NULL-frame, one running. Then run MarkStaleForCascade
@@ -57,7 +57,7 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	runningID := uuid.New()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		// fresh node: created in 'fresh' by NodeStore.Create.
+		// fresh node: created in 'fresh' by NodeTable.Create.
 		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID:           freshID,
 			InstanceID:   fix.InstanceID,
@@ -80,7 +80,7 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, staleNullFrameID,
-			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 			return err
 		}
 
@@ -95,11 +95,11 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, runningID,
-			shared.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, runningID,
-			shared.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
 			return err
 		}
 		// Pin the running node's frame_id to a different frame; the cascade
@@ -134,8 +134,8 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	if gotFresh == nil {
 		t.Fatalf("freshID row missing")
 	}
-	if gotFresh.State != shared.NodeStateStale {
-		t.Fatalf("fresh: state=%q want %q", gotFresh.State, shared.NodeStateStale)
+	if gotFresh.State != cascade.NodeStateStale {
+		t.Fatalf("fresh: state=%q want %q", gotFresh.State, cascade.NodeStateStale)
 	}
 	if gotFresh.FrameID == nil || *gotFresh.FrameID != cascadeFrameID {
 		t.Fatalf("fresh: frame_id=%v want %v", gotFresh.FrameID, cascadeFrameID)
@@ -153,8 +153,8 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	if gotStaleNull == nil {
 		t.Fatalf("staleNullFrameID row missing")
 	}
-	if gotStaleNull.State != shared.NodeStateStale {
-		t.Fatalf("stale-null: state=%q want %q", gotStaleNull.State, shared.NodeStateStale)
+	if gotStaleNull.State != cascade.NodeStateStale {
+		t.Fatalf("stale-null: state=%q want %q", gotStaleNull.State, cascade.NodeStateStale)
 	}
 	if gotStaleNull.FrameID == nil || *gotStaleNull.FrameID != cascadeFrameID {
 		t.Fatalf("stale-null: frame_id=%v want %v", gotStaleNull.FrameID, cascadeFrameID)
@@ -173,9 +173,9 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Driver) {
 	if gotRunning == nil {
 		t.Fatalf("runningID row missing")
 	}
-	if gotRunning.State != shared.NodeStateRunning {
+	if gotRunning.State != cascade.NodeStateRunning {
 		t.Fatalf("running: state=%q want %q (cascade must not overwrite running rows)",
-			gotRunning.State, shared.NodeStateRunning)
+			gotRunning.State, cascade.NodeStateRunning)
 	}
 	if gotRunning.FrameID == nil || *gotRunning.FrameID != otherFrameID {
 		t.Fatalf("running: frame_id=%v want %v (cascade must not overwrite frame_id of running rows)",

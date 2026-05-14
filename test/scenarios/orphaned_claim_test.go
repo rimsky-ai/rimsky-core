@@ -2,16 +2,16 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario 13 — orphaned claim: a `rimsky_claim_handle` row outlives its
+// Scenario 13 — orphaned claim: a `rimsky_claim_handles` row outlives its
 // supervisor's heartbeat. The scheduler's §7.5 step-2 lock-holder sweep
 // reaps the expired row, deletes it claimant-guarded on
 // `holder_supervisor_id`, and emits a `lock_orphan_reaped` event.
 //
 // Migrated to the stores-redesign template grammar (spec §11). The legacy
-// dispatch-row claim-orphan path (`rimsky_worker_request.claimed_by` >
-// 5 × heartbeat_timeout) is still wired in `modeling/scheduler/scheduler.go` and
+// dispatch-row claim-orphan path (`rimsky_node_runs.claimed_by` >
+// 5 × heartbeat_timeout) is still wired in `graph/scheduler/scheduler.go` and
 // emits `orphaned_claim_released`, but the redesign relocates the
-// supervisor-side orphan signal onto `rimsky_claim_handle` (§9.9.2 +
+// supervisor-side orphan signal onto `rimsky_claim_handles` (§9.9.2 +
 // §7.5). This scenario exercises the lock-holder path; `verify_before_run_
 // race_test.go` covers the dispatch-row complement.
 package scenarios
@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestOrphanedClaim(t *testing.T) {
@@ -45,7 +45,7 @@ func TestOrphanedClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Seed an expired `rimsky_claim_handle` row tied to a dead supervisor.
+	// Seed an expired `rimsky_claim_handles` row tied to a dead supervisor.
 	// We pick `kind='named'` so the per-row reap path runs without needing a
 	// real claim_store factory in the harness — the §7.5 step-2 reap is
 	// identical for all three kinds modulo the store-side ReleaseLock call

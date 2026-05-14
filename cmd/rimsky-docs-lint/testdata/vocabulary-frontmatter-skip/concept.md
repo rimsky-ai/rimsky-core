@@ -1,6 +1,6 @@
 ---
 concept: example
-deprecated_terms: [template_id, consumer_key, substrate]
+deprecated_terms: [template_id, instance_key, substrate]
 ---
 
 # Example

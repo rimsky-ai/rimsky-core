@@ -25,11 +25,14 @@ import { detectRateLimit } from "./rate-limit.js";
  * callback URL. Per spec §12.2 the legacy `result` field has been retired in
  * favour of `attributes_delta`.
  *
- * - `complete`: terminal success. `attributesDelta` is the terminal-final
- *   writeback (may be `null` when the executor used the incremental
- *   `attributes_set` callback path; the supervisor already has that data).
- * - `blocked`: terminal `Blocked`.
- * - `errored`: terminal `Errored`.
+ * - `complete`: terminal success — maps to a StreamClose `Success` outcome on
+ *   the wire. `attributesDelta` is the terminal-final writeback (may be `null`
+ *   when the executor used the incremental `attributes_set` callback path; the
+ *   supervisor already has that data).
+ * - `blocked`: maps to a StreamClose `Error{error_class:"executor_blocked"}`
+ *   outcome on the wire (post-E.2 the pre-rename Blocked variant collapsed
+ *   into Error with the reserved `executor_blocked` class).
+ * - `errored`: maps to a StreamClose `Error{error_class}` outcome on the wire.
  *
  * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
  */
@@ -44,8 +47,8 @@ export type AgentOutcome =
   | { kind: "errored"; errorClass: string; payload: unknown }
   | {
       // J9 rate-limit auto-park (and any other voluntary park trigger).
-      // The supervisor receives ParkRequested via the gRPC stream or
-      // async callback (see plan A3).
+      // The supervisor receives the `Park` terminal via the gRPC stream
+      // or async callback (see plan A3).
       kind: "park_requested";
       reason: string;
       payload: Uint8Array;
@@ -134,8 +137,8 @@ export interface AgentRunOptions {
      * validation failure. The executor returns "rejected" with the
      * validation errors to the agent's MCP call, the agent corrects
      * and retries; after this many failed retries the run terminates
-     * with `Errored { error_class: "schema_validation_failed" }`.
-     * Default 3.
+     * with a StreamClose `Error{error_class: "schema_validation_failed"}`
+     * outcome on the wire. Default 3.
      */
     maxSchemaCorrections?: number;
   };
@@ -151,7 +154,7 @@ export interface AgentRunOptions {
   logger: Logger;
   /**
    * J10: Resume context populated by the supervisor when this dispatch
-   * is a resume after a prior ParkRequested. When `sessionToken` is
+   * is a resume after a prior `Park` terminal. When `sessionToken` is
    * non-empty, claude-agent launches the CLI with `--resume <token>`
    * so the prior conversation resumes; `payload` and `reason` are
    * surfaced to the prompt-template engine as
@@ -453,7 +456,8 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   // J8: track corrective `report_complete` retries. After more than
   // maxSchemaCorrections (default 3) consecutive validation failures,
-  // the run terminates with `Errored { error_class: "schema_validation_failed" }`.
+  // the run terminates with a StreamClose `Error{error_class:
+  // "schema_validation_failed"}` outcome on the wire.
   const maxSchemaCorrections =
     typeof cliConfig?.maxSchemaCorrections === "number" && cliConfig.maxSchemaCorrections >= 0
       ? cliConfig.maxSchemaCorrections
@@ -464,9 +468,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   // counter exceeds the cap, it schedules teardown with an `errored`
   // outcome AND returns "accepted" so the agent's tool call resolves
   // (the run is committed; the agent sees the success but the
-  // supervisor receives Errored). Otherwise it returns "rejected"
-  // with a corrective message — the agent can re-call report_complete
-  // with a fixed delta.
+  // supervisor receives a StreamClose Error outcome). Otherwise it
+  // returns "rejected" with a corrective message — the agent can
+  // re-call report_complete with a fixed delta.
   const rejectWithCorrection = (
     detail: string,
     scheduleTeardown: (td: () => Promise<void>) => void,
@@ -739,9 +743,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     // J9: rate-limit auto-park. When the CLI dies non-zero AND its
     // stderr carries a rate-limit signal AND userdata.cli.handle_rate_limits
     // is enabled (default true), emit `park_requested` instead of
-    // bouncing through the recovery path. The supervisor receives
-    // ParkRequested and parks the node until the reset window
-    // (or external invalidate) fires.
+    // bouncing through the recovery path. The supervisor receives the
+    // `Park` terminal and parks the node until the reset window (or
+    // external invalidate) fires.
     const handleRateLimits = cliConfig?.handleRateLimits !== false;
     if (
       handleRateLimits &&

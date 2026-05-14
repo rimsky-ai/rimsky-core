@@ -6,8 +6,8 @@
  * rate-limit.ts — detection helpers for Anthropic API rate-limit events.
  *
  * Per the 2026-05-08 platform-extensions plan J9, claude-agent should
- * convert detected rate limits into a `ParkRequested` terminal so the
- * rimsky supervisor parks the node and resumes after the reset window.
+ * convert detected rate limits into a `Park` terminal so the rimsky
+ * supervisor parks the node and resumes after the reset window.
  *
  * The CLI surfaces rate limits via stderr lines containing
  * `rate_limit_error` or "429" or the literal "rate limit". Reset
@@ -21,7 +21,7 @@
 export interface RateLimitSignal {
   detected: boolean;
   resumeAt: Date | null;
-  /** Recommended display reason for ParkRequested. */
+  /** Recommended display reason for the `Park` terminal. */
   reason: string;
 }
 

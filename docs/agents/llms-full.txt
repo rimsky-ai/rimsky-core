@@ -21,7 +21,9 @@ Nodes need typed contracts. Without them, dependency edges between nodes are wir
 
 Both gates are mandatory. The double-validation catches both substitution bugs (where the source value doesn't match the schema) and executor bugs (where the executor returns something the schema doesn't allow).
 
-The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `{{deps.<source>.<field>}}` for upstream values, `{{claim.<alias>.payload.<field>}}` for claim-pass payloads, or `{{params.<key>}}` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
+The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `nodes.<source>.value.<path>` for upstream values, `nodes.<emitter>.event.<name>.<path>` for executor-emitted named-event payloads, `claim.<alias>.payload.<path>` for claim-pass payloads, or `params.<path>` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
+
+The `nodes.<emitter>.event.<name>.<path>` source kind reads from the per-instance event ledger (rows persisted when the emitting executor streams a `NamedEvent`). The most-recent emission of `(emitter, name)` is selected; `<path>` walks the JSON payload via the same `walkPath` mechanism as the value substitution. Event payloads inherit the same opacity discipline as attribute values — the supervisor never logs, normalizes, or transforms them outside this substitution-leaf extraction (`@blessed-invariant 11` / `@blessed-invariant 21`).
 
 ## How you encounter it
 
@@ -60,9 +62,20 @@ The propagation of `invalidate` through the node graph. When a node loses or rep
 
 A workflow whose steps depend on each other faces a natural problem: when an upstream input changes, every downstream step that consumed it is now stale. Rimsky models this directly. Each node declares its dependencies; when a node's value changes (or is explicitly invalidated), the cascade engine walks the dependency graph and marks every dependent stale. The scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their executors.
 
-`invalidate` is Rimsky's only graph-level message. Recalculation is not a peer message — it's a scheduler action. The dispatch loop sees a node in `stale`, checks eligibility (claims and locks acquirable, dependencies fresh), and runs the node's executor. The clean separation lets the cascade engine be a pure reachability computation while the scheduler handles all the I/O concerns (claim acquisition, lock contention, executor dispatch, async callbacks).
+`invalidate` is Rimsky's only graph-level message. Recalculation is not a service message — it's a scheduler action. The dispatch loop sees a node in `stale`, checks eligibility (claims and locks acquirable, dependencies fresh), and runs the node's executor. The clean separation lets the cascade engine be a pure reachability computation while the scheduler handles all the I/O concerns (claim acquisition, lock contention, executor dispatch, async callbacks).
 
 A cascade always happens in the context of a frame. The frame ID stamps every cascade-affected row, so observability tooling can answer "show me everything that happened as a result of this invalidate."
+
+### The cascade-firing gate (lazy + last_outcome-driven)
+
+Today's lazy + Changed-gated cascade is preserved end-to-end. When a node commits, the supervisor's terminal handler fires the cascade only when the commit produced new value — i.e., the upstream's `last_outcome == fresh_changed`. Under the default `on_executor_complete: { resolve: by_changed }` (also the implicit default when no handler is declared) this is functionally identical to the prior `t.Changed` gate.
+
+`last_outcome` is **observability metadata, not a dispatch gate**. Two non-default `on_executor_complete` resolutions diverge from the default:
+
+- `always_propagate` forces `last_outcome=fresh_changed` even on `changed:false`, so the cascade fires.
+- `never_propagate` forces `last_outcome=fresh_unchanged` even on `changed:true`, so the cascade does not fire.
+
+Per-emit invalidate frame discipline (`frame: in | next`) is documented in [`invalidate.md`](invalidate.md).
 
 ## How you encounter it
 
@@ -82,7 +95,7 @@ A node's executor commits with a `changed: bool` declaration. `changed: true` (t
 ## Common mistakes
 
 - **Rimsky's cascade ≠ CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through a directed acyclic dependency graph.
-- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a peer message that travels alongside.
+- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
 - Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is dependency-driven, not value-diff-driven; the executor commits `changed: false` if it wants to halt propagation at itself.
 - Confusing cascade reach with executor invocation. Cascade marks nodes stale; the scheduler decides which stale nodes are eligible for dispatch (after acquiring any required claims and locks).
 
@@ -137,6 +150,159 @@ Each claim handle carries a `claim_id` that uniquely identifies the claim across
 
 ---
 
+# Filesystem store (`stores/filesystem/`)
+
+The bundled filesystem store is a reference [claim producer](claim-producer.md) that treats folders under a configured root as the resource each [claim](claim.md) acquires.
+
+## Selectors
+
+Two selector forms:
+
+- **Concrete-path selector** — e.g. `documents/alpha`. Resolves to a path under `<root>/<selector>`. Two claims on the same logical path produce byte-equal scopes (for the cross-claim conflict check).
+- **Pick-policy selector** — e.g. `@docs-ring`. Resolves via a configured `pick_policy` entry to a discovered folder under `<root>/<policy.root>`. Each pick policy implements a queue/ring/single-pass workflow over the folders it discovers.
+
+## Pick-policy actions (v2)
+
+Each pick policy declares two action fields. Both are required.
+
+| Field | Fires on |
+|---|---|
+| `on_commit` | `Commit` (success path) |
+| `on_give_up` | `Abandon` (failure path) |
+
+Each action takes a value from the v2 vocabulary:
+
+| Action | Queue entry | Folder on disk |
+|---|---|---|
+| `pop` | consumed | kept in place |
+| `pop_and_move: <target>` | consumed | renamed to `<root>/<target>/<folder>` |
+| `pop_and_delete` | consumed | destroyed (`os.RemoveAll`) |
+| `recycle` | returned to queue tail | kept in place |
+
+YAML shape: bare strings for non-parameterized actions; one-key map for `pop_and_move`:
+
+```yaml
+pick_policies:
+  "@docs":
+    root: documents
+    folder_pattern: "^[a-z][a-z0-9_-]*$"
+    on_commit:
+      pop_and_move: documents.failed
+    on_give_up: recycle
+    sync_strategy: on_drain
+    visibility_timeout_seconds: 1800
+```
+
+## `sync_strategy`
+
+Controls when the store re-discovers folders under `<root>/<policy.root>`.
+
+| Value | Sync runs when |
+|---|---|
+| `on_open` | every `Open` call (default) |
+| `on_drain` | only when `available/` is empty AND no `drained` sentinel is present (start of a new pass) |
+| `explicit` | only via the admin endpoint |
+| `never` | only at startup (initial population) |
+
+The `on_drain` mode produces single-pass-then-refresh queue mode: each pass yields N `Acquired` outcomes followed by one `Unavailable`. The next `Open` after that re-runs sync and starts a new pass.
+
+## Common patterns
+
+- **Ring-mode + live discovery:** `recycle + on_open`. Forever-cycling queue with new folders detected automatically.
+- **Queue-mode + auto-refresh:** `pop + on_drain`. Process each item once per pass; a new pass starts after the next `Open` fires sync.
+- **Stage-promote:** `pop_and_move(target=promoted) + on_open`. Folders move to a sibling directory after success.
+- **One-shot ingest:** `pop_and_delete + on_drain`. Folders disappear after success; queue drains permanently.
+- **Static queue + explicit refresh:** `pop + explicit`. Operator triggers admin sync to repopulate.
+
+## Validator rejections (config-load)
+
+- `pop + sync_strategy: on_open` — queue would never drain (`runSync` re-adds popped folders).
+- `pop_and_move` target on a different filesystem from `root` — `os.Rename` is not atomic across filesystems.
+- Old vocabulary (`release_to_back`, `release_to_head`, `delete`, `OnCommitDefault`, `OnGiveUpDefault`) — pre-v1 break-cleanly.
+
+## Validator warnings
+
+- `recycle + sync_strategy: on_drain` — legal but inert; the queue never empties so `on_drain` never fires.
+
+
+---
+
+# Postgres store (`stores/postgres/`)
+
+The bundled postgres store is a reference [claim producer](claim-producer.md) that treats rows in an operator-owned items table as the resource each [claim](claim.md) acquires.
+
+## Selectors
+
+Two selector forms:
+
+- **Scope selector** — selector echoed verbatim as both address and scope; no items table involvement.
+- **Pick-policy selector** — e.g. `@review-queue`. Resolves via a configured `pick_policy` to a row in the configured items table via `FOR UPDATE SKIP LOCKED`.
+
+## Items table schema
+
+Each pick policy points at an operator-managed table. Required columns:
+
+| Column | Type |
+|---|---|
+| `item_id` | `text` |
+| `payload` | `jsonb` |
+| `state` | `text` |
+| `claim_token` | `text` |
+| `claimed_at` | `timestamp with time zone` |
+| `enqueued_at` | `timestamp with time zone` |
+| `priority` | `integer` |
+| `sequence` | `bigint` |
+
+The store verifies the schema at startup; missing columns or wrong types fail config-load.
+
+## Pick-policy actions (v2)
+
+Each pick policy declares two action fields. Both are required.
+
+| Field | Fires on |
+|---|---|
+| `on_commit` | `Commit` (success path) |
+| `on_give_up` | `Abandon` (failure path) |
+
+The pg-store supports a subset of the v2 vocabulary because the items-table row IS the resource — there's no separate folder concept.
+
+| Action | Supported | Effect |
+|---|---|---|
+| `pop` | yes | row deleted |
+| `recycle` | yes | row returns to queue tail (claim_token cleared, sequence re-bumped) |
+| `pop_and_move` | rejected at config-load | no folder concept |
+| `pop_and_delete` | rejected at config-load | semantically equivalent to `pop`; the redundant name would mislead |
+
+YAML shape:
+
+```yaml
+pick_policies:
+  "@review-queue":
+    items_table: items_inbound
+    on_commit: pop
+    on_give_up: recycle
+    visibility_timeout_seconds: 300
+```
+
+## Common patterns
+
+- **Queue-mode (one-shot ingest):** `pop + recycle`. Each item processed once; failures recycle to the tail for retry.
+- **Ring-mode (forever-cycling):** `recycle + recycle`. Items rotate indefinitely.
+
+## Validator rejections (config-load)
+
+- `pop_and_move` action — not supported by postgres store.
+- `pop_and_delete` action — not supported (use `pop`).
+- Old vocabulary (`release_to_back`, `release_to_head`, `delete`, `OnCommitDefault`, `OnGiveUpDefault`) — pre-v1 break-cleanly.
+- Items-table identifier with mixed case, hyphens, or other non-`[a-z_][a-z0-9_]*` characters.
+
+## No `sync_strategy`
+
+The pg-store has no analogous mechanism — the items table is the source of truth and no auto-discovery is involved. Operators populate the table externally (the store's admin endpoint exposes a bulk-insert API).
+
+
+---
+
 # Claim producer
 
 ## Definition
@@ -147,7 +313,7 @@ The protocol-level term for a service that produces claim handles for Rimsky's l
 
 Rimsky's coordination primitives (claims, named locks) need to know about state outside the orchestrator: the filesystem holding workflow outputs, the postgres database queue, the S3 bucket of artifacts. But Rimsky cannot know the structure of every possible state — there are too many.
 
-The claim-producer protocol is the contract. A peer service implements five methods; Rimsky calls them at acquisition (`Open`), at executor terminal (`Commit`/`Abandon`/`Release`), and at startup (`Capabilities`). The producer is the source of truth for the structure of its underlying state; Rimsky is the source of truth for which claims are currently held.
+The claim-producer protocol is the contract. A service implements five methods; Rimsky calls them at acquisition (`Open`), at executor terminal (`Commit`/`Abandon`/`Release`), and at startup (`Capabilities`). The producer is the source of truth for the structure of its underlying state; Rimsky is the source of truth for which claims are currently held.
 
 This split keeps the protocol minimal. Producers don't internally persist lock state — they're stateless servers that know how to translate their selectors into scope bytes and how to mutate their underlying state on commit/abandon. Rimsky owns the claim-handle table; producers own everything else.
 
@@ -157,7 +323,7 @@ This split keeps the protocol minimal. Producers don't internally persist lock s
 - **`Commit(CommitRequest) → CommitResponse`**: signals that the consumer of the claim succeeded. The producer decides what to do with its own state per its own configuration.
 - **`Abandon(AbandonRequest) → AbandonResponse`**: signals that the consumer of the claim failed. The producer decides what to do with its own state per its own configuration.
 - **`Release(ReleaseRequest) → ReleaseResponse`**: tear down producer-side read state (snapshot, MVCC transaction) for a read claim. Distinct from `Commit`/`Abandon`, which are write-claim-shaped.
-- **`Capabilities(CapabilitiesRequest) → CapabilitiesResponse`**: startup handshake. Returns the producer's `WriteSemanticsEnvelope`. Probed once per protocol per peer at process startup.
+- **`Capabilities(CapabilitiesRequest) → CapabilitiesResponse`**: startup handshake. Returns the producer's `WriteSemanticsEnvelope`. Probed once per protocol per service at process startup.
 
 ## A note on naming: "claim producer" vs "store"
 
@@ -165,11 +331,11 @@ In protocol-level prose — wire protocols, conformance suites, the Go interface
 
 In casual operator parlance and in the reference-implementation tree (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`), the colloquial name **store** survives. "The filesystem store," "the postgres store," "the stub store" are normal ways to talk about data-backed reference impls.
 
-The two names refer to the same thing — a peer service that implements the five-method `ClaimProducer` protocol. Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is fine in casual contexts about the bundled reference impls.
+The two names refer to the same thing — a service that implements the five-method `ClaimProducer` protocol. Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is fine in casual contexts about the bundled reference impls.
 
 ## How you encounter it
 
-- **Operator config**: the `claim_producers:` block in `rimsky.yml`. Each entry has an `endpoint` (gRPC URL), an optional `protocols: [...]` list, and a required `write_semantics_envelope: [...]`.
+- **Operator config**: the `claim_producers:` block in `rimsky.yml`. Each entry has an `endpoint` (gRPC URL), an optional `protocols: [...]` list, and a required `write_semantics_allowed: [...]`.
 - **Implementing a producer**: speak gRPC against `protocols/proto/v1/claim_producer.proto`. The reference impls (filesystem, postgres, stub) live under `stores/` and are runnable as standalone binaries.
 - **Conformance**: `cmd/rimsky-claim-producer-conformance` exercises a producer against the wire-protocol contract.
 
@@ -248,11 +414,492 @@ A claim becomes a [claim handle](claim-handle.md) once acquired.
 
 ---
 
+# Design philosophy
+
+Rimsky is a domain-agnostic orchestration platform. The codebase ships
+no domain vocabulary, no project terminology, no consumer-specific
+defaults. Every domain-shaped piece of a deployment — the templates,
+the userdata, the MCP catalogs, the audit logs — lives in the
+consumer's repository, not in rimsky's.
+
+This page sets the lens through which the rest of the documentation is
+written. It is the answer to "why do you draw the line where you do?"
+
+## The core split: graphs are control flow, executors are domain logic
+
+Rimsky owns:
+
+- **Cascade.** When a node's outputs change, the platform decides
+  which dependents get re-run. Whether `changed` is meaningful, what
+  the node produced, and what the dependents do with the value are
+  all out of rimsky's scope.
+- **Claims.** The atomic acquisition transaction, the conflict
+  predicate, the producer-side write semantics envelope, the
+  deterministic-sorted-order multi-lock acquisition, the held-claim
+  auto-terminal — every piece of contention safety. Whether a claim
+  is "this row in items table" or "this concrete path on disk" is
+  out of scope; the platform compares scope bytes, not their meaning.
+- **Frames.** The unit of cascade resolution. Operators see frames
+  start, hold, and complete; the platform never inspects what the
+  frame is about.
+- **Error policy.** `retry / invalidate / give_up / pass`, the
+  consecutive-retries-without-progress cap, three declarable lifecycle
+  handler slots plus the `on_event` handler map. Any domain-shaped
+  retry semantics live in the policy declarations; rimsky executes
+  them.
+- **Persistence.** Every state mutation goes through the persistence
+  driver; Postgres and SQLite are the shipped reference impls. No
+  in-memory state crosses a process boundary except through that
+  driver. Producers may also persist, but their state is opaque to
+  rimsky.
+
+The executor owns:
+
+- **Vocabulary.** The userdata schema declares the shape; the
+  attributes schema declares the output. Anything more specific
+  than "JSON object" is out-of-scope for the platform.
+- **Domain logic.** The agent prompt, the API call, the
+  transformation, the validation. Rimsky moves bytes in and bytes
+  out.
+- **External integrations.** MCP servers, webhooks, third-party
+  APIs. The executor — and the project-built tools wired into its
+  catalog — handle every integration concern.
+
+The producer (the "store" colloquially) owns:
+
+- **Domain-specific scope canonicalization.** Whether "row 42" in the
+  items table conflicts with "row 42 of last hour's snapshot" is the
+  producer's policy. Rimsky compares scope bytes and asks no
+  questions.
+- **Domain-specific commit/abandon semantics.** A filesystem store
+  unlinks; a postgres store deletes; a future S3 store finalizes a
+  multipart upload. Rimsky calls verbs and trusts the producer.
+
+## Why "blob bytes are inert"
+
+Several of the platform's behaviors hinge on rimsky never reading
+domain data in any way other than the substitution path. Attribute
+values, named-event payloads, parked-state payloads, claim
+addresses, claim payloads — all of them are byte slices from
+rimsky's perspective. Logging them, normalizing them, indexing them,
+validating them beyond the schema gates, attaching them to traces,
+including them in error messages — every one of those acts would
+make rimsky a partial participant in the domain. It would force the
+platform to take on bug surface and security surface that belongs to
+the consumer.
+
+Two `@blessed-invariant`s lock this in source:
+
+- Invariant 11: userdata is opaque.
+- Invariant 20: claim content is inert.
+- Invariant 21: blob content is inert.
+
+Removing or weakening these would unwind the design.
+
+## Why no domain helpers ship
+
+A platform that ships domain helpers becomes a platform whose users
+file requests for more domain helpers. The shipped reference
+impls (`http-node`, `claude-agent`, `stub`, `filesystem`,
+`postgres`) are deliberately illustrative: they cover the protocol's
+shape and the deployment story. They are not a curated catalog of
+production-ready domain pieces.
+
+If a project needs a Salesforce executor, an audit-trail
+LifecycleSubscriber, a tickets-table ClaimProducer, those live in the
+project's own repository. They depend on the public protocol surface
+(`protocols/proto/v1/*.proto`) and the documented control-API; they
+do not need to fork or vendor rimsky.
+
+## Why pre-v1 still has invariants
+
+The "pre-v1" release stance gives rimsky permission to break wire
+shapes and schema between versions. It does not give rimsky permission
+to weaken the safety properties — the deterministic-sorted-order
+multi-lock acquisition, the verify-before-run guard, the
+claimant-guarded release, the unified terminal-decision engine, the
+auto-terminal aggregate-outcome rule. Those are load-bearing for any
+project that adopts rimsky; without them, every consumer would have to
+invent their own.
+
+Pre-v1 is about iteration speed on the surfaces; the safety
+properties are stable.
+
+## How to read the documentation
+
+The concept pages (`docs/concepts/*.md`) are the canonical reference.
+Each is one noun in the platform's vocabulary, with a tight
+description, the wire shape if relevant, and the mechanics. The
+protocol pages (`docs/protocols/*.md`) walk a builder through
+implementing a service. The executor and producer per-component pages
+(`docs/executors/*`, `docs/stores/*`, `docs/blob-backends/*`) cover
+the shipped reference impls in operator-facing detail. The narrative
+pages (`docs/humans/*`) and the design-philosophy page (this one) set
+the framing.
+
+When in doubt: cite from the concept pages. They are the load-bearing
+material; everything else points at them.
+
+
+---
+
+# Deterministic transformations
+
+Not every node in a rimsky graph is an agent or an external service.
+Many graphs benefit from interleaving deterministic post-processing
+nodes between the agent-driven (or otherwise-non-deterministic) work.
+This page covers the recurring patterns: post-processors,
+confidence-driven branching, and agent self-blocks.
+
+Rimsky has no special-cased node type for "deterministic"; the trick is
+to use the existing executor + handler surfaces in a constrained way.
+
+## Post-processors as native (claim-only) nodes
+
+A node with no `executor` declared is a **native node** — rimsky
+synthesizes a `Complete{changed: true}` once any of its claims have
+been acquired. The value the cascade carries is whatever the upstream
+nodes wrote into the attributes.
+
+Use this for:
+
+- Combining outputs from multiple parents into one shaped object.
+- Stripping or renaming fields the downstream nodes expect.
+- Forcing a cascade fan-out (`ResolveAlwaysPropagate`) at a specific
+  graph point.
+
+## Post-processors as `http-node` invocations
+
+For non-trivial transformations, `http-node` (the bundled Go reference
+executor) accepts a small declarative HTTP-call shape and returns the
+response in `attributes_delta`. Pair it with `qualityrules` on the
+node's attributes for assertion-style guards on the transformed
+output.
+
+## Confidence-driven branching
+
+Pattern: an agent emits a confidence score with its findings. The
+branch nodes use `on_executor_complete` with `resolve: by_changed` and
+an invalidate emit to route to the right downstream.
+
+```yaml
+nodes:
+  classify:
+    executor: claude-agent
+    userdata:
+      cli:
+        system_prompt: "Classify the document. Emit confidence 0..1."
+    attributes:
+      schema:
+        properties:
+          category:
+            type: string
+          confidence:
+            type: number
+
+  high_confidence_path:
+    executor: deterministic-finalize
+    attributes:
+      schema:
+        properties:
+          category:
+            source: nodes.classify.value.category
+    deps: [classify]
+
+  low_confidence_path:
+    executor: human-review
+    attributes:
+      schema:
+        properties:
+          category:
+            source: nodes.classify.value.category
+    deps: [classify]
+```
+
+The `classify` node's `on_executor_complete` is empty (default
+`by_changed`). Downstream invalidation gating is handled at attribute-
+substitution time: nodes that reference `nodes.classify.value.category`
+trigger when classify completes and propagates. The branching is then
+done by quality-rule guards on each downstream that no-op (via a
+deterministic node returning unchanged) when their confidence
+condition isn't satisfied.
+
+For sharper branching, use named events:
+
+```yaml
+nodes:
+  classify:
+    executor: claude-agent
+    on_event:
+      high_confidence:
+        invalidate:
+          targets: [auto_finalize]
+      low_confidence:
+        invalidate:
+          targets: [needs_review]
+```
+
+The `classify` executor emits `high_confidence` or `low_confidence` as
+a named event before its terminal `Complete`. Each `on_event` handler
+fires the appropriate downstream invalidate.
+
+## Agent self-blocks
+
+Pattern: an agent reaches a state where it cannot continue without
+external input — a missing parameter, a required artifact, an
+ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}` (not
+`Error{error_class}`) to signal "I produced output but explicitly chose not to
+claim success", paired with an `on_executor_errored` handler that
+routes the run downstream.
+
+```yaml
+nodes:
+  draft:
+    executor: claude-agent
+    on_executor_errored:
+      resolve: pass
+      invalidate:
+        targets: [routing]
+```
+
+`draft` emits `Blocked { reason: "needs_review", payload: {...} }`. The
+handler routes through `routing` which decides next steps based on the
+blocked-payload context. See `docs/concepts/handlers.md` and
+`docs/protocols/executor.md` for the wire-shape details.
+
+## Why this split matters
+
+Rimsky stays domain-agnostic. The graph carries flow control; the
+executors carry domain logic. Deterministic transformations are just a
+class of executor where the implementation happens to be pure code
+rather than an agent or external service. The semantics —
+substitution, retry policy, cascade, claims — are identical.
+
+
+---
+
+# Domain stores
+
+A **domain store** is a project-built MCP server that holds
+project-specific state — prompt context, learnings, examples,
+corrections, glossaries, evaluation rubrics, partial pipeline state —
+and exposes it as a tool catalog that an agent executor can consume
+during a dispatch. Rimsky does not ship a domain store; the platform
+provides the wiring that makes them composable.
+
+This page covers the pattern and the contract a domain store satisfies
+to participate in the rimsky control plane.
+
+## What a domain store is
+
+Mechanically: an HTTP or stdio MCP server registered in the executor's
+catalog (claude-agent uses an `mcp_catalog` block in its startup
+config — see `docs/executors/claude-agent/userdata.md`). Templates
+reference catalog entries by `ref` in their userdata. Dispatch wires
+the entry into the agent's tool space.
+
+Conceptually: rimsky stays domain-agnostic; the domain store is where a
+consuming project lands its vocabulary, its data, and its operations.
+The store presents the project as a tool surface to agents, while the
+graph (nodes, attributes, claims) handles flow control.
+
+## Why this split
+
+- **Re-use across templates.** A single project-tracker MCP can serve
+  a dozen graphs without each template re-defining the integration.
+- **Operator-managed catalogs.** Catalog entries live in the operator's
+  startup config; templates only carry refs. Adding a new domain store
+  is an operator change, not a template change.
+- **Auditable tool surfaces.** `policy.allow_inline: false` blocks
+  templates from injecting unconfigured MCP servers at dispatch time.
+  The operator's allow-list is the single source of truth for which
+  MCP surfaces dispatches may reach.
+
+## The minimal contract
+
+A domain store needs:
+
+1. An MCP-protocol HTTP or stdio endpoint.
+2. A `tools/list` response advertising its tool catalog.
+3. Per-tool input schemas for argument validation.
+4. Idempotency on the tools that can be retried by the agent
+   (rimsky's retry policy may dispatch the same node multiple times).
+
+What rimsky does **not** require:
+
+- Any persistence model (use Postgres, SQLite, files, an in-memory
+  cache, or a remote service).
+- Any specific authentication scheme (the operator wires this through
+  the catalog config — env vars, headers, mTLS).
+- A specific language or runtime.
+
+## Worked example: a project-tracker domain store
+
+```yaml
+# operator config
+mcp_catalog:
+  project-tracker:
+    transport: http
+    url: ${PROJECT_TRACKER_URL}
+    headers:
+      Authorization: ${PROJECT_TRACKER_TOKEN}
+policy:
+  allow_inline: false
+  allow_modules_from: ["@project-alpha/*"]
+```
+
+```yaml
+# template node
+nodes:
+  ingest:
+    executor: claude-agent
+    userdata:
+      cli:
+        mcpServers:
+          - ref: project-tracker
+        system_prompt: "Use tools to fetch tickets and update status."
+```
+
+The project-tracker server exposes `tickets.list`, `tickets.get`,
+`tickets.update_status` and similar. The agent invokes them through
+MCP. The dispatch's `attributes_delta` carries the agent's structured
+findings back into rimsky.
+
+## Substituting domain-store outputs into the graph
+
+When a domain-store call's result is needed by a downstream node,
+expose it through the standard substitution path. Two main idioms:
+
+- **Through the agent's `report_complete`.** The agent stores its
+  findings in `attributes_delta`; downstream nodes read them via
+  `source: nodes.<this>.value.<path>`.
+- **Through named events.** If the executor emits non-terminal
+  domain-shaped signals (e.g. `ticket.updated`, `learning.captured`),
+  downstream nodes read them via
+  `source: nodes.<this>.event.<name>.<path>`.
+
+Pick whichever shape the data fits — `value` for terminal outputs,
+`event` for mid-flight signals — and the substitution layer treats
+them identically once persisted.
+
+## Operational notes
+
+- **Per-dispatch vs. persistent lifetimes.** Stdio MCP servers can run
+  per-dispatch (spawned and reaped each run) or persistent (one
+  process per claude-agent process). Persistent is the cheaper choice
+  for stateless tooling.
+- **Module / http-loopback transports.** For tools tightly coupled to
+  the executor's runtime (e.g. project-shaped helpers in TypeScript),
+  prefer the `module` transport. It runs in-process and the wire path
+  collapses to a loopback HTTP listener.
+- **Audit logging.** Domain stores are the right place for audit
+  trails of agent-driven mutation. Rimsky's events log captures node
+  state transitions; the domain store captures domain-level state
+  changes.
+
+
+---
+
+# Error policy
+
+## Definition
+
+The mechanism that maps an executor's `error_class` plus the run's
+retry counters onto an action: `retry`, `invalidate(targets)`,
+`give_up`, or `pass`. Templates declare `error_types` per node;
+rimsky's runtime resolves the policy at terminal time.
+
+## Why it exists
+
+Different errors warrant different responses. A transient network
+failure is a candidate for retry. An invalid input is a give-up. A
+contention conflict might warrant invalidating a related node. Without
+a declarative policy, every executor would have to invent its own
+retry semantics; with one, the platform handles retry uniformly and
+the template author expresses intent.
+
+## Policy chain
+
+A node's `error_types` block declares per-error_class actions. At
+terminal time the runtime looks up the action for the executor-supplied
+`error_class` and dispatches:
+
+- `retry` — re-dispatch after a backoff.
+- `invalidate(targets)` — invalidate the named target nodes; the
+  emitted invalidates respect the optional `frame: in | next` setting.
+- `give_up` — fail the node with the executor-supplied error class.
+- `pass` — treat the failure as a no-op for cascade; transitions to
+  `fresh+passed` without error routing.
+
+> The pre-2026-05-12 action flavors `discard_then_retry` and
+> `resume_then_retry` are retired; both now resolve to `retry`. The
+> supervisor releases acquired claims at terminal regardless.
+
+The three lifecycle handlers (`on_acquire_unavailable`,
+`on_executor_complete`, `on_executor_errored`) override or extend this
+resolution. See `docs/concepts/handlers.md`.
+
+## `max_retries_without_progress` cap
+
+To prevent runaway retry loops, every dispatch tracks a
+`consecutive_retries_no_progress` counter. The counter increments on
+retry and resets on any `last_outcome` change. When the counter
+exceeds the effective cap, the runtime forces
+`Errored { error_class: "retry_loop_no_progress" }` instead of another
+retry.
+
+The effective cap is resolved as:
+
+1. The per-node value `max_retries_without_progress` from the template
+   (a pointer integer; nil = use deployment default; 0 = disable cap;
+   N > 0 = use N).
+2. The deployment-level default
+   `scheduler.max_retries_without_progress` from `rimsky.yml` (default
+   100).
+
+A per-node value of `0` disables the cap entirely — useful for nodes
+that are expected to retry indefinitely (watchdog graphs, polling
+nodes against external systems). For most nodes the deployment default
+is appropriate.
+
+The metric `rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
+fires whenever the cap forces a failure; alerting on this metric
+surfaces retry loops before they exhaust budget.
+
+## How you encounter it
+
+- **Templates**: the `error_types:` block under each node.
+- **Per-node tuning**: `max_retries_without_progress` as a sibling
+  field on the node spec.
+- **Deployment-level default**: `scheduler.max_retries_without_progress`
+  in `rimsky.yml`.
+
+## Common mistakes
+
+- Conflating `Error{error_class: "executor_blocked"}` and `Error{error_class}`. `Error{error_class: "executor_blocked"}` means "I produced
+  output but explicitly chose not to claim success" — typically routed
+  via `on_executor_errored` to a downstream review or routing node.
+  `Error{error_class}` means a true failure.
+- Setting `max_retries_without_progress: 0` on every node. The cap
+  exists to surface retry loops; disabling it broadly hides bugs.
+- Expecting `give_up` to terminate the instance. It fails the node;
+  whether the instance is recoverable depends on downstream handlers
+  and the `frame_resolution:` policy.
+
+## See also
+
+- [`handlers.md`](handlers.md)
+- [`executor.md`](executor.md)
+- [`parked.md`](parked.md)
+
+
+---
+
 # Executor
 
 ## Definition
 
-The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
+The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 ## Why it exists
 
@@ -260,22 +907,26 @@ Rimsky's role is orchestration: when to run a node, what claims and locks to acq
 
 The executor surface splits into two service definitions:
 
-- **`NodeExecutor`** in `protocols/proto/v1/executor.proto`. The required dispatch protocol. One method:
-    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `Complete`, `Blocked`, `Errored`, or `AsyncAccepted`. The supervisor's terminal handling is keyed on the final event type.
+- **`Executor`** in `protocols/proto/v1/executor.proto`. The required dispatch protocol. One method:
+    - **`Execute(ExecuteRequest) → stream<ExecuteEvent>`**: dispatch a node. The executor streams back events: `Heartbeat`, `NamedEvent`, `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`, or `Park`. The supervisor's terminal handling is keyed on the final event type. `NamedEvent` is non-terminal (zero or more per run); `Park` is terminal-but-resumable (the node transitions to `parked` and can be re-dispatched with `ResumeContext`).
 - **`ExecutorObservability`** in `protocols/proto/v1/executor_observability.proto`. The optional read-only protocol every executor MAY implement to expose per-dispatch traces to dashboards. Three methods:
-    - **`GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`**: startup handshake; declares trace-get/trace-stream support and per-dispatch retention.
+    - **`Capabilities(CapabilitiesRequest) → ObservabilityCapabilities`**: startup handshake; declares trace-get/trace-stream support and per-dispatch retention.
     - **`GetTrace(GetTraceRequest) → Trace`**: pull a previously-streamed trace by `dispatch_id`.
     - **`StreamTrace(StreamTraceRequest) → stream<TraceEvent>`**: stream live trace events for an in-flight or recent dispatch.
 
-The async-callback path is for executors whose work outlives a streaming RPC: the executor responds with `AsyncAccepted` and later POSTs to the supervisor's callback URL — `${callback_url}/v1/callback/{async_ack_id}` — with the final event.
+The async-callback path is for executors whose work outlives a streaming RPC: the executor responds with `AwaitAsyncCallback` and later POSTs to the supervisor's callback URL — `${callback_url}/v1/callback/{async_ack_id}` — with the final event.
 
 An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 
 ## How you encounter it
 
 - **Operator config**: the `executors:` block in `rimsky.yml`. Each entry has `transport`, `endpoint`, `tls`, and an optional `protocols: [...]` list.
-- **Implementing an executor**: speak gRPC against `protocols/proto/v1/executor.proto` (required) and optionally `protocols/proto/v1/executor_observability.proto`. Reference impls live under `executors/`: `http-node` (Go), `claude-agent` (TypeScript / npm), `stub` (Go test fixture).
-- **Conformance**: `cmd/rimsky-conformance` exercises an executor against the wire-protocol contract. For LLM-calling executors, run with `--require-stub-mode` to ensure the conformance run uses stubs (real LLM calls during conformance are rejected by the stub-mode probe).
+- **Implementing an executor**: speak gRPC against `protocols/proto/v1/executor.proto` (required) and optionally `protocols/proto/v1/executor_observability.proto`. Reference impls live under `executors/`: `http-node` (Go, production-shaped) and `claude-agent` (TypeScript / npm, production-shaped). The `stub` directory is a test double in the Meszaros sense (canned-outcome scripting for tests, conformance, and no-op demos) — not a skeleton template; copy from `http-node` or `claude-agent` instead.
+- **Conformance**: `cmd/rimsky-executor-conformance` exercises an executor against the wire-protocol contract. For LLM-calling executors, run with `--require-stub-mode` to ensure the conformance run uses stubs (real LLM calls during conformance are rejected by the stub-mode probe).
+
+## Using `Error{error_class: "executor_blocked"}` as a routing signal
+
+An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` (which means the executor failed). Templates can wire `on_executor_errored: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
 
 ## Consumer-visible guarantees
 
@@ -287,7 +938,7 @@ An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 
 - Treating `userdata` as a structured input. It's not — Rimsky sends opaque bytes; the executor's contract with the template author is what gives it shape.
 - Posting async-callback events with body keyed `kind:` instead of `type:`. The supervisor route rejects the wrong key — the TS claude-agent test suite covers this.
-- Running conformance against a non-stubbed LLM-calling executor without `--require-stub-mode`. The probe rejects non-stubbed peers.
+- Running conformance against a non-stubbed LLM-calling executor without `--require-stub-mode`. The probe rejects non-stubbed services.
 
 ## See also
 
@@ -321,6 +972,14 @@ The frame ID is a correlation token, not a structural lock. Workers within a fra
 
 The two modes never mix within an instance — the policy is template-level.
 
+## Frame timeout: `frame_timeout_ms`
+
+A template may declare `frame_timeout_ms:` (default 600_000 = 10 minutes; hard floor 60_000 = 60 seconds). The scheduler compares this timeout against the frame's `last_progress_at` — i.e., **no progress in window**, not frame age. Any node-state transition within the frame refreshes `last_progress_at`, so a long-running but progressing self-invalidate loop or worker-pool stays under the timeout indefinitely; a wedged frame whose nodes stop transitioning trips the warning.
+
+Trips a `frame.stuck.observed` slog warning and nothing else. There is no destructive action; the frame stays `running`. Operators are expected to investigate via the dashboard / event log and decide whether to issue an operator invalidate, mark a node failed manually, or wait. (Pre-v1 design choice: no blanket "frame too old; kill it" policy. We will revisit destructive timeout behavior, if any, post-v1.)
+
+This is distinct from per-run executor silence-timeout (which lives on the executor service): `frame_timeout_ms` is the scheduler-level "is the frame making progress" observation; per-executor silence is the executor-side "did this run go silent" metric. Neither auto-fails a frame.
+
 ## How you encounter it
 
 - **Templates**: the `frame_resolution:` field at the template's top level. Required; one of `serial_queue` or `coalesce`.
@@ -335,6 +994,10 @@ The two modes never mix within an instance — the policy is template-level.
 - Under `serial_queue`, frames execute in arrival order. Under `coalesce`, the merged frame represents the most recent invalidate at the time the in-flight frame ended.
 - Frames are never backfilled: a missed schedule fire does not retroactively create a frame; the schedule advances from the recorded next-fire-at, not from the wall clock.
 
+## Held frames
+
+A frame is **held** when one or more of its nodes is in a non-terminal pause state — typically `parked` (the node emitted `Park` waiting for a time-based or signal-based wake) but also `pending` claims awaiting acquisition. Held frames are surfaced via `GET /admin/diagnostics/held-frames` (see `docs/concepts/operational-health.md`). They are normal during agent-driven work that includes external decisions; persistently held frames may indicate stuck reviews and warrant investigation. Auto-terminal of held claims fires once every node in the holding subgraph completes, so the held-claim release happens at the end of the holding subgraph, not at park boundary.
+
 ## Common mistakes
 
 - **Rimsky's frame ≠ stack frame, video frame, UI frame.** A Rimsky frame is the unit of cascade resolution for an instance; nothing to do with call stacks, animation, or screen rendering.
@@ -348,6 +1011,107 @@ The two modes never mix within an instance — the policy is template-level.
 - [`cascade.md`](cascade.md)
 - [`instance.md`](instance.md)
 - [`node-state.md`](node-state.md)
+
+
+---
+
+# Handlers
+
+## Definition
+
+A node's reactive policy is expressed as a set of declarative
+**handlers** in the template DSL. Each handler maps one event from
+the executor protocol to a small action vocabulary: `pass`, `retry`,
+`error`, plus an optional `invalidate` emit.
+
+The supervisor terminal pipeline routes every event through the
+matching handler. The handler's `resolve` decides the cascade
+behavior; the optional `invalidate` slot fires unconditionally
+alongside `resolve`.
+
+## The slots
+
+Three declarable lifecycle handler slots plus the `on_event` map:
+
+- `on_acquire_unavailable` — when any required claim's `Open` returns
+  `Unavailable`. Resolves: `pass | retry | error`.
+- `on_executor_complete` — when the executor emits `Complete`.
+  Resolves: `by_changed | always_propagate | never_propagate`.
+- `on_executor_errored` — when the executor emits `Error{error_class}`
+  (including the `executor_blocked` error class, which collapsed into
+  this slot post-2026-05-12). Resolves: `pass | retry | error`. Use
+  `error_types: { <error_class>: { action: ... } }` to discriminate by
+  the producer-declared `error_class`.
+- `on_event` — a per-event-name map keyed by names declared in the
+  executor's `Capabilities.declared_events`. Each handler entry has
+  the same shape as the others: `resolve` + optional `invalidate`.
+  Non-terminal: a node may emit any number of named events between
+  start and its terminal event.
+
+## DSL example
+
+```yaml
+nodes:
+  - type: classifier
+    executor: ml-classifier
+    on_executor_complete:
+      resolve: by_changed
+    error_types:
+      executor_blocked:
+        action: pass
+        invalidate:
+          targets: [low_confidence_review]
+          frame: next
+    on_executor_errored:
+      resolve: retry
+    on_event:
+      score_emitted:
+        invalidate:
+          targets: [aggregator]
+          frame: in
+```
+
+## Resolve verdicts
+
+| Verdict             | Cascade behavior                                      | Valid in                                  |
+|---------------------|-------------------------------------------------------|-------------------------------------------|
+| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored, on_event |
+| `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored, on_event    |
+| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored, on_event |
+| `by_changed`        | Default for Complete: cascade fires iff `changed=true`. | complete                                |
+| `always_propagate`  | Force `fresh_changed`; cascade fires regardless of `changed`. | complete                          |
+| `never_propagate`   | Force `fresh_unchanged`; cascade does not fire even if `changed=true`. | complete                  |
+
+## Handler-emitted invalidate
+
+The `invalidate` slot fires unconditionally when its handler runs.
+Targets are template node types or `self`; `frame` is `in` (same frame
+the source dispatched in) or `next` (default — a fresh frame). The
+invalidate-emitted target can be a parked node — the unified
+invalidate handler wakes it the same way `POST
+/admin/instances/.../invalidate` does, with `resume_reason:
+"external_invalidate"`.
+
+## Validation at template registration
+
+- `on_event` keys are cross-checked against the executor's
+  `Capabilities.declared_events`. Templates referring to an
+  undeclared event are rejected at registration.
+- `error_class` is required on `resolve: error`.
+- `invalidate.targets` must reference a declared node type or `self`.
+- `frame` must be `in` or `next`.
+
+When the executor's capabilities are not yet visible (e.g. service is
+unreachable at template-deploy time), the cross-check is skipped
+silently — the runtime then defends against unknown event names by
+treating them as no-ops.
+
+## Userdata vs. handlers
+
+Userdata is inert in Rimsky (`@blessed-invariant 11`); rimsky never
+inspects it. Handlers are rimsky-side and project-agnostic. Anything
+project-specific belongs in userdata; anything that drives
+state-machine behavior belongs in handlers.
 
 
 ---
@@ -503,7 +1267,7 @@ Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and
 
 Rimsky's reactive model is grounded in a single message because the system needs precisely one verb at the graph level: "this node's value is no longer current." That verb is `invalidate`. Every other propagation effect (recalculation, error handling, schedule firing) reduces to "node X is invalidated; the cascade engine handles the rest."
 
-The single-message design keeps the cascade engine small and auditable. The state machine has four states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
+The single-message design keeps the cascade engine small and auditable. The state machine has five states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
 
 `invalidate` can originate from three places:
 
@@ -513,11 +1277,28 @@ The single-message design keeps the cascade engine small and auditable. The stat
 
 In all three cases, the propagation rule is identical.
 
+A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the three declarable lifecycle handler slots plus the `on_event` map may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
+
+## `frame: in | next` — per-emit frame discipline
+
+Every invalidate emit declaration carries an optional `frame:` field controlling whether the emit joins the current cascade or buffers a new frame:
+
+- **`frame: next`** (default) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. This preserves today's behavior: cascades don't cross frame boundaries.
+- **`frame: in`** — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Useful for self-invalidation loops (`{ targets: [self], frame: in }`) that want a single frame to span all iterations.
+
+Where it can appear:
+
+- Operator API (`POST /nodes/{id}/invalidate { frame: ... }`).
+- Error-types policy invalidate action (`policy: [{action: invalidate, targets: [...], frame: ...}]`).
+- Lifecycle-handler invalidate (`on_*: { invalidate: { targets: [...], frame: ... } }`).
+
+Default is `next` everywhere except the cascade-on-commit and pure-cascade scheduler walks (which are scheduler actions, not configurable invalidate emits).
+
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` is the operator-facing trigger.
 - **Templates**: the `dependencies:` list of each node declaration determines the cascade target set.
-- **Error handling**: when an executor's terminal `Errored` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
+- **Error handling**: when an executor's terminal `Error{error_class}` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
 
 ## Consumer-visible guarantees
 
@@ -543,15 +1324,15 @@ In all three cases, the propagation rule is identical.
 
 ## Definition
 
-An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 ## Why it exists
 
-Some peers need to know when templates and instances change state — a postgres claim producer might want to provision a queue table when a template is deployed; an external observability system might want to record instance creations. Without a protocol, these peers would poll the control-api or scrape state from elsewhere.
+Some services need to know when templates and instances change state — a postgres claim producer might want to provision a queue table when a template is deployed; an external observability system might want to record instance creations. Without a protocol, these services would poll the control-api or scrape state from elsewhere.
 
-The lifecycle protocol formalizes the hooks. The control-api fires events synchronously at each state transition; idempotency is tracked in the persistence layer so replays are no-ops. Peers that want the events declare `lifecycle_subscriber` in their `protocols: [...]` config; peers that don't subscribe silently skip fan-out.
+The lifecycle protocol formalizes the hooks. The control-api fires events synchronously at each state transition; idempotency is tracked in the persistence layer so replays are no-ops. Services that want the events declare `lifecycle_subscriber` in their `protocols: [...]` config; services that don't subscribe silently skip fan-out.
 
-The protocol is opt-in because most peers don't need it. A pure executor or a pure claim producer that wraps stateless storage has no use for state-transition hooks. Forcing every peer to implement six methods would be friction without benefit.
+The protocol is opt-in because most services don't need it. A pure executor or a pure claim producer that wraps stateless storage has no use for state-transition hooks. Forcing every service to implement six methods would be friction without benefit.
 
 ## The six methods
 
@@ -562,20 +1343,20 @@ The protocol is opt-in because most peers don't need it. A pure executor or a pu
 - **`OnInstanceCreated`** — a new instance was created against a deployed template.
 - **`OnInstanceTerminated`** — an instance moved to its terminal state (success or failure) or was deleted by an operator.
 
-All subscribed peers implement all six methods; peers that don't react to a particular event return `nil` from that method.
+All subscribed services implement all six methods; services that don't react to a particular event return `nil` from that method.
 
 Bundled producer binaries can ship a no-op `LifecycleSubscriber` via `enable_lifecycle: true` config without forking the binary.
 
 ## How you encounter it
 
-- **Operator config**: peers that want lifecycle events list `lifecycle_subscriber` in their `protocols: [...]` config under `rimsky.yml`. Without that, the peer is silently skipped during fan-out.
-- **Implementing a subscriber**: speak gRPC against `protocols/proto/v1/lifecycle.proto`. The protocol is implementable separately from `ClaimProducer` and `Executor` — a peer can opt into one, two, or three protocols by listing them.
+- **Operator config**: services that want lifecycle events list `lifecycle_subscriber` in their `protocols: [...]` config under `rimsky.yml`. Without that, the service is silently skipped during fan-out.
+- **Implementing a subscriber**: speak gRPC against `protocols/proto/v1/lifecycle.proto`. The protocol is implementable separately from `ClaimProducer` and `Executor` — a service can opt into one, two, or three protocols by listing them.
 
 ## Consumer-visible guarantees
 
 - Lifecycle events fire from the control-api process at the moment of state transition. Synchronous fan-out means a slow subscriber slows down the transition; subscribers should be fast.
-- Idempotency is tracked per (peer, event-type, object-id). Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side. Subscribers should still write idempotent handlers because their own internal effects may not be idempotent by default.
-- Peers referenced by a template but not subscribed silently skip fan-out. There's no error — non-subscription is the default.
+- Idempotency is tracked per (service, event-type, object-id). Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side. Subscribers should still write idempotent handlers because their own internal effects may not be idempotent by default.
+- Services referenced by a template but not subscribed silently skip fan-out. There's no error — non-subscription is the default.
 
 ## Common mistakes
 
@@ -636,11 +1417,11 @@ Two modes:
 
 ## Definition
 
-The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled).
+The five named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`, `parked`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled) and the `parked` distinction (non-terminal hold awaiting time-based wake or external invalidate).
 
 ## Why it exists
 
-Rimsky's reactive model rests on a small, exhaustive state vocabulary. The four named states are the names operators read in dashboards, log lines, control-api responses, and error messages. Internally they're derived from a `(has_value, has_outstanding_request, auto_recovers)` triple — that detail is rarely useful to consumers, but the steady-state mapping is:
+Rimsky's reactive model rests on a small, exhaustive state vocabulary. The five named states are the names operators read in dashboards, log lines, control-api responses, and error messages. Four of them derive from a `(has_value, has_outstanding_request, auto_recovers)` triple — that detail is rarely useful to consumers, but the steady-state mapping is:
 
 | has_value | has_outstanding_request | auto_recovers | name      |
 |-----------|-------------------------|---------------|-----------|
@@ -649,9 +1430,25 @@ Rimsky's reactive model rests on a small, exhaustive state vocabulary. The four 
 | false     | true                    | n/a           | `running` |
 | false     | false                   | false         | `failed`  |
 
+The fifth state, `parked`, sits outside that triple: it is a non-terminal hold entered when an executor emits the `Park` terminal event. A parked node is not running (heartbeating is paused, so the orphan-claim reaper skips it) and not failed (held claims persist across the park boundary). It exits via time-based wake (`resume_at`), in-graph or admin invalidate, or watchdog timeout (`max_park_duration` → `failed` with `error_class: "park_timeout"`). Cascade does not propagate from `parked`.
+
 A note on the genesis case: a freshly-created node carries the named state `fresh` but has no value yet. Once the node runs at least once and emits a value, the steady-state mapping above applies.
 
 The state machine rejects illegal transitions (e.g., `running → running` under the same dispatch reason is an error, not a no-op). This is a load-bearing safety property that prevents subtle double-dispatch bugs.
+
+### `last_outcome` — resolution flavor
+
+Alongside `state`, every node row carries a `last_outcome` column capturing the **resolution flavor** of the most recent terminal-for-this-frame transition. Five values:
+
+- `fresh_changed` — node committed and propagated; downstream cascade fires.
+- `fresh_unchanged` — node committed without change; downstream cascade does not fire.
+- `passed` — handler resolved `pass` (Unavailable / Blocked / Errored skipped without error routing).
+- `pure_cascade` — node transitioned `stale → fresh` via dependency cascade only (no executor invocation).
+- `failed` — node landed in `failed` via give_up policy or dispatch_impossible.
+
+`last_outcome` is **observability metadata, not a dispatch gate**. The cascade-firing predicate is now expressed as `last_outcome == fresh_changed`; under the default `by_changed` resolution this is functionally identical to the prior `t.Changed` gate.
+
+The five named states (`fresh`, `stale`, `running`, `failed`, `parked`) are unchanged. `last_outcome` is an additional column written by the same transition that lands the node in `fresh` or `failed`.
 
 ## How you encounter it
 
@@ -683,7 +1480,7 @@ The state machine rejects illegal transitions (e.g., `running → running` under
 
 ## Definition
 
-The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of four states.
+The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 
 ## Why it exists
 
@@ -712,6 +1509,19 @@ In a template's `nodes:` list, each entry has:
 - **Control API**: `GET /nodes/{id}`, `POST /nodes/{id}/invalidate`, `POST /nodes/{id}/reset`, `GET /instances/{idOrKey}/nodes`.
 - **Template DSL**: the `nodes:` list of a template spec.
 
+### Lifecycle handlers
+
+Each node may declare three declarable lifecycle handler slots plus the `on_event` map that customize the supervisor's behavior at terminal events. All four are optional; absent slots use today's hardcoded defaults.
+
+- `on_acquire_unavailable: { resolve: pass | retry | error, error_class?, invalidate? }` — runs when any required claim's `Open` returned `Available=false`. Default (or explicit `retry`) is silent retry; `pass` transitions the node to `fresh+passed` without invoking the executor; `error` routes through the named `error_types[error_class]` policy.
+- `on_executor_complete: { resolve: by_changed | always_propagate | never_propagate, invalidate? }` — runs at a `Complete` terminal (the StreamClose `Success` outcome on the wire). Default `by_changed` mirrors today's behavior; `always_propagate` forces the cascade gate to fire even on `changed:false`; `never_propagate` suppresses the cascade gate even on `changed:true`.
+- `on_executor_errored: { resolve: error | pass, error_class?, invalidate? }` — runs at an `Error{error_class}` terminal (the StreamClose `Error` outcome on the wire, including the reserved `executor_blocked` class that collapsed into this slot post-2026-05-12). Default routes through `error_types[<executor-class>]`; `pass` transitions to `fresh+passed`; `error` overrides the routed class.
+- `on_event: { <event_name>: { resolve, invalidate? } }` — a per-event-name map keyed by names declared in the executor's `Capabilities.declared_events`. Non-terminal: a node may emit any number of named events between start and its terminal event.
+
+Each handler may declare an optional `invalidate: { targets: [...], frame: in | next }` block that fires unconditionally when the handler runs (orthogonal to `resolve`). Targets resolve to node types within the same instance; the literal `self` resolves to the source node's type. `frame: in` joins the source's frame; `frame: next` (default) buffers through `frame.EnqueueOrCoalesce` as a new frame.
+
+See `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md` for the full spec.
+
 ## Consumer-visible guarantees
 
 - A node's value (its captured attributes) is set by exactly one source: the executor's writeback at commit time, validated against the node's `attributes:` schema. Validation runs twice — once at dispatch (post-substitution, on inputs) and once at commit (on the executor's writeback).
@@ -730,6 +1540,212 @@ In a template's `nodes:` list, each entry has:
 - [`instance.md`](instance.md)
 - [`cascade.md`](cascade.md)
 - [`frame.md`](frame.md)
+
+
+---
+
+# Operational health
+
+Rimsky is a long-running platform; operators who run it need
+visibility into what is healthy, what is degraded, and what is wedged.
+This page covers the surfaces rimsky exposes for that and the
+operational patterns that compose them.
+
+## Surfaces
+
+### Lifecycle-subscriber services
+
+Any service registered with `protocols: [claim_producer, lifecycle_subscriber]`
+in `rimsky.yml` receives the six lifecycle events at the points they
+fire (template registered/deployed/undeployed/deregistered, instance
+created/terminated). Wire a domain-shaped audit log to a
+LifecycleSubscriber and the audit trail composes for free. The events
+are persistently idempotent (rimsky records each `(producer,
+scope_kind, scope_id)` triple it has already fired); a
+re-fire under the same `(producer, scope_kind, scope_id)` is a no-op
+on the consumer side.
+
+### Watchdog graphs
+
+A graph instance can run forever and check itself: a scheduled node
+that polls a metric, queries the control API, and either sleeps until
+the next tick or invalidates a downstream remediation node when an
+alarm condition fires. This pattern lets operators express incident
+response as a graph rather than as ad hoc scripts.
+
+The scheduling primitives:
+- `cron:` on a node fires it at the configured cadence.
+- `force-fire` on a scheduled node bypasses the cadence (admin-only).
+- `on_executor_complete` with `invalidate` chains the watchdog into a
+  remediation graph.
+
+### Control-API polling
+
+The control API exposes JSON endpoints suitable for polling from
+dashboards or external monitors:
+
+- `GET /admin/diagnostics/held-frames` — frames currently held
+  pending node completion. Held frames are normal during agent-driven
+  work; persistently held frames may indicate stuck reviews.
+- `GET /admin/diagnostics/parked-nodes` — parked nodes with their
+  reasons and resume timestamps. Optional `?reason=<name>` filter.
+- `GET /metrics` — Prometheus text format on the per-process
+  `RIMSKY_METRICS_PORT` (default disabled). The metric set covers
+  dispatches by terminal class, claim acquisitions by producer, node
+  state gauges, parked-by-reason gauges, dispatch latency
+  histograms, and held-frame counts.
+
+### Admin invalidate
+
+`POST /admin/instances/{instance}/nodes/{node_id}/invalidate` is the
+operator escape hatch. It dispatches by node state:
+
+- `parked` → resume with `resume_reason: "external_invalidate"`.
+- `fresh` → standard invalidate (state → stale; cascade picks up next
+  scheduler tick).
+- `running` or `failed` → 409 Conflict.
+
+Use it when something has wedged on a signal that didn't arrive (a
+review never came back, a webhook never fired). For all other states,
+use the normal cascade or template-driven mechanisms.
+
+## Patterns
+
+### Single dashboard for held + parked + retries
+
+Compose `held-frames`, `parked-nodes`, and the
+`rimsky_dispatches_total` metric (filtered by terminal class) into one
+operator dashboard. Persistent growth in any of the three signals
+something to investigate.
+
+### Per-tenant SLA observability
+
+Templates can be tagged with the consumer they belong to. The
+lifecycle-subscriber service receives that tag at template-deployed
+time and can surface per-tenant rollups in the operator's monitoring
+stack.
+
+### Detect retry loops with no progress
+
+The `max_retries_without_progress` cap (default 100; 0 disables;
+configurable per-node) forces `error_class: "retry_loop_no_progress"`
+when the same `last_outcome` is observed N times in a row. Combined
+with the `rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
+metric, retry loops surface in alerts before they exhaust budget.
+
+### Graceful degradation
+
+A graph that depends on an external service can wrap the dependency in
+a node with `on_executor_errored` set to `pass` and an invalidate
+emit to a "degraded mode" downstream. The graph keeps moving; the
+operator sees degraded-mode telemetry and can intervene.
+
+## What rimsky does not provide
+
+Rimsky's surfaces are JSON over HTTP plus Prometheus metrics. Any
+higher-level dashboarding (alerting rules, log aggregation, paging)
+lives in the operator's existing observability stack — Grafana,
+Datadog, PagerDuty, or whatever the project standardizes on.
+Rimsky's role is to expose the underlying signals; the operator's
+role is to compose them.
+
+
+---
+
+# Parked
+
+## Definition
+
+A non-terminal node state representing "work paused; will resume on
+time, signal, or watchdog." A node enters `parked` when its executor
+emits the `Park` terminal event; it exits via one of three
+paths:
+
+1. **Time-based wake** — when `Park.resume_at` is set, the
+   `SweepParkedNodes` sweep transitions the node back to `stale`
+   (and the node_run row from `parked` to `pending`) when
+   `resume_at` has passed; the next supervisor tick re-dispatches the
+   executor with a `ResumeContext` carrying back the original
+   `payload` and `session_token` plus `resume_reason:
+   "deadline_elapsed"`.
+2. **Signal-based wake** — an in-graph or admin invalidate against
+   the parked node transitions it back to `stale` and re-dispatches
+   on the next tick with `resume_reason: "external_invalidate"`.
+   Both paths run through the unified invalidate handler.
+3. **Watchdog timeout** — when the node's `max_park_duration` is set
+   and `parked_at + max_park_duration < now()`, the watchdog forces
+   the node to `failed` with `error_class: "park_timeout"`.
+
+## Why it exists
+
+Some work is genuinely paused, not failed. A rate-limit retry that
+will succeed in 60 seconds is wasted as a retry-loop; an awaiting-
+human-decision step is blocked, but not erroneous. Modeling these as
+`failed` (which requires `give_up`-driven retry policy or
+operator-driven invalidate) loses the distinction between "stuck on
+something legitimate" and "broke." Parked is the orthogonal axis.
+
+## Held claims and the park boundary
+
+Claims acquired before the park stay live across the park boundary:
+
+- The orphan-claim reaper (foundation invariant 6) skips
+  `phase='parked'` rows because heartbeating is paused during park.
+- The held-claim auto-terminal mechanism still fires correctly: a
+  parked node remains an `active` member of the holding subgraph, and
+  resolution waits for it to complete or fail just like any other
+  holding-subgraph member.
+- On resume, the node re-acquires its dispatch slot but does not
+  re-Open the claims — it still owns them.
+
+## ResumeContext
+
+When the runner re-dispatches a parked node, `ExecuteRequest.resume_context`
+is populated:
+
+```protobuf
+message ResumeContext {
+  bytes  payload        = 1;  // verbatim from Park.payload
+  string session_token  = 2;  // verbatim from Park.session_token
+  string resume_reason  = 3;  // "deadline_elapsed" | "external_invalidate"
+}
+```
+
+Executors use these to resume external work — for example, the
+`claude-agent` reference impl uses `session_token` as the Claude CLI's
+`--resume <session_id>` argument.
+
+## "Human review = indefinite park"
+
+A common pattern: an executor produces a tentative output, then parks
+indefinitely (no `resume_at`) with `reason: "human_review"`. Operators
+inspect the parked node via the diagnostics endpoints, take whatever
+action is needed externally, and call `POST /admin/instances/{i}/nodes/{n}/invalidate`
+to wake the node. The resumed dispatch sees `resume_reason:
+"external_invalidate"` and can read context from any side-channel the
+operator wrote (e.g. an attribute set by another node in the same
+graph).
+
+## Antipattern: mid-frame human review
+
+Parking a frame on review serializes parallel work in the same frame
+and creates long-lived held frames. The recommended idiom is
+**post-frame review**: the producing frame runs to completion; review
+happens externally; a follow-on graph or instance kicks off the
+post-review work. Frame-blocking review is supported and works
+correctly, but should be reserved for cases where downstream genuinely
+cannot proceed safely without approval (e.g. cross-system commit
+where the alternative is to reverse-cascade after the fact).
+
+## Diagnostics
+
+- `GET /admin/diagnostics/parked-nodes` — every currently-parked
+  node, optional `?reason=<name>` filter.
+- `GET /admin/diagnostics/held-frames` — frames with at least one
+  parked node, grouped by `frame_id`.
+- `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` —
+  signal-based wake; returns 409 if the node is in `running` or
+  `failed`.
 
 
 ---
@@ -841,7 +1857,7 @@ Instances bind to a specific template hash at creation. Tag movement does not mi
 
 - **Control API**: `POST /templates` to register; `POST /templates/{id}/deploy` to deploy; `GET /templates`, `GET /templates/{id}` for read; `DELETE /templates/{id}` to deregister.
 - **CLI**: `rimsky-cli template register`, `rimsky-cli template deploy`, `rimsky-cli template undeploy`, `rimsky-cli template rm`.
-- **Lifecycle**: registered → deployed → undeployed; deregistered is the absent state. Each transition fires a `LifecycleSubscriber.OnTemplate*` event to all subscribed peers.
+- **Lifecycle**: registered → deployed → undeployed; deregistered is the absent state. Each transition fires a `LifecycleSubscriber.OnTemplate*` event to all subscribed services.
 
 ## Consumer-visible guarantees
 
@@ -924,7 +1940,7 @@ The four values:
 - **`blocking_async`** — staging area; reads block until commit. Two writers conflict; reads and writers also serialize.
 - **`read_only`** — read-only access (no writes possible). Two readers coexist trivially.
 
-The producer's `Capabilities()` startup handshake returns the **write-semantics envelope** — the set of values it may return on `Open`. The operator declares a subset envelope per peer in `rimsky.yml`; the capability handshake validates operator-declared ⊆ producer-declared.
+The producer's `Capabilities()` startup handshake returns the **write-semantics envelope** — the set of values it may return on `Open`. The operator declares a subset envelope per service in `rimsky.yml`; the capability handshake validates operator-declared ⊆ producer-declared.
 
 ## Per-claim vs. per-producer
 
@@ -935,7 +1951,7 @@ Producers that support multiple values choose per-claim based on the claim's int
 ## How you encounter it
 
 - **Wire**: `OpenResponse.acquired.realized_write_semantics` carries the per-claim verdict.
-- **Operator config**: `claim_producers.<name>.write_semantics_envelope:` declares the operator's allowed subset (must be ⊆ producer-advertised).
+- **Operator config**: `claim_producers.<name>.write_semantics_allowed:` declares the operator's allowed subset (must be ⊆ producer-advertised).
 - **Capability handshake failure**: if the operator's declared envelope is not a subset of the producer's advertised envelope, the supervisor refuses to start.
 
 ## Consumer-visible guarantees
@@ -947,7 +1963,7 @@ Producers that support multiple values choose per-claim based on the claim's int
 ## Common mistakes
 
 - Confusing the producer's envelope with the per-claim realized value. Envelope is the set of possible values; realized is the value for one specific claim.
-- Declaring a `write_semantics_envelope` for a peer that exceeds the producer's advertised envelope. The capability handshake will fail at startup.
+- Declaring a `write_semantics_allowed` for a service that exceeds the producer's advertised envelope. The capability handshake will fail at startup.
 - Expecting `staged_async` to give you producer-internal serialization for free. Producers must offer real concurrent-read access to deliver `staged_async` honestly.
 
 ## See also
@@ -956,6 +1972,155 @@ Producers that support multiple values choose per-claim based on the claim's int
 - [`claim-producer.md`](claim-producer.md)
 - [`claim-handle.md`](claim-handle.md)
 - [`scope.md`](scope.md)
+
+
+---
+
+# Pipelines as executors
+
+A common pattern for adopting rimsky in an existing system is to wrap an
+external pipeline, service, or workflow as an **executor**. Once the
+external work is reachable through the executor protocol, every other
+piece of rimsky machinery (claims, attributes, error policy,
+cascade, frames, handlers, named events, parked-state) becomes available
+to govern it.
+
+This page outlines the design idiom and the wire-shape choices that make
+it work for several recurring categories of integration: agent-driven
+analyses, webhook-driven flows, and external-decision waits.
+
+## What an executor is, in this lens
+
+From rimsky's perspective an executor is anything that:
+
+1. Implements the `Execute` RPC (gRPC stream or HTTP+JSON bridge).
+2. Returns one of the protocol's terminal events
+   (`Success`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`, `Park`).
+3. Optionally implements `ExecutorObservability.Capabilities()` to
+   declare its `userdata_schema` and `declared_events`.
+
+There is no requirement that an executor be implemented in any
+particular language or runtime. The reference implementations
+(`claude-agent` in TypeScript, `http-node` in Go) are illustrative,
+not normative. The `stub` Go package is a test double (canned-outcome
+scripting for tests and conformance), not a starting template. A
+pipeline written in Python, a Lambda behind API Gateway, or a
+long-running service in Kubernetes can all satisfy the protocol with
+a thin wrapper.
+
+## Categories of integration
+
+### Agent-driven analyses
+
+The wrapper hands user-facing prompts and tool catalogs to a Claude or
+similar agent and consumes its outputs. `claude-agent` is the reference
+shape: a dispatch produces a CLI invocation; `report_complete` (the
+internal MCP tool) marshals the output back into an
+`attributes_delta`; the wrapper validates against the
+`attributes_schema` from the dispatch and either commits or asks the
+agent to correct.
+
+Use the **userdata schema** to lock the wrapper's input shape;
+`Capabilities.userdata_schema` is enforced at template registration and
+again at dispatch (`@blessed-invariant 12` extended). Use the
+**named-event** wire type to surface non-terminal signals such as
+intermediate findings, telemetry, or progress markers — those are
+addressable later via `nodes.<emitter>.event.<name>.<path>`
+substitution.
+
+### Webhook-driven flows
+
+The wrapper accepts an incoming webhook, kicks off the external work,
+and emits `AwaitAsyncCallback` immediately. When the webhook return-payload
+arrives the wrapper POSTs the new-shape async-callback body
+(`{events: [...], terminal: {...}}`) to the supervisor's
+callback URL. Events from the body are persisted before the terminal,
+so an `on_event` handler can fire mid-flight.
+
+This idiom is the right shape whenever the external work has its own
+durable state and can be re-entered from outside; the executor is a
+pure dispatcher.
+
+### External-decision waits (parked)
+
+Use `Park` whenever the wrapper needs to pause the run for an
+out-of-band signal — a human approval, a downstream system's
+completion, a rate-limit reset, a quorum vote.
+
+`Park.resume_at` schedules a time-based wake. Omit it for
+indefinite parks waiting on a signal. Resume happens via the admin
+endpoint `POST /admin/instances/{instance}/nodes/{node}/invalidate` or
+via an in-graph invalidate emitted by an `on_event` handler. The
+executor reads `ResumeContext.payload` and `ResumeContext.session_token`
+on the resume dispatch — so the wrapper can stash whatever resumption
+state it needs.
+
+The watchdog `max_park_duration` per-node cap fails the run with
+`error_class: "park_timeout"` if a park exceeds the configured budget;
+empty `max_park_duration` means unbounded.
+
+## Worked example: a single-document analysis with human review
+
+Suppose we want a small graph that runs an analysis, gates on human
+review, then triggers a downstream summary.
+
+```yaml
+nodes:
+  analysis:
+    executor: project-alpha-agent
+    userdata:
+      cli:
+        system_prompt: "Analyze the document at {{params.path}}"
+    on_executor_complete:
+      resolve: by_changed
+      invalidate:
+        targets: [review_gate]
+
+  review_gate:
+    executor: project-alpha-review
+    on_event:
+      approved:
+        resolve: pass
+        invalidate:
+          targets: [summary]
+      rejected:
+        resolve: error
+        error_class: human_rejected
+
+  summary:
+    executor: project-alpha-agent
+    attributes:
+      schema:
+        properties:
+          source:
+            source: nodes.analysis.value.findings
+          decision:
+            source: nodes.review_gate.event.approved.payload
+```
+
+`review_gate` emits `Park` on dispatch and waits. A human
+approves through a project-built UI that calls
+`POST /admin/instances/.../nodes/review_gate/invalidate`; the executor
+resumes, emits `approved` (a named event with the reviewer payload),
+then completes. `summary` runs against the resolved `decision`
+substitution.
+
+## Antipattern: blocking a frame on review
+
+Frame-blocking review (the analysis-and-review pattern above) does work
+correctly — held frames stay held, parked nodes stay parked,
+auto-terminal fires once the review completes. But it serializes
+parallel work in the same frame and creates long-lived held frames in
+operational dashboards.
+
+When a review can be moved out of the producing frame's critical path,
+prefer the **post-frame review** idiom: the producing graph runs to
+completion; review happens externally; a follow-on graph or instance
+kicks off post-review work. Reserve frame-blocking review for cases
+where downstream genuinely cannot proceed without the approval.
+
+See `docs/concepts/parked.md` for the parked-state mechanics this
+section depends on.
 
 
 ---
@@ -979,7 +2144,7 @@ A note on terminology: the protocol-level term is **claim producer** (the servic
 
 ## 1. The wire contract
 
-The producer is a peer service. Rimsky's processes dial it at startup, run a `Capabilities()` handshake, and issue four runtime verbs over gRPC:
+The producer is a service. Rimsky's processes dial it at startup, run a `Capabilities()` handshake, and issue four runtime verbs over gRPC:
 
 ```protobuf
 service ClaimProducer {
@@ -1022,7 +2187,7 @@ Inside `OpenRequest`:
 
 - `claim_id` — Rimsky-generated UUID; record it first (obligation 2).
 <!-- vocabulary-lint-ignore: template_id -->
-- `store_name`, `selector`, `intent`, `alias`, `template_id`, `instance_id` — the resolved claim spec. `selector` is post-substitution; the producer parses it. The proto field is named `template_id` (the wire-protocol field name) and carries the content hash; `instance_id` is the instance UUID. Both are opaque to rimsky and provided for namespace routing or trace correlation.
+- `producer_name`, `selector`, `intent`, `alias`, `template_id`, `instance_id` — the resolved claim spec. `selector` is post-substitution; the producer parses it. The proto field is named `template_id` (the wire-protocol field name) and carries the content hash; `instance_id` is the instance UUID. Both are opaque to rimsky and provided for namespace routing or trace correlation.
 
 Return one of two `oneof` variants in `OpenResponse`:
 
@@ -1061,9 +2226,9 @@ Not called for read-only claims (Rimsky calls `Release` instead). Idempotent in 
 
 ### `Capabilities(CapabilitiesRequest) → CapabilitiesResponse`
 
-`CapabilitiesRequest` has no fields. `CapabilitiesResponse` returns the `WriteSemanticsEnvelope` — the set of `WriteSemantics` values this producer may return from `Open`. Probed once per peer at process startup; cached for the process's lifetime.
+`CapabilitiesRequest` has no fields. `CapabilitiesResponse` returns the `WriteSemanticsEnvelope` — the set of `WriteSemantics` values this producer may return from `Open`. Probed once per service at process startup; cached for the process's lifetime.
 
-The operator declares a subset envelope per peer in `rimsky.yml` under `write_semantics_envelope:`. The capability handshake validates operator-declared ⊆ producer-declared; a mismatch fails Rimsky startup.
+The operator declares a subset envelope per service in `rimsky.yml` under `write_semantics_allowed:`. The capability handshake validates operator-declared ⊆ producer-declared; a mismatch fails Rimsky startup.
 
 ## 5. Verb-firing matrix per claim shape
 
@@ -1127,7 +2292,7 @@ Each is a standalone Go binary plus a Dockerfile and config example.
 This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `protocols/proto/v1/executor.proto` (the required dispatch protocol) and `protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); this guide is the practical companion.
 
 <!-- @source: concepts/executor.md -->
-> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `NodeExecutor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`GetCapabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go peers.
+> The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
 
@@ -1138,7 +2303,7 @@ This guide is for developers implementing an executor — in any language — an
 The executor surface is split across two service definitions. The required dispatch protocol carries one method:
 
 ```protobuf
-service NodeExecutor {
+service Executor {
   rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
 }
 ```
@@ -1149,7 +2314,7 @@ The optional read-only observability protocol carries three:
 
 ```protobuf
 service ExecutorObservability {
-  rpc GetCapabilities(GetCapabilitiesRequest) returns (ObservabilityCapabilities);
+  rpc Capabilities(CapabilitiesRequest) returns (ObservabilityCapabilities);
   rpc GetTrace(GetTraceRequest) returns (Trace);
   rpc StreamTrace(StreamTraceRequest) returns (stream TraceEvent);
 }
@@ -1157,13 +2322,13 @@ service ExecutorObservability {
 
 Source: `protocols/proto/v1/executor_observability.proto`.
 
-Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Peers MUST implement `NodeExecutor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
+Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
 
-`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes plus opaque userdata, and streams back zero or more events ending in one of: `Complete`, `Blocked`, `Errored`, `AsyncAccepted`.
+`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes plus opaque userdata, and streams back zero or more events ending in one of: `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`.
 
 ## 2. The methods
 
-### `NodeExecutor.Execute(ExecuteRequest) → stream<ExecuteEvent>`
+### `Executor.Execute(ExecuteRequest) → stream<ExecuteEvent>`
 
 Dispatch a node. Inside `ExecuteRequest`:
 
@@ -1175,13 +2340,15 @@ Dispatch a node. Inside `ExecuteRequest`:
 Stream back any number of these events:
 
 - **`Heartbeat`** — keep-alive while work continues.
+- **`NamedEvent`** — non-terminal domain-shaped signal. Two fields: `string name` (must appear in `Capabilities.declared_events`) plus `bytes payload` (opaque to Rimsky; available to substitution as `nodes.<emitter>.event.<name>.<path>`). Zero or more emissions per run; does not close the stream.
 - **`Complete`** — terminal success. Three fields:
     - `bool changed` — producer-declared verdict on whether this run produced a different value than the previous run. A `false` value halts cascade propagation at this node.
     - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
     - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run (see spec §12.5).
-- **`Blocked`** — terminal: I cannot proceed; the supervisor schedules retry per the node's error policy.
-- **`Errored`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
-- **`AsyncAccepted`** — non-streaming terminal: I'll send the final event later via callback (see §4).
+- **`Error{error_class: "executor_blocked"}`** — terminal: I produced output but explicitly chose not to claim success. Use `Error{error_class: "executor_blocked"}` (rather than `Error{error_class}`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
+- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
+- **`AwaitAsyncCallback`** — non-streaming terminal: I'll send the final event later via callback (see §4).
+- **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
 
 ### `ExecutorObservability.StreamTrace(StreamTraceRequest) → stream<TraceEvent>`
 
@@ -1191,9 +2358,11 @@ Streaming trace of executor activity for observability dashboards. Keyed by `dis
 
 Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past invocations from dashboards.
 
-### `ExecutorObservability.GetCapabilities(GetCapabilitiesRequest) → ObservabilityCapabilities`
+### `ExecutorObservability.Capabilities(CapabilitiesRequest) → ObservabilityCapabilities`
 
-Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, and any custom UI URL the dashboard should embed. Probed once per peer at process startup.
+Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
+
+`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `on_event` handlers in registering templates; references to undeclared events reject the registration.
 
 ## 3. The userdata guarantee
 
@@ -1208,7 +2377,27 @@ This means:
 
 ## 4. The async-callback path
 
-For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AsyncAccepted` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor:
+For executors whose work outlives a streaming RPC (background jobs, async LLM calls, long-running batch processes), respond with `AwaitAsyncCallback` carrying an `async_ack_id`. Later, when the work completes, POST the final event back to the supervisor.
+
+Two callback body shapes are accepted; the supervisor parses the new shape first and falls back to the legacy shape on a parse error.
+
+**New shape (preferred).** Carries an optional events array plus exactly one terminal:
+
+```
+POST ${callback_url}/v1/callback/{async_ack_id}
+Content-Type: application/json
+
+{
+  "events": [
+    { "name": "phase_complete", "payload": "..." }
+  ],
+  "complete": { "changed": true, "attributes_delta": { ... } }
+}
+```
+
+Exactly one of `complete`, `blocked`, `errored`, `park_requested` must be set. Events from the array are persisted and processed before the terminal, so an `on_event` handler can fire mid-flight.
+
+**Legacy shape (still accepted).** Single-terminal-event:
 
 ```
 POST ${callback_url}/v1/callback/{async_ack_id}
@@ -1223,28 +2412,39 @@ Content-Type: application/json
 Important wire details:
 
 - The callback path is `${callback_url}/v1/callback/{async_ack_id}` — the supervisor's callback hostname (advertised via the `callback.advertise_host` config) plus the async_ack_id.
-- The body is keyed `type` (not `kind`). The supervisor's callback route enforces this exact key.
-- Valid `type` values mirror the streaming-event terminal types: `complete`, `blocked`, `errored`.
+- For the legacy shape, the body is keyed `type` (not `kind`). The supervisor's callback route enforces this exact key.
+- Valid legacy `type` values mirror the streaming-event terminal types: `complete`, `blocked`, `errored`.
+- New-shape bodies that include `park_requested` map onto the `Park` terminal event.
 
 The TS claude-agent reference impl's test suite (under `executors/claude-agent/`) covers this exact wire shape; refer to those tests when implementing async-callback in a different language.
 
+## 4a. Resume context
+
+When the supervisor resumes a parked node, the dispatch's `ExecuteRequest.resume_context` is populated with three fields:
+
+- `bytes payload` — the original `Park.payload`.
+- `string session_token` — the original `session_token` (executor-side correlation identifier).
+- `string resume_reason` — `"deadline_elapsed"` (time-based via `resume_at`) or `"external_invalidate"` (admin or in-graph invalidate).
+
+When `resume_context` is empty, this is a fresh dispatch. Executors that do not implement parking can ignore the field.
+
 ## 5. Conformance
 
-The `cmd/rimsky-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
+The `cmd/rimsky-executor-conformance` binary exercises an executor against the wire-protocol contract. Run it pointing at your executor endpoint:
 
 ```
-rimsky-conformance --endpoint <your-executor-host:port> --transport grpc
+rimsky-executor-conformance --endpoint <your-executor-host:port> --transport grpc
 ```
 
-For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed peers are rejected. This prevents accidental real-LLM calls during conformance.
+For LLM-calling executors, run with `--require-stub-mode`. The conformance harness probes the executor for stub mode at startup; non-stubbed services are rejected. This prevents accidental real-LLM calls during conformance.
 
 ## 6. Reference impls
 
 Three reference executors ship under `executors/`:
 
-- `executors/http-node/` — Go executor that calls an external HTTP endpoint.
-- `executors/claude-agent/` — TypeScript / npm executor that calls Anthropic's API. Uses the async-callback path.
-- `executors/stub/` — Go test fixture; returns canned responses.
+- `executors/http-node/` — Go executor that calls an external HTTP endpoint. Production-shaped; the right starting point if you are writing your own executor.
+- `executors/claude-agent/` — TypeScript / npm executor that runs the Claude Code CLI. Production-shaped; demonstrates the async-callback path end-to-end.
+- `executors/stub/` — Test double (Meszaros sense) for scenario tests, conformance, and no-op smoke deployments. **Not a skeleton template** — see `executors/stub/README.md`.
 
 Each is runnable as a standalone process plus a Dockerfile.
 
@@ -1260,10 +2460,10 @@ Each is runnable as a standalone process plus a Dockerfile.
 
 # Implementing a lifecycle subscriber
 
-This guide is for developers implementing a lifecycle subscriber — a peer that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
+This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
 
 <!-- @source: concepts/lifecycle-subscriber.md -->
-> An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+> An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Service-to-service auth is operator-configured at the deployment layer.
 
@@ -1288,19 +2488,19 @@ All six methods return `LifecycleAck` — there's no return data, just an acknow
 
 ## 2. Opting in
 
-Lifecycle is the third Rimsky protocol; opting in is a per-peer configuration flag. Add `lifecycle_subscriber` to the peer's `protocols: [...]` list in `rimsky.yml`:
+Lifecycle is the third Rimsky protocol; opting in is a per-service configuration flag. Add `lifecycle_subscriber` to the service's `protocols: [...]` list in `rimsky.yml`:
 
 ```yaml
 claim_producers:
   my-store:
     endpoint: "grpc://my-store:9100"
     protocols: [claim_producer, lifecycle_subscriber]
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 ```
 
-Without that entry, the peer is silently skipped during fan-out — there's no error, non-subscription is the default.
+Without that entry, the service is silently skipped during fan-out — there's no error, non-subscription is the default.
 
-The flag is per-peer, not per-protocol. A peer that implements both `ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server registers handlers for both.
+The flag is per-service, not per-protocol. A service that implements both `ClaimProducer` and `LifecycleSubscriber` lists both protocols; the gRPC server registers handlers for both.
 
 For bundled producer binaries that ship a no-op `LifecycleSubscriber`, a separate config flag `enable_lifecycle: true` lets operators turn the lifecycle handlers on without forking the binary.
 
@@ -1333,9 +2533,9 @@ Fired when an instance moves to its terminal state — completed all frames or w
 ## 4. Idempotency
 
 <!-- @source: concepts/lifecycle-subscriber.md -->
-> An opt-in protocol for peers that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
+> An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
-Rimsky tracks idempotency at its own boundary: each event is keyed by `(peer-name, event-type, object-id)`. Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side.
+Rimsky tracks idempotency at its own boundary: each event is keyed by `(service-name, event-type, object-id)`. Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side.
 
 That's the rimsky-side guarantee; the subscriber must still handle replays correctly because its own internal effects (e.g. allocating a queue, sending a notification) may not be idempotent by default. The recommended pattern is to treat each handler as if it could be invoked multiple times for the same `(event-type, object-id)` and short-circuit early.
 
@@ -1346,14 +2546,14 @@ Lifecycle events are fired synchronously from the control-api process. A slow su
 Implications:
 
 - **Be fast.** Subscribers should acknowledge within hundreds of milliseconds. Push slow work into the subscriber's own internal queue.
-- **Don't depend on inter-event ordering.** The control-api fans out to subscribed peers in a fixed but unspecified order; an `OnTemplateDeployed` notification from peer A may arrive before or after peer B's notification.
+- **Don't depend on inter-event ordering.** The control-api fans out to subscribed services in a fixed but unspecified order; an `OnTemplateDeployed` notification from service A may arrive before or after service B's notification.
 - **Failures don't block other subscribers.** A subscriber returning an error is logged but does not block fan-out to remaining subscribers.
 
 ## 6. Reference impl
 
 There's no standalone reference lifecycle-subscriber binary in the repo — lifecycle handlers ship inside the bundled producer binaries, gated by `enable_lifecycle: true` in their config.
 
-The minimal opt-in shape is a peer entry that lists both protocols and (for bundled producers) sets `enable_lifecycle: true`:
+The minimal opt-in shape is a service entry that lists both protocols and (for bundled producers) sets `enable_lifecycle: true`:
 
 ```yaml
 claim_producers:
@@ -1361,10 +2561,10 @@ claim_producers:
     endpoint: "grpc://my-store:9100"
     protocols: [claim_producer, lifecycle_subscriber]
     enable_lifecycle: true
-    write_semantics_envelope: [sync]
+    write_semantics_allowed: [sync]
 ```
 
-The peer's gRPC server registers both `ClaimProducer` and `LifecycleSubscriber` handlers; control-api fans out the six lifecycle methods at the matching state transitions.
+The service's gRPC server registers both `ClaimProducer` and `LifecycleSubscriber` handlers; control-api fans out the six lifecycle methods at the matching state transitions.
 
 ## See also
 

@@ -52,7 +52,7 @@ const DefaultOrphanRetention = 24 * time.Hour
 // is ≤ 0, falls back to DefaultOrphanRetention.
 func QueueBlobOrphan(
 	ctx context.Context,
-	orphans BlobOrphansStore,
+	orphans BlobOrphanTable,
 	tx Tx,
 	handle, backend string,
 	now time.Time,

@@ -15,11 +15,11 @@ The operator-dashboard HTTP-route backplane exposed by rimsky-control-api: `/obs
 
 ## Purpose
 
-Operators (and dashboards built on top of rimsky) need to see what's running, what's wedged, what events have fired, and how cascade is propagating. `cascade-graph` is the read-only HTTP surface that exposes that state without coupling consumers to internal SQL or to the per-peer observability protocols.
+Operators (and dashboards built on top of rimsky) need to see what's running, what's wedged, what events have fired, and how cascade is propagating. `cascade-graph` is the read-only HTTP surface that exposes that state without coupling consumers to internal SQL or to the per-service observability protocols.
 
 ## Boundaries
 
-Owns: the route definitions, the per-route handlers, the JSON marshalling, the `inTx`-per-handler discipline. Does NOT own: per-peer executor/store observability protocols (see `observability`), audit-log writes (see `event-log`), control-plane mutation endpoints (see `control-api`). Adjacent: `observability`, `control-api`, `event-log`, `frame`, `node`.
+Owns: the route definitions, the per-route handlers, the JSON marshalling, the `inTx`-per-handler discipline. Does NOT own: per-service executor/store observability protocols (see `observability`), audit-log writes (see `event-log`), control-plane mutation endpoints (see `control-api`). Adjacent: `observability`, `control-api`, `event-log`, `frame`, `node`.
 
 ## Invariants
 

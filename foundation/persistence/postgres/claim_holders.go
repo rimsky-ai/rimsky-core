@@ -2,11 +2,11 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// ClaimHoldersStore is the postgres accessor for `rimsky_claim_holders`.
+// ClaimHolderTable is the postgres accessor for `rimsky_claim_holders`.
 // One row per (lock_holder, holder_node) pair from the §18.4 holding
 // subgraph. Rows transition `'active'` → `'completed'` (success) or
 // `'failed'` (give-up/failure) per §4.10 invariant 13. The claim_handle_id FK cascades
-// deletes when the parent rimsky_claim_handle row is removed at
+// deletes when the parent rimsky_claim_handles row is removed at
 // auto-terminal.
 package postgres
 
@@ -19,14 +19,14 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// ClaimHoldersStore is the postgres ClaimHoldersStore implementation.
+// ClaimHolderTable is the postgres ClaimHolderTable implementation.
 
 const claimHolderCols = `id, claim_handle_id, holder_node_id, state, completed_at`
 
-// Insert satisfies persistence.ClaimHoldersStore. Rows are inserted in
+// Insert satisfies persistence.ClaimHolderTable. Rows are inserted in
 // 'active' state.
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	ex := s.q(tx)
@@ -41,7 +41,7 @@ func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolde
 	return nil
 }
 
-// Get satisfies persistence.ClaimHoldersStore.
+// Get satisfies persistence.ClaimHolderTable.
 func (s *claimHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	row := ex.QueryRow(ctx,
@@ -57,13 +57,13 @@ func (s *claimHoldersImpl) Get(ctx context.Context, id shared.UUID, tx persisten
 	return &out, nil
 }
 
-// ListByClaimHandleID satisfies persistence.ClaimHoldersStore.
-func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, lockHolderID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
+// ListByClaimHandleID satisfies persistence.ClaimHolderTable.
+func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
 		 WHERE claim_handle_id = $1
-		 ORDER BY id ASC`, lockHolderID,
+		 ORDER BY id ASC`, claimHandleID,
 	)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, lockHolderID
 	return collectClaimHolders(rows)
 }
 
-// ListByHolderNode satisfies persistence.ClaimHoldersStore.
+// ListByHolderNode satisfies persistence.ClaimHolderTable.
 func (s *claimHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
@@ -87,13 +87,13 @@ func (s *claimHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 	return collectClaimHolders(rows)
 }
 
-// ListActiveByClaimHandleID satisfies persistence.ClaimHoldersStore.
-func (s *claimHoldersImpl) ListActiveByClaimHandleID(ctx context.Context, lockHolderID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
+// ListActiveByClaimHandleID satisfies persistence.ClaimHolderTable.
+func (s *claimHoldersImpl) ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
 		 WHERE claim_handle_id = $1 AND state = 'active'
-		 ORDER BY id ASC`, lockHolderID,
+		 ORDER BY id ASC`, claimHandleID,
 	)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (s *claimHoldersImpl) ListActiveByClaimHandleID(ctx context.Context, lockHo
 	return collectClaimHolders(rows)
 }
 
-// Complete satisfies persistence.ClaimHoldersStore. Idempotent: only updates
+// Complete satisfies persistence.ClaimHolderTable. Idempotent: only updates
 // rows still in 'active' state.
 func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx) error {
 	ex := s.q(tx)
@@ -119,12 +119,12 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 	return nil
 }
 
-// CompleteByLockHolderAndNode satisfies persistence.ClaimHoldersStore. Single
+// CompleteByClaimHandleAndNode satisfies persistence.ClaimHolderTable. Single
 // targeted UPDATE on the unique (claim_handle_id, holder_node_id) pair —
 // avoids the read-then-write round-trip the supervisor's terminal-release
 // path would otherwise pay per held alias.
-func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
-	ctx context.Context, lockHolderID, holderNodeID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
+func (s *claimHoldersImpl) CompleteByClaimHandleAndNode(
+	ctx context.Context, claimHandleID, holderNodeID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -134,26 +134,26 @@ func (s *claimHoldersImpl) CompleteByLockHolderAndNode(
 		  WHERE claim_handle_id = $1
 		    AND holder_node_id = $2
 		    AND state = 'active'`,
-		lockHolderID, holderNodeID, string(state),
+		claimHandleID, holderNodeID, string(state),
 	)
 	if err != nil {
-		return fmt.Errorf("claim_holders.CompleteByLockHolderAndNode: %w", err)
+		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndNode: %w", err)
 	}
 	return nil
 }
 
-// FailAllActiveByClaimHandle satisfies persistence.ClaimHoldersStore.
+// FailAllActiveByClaimHandle satisfies persistence.ClaimHolderTable.
 // Single bulk UPDATE that flips every still-'active' row for the given
 // claim_handle to 'failed'. Used by the held-claim acquirer-failure
 // path so auto-terminal fires immediately instead of leaking the
 // claim_handle while inheritors never reach a terminal.
 //
 // Defense-in-depth claimant guard: the EXISTS clause confirms the
-// caller still owns the parent rimsky_claim_handle (matches blessed-
+// caller still owns the parent rimsky_claim_handles (matches blessed-
 // invariant 4 — every ownership-bearing UPDATE/DELETE filters on
 // supervisor).
 func (s *claimHoldersImpl) FailAllActiveByClaimHandle(
-	ctx context.Context, lockHolderID shared.UUID, supervisorID string, tx persistence.Tx,
+	ctx context.Context, claimHandleID shared.UUID, supervisorID string, tx persistence.Tx,
 ) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -163,11 +163,11 @@ func (s *claimHoldersImpl) FailAllActiveByClaimHandle(
 		  WHERE claim_handle_id = $1
 		    AND state = 'active'
 		    AND EXISTS (
-		      SELECT 1 FROM rimsky_claim_handle
+		      SELECT 1 FROM rimsky_claim_handles
 		       WHERE id = $1
 		         AND holder_supervisor_id = $2
 		    )`,
-		lockHolderID, supervisorID,
+		claimHandleID, supervisorID,
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.FailAllActiveByClaimHandle: %w", err)

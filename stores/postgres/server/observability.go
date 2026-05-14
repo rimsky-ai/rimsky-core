@@ -32,12 +32,12 @@ import (
 // build a query against a name that could carry SQL.
 var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 
-// ObservabilityServer is the postgres store's StoreObservability
+// ObservabilityServer is the postgres store's ClaimProducerObservability
 // implementation. Exposes two admin views: `pick_policies` (declared
 // policies + their default actions) and `items_queue` (per-policy
 // queued vs in-progress count).
 type ObservabilityServer struct {
-	genv1.UnimplementedStoreObservabilityServer
+	genv1.UnimplementedClaimProducerObservabilityServer
 	store *pgsstore.Store
 	// httpBridgeURL is set once at startup before the gRPC server
 	// accepts traffic; sync.Once-style write means later reads can be
@@ -55,7 +55,7 @@ func NewObservabilityServer(store *pgsstore.Store) *ObservabilityServer {
 }
 
 // SetHTTPBridgeURL records the URL the store advertises in
-// StoreObservabilityCapabilities.http_bridge_url. Set-once at startup;
+// ClaimProducerObservabilityCapabilities.http_bridge_url. Set-once at startup;
 // subsequent calls are ignored. Empty value disables.
 func (s *ObservabilityServer) SetHTTPBridgeURL(u string) {
 	s.httpBridgeURLOnce.Do(func() { s.httpBridgeURL = u })
@@ -70,10 +70,10 @@ func (s *ObservabilityServer) SetIdleTimeout(d time.Duration) { s.idleTimeout = 
 // timeout for live observability streams.
 const defaultObsIdleTimeout = 5 * time.Minute
 
-// GetCapabilities reports the v1 surface: admin views plus per-claim
+// Capabilities reports the v1 surface: admin views plus per-claim
 // get/stream/list backed by an in-memory ledger.
-func (s *ObservabilityServer) GetCapabilities(_ context.Context, _ *genv1.GetStoreCapabilitiesRequest) (*genv1.StoreObservabilityCapabilities, error) {
-	return &genv1.StoreObservabilityCapabilities{
+func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.GetClaimProducerCapabilitiesRequest) (*genv1.ClaimProducerObservabilityCapabilities, error) {
+	return &genv1.ClaimProducerObservabilityCapabilities{
 		SupportsClaimGet:              true,
 		SupportsClaimStream:           true,
 		SupportsListClaims:            true,
@@ -101,7 +101,7 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 // idle timeout fires per spec §3.5). Subscribers register under the
 // ledger's lock so events appended between snapshot and subscribe are
 // not lost.
-func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.StoreObservability_StreamClaimServer) error {
+func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
 	defer unsub()
 	if rec == nil {
@@ -389,6 +389,6 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 // wire SetHTTPBridgeURL.
 func (s *Server) RegisterObservability(grpcSrv *grpc.Server) *ObservabilityServer {
 	o := NewObservabilityServer(s.store)
-	genv1.RegisterStoreObservabilityServer(grpcSrv, o)
+	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, o)
 	return o
 }

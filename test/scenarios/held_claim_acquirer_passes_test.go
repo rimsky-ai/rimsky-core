@@ -12,7 +12,7 @@
 //   - A passes (fresh+passed) without invoking the executor.
 //   - B is not woken — the cascade-firing gate is last_outcome ==
 //     fresh_changed; passed does not propagate.
-//   - No rimsky_claim_handle rows exist for the never-acquired claim.
+//   - No rimsky_claim_handles rows exist for the never-acquired claim.
 //   - No rimsky_claim_holders rows — the held subgraph never registered.
 package scenarios
 
@@ -23,12 +23,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/control/config"
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/config"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 	"github.com/fallguy/rimsky/stores/common/action"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
@@ -38,7 +38,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -54,17 +54,17 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsEnvelope: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
 				},
 			},
 		},
 	})
-	h.Stub.WhenType("acquirer").Complete(map[string]any{}, true, "should-not-run")
-	h.Stub.WhenType("inheritor").Complete(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "should-not-run")
+	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-claim-acquirer-passes", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -94,7 +94,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.NotNil(t, inh)
 
 	// Acquirer should land in fresh+passed.
-	require.True(t, waitForLastOutcome(t, h, acq.ID, shared.LastOutcomePassed, 30*time.Second),
+	require.True(t, waitForLastOutcome(t, h, acq.ID, cascade.LastOutcomePassed, 30*time.Second),
 		"acquirer should record last_outcome=passed under on_acquire_unavailable: pass")
 
 	// Inheritor must NOT run — pass does not cascade (last_outcome=passed
@@ -112,20 +112,20 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 		inhRow = ri
 		return err
 	}))
-	require.Equal(t, shared.NodeStateFresh, acqRow.State,
+	require.Equal(t, cascade.NodeStateFresh, acqRow.State,
 		"acquirer should be fresh after pass")
-	require.Equal(t, shared.NodeStateFresh, inhRow.State,
+	require.Equal(t, cascade.NodeStateFresh, inhRow.State,
 		"inheritor should remain fresh — pass should not cascade to it")
 
 	// Executor must not have been invoked for either node.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when the acquirer passes on Unavailable")
 
-	// No rimsky_claim_handle rows for this instance — the claim was
+	// No rimsky_claim_handles rows for this instance — the claim was
 	// never acquired so no holder rows should exist.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_handle lh
+		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
 		  WHERE n.instance_id = $1`, uuid.UUID(iid),
 	).Scan(&lhCount))

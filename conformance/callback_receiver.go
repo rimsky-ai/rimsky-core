@@ -27,16 +27,18 @@ import (
 // ahead of time via Register.
 //
 // Scenarios that test terminal verdicts use AwaitTerminal — it reads the gRPC
-// stream until it sees a terminal event. If that terminal is AsyncAccepted,
-// AwaitTerminal then waits on the receiver's channel for the eventual callback
-// POST and synthesizes an equivalent ExecuteEvent for the caller. This lets
-// the same scenario validate both synchronous and async executors without
-// per-scenario branching.
+// stream until it sees a terminal StreamClose event. If that StreamClose
+// outcome is AwaitAsyncCallback, AwaitTerminal then waits on the receiver's
+// channel for the eventual callback POST and synthesizes an equivalent
+// ExecuteEvent for the caller. This lets the same scenario validate both
+// synchronous and async executors without per-scenario branching.
 //
-// The receiver accepts both the post-Plan-A5 AsyncCallbackBody shape
-// (`{events?, complete|blocked|errored|park_requested}`) and the legacy
-// shape (`{type: "complete"|"blocked"|"errored", ...}`) — same as the
-// supervisor's parser at foundation/integration/callback.go.
+// The receiver accepts the AsyncCallbackBody shape with the outcome
+// oneof keyed `success | error | park`. The pre-rename
+// `{type: "complete"|"blocked"|"errored", ...}` discriminator shape and the
+// per-terminal keys `complete | blocked | errored | park_requested` are no
+// longer accepted — same as the supervisor's parser at
+// foundation/integration/callback.go.
 type CallbackReceiver struct {
 	srv          *http.Server
 	bindAddr     string // listening "ip:port"
@@ -157,131 +159,95 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseCallbackBody accepts both the new AsyncCallbackBody shape and the legacy
-// `{type: "..."}` shape. Returns a synthesized ExecuteEvent with the terminal
-// oneof populated.
+// parseCallbackBody parses the AsyncCallbackBody shape. Top-level
+// outcome oneof keys: success | error | park. The legacy
+// `{type: ...}` discriminator shape and the legacy
+// `complete | blocked | errored | park_requested` per-terminal keys
+// are no longer accepted.
 //
-// @source: foundation/integration/callback.go::tryParseAsyncCallback
+// @source: foundation/integration/callback.go::parseAsyncCallback
 // @diverged: true
 // @reason: The supervisor parses a typed body via json.Unmarshal into
 // asyncCallbackBody. The conformance receiver operates on a
 // map[string]any so test fixtures can be loose; payload bytes do not
-// have to be base64-encoded here. Both must reject >1 terminal-field
-// bodies identically — that branch is the load-bearing parity check.
+// have to be base64-encoded here. Both must reject !=1 outcome bodies
+// identically — that branch is the load-bearing parity check.
 func parseCallbackBody(body map[string]any) (*genv1.ExecuteEvent, error) {
-	// New shape: top-level keys complete | blocked | errored | park_requested.
-	terminalCount := 0
-	if _, ok := body["complete"]; ok {
-		terminalCount++
+	outcomeCount := 0
+	if _, ok := body["success"]; ok {
+		outcomeCount++
 	}
-	if _, ok := body["blocked"]; ok {
-		terminalCount++
+	if _, ok := body["error"]; ok {
+		outcomeCount++
 	}
-	if _, ok := body["errored"]; ok {
-		terminalCount++
+	if _, ok := body["park"]; ok {
+		outcomeCount++
 	}
-	if _, ok := body["park_requested"]; ok {
-		terminalCount++
+	if outcomeCount != 1 {
+		return nil, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set (success | error | park); got %d outcomes", outcomeCount)
 	}
-	if terminalCount > 1 {
-		return nil, fmt.Errorf("async callback body must include exactly one terminal field; got %d", terminalCount)
+	if v, ok := body["success"]; ok {
+		return mapSuccess(asMap(v))
 	}
-	if v, ok := body["complete"]; ok {
-		return mapComplete(asMap(v))
+	if v, ok := body["error"]; ok {
+		return mapErrorOutcome(asMap(v))
 	}
-	if v, ok := body["blocked"]; ok {
-		return mapBlocked(asMap(v))
+	if v, ok := body["park"]; ok {
+		return mapPark(asMap(v))
 	}
-	if v, ok := body["errored"]; ok {
-		return mapErrored(asMap(v))
-	}
-	if v, ok := body["park_requested"]; ok {
-		return mapParkRequested(asMap(v))
-	}
-	// Legacy shape: top-level "type".
-	t, _ := body["type"].(string)
-	switch t {
-	case "complete":
-		return mapComplete(body)
-	case "blocked":
-		return mapBlocked(body)
-	case "errored":
-		return mapErrored(body)
-	}
-	return nil, fmt.Errorf("callback body has no terminal field")
+	return nil, fmt.Errorf("callback body has no outcome field")
 }
 
-func mapComplete(m map[string]any) (*genv1.ExecuteEvent, error) {
+func mapSuccess(m map[string]any) (*genv1.ExecuteEvent, error) {
 	delta, _ := structpb.NewStruct(asMap(m["attributes_delta"]))
 	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_Complete{
-			Complete: &genv1.Complete{
+		Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
 				AttributesDelta: delta,
 				Changed:         asBool(m["changed"]),
 				ChangeSummary:   asString(m["change_summary"]),
-			},
+			}}},
 		},
 	}, nil
 }
 
-func mapBlocked(m map[string]any) (*genv1.ExecuteEvent, error) {
-	// Blocked carries a `context` Struct on the wire, not `payload`. Tolerate
-	// both keys to ease writing test fixtures.
-	ctx, _ := structpb.NewStruct(asMap(m["context"]))
-	if ctx == nil {
-		ctx, _ = structpb.NewStruct(asMap(m["payload"]))
-	}
-	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_Blocked{
-			Blocked: &genv1.Blocked{
-				Reason:  asString(m["reason"]),
-				Context: ctx,
-			},
-		},
-	}, nil
-}
-
-func mapErrored(m map[string]any) (*genv1.ExecuteEvent, error) {
+func mapErrorOutcome(m map[string]any) (*genv1.ExecuteEvent, error) {
 	pl, _ := structpb.NewStruct(asMap(m["payload"]))
 	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_Errored{
-			Errored: &genv1.Errored{
+		Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
 				ErrorClass: asString(m["error_class"]),
 				Payload:    pl,
-			},
+			}}},
 		},
 	}, nil
 }
 
-func mapParkRequested(m map[string]any) (*genv1.ExecuteEvent, error) {
+func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
 	payloadStr := asString(m["payload"])
 	var payloadBytes []byte
 	if payloadStr != "" {
-		// Per Plan A5 the payload is base64 over the JSON wire (Go []byte
-		// convention). Tolerate non-base64 by treating it as a literal.
+		// Payload is base64 over the JSON wire (Go []byte convention).
+		// Tolerate non-base64 by treating it as a literal.
 		if decoded, err := base64.StdEncoding.DecodeString(payloadStr); err == nil {
 			payloadBytes = decoded
 		} else {
 			payloadBytes = []byte(payloadStr)
 		}
 	}
-	pr := &genv1.ParkRequested{
+	p := &genv1.Park{
 		Reason:       asString(m["reason"]),
 		Payload:      payloadBytes,
 		SessionToken: asString(m["session_token"]),
 	}
-	// resume_at is RFC3339 over the JSON wire (matches the TS executor's
-	// outcomeToCallbackBody emit shape and the supervisor's
-	// tryParseAsyncCallback parser at foundation/integration/callback.go).
-	// Tolerate absence; keep ResumeAt nil when the executor didn't send one.
 	if rawResume := asString(m["resume_at"]); rawResume != "" {
 		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {
-			pr.ResumeAt = timestamppb.New(pt)
+			p.ResumeAt = timestamppb.New(pt)
 		}
 	}
 	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_ParkRequested{
-			ParkRequested: pr,
+		Event: &genv1.ExecuteEvent_StreamClose{
+			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: p}},
 		},
 	}, nil
 }

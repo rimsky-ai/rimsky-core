@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// ScheduleStore — port of rimsky/src/storage/postgres/timer-store.ts adapted
+// ScheduleTable — port of rimsky/src/storage/postgres/timer-store.ts adapted
 // for the spec §11.1 rename: rimsky_timers → rimsky_schedules, keyed on
 // node_id (no separate target_cell_id or reason columns).
 package postgres
@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/shared"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // scheduleCursor encodes (next_fire_at, node_id) so duplicate

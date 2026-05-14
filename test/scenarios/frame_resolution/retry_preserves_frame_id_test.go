@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies that an applyTerminalAppError → retry path that transitions
+// Verifies that an applyErrorPolicy → retry path that transitions
 // a node back to 'stale' preserves frame_id. Frame-end detection
 // (runFrameEndDetection) filters by `n.frame_id = f.frame_id`, so a
 // retried-but-still-in-the-same-frame node must continue to count as
@@ -23,8 +23,8 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/modeling/node"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 // TestRetryDoesNotPrematurelyEndFrame is a targeted check: while the
@@ -45,7 +45,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "retry-frame-end-predicate", Version: "1",
-		FrameResolution: node.FrameResolutionSerialQueue,
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -68,7 +68,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	// frame_id (simulating what advanceOneFrame does at frame-start).
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, mode, state, source_node_ids,
+		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids,
 			queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
 		RETURNING frame_id

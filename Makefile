@@ -6,7 +6,7 @@ proto-gen:
 	cd protocols/proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  executor.proto events.proto claim_producer.proto lifecycle.proto \
-	  executor_observability.proto store_observability.proto
+	  executor_observability.proto claim_producer_observability.proto
 
 test:
 	go test ./...
@@ -120,9 +120,9 @@ cli-sync-embedded:
 	  gsub(/\.\/rimsky\.yml:\/etc\/rimsky\/rimsky\.yml:ro/, "../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro"); \
 	} \
 	/^  #/ { buf[bufN++] = $$0; next } \
-	{ flush_buf(); print }' deploy/docker-compose.yml > modeling/cli/embedded/deploy/docker-compose.yml
-	cp deploy/store-filesystem.yml modeling/cli/embedded/deploy/store-filesystem.yml
-	cp deploy/supervisor-config.yml modeling/cli/embedded/deploy/supervisor-config.yml
+	{ flush_buf(); print }' deploy/docker-compose.yml > control/cli/embedded/deploy/docker-compose.yml
+	cp deploy/store-filesystem.yml control/cli/embedded/deploy/store-filesystem.yml
+	cp deploy/supervisor-config.yml control/cli/embedded/deploy/supervisor-config.yml
 
 cli-image:
 	docker build -f Dockerfile.cli --build-arg VERSION=$(VERSION) -t rimsky/cli:latest .

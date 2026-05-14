@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// store_lifecycle.go — SQLite-backed persistence.LifecycleIdempotencyStore.
+// store_lifecycle.go — SQLite-backed persistence.LifecycleIdempotencyTable.
 package sqlite
 
 import (
@@ -19,7 +19,7 @@ const storeLifecycleCols = `store_registration_name, scope_kind, scope_id, state
 func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, storeName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) (*persistence.LifecycleIdempotencyRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+storeLifecycleCols+`
-		 FROM rimsky_lifecycle_idempotency
+		 FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
 		storeName, string(scopeKind), scopeID,
 	)
@@ -35,7 +35,7 @@ func (s *lifecycleIdempotencyImpl) Get(ctx context.Context, storeName string, sc
 
 func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.LifecycleIdempotencyRow, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_lifecycle_idempotency (store_registration_name, scope_kind, scope_id, state, last_event_at)
+		`INSERT INTO rimsky_lifecycle_idempotencies (store_registration_name, scope_kind, scope_id, state, last_event_at)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(store_registration_name, scope_kind, scope_id)
 		 DO UPDATE SET state = excluded.state, last_event_at = excluded.last_event_at`,
@@ -49,7 +49,7 @@ func (s *lifecycleIdempotencyImpl) Upsert(ctx context.Context, in persistence.Li
 
 func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, storeName string, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_lifecycle_idempotency
+		`DELETE FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ? AND scope_kind = ? AND scope_id = ?`,
 		storeName, string(scopeKind), scopeID,
 	)
@@ -61,7 +61,7 @@ func (s *lifecycleIdempotencyImpl) Delete(ctx context.Context, storeName string,
 
 func (s *lifecycleIdempotencyImpl) DeleteByScope(ctx context.Context, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_lifecycle_idempotency
+		`DELETE FROM rimsky_lifecycle_idempotencies
 		 WHERE scope_kind = ? AND scope_id = ?`,
 		string(scopeKind), scopeID,
 	)
@@ -74,7 +74,7 @@ func (s *lifecycleIdempotencyImpl) DeleteByScope(ctx context.Context, scopeKind 
 func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind persistence.LifecycleIdempotencyScopeKind, scopeID string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+storeLifecycleCols+`
-		 FROM rimsky_lifecycle_idempotency
+		 FROM rimsky_lifecycle_idempotencies
 		 WHERE scope_kind = ? AND scope_id = ?
 		 ORDER BY store_registration_name ASC`,
 		string(scopeKind), scopeID,
@@ -101,7 +101,7 @@ func (s *lifecycleIdempotencyImpl) ListByScope(ctx context.Context, scopeKind pe
 func (s *lifecycleIdempotencyImpl) ListByStore(ctx context.Context, storeName string, tx persistence.Tx) ([]persistence.LifecycleIdempotencyRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+storeLifecycleCols+`
-		 FROM rimsky_lifecycle_idempotency
+		 FROM rimsky_lifecycle_idempotencies
 		 WHERE store_registration_name = ?
 		 ORDER BY scope_kind ASC, scope_id ASC`,
 		storeName,

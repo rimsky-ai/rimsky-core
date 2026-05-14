@@ -12,18 +12,18 @@ data:
     # Mirrors deploy/rimsky.yml from the reference compose stack. Per
     # docs/specs/2026-05-04-modeling-layer-contract.md §10 (Option II
     # YAML): claim_producers + named_locks + executors in a single config,
-    # each peer carrying a `protocols:` list and (for claim_producers) a
-    # `write_semantics_envelope:` set. Override by setting `rimsky.config`
+    # each service carrying a `protocols:` list and (for claim_producers) a
+    # `write_semantics_allowed:` set. Override by setting `rimsky.config`
     # in values.yaml to a literal YAML body.
     claim_producers:
       - name: content
         endpoint: "grpc://{{ include "rimsky.fullname" . }}-store-filesystem:9100"
         protocols: [claim_producer]
-        write_semantics_envelope: [sync]
+        write_semantics_allowed: [sync]
       - name: topics-ring
         endpoint: "grpc://{{ include "rimsky.fullname" . }}-store-postgres:9101"
         protocols: [claim_producer]
-        write_semantics_envelope: [sync]
+        write_semantics_allowed: [sync]
     named_locks:
       - name: "topics-ring:concurrent-claims"
         mode: counting

@@ -69,12 +69,12 @@ func jsonValueEqual(a, b any) bool {
 	}
 }
 
-func testScopeByteEquality(t *testing.T, d persistence.Driver) {
+func testScopeByteEquality(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	store := d.Store()
+	store := d.Tables()
 
-	storeName := "scope-conformance-store"
+	producerName := "scope-conformance-store"
 	intent := "rw"
 	scopeA := json.RawMessage(`{"path":"/data/a"}`)
 	scopeB := json.RawMessage(`{"path":"/data/b"}`)
@@ -86,7 +86,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 			return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 				ID:                 uuid.New(),
 				LockKind:           persistence.LockKindScope,
-				StoreName:          &storeName,
+				ProducerName:       &producerName,
 				ScopeData:          scope,
 				Intent:             &intent,
 				HolderSupervisorID: supID,
@@ -99,9 +99,9 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 	}
 
 	// Two byte-equal scopes: both rows land successfully (the
-	// rimsky_claim_handle table doesn't unique-constrain scope; the
+	// rimsky_claim_handles table doesn't unique-constrain scope; the
 	// supervisor's in-go conflict predicate is what catches the conflict).
-	// We verify that ListByStoreScope returns both, and that the rows'
+	// We verify that ListByProducerScope returns both, and that the rows'
 	// scope_data bytes round-trip equal.
 	insert(t, scopeA)
 	insert(t, scopeA)
@@ -109,10 +109,10 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 	var rows []persistence.ClaimHandleRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.ClaimHandles().ListByStoreScope(ctx, storeName, tx)
+		rows, err = store.ClaimHandles().ListByProducerScope(ctx, producerName, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("ListByStoreScope: %v", err)
+		t.Fatalf("ListByProducerScope: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 scope rows, got %d", len(rows))
@@ -134,10 +134,10 @@ func testScopeByteEquality(t *testing.T, d persistence.Driver) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.ClaimHandles().ListByStoreScope(ctx, storeName, tx)
+		rows, err = store.ClaimHandles().ListByProducerScope(ctx, producerName, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("ListByStoreScope #2: %v", err)
+		t.Fatalf("ListByProducerScope #2: %v", err)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 scope rows, got %d", len(rows))

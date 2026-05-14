@@ -31,8 +31,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/modeling/frame"
-	"github.com/fallguy/rimsky/modeling/scenario"
+	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
@@ -41,12 +41,12 @@ func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {
 
 	dispatchID := seedTerminalFrameAndDispatch(t, h, "stale-sup")
 
-	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Store(), h.Driver.Queue(),
+	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(),
 		slog.New(slog.NewTextHandler(io.Discard, nil))))
 
 	var claimedBy *string
 	h.QueryRowSQL(
-		`SELECT claimed_by FROM rimsky_worker_request WHERE id = $1`,
+		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`,
 		[]any{dispatchID}, &claimedBy)
 	require.Nil(t, claimedBy,
 		"orphan reaper should release dispatch claim when joined frame is terminal")
@@ -89,7 +89,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	templateHash := "sha256-" + suffix
 	h.ExecSQL(`
 		INSERT INTO rimsky_templates (id, spec, state)
-		VALUES ($1, '{"frame_resolution":"serial_queue"}'::jsonb, 'deployed')
+		VALUES ($1, '{"frame_resolution_mode":"serial_queue"}'::jsonb, 'deployed')
 	`, templateHash)
 	instanceID := uuid.New()
 	h.ExecSQL(`
@@ -104,13 +104,13 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	frameID := uuid.New()
 	now := time.Now()
 	h.ExecSQL(`
-		INSERT INTO rimsky_frames (frame_id, instance_id, mode, state, source_node_ids,
+		INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
 			queued_at, started_at, ended_at, frame_timeout_ms)
 		VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::UUID[], $4, $4, $4, 600000)
 	`, frameID, instanceID, nodeID, now)
 	dispatchID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_worker_request (id, node_id, executor_name, required_stores, claimed_by, frame_id)
+		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id)
 		VALUES ($1, $2, NULL, '{}', $3, $4)
 	`, dispatchID, nodeID, claimedBy, frameID)
 	return dispatchID

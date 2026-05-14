@@ -12,11 +12,11 @@ references:
 
 ## What it is
 
-A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the `ModeCoexists` matrix treats concurrent claims on byte-equal scope. Three-level structure: producer advertises an **envelope** (set of values) via `Capabilities()`; operator declares a narrowing envelope per producer in `rimsky.yml`; each `Open` returns one realized value in `Acquired.realized_write_semantics`.
+A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the `ModeCoexists` matrix treats concurrent claims on byte-equal scope. Three-level structure: producer advertises an allowed-values set via `Capabilities()`; operator declares a narrowing allowed-values set per producer in `cfg:rimsky.yml` (key `write_semantics_allowed:`); each `Open` returns one realized value in `Acquired.realized_write_semantics`.
 
 ## Purpose
 
-A single per-binary capability is too coarse (a postgres producer might support `sync` for some resources and `staged_async` for others); per-claim with no upper bound is unbounded. The three-level envelope structure pins what the producer claims to support, what the operator allows, and what each specific claim got.
+A single per-binary capability is too coarse (a postgres producer might support `sync` for some resources and `staged_async` for others); per-claim with no upper bound is unbounded. The three-level allowed-values structure pins what the producer claims to support, what the operator allows, and what each specific claim got.
 
 ## Boundaries
 
@@ -24,16 +24,20 @@ Owns: the enum values, the envelope handshake, the realized-per-claim value, the
 
 ## Invariants
 
-- Operator envelope ⊆ producer envelope (validated at startup; fails fast).
+- Operator-declared `write_semantics_allowed` ⊆ producer-advertised set (validated at startup; fails fast).
 - `UNKNOWN` is the proto zero value; producers must not return it; supervisor rejects it.
 - Byte-equal-scope uniformity: two `Open` calls with byte-equal scope MUST return the same realized value (spec §2.5).
 - Reader-lease internal serialization is forbidden for `staged_async` — honest support requires snapshot delegation or MVCC pass-through (`@blessed-invariant 9b`).
 
 ## Aliases and historical names
 
-The legacy single-value `write_semantics:` YAML key is accepted as a single-element envelope shortcut (pre-v1 transition affordance).
+Pre-`spec:2026-05-12-nomenclature-resolution` Group C, the operator-facing YAML key was `write_semantics_envelope:` (with a single-value `write_semantics: <value>` shortcut accepted as a one-element list). Both forms are retired: the canonical key is `write_semantics_allowed:`, and the single-value shortcut is rejected with a precise error message. The proto field is `Capabilities.write_semantics_allowed` (renamed from `write_semantics_envelope`).
 
 ## Open within this concept
 
-- Legacy single-value `write_semantics:` YAML alias of `write_semantics_envelope:` — see `tensions/yaml-write-semantics-alias.md`.
+(none live; the `write_semantics_envelope` rename and the single-value alias retirement both landed under `spec:2026-05-12-nomenclature-resolution`.)
+
+## Notes
+
+- `write_semantics_envelope` → `write_semantics_allowed` rename per `spec:2026-05-12-nomenclature-resolution` Group C.2. Single-value `write_semantics:` YAML shortcut retired per Group C.1. Resolves `tension:_resolved/yaml-write-semantics-alias`.
 

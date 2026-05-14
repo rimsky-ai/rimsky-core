@@ -1,18 +1,18 @@
 # @rimsky/executor-claude-agent
 
-TypeScript reference implementation of a rimsky v1 NodeExecutor that runs
+TypeScript reference implementation of a rimsky v1 Executor that runs
 agentic cells by spawning the Claude CLI as a subprocess, giving it an internal
 MCP callback URL, and relaying the subprocess's structured outcome back to the
 rimsky supervisor.
 
 ## Design
 
-Speaks rimsky's NodeExecutor protocol (see
-`../../proto/v1/node_executor.proto`) loaded at runtime via `@grpc/proto-loader`.
+Speaks rimsky's Executor protocol (see
+`../../proto/v1/executor.proto`) loaded at runtime via `@grpc/proto-loader`.
 Always uses the async-handoff pattern:
 
 1. `Execute(ExecuteRequest)` is received over gRPC.
-2. Executor emits one `Heartbeat` + `AsyncAccepted` and closes the stream.
+2. Executor emits one `Heartbeat` + `StreamClose{AwaitAsyncCallback}` and closes the stream.
 3. Executor runs the agent in the background; posts final outcome to
    `callback_url` (HTTP+JSON, supervisor-supplied).
 
@@ -22,14 +22,14 @@ The agent runtime:
   the Claude CLI subprocess can invoke via its MCP-HTTP transport.
 - Spawns the `claude` binary with the callback URL and a per-run token.
 - Watches for silence (no stdout within `silenceTimeoutMs`) and tears the
-  subprocess down as `silence_timeout` → Errored.
+  subprocess down as `Error{error_class: "silence_timeout"}`.
 - Releases the callback token when the run ends.
 
 ## Stub mode
 
 Setting `RIMSKY_EXECUTOR_STUB_MODE=1` short-circuits the agent runtime: no
 Claude CLI spawn, no network calls, no internal MCP server. Returns a canned
-`Complete { stub: true }` after ~50ms. All tests run under stub mode.
+`StreamClose{Success{attributes_delta: {stub: true}}}` after ~50ms. All tests run under stub mode.
 
 ## Userdata fields
 

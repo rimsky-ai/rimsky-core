@@ -53,7 +53,7 @@ Common diagnostic patterns:
 - A `stale` node with no `running` ancestors and no claim contention — likely a scheduler-tick or capacity-lock issue. Check the executor capacity and claim/lock acquisition events.
 
 <!-- @source: concepts/node-state.md -->
-> The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled).
+> The five named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`, `parked`. The state-machine vocabulary covers every legal combination of "do we have a value?" and "is work pending?" plus the `failed` distinction (work attempted, no value, no auto-recovery scheduled) and the `parked` distinction (non-terminal hold awaiting time-based wake or external invalidate).
 
 ### Frame timeline
 
