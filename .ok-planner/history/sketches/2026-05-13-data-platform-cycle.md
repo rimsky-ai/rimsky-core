@@ -304,6 +304,17 @@ No ambiguity, because the blessed type set is finite and named.
 5. **Migration from existing usage.** Pre-v1; no migration path
    needed. The blob backend evolves; consumers using it adapt.
    CHANGELOG entry covers the surface change.
+6. **Type-registry generality vs minimalism.** Design the registry
+   surface to anticipate future typed attributes with richer semantics
+   (predicate pushdown into the backing store, side-metadata like
+   coordinate systems or units of measure, query operators that need
+   to compose with the substitution layer), or keep the registry
+   minimal and extend it per new type. Lean: generality at the design
+   level (anticipate the shape so later types plug in cleanly),
+   minimalism at the implementation level (only what `blob` and
+   `table` need ships in this cycle). The two `Future candidates`
+   above are the pressure-test for whether the design is general
+   enough.
 
 ---
 
@@ -823,7 +834,10 @@ Worth documenting as a pattern in the worked example.
 
 1. **Type registry surface + `rimsky.yml` typed-attributes config +
    `blob` evolution.** Foundation work, no new types yet. The `blob`
-   refactor teaches the implementation pattern.
+   refactor teaches the implementation pattern. Verifier convention
+   gets a concept-doc home at `docs/concepts/verifier.md` (paired with
+   the existing `concept:quality-rule` doc, which gets a deprecation
+   notice).
 2. **Python SDK first ship + `blob` adapter.** No `table` yet. Just
    the executor-protocol ergonomics. Distribute via PyPI. Worked
    example: `docs/agents/examples/python-executor.md`.
@@ -836,11 +850,25 @@ Worth documenting as a pattern in the worked example.
 5. **`verifier-http` bundled executor.** Generic HTTP delegation.
 6. **TypeScript SDK first ship + `blob` + `table` adapters +
    `claude-agent` refactor onto the SDK.**
-7. **Deprecation cutover.** Remove `pkg:graph/qualityrule/`. Update
-   templates in `docs/agents/examples/` to the new shape. CHANGELOG.
+7. **Deprecation cutover** (after both bundled verifier executors are
+   stable). Remove `pkg:graph/qualityrule/`. Update templates in
+   `docs/agents/examples/` to the new shape. Move the
+   `concept:quality-rule` doc to history; the verifier concept doc
+   already lives at `docs/concepts/verifier.md` from step 1.
+   CHANGELOG.
 
 Steps 1–5 are sequenced (each depends on prior). Step 6 can run in
 parallel with 4 and 5 if labor allows. Step 7 closes the cycle.
+
+**Adapter conformance discipline.** Each SDK adapter (Python and
+TypeScript, per type) ships with **round-trip-integrity tests**: bytes
+written through an adapter come back identical when read through the
+same adapter, and round-trip semantics are stable across language
+boundaries (a `table` written by a Python executor reads identically
+in a TypeScript executor). These tests gate each SDK release; they're
+the regression net that prevents adapter drift from corrupting silent
+edge cases (Arrow type mappings, null vs absent, NaN encoding,
+timezone semantics).
 
 ## What this isn't
 

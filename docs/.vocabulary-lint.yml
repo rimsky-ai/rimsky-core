@@ -28,6 +28,8 @@ forbidden:
       - docs/vocabulary.md
       - docs/licensing.md
       - docs/README.md
+      - docs/roadmap.md
+      - docs/comparison.md
       - llms.txt
       - llms-full.txt
       - README.md

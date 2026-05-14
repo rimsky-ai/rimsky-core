@@ -231,6 +231,15 @@ For workflows with many conditional subgraphs and many fan-in points,
 this pattern multiplies — every fan-in needs a custom readiness node,
 or a generic "wait for these named completion events" executor.
 
+The framing: the friction isn't "rimsky can't express this" — `on_event`
+plus a parked readiness node expresses it precisely. The friction is
+that expressing this requires the template author to be a graph
+designer and a state-machine designer simultaneously, every time. A
+bundled `barrier` executor centralizes the state-machine design once,
+documents it, exposes it via a userdata schema, and frees template
+authors to declare "wait for these signals" without having to
+implement the waiting themselves.
+
 ### The proposal: ship the readiness pattern as a bundled executor
 
 A new bundled executor: `barrier`. Userdata declares "wait for these
@@ -330,6 +339,23 @@ that hides the barrier behind cleaner dependency notation, that's a
 signal Direction A earns its place; the bundled `barrier` becomes the
 underlying mechanism. If the bundled executor proves ergonomic enough,
 Direction A may never need to happen.
+
+### Success criteria for staying with the bundled executor
+
+After the bundled `barrier` ships, the signals that determine whether
+to lift to Direction A (or stay):
+
+- **Reach frequency.** How often template authors reach for the
+  `barrier` executor across real consumer workloads. Rare → stay
+  bundled (the friction was specific, not general). Frequent → consider
+  lifting.
+- **Template readability.** Whether the resulting templates read
+  cleanly with barrier nodes inlined, or whether the inlined-barrier
+  nodes consistently obscure the spine. Clean → stay bundled. Obscuring
+  → lift the syntactic sugar.
+- **Userdata schema gaps.** Edge cases that don't fit the
+  `wait_for` / `filter` / `timeout` shape. Few → stay; the schema
+  earned its place. Many → revisit the shape or lift to primitive.
 
 ### Open questions
 
@@ -621,3 +647,10 @@ on Piece 1 (`PARK_REASON_BARRIER_WAIT` must exist).
 - Not a substrate-specific atomic-swap implementation. The pattern is
   generic; the reference impl is filesystem-only as a teaching aid.
 - Not a typed-attribute change.
+- Not a cascade, held-claim, scheduler, or core executor-protocol
+  change. The `parked_reason` enum (plus its `reason_label` companion)
+  is the only protocol-surface addition; the barrier is a bundled
+  executor; atomic-staging is producer-side. None of the three pieces
+  touches `concept:cascade`, `concept:claim-handle`, or the scheduler's
+  eligibility logic. The cycle should stay inside this envelope —
+  anything that crosses it is scope creep.
