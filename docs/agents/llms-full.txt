@@ -10,7 +10,7 @@
 
 ## Definition
 
-The typed inputs and outputs of a node, declared by a JSON Schema in the template's `attributes:` block. Attributes are the substitution boundary: `{{deps.<source>.<field>}}`, `{{claim.<alias>.<path>}}`, `{{params.<key>}}` directives in the schema's `source:` fields are resolved at dispatch.
+The typed inputs and outputs of a node, declared by a JSON Schema in the template's `attributes:` block. Attributes are the substitution boundary: `{{nodes.<source>.attribute.<field>}}`, `{{nodes.<source>.event.<name>.<path>}}`, `{{claim.<alias>.<path>}}`, `{{params.<key>}}` directives in the schema's `source:` fields are resolved at dispatch.
 
 ## Why it exists
 
@@ -21,14 +21,24 @@ Nodes need typed contracts. Without them, dependency edges between nodes are wir
 
 Both gates are mandatory. The double-validation catches both substitution bugs (where the source value doesn't match the schema) and executor bugs (where the executor returns something the schema doesn't allow).
 
-The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `nodes.<source>.value.<path>` for upstream values, `nodes.<emitter>.event.<name>.<path>` for executor-emitted named-event payloads, `claim.<alias>.payload.<path>` for claim-pass payloads, or `params.<path>` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
+The schema's `source:` field is where substitution happens. Each property declares where its value comes from — typically `nodes.<source>.attribute.<key>` for upstream attribute writeback, `nodes.<emitter>.event.<name>.<path>` for executor-emitted named-event payloads, `claim.<alias>.payload.<path>` for claim-pass payloads, or `params.<path>` for instance-level params. The schema is standard JSON Schema (Draft 7+); `source:` is a Rimsky-specific extension that names the substitution.
 
 The `nodes.<emitter>.event.<name>.<path>` source kind reads from the per-instance event ledger (rows persisted when the emitting executor streams a `NamedEvent`). The most-recent emission of `(emitter, name)` is selected; `<path>` walks the JSON payload via the same `walkPath` mechanism as the value substitution. Event payloads inherit the same opacity discipline as attribute values — the supervisor never logs, normalizes, or transforms them outside this substitution-leaf extraction (`@blessed-invariant 11` / `@blessed-invariant 21`).
+
+## Substitution refs auto-subscribe
+
+Every substitution directive that references another node implicitly adds a subscription on the consuming node (see [`subscription.md`](subscription.md)):
+
+- `{{nodes.X.attribute.Y}}` adds `{node: X, on: attribute, name: Y}`.
+- `{{nodes.X.event.Z.<path>}}` adds `{node: X, on: event, name: Z}`.
+- `{{claim.<alias>.<path>}}` and `{{params.<path>}}` are not graph nodes and add no subscription.
+
+This means a node that reads upstream attributes is automatically wired into the cascade — there is no separate `dependencies:` declaration to keep in sync with the substitution refs.
 
 ## How you encounter it
 
 - **Templates**: the `attributes:` block of each node declaration.
-- **Substitution**: directives like `{{deps.upstream-node.value}}` or `{{claim.snapshot.payload.item_id}}` resolve at dispatch.
+- **Substitution**: directives like `{{nodes.upstream-node.attribute.value}}` or `{{claim.snapshot.payload.item_id}}` resolve at dispatch.
 - **Executor protocol**: the executor receives substituted attributes in `ExecuteRequest`; on `Complete`, the executor returns writeback that becomes the node's persisted value (after schema validation).
 
 ## Consumer-visible guarantees
@@ -48,6 +58,7 @@ The `nodes.<emitter>.event.<name>.<path>` source kind reads from the per-instanc
 - [`claim.md`](claim.md)
 - [`inheritance.md`](inheritance.md)
 - [`userdata.md`](userdata.md)
+- [`subscription.md`](subscription.md)
 
 
 ---
@@ -56,11 +67,11 @@ The `nodes.<emitter>.event.<name>.<path>` source kind reads from the per-instanc
 
 ## Definition
 
-The propagation of `invalidate` through the node graph. When a node loses or replaces its value, downstream dependents are marked `stale` so the scheduler can recalculate them from the new value. Cascade is the reactive-computation engine at the heart of Rimsky.
+The propagation of `invalidate` through the node graph. When a node loses or replaces its value, every receiver that subscribed to the sender's transition is marked `stale` so the scheduler can recalculate them from the new value. Cascade is the reactive-computation engine at the heart of Rimsky.
 
 ## Why it exists
 
-A workflow whose steps depend on each other faces a natural problem: when an upstream input changes, every downstream step that consumed it is now stale. Rimsky models this directly. Each node declares its dependencies; when a node's value changes (or is explicitly invalidated), the cascade engine walks the dependency graph and marks every dependent stale. The scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their executors.
+A workflow whose steps depend on each other faces a natural problem: when an upstream input changes, every downstream step that consumed it is now stale. Rimsky models this directly. Each node declares the upstream topics it subscribes to (and substitution refs auto-subscribe — see [`subscription.md`](subscription.md)). When a node's value changes (or is explicitly invalidated), the cascade engine consults the per-template subscription-edge inverse map and marks every matching receiver stale. The scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their executors.
 
 `invalidate` is Rimsky's only graph-level message. Recalculation is not a service message — it's a scheduler action. The dispatch loop sees a node in `stale`, checks eligibility (claims and locks acquirable, dependencies fresh), and runs the node's executor. The clean separation lets the cascade engine be a pure reachability computation while the scheduler handles all the I/O concerns (claim acquisition, lock contention, executor dispatch, async callbacks).
 
@@ -77,11 +88,21 @@ Today's lazy + Changed-gated cascade is preserved end-to-end. When a node commit
 
 Per-emit invalidate frame discipline (`frame: in | next`) is documented in [`invalidate.md`](invalidate.md).
 
+## Eligibility via the wait-set
+
+Stale-marking a receiver is half of cascade; the other half is the eligibility gate. Each cascade-walk match inserts a row into the per-frame wait-set ledger (see [`wait-set.md`](wait-set.md)) keyed on `(frame, receiver, sender, topic_kind, scope)`. The scheduler's dispatch query reads:
+
+```
+A stale node is dispatch-eligible iff its wait-set is empty in the current frame.
+```
+
+When the sender resolves to a settled state (`fresh`, `failed`, `parked`), the engine bulk-deletes wait-set rows for that sender in the frame. Receivers with no remaining rows are dispatch-eligible.
+
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` triggers a cascade rooted at the named node.
-- **Templates**: the `dependencies:` list of each node declaration determines what propagates where.
-- **Errors**: when the supervisor's policy chain resolves an executor-reported `error_class` to the `invalidate(targets)` action, the named targets are cascaded as part of the failure-handling path.
+- **Templates**: each node's `subscribes:` block (plus the substitution refs in its attribute schema, which auto-subscribe) defines what propagates where.
+- **Errors**: when a node terminals with `Error{error_class}`, every receiver whose `subscribes:` entry matches `{node: <sender>, on: state, when: failed, error_class: <class>}` is stale-marked as part of the failure-handling path.
 
 ## The `changed` halt-at-this-node signal
 
@@ -94,16 +115,18 @@ A node's executor commits with a `changed: bool` declaration. `changed: true` (t
 
 ## Common mistakes
 
-- **Rimsky's cascade ≠ CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through a directed acyclic dependency graph.
+- **Rimsky's cascade ≠ CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map.
 - Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
-- Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is dependency-driven, not value-diff-driven; the executor commits `changed: false` if it wants to halt propagation at itself.
-- Confusing cascade reach with executor invocation. Cascade marks nodes stale; the scheduler decides which stale nodes are eligible for dispatch (after acquiring any required claims and locks).
+- Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` if it wants to halt propagation at itself.
+- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; the scheduler decides which stale nodes are eligible for dispatch (wait-set empty for the current frame, claims and locks acquirable).
 
 ## See also
 
 - [`node-state.md`](node-state.md)
 - [`invalidate.md`](invalidate.md)
 - [`frame.md`](frame.md)
+- [`subscription.md`](subscription.md)
+- [`wait-set.md`](wait-set.md)
 
 
 ---
@@ -579,8 +602,8 @@ output.
 ## Confidence-driven branching
 
 Pattern: an agent emits a confidence score with its findings. The
-branch nodes use `on_executor_complete` with `resolve: by_changed` and
-an invalidate emit to route to the right downstream.
+branch nodes auto-subscribe via their attribute substitutions and
+diverge on quality-rule guards.
 
 ```yaml
 nodes:
@@ -603,8 +626,7 @@ nodes:
       schema:
         properties:
           category:
-            source: nodes.classify.value.category
-    deps: [classify]
+            source: nodes.classify.attribute.category
 
   low_confidence_path:
     executor: human-review
@@ -612,45 +634,50 @@ nodes:
       schema:
         properties:
           category:
-            source: nodes.classify.value.category
-    deps: [classify]
+            source: nodes.classify.attribute.category
 ```
 
 The `classify` node's `on_executor_complete` is empty (default
-`by_changed`). Downstream invalidation gating is handled at attribute-
-substitution time: nodes that reference `nodes.classify.value.category`
-trigger when classify completes and propagates. The branching is then
-done by quality-rule guards on each downstream that no-op (via a
+`by_changed`). Both downstream nodes auto-subscribe to `classify` via
+their `{{nodes.classify.attribute.category}}` substitution refs;
+they fire when `classify` completes and propagates. The branching is
+then done by quality-rule guards on each downstream that no-op (via a
 deterministic node returning unchanged) when their confidence
 condition isn't satisfied.
 
-For sharper branching, use named events:
+For sharper branching, use named-event subscriptions:
 
 ```yaml
 nodes:
   classify:
     executor: claude-agent
-    on_event:
-      high_confidence:
-        invalidate:
-          targets: [auto_finalize]
-      low_confidence:
-        invalidate:
-          targets: [needs_review]
+    # The executor emits `high_confidence` or `low_confidence` as a
+    # named event before its terminal `Complete`.
+
+  auto_finalize:
+    executor: deterministic-finalize
+    subscribes:
+      - { node: classify, on: event, name: high_confidence }
+
+  needs_review:
+    executor: human-review
+    subscribes:
+      - { node: classify, on: event, name: low_confidence }
 ```
 
-The `classify` executor emits `high_confidence` or `low_confidence` as
-a named event before its terminal `Complete`. Each `on_event` handler
-fires the appropriate downstream invalidate.
+Each branch node subscribes to a different named event from `classify`;
+the cascade walk stale-marks only the matching subscriber when the
+event fires.
 
 ## Agent self-blocks
 
 Pattern: an agent reaches a state where it cannot continue without
 external input — a missing parameter, a required artifact, an
-ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}` (not
-`Error{error_class}`) to signal "I produced output but explicitly chose not to
-claim success", paired with an `on_executor_errored` handler that
-routes the run downstream.
+ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}`
+to signal "I produced output but explicitly chose not to claim success",
+paired with an `on_executor_errored` handler that suppresses the
+default error routing and a receiver-side subscription that routes the
+run downstream.
 
 ```yaml
 nodes:
@@ -658,14 +685,20 @@ nodes:
     executor: claude-agent
     on_executor_errored:
       resolve: pass
-      invalidate:
-        targets: [routing]
+
+  routing:
+    executor: routing-agent
+    subscribes:
+      - { node: draft, on: state, when: failed, error_class: executor_blocked }
 ```
 
-`draft` emits `Blocked { reason: "needs_review", payload: {...} }`. The
-handler routes through `routing` which decides next steps based on the
-blocked-payload context. See `docs/concepts/handlers.md` and
-`docs/protocols/executor.md` for the wire-shape details.
+`draft` emits `Error{error_class: "executor_blocked", payload: {...}}`.
+The `on_executor_errored: pass` handler treats the failure as a no-op
+for `draft`'s cascade gate; the `routing` node's filtered subscription
+fires on the `executor_blocked` class and decides next steps based on
+the blocked-payload context. See `docs/concepts/handlers.md`,
+`docs/concepts/subscription.md`, and `docs/protocols/executor.md`
+for the wire-shape details.
 
 ## Why this split matters
 
@@ -805,9 +838,10 @@ them identically once persisted.
 ## Definition
 
 The mechanism that maps an executor's `error_class` plus the run's
-retry counters onto an action: `retry`, `invalidate(targets)`,
-`give_up`, or `pass`. Templates declare `error_types` per node;
-rimsky's runtime resolves the policy at terminal time.
+retry counters onto an action: `retry`, `give_up`, or `pass`.
+Templates declare `error_types` per node; rimsky's runtime resolves
+the policy at terminal time. Cascade coupling on failure is declared
+receiver-side via `subscribes:` filters (see [`subscription.md`](subscription.md)).
 
 ## Why it exists
 
@@ -825,15 +859,17 @@ terminal time the runtime looks up the action for the executor-supplied
 `error_class` and dispatches:
 
 - `retry` — re-dispatch after a backoff.
-- `invalidate(targets)` — invalidate the named target nodes; the
-  emitted invalidates respect the optional `frame: in | next` setting.
 - `give_up` — fail the node with the executor-supplied error class.
 - `pass` — treat the failure as a no-op for cascade; transitions to
   `fresh+passed` without error routing.
 
 > The pre-2026-05-12 action flavors `discard_then_retry` and
 > `resume_then_retry` are retired; both now resolve to `retry`. The
-> supervisor releases acquired claims at terminal regardless.
+> supervisor releases acquired claims at terminal regardless. The
+> pre-2026-05-14 `action: invalidate` is also retired; cascade
+> coupling on failure is declared receiver-side via a `subscribes:`
+> entry on the impactee: `{node: <sender>, on: state, when: failed,
+> error_class: <class>}`.
 
 The three lifecycle handlers (`on_acquire_unavailable`,
 `on_executor_complete`, `on_executor_errored`) override or extend this
@@ -891,6 +927,7 @@ surfaces retry loops before they exhaust budget.
 - [`handlers.md`](handlers.md)
 - [`executor.md`](executor.md)
 - [`parked.md`](parked.md)
+- [`subscription.md`](subscription.md)
 
 
 ---
@@ -926,7 +963,7 @@ An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 
 ## Using `Error{error_class: "executor_blocked"}` as a routing signal
 
-An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` (which means the executor failed). Templates can wire `on_executor_errored: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
+An executor may emit `Error{error_class: "executor_blocked"}` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` for other failure classes. Templates wire the routing receiver-side: the routing node declares `subscribes: [{node: <emitter>, on: state, when: failed, error_class: executor_blocked}]`. See `docs/concepts/handlers.md`, `docs/concepts/error-policy.md`, and `docs/concepts/subscription.md`.
 
 ## Consumer-visible guarantees
 
@@ -1022,16 +1059,17 @@ A frame is **held** when one or more of its nodes is in a non-terminal pause sta
 A node's reactive policy is expressed as a set of declarative
 **handlers** in the template DSL. Each handler maps one event from
 the executor protocol to a small action vocabulary: `pass`, `retry`,
-`error`, plus an optional `invalidate` emit.
+or `error` (plus the cascade-gating verdicts for `on_executor_complete`).
 
 The supervisor terminal pipeline routes every event through the
-matching handler. The handler's `resolve` decides the cascade
-behavior; the optional `invalidate` slot fires unconditionally
-alongside `resolve`.
+matching handler. The handler's `resolve` decides the cascade gate.
+Cascade coupling between nodes is declared receiver-side via
+`subscribes:` (see [`subscription.md`](subscription.md)) — handlers
+no longer carry a send-side `invalidate:` slot.
 
 ## The slots
 
-Three declarable lifecycle handler slots plus the `on_event` map:
+Three lifecycle handler slots:
 
 - `on_acquire_unavailable` — when any required claim's `Open` returns
   `Unavailable`. Resolves: `pass | retry | error`.
@@ -1042,11 +1080,10 @@ Three declarable lifecycle handler slots plus the `on_event` map:
   this slot post-2026-05-12). Resolves: `pass | retry | error`. Use
   `error_types: { <error_class>: { action: ... } }` to discriminate by
   the producer-declared `error_class`.
-- `on_event` — a per-event-name map keyed by names declared in the
-  executor's `Capabilities.declared_events`. Each handler entry has
-  the same shape as the others: `resolve` + optional `invalidate`.
-  Non-terminal: a node may emit any number of named events between
-  start and its terminal event.
+
+Named events emitted by the executor are not handled by lifecycle
+handlers; receivers subscribe to them directly via
+`subscribes: [{node: <emitter>, on: event, name: <event-name>}]`.
 
 ## DSL example
 
@@ -1059,47 +1096,38 @@ nodes:
     error_types:
       executor_blocked:
         action: pass
-        invalidate:
-          targets: [low_confidence_review]
-          frame: next
     on_executor_errored:
       resolve: retry
-    on_event:
-      score_emitted:
-        invalidate:
-          targets: [aggregator]
-          frame: in
+
+  - type: low_confidence_review
+    executor: human-review
+    subscribes:
+      - { node: classifier, on: state, when: failed, error_class: executor_blocked }
+
+  - type: aggregator
+    executor: aggregate
+    subscribes:
+      - { node: classifier, on: event, name: score_emitted, frame: in }
 ```
 
 ## Resolve verdicts
 
 | Verdict             | Cascade behavior                                      | Valid in                                  |
 |---------------------|-------------------------------------------------------|-------------------------------------------|
-| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored, on_event |
-| `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored, on_event    |
-| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored, on_event |
+| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored              |
+| `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored              |
+| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored              |
 | `by_changed`        | Default for Complete: cascade fires iff `changed=true`. | complete                                |
 | `always_propagate`  | Force `fresh_changed`; cascade fires regardless of `changed`. | complete                          |
 | `never_propagate`   | Force `fresh_unchanged`; cascade does not fire even if `changed=true`. | complete                  |
 
-## Handler-emitted invalidate
-
-The `invalidate` slot fires unconditionally when its handler runs.
-Targets are template node types or `self`; `frame` is `in` (same frame
-the source dispatched in) or `next` (default — a fresh frame). The
-invalidate-emitted target can be a parked node — the unified
-invalidate handler wakes it the same way `POST
-/admin/instances/.../invalidate` does, with `resume_reason:
-"external_invalidate"`.
-
 ## Validation at template registration
 
-- `on_event` keys are cross-checked against the executor's
-  `Capabilities.declared_events`. Templates referring to an
-  undeclared event are rejected at registration.
 - `error_class` is required on `resolve: error`.
-- `invalidate.targets` must reference a declared node type or `self`.
-- `frame` must be `in` or `next`.
+- Subscriptions in `subscribes:` validate against the upstream node's
+  declared output topology (attribute names, declared events) when
+  reachable; see [`subscription.md`](subscription.md) for the validator
+  rules.
 
 When the executor's capabilities are not yet visible (e.g. service is
 unreachable at template-deploy time), the cross-check is skipped
@@ -1112,6 +1140,14 @@ Userdata is inert in Rimsky (`@blessed-invariant 11`); rimsky never
 inspects it. Handlers are rimsky-side and project-agnostic. Anything
 project-specific belongs in userdata; anything that drives
 state-machine behavior belongs in handlers.
+
+## See also
+
+- [`node-state.md`](node-state.md)
+- [`subscription.md`](subscription.md)
+- [`error-policy.md`](error-policy.md)
+- [`invalidate.md`](invalidate.md)
+- [`executor.md`](executor.md)
 
 
 ---
@@ -1176,19 +1212,19 @@ The DSL mechanism by which a downstream node declares it will use a live claim f
 
 Two very different propagation patterns coexist in Rimsky:
 
-- **Value-pass**: a source node extracts captured fields into its own attributes; downstream nodes consume via `{{deps.<source>.<field>}}`. Lifetime-independent — works after the source's claim has closed.
+- **Value-pass**: a source node extracts captured fields into its own attributes; downstream nodes consume via `{{nodes.<source>.attribute.<field>}}`. Lifetime-independent — works after the source's claim has closed.
 - **Claim-pass**: a downstream node inherits the live claim and uses `{{claim.<alias>.address | payload.<f> | scope}}`. Requires the claim to remain open; the inheriting node's existence holds it.
 
 Inheritance enables claim-pass. Without it, every downstream consumer would need to re-acquire the same scope, with risk of getting a different snapshot or a different queue item.
 
-The "direct only" rule is a deliberate constraint. Allowing transitive inheritance through arbitrary dependency chains would make claim lifetimes hard to reason about; with direct-only, you can read a template and immediately see which nodes hold a given claim.
+The "direct only" rule is a deliberate constraint. Allowing transitive inheritance through arbitrary subscription chains would make claim lifetimes hard to reason about; with direct-only, you can read a template and immediately see which nodes hold a given claim.
 
 ## Propagation modes
 
 The two propagation modes are distinct mechanisms, and a template can use both:
 
-- **Value-pass**: source captures fields into its committed attributes; downstream `{{deps.<source>.<field>}}` reads them. Survives after the source's claim closes.
-- **Claim-pass**: downstream `inherits: [{ claim: <alias> }]` widens the holding subgraph; downstream `{{claim.<alias>.*}}` reads the live claim. Closes when the entire subgraph terminates. Each entry references a claim alias declared in an upstream node's `stores:` block; the upstream node must be reachable from this node via the dependency graph.
+- **Value-pass**: source captures fields into its committed attributes; downstream `{{nodes.<source>.attribute.<field>}}` reads them. Survives after the source's claim closes.
+- **Claim-pass**: downstream `inherits: [{ claim: <alias> }]` widens the holding subgraph; downstream `{{claim.<alias>.*}}` reads the live claim. Closes when the entire subgraph terminates. Each entry references a claim alias declared in an upstream node's `stores:` block; the upstream node must be reachable from this node via the subscription graph.
 
 ## How you encounter it
 
@@ -1197,13 +1233,13 @@ The two propagation modes are distinct mechanisms, and a template can use both:
 
 ## Consumer-visible guarantees
 
-- Inheritance is direct only. A node that wants to inherit a claim must explicitly name the claim's alias in its own `inherits:` block; transitive inheritance through dependency chains is not supported.
+- Inheritance is direct only. A node that wants to inherit a claim must explicitly name the claim's alias in its own `inherits:` block; transitive inheritance through subscription chains is not supported.
 - An inheriting node's existence widens the holding subgraph by one member. The claim is held until every member terminates.
 
 ## Common mistakes
 
 - Confusing inheritance with object-oriented inheritance. There are no methods or fields being inherited from a parent class; this is a directive that says "when I run, the claim with this alias is still live and available for me to substitute."
-- Expecting `{{deps.<node>.<field>}}` and `{{claim.<alias>.*}}` to be interchangeable. The first reads from the upstream node's persisted attributes (works after the claim has closed); the second reads from the live claim (requires inheritance to keep the claim open).
+- Expecting `{{nodes.<node>.attribute.<field>}}` and `{{claim.<alias>.*}}` to be interchangeable. The first reads from the upstream node's persisted attributes (works after the claim has closed); the second reads from the live claim (requires inheritance to keep the claim open).
 
 ## See also
 
@@ -1261,7 +1297,7 @@ The `params` block is instance-level config: substitutable into selectors and at
 
 ## Definition
 
-Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and cascades the same message to dependents. The cascade engine is a pure reachability walk over the dependency graph rooted at the invalidated node.
+Rimsky's only graph-level message. Sent to a node, it marks the node `stale`; the cascade walk then traverses the per-template subscription-edge inverse map and stale-marks each receiver that subscribed to the sender's transition.
 
 ## Why it exists
 
@@ -1269,40 +1305,37 @@ Rimsky's reactive model is grounded in a single message because the system needs
 
 The single-message design keeps the cascade engine small and auditable. The state machine has five states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
 
-`invalidate` can originate from three places:
+`invalidate` originates from these places:
 
 1. **Operator-driven**: a `POST /nodes/{id}/invalidate` request from the control API or `rimsky-cli`.
 2. **Schedule-driven**: a scheduled fire-time arriving at a node configured with a cron schedule.
-3. **Executor-driven**: an executor reports an `error_class` whose policy chain in the template resolves to the `invalidate(targets)` action. (The executor reports only the error class; the supervisor maps `(error_class, retry_counter)` to the action.)
+3. **Cascade-walk-driven**: the scheduler's cascade walk, evaluating the per-template subscription-edge inverse map at a sender's transition, stale-marks every receiver whose `subscribes:` entry could match (and inserts a wait-set row gating its eligibility until the sender settles).
 
-In all three cases, the propagation rule is identical.
-
-A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the three declarable lifecycle handler slots plus the `on_event` map may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
+In all cases the propagation rule is identical: the receiver enters `stale` (idempotent if already stale) and its wait-set row blocks dispatch until the upstream sender resolves.
 
 ## `frame: in | next` — per-emit frame discipline
 
 Every invalidate emit declaration carries an optional `frame:` field controlling whether the emit joins the current cascade or buffers a new frame:
 
-- **`frame: next`** (default) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. This preserves today's behavior: cascades don't cross frame boundaries.
-- **`frame: in`** — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Useful for self-invalidation loops (`{ targets: [self], frame: in }`) that want a single frame to span all iterations.
+- **`frame: in`** (default for per-node subscriptions) — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Suitable for in-cascade reactive coupling.
+- **`frame: next`** (default for cross-cutting `instance: true` subscriptions and for operator API emits) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. Useful for cross-cutting reactions that should not surprise the current frame's resolution.
 
 Where it can appear:
 
 - Operator API (`POST /nodes/{id}/invalidate { frame: ... }`).
-- Error-types policy invalidate action (`policy: [{action: invalidate, targets: [...], frame: ...}]`).
-- Lifecycle-handler invalidate (`on_*: { invalidate: { targets: [...], frame: ... } }`).
+- Per-subscription `frame:` modifier in a receiver's `subscribes:` entry.
 
-Default is `next` everywhere except the cascade-on-commit and pure-cascade scheduler walks (which are scheduler actions, not configurable invalidate emits).
+The cascade-walk-driven invalidates are scheduler actions; they obey the receiver-side subscription's per-edge `frame: in | next` setting rather than a sender-side flag.
 
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` is the operator-facing trigger.
-- **Templates**: the `dependencies:` list of each node declaration determines the cascade target set.
-- **Error handling**: when an executor's terminal `Error{error_class}` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
+- **Templates**: a receiver declares `subscribes:` entries pointing at the senders whose transitions should invalidate it; substitution refs (`{{nodes.X.attribute.Y}}`, `{{nodes.X.event.Z.<path>}}`) auto-subscribe. The cascade walk at a sender's transition stale-marks every matching subscriber.
+- **Errors**: when an executor terminals with `Error{error_class}`, every receiver whose `subscribes:` entry matches `{node: <sender>, on: state, when: failed, error_class: <class>}` is invalidated by the cascade walk.
 
 ## Consumer-visible guarantees
 
-- Invalidate is idempotent: an already-`stale` node receiving an `invalidate` stays `stale`; the cascade still walks dependents (and they too may already be `stale`, in which case the walk is a no-op for them).
+- Invalidate is idempotent: an already-`stale` node receiving an `invalidate` stays `stale`; the cascade still walks subscribers (and they too may already be `stale`, in which case the walk is a no-op for them).
 - Invalidate does not preempt running work. An in-flight node will run to its terminal state; the invalidate either queues a new frame (`serial_queue`) or joins the pending coalesce (`coalesce`).
 
 ## Common mistakes
@@ -1310,11 +1343,13 @@ Default is `next` everywhere except the cascade-on-commit and pure-cascade sched
 - Confusing `invalidate` with "abort." Invalidate signals "the value is no longer current"; it does not interrupt or cancel anything mid-flight. Graceful preemption is not part of the model.
 - Treating `invalidate` like a function call that returns a result. Invalidate is fire-and-forget; the cascade walks the graph asynchronously and the scheduler picks up newly-stale nodes on the next tick.
 - Thinking there's a second message called "recalculate." There isn't. Recalculation is what the scheduler does to a stale node; `invalidate` is the only message that travels between nodes.
-- Trying to invalidate a non-existent target. The control-api endpoint returns an error; the executor's `invalidate(targets)` action references node names that must be present in the same template.
+- Trying to invalidate a non-existent target. The control-api endpoint returns an error; receivers' `subscribes:` entries are validated at template registration against the template's declared nodes.
 
 ## See also
 
 - [`cascade.md`](cascade.md)
+- [`subscription.md`](subscription.md)
+- [`wait-set.md`](wait-set.md)
 - [`node-state.md`](node-state.md)
 
 
@@ -1480,13 +1515,13 @@ The five named states (`fresh`, `stale`, `running`, `failed`, `parked`) are unch
 
 ## Definition
 
-The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
+The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its subscriptions, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 
 ## Why it exists
 
-Rimsky orchestrates work as a directed graph. Each vertex of the graph is a node — an addressable, named computation that depends on zero or more upstream nodes and produces attributes that downstream nodes consume. The graph shape is declared in a template (the static artifact); the runtime state of a node lives in the instance that the template was launched from.
+Rimsky orchestrates work as a directed graph. Each vertex of the graph is a node — an addressable, named computation that subscribes to zero or more upstream nodes and produces attributes that downstream nodes consume. The graph shape is declared in a template (the static artifact); the runtime state of a node lives in the instance that the template was launched from.
 
-Nodes are the unit of cascade resolution: when an upstream value changes, downstream nodes receive an `invalidate` and (if eligible) the scheduler recalculates them. Nodes are also the unit of dispatch: each node declares an executor, and when the node enters the `running` state the supervisor invokes that executor over the wire.
+Nodes are the unit of cascade resolution: when an upstream value changes, every subscriber receives an `invalidate` and (if eligible) the scheduler recalculates them. Nodes are also the unit of dispatch: each node declares an executor, and when the node enters the `running` state the supervisor invokes that executor over the wire.
 
 A node's identity is the pair `(instance_id, node_name)`. Within a template, node names are unique. Across instances of the same template, node names are reused (each instance is its own population).
 
@@ -1495,7 +1530,7 @@ A node's identity is the pair `(instance_id, node_name)`. Within a template, nod
 In a template's `nodes:` list, each entry has:
 
 - `type:` — the node's name within the template (unique).
-- `dependencies:` — zero or more sibling node names whose `fresh` state gates this node's eligibility.
+- `subscribes:` — zero or more subscription entries declaring "fire me when this upstream topic transitions." Substitution refs in the attribute schema auto-subscribe; explicit entries are added for non-reading coupling. See [`subscription.md`](subscription.md).
 - `attributes:` — JSON Schema defining typed inputs and outputs (with `{{...}}` substitution directives in `source:` fields).
 - `executor:` — reference to a configured executor.
 - `stores:` — zero or more claim declarations (each binding an `alias`, `name` (the claim producer), `selector`, `intent`).
@@ -1511,16 +1546,15 @@ In a template's `nodes:` list, each entry has:
 
 ### Lifecycle handlers
 
-Each node may declare three declarable lifecycle handler slots plus the `on_event` map that customize the supervisor's behavior at terminal events. All four are optional; absent slots use today's hardcoded defaults.
+Each node may declare three lifecycle handler slots that customize the supervisor's behavior at terminal events. All three are optional; absent slots use today's hardcoded defaults.
 
-- `on_acquire_unavailable: { resolve: pass | retry | error, error_class?, invalidate? }` — runs when any required claim's `Open` returned `Available=false`. Default (or explicit `retry`) is silent retry; `pass` transitions the node to `fresh+passed` without invoking the executor; `error` routes through the named `error_types[error_class]` policy.
-- `on_executor_complete: { resolve: by_changed | always_propagate | never_propagate, invalidate? }` — runs at a `Complete` terminal (the StreamClose `Success` outcome on the wire). Default `by_changed` mirrors today's behavior; `always_propagate` forces the cascade gate to fire even on `changed:false`; `never_propagate` suppresses the cascade gate even on `changed:true`.
-- `on_executor_errored: { resolve: error | pass, error_class?, invalidate? }` — runs at an `Error{error_class}` terminal (the StreamClose `Error` outcome on the wire, including the reserved `executor_blocked` class that collapsed into this slot post-2026-05-12). Default routes through `error_types[<executor-class>]`; `pass` transitions to `fresh+passed`; `error` overrides the routed class.
-- `on_event: { <event_name>: { resolve, invalidate? } }` — a per-event-name map keyed by names declared in the executor's `Capabilities.declared_events`. Non-terminal: a node may emit any number of named events between start and its terminal event.
+- `on_acquire_unavailable: { resolve: pass | retry | error, error_class? }` — runs when any required claim's `Open` returned `Available=false`. Default (or explicit `retry`) is silent retry; `pass` transitions the node to `fresh+passed` without invoking the executor; `error` routes through the named `error_types[error_class]` policy.
+- `on_executor_complete: { resolve: by_changed | always_propagate | never_propagate }` — runs at a `Complete` terminal (the StreamClose `Success` outcome on the wire). Default `by_changed` mirrors today's behavior; `always_propagate` forces the cascade gate to fire even on `changed:false`; `never_propagate` suppresses the cascade gate even on `changed:true`.
+- `on_executor_errored: { resolve: error | pass, error_class? }` — runs at an `Error{error_class}` terminal (the StreamClose `Error` outcome on the wire, including the reserved `executor_blocked` class that collapsed into this slot post-2026-05-12). Default routes through `error_types[<executor-class>]`; `pass` transitions to `fresh+passed`; `error` overrides the routed class.
 
-Each handler may declare an optional `invalidate: { targets: [...], frame: in | next }` block that fires unconditionally when the handler runs (orthogonal to `resolve`). Targets resolve to node types within the same instance; the literal `self` resolves to the source node's type. `frame: in` joins the source's frame; `frame: next` (default) buffers through `frame.EnqueueOrCoalesce` as a new frame.
+Cascade coupling is declared receiver-side via the `subscribes:` block (see [`subscription.md`](subscription.md)). The pre-2026-05-14 `on_event:` map and `invalidate.targets:` clauses on lifecycle handlers retired; their effects are now expressed as receiver-side subscriptions (`{node: <sender>, on: state | event, ...}`).
 
-See `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md` for the full spec.
+See [`handlers.md`](handlers.md) for the full handler vocabulary.
 
 ## Consumer-visible guarantees
 
@@ -1540,6 +1574,7 @@ See `.ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.m
 - [`instance.md`](instance.md)
 - [`cascade.md`](cascade.md)
 - [`frame.md`](frame.md)
+- [`subscription.md`](subscription.md)
 
 
 ---
@@ -1768,7 +1803,7 @@ The **selector** is the opaque text the graph author supplies (post-substitution
 
 The **scope** is the resolved selector or pick-policy-picked identifier — the canonical-byte form the producer commits to representing this claim by. Returned in `OpenResponse.scope` (named `Acquired.scope` in the proto). Persisted with the claim handle as the scope bytes.
 
-Selectors may contain `{{...}}` substitution directives resolved at dispatch (`{{deps.<node>.<field>}}`, `{{params.<key>}}`, `{{claim.<alias>.payload.<field>}}`); scopes never do — they are post-resolution.
+Selectors may contain `{{...}}` substitution directives resolved at dispatch (`{{nodes.<node>.attribute.<field>}}`, `{{params.<key>}}`, `{{claim.<alias>.payload.<field>}}`); scopes never do — they are post-resolution.
 
 ## How you encounter it
 
@@ -1793,6 +1828,99 @@ Selectors may contain `{{...}}` substitution directives resolved at dispatch (`{
 - [`claim-handle.md`](claim-handle.md)
 - [`claim-producer.md`](claim-producer.md)
 - [`write-semantics.md`](write-semantics.md)
+
+
+---
+
+# Subscription
+
+## Definition
+
+A receiver-side declaration that says "fire me when this upstream topic transitions." Three topic kinds: `state` (any node-state transition), `attribute` (an upstream node's attribute writeback), `event` (a named-event emission). Declared per node under `subscribes:` in the template DSL; substitution refs in a node's attribute schema auto-subscribe.
+
+## Why it exists
+
+The pre-2026-05-14 `dependencies: [foo]` block bundled three independent capabilities into one declaration: (a) read access to `foo`'s attributes via substitution, (b) reactive coupling — when `foo` terminals, I go stale, (c) eligibility gate — don't dispatch me until `foo` is fresh. The three are conceptually distinct. Subscriptions decompose the bundle:
+
+- Read access lives in the substitution grammar (`{{nodes.X.attribute.Y}}`, `{{nodes.X.event.Z.<path>}}`).
+- Reactive coupling lives in subscriptions (explicit `subscribes:` plus implicit auto-subscribe from substitution refs).
+- Eligibility gating lives in the wait-set ledger (see [`wait-set.md`](wait-set.md)).
+
+This decoupling also retires the send-side `invalidate.targets:` slot on lifecycle handlers and the `action: invalidate` clause on error-types policies. Cascade flow is impactee-declared: each node's reactive surface reads cleanly from its own template entry.
+
+## Topic kinds
+
+| `on:` | Required filters | Optional filters | Fires when |
+|---|---|---|---|
+| `state` | — | `when: <node-state>`, `outcome: <last-outcome>`, `error_class: <class>`, `reason: <park-reason>` | Subscribed node enters the filtered state. Filters compose conjunctively. Empty `when:` means any state transition. |
+| `attribute` | — | `name: <attribute-key>` | Subscribed node terminals with a changed attribute. With `name:`, fires only when that key changed; without, fires on any attribute change. |
+| `event` | `name: <event-name>` | — | Subscribed node emits the named event. The name must appear in the upstream executor's `Capabilities.declared_events` (validated at registration when reachable). |
+
+## Scope
+
+- **Per-node** (`node: <upstream>`): the subscription matches only transitions of the named upstream node. Default `frame: in`.
+- **Cross-cutting** (`instance: true`): the subscription matches transitions of any node in the instance whose topic satisfies the filters. Useful for "clean up on any failure of class X" patterns. Default `frame: next`.
+
+## Frame modifier
+
+Each subscription accepts an optional `frame: in | next` modifier:
+
+- `frame: in` — the cascade walk's stale-mark + wait-set insert lands in the current frame.
+- `frame: next` — the receiver is queued as a frame source for the next frame; the new frame opens after the current one closes.
+
+## Auto-subscribe from substitution refs
+
+Every substitution directive in a node's `attributes` schema that references another node implicitly adds a subscription:
+
+- `{{nodes.X.attribute.Y}}` → `{node: X, on: attribute, name: Y}`.
+- `{{nodes.X.event.Z.<path>}}` → `{node: X, on: event, name: Z}`.
+- `{{claim.<alias>.<path>}}` and `{{params.<path>}}` add no subscription (not graph nodes).
+
+The auto-subscribed set is unioned with the explicit `subscribes:` block. Explicit declarations exist for couplings that don't read upstream data — e.g. "fire me when X reaches `parked` even though I don't read any of X's attributes."
+
+## DSL example
+
+```yaml
+nodes:
+  - type: finalize
+    executor: http-node
+    subscribes:
+      - { node: spine_z, on: state, when: fresh, outcome: fresh_changed }
+      - { node: optional_check_1, on: state, when: fresh }
+      - { node: optional_check_2, on: state, when: fresh }
+      - { node: intake, on: event, name: applicable_subgraphs_decided }
+      - { node: foo, on: attribute, name: my_attr }
+      - { instance: true, on: state, when: failed, error_class: rate_limited, frame: next }
+    attributes:
+      foo: { source: "{{nodes.intake.event.applicable_subgraphs_decided.foo}}" }
+      bar: { source: "{{nodes.spine_z.attribute.bar}}" }
+```
+
+The `dependencies:` block does not exist on the new template shape.
+
+## How you encounter it
+
+- **Templates**: the `subscribes:` block on each node declaration; substitution directives in `attributes.<field>.source`.
+- **Diagnostics**: `GET /admin/diagnostics/wait-sets?frame=<frame_id>&node=<node_id>` shows the per-frame wait-set rows that drive a receiver's eligibility.
+
+## Consumer-visible guarantees
+
+- Subscriptions are validated at template registration: `node:` references resolve to declared template nodes; topic-kind required filters are present; per-topic-kind output topology is cross-checked against the upstream executor's `Capabilities` (silent-skip when unreachable, mirroring the existing `validateOnEvent` behavior).
+- Substitution refs auto-subscribe — no orphan reads. Reading `{{nodes.X.attribute.Y}}` implies a `{node: X, on: attribute, name: Y}` subscription.
+- A stale receiver dispatches iff its wait-set is empty for the current frame.
+
+## Common mistakes
+
+- Declaring a `subscribes:` entry for a coupling that the substitution grammar already covers. The auto-subscribed set handles `{{nodes.X.<topic>.<key>}}` references; explicit entries are only needed for non-reading coupling.
+- Filtering on `outcome:` when `on:` is not `state`. State-only filters apply only to `on: state`; on `on: attribute` or `on: event` they are rejected at registration.
+- Assuming a `dependencies: [foo]` receiver gates only on `foo` reaching `fresh`. Under the new model, the wait-set drain fires on any settled state of `foo` (`fresh`, `failed`, `parked`). Templates that need the old "won't fire if upstream failed" gate must rewrite the coupling as an explicit filtered subscription — e.g. `{node: foo, on: state, when: fresh, outcome: fresh_changed}`.
+
+## See also
+
+- [`cascade.md`](cascade.md)
+- [`wait-set.md`](wait-set.md)
+- [`invalidate.md`](invalidate.md)
+- [`attributes.md`](attributes.md)
 
 
 ---
@@ -1911,7 +2039,7 @@ The "no substitution" rule is load-bearing. A `{{...}}` directive in `userdata` 
 ## Common mistakes
 
 - **Rimsky's userdata ≠ cloud-init userdata.** Cloud-init userdata IS parsed by the cloud provider (interpreted as a script or cloud-config YAML). Rimsky's userdata is bytes-in, bytes-out — Rimsky never parses or interprets it.
-- Putting `{{deps.foo.bar}}` in userdata and expecting it to substitute. It won't — substitution applies only to attribute schema `source:` fields. If you need the value, declare it as an attribute.
+- Putting `{{nodes.foo.attribute.bar}}` in userdata and expecting it to substitute. It won't — substitution applies only to attribute schema `source:` fields. If you need the value, declare it as an attribute.
 - Encrypting userdata for transport. Rimsky transports it as opaque bytes regardless; encryption is the operator's call (and the executor's responsibility to decrypt).
 
 ## See also
@@ -1919,6 +2047,69 @@ The "no substitution" rule is load-bearing. A `{{...}}` directive in `userdata` 
 - [`attributes.md`](attributes.md)
 - [`executor.md`](executor.md)
 - [`node.md`](node.md)
+
+
+---
+
+# Wait-set
+
+## Definition
+
+A per-frame ledger that records "receiver R is waiting for sender S in frame F under (topic_kind, subscription_scope)." Cascade walks insert rows pessimistically when senders transition; the settled-state drain bulk-deletes rows when senders resolve. A stale node is dispatch-eligible iff its wait-set is empty in the current frame.
+
+## Why it exists
+
+The dispatch eligibility predicate used to read "all dependencies fresh" — a strict-AND over the per-node `dependencies:` list. Under the subscription model, there is no static dependency list to scan; coupling is declared per-topic and the cascade walk announces it at run-time. The wait-set ledger derives eligibility from cascade history:
+
+- The cascade walk inserts a row whenever a sender's transition could match a receiver's subscription.
+- The settled-state drain bulk-deletes rows when the sender reaches a settled state (`fresh`, `failed`, `parked`).
+- The scheduler's `SweepReady` query dispatches stale nodes whose wait-set is empty for the current frame.
+
+Idempotent re-fire handles the "filter didn't actually match" case: every cascade-walk match inserts a row regardless of filter compatibility; the settled-state drain releases the gate uniformly. Receivers whose filter did not match at the settled state still re-dispatch — they produce equivalent output because their attribute substitutions resolve from the unchanged upstream value.
+
+## How rows are created and drained
+
+- **Insert on cascade walk**: when a sender transitions out of a settled state, the cascade engine reads the per-template inverse-edge map for the sender's node-type, finds every subscription edge that could match at the sender's eventual settled state (state subscriptions regardless of `when:` filter; attribute subscriptions; named-event subscriptions), marks each receiver `stale` (idempotent within the frame), and inserts a wait-set row for each match.
+- **Insert on named-event emission**: when a sender emits a named event mid-cycle, matching `on: event` subscribers also receive a wait-set row + stale-mark.
+- **Drain on settle**: when a sender reaches `fresh`, `failed`, or `parked`, the engine bulk-deletes wait-set rows where `frame_id = F AND sender_node_id = S`. The drain is unconditional across topic kinds.
+- **Drop on frame close**: when a frame closes, its wait-set rows are removed atomically with the frame. Stale rows from prior frames cannot affect new frames.
+
+## Cross-cutting vs per-node
+
+A receiver with both a per-node subscription and a cross-cutting (`instance: true`) subscription that match the same sender on the same topic kind gets two rows; both must drain before the receiver is eligible. The two scopes are distinguished by the `subscription_scope` column (`direct` for per-node, `instance` for cross-cutting).
+
+## Eligibility predicate
+
+```
+A stale node is dispatch-eligible iff no wait-set row exists for
+(frame = current_frame, receiver = node).
+```
+
+A node with no upstream-graph invalidators this frame (e.g. operator-API direct invalidate, scheduled-node cron tick, freshly-created node with no in-graph triggers) has an empty wait-set and is immediately eligible.
+
+## How you encounter it
+
+- **Diagnostics**: `GET /admin/diagnostics/wait-sets?frame=<frame_id>&node=<node_id>` returns the wait-set rows for a given frame (and optionally narrowed to one receiver). Used for debugging stuck frames.
+
+## Consumer-visible guarantees
+
+- A stale receiver is eligible iff its wait-set is empty for the current frame.
+- The bulk-delete-on-settle rule covers every topic kind uniformly (idempotent re-fire when a filter didn't actually match).
+- Wait-set rows live only within their frame's lifetime; no stale ledger entries survive frame close.
+- Multiple invalidators are handled trivially — each sender contributes its own row; the receiver waits until all rows for `(frame, receiver)` are gone.
+
+## Common mistakes
+
+- Expecting wait-set rows to persist across frames. They do not — frame close cascade-deletes them.
+- Reading the wait-set as the "subscription graph." It is not — it is per-frame run-time history. The static coupling is the per-template inverse-edge map computed at registration.
+- Assuming a wait-set row gates on filter match. The row is pessimistic; the drain is unconditional on sender settle. Receivers whose filter didn't actually match still re-dispatch idempotently.
+
+## See also
+
+- [`subscription.md`](subscription.md)
+- [`cascade.md`](cascade.md)
+- [`frame.md`](frame.md)
+- [`node-state.md`](node-state.md)
 
 
 ---
@@ -2035,7 +2226,8 @@ and emits `AwaitAsyncCallback` immediately. When the webhook return-payload
 arrives the wrapper POSTs the new-shape async-callback body
 (`{events: [...], terminal: {...}}`) to the supervisor's
 callback URL. Events from the body are persisted before the terminal,
-so an `on_event` handler can fire mid-flight.
+so any receiver with a `subscribes: [{node: <emitter>, on: event, name: <name>}]`
+entry fires mid-flight.
 
 This idiom is the right shape whenever the external work has its own
 durable state and can be re-entered from outside; the executor is a
@@ -2050,10 +2242,11 @@ completion, a rate-limit reset, a quorum vote.
 `Park.resume_at` schedules a time-based wake. Omit it for
 indefinite parks waiting on a signal. Resume happens via the admin
 endpoint `POST /admin/instances/{instance}/nodes/{node}/invalidate` or
-via an in-graph invalidate emitted by an `on_event` handler. The
-executor reads `ResumeContext.payload` and `ResumeContext.session_token`
-on the resume dispatch — so the wrapper can stash whatever resumption
-state it needs.
+via an in-graph invalidate produced by the cascade walk (when another
+node's transition matches a `subscribes:` entry that targets the
+parked node). The executor reads `ResumeContext.payload` and
+`ResumeContext.session_token` on the resume dispatch — so the wrapper
+can stash whatever resumption state it needs.
 
 The watchdog `max_park_duration` per-node cap fails the run with
 `error_class: "park_timeout"` if a park exceeds the configured budget;
@@ -2073,19 +2266,11 @@ nodes:
         system_prompt: "Analyze the document at {{params.path}}"
     on_executor_complete:
       resolve: by_changed
-      invalidate:
-        targets: [review_gate]
 
   review_gate:
     executor: project-alpha-review
-    on_event:
-      approved:
-        resolve: pass
-        invalidate:
-          targets: [summary]
-      rejected:
-        resolve: error
-        error_class: human_rejected
+    subscribes:
+      - { node: analysis, on: state, when: fresh, outcome: fresh_changed }
 
   summary:
     executor: project-alpha-agent
@@ -2093,17 +2278,18 @@ nodes:
       schema:
         properties:
           source:
-            source: nodes.analysis.value.findings
+            source: nodes.analysis.attribute.findings
           decision:
             source: nodes.review_gate.event.approved.payload
 ```
 
-`review_gate` emits `Park` on dispatch and waits. A human
-approves through a project-built UI that calls
-`POST /admin/instances/.../nodes/review_gate/invalidate`; the executor
-resumes, emits `approved` (a named event with the reviewer payload),
-then completes. `summary` runs against the resolved `decision`
-substitution.
+`review_gate` subscribes to `analysis` completing and emits `Park` on
+dispatch, waiting. A human approves through a project-built UI that
+calls `POST /admin/instances/.../nodes/review_gate/invalidate`; the
+executor resumes, emits `approved` (a named event with the reviewer
+payload), then completes. `summary` auto-subscribes to both `analysis`
+(via the attribute substitution) and `review_gate`'s `approved` event
+(via the event substitution); it runs once both upstream waits drain.
 
 ## Antipattern: blocking a frame on review
 
@@ -2346,7 +2532,7 @@ Stream back any number of these events:
     - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
     - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run (see spec §12.5).
 - **`Error{error_class: "executor_blocked"}`** — terminal: I produced output but explicitly chose not to claim success. Use `Error{error_class: "executor_blocked"}` (rather than `Error{error_class}`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
-- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
+- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `give_up`, or `pass`. Cascade coupling on failure is declared receiver-side via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]` on the impactee node.
 - **`AwaitAsyncCallback`** — non-streaming terminal: I'll send the final event later via callback (see §4).
 - **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
 
@@ -2362,7 +2548,7 @@ Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past inv
 
 Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
 
-`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `on_event` handlers in registering templates; references to undeclared events reject the registration.
+`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `subscribes: [{on: event, name: <name>}]` entries in registering templates; references to undeclared events reject the registration.
 
 ## 3. The userdata guarantee
 

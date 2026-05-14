@@ -4,7 +4,17 @@
 
 // Scenario 17 — stub completes with changed=false; supervisor records a
 // `no_op_commit` event (preserved kind, spec §16) and does NOT emit
-// `attributes_committed`. Dependents are NOT cascaded.
+// `attributes_committed`.
+//
+// Post-2026-05-14 the pessimistic-invalidate rule (spec Piece 1) marks
+// subscribers stale at the producer's INVALIDATION transition (not at
+// settlement). A subscriber re-dispatches idempotently per
+// `concept:wait-set`'s "filter didn't actually match" rule — the
+// settled-state drain releases the wait-set unconditionally. The
+// old-model assertion that "dependent should still be fresh" no longer
+// holds; this test now asserts the producer's no_op_commit semantic
+// (event-kind preserved; no attributes_committed) and the dependent's
+// idempotent re-dispatch through the cascade.
 //
 // Migrated to the stores-redesign template grammar (spec §11). The legacy
 // `current_version_id` assertion is gone — the redesign retired the
@@ -48,10 +58,10 @@ func TestNoOpCommit(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "dependent",
-					Executor:     "stub",
-					Dependencies: []string{"producer"},
+					Type:     "dependent",
+					Executor: "stub",
 				},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "producer", On: "state"}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -140,24 +150,18 @@ func TestNoOpCommit(t *testing.T) {
 	require.Equal(t, priorCount, len(postCommitted.Events),
 		"no_op commit must NOT emit attributes_committed (changed=false)")
 
-	// Dependent was not re-cascaded: no pending dispatch row, still fresh,
-	// state unchanged since first cascade.
-	var depDispatchCount int
-	err = h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, dep.ID,
-	).Scan(&depDispatchCount)
-	require.NoError(t, err)
-	require.Equal(t, 0, depDispatchCount,
-		"dependent should not be re-enqueued after producer no_op commit")
+	// Under the pessimistic-invalidate rule, the producer's
+	// invalidation cascades to mark the dependent stale; the
+	// dependent re-dispatches idempotently. Wait for the dependent
+	// to settle back to fresh — the test's stub returns the same
+	// downstream attributes, so the dependent's second run is
+	// semantically a no-op too. We assert the cascade completes
+	// (dependent re-reaches fresh) rather than asserting the
+	// dependent was never re-cascaded.
+	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 30*time.Second),
+		"dependent should re-reach fresh after idempotent cascade from producer no_op commit")
 
-	var depAfter *persistence.NodeRow
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, dep.ID, tx)
-		depAfter = r
-		return err
-	}))
-	require.Equal(t, cascade.NodeStateFresh, depAfter.State,
-		"dependent should still be fresh (never cascaded)")
-	require.Equal(t, depBefore.UpdatedAt, depAfter.UpdatedAt,
-		"dependent's updated_at should not advance on a producer no_op commit")
+	// depBefore is captured pre-invalidation; not asserting on
+	// UpdatedAt anymore since the dependent's re-dispatch advances it.
+	_ = depBefore
 }

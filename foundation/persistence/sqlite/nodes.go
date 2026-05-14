@@ -25,25 +25,21 @@ import (
 )
 
 const nodeCols = `
-  id, instance_id, node_type, executor, schedule_cron, state, last_outcome, dependencies,
+  id, instance_id, node_type, executor, schedule_cron, state, last_outcome,
   current_error_class, retry_counter, action_index, last_heartbeat_at,
   assigned_supervisor_id, frame_id, created_at, updated_at
 `
 
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
-	deps := in.Dependencies
-	if deps == nil {
-		deps = []foundationshared.UUID{}
-	}
 	now := nowUTC()
 	row := s.q(tx).QueryRowContext(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, schedule_cron, state, dependencies, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, 'fresh', ?, ?, ?)
+		   id, instance_id, node_type, executor, schedule_cron, state, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, 'fresh', ?, ?)
 		 RETURNING `+nodeCols,
 		in.ID.String(), in.InstanceID.String(), in.NodeType,
 		nullableString(in.Executor), nullableString(in.ScheduleCron),
-		marshalUUIDArray(deps), now, now,
+		now, now,
 	)
 	return scanNode(row)
 }
@@ -121,19 +117,18 @@ func (s *nodesImpl) ListByInstancePaged(
 }
 
 // ListReadyForDispatch returns executor-backed nodes in 'stale' whose
-// dependencies are all 'fresh' and that have no outstanding dispatch row.
+// wait-set is empty in their current frame and that have no
+// outstanding dispatch row.
 //
-// SQLite has no `unnest()` or `ANY(array)`; we use json_each() over the
-// JSON-array dependencies column instead.
+//	@concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes n
 		 WHERE n.executor IS NOT NULL AND n.executor <> ''
 		   AND n.state = 'stale'
 		   AND NOT EXISTS (
-		     SELECT 1 FROM json_each(n.dependencies) je
-		     JOIN rimsky_nodes d ON d.id = je.value
-		     WHERE d.state <> 'fresh'
+		     SELECT 1 FROM rimsky_wait_set w
+		     WHERE w.frame_id = n.frame_id AND w.receiver_node_id = n.id
 		   )
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_node_runs x WHERE x.node_id = n.id
@@ -147,15 +142,15 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 	return collectNodes(rows)
 }
 
+//	@concept: wait-set
 func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM rimsky_nodes n
 		 WHERE (n.executor IS NULL OR n.executor = '')
 		   AND n.state = 'stale'
 		   AND NOT EXISTS (
-		     SELECT 1 FROM json_each(n.dependencies) je
-		     JOIN rimsky_nodes d ON d.id = je.value
-		     WHERE d.state <> 'fresh'
+		     SELECT 1 FROM rimsky_wait_set w
+		     WHERE w.frame_id = n.frame_id AND w.receiver_node_id = n.id
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -182,23 +177,6 @@ func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID st
 		`SELECT `+nodeCols+` FROM rimsky_nodes
 		 WHERE state = 'running' AND assigned_supervisor_id = ?
 		 ORDER BY updated_at ASC`, supervisorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-// ListDependentsOf finds nodes that include nodeID in their JSON-array
-// dependencies column. SQLite has no ANY() so we json_each the column
-// against a literal id.
-func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM rimsky_nodes n
-		 WHERE EXISTS (
-		   SELECT 1 FROM json_each(n.dependencies) je WHERE je.value = ?
-		 )
-		 ORDER BY n.created_at ASC`, nodeID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +388,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		scheduleCron    sql.NullString
 		stateStr        string
 		lastOutcomeStr  sql.NullString
-		dependenciesStr string
 		currentErrClass sql.NullString
 		lastHB          sql.NullString
 		assignedSup     sql.NullString
@@ -421,7 +398,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
 		&executor, &scheduleCron, &stateStr, &lastOutcomeStr,
-		&dependenciesStr,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameIDStr,
 		&createdAtStr, &updatedAtStr,
@@ -435,10 +411,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	instanceID, err := uuid.Parse(instanceIDStr)
 	if err != nil {
 		return persistence.NodeRow{}, fmt.Errorf("scanNode: instance_id: %w", err)
-	}
-	deps, err := unmarshalUUIDArray(dependenciesStr)
-	if err != nil {
-		return persistence.NodeRow{}, err
 	}
 	createdAt, err := parseTime(createdAtStr)
 	if err != nil {
@@ -454,7 +426,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	if lastOutcomeStr.Valid {
 		r.LastOutcome = cascade.LastOutcome(lastOutcomeStr.String)
 	}
-	r.Dependencies = deps
 	r.Executor = executor.String
 	r.ScheduleCron = scheduleCron.String
 	r.CurrentErrorClass = currentErrClass.String

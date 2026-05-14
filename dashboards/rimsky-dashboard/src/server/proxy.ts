@@ -16,6 +16,16 @@ export const proxy = new Hono();
 // long-lived; we only apply the timeout to connect, not the body read.
 const PROXY_TIMEOUT_MS = Number(process.env.RIMSKY_DASHBOARD_PROXY_TIMEOUT_MS ?? 30_000);
 
+// Admin diagnostic endpoints (e.g. /admin/diagnostics/parked-nodes) are
+// mounted at the control-api root with no `/v1/observability/` prefix.
+// Route those before the generic observability rewrite so the upstream
+// receives the bare /admin/* path.
+proxy.all('/api/control/admin/*', async (c) => {
+  const upstreamPath = c.req.path.replace('/api/control', '');
+  const search = new URL(c.req.url).search;
+  return forward(c, `${config.controlApiUrl}${upstreamPath}${search}`);
+});
+
 proxy.all('/api/control/*', async (c) => {
   const upstreamPath = c.req.path.replace('/api/control', '/v1/observability');
   const search = new URL(c.req.url).search;

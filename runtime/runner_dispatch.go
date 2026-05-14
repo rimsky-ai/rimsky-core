@@ -56,7 +56,8 @@ type terminalEvent struct {
 	ErrorClass    string
 	Payload       map[string]any
 	// Park fields — set when Kind == terminalKindPark.
-	ParkReason       string
+	ParkReason       genv1.ParkReason
+	ParkReasonNote   string
 	ParkPayload      []byte
 	ParkResumeAt     time.Time // zero ⇒ indefinite
 	ParkSessionToken string
@@ -302,6 +303,7 @@ func readExecutorStream(
 				t := terminalEvent{
 					Kind:             terminalKindPark,
 					ParkReason:       oc.Park.Reason,
+					ParkReasonNote:   oc.Park.ReasonNote,
 					ParkPayload:      oc.Park.Payload,
 					ParkSessionToken: oc.Park.SessionToken,
 					NamedEvents:      pending,
@@ -373,7 +375,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 func buildResolveContextForDispatch(
 	ctx context.Context, args RunArgs, acq *acquisition,
 ) (attributes.ResolveContext, error) {
-	deps := loadDepsAttributesByID(ctx, args, acq)
+	deps := loadSubscribedNodeAttributesByID(ctx, args, acq)
 	claims := map[string]locks.ClaimResult{}
 	for _, lk := range acq.Locks {
 		if lk.Alias == "" {
@@ -569,18 +571,25 @@ func fieldNames(m map[string]any) []string {
 	return out
 }
 
-// loadDepsAttributesByID is the per-dispatch dep map. Runs between
-// the acquisition tx and the dispatch tx, so it opens its own
-// short-lived read tx — every Store method requires an explicit tx
-// (option C / no-nil-tx).
-func loadDepsAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
+// loadSubscribedNodeAttributesByID is the per-dispatch subscribed-node
+// attribute map. Runs between the acquisition tx and the dispatch tx,
+// so it opens its own short-lived read tx — every Store method requires
+// an explicit tx (option C / no-nil-tx).
+//
+// Post-T23: the subscribed-sender set is resolved from the per-template
+// cached subscription-edge inverse map (see graph/node/subscription_edges.go
+// + runtime/subscription_loaders.go) — no longer reads the retired
+// nodes.dependencies column.
+//
+//	@concept: subscription
+func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
 	var out map[string]json.RawMessage
 	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		nd, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
-		if err != nil || nd == nil {
+		senders, err := resolveSubscribedSenders(ctx, args, acq.NodeID, tx)
+		if err != nil {
 			return nil
 		}
-		out = loadDepsAttributes(ctx, args, tx, nd)
+		out = loadSubscribedNodeAttributes(ctx, args, tx, senders)
 		return nil
 	})
 	return out

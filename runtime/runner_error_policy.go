@@ -26,7 +26,6 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/node"
 )
 
@@ -143,15 +142,18 @@ func applyErrorPolicy(
 			},
 		}, tx)
 	})
-	if resolved.Kind == "invalidate" {
-		return invalidateTargets(ctx, args, acq, resolved.Targets, resolved.Frame)
-	}
+	// `invalidate` action retired under the 2026-05-14 subscription-
+	// cascade resolution; the validator rejects it at deploy time.
 	return nil
 }
 
 // applyResolvedAction wraps the per-policy action SQL (state update,
 // queue mutation) so applyErrorPolicy stays inside the cold-read
-// 100-line guideline.
+// 100-line guideline. The `invalidate` action retired under the
+// 2026-05-14 subscription-cascade resolution (validator rejects it at
+// template-deploy time — `template_validator.go::validateErrorTypes`).
+//
+//	@concept: wait-set
 func applyResolvedAction(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, prior *persistence.NodeRow, resolved node.ResolvedAction,
@@ -161,6 +163,13 @@ func applyResolvedAction(
 		if prior != nil && prior.State == cascade.NodeStateRunning {
 			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
 				cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
+				return err
+			}
+			// Pessimistic-invalidate: running → stale is the sender's
+			// invalidation in this frame. Gate downstream subscribers
+			// so they don't race the retry.
+			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
+				acq.NodeID, acq.NodeType, acq.InstanceID, acq.FrameID); err != nil {
 				return err
 			}
 		}
@@ -174,20 +183,17 @@ func applyResolvedAction(
 			EnqueuedAt:     args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
 			FrameID:        acq.FrameID,
 		}, tx)
-	case "invalidate":
-		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-				cascade.NodeStateStale, cascade.ReasonPolicyInvalidate, "", tx); err != nil {
-				return err
-			}
-		}
-		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
 	case "give_up":
 		if prior != nil && prior.State == cascade.NodeStateRunning {
 			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
 				cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
 				return err
 			}
+		}
+		// Settled-state drain on failed: any wait-set rows gating
+		// receivers on this sender release.
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+			return err
 		}
 		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
 	}
@@ -285,62 +291,6 @@ func requiredStoresForAcq(acq *acquisition) []string {
 		return nil
 	}
 	return node.RequiredStores(*acq.NodeDef)
-}
-
-// invalidateTargets resolves the policy's target node-types to node
-// IDs in the same instance and routes InvalidateNode to
-// each. `frame` is the per-emit FrameIn / FrameNext setting from the
-// PolicyAction; empty defaults to FrameNext at the InvalidateNode call
-// site.
-func invalidateTargets(
-	ctx context.Context, args RunArgs, acq *acquisition, targets []string, frame string,
-) error {
-	var other []persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
-		other = rows
-		return err
-	}); err != nil {
-		return err
-	}
-	typeToID := make(map[string]shared.UUID, len(other))
-	for _, o := range other {
-		typeToID[o.NodeType] = o.ID
-	}
-	var resolved []shared.UUID
-	var unresolved []string
-	for _, t := range targets {
-		if id, ok := typeToID[t]; ok {
-			resolved = append(resolved, id)
-		} else {
-			unresolved = append(unresolved, t)
-		}
-	}
-	if len(unresolved) > 0 {
-		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "unresolved_invalidate_target",
-				Payload: map[string]any{
-					"unresolved_targets": unresolved,
-				},
-			}, tx)
-		})
-	}
-	src := acq.NodeID
-	for _, tid := range resolved {
-		_ = InvalidateNode(ctx, InvalidateArgs{
-			Persist: args.Persist, Queue: args.Queue,
-			Clock: args.Clock, Logger: args.Logger,
-			SourceNodeID: &src,
-			TargetNodeID: tid,
-			Reason:       "policy_invalidate",
-			SupervisorID: args.SupervisorID,
-			Frame:        frame,
-			Metrics:      args.Metrics,
-		})
-	}
-	return nil
 }
 
 // shouldForceRetryLoopGiveUp returns true when the per-row

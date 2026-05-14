@@ -57,7 +57,7 @@ Stream back any number of these events:
     - `string change_summary` — free-text summary of the change (audit-log only; not parsed by Rimsky).
     - `Struct attributes_delta` — terminal-final attribute writeback (validated against the node's attributes schema). May be empty when the executor used the incremental-callback path during the run (see spec §12.5).
 - **`Error{error_class: "executor_blocked"}`** — terminal: I produced output but explicitly chose not to claim success. Use `Error{error_class: "executor_blocked"}` (rather than `Error{error_class}`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
-- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `discard_then_retry`, `resume_then_retry`, `invalidate(targets)`, or `give_up`.
+- **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `give_up`, or `pass`. Cascade coupling on failure is declared receiver-side via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]` on the impactee node.
 - **`AwaitAsyncCallback`** — non-streaming terminal: I'll send the final event later via callback (see §4).
 - **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
 
@@ -73,7 +73,7 @@ Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past inv
 
 Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
 
-`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `on_event` handlers in registering templates; references to undeclared events reject the registration.
+`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `subscribes: [{on: event, name: <name>}]` entries in registering templates; references to undeclared events reject the registration.
 
 ## 3. The userdata guarantee
 

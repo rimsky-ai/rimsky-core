@@ -133,7 +133,7 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 			cascade.NodeStateStale, cascade.ReasonHandlerResume, "", tx); err != nil {
 			return err
 		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &target.ID, InstanceID: &target.InstanceID,
 			Kind: "parked_resume_started",
 			Payload: map[string]any{
@@ -143,8 +143,83 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 				"had_session":   parked.SessionToken != "",
 				"payload_bytes": len(parked.PayloadInline) + len(parked.PayloadHandle),
 			},
-		}, tx)
+		}, tx); err != nil {
+			return err
+		}
+		// Pessimistic-invalidate per spec Piece 1: parked → stale is
+		// the sender's invalidation in this frame (parked is settled).
+		// Gate downstream subscribers so they don't dispatch with
+		// stale upstream data while the woken sender re-runs.
+		//
+		//	@concept: cascade
+		//	@concept: wait-set
+		if target.FrameID == nil {
+			return nil
+		}
+		return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
+			args.Logger, target.ID, target.InstanceID, *target.FrameID)
 	})
+}
+
+// wakeParkedReceiverInTx is the cascade-walk variant of wakeParkedNode:
+// runs inside the caller's tx (no nested transaction), drives the same
+// parked → stale transition + audit event, and stamps the receiver
+// with the sender's frame_id so the receiver joins the active frame
+// (rather than waiting for a separate next-frame open).
+//
+// Used by `cascadeSubscribersStaleInTx` when the cascade walk visits a
+// parked receiver. The parent caller (the cascade walk) then inserts
+// the wait-set row that gates this newly-stale receiver on the
+// invalidating sender.
+//
+//	@concept: parked-state
+//	@concept: cascade
+func wakeParkedReceiverInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	receiver persistence.NodeRow, frameID shared.UUID,
+) error {
+	parked, err := args.Queue.GetParkedByNode(ctx, receiver.ID)
+	if err != nil {
+		return fmt.Errorf("wakeParkedReceiverInTx: GetParkedByNode: %w", err)
+	}
+	if parked == nil {
+		// Race: the receiver is parked but the node-run row is in
+		// transition. Fall back to MarkStaleForCascade — the next
+		// orphan-reaper sweep will clean any stranded queue row.
+		return args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx)
+	}
+	resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
+	if err != nil {
+		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
+	}
+	if !resumed {
+		// Already moved out of parked (raced with the deadline
+		// sweep or another cascade); skip the state transition to
+		// avoid double-firing. Stamp frame_id so the receiver lands
+		// in this frame regardless.
+		return args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx)
+	}
+	if err := args.Persist.Nodes().UpdateState(ctx, receiver.ID,
+		cascade.NodeStateStale, cascade.ReasonHandlerResume, "", tx); err != nil {
+		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)
+	}
+	// Stamp the receiver with this frame's id so subsequent eligibility
+	// queries scope wait-set lookups correctly. ResumeParkedInTx leaves
+	// the row's frame_id intact; the receiver was parked in some
+	// earlier frame and needs to rejoin the current one.
+	if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx); err != nil {
+		return fmt.Errorf("wakeParkedReceiverInTx: stamp frame_id: %w", err)
+	}
+	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &receiver.ID, InstanceID: &receiver.InstanceID,
+		Kind: "parked_resume_started",
+		Payload: map[string]any{
+			"resume_reason": "cascade_wake",
+			"prior_reason":  parked.Reason,
+			"had_session":   parked.SessionToken != "",
+			"payload_bytes": len(parked.PayloadInline) + len(parked.PayloadHandle),
+		},
+	}, tx)
 }
 
 // loadTargetNode wraps Persist.Transaction + Nodes().Get for the

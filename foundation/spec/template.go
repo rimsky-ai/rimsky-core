@@ -36,7 +36,7 @@ const (
 
 // TemplateNodeDef is one node in a template. An empty Executor means
 // the node is a pure-cascade or pure-infra node — it runs no executor
-// handler and is only used to express dependency fan-out and/or
+// handler and is only used to express subscription fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
 	Type         string                     `yaml:"type" json:"type"`
@@ -44,13 +44,24 @@ type TemplateNodeDef struct {
 	Executor     string                     `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
 	Userdata     map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
 	Schedule     string                     `yaml:"schedule,omitempty" json:"schedule,omitempty"` // cron expr; optional
-	Dependencies []string                   `yaml:"dependencies,omitempty" json:"dependencies,omitempty"`
 	Stores       []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
 	Locks        []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
 	Attributes   *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
 	QualityRules []QualityRuleSpec          `yaml:"quality_rules,omitempty" json:"quality_rules,omitempty"`
 	Inherits     []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
 	ErrorTypes   map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
+
+	// Subscribes declares the node's reactive surface. Each entry names an
+	// upstream node (or instance: true for cross-cutting) plus a topic kind
+	// (state | attribute | event) with optional filters and a frame
+	// modifier. Plus implicit subscriptions inferred by the template
+	// validator from substitution refs in Attributes (see
+	// graph/node/subscription_edges.go). Per spec
+	// .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
+	// Piece 1.
+	//
+	//	@concept: subscription
+	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
 	// Lifecycle handlers — declarative slots for the three supervisor
 	// terminal-event paths. Per the reactive-loops + lifecycle-handlers
@@ -62,17 +73,14 @@ type TemplateNodeDef struct {
 	// Errored). All non-Complete error variants flow through
 	// OnExecutorErrored; operator-declared `error_types` discriminates by
 	// `error_class`.
+	//
+	// Per the 2026-05-14 subscription-cascade resolution, the
+	// invalidate-emit slots on every handler retire; cascade coupling
+	// is declared receiver-side via Subscribes. Lifecycle handlers
+	// retain only their `resolve` and `error_class` fields.
 	OnAcquireUnavailable *OnAcquireUnavailableHandler `yaml:"on_acquire_unavailable,omitempty" json:"on_acquire_unavailable,omitempty"`
 	OnExecutorComplete   *OnExecutorCompleteHandler   `yaml:"on_executor_complete,omitempty"   json:"on_executor_complete,omitempty"`
 	OnExecutorErrored    *OnExecutorTerminalHandler   `yaml:"on_executor_errored,omitempty"    json:"on_executor_errored,omitempty"`
-
-	// OnEvent declares per-named-event handlers for non-terminal events
-	// the executor emits via the protocol-layer NamedEvent wire type.
-	// Keys are event names that MUST appear in the executor's
-	// Capabilities.declared_events; the graph-layer template validator
-	// (graph/template/userdata_validation.go) cross-checks.
-	// Per the 2026-05-08 platform-extensions plan F1.
-	OnEvent map[string]EventHandler `yaml:"on_event,omitempty" json:"on_event,omitempty"`
 
 	// MaxParkDuration caps how long a parked node may stay parked before
 	// the SweepParkedNodes watchdog forces it to fail with
@@ -91,53 +99,36 @@ type TemplateNodeDef struct {
 	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
 }
 
-// EventHandler declares the supervisor's behavior when an executor emits
-// a NamedEvent matching one of the keys in TemplateNodeDef.OnEvent.
-//
-// Resolve is one of "pass" | "retry" | "error" | "" (default = do
-// nothing beyond firing Invalidate). ErrorClass is required when
-// Resolve == "error".
-//
-// Invalidate fires unconditionally when the handler runs (orthogonal to
-// Resolve), exactly like the lifecycle-handler invalidate slot. Targets
-// are node types or "self"; Frame is "in" | "next" (default "next").
-//
-// Per plan F1.
-type EventHandler struct {
-	Resolve    string             `yaml:"resolve,omitempty" json:"resolve,omitempty"`
-	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"`
-	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
-}
-
 // OnAcquireUnavailableHandler declares the supervisor's behavior when
 // any required claim's Open returns Unavailable. See spec §3.
+//
+// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
+// resolution; receivers declare cascade coupling via SubscriptionEntry
+// with `on: state, when: failed, error_class: <class>`.
 type OnAcquireUnavailableHandler struct {
-	Resolve    string             `yaml:"resolve" json:"resolve"`                             // pass | retry | error
-	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
-	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
+	Resolve    string `yaml:"resolve" json:"resolve"`                             // pass | retry | error
+	ErrorClass string `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
 }
 
 // OnExecutorCompleteHandler declares the supervisor's behavior on a
 // Complete terminal. See spec §3.
+//
+// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
+// resolution; receivers declare cascade coupling via SubscriptionEntry
+// with `on: state, when: fresh, outcome: fresh_changed`.
 type OnExecutorCompleteHandler struct {
-	Resolve    string             `yaml:"resolve" json:"resolve"` // by_changed | always_propagate | never_propagate
-	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
+	Resolve string `yaml:"resolve" json:"resolve"` // by_changed | always_propagate | never_propagate
 }
 
 // OnExecutorTerminalHandler declares behavior on a Blocked or Errored
 // terminal. See spec §3.
+//
+// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
+// resolution; receivers declare cascade coupling via SubscriptionEntry
+// with `on: state, when: failed, error_class: <class>`.
 type OnExecutorTerminalHandler struct {
-	Resolve    string             `yaml:"resolve" json:"resolve"`                             // error | pass
-	ErrorClass string             `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
-	Invalidate *HandlerInvalidate `yaml:"invalidate,omitempty" json:"invalidate,omitempty"`
-}
-
-// HandlerInvalidate is the optional invalidate-emit slot on every
-// lifecycle handler. Fires unconditionally when the handler runs;
-// orthogonal to resolve. See spec §3.5.
-type HandlerInvalidate struct {
-	Targets []string `yaml:"targets" json:"targets"`
-	Frame   string   `yaml:"frame,omitempty" json:"frame,omitempty"` // in | next; default next
+	Resolve    string `yaml:"resolve" json:"resolve"`                             // error | pass
+	ErrorClass string `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
 }
 
 // Resolve constants per handler. The validator at template-deploy

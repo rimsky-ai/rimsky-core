@@ -612,15 +612,14 @@ func claimTopicNode() map[string]any {
 // from claim-topic for value-passing only.
 func scopeNode() map[string]any {
 	return map[string]any{
-		"type":         "scope",
-		"dependencies": []string{"claim-topic"},
-		"executor":     "claude-agent",
+		"type":     "scope",
+		"executor": "claude-agent",
 		"attributes": map[string]any{
 			"schema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"area":        map[string]any{"type": "string", "source": "{{deps.claim-topic.area}}"},
-					"subtopic":    map[string]any{"type": "string", "source": "{{deps.claim-topic.subtopic}}"},
+					"area":        map[string]any{"type": "string", "source": "{{nodes.claim-topic.attribute.area}}"},
+					"subtopic":    map[string]any{"type": "string", "source": "{{nodes.claim-topic.attribute.subtopic}}"},
 					"scope_notes": map[string]any{"type": "string"},
 				},
 				"required": []any{"scope_notes"},
@@ -637,7 +636,6 @@ func scopeNode() map[string]any {
 			"review_rejected": map[string]any{
 				"policy": []map[string]any{
 					{"action": "discard_then_retry", "count": 2},
-					{"action": "invalidate", "targets": []string{"scope"}},
 					{"action": "give_up"},
 				},
 			},
@@ -654,16 +652,15 @@ func scopeNode() map[string]any {
 // the YAML fixture file documents what the spec example carries.
 func draftNode() map[string]any {
 	return map[string]any{
-		"type":         "draft",
-		"dependencies": []string{"claim-topic", "scope"},
-		"executor":     "claude-agent",
+		"type":     "draft",
+		"executor": "claude-agent",
 		"attributes": map[string]any{
 			"schema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"area":        map[string]any{"type": "string", "source": "{{deps.claim-topic.area}}"},
-					"subtopic":    map[string]any{"type": "string", "source": "{{deps.claim-topic.subtopic}}"},
-					"scope_notes": map[string]any{"type": "string", "source": "{{deps.scope.scope_notes}}"},
+					"area":        map[string]any{"type": "string", "source": "{{nodes.claim-topic.attribute.area}}"},
+					"subtopic":    map[string]any{"type": "string", "source": "{{nodes.claim-topic.attribute.subtopic}}"},
+					"scope_notes": map[string]any{"type": "string", "source": "{{nodes.scope.attribute.scope_notes}}"},
 				},
 				"required": []any{"area", "subtopic", "scope_notes"},
 			},
@@ -671,7 +668,7 @@ func draftNode() map[string]any {
 		"stores": []map[string]any{
 			{
 				"name":     "content",
-				"selector": "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md",
+				"selector": "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md",
 				"intent":   "rw",
 			},
 		},
@@ -694,10 +691,20 @@ func draftNode() map[string]any {
 // `on_give_up` config governs disposition. This node just
 // reads the draft's output scope.
 func reviewNode() map[string]any {
+	// Review explicitly subscribes to claim-topic, scope, and draft for
+	// state-transition cascade coupling. Substitution refs would auto-
+	// subscribe on claim-topic (via the selector) but draft is read
+	// only via the held claim (no substitution ref), so we declare
+	// the dependency explicitly. The retired `dependencies:` list is
+	// gone.
 	return map[string]any{
-		"type":         "review",
-		"dependencies": []string{"claim-topic", "scope", "draft"},
-		"executor":     "claude-agent",
+		"type":     "review",
+		"executor": "claude-agent",
+		"subscribes": []map[string]any{
+			{"node": "claim-topic", "on": "state"},
+			{"node": "scope", "on": "state"},
+			{"node": "draft", "on": "state"},
+		},
 		"attributes": map[string]any{
 			"schema": map[string]any{
 				"properties": map[string]any{
@@ -710,7 +717,7 @@ func reviewNode() map[string]any {
 		"stores": []map[string]any{
 			{
 				"name":     "content",
-				"selector": "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md",
+				"selector": "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md",
 				"intent":   "r",
 			},
 		},

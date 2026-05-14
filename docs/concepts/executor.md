@@ -40,7 +40,7 @@ An HTTP+JSON bridge is available for languages without convenient gRPC tooling.
 
 ## Using `Error{error_class: "executor_blocked"}` as a routing signal
 
-An executor may emit `Blocked { reason, payload }` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` (which means the executor failed). Templates can wire `on_executor_errored: { resolve: pass, invalidate: { targets: [routing_node] } }` to handle the routing without treating the run as a failure. See `docs/concepts/handlers.md` and `docs/concepts/error-policy.md`.
+An executor may emit `Error{error_class: "executor_blocked"}` when it produced output but explicitly chose not to claim success — for example, low-confidence outputs that should route to human review. This is distinct from `Error{error_class}` for other failure classes. Templates wire the routing receiver-side: the routing node declares `subscribes: [{node: <emitter>, on: state, when: failed, error_class: executor_blocked}]`. See `docs/concepts/handlers.md`, `docs/concepts/error-policy.md`, and `docs/concepts/subscription.md`.
 
 ## Consumer-visible guarantees
 

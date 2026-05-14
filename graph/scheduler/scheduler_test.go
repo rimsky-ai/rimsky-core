@@ -90,9 +90,10 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	ctx := context.Background()
 	var n persistence.NodeRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		_ = deps // legacy: dependency-edge resolution is now via subscription-edge map
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
-			Executor: executor, Dependencies: deps,
+			Executor: executor,
 		}, tx)
 		if err != nil {
 			return err

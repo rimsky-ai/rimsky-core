@@ -26,6 +26,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/graph/scenario"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -44,7 +45,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	resumeAt := time.Now().Add(2 * time.Second)
 	h.Stub.WhenType("worker").
-		Park("rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
+		Park(genv1.ParkReason_PARK_REASON_RETRY_BACKOFF, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-deadline", Version: "1",
@@ -106,7 +107,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Indefinite park — no resume_at.
 	h.Stub.WhenType("worker").
-		Park("human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
+		Park(genv1.ParkReason_PARK_REASON_AWAITING_HUMAN, "human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-external", Version: "1",
@@ -153,7 +154,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Park indefinitely so SweepParkedNodes' watchdog branch fires; the
 	// runtime measures overrun against parked_at + max_park_duration.
-	h.Stub.WhenType("worker").Park("waiting", nil, time.Time{}, "")
+	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "waiting", nil, time.Time{}, "")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-overrun", Version: "1",
@@ -187,7 +188,7 @@ func TestParkedLifecycleEmptyReasonPermitted(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	resumeAt := time.Now().Add(200 * time.Millisecond)
-	h.Stub.WhenType("worker").Park("", nil, resumeAt, "")
+	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_UNSPECIFIED, "", nil, resumeAt, "")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-empty-reason", Version: "1",
@@ -209,15 +210,29 @@ func TestParkedLifecycleEmptyReasonPermitted(t *testing.T) {
 }
 
 // TestParkedLifecycleIntraGraphInvalidateAgainstParked covers E6 case (g).
-// Node A parks; node B emits a NamedEvent whose on_event handler invalidates
-// A. Verify A wakes via the unified path.
+// Node A parks; later, an upstream cascade walk visits A and must
+// transition A parked → stale via `wakeParkedReceiverInTx` (in
+// `runtime/wake_parked.go`) rather than leaving A stranded.
+//
+// Post-2026-05-14 the cascade walk wakes parked receivers in the same
+// tx as the regular MarkStaleForCascade + wait-set insert; without
+// that wiring, A would stay parked indefinitely (the original wake
+// path required an explicit operator invalidate or deadline-elapsed
+// sweep).
+//
+// Graph shape: B is a root; A subscribes to B's state with `frame:
+// next` so A is a sibling root in the initial frame and an event-
+// driven receiver in the next frame. A parks in its initial run; the
+// follow-up invalidate of B fires the cascade walk over A's
+// subscription edge, hitting the parked-state path.
 func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// A parks indefinitely. B emits a named event whose on_event
-	// handler invalidates A.
-	h.Stub.WhenType("a").Park("await_signal", nil, time.Time{}, "session-A")
+	// A parks indefinitely on first dispatch. B emits the "ready"
+	// event then completes successfully (the event is incidental;
+	// the cascade walk fires on B's state transition).
+	h.Stub.WhenType("a").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "await_signal", nil, time.Time{}, "session-A")
 	h.Stub.WhenType("b").EmitNamedEvent("ready", []byte(`{"go":true}`)).
 		Success(map[string]any{}, true, "b-done")
 
@@ -225,16 +240,17 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 		Name: "parked-intra-invalidate", Version: "1",
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "b",
-				Executor: "stub",
-				OnEvent: map[string]node.EventHandler{
-					"ready": {
-						Invalidate: &node.HandlerInvalidate{Targets: []string{"a"}, Frame: node.FrameNext},
-					},
-				},
-			}),
+			// A: declares `frame: next` on its subscription to B. With
+			// `frame: next`, A is treated as a root for the initial
+			// frame (it dispatches alongside B) and only re-fires in a
+			// subsequent frame when B re-settles. This lets A park on
+			// initial dispatch while still having a subscription edge
+			// that the cascade walk can traverse later.
+			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "b", On: "state", Frame: "next",
+				})),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-park-intra", map[string]any{})
@@ -243,20 +259,34 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	// Wait for A to park.
+	// Wait for A to park (initial run).
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateParked, 30*time.Second),
 		"a should reach parked")
-	// Wait for B to complete (emits the event before its terminal).
+	// Wait for B to complete its initial run.
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should complete after emitting the event")
+		"b should complete its initial run")
 
-	// Reschedule A so the resume terminates normally.
+	// Reschedule A's stub so its eventual resume produces a clean
+	// terminal.
 	h.Stub.WhenType("a").Success(map[string]any{}, true, "a-resumed")
+	// Reschedule B so its invalidate-then-settle below uses a clean
+	// script.
+	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-redo")
 
-	require.True(t, h.WaitForEventKind(a.ID, "parked_resume_started", 10*time.Second),
-		"on_event handler should have invalidated A through the unified wake path")
+	// Invalidate B. A subscribes to B (`frame: next`); the cascade
+	// walk at B's invalidation opens a new frame for A. But A is
+	// parked, so the walk must run wakeParkedReceiverInTx to
+	// transition A parked → stale + emit `parked_resume_started`.
+	resp, err := http.Post(h.ControlBase+"/nodes/"+b.ID.String()+"/invalidate",
+		"application/json", bytes.NewReader([]byte(`{}`)))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.True(t, h.WaitForEventKind(a.ID, "parked_resume_started", 30*time.Second),
+		"cascade-walk wake should have transitioned A parked → stale and emitted parked_resume_started")
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a should reach fresh after handler-driven resume")
+		"a should reach fresh after the cascade-driven resume")
 }
 
 // TestParkedLifecycleHeldClaimRetentionAcrossPark covers E6 case (e).
@@ -299,9 +329,20 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 			},
 		},
 	})
-	resumeAt := time.Now().Add(1 * time.Second)
+	// resumeAt must be far enough in the future that, under heavy
+	// parallel testcontainer load, the entire setup-through-parked-
+	// state-probe sequence completes BEFORE SweepParkedNodes can pick
+	// the row up — otherwise the sweep dispatches under the still-Park
+	// script (the resume's Success script is registered below, after
+	// parked-state probes), the node re-parks, and the test times out
+	// on `WaitForNodeState(..., Fresh)`. Observed parallel setup
+	// latency on a loaded host runs ~5-10s; 10s gives clear buffer
+	// while keeping resume comfortably inside the post-resume 30s
+	// WaitForNodeState windows. The original 1s budget assumed cold-
+	// container speeds and was the documented flake source.
+	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("acquirer").
-		Park("checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
+		Park(genv1.ParkReason_PARK_REASON_TIME_WAIT, "checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
 	// Inheritor is pre-scripted but won't be reached until the
 	// acquirer resumes and completes.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
@@ -316,11 +357,11 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "inheritor",
-					Executor:     "stub",
-					Dependencies: []string{"acquirer"},
+					Type:     "inheritor",
+					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
 			),
 		},
 	})
@@ -332,6 +373,16 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
+
+	// Re-script the acquirer for the resume dispatch BEFORE the parked-
+	// state SQL probes run, and BEFORE the wall-clock approaches the
+	// scripted resume_at. WhenType replaces the entire script in the
+	// stub's per-type map, so this swap turns the next Execute call on
+	// "acquirer" into a Success terminal. Pairing the swap with the
+	// generous resume_at above closes the time-based wake race: even
+	// under heavy testcontainer load the Success script is in place
+	// long before SweepParkedNodes can pick the parked row up.
+	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
 	// While parked, verify the node-run row is in phase='parked'
 	// AND the rimsky_claim_handles row for the held claim survives
@@ -346,7 +397,8 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	)
 	require.Equal(t, "parked", phase, "node-run must be in parked phase")
 	require.NotNil(t, parkedReason, "parked_reason must survive parked transition")
-	require.Equal(t, "checkpoint", *parkedReason)
+	require.Equal(t, "time_wait", *parkedReason,
+		"parked_reason should store the enum form (snake_case)")
 
 	// Held claim_handle row exists during park: the held subgraph
 	// (acquirer + inheritor) is still active, so auto-terminal cannot
@@ -359,9 +411,6 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	).Scan(&lhCount))
 	require.Equal(t, 1, lhCount,
 		"held claim_handle row must survive across the active → parked transition")
-
-	// Reschedule the acquirer script so the resume can complete.
-	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
 	require.True(t, h.WaitForEventKind(acq.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked acquirer")
@@ -421,7 +470,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 			},
 		},
 	})
-	h.Stub.WhenType("acquirer").Park("waiting_held", nil, time.Time{}, "")
+	h.Stub.WhenType("acquirer").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "waiting_held", nil, time.Time{}, "")
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -438,11 +487,11 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "inheritor",
-					Executor:     "stub",
-					Dependencies: []string{"acquirer"},
+					Type:     "inheritor",
+					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
 			),
 		},
 	})

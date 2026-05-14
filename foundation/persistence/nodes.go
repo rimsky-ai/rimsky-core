@@ -15,6 +15,12 @@ import (
 
 // NodeRow mirrors a row of rimsky_nodes — the per-instance node-state
 // row driven by the cascade engine and the supervisor.
+//
+// Post-2026-05-14: the `dependencies` column retired in favour of the
+// receiver-side `subscribes:` model. Cascade-coupled receivers are
+// resolved via the per-template subscription-edge inverse map (see
+// runtime/subscription_loaders.go::resolveSubscribedSenders); the
+// retired column is no longer surfaced on the row type.
 type NodeRow struct {
 	ID                   shared.UUID         `json:"id"`
 	InstanceID           shared.UUID         `json:"instance_id"`
@@ -23,7 +29,6 @@ type NodeRow struct {
 	ScheduleCron         string              `json:"schedule_cron"`
 	State                cascade.NodeState   `json:"state"`
 	LastOutcome          cascade.LastOutcome `json:"last_outcome,omitempty"`
-	Dependencies         []shared.UUID       `json:"dependencies"`
 	CurrentErrorClass    string              `json:"current_error_class,omitempty"`
 	RetryCounter         int                 `json:"retry_counter"`
 	ActionIndex          int                 `json:"action_index"`
@@ -41,7 +46,6 @@ type NodeCreateInput struct {
 	NodeType     string
 	Executor     string
 	ScheduleCron string
-	Dependencies []shared.UUID
 }
 
 // NodeTable is the rimsky_nodes accessor.
@@ -61,7 +65,6 @@ type NodeTable interface {
 	// The DB is the source of truth; do not rely on in-memory bookkeeping
 	// of "currently running" nodes.
 	ListRunningBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]NodeRow, error)
-	ListDependentsOf(ctx context.Context, nodeID shared.UUID, tx Tx) ([]NodeRow, error)
 	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)

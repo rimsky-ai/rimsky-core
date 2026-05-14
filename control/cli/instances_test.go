@@ -61,7 +61,7 @@ func TestRunInstanceNodes(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh", Dependencies: []string{}})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
 	if got := cli.RunInstanceNodes(context.Background(), []string{inst.ID}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
@@ -159,7 +159,7 @@ func TestRunNodeGet_Found(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh", Dependencies: []string{}})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
 	if got := cli.RunNodeGet(context.Background(), []string{"n1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}

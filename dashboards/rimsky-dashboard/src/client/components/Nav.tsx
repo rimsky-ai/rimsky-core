@@ -25,6 +25,7 @@ const sections: { title: string; links: { path: string; label: string }[] }[] = 
       { path: '/frames', label: 'Frames' },
       { path: '/node-runs', label: 'Node-runs' },
       { path: '/lock-holders', label: 'Lock holders' },
+      { path: '/parked-nodes', label: 'Parked nodes' },
     ],
   },
   {

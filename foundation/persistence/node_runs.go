@@ -281,7 +281,11 @@ type ResumeMetadataRow struct {
 	PayloadHandle        string
 	PayloadHandleBackend string
 	Reason               string
-	SessionToken         string
+	// ReasonNote is the free-form human annotation persisted alongside
+	// the typed Reason (`col:rimsky_node_runs.parked_reason_note`).
+	// Inert in rimsky (`@blessed-invariant 11`-class opacity).
+	ReasonNote   string
+	SessionToken string
 	// WakeReason carries the WakeReason enum value persisted by
 	// ResumeParkedInTx ("deadline_elapsed" | "external_invalidate").
 	// Empty when no wake has been recorded.
@@ -301,13 +305,17 @@ type ResumeMetadataRow struct {
 // MUST also be non-empty so the read path can route the fetch.
 //
 // ResumeAt may be zero (indefinite park; resume only via
-// external invalidate). Reason is recommended non-empty but not enforced.
+// external invalidate). Reason is the snake_case typed enum value
+// stored in col:rimsky_node_runs.parked_reason; ReasonNote is the
+// free-form human annotation stored in
+// col:rimsky_node_runs.parked_reason_note (inert in rimsky).
 type ParkActiveInput struct {
 	DispatchID           shared.UUID
 	ExpectedClaimedBy    string
 	ParkedAt             time.Time
 	ResumeAt             time.Time // zero ⇒ NULL (no deadline-based resume)
 	Reason               string
+	ReasonNote           string
 	SessionToken         string
 	PayloadInline        []byte
 	PayloadHandle        string
@@ -324,20 +332,27 @@ type ParkedDiagnosticRow struct {
 	ParkedAt   time.Time
 	ResumeAt   time.Time
 	Reason     string
+	// ReasonNote is the free-form human annotation persisted alongside
+	// Reason. Surfaced to the diagnostics endpoint and CLI; inert in
+	// rimsky (no rimsky code path inspects it).
+	ReasonNote string
 }
 
 // ParkedRow is a row returned by ListParkedReadyForResume,
 // ListParkedOverdue, and GetParkedByNode. Carries the persisted park
 // metadata so the resume-dispatch path (E4) can build ResumeContext.
 type ParkedRow struct {
-	DispatchID               shared.UUID
-	NodeID                   shared.UUID
-	ExecutorName             string
-	RequiredStores           []string
-	FrameID                  shared.UUID
-	ParkedAt                 time.Time
-	ResumeAt                 *time.Time
-	Reason                   string
+	DispatchID     shared.UUID
+	NodeID         shared.UUID
+	ExecutorName   string
+	RequiredStores []string
+	FrameID        shared.UUID
+	ParkedAt       time.Time
+	ResumeAt       *time.Time
+	Reason         string
+	// ReasonNote is the free-form human annotation persisted alongside
+	// Reason in col:rimsky_node_runs.parked_reason_note. Inert.
+	ReasonNote               string
 	SessionToken             string
 	PayloadInline            []byte
 	PayloadHandle            string

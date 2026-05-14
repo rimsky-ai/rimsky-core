@@ -251,12 +251,20 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 }
 
 // transitiveAncestors returns, for each node type, the set of all
-// node types it depends on transitively (the closure of the deps
-// relation upward). Self is not included.
+// node types it is reactively coupled to transitively (the closure of
+// the subscription relation upward). Self is not included.
+//
+// Post-2026-05-14 the relation is driven by SubscriptionEntry +
+// substitution-ref inference rather than the retired Dependencies
+// field. We collect the direct upstream node-types from each node's
+// explicit `subscribes:` entries plus any `{{nodes.<X>...}}`
+// substitution refs in the node's attribute-schema sources.
+//
+//	@concept: subscription
 func transitiveAncestors(nodes []TemplateNodeDef) map[string]map[string]struct{} {
 	directDeps := make(map[string][]string, len(nodes))
 	for _, n := range nodes {
-		directDeps[n.Type] = append([]string{}, n.Dependencies...)
+		directDeps[n.Type] = upstreamNodeTypes(n)
 	}
 	out := make(map[string]map[string]struct{}, len(nodes))
 	for _, n := range nodes {
@@ -273,6 +281,35 @@ func transitiveAncestors(nodes []TemplateNodeDef) map[string]map[string]struct{}
 		}
 		walk(n.Type)
 		out[n.Type] = seen
+	}
+	return out
+}
+
+// upstreamNodeTypes returns the direct upstream node-types this node is
+// reactively coupled to: explicit per-node Subscribes entries plus
+// substitution refs in attribute-schema sources. Cross-cutting
+// (instance:true) entries do not contribute a direct edge (the
+// inheritance walker needs concrete node types).
+func upstreamNodeTypes(n TemplateNodeDef) []string {
+	seen := make(map[string]struct{})
+	for _, s := range n.Subscribes {
+		if s.Node == "" || s.Node == n.Type {
+			continue
+		}
+		seen[s.Node] = struct{}{}
+	}
+	for _, ref := range parseSubstitutionRefsFromAttributes(n) {
+		if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
+			continue
+		}
+		seen[ref.SenderNodeType] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for t := range seen {
+		out = append(out, t)
 	}
 	return out
 }

@@ -26,5 +26,6 @@ type Tables interface {
 	Frames() FrameTable
 	BlobOrphans() BlobOrphanTable
 	NodeEvents() NodeEventTable
+	WaitSet() WaitSetTable
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx Tx) error) error
 }

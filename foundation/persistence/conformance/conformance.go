@@ -52,4 +52,5 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Database, rawExec 
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("SchedulesDenseSameTimestampPagination", func(t *testing.T) { testSchedulesDenseSameTimestampPagination(t, factory(t)) })
+	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 }

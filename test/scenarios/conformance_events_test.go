@@ -46,14 +46,13 @@ func TestConformanceEvents(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
 				Executor: "stub",
-				OnEvent: map[string]node.EventHandler{
-					"ready": {
-						Invalidate: &node.HandlerInvalidate{Targets: []string{"b"}, Frame: node.FrameNext},
-					},
-				},
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				// The {{nodes.a.event.ready.value}} ref below auto-subscribes
+				// b to a's `event` topic with name="ready"; explicit
+				// subscription kept here for clarity.
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "event", Name: "ready"}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

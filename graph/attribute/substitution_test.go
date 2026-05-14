@@ -64,15 +64,17 @@ func TestSubstitute(t *testing.T) {
 		missingSubstr string
 	}
 	cases := []tcase{
-		// deps source
-		{name: "deps simple", raw: "{{deps.claim-topic.area}}", want: "northwest"},
-		{name: "deps nested path", raw: "{{deps.claim-topic.nested.deep}}", want: "value"},
-		{name: "deps in template", raw: "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md",
+		// nodes.<X>.attribute.<...> source (post-2026-05-14)
+		{name: "attribute simple", raw: "{{nodes.claim-topic.attribute.area}}", want: "northwest"},
+		{name: "attribute nested path", raw: "{{nodes.claim-topic.attribute.nested.deep}}", want: "value"},
+		{name: "attribute in template", raw: "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md",
 			want: "items/northwest/sea-otters.md"},
-		{name: "deps unknown node", raw: "{{deps.no-such-node.x}}", wantMissing: true,
+		{name: "attribute unknown node", raw: "{{nodes.no-such-node.attribute.x}}", wantMissing: true,
 			missingSubstr: "no upstream node"},
-		{name: "deps missing field", raw: "{{deps.claim-topic.does_not_exist}}", wantMissing: true,
-			missingSubstr: "field path not found"},
+		{name: "attribute missing field", raw: "{{nodes.claim-topic.attribute.does_not_exist}}", wantMissing: true,
+			missingSubstr: "attribute field path not found"},
+		{name: "deps prefix retired", raw: "{{deps.claim-topic.area}}", wantMissing: true,
+			missingSubstr: "retired"},
 
 		// claim payload
 		{name: "claim payload simple", raw: "{{claim.topics-ring.payload.area}}", want: "rocky-shore"},
@@ -109,13 +111,13 @@ func TestSubstitute(t *testing.T) {
 		{name: "empty input", raw: "", want: ""},
 
 		// recursion not performed
-		{name: "result containing braces is literal", raw: "{{deps.recursive.template}}"},
+		{name: "result containing braces is literal", raw: "{{nodes.recursive.attribute.template}}"},
 
 		// unknown source kind
 		{name: "unknown kind", raw: "{{userdata.foo}}", wantMissing: true,
 			missingSubstr: "unknown source kind"},
 		{name: "malformed empty directive", raw: "{{}}", wantMissing: true},
-		{name: "deps too short", raw: "{{deps.x}}", wantMissing: true},
+		{name: "nodes too short", raw: "{{nodes.x}}", wantMissing: true},
 		{name: "claim too short", raw: "{{claim.x}}", wantMissing: true},
 	}
 
@@ -166,7 +168,7 @@ func TestSubstitute_NilContext(t *testing.T) {
 	if got != "plain text" {
 		t.Fatalf("want plain, got %q", got)
 	}
-	_, err = Substitute("{{deps.x.y}}", ResolveContext{})
+	_, err = Substitute("{{nodes.x.attribute.y}}", ResolveContext{})
 	if !IsMissingSource(err) {
 		t.Fatalf("expected ErrMissingSource for nil deps, got %v", err)
 	}
@@ -174,8 +176,8 @@ func TestSubstitute_NilContext(t *testing.T) {
 
 func TestErrMissingSource_Format(t *testing.T) {
 	t.Parallel()
-	e := &ErrMissingSource{Directive: "deps.x.y", Reason: "no upstream node x"}
-	if !strings.Contains(e.Error(), "{{deps.x.y}}") {
+	e := &ErrMissingSource{Directive: "nodes.x.attribute.y", Reason: "no upstream node x"}
+	if !strings.Contains(e.Error(), "{{nodes.x.attribute.y}}") {
 		t.Fatalf("error format should include directive in braces, got %q", e.Error())
 	}
 	if !strings.Contains(e.Error(), "no upstream node x") {

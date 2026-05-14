@@ -53,6 +53,23 @@ export const ReportErrorInput = z.object({
   payload: z.unknown().optional(),
 });
 
+// Allowed snake_case ParkReason values (excluding "unspecified",
+// which is a placeholder enum value rather than a real reason). Mirrors
+// the proto ParkReason enum's lower_snake_case projection.
+export const PARK_REASONS = [
+  "time_wait",
+  "signal_wait",
+  "awaiting_human",
+  "retry_backoff",
+] as const;
+
+export const ReportParkInput = z.object({
+  token: z.string(),
+  reason: z.enum(PARK_REASONS),
+  reason_note: z.string().optional(),
+  resume_at: z.string().optional(),
+});
+
 export { AttributesReadInput, AttributesSetInput };
 
 export interface ToolDefinition {
@@ -103,6 +120,34 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         token: { type: "string" },
         error_class: { type: "string" },
         payload: {},
+      },
+    },
+  },
+  {
+    name: "report_park",
+    description:
+      "Park the dispatch. The supervisor pauses the node until resume_at " +
+      "elapses or an invalidate wakes it. Per 2026-05-14 Piece 2, reason " +
+      "is the typed ParkReason value (snake_case).",
+    inputSchema: {
+      type: "object",
+      required: ["token", "reason"],
+      properties: {
+        token: { type: "string" },
+        reason: {
+          type: "string",
+          enum: [...PARK_REASONS],
+          description: "Typed park reason. The agent must pick one.",
+        },
+        reason_note: {
+          type: "string",
+          description: "Optional human-readable annotation.",
+        },
+        resume_at: {
+          type: "string",
+          format: "date-time",
+          description: "Optional ISO 8601 timestamp at which to wake. Absent means signal-only.",
+        },
       },
     },
   },

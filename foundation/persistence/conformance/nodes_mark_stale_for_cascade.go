@@ -63,7 +63,6 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 			InstanceID:   fix.InstanceID,
 			NodeType:     "cascade-fresh",
 			Executor:     "test-executor",
-			Dependencies: []shared.UUID{},
 		}, tx); err != nil {
 			return err
 		}
@@ -75,7 +74,6 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 			InstanceID:   fix.InstanceID,
 			NodeType:     "cascade-stale-null",
 			Executor:     "test-executor",
-			Dependencies: []shared.UUID{},
 		}, tx); err != nil {
 			return err
 		}
@@ -90,7 +88,6 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 			InstanceID:   fix.InstanceID,
 			NodeType:     "cascade-running",
 			Executor:     "test-executor",
-			Dependencies: []shared.UUID{},
 		}, tx); err != nil {
 			return err
 		}

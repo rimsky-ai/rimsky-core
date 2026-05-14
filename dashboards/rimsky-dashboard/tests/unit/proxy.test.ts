@@ -38,6 +38,12 @@ beforeEach(() => {
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }
+    if (url.endsWith('/admin/diagnostics/parked-nodes')) {
+      return new Response(JSON.stringify({ parked: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     return new Response('not found', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchSpy);
@@ -55,6 +61,24 @@ describe('proxy', () => {
     expect(body.instances_active).toBe(3);
     const calls = fetchSpy.mock.calls.map((c) => c[0]);
     expect(calls.some((u) => String(u).endsWith('/v1/observability/system/summary'))).toBe(true);
+  });
+
+  // /api/control/admin/* is the admin-bypass route: admin diagnostic
+  // endpoints (e.g. /admin/diagnostics/parked-nodes) are mounted on
+  // control-api at the bare /admin/* path with no /v1/observability/
+  // prefix. The proxy must strip /api/control and forward the rest
+  // verbatim — NOT rewrite into /v1/observability/admin/* — otherwise
+  // the dashboard's Parked Nodes view 404s.
+  it('forwards /api/control/admin/* without the /v1/observability/ rewrite', async () => {
+    const res = await proxy.request('/api/control/admin/diagnostics/parked-nodes');
+    expect(res.status).toBe(200);
+    const calls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    // The admin path must appear bare (no /v1/observability/ prefix).
+    expect(calls.some((u) => u.endsWith('/admin/diagnostics/parked-nodes'))).toBe(true);
+    // And the wrong rewrite must NOT appear.
+    expect(
+      calls.some((u) => u.endsWith('/v1/observability/admin/diagnostics/parked-nodes')),
+    ).toBe(false);
   });
 
   it('routes /api/exec/:name/* through the discovered http_bridge_url', async () => {

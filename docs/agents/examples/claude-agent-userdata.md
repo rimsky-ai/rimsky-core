@@ -29,12 +29,12 @@ nodes:
       prompt: |
         Summarize the following document.
         Use Markdown formatting where appropriate. Substitute literal text
-        like {{deps.upstream.value}} into the output if it appears in the
+        like {{nodes.upstream.attribute.value}} into the output if it appears in the
         source, but do not expect Rimsky to have substituted it on input.
       model: claude-sonnet-4-6
 ```
 
-The `{{deps.upstream.value}}` literal in `userdata.prompt` is intentional — Rimsky does not parse or substitute `userdata`, so the executor sees the literal text. (`userdata` is a YAML map per the template DSL, not a string.)
+The `{{nodes.upstream.attribute.value}}` literal in `userdata.prompt` is intentional — Rimsky does not parse or substitute `userdata`, so the executor sees the literal text. (`userdata` is a YAML map per the template DSL, not a string.)
 
 ## 2. Register, deploy, instantiate
 
@@ -61,7 +61,7 @@ curl -s "http://localhost:8080/events?instance_id=<instance_id>" \
   | jq -r '[.events[] | select(.kind=="attributes_substituted") | .payload.substituted_fields[]] | length'
 ```
 
-Expected output: `0` (no schema field had a `source:` directive in this template, so substitution touched nothing — and since `userdata` is not an attribute, the `{{deps.upstream.value}}` literal it contains was never even a candidate for substitution).
+Expected output: `0` (no schema field had a `source:` directive in this template, so substitution touched nothing — and since `userdata` is not an attribute, the `{{nodes.upstream.attribute.value}}` literal it contains was never even a candidate for substitution).
 
 ## See also
 

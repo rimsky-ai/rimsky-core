@@ -60,16 +60,22 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}
-	// Build edges_out per type from the template's dependency graph.
-	// dependencies[a] = list of types a depends on  → edges_in.
-	// edges_out is the inverse.
+	// Build edges_out per type from the template's subscription graph.
+	// Post-2026-05-14, the dependency edges are derived from the
+	// per-node Subscribes block: each entry naming a sender contributes
+	// edges_in[receiver] += sender and edges_out[sender] += receiver.
+	// Cross-cutting (instance:true) subscriptions are skipped (no
+	// concrete sender).
 	edgesIn := map[string][]string{}
 	edgesOut := map[string][]string{}
 	if template != nil {
 		for _, d := range template.Spec.Nodes {
-			edgesIn[d.Type] = append(edgesIn[d.Type], d.Dependencies...)
-			for _, dep := range d.Dependencies {
-				edgesOut[dep] = append(edgesOut[dep], d.Type)
+			for _, s := range d.Subscribes {
+				if s.Node == "" {
+					continue
+				}
+				edgesIn[d.Type] = append(edgesIn[d.Type], s.Node)
+				edgesOut[s.Node] = append(edgesOut[s.Node], d.Type)
 			}
 		}
 	}

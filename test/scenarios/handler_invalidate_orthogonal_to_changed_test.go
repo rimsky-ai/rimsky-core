@@ -2,99 +2,30 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 42 — handler_invalidate_orthogonal_to_changed.
-//
-// Per spec §3.5, the handler.invalidate emit is orthogonal to resolve.
-// A worker with on_executor_complete: { resolve: by_changed,
-// invalidate: { targets: [monitor], frame: next } } that commits with
-// changed=false must:
-//   - record last_outcome=fresh_unchanged (no cascade to its own deps);
-//   - still fire the invalidate emit, marking monitor stale.
-//
-// monitor is an independent node with no upstream so its only path back
-// to stale is the handler.invalidate emit.
+// Task 42 — handler_invalidate_orthogonal_to_changed retired under the
+// 2026-05-14 subscription-cascade resolution: send-side
+// handler.invalidate emits retired. The orthogonal-to-changed shape is
+// expressed receiver-side: a receiver that subscribes WITHOUT a
+// `last_outcome` filter sees every fresh transition (changed or not);
+// a receiver that filters on `outcome: fresh_changed` sees only
+// content-bearing transitions. The cascade-firing gate is
+// `last_outcome == fresh_changed`, so without `always_propagate` on
+// the sender, fresh_unchanged transitions do not fire downstream by
+// default — the legacy "orthogonal" semantics retire.
 package scenarios
 
 import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/graph/scenario"
 )
 
 func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	// worker commits no-op (changed=false). monitor commits truthy.
-	h.Stub.WhenType("worker").Success(map[string]any{}, false, "noop")
-	h.Stub.WhenType("monitor").Success(map[string]any{"m": 1}, true, "monitored")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "handler-invalidate-orthogonal", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "worker",
-				Executor: "stub",
-				OnExecutorComplete: &node.OnExecutorCompleteHandler{
-					Resolve: node.ResolveByChanged,
-					Invalidate: &node.HandlerInvalidate{
-						Targets: []string{"monitor"},
-						Frame:   node.FrameNext,
-					},
-				},
-			}),
-			// monitor has no upstream — its only path back to stale is
-			// the handler.invalidate emit.
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "monitor",
-				Executor: "stub",
-			}),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-orthogonal", map[string]any{})
-
-	worker := h.FindNode(iid, "worker")
-	monitor := h.FindNode(iid, "monitor")
-	require.NotNil(t, worker)
-	require.NotNil(t, monitor)
-
-	// Wait for both to reach fresh on first run.
-	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor did not reach fresh on first run")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker did not reach fresh on first run")
-
-	// worker's last_outcome must be fresh_unchanged (its commit was a
-	// no-op).
-	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomeFreshUnchanged, 30*time.Second),
-		"worker should record last_outcome=fresh_unchanged on no-op commit")
-
-	// Despite worker's no-op commit, the handler.invalidate must have
-	// marked monitor stale and re-driven it to fresh. Count the number
-	// of work_completed events for monitor — must be at least 2 (the
-	// initial run + the handler-invalidate-driven re-run).
-	require.True(t, waitForEventCount(t, h, monitor.ID, "work_completed", 2, 30*time.Second),
-		"monitor must have run twice — once initially and once via handler.invalidate emit")
-
-	// Verify the worker's last_outcome is still fresh_unchanged after the
-	// orthogonal invalidate (the invalidate didn't cascade back to worker).
-	var wRow *persistence.NodeRow
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
-		wRow = r
-		return err
-	}))
-	require.Equal(t, cascade.LastOutcomeFreshUnchanged, wRow.LastOutcome,
-		"worker's last_outcome should remain fresh_unchanged")
-	require.Equal(t, cascade.NodeStateFresh, wRow.State,
-		"worker should be fresh")
+	t.Skip("retired: send-side handler.invalidate emit retired; orthogonal-" +
+		"to-changed semantics expressed via receiver-side subscription " +
+		"with sender `resolve: always_propagate` under the new model")
 }
 
 // waitForEventCount polls rimsky_events for the count of (node_id, kind)

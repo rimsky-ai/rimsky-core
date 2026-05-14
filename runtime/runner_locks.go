@@ -22,6 +22,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/node"
 )
@@ -75,9 +76,10 @@ func producerNameForSpec(sp any) string {
 
 // buildLockSpecs translates the template's per-node-type Stores+Locks
 // declarations into concrete spec values. Substitutes `{{params.x}}`,
-// `{{deps.<n>.<f>}}`, and `{{claim.<alias>.{address|scope|payload.<f>}}}`
-// (when the alias has a live inherited claim) into the selector and
-// named-lock name per the substitution grammar.
+// `{{nodes.<n>.attribute.<f>}}`, and
+// `{{claim.<alias>.{address|scope|payload.<f>}}}` (when the alias has
+// a live inherited claim) into the selector and named-lock name per
+// the substitution grammar.
 //
 // All persistence reads share the caller's tx — passing nil here would
 // self-deadlock against the SQLite driver's single-connection pool
@@ -98,9 +100,21 @@ func buildLockSpecs(
 		}
 		paramsRaw = b
 	}
+	var subs []shared.UUID
+	if nd != nil {
+		// Post-T23: subscribed-sender set resolved from the cached
+		// per-template subscription-edge inverse map (see
+		// runtime/subscription_loaders.go); the retired
+		// nodes.dependencies column is no longer consulted.
+		ss, sErr := resolveSubscribedSenders(ctx, args, nd.ID, tx)
+		if sErr != nil {
+			return nil, sErr
+		}
+		subs = ss
+	}
 	resolveCtx := attributes.ResolveContext{
 		Params: paramsRaw,
-		Deps:   loadDepsAttributes(ctx, args, tx, nd),
+		Deps:   loadSubscribedNodeAttributes(ctx, args, tx, subs),
 		Claim:  loadInheritedClaimsForNode(ctx, args, tx, nd),
 	}
 
@@ -211,18 +225,26 @@ func aliasFromAcquirerStores(def *node.TemplateNodeDef, lh *persistence.ClaimHan
 	return candidates[0].AliasOf()
 }
 
-// loadDepsAttributes pulls each upstream node's
+// loadSubscribedNodeAttributes pulls each subscribed-to upstream node's
 // rimsky_node_attributes.data into a map keyed by the upstream's
 // node_type, marshalled to json.RawMessage so the substitution engine
 // can lazy-walk into it.
 //
+// `subscribedNodeIDs` is the set of upstream node UUIDs the receiver is
+// subscribed to (either explicitly via Subscribes or implicitly via
+// `{{nodes.X.attribute.Y}}` substitution refs). Post-T23: callers
+// resolve this via runtime/subscription_loaders.go::resolveSubscribedSenders
+// against the cached per-template subscription-edge inverse map.
+//
 // Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
-func loadDepsAttributes(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]json.RawMessage {
-	if nd == nil || len(nd.Dependencies) == 0 {
+//
+//	@concept: subscription
+func loadSubscribedNodeAttributes(ctx context.Context, args RunArgs, tx persistence.Tx, subscribedNodeIDs []shared.UUID) map[string]json.RawMessage {
+	if len(subscribedNodeIDs) == 0 {
 		return nil
 	}
-	out := make(map[string]json.RawMessage, len(nd.Dependencies))
-	for _, depID := range nd.Dependencies {
+	out := make(map[string]json.RawMessage, len(subscribedNodeIDs))
+	for _, depID := range subscribedNodeIDs {
 		depNode, _ := args.Persist.Nodes().Get(ctx, depID, tx)
 		if depNode == nil {
 			continue

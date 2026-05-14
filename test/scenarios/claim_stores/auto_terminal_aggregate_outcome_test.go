@@ -73,8 +73,9 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 				scenario.WithStores(scenario.AliasedClaimRef("content", "/region-held", "rw", "held")),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "inheritor", Executor: "stub", Dependencies: []string{"acquirer"}},
+				node.TemplateNodeDef{Type: "inheritor", Executor: "stub"},
 				scenario.WithInherits(scenario.Inherit("held")),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
 			),
 		},
 	})

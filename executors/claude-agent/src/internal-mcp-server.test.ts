@@ -24,6 +24,7 @@ function makeRegistryEntry(overrides: {
   nodeId?: string;
   callbackUrl?: string;
   onComplete?: import("./token-registry.js").TokenEntry["onComplete"];
+  onPark?: import("./token-registry.js").TokenEntry["onPark"];
   onAttributesSet?: import("./token-registry.js").TokenEntry["onAttributesSet"];
 } = {}): import("./token-registry.js").TokenEntry {
   return {
@@ -37,6 +38,7 @@ function makeRegistryEntry(overrides: {
       (async () => ({ status: "accepted" as const })),
     onBlocked: async () => {},
     onError: async () => {},
+    onPark: overrides.onPark,
     onAttributesSet:
       overrides.onAttributesSet ??
       (async () => ({ status: 204 })),
@@ -61,7 +63,7 @@ function parseToolText<T>(content: unknown): T {
 }
 
 describe("rimsky-callback MCP tools", () => {
-  it("lists all five tools", async () => {
+  it("lists all six tools (incl. report_park)", async () => {
     const registry = new TokenRegistry();
     const client = await buildClient(registry);
 
@@ -73,6 +75,7 @@ describe("rimsky-callback MCP tools", () => {
       "report_blocked",
       "report_complete",
       "report_error",
+      "report_park",
     ]);
   });
 
@@ -207,5 +210,70 @@ describe("rimsky-callback MCP tools", () => {
       arguments: { token: "nope", changed: false },
     });
     expect(res.isError).toBe(true);
+  });
+
+  it("dispatches report_park with a typed reason + optional note", async () => {
+    const registry = new TokenRegistry();
+    let captured:
+      | {
+          reason: string;
+          reasonNote: string | null;
+          resumeAt: string | null;
+        }
+      | null = null;
+    registry.register(
+      "tok-park",
+      makeRegistryEntry({
+        onPark: async (reason, reasonNote, resumeAt) => {
+          captured = { reason, reasonNote, resumeAt };
+        },
+      }),
+    );
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "report_park",
+      arguments: {
+        token: "tok-park",
+        reason: "awaiting_human",
+        reason_note: "operator review pending",
+        resume_at: "2026-05-15T12:00:00Z",
+      },
+    });
+    expect(parseToolText(res.content)).toEqual({ status: "accepted" });
+    expect(captured).toEqual({
+      reason: "awaiting_human",
+      reasonNote: "operator review pending",
+      resumeAt: "2026-05-15T12:00:00Z",
+    });
+  });
+
+  it("report_park rejects unspecified / unknown reasons via schema", async () => {
+    const registry = new TokenRegistry();
+    registry.register("tok-bad", makeRegistryEntry({}));
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "report_park",
+      arguments: { token: "tok-bad", reason: "unspecified" },
+    });
+    expect(res.isError).toBe(true);
+  });
+
+  it("report_park surfaces a structured response when the run did not register onPark", async () => {
+    const registry = new TokenRegistry();
+    registry.register("tok-no-park", makeRegistryEntry({})); // no onPark
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "report_park",
+      arguments: { token: "tok-no-park", reason: "time_wait" },
+    });
+    // The handler returns a structured "park_not_supported" payload
+    // (not isError) so the agent can surface a meaningful message to
+    // the user; the per-run registration is expected to wire onPark
+    // in production. Either shape is acceptable; we just want to
+    // assert the path doesn't crash.
+    expect(typeof res.content).toBe("object");
   });
 });

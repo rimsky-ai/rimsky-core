@@ -30,6 +30,7 @@ import type {
   TraceResponse,
   AdminViewResponse,
   FrameRow,
+  ParkedNodesResponse,
 } from './types';
 
 async function get<T>(path: string): Promise<T> {
@@ -103,4 +104,13 @@ export const api = {
 
   getAdminView: (storeName: string, viewName: string, params: Record<string, string> = {}) =>
     get<AdminViewResponse>(`/api/store/${storeName}/admin/${viewName}${qs(params)}`),
+
+  // Parked-node diagnostics: surfaces every node currently in
+  // phase='parked' across the cluster. ?reason= filters by snake_case
+  // ParkReason value (time_wait | signal_wait | awaiting_human |
+  // retry_backoff). Per 2026-05-14 Piece 2.
+  listParkedNodes: (reason?: string) =>
+    get<ParkedNodesResponse>(
+      `/api/control/admin/diagnostics/parked-nodes${qs({ reason })}`,
+    ),
 };

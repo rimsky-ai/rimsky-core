@@ -45,13 +45,9 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
 				Executor: "stub",
-				OnEvent: map[string]node.EventHandler{
-					"ready": {
-						Invalidate: &node.HandlerInvalidate{Targets: []string{"b"}, Frame: node.FrameNext},
-					},
-				},
 			}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "event", Name: "ready"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-on-event-stream", map[string]any{})
@@ -124,35 +120,30 @@ func TestOnEventMultipleEmissionsLatestWins(t *testing.T) {
 	require.Contains(t, string(evt.PayloadInline), `"step":3`)
 }
 
-// TestOnEventUndeclaredEventNameRejectedAtRegistration covers H3 case (d).
-// A template referencing an event name not in the executor's
-// declared_events fails registration. The stub executor's
-// ObservabilityCapabilities currently declares no events, so any
-// on_event referencing an event name should be rejected.
+// TestOnEventUndeclaredEventNameRejectedAtRegistration covers H3 case (d)
+// under the post-2026-05-14 subscription-cascade model. A template
+// declaring a subscription `on: event` with a name not in the emitter
+// executor's declared_events fails registration. The stub executor's
+// ObservabilityCapabilities declares no events, so any event-topic
+// subscription should be rejected at template-deploy time.
 func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Build a template whose on_event handler references an event name
-	// the stub executor does not declare. With AppDeps.ExecutorCapabilities
-	// wired (config.StartControlAPI) the controlapi templates handler
-	// rejects this at registration before the deploy step.
 	body := map[string]any{
 		"template": map[string]any{
 			"name":                  "on-event-undeclared",
 			"version":               "1",
 			"frame_resolution_mode": "serial_queue",
 			"nodes": []map[string]any{
+				{"type": "emitter", "executor": "stub"},
 				{
-					"type":     "worker",
+					"type":     "receiver",
 					"executor": "stub",
-					"on_event": map[string]any{
-						"undeclared_event": map[string]any{
-							"invalidate": map[string]any{
-								"targets": []string{"worker"},
-								"frame":   "next",
-							},
-						},
-					},
+					"subscribes": []map[string]any{{
+						"node": "emitter",
+						"on":   "event",
+						"name": "undeclared_event",
+					}},
 				},
 			},
 		},

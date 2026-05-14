@@ -2,6 +2,99 @@
 
 ## Unreleased
 
+- Public-doc migration to the subscription-cascade model (2026-05-14, T55
+  follow-up). The 2026-05-14 subscription-cascade resolution plan
+  migrated runtime + scenario code; this pass migrates the remaining
+  public-doc surface: substitution grammar (`{{deps.X.Y}}` →
+  `{{nodes.X.attribute.Y}}`) and template shape (`dependencies:` /
+  `on_event:` map / send-side `invalidate.targets:` / `action:
+  invalidate` retired) updated across `docs/concepts/*.md`,
+  `docs/agents/llms.txt`, `docs/agents/examples/claude-agent-userdata.md`,
+  `docs/agents/errors/attribute_validation_failed_at_dispatch.md`,
+  `docs/humans/concepts.md`, `docs/humans/dashboard.md`,
+  `docs/protocols/executor.md`. Two new concept docs added:
+  `docs/concepts/subscription.md` and `docs/concepts/wait-set.md`;
+  `docs/agents/llms.txt` index updated to include them.
+  `docs/agents/llms-full.txt` and `docs/glossary.md` regenerated via
+  `make docs-roots`. Retired-vocabulary mentions that survive are
+  explanatory prose inside the new docs (the catalog explicitly
+  documents the retirement).
+
+- Subscription-cascade cycle — review-cleanup pass 2 (2026-05-14).
+  Three follow-ups beyond the prior review pass: (1) added a unit
+  test in `dashboards/rimsky-dashboard/tests/unit/proxy.test.ts`
+  covering the new `/api/control/admin/*` bypass route so a future
+  refactor of `proxy.ts` cannot silently break the Parked Nodes
+  view's data path; (2) added an erratum + matching
+  `tension:frame-next-wait-set-placement` entry to the
+  subscription-cascade design spec acknowledging that the shipped
+  `frame: next` cascade-walk skips wait-set inserts entirely
+  (instead opening a fresh frame via `EnqueueOrCoalesce`) because
+  the originally-specified next-frame wait-set row would never
+  drain — sound under `serial_queue`, the only currently-supported
+  `frame_resolution_mode`; (3) fixed the flaky
+  `TestParkedLifecycleHeldClaimRetentionAcrossPark` scenario test by
+  bumping the scripted `resume_at` from `now+1s` to `now+10s` (above
+  observed parallel-testcontainer setup latency) and re-scripting
+  the resume's Success terminal BEFORE the parked-state SQL probes,
+  closing the race where `SweepParkedNodes` could dispatch against
+  the still-Park script under heavy load. Now passes 20/20 under
+  `-count=20 -p 8 -race`.
+- Subscription-cascade resolution + ParkReason typed (2026-05-14 cycle).
+  `dependencies:` retires; `subscribes:` introduced (impactee-side
+  declaration of reactive coupling, with three topic kinds: `state` /
+  `attribute` / `event`). Substitution refs in attribute schemas
+  auto-subscribe via the template-validator's substitution-ref parser.
+  New `rimsky_wait_set` persistence ledger drives dispatch eligibility:
+  a stale node is dispatch-eligible iff its wait-set is empty for the
+  current frame. Lifecycle-handler `invalidate.targets:` and
+  `error_types: action: invalidate` retire; receivers declare cascade
+  coupling via subscriptions. The `on_event:` map retires (replaced by
+  `subscribes: [{on: event, name: <event>}]`). Substitution grammar
+  `deps.X.Y` → `nodes.X.attribute.Y` (the `nodes.X.event.Y.<path>`
+  form is unchanged). New `concept:subscription` + `concept:wait-set`
+  concept docs; `concept:on-event-handler` retired to `_retired/`;
+  eleven sibling concept docs mutated. Resolves four design tensions
+  (`dependency-overloaded-bundle`, `subscription-implies-cascade-dependency`,
+  `rimsky-not-a-dag-vocabulary`, `send-vs-subscribe-asymmetry`).
+- `Park.reason` typed as `ParkReason` enum on the wire (proto-layer
+  change). Five values: `PARK_REASON_UNSPECIFIED` /
+  `_TIME_WAIT` / `_SIGNAL_WAIT` / `_AWAITING_HUMAN` / `_RETRY_BACKOFF`.
+  Storage form: lower_snake_case derived from the enum symbol
+  (`awaiting_human` etc.) on the diagnostics endpoint, the
+  `rimsky-cli parked list --reason=` flag, the Prometheus
+  `rimsky_parked_nodes_by_reason` gauge label, and the
+  `rimsky_node_runs.parked_reason` column. New `Park.reason_note`
+  string field carries the optional free-form human annotation
+  (stored in new column `rimsky_node_runs.parked_reason_note`, inert
+  in rimsky). New `rimsky-cli parked list` subcommand surfaces the
+  `/admin/diagnostics/parked-nodes` endpoint as a table with
+  `--reason=` filter; the endpoint now validates the filter against
+  the typed enum and returns HTTP 400 on unknown values. New
+  `/admin/diagnostics/wait-sets?frame=<uuid>[&node=<uuid>]` endpoint
+  surfaces the wait-set ledger for stuck-frame debugging. claude-agent
+  TS executor gains a `report_park` MCP tool with the snake_case
+  enum form; the rate-limit auto-park path maps to `time_wait` with
+  the descriptive free-form text moved to `reason_note`.
+  `rimsky_nodes.dependencies` column + `NodeRow.Dependencies` field +
+  `ListDependentsOf` accessor + `validateDependencies` validator +
+  `HandlerInvalidate` row-type + `emitHandlerInvalidate` runtime
+  helper all retire. The runtime resolves subscribed senders via the
+  cached per-template subscription-edge inverse map
+  (`runtime/subscription_loaders.go::resolveSubscribedSenders`). The
+  cascade walk (`cascadeSubscribersStaleInTx`) consumes the inverse
+  map directly and respects per-edge `frame: in | next` modifiers.
+  `parked_reason_note` is now surfaced on the read path
+  (`ParkedRow.ReasonNote`, `ResumeMetadataRow.ReasonNote`,
+  `ParkedDiagnosticRow.ReasonNote`); the admin diagnostics endpoint
+  exposes it as `reason_note`. New dashboard `Parked nodes` view
+  (`dashboards/rimsky-dashboard/src/client/routes/ParkedNodesPage.tsx`)
+  groups by reason and highlights `awaiting_human` rows with
+  operator-attention styling. New atomic-staging pattern doc
+  (`docs/agents/examples/atomic-staging.md`) + reference filesystem
+  producer (`examples/atomic-staging-fs-producer/`) implementing the
+  four-verb protocol over a POSIX substrate with two-rename atomic
+  swap on Commit + leaked-staging sweep loop.
 - Foundation → graph back-import eliminated. The 2026-05-13 layer
   restructure left one documented residual: nine files under
   `foundation/persistence/` imported `graph/node` for `TemplateSpec`,

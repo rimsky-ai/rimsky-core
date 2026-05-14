@@ -28,7 +28,7 @@ import (
 )
 
 const nodeCols = `
-  id, instance_id, node_type, executor, schedule_cron, state, last_outcome, dependencies,
+  id, instance_id, node_type, executor, schedule_cron, state, last_outcome,
   current_error_class, retry_counter, action_index, last_heartbeat_at,
   assigned_supervisor_id, frame_id, created_at, updated_at
 `
@@ -42,18 +42,13 @@ const nodeCols = `
 // frame.EnqueueOrCoalesce + scheduler-tick frame engine pair.
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	ex := s.q(tx)
-	deps := in.Dependencies
-	if deps == nil {
-		deps = []foundationshared.UUID{}
-	}
 	row := ex.QueryRow(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, schedule_cron, state, dependencies
-		 ) VALUES ($1, $2, $3, $4, $5, 'fresh', $6)
+		   id, instance_id, node_type, executor, schedule_cron, state
+		 ) VALUES ($1, $2, $3, $4, $5, 'fresh')
 		 RETURNING `+nodeCols,
 		in.ID, in.InstanceID, in.NodeType,
 		nullableString(in.Executor), nullableString(in.ScheduleCron),
-		deps,
 	)
 	return scanNode(row)
 }
@@ -134,7 +129,15 @@ func (s *nodesImpl) ListByInstancePaged(
 }
 
 // ListReadyForDispatch returns executor-backed nodes in `stale` whose
-// dependencies are all `fresh` and that have no outstanding dispatch row.
+// wait-set is empty in their current frame and that have no
+// outstanding dispatch row.
+//
+// Post-2026-05-14 the eligibility predicate is wait-set-empty rather
+// than dependencies-all-fresh; the cascade walk populates
+// rimsky_wait_set on every sender transition and the settled-state
+// drain removes rows when senders resolve.
+//
+//	@concept: wait-set
 func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
@@ -142,9 +145,8 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		 WHERE n.executor IS NOT NULL AND n.executor <> ''
 		   AND n.state = 'stale'
 		   AND NOT EXISTS (
-		     SELECT 1 FROM unnest(n.dependencies) AS dep_id
-		     JOIN rimsky_nodes d ON d.id = dep_id
-		     WHERE d.state <> 'fresh'
+		     SELECT 1 FROM rimsky_wait_set w
+		     WHERE w.frame_id = n.frame_id AND w.receiver_node_id = n.id
 		   )
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_node_runs x WHERE x.node_id = n.id
@@ -159,9 +161,11 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 }
 
 // ListPureCascadeReady returns pure-cascade (Executor == "") nodes in state
-// 'stale' whose deps are all 'fresh'. The scheduler's cascade sweeper uses
-// this list to flip them to 'fresh' directly without going through the
-// dispatch queue.
+// 'stale' whose wait-set is empty in their current frame. The
+// scheduler's cascade sweeper uses this list to flip them to 'fresh'
+// directly without going through the dispatch queue.
+//
+//	@concept: wait-set
 func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
@@ -169,9 +173,8 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		 WHERE (n.executor IS NULL OR n.executor = '')
 		   AND n.state = 'stale'
 		   AND NOT EXISTS (
-		     SELECT 1 FROM unnest(n.dependencies) AS dep_id
-		     JOIN rimsky_nodes d ON d.id = dep_id
-		     WHERE d.state <> 'fresh'
+		     SELECT 1 FROM rimsky_wait_set w
+		     WHERE w.frame_id = n.frame_id AND w.receiver_node_id = n.id
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -200,18 +203,6 @@ func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID st
 		`SELECT `+nodeCols+` FROM rimsky_nodes
 		 WHERE state = 'running' AND assigned_supervisor_id = $1
 		 ORDER BY updated_at ASC`, supervisorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListDependentsOf(ctx context.Context, nodeID foundationshared.UUID, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	ex := s.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+nodeCols+` FROM rimsky_nodes
-		 WHERE $1 = ANY(dependencies) ORDER BY created_at ASC`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +448,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
 		&executor, &scheduleCron, &r.State, &lastOutcome,
-		&r.Dependencies,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameID,
 		&r.CreatedAt, &r.UpdatedAt,
@@ -473,9 +463,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB
 	r.FrameID = frameID
-	if r.Dependencies == nil {
-		r.Dependencies = []foundationshared.UUID{}
-	}
 	return r, nil
 }
 

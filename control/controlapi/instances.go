@@ -555,17 +555,24 @@ func provisionInstanceTx(
 	// Phase 1: create nodes (Create defaults to 'fresh' per migration 002 +
 	// spec §3.1) + register schedules. Phase 2 enqueues an initial frame
 	// for each root.
+	//
+	// Post-2026-05-14: cascade-coupling is declared receiver-side via
+	// `subscribes:`; the per-template subscription-edge inverse map
+	// (graph/node/subscription_edges.go) drives cascade walks. The
+	// retired `dependencies` column is no longer populated.
 	for _, def := range tpl.Spec.Nodes {
 		nodeID := nodeIDs[def.Type]
-
-		// Map dependency node-types to UUIDs.
-		depUUIDs := make([]foundationshared.UUID, 0, len(def.Dependencies))
-		for _, depType := range def.Dependencies {
-			depID, ok := nodeIDs[depType]
-			if !ok {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: unknown dependency %q referenced by node %q", depType, def.Type)
+		// Subscription validity is checked at template-deploy time by
+		// the validator; we still emit an instance-time error on
+		// missing target so a hand-rolled spec doesn't silently
+		// dispatch.
+		for _, s := range def.Subscribes {
+			if s.Node == "" {
+				continue
 			}
-			depUUIDs = append(depUUIDs, depID)
+			if _, ok := nodeIDs[s.Node]; !ok {
+				return createInstanceResponse{}, fmt.Errorf("instance-factory: subscribe references unknown node %q (on node %q)", s.Node, def.Type)
+			}
 		}
 
 		// Create node row.
@@ -575,7 +582,6 @@ func provisionInstanceTx(
 			NodeType:     def.Type,
 			Executor:     def.Executor,
 			ScheduleCron: def.Schedule,
-			Dependencies: depUUIDs,
 		}, tx); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
 		}
@@ -596,11 +602,31 @@ func provisionInstanceTx(
 		}
 	}
 
-	// Phase 2: enqueue an initial frame for each root node (no deps),
-	// reusing the caller's tx so the frame inserts are atomic with the
-	// instance+node creation above.
+	// Phase 2: enqueue an initial frame for each root node (no upstream
+	// subscriptions), reusing the caller's tx so the frame inserts are
+	// atomic with the instance+node creation above.
+	//
+	// Post-2026-05-14: a "root" is a node with no `subscribes:` entries
+	// naming an upstream node AND no substitution refs in its attribute
+	// schema. Cross-cutting (`instance:true`) entries don't disqualify
+	// a root because they fire on cascade-walks, not at instance create.
 	for _, def := range tpl.Spec.Nodes {
-		if len(def.Dependencies) != 0 {
+		hasUpstream := false
+		for _, s := range def.Subscribes {
+			if s.Node != "" && s.Node != def.Type {
+				hasUpstream = true
+				break
+			}
+		}
+		if !hasUpstream {
+			for _, ref := range nodepkg.UpstreamNodeTypesFromAttributes(def) {
+				if ref != def.Type {
+					hasUpstream = true
+					break
+				}
+			}
+		}
+		if hasUpstream {
 			continue
 		}
 		nodeID := nodeIDs[def.Type]

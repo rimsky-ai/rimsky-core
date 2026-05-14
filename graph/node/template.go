@@ -43,8 +43,7 @@ type (
 	NodeLockRef                 = spec.NodeLockRef
 	NodeAttributesDef           = spec.NodeAttributesDef
 	InheritEntry                = spec.InheritEntry
-	EventHandler                = spec.EventHandler
-	HandlerInvalidate           = spec.HandlerInvalidate
+	SubscriptionEntry           = spec.SubscriptionEntry
 	OnAcquireUnavailableHandler = spec.OnAcquireUnavailableHandler
 	OnExecutorCompleteHandler   = spec.OnExecutorCompleteHandler
 	OnExecutorTerminalHandler   = spec.OnExecutorTerminalHandler

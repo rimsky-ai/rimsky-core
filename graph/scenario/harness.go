@@ -571,8 +571,37 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if n.Schedule != "" {
 		nd["schedule"] = n.Schedule
 	}
-	if len(n.Dependencies) > 0 {
-		nd["dependencies"] = n.Dependencies
+	if len(n.Subscribes) > 0 {
+		subs := make([]map[string]any, 0, len(n.Subscribes))
+		for _, s := range n.Subscribes {
+			item := map[string]any{"on": s.On}
+			if s.Node != "" {
+				item["node"] = s.Node
+			}
+			if s.Instance {
+				item["instance"] = true
+			}
+			if s.When != "" {
+				item["when"] = s.When
+			}
+			if s.Outcome != "" {
+				item["outcome"] = s.Outcome
+			}
+			if s.ErrorClass != "" {
+				item["error_class"] = s.ErrorClass
+			}
+			if s.Reason != "" {
+				item["reason"] = s.Reason
+			}
+			if s.Name != "" {
+				item["name"] = s.Name
+			}
+			if s.Frame != "" {
+				item["frame"] = s.Frame
+			}
+			subs = append(subs, item)
+		}
+		nd["subscribes"] = subs
 	}
 	if len(n.Stores) > 0 {
 		stores := make([]map[string]any, 0, len(n.Stores))
@@ -649,20 +678,13 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		nd["error_types"] = ets
 	}
 	if n.OnAcquireUnavailable != nil {
-		nd["on_acquire_unavailable"] = handlerToJSON(n.OnAcquireUnavailable.Resolve, n.OnAcquireUnavailable.ErrorClass, n.OnAcquireUnavailable.Invalidate)
+		nd["on_acquire_unavailable"] = handlerToJSON(n.OnAcquireUnavailable.Resolve, n.OnAcquireUnavailable.ErrorClass)
 	}
 	if n.OnExecutorComplete != nil {
-		nd["on_executor_complete"] = handlerToJSON(n.OnExecutorComplete.Resolve, "", n.OnExecutorComplete.Invalidate)
+		nd["on_executor_complete"] = handlerToJSON(n.OnExecutorComplete.Resolve, "")
 	}
 	if n.OnExecutorErrored != nil {
-		nd["on_executor_errored"] = handlerToJSON(n.OnExecutorErrored.Resolve, n.OnExecutorErrored.ErrorClass, n.OnExecutorErrored.Invalidate)
-	}
-	if len(n.OnEvent) > 0 {
-		evtMap := map[string]any{}
-		for name, h := range n.OnEvent {
-			evtMap[name] = handlerToJSON(h.Resolve, h.ErrorClass, h.Invalidate)
-		}
-		nd["on_event"] = evtMap
+		nd["on_executor_errored"] = handlerToJSON(n.OnExecutorErrored.Resolve, n.OnExecutorErrored.ErrorClass)
 	}
 	if n.MaxParkDuration != "" {
 		nd["max_park_duration"] = n.MaxParkDuration
@@ -674,23 +696,16 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 }
 
 // handlerToJSON serializes a lifecycle handler block.
-func handlerToJSON(resolve, errorClass string, inv *node.HandlerInvalidate) map[string]any {
+//
+// Post-2026-05-14: the invalidate-emit slot retired; only resolve +
+// error_class remain.
+func handlerToJSON(resolve, errorClass string) map[string]any {
 	h := map[string]any{}
 	if resolve != "" {
 		h["resolve"] = resolve
 	}
 	if errorClass != "" {
 		h["error_class"] = errorClass
-	}
-	if inv != nil {
-		invMap := map[string]any{}
-		if len(inv.Targets) > 0 {
-			invMap["targets"] = inv.Targets
-		}
-		if inv.Frame != "" {
-			invMap["frame"] = inv.Frame
-		}
-		h["invalidate"] = invMap
 	}
 	return h
 }
@@ -730,6 +745,12 @@ func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 func withInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Inherits = append(n.Inherits, refs...)
+	}
+}
+
+func withSubscribes(subs ...node.SubscriptionEntry) func(*node.TemplateNodeDef) {
+	return func(n *node.TemplateNodeDef) {
+		n.Subscribes = append(n.Subscribes, subs...)
 	}
 }
 
@@ -800,4 +821,11 @@ func WithAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 
 func WithInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 	return withInherits(refs...)
+}
+
+// WithSubscribes appends one or more SubscriptionEntry receivers to the
+// node's Subscribes list. Used by scenario tests to declare cascade
+// coupling under the post-2026-05-14 subscription model.
+func WithSubscribes(subs ...node.SubscriptionEntry) func(*node.TemplateNodeDef) {
+	return withSubscribes(subs...)
 }

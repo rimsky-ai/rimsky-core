@@ -80,9 +80,8 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{
-					Type:         "b",
-					Executor:     "stub",
-					Dependencies: []string{"a", "c"},
+					Type:     "b",
+					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"template_resolution_failed": {
 							Policy: []node.PolicyAction{{Action: "give_up"}},
@@ -90,6 +89,10 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 					},
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{Node: "a", On: "state"},
+					node.SubscriptionEntry{Node: "c", On: "state"},
+				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

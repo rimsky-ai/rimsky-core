@@ -176,7 +176,7 @@ func TestRunComposeUp_NonTTYDestructiveRequiresYes(t *testing.T) {
 	if len(insts) != 1 {
 		t.Fatalf("got %+v", insts)
 	}
-	srv.State.AddNode(insts[0].ID, cli.Node{ID: "n", InstanceID: insts[0].ID, NodeType: "a", State: "failed", Dependencies: []string{}})
+	srv.State.AddNode(insts[0].ID, cli.Node{ID: "n", InstanceID: insts[0].ID, NodeType: "a", State: "failed"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(insts[0].ID, &now)
 	// Now flip the manifest to restart=on_failure: re-write.

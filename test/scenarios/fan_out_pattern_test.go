@@ -37,21 +37,24 @@ func TestFanOutPattern(t *testing.T) {
 			// Pure-cascade scheduled root; no executor / no stores.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "root", Schedule: "* * * * *"}),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "child_a", Executor: "stub", Dependencies: []string{"root"}},
+				node.TemplateNodeDef{Type: "child_a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", On: "state"}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"a": map[string]any{"type": "integer"}},
 				}),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "child_b", Executor: "stub", Dependencies: []string{"root"}},
+				node.TemplateNodeDef{Type: "child_b", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", On: "state"}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"b": map[string]any{"type": "integer"}},
 				}),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "child_c", Executor: "stub", Dependencies: []string{"root"}},
+				node.TemplateNodeDef{Type: "child_c", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "root", On: "state"}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"c": map[string]any{"type": "integer"}},

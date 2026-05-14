@@ -175,11 +175,19 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Tables, t
 // in-flight stale source to exercise ProcessPureCascade.
 func pcCreateNode(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, executor string, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
+	_ = deps // legacy: dependency-edge resolution is now via subscription-edge map
+	return pcCreateNodeWithType(ctx, t, f, instanceID, "t", executor)
+}
+
+// pcCreateNodeWithType is the post-2026-05-14 helper: NodeType is
+// explicit so the test's template can declare matching subscribers.
+func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, instanceID shared.UUID, nodeType, executor string) persistence.NodeRow {
+	t.Helper()
 	var n persistence.NodeRow
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID: uuid.New(), InstanceID: instanceID, NodeType: "t",
-			Executor: executor, Dependencies: deps,
+			ID: uuid.New(), InstanceID: instanceID, NodeType: nodeType,
+			Executor: executor,
 		}, tx)
 		if err != nil {
 			return err
@@ -395,15 +403,29 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	ctx := context.Background()
 	f := newPureCascadeFixture(t)
 
-	tpl := pcDeployTemplate(ctx, t, f.persist, "alpha")
+	// Template carries two declared node-types: pure-cascade `pure-a`
+	// and executor-backed `worker-b`. Under the post-2026-05-14 model,
+	// `worker-b` subscribes to `pure-a` via subscription-edge inference;
+	// the pure-cascade sweep computes receivers from that inverse map.
+	tpl := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
+		Name: "alpha-cascade", Version: "v1",
+		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
+		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
+		Nodes: []nodepkg.TemplateNodeDef{
+			{Type: "pure-a"},
+			{Type: "worker-b", Executor: "worker",
+				Subscribes: []nodepkg.SubscriptionEntry{{Node: "pure-a", On: "state"}}},
+		},
+	})
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
 
-	// A: pure cascade, no deps. B: executor "worker", depends on A.
-	// Before sweep: A=stale, B=stale (dep A stale). Sweep flips A → fresh,
-	// then emits recalculate to B; B's dep is now fresh so the recalculate
-	// enqueues B onto the dispatch queue.
-	pureA := pcCreateNode(ctx, t, f, inst.ID, "")
-	execB := pcCreateNode(ctx, t, f, inst.ID, "worker", pureA.ID)
+	// A: pure cascade, no deps. B: executor "worker", subscribes to A.
+	// Before sweep: A=stale, B=stale (gated by A). Sweep flips A → fresh,
+	// then emits recalculate to B; B's wait-set is empty (we didn't seed
+	// any wait-set rows) so the recalculate enqueues B onto the dispatch
+	// queue.
+	pureA := pcCreateNodeWithType(ctx, t, f, inst.ID, "pure-a", "")
+	execB := pcCreateNodeWithType(ctx, t, f, inst.ID, "worker-b", "worker")
 	// Seed a frame for both (B is the one that gets enqueued).
 	pcSeedFrame(ctx, t, f, inst.ID, execB.ID)
 

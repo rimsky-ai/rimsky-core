@@ -169,6 +169,22 @@ message Error {
   google.protobuf.Struct payload = 2;
 }
 
+// ParkReason categorizes why an executor parked a node. Storage form
+// (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
+// from the enum symbol (e.g. PARK_REASON_AWAITING_HUMAN ->
+// awaiting_human). The same form is used on the diagnostics
+// endpoint, the rimsky-cli `parked list --reason=` flag, and the
+// Prometheus rimsky_parked_nodes_by_reason gauge label.
+//
+// @concept: parked-state
+enum ParkReason {
+  PARK_REASON_UNSPECIFIED    = 0;
+  PARK_REASON_TIME_WAIT      = 1;
+  PARK_REASON_SIGNAL_WAIT    = 2;
+  PARK_REASON_AWAITING_HUMAN = 3;
+  PARK_REASON_RETRY_BACKOFF  = 4;
+}
+
 // Park signals that the executor wants to pause the node and resume
 // later. The held claim handle is retained across the park boundary;
 // on resume, rimsky re-dispatches with ExecuteRequest.resume_context
@@ -177,9 +193,9 @@ message Error {
 // At least one of resume_at or external invalidation must wake the
 // node; rimsky does not enforce this in-protocol.
 message Park {
-  // Recommended non-empty; empty is permitted but logged WARN at the
-  // supervisor.
-  string reason = 1;
+  // Typed reason. Stored as lower_snake_case text in
+  // col:rimsky_node_runs.parked_reason.
+  ParkReason reason = 1;
   // Inert to rimsky. Passed back as ResumeContext.payload on resume.
   bytes payload = 2;
   // Optional. When non-zero, the supervisor's SweepParkedNodes sweep
@@ -189,6 +205,8 @@ message Park {
   // Optional. Inert to rimsky. Passed back as
   // ResumeContext.session_token on resume.
   string session_token = 4;
+  // Free-form human annotation. Inert in rimsky.
+  string reason_note = 5;
 }
 
 // AwaitAsyncCallback (formerly AsyncAccepted) signals that the executor

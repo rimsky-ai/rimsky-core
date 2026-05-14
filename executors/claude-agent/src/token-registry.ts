@@ -61,6 +61,16 @@ export interface TokenEntry {
     scheduleTeardown: (td: () => Promise<void>) => void,
   ) => Promise<void>;
   /**
+   * Park the dispatch. Per 2026-05-14 Piece 2, `reason` is the typed
+   * ParkReason snake_case value. `resumeAt` is optional ISO 8601.
+   */
+  onPark?: (
+    reason: string,
+    reasonNote: string | null,
+    resumeAt: string | null,
+    scheduleTeardown: (td: () => Promise<void>) => void,
+  ) => Promise<void>;
+  /**
    * Persist a partial attribute write via the supervisor's incremental
    * writeback callback. Returns the HTTP status from the supervisor so the
    * tool dispatcher can surface a structured result to the agent.

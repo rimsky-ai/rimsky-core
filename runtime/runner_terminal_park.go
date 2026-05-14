@@ -27,11 +27,37 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
+
+// parkReasonStorageForm converts the proto ParkReason enum to the
+// snake_case text stored in col:rimsky_node_runs.parked_reason. The
+// same form drives the diagnostics endpoint, the rimsky-cli flag, and
+// the Prometheus gauge label.
+//
+//	@concept: parked-state
+func parkReasonStorageForm(r genv1.ParkReason) string {
+	s := strings.TrimPrefix(r.String(), "PARK_REASON_")
+	return strings.ToLower(s)
+}
+
+// parkReasonFromStorageForm inverts parkReasonStorageForm: given the
+// snake_case text (used on the async-callback body), return the proto
+// enum value. Unrecognized inputs map to PARK_REASON_UNSPECIFIED.
+//
+//	@concept: parked-state
+func parkReasonFromStorageForm(s string) genv1.ParkReason {
+	upper := "PARK_REASON_" + strings.ToUpper(s)
+	if v, ok := genv1.ParkReason_value[upper]; ok {
+		return genv1.ParkReason(v)
+	}
+	return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+}
 
 // applyTerminalPark handles the Park terminal event. Persists
 // the park metadata, spills large payloads, transitions the node-run
@@ -39,8 +65,8 @@ import (
 func applyTerminalPark(
 	ctx context.Context, args RunArgs, acq *acquisition, t terminalEvent,
 ) error {
-	if t.ParkReason == "" {
-		args.Logger.Warn("applyTerminalPark: empty reason (recommended non-empty)",
+	if t.ParkReason == genv1.ParkReason_PARK_REASON_UNSPECIFIED {
+		args.Logger.Warn("applyTerminalPark: reason unspecified (recommended typed)",
 			"node_id", acq.NodeID.String(),
 			"dispatch_id", acq.DispatchID.String())
 	}
@@ -97,7 +123,8 @@ func applyTerminalPark(
 		ExpectedClaimedBy:    args.SupervisorID,
 		ParkedAt:             now,
 		ResumeAt:             t.ParkResumeAt,
-		Reason:               t.ParkReason,
+		Reason:               parkReasonStorageForm(t.ParkReason),
+		ReasonNote:           t.ParkReasonNote,
 		SessionToken:         t.ParkSessionToken,
 		PayloadInline:        payloadInline,
 		PayloadHandle:        payloadHandle,
@@ -121,12 +148,19 @@ func applyTerminalPark(
 			cascade.NodeStateParked, cascade.ReasonHandlerPark, "", tx); err != nil {
 			return err
 		}
+		// Settled-state drain on park: the sender reached a settled
+		// state (parked); any wait-set rows gating receivers on this
+		// sender release.
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+			return err
+		}
 		// Audit-log the park event.
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "park_requested",
 			Payload: map[string]any{
-				"reason":            t.ParkReason,
+				"reason":            parkReasonStorageForm(t.ParkReason),
+				"reason_note":       t.ParkReasonNote,
 				"resume_at":         resumeAtForLog(t.ParkResumeAt),
 				"has_session_token": t.ParkSessionToken != "",
 				"payload_bytes":     len(t.ParkPayload),

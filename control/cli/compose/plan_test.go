@@ -204,7 +204,7 @@ instances:
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "failed", Dependencies: []string{}})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "failed"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 
@@ -409,7 +409,7 @@ instances:
 	// Non-fresh non-failed state on a terminal instance: blessed-invariant
 	// 13 forbids this in production, but the CLI's classifier must
 	// defensively treat anything-not-fresh as failure.
-	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running", Dependencies: []string{}})
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 

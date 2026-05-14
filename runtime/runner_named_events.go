@@ -2,20 +2,18 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Named-event processing — H1 (persist) + H2 (on_event handler dispatch).
+// Named-event processing — persists each emitted NamedEvent.
 //
 // Every NamedEvent emitted during a dispatch (gRPC stream or async
-// callback body) is:
-//   1. Persisted to rimsky_node_events via NodeEventTable.Insert,
-//      with payload spilled through the configured BlobBackend when
-//      it exceeds BlobSpillThreshold (per plan H1).
-//   2. Matched against the emitter node's TemplateNodeDef.OnEvent map.
-//      If a matching handler is present, its Invalidate slot is fired
-//      via the unified invalidate handler (per plan H2). The handler's
-//      Resolve verdict (`pass`/`retry`/`error`/empty) is captured in
-//      the audit log; the handler does not transition the emitter's
-//      state directly — the executor's terminal verdict still drives
-//      the state machine.
+// callback body) is persisted to rimsky_node_events via
+// NodeEventTable.Insert, with payload spilled through the configured
+// BlobBackend when it exceeds BlobSpillThreshold.
+//
+// Post-2026-05-14 the per-event invalidate-emit handler retires: the
+// receiver-side `subscribes: [{node, on: event, name}]` declaration
+// replaces the substitution-path and the cascade-fire path uniformly.
+// The cascade walk picks up the emission via the subscription-edge
+// match in cascadeSubscribersStaleInTx.
 //
 // Per @blessed-invariant 21 the payload bytes are never logged,
 // formatted, or transformed; only sizes and names appear in audit-log
@@ -28,7 +26,6 @@ import (
 	"fmt"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/graph/node"
 )
 
 // processNamedEvents walks the captured event list, persists each via
@@ -46,12 +43,10 @@ func processNamedEvents(ctx context.Context, args RunArgs, acq *acquisition, eve
 				"node_id", acq.NodeID.String(),
 				"event_name", evt.Name,
 				"error", err.Error())
-			// Continue — handler dispatch is still attempted because
-			// the event happened even if persistence failed; the
-			// substitution path may not find it but the
-			// invalidate-fanout still has value for routing.
 		}
-		fireOnEventHandler(ctx, args, acq, evt.Name)
+		// Receiver-side `subscribes: [{node, on: event, name}]` handles
+		// downstream cascade-fire via the subscription-edge match in
+		// cascadeSubscribersStaleInTx; no per-emit handler dispatch here.
 	}
 }
 
@@ -121,63 +116,6 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 	return nil
 }
 
-// fireOnEventHandler looks up the emitter's template OnEvent[<name>]
-// entry; if present, fires the declared Invalidate via the unified
-// invalidate-handler path (the same one that the admin invalidate
-// endpoint uses, so handler-emitted invalidates correctly resume parked
-// targets).
-//
-// The handler's Resolve verdict (pass/retry/error) is recorded in the
-// audit-log only — it does not transition the emitter's state directly
-// (the executor's terminal verdict drives the state machine). The
-// audit-log entry is written even when no Invalidate is configured so
-// operators can confirm the handler ran.
-func fireOnEventHandler(ctx context.Context, args RunArgs, acq *acquisition, eventName string) {
-	if acq.NodeDef == nil || len(acq.NodeDef.OnEvent) == 0 {
-		return
-	}
-	handler, ok := acq.NodeDef.OnEvent[eventName]
-	if !ok {
-		return
-	}
-	// Audit-log the handler invocation, including the declared Resolve
-	// verdict + ErrorClass. The runtime does not transition the emitter
-	// based on these fields (the executor's terminal verdict drives the
-	// state machine), but operators have asked for visibility into what
-	// the handler declared so a misconfigured `resolve: error` is
-	// recoverable from the audit trail rather than only surfacing as a
-	// silent no-op.
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "on_event_handler_fired",
-			Payload: map[string]any{
-				"event_name":           eventName,
-				"declared_resolve":     handler.Resolve,
-				"declared_error_class": handler.ErrorClass,
-				"has_invalidate":       handler.Invalidate != nil && len(handler.Invalidate.Targets) > 0,
-			},
-		}, tx)
-	}); err != nil {
-		args.Logger.Warn("fireOnEventHandler: audit-log append failed",
-			"node_id", acq.NodeID.String(),
-			"event_name", eventName,
-			"error", err.Error())
-	}
-
-	if handler.Invalidate == nil || len(handler.Invalidate.Targets) == 0 {
-		return
-	}
-	// Convert the graph-layer DSL HandlerInvalidate to the foundation
-	// invalidate target list. Resolve targets via instance-wide
-	// type-to-id lookup (same approach as invalidateTargets in
-	// runner_error_policy.go).
-	frameMode := handler.Invalidate.Frame
-	if frameMode == "" {
-		frameMode = node.FrameNext
-	}
-	emitHandlerInvalidate(ctx, args, acq.NodeID, acq.NodeType, acq.InstanceID, &acq.FrameID, &node.HandlerInvalidate{
-		Targets: handler.Invalidate.Targets,
-		Frame:   frameMode,
-	})
-}
+// fireOnEventHandler retired by the 2026-05-14 subscription-cascade
+// resolution. Receiver-side `subscribes: [{node, on: event, name}]`
+// replaces the substitution path and the cascade-fire path uniformly.

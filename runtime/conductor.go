@@ -97,9 +97,24 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 		}
 		// running → stale (also clears assigned_supervisor_id + heartbeat
 		// as part of the state transition; no separate clear call needed).
+		//
+		// Pessimistic-invalidate per spec Piece 1: the running → stale
+		// transition IS this sender's invalidation in this frame. Gate
+		// downstream subscribers so they don't dispatch with stale
+		// upstream data while the re-enqueued sender is re-running.
+		//
+		//	@concept: cascade
+		//	@concept: wait-set
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Nodes().UpdateState(ctx, n.ID,
-				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, "", tx)
+			if err := args.Persist.Nodes().UpdateState(ctx, n.ID,
+				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, "", tx); err != nil {
+				return err
+			}
+			if n.FrameID == nil {
+				return nil
+			}
+			return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
+				log, n.ID, n.InstanceID, *n.FrameID)
 		}); err != nil {
 			log.Warn("tick: heartbeat_lost state transition failed",
 				"node_id", n.ID.String(), "error", err.Error())

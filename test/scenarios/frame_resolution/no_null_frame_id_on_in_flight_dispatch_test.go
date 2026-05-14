@@ -37,8 +37,10 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub", Dependencies: []string{"worker"}}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub", Dependencies: []string{"middle"}}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", On: "state"})),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-no-null", map[string]any{})

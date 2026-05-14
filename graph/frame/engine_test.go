@@ -36,8 +36,8 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	t.Helper()
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_nodes
-            (id, instance_id, node_type, state, dependencies, frame_id)
-        VALUES ($1, $2, 'n', $3, ARRAY[]::UUID[], $4)
+            (id, instance_id, node_type, state, frame_id)
+        VALUES ($1, $2, 'n', $3, $4)
     `, nodeID, instanceID, state, frameID)
 }
 

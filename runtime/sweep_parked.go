@@ -130,6 +130,17 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, cascade.LastOutcomeFailed, tx); err != nil {
 			return err
 		}
+		// Settled-state drain on park-timeout failed: parked → failed
+		// is a transition between settled states, but any wait-set
+		// rows that landed between park-time and timeout (e.g. via a
+		// concurrent cascade walk) must release. Defensive correctness
+		// per `concept:wait-set` invariant "Bulk-delete on sender
+		// resolution covers every topic kind uniformly."
+		//
+		//	@concept: wait-set
+		if err := args.Persist.WaitSet().DeleteBySender(ctx, row.FrameID, row.NodeID, tx); err != nil {
+			return err
+		}
 		// Auto-terminal Abandon for any held claims anchored on this
 		// node. We mark the claim-holders rows as 'failed' so
 		// CheckAndFireResolution computes the aggregate-failed → Abandon

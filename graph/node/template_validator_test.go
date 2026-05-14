@@ -55,20 +55,22 @@ func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-func TestValidateTemplate_Error_DependencyToUnknownNode(t *testing.T) {
+func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",
 		Version:             "1.0.0",
 		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
-			Type:         "a",
-			Executor:     "handler.a",
-			Dependencies: []string{"ghost"},
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ghost", On: "state"},
+			},
 		}},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].dependencies[0]")
+	hasErrorAt(t, res, "nodes[0].subscribes[0].node")
 }
 
 func TestValidateTemplate_Error_FrameResolutionMissing(t *testing.T) {
@@ -164,8 +166,8 @@ func TestValidateInheritance_Ok_HeldClaim(t *testing.T) {
 			},
 			{
 				Type: "process", Executor: "h",
-				Dependencies: []string{"pick"},
-				Inherits:     []InheritEntry{{Claim: "queue"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Inherits:   []InheritEntry{{Claim: "queue"}},
 			},
 		},
 	}
@@ -182,8 +184,8 @@ func TestValidateInheritance_Error_UnknownAlias(t *testing.T) {
 			{Type: "pick", Executor: "h"},
 			{
 				Type: "process", Executor: "h",
-				Dependencies: []string{"pick"},
-				Inherits:     []InheritEntry{{Claim: "ghost"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Inherits:   []InheritEntry{{Claim: "ghost"}},
 			},
 		},
 	}
@@ -239,10 +241,13 @@ func TestValidateInheritance_Error_AmbiguousAcquirers(t *testing.T) {
 				},
 			},
 			{
-				Type:         "downstream",
-				Executor:     "h",
-				Dependencies: []string{"pick_a", "pick_b"},
-				Inherits:     []InheritEntry{{Claim: "queue"}},
+				Type:     "downstream",
+				Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "pick_a", On: "state"},
+					{Node: "pick_b", On: "state"},
+				},
+				Inherits: []InheritEntry{{Claim: "queue"}},
 			},
 		},
 	}
@@ -273,8 +278,9 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 				},
 			},
 			{
-				Type: "process", Dependencies: []string{"pick"},
-				Inherits: []InheritEntry{{Claim: "queue"}},
+				Type:       "process",
+				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Inherits:   []InheritEntry{{Claim: "queue"}},
 			},
 		},
 	}
@@ -441,81 +447,11 @@ func TestValidateTemplate_OnExecutorErrored_BadResolve(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].on_executor_errored.resolve")
 }
 
-func TestValidateTemplate_HandlerInvalidate_SelfTarget(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{
-				Resolve: ResolveByChanged,
-				Invalidate: &HandlerInvalidate{
-					Targets: []string{SelfTarget},
-					Frame:   FrameNext,
-				},
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateTemplate_HandlerInvalidate_BadFrame(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{
-				Resolve: ResolveByChanged,
-				Invalidate: &HandlerInvalidate{
-					Targets: []string{SelfTarget},
-					Frame:   "bogus",
-				},
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.frame")
-}
-
-func TestValidateTemplate_HandlerInvalidate_UnknownTarget(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{
-				Resolve: ResolveByChanged,
-				Invalidate: &HandlerInvalidate{
-					Targets: []string{"nonexistent"},
-				},
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.targets[0]")
-}
-
-func TestValidateTemplate_HandlerInvalidate_EmptyTargets(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{
-				Resolve: ResolveByChanged,
-				Invalidate: &HandlerInvalidate{
-					Targets: []string{},
-				},
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_executor_complete.invalidate.targets")
-}
-
+// TestValidateTemplate_EmptyHandlerRejected: handlers must declare a
+// resolve verb. The invalidate-emit slot retired post-2026-05-14, so
+// the "neither resolve nor invalidate" case collapses to "resolve is
+// required."
 func TestValidateTemplate_EmptyHandlerRejected(t *testing.T) {
-	// A handler with neither resolve nor invalidate is meaningless.
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
@@ -528,12 +464,15 @@ func TestValidateTemplate_EmptyHandlerRejected(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable")
 }
 
-func TestValidateTemplate_PolicyAction_Frame(t *testing.T) {
+// TestValidateTemplate_PolicyAction_InvalidateRejected: error-policy
+// `action: invalidate` retires per the 2026-05-14 subscription-cascade
+// resolution; receivers declare cascade coupling via Subscribes.
+func TestValidateTemplate_PolicyAction_InvalidateRejected(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
-			{Type: "a"},
-			{Type: "b", ErrorTypes: map[string]ErrorTypePolicy{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
 				"some_error": {Policy: []PolicyAction{
 					{Action: "invalidate", Targets: []string{"a"}, Frame: FrameIn},
 				}},
@@ -541,93 +480,61 @@ func TestValidateTemplate_PolicyAction_Frame(t *testing.T) {
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].action")
 }
 
-func TestValidateTemplate_PolicyAction_BadFrame(t *testing.T) {
+// TestValidateSubscribes_Ok covers the happy path: a state-when-fresh
+// subscription against a declared node.
+func TestValidateSubscribes_Ok(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
-			{Type: "a"},
-			{Type: "b", ErrorTypes: map[string]ErrorTypePolicy{
-				"some_error": {Policy: []PolicyAction{
-					{Action: "invalidate", Targets: []string{"a"}, Frame: "bogus"},
-				}},
-			}},
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", On: "state", When: "fresh"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateSubscribes_MutexNodeAndInstance: node + instance:true is
+// mutually exclusive.
+func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Instance: true, On: "state"},
+				},
+			},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].frame")
 }
 
-// TestValidateOnEvent_OkAndError covers plan F1 + F6 — on_event handler
-// validation including cross-check against ExecutorDeclaredEvents.
-func TestValidateOnEvent_Ok(t *testing.T) {
+// TestValidateSubscribes_EventNameRequired: on:event needs a name.
+func TestValidateSubscribes_EventNameRequired(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			OnEvent: map[string]EventHandler{
-				"action_taken": {Resolve: ResolvePass},
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", On: "event"},
+				},
 			},
-		}},
-	}
-	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
-		ExecutorDeclaredEvents: func(name string) ([]string, bool) {
-			if name == "h" {
-				return []string{"action_taken", "score_emitted"}, true
-			}
-			return nil, false
 		},
 	}
-	res := ValidateTemplate(spec, hooks)
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateOnEvent_UndeclaredEventRejected(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			OnEvent: map[string]EventHandler{
-				"never_emitted": {Resolve: ResolvePass},
-			},
-		}},
-	}
-	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
-		ExecutorDeclaredEvents: func(name string) ([]string, bool) {
-			return []string{"action_taken"}, true
-		},
-	}
-	res := ValidateTemplate(spec, hooks)
+	res := ValidateTemplate(spec, RegistryHooks{})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, `nodes[0].on_event["never_emitted"]`)
-}
-
-func TestValidateOnEvent_PureCascadeRejected(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnEvent: map[string]EventHandler{
-				"any": {Resolve: ResolvePass},
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_event")
 }
 
 func TestValidateMaxParkDuration_Ok(t *testing.T) {

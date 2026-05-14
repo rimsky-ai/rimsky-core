@@ -27,7 +27,7 @@ The **selector** is the opaque text the graph author supplies (post-substitution
 
 The **scope** is the resolved selector or pick-policy-picked identifier — the canonical-byte form the producer commits to representing this claim by. Returned in `OpenResponse.scope` (named `Acquired.scope` in the proto). Persisted with the claim handle as the scope bytes.
 
-Selectors may contain `{{...}}` substitution directives resolved at dispatch (`{{deps.<node>.<field>}}`, `{{params.<key>}}`, `{{claim.<alias>.payload.<field>}}`); scopes never do — they are post-resolution.
+Selectors may contain `{{...}}` substitution directives resolved at dispatch (`{{nodes.<node>.attribute.<field>}}`, `{{params.<key>}}`, `{{claim.<alias>.payload.<field>}}`); scopes never do — they are post-resolution.
 
 ## How you encounter it
 

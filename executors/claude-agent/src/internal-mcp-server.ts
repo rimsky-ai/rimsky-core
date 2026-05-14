@@ -231,6 +231,51 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
   );
 
   mcp.tool(
+    "report_park",
+    "Park the dispatch. The supervisor pauses the node until resume_at " +
+      "elapses or an invalidate wakes it. Per 2026-05-14 Piece 2, reason " +
+      "is the typed ParkReason snake_case value (time_wait | signal_wait | " +
+      "awaiting_human | retry_backoff).",
+    {
+      token: tokenField,
+      reason: z.enum([
+        "time_wait",
+        "signal_wait",
+        "awaiting_human",
+        "retry_backoff",
+      ]),
+      reason_note: z.string().optional(),
+      resume_at: z.string().optional(),
+    },
+    async (args) => {
+      const entry = registry.lookup(args.token);
+      if (!entry) return unknownToken("report_park");
+      logCall("report_park", entry.runId);
+      if (!entry.onPark) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "park_not_supported",
+            },
+          ],
+          isError: true,
+        };
+      }
+      await entry.onPark(
+        args.reason,
+        args.reason_note ?? null,
+        args.resume_at ?? null,
+        deferTeardown,
+      );
+      const ack = { status: "accepted" as const };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(ack) }],
+      };
+    },
+  );
+
+  mcp.tool(
     "attributes_read",
     "Read the per-run attributes object as captured at executor spawn. " +
       "Returns the same snapshot for the duration of the run.",

@@ -5,12 +5,12 @@
 // Scenario 5 — A → B → C all run to fresh; invalidating A cascades to
 // B and C, both re-run.
 //
-// Migrated to the stores-redesign template grammar (spec §11): nodes are
-// built via scenario.MakeNode + scenario.WithAttributes. Data flow between
-// nodes uses the new attribute-source mechanism (spec §10): each
-// downstream node's attribute schema declares fields with
-// `source: "{{deps.<n>.<f>}}"`, which the supervisor substitutes at
-// dispatch from the upstream node's rimsky_node_attributes.data row.
+// Migrated to the post-2026-05-14 subscription-cascade template grammar:
+// nodes are built via scenario.MakeNode + scenario.WithAttributes. Data
+// flow between nodes uses the substitution grammar
+// `source: "{{nodes.<X>.attribute.<Y>}}"`, which auto-subscribes the
+// receiver to the sender's `attribute` topic at template-registration
+// time (see graph/node/subscription_edges.go).
 //
 // The behavioural intent (chain reaches fresh; invalidate-A cascades to
 // B and C) is preserved; the redesign-shaped assertion ("this node's
@@ -54,26 +54,27 @@ func TestCascadeInvalidate(t *testing.T) {
 				}),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "b", Executor: "stub", Dependencies: []string{"a"}},
+				node.TemplateNodeDef{Type: "b", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Substitution always yields a stringified value
-						// (spec §10), so source-driven fields are typed
-						// as string regardless of the upstream's storage
-						// type.
-						"a": map[string]any{"type": "string", "source": "{{deps.a.a}}"},
+						// Substitution always yields a stringified value,
+						// so source-driven fields are typed as string
+						// regardless of the upstream's storage type. The
+						// {{nodes.a.attribute.a}} ref auto-subscribes b to
+						// a's `attribute` topic.
+						"a": map[string]any{"type": "string", "source": "{{nodes.a.attribute.a}}"},
 						// Written by b's executor.
 						"b": map[string]any{"type": "integer"},
 					},
 				}),
 			),
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "c", Executor: "stub", Dependencies: []string{"b"}},
+				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b": map[string]any{"type": "string", "source": "{{deps.b.b}}"},
+						"b": map[string]any{"type": "string", "source": "{{nodes.b.attribute.b}}"},
 						"c": map[string]any{"type": "integer"},
 					},
 				}),
@@ -104,7 +105,7 @@ func TestCascadeInvalidate(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, bRow, "b should have a node_attributes row after fresh")
-	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from deps.a.a")
+	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from nodes.a.attribute.a")
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")
 
 	// Invalidate A; B and C should cascade-stale then rerun to fresh.

@@ -5,7 +5,7 @@ This page walks Rimsky's vocabulary in learning order. Each section names the co
 ## 1. Nodes and node states
 
 <!-- @source: concepts/node.md -->
-> The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its dependencies, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
+> The unit of work in a Rimsky template. A node is a named vertex in a template's graph, defined by its subscriptions, attributes schema, and the executor that runs it. At runtime, every node belongs to a specific instance and has one of five states.
 
 The five states are exhaustive — every node, at every moment, is in one of them.
 
@@ -42,12 +42,12 @@ See [`concepts/frame.md`](../concepts/frame.md).
 Rimsky's reactive model rests on one cascade message and one scheduler action.
 
 <!-- @source: concepts/cascade.md -->
-> The propagation of `invalidate` through the node graph. When a node loses or replaces its value, downstream dependents are marked `stale` so the scheduler can recalculate them from the new value. Cascade is the reactive-computation engine at the heart of Rimsky.
+> The propagation of `invalidate` through the node graph. When a node loses or replaces its value, every receiver that subscribed to the sender's transition is marked `stale` so the scheduler can recalculate them from the new value. Cascade is the reactive-computation engine at the heart of Rimsky.
 
 Cascade is a pure reachability walk; it does no I/O and no executor dispatch on its own. The scheduler picks up newly-stale nodes on subsequent ticks and recalculates them by dispatching their executors.
 
 <!-- @source: concepts/invalidate.md -->
-> Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and cascades the same message to dependents. The cascade engine is a pure reachability walk over the dependency graph rooted at the invalidated node.
+> Rimsky's only graph-level message. Sent to a node, it marks the node `stale`; the cascade walk then traverses the per-template subscription-edge inverse map and stale-marks each receiver that subscribed to the sender's transition.
 
 There is no second message. "Recalculate" is a verb describing what the scheduler does to a stale node — not a service message that travels alongside `invalidate`.
 
@@ -118,7 +118,7 @@ For implementation guides, see [`protocols/`](../protocols/).
 A node has two distinct ways of carrying input: the typed, substituted, schema-validated `attributes:` block; and the opaque, never-substituted `userdata:` block.
 
 <!-- @source: concepts/attributes.md -->
-> The typed inputs and outputs of a node, declared by a JSON Schema in the template's `attributes:` block. Attributes are the substitution boundary: `{{deps.<source>.<field>}}`, `{{claim.<alias>.<path>}}`, `{{params.<key>}}` directives in the schema's `source:` fields are resolved at dispatch.
+> The typed inputs and outputs of a node, declared by a JSON Schema in the template's `attributes:` block. Attributes are the substitution boundary: `{{nodes.<source>.attribute.<field>}}`, `{{nodes.<source>.event.<name>.<path>}}`, `{{claim.<alias>.<path>}}`, `{{params.<key>}}` directives in the schema's `source:` fields are resolved at dispatch.
 
 <!-- @source: concepts/userdata.md -->
 > Free-form opaque bytes a template author attaches to a node's executor invocation. Rimsky never inspects, parses, substitutes, or validates `userdata`. The executor receives the bytes verbatim. This is distinct from `attributes`, which are typed, substituted, and schema-validated.

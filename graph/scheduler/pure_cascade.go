@@ -130,21 +130,56 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			"node_id", n.ID.String(), "error", err.Error())
 		// Not fatal — the state transition already succeeded.
 	}
-	var dependents []persistence.NodeRow
+	// Post-2026-05-14: receivers resolved from the per-template
+	// subscription-edge inverse map; the retired nodes.dependencies
+	// column is no longer consulted.
+	var receivers []persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := sb.Nodes().ListDependentsOf(ctx, n.ID, tx)
-		dependents = rows
-		return err
+		inst, err := sb.Instances().Get(ctx, n.InstanceID, tx)
+		if err != nil || inst == nil {
+			return err
+		}
+		row, err := sb.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+		if err != nil || row == nil {
+			return err
+		}
+		subs := nodepkg.ExtractSubstitutionRefsFromTemplate(row.Spec)
+		edges := nodepkg.BuildSubscriptionEdges(row.Spec, subs)
+		if len(edges) == 0 {
+			return nil
+		}
+		candidate := append([]nodepkg.SubscriptionEdge{}, edges[n.NodeType]...)
+		candidate = append(candidate, edges[""]...)
+		if len(candidate) == 0 {
+			return nil
+		}
+		want := make(map[string]struct{}, len(candidate))
+		for _, e := range candidate {
+			want[e.ReceiverNodeType] = struct{}{}
+		}
+		instNodes, err := sb.Nodes().ListByInstance(ctx, n.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		for _, x := range instNodes {
+			if x.ID == n.ID {
+				continue
+			}
+			if _, ok := want[x.NodeType]; ok {
+				receivers = append(receivers, x)
+			}
+		}
+		return nil
 	}); err != nil {
-		log.Warn("ProcessPureCascade: list dependents failed",
+		log.Warn("ProcessPureCascade: list receivers failed",
 			"node_id", n.ID.String(), "error", err.Error())
 		return nil
 	}
-	// Cascade message-pass: mark each child stale + parent's frame_id
+	// Cascade message-pass: mark each receiver stale + parent's frame_id
 	// (per spec §4.4). The pure-cascade source's frame_id was set at
-	// frame-start; children inherit it so the frame-end predicate (§4.2)
+	// frame-start; receivers inherit it so the frame-end predicate (§4.2)
 	// sees them as in-flight and the next sweep enqueues their dispatch.
-	for _, dep := range dependents {
+	for _, dep := range receivers {
 		if n.FrameID != nil {
 			cascadePropagateFrameID(ctx, sb, dep.ID, *n.FrameID, log)
 		}

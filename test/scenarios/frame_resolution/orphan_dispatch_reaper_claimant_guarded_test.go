@@ -98,8 +98,8 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, instanceID, templateHash)
 	nodeID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_nodes (id, instance_id, node_type, state, dependencies)
-		VALUES ($1, $2, 'n', 'fresh', ARRAY[]::UUID[])
+		INSERT INTO rimsky_nodes (id, instance_id, node_type, state)
+		VALUES ($1, $2, 'n', 'fresh')
 	`, nodeID, instanceID)
 	frameID := uuid.New()
 	now := time.Now()

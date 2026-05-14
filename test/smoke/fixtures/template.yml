@@ -47,15 +47,20 @@ nodes:
     locks:
       - { name: "topics-ring:concurrent-claims" }
 
+  # Post-2026-05-14 subscription-cascade resolution: cascade coupling is
+  # declared receiver-side via `subscribes:`; the substitution-ref
+  # parser auto-subscribes on `{{nodes.<X>.attribute.<Y>}}` so the
+  # explicit `subscribes:` entries below mirror what the parser would
+  # infer. The middle `action: invalidate` self-edge retires entirely
+  # — the retry-twice-then-give-up intent survives via the retry cap.
   - type: scope
-    dependencies: [claim-topic]
     executor: claude-agent
     attributes:
       schema:
         type: object
         properties:
-          area:        { type: string, source: "{{deps.claim-topic.area}}" }
-          subtopic:    { type: string, source: "{{deps.claim-topic.subtopic}}" }
+          area:        { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
+          subtopic:    { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
           scope_notes: { type: string }
         required: [scope_notes]
     userdata:
@@ -67,23 +72,21 @@ nodes:
       review_rejected:
         policy:
           - { action: discard_then_retry, count: 2 }
-          - { action: invalidate, targets: [scope] }
           - { action: give_up }
 
   - type: draft
-    dependencies: [claim-topic, scope]
     executor: claude-agent
     attributes:
       schema:
         type: object
         properties:
-          area:        { type: string, source: "{{deps.claim-topic.area}}" }
-          subtopic:    { type: string, source: "{{deps.claim-topic.subtopic}}" }
-          scope_notes: { type: string, source: "{{deps.scope.scope_notes}}" }
+          area:        { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
+          subtopic:    { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
+          scope_notes: { type: string, source: "{{nodes.scope.attribute.scope_notes}}" }
         required: [area, subtopic, scope_notes]
     stores:
       - name: content
-        selector: "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"
+        selector: "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md"
         intent: rw
     userdata:
       model: claude-sonnet-4-6
@@ -94,7 +97,6 @@ nodes:
       - { name: model-budget }
 
   - type: review
-    dependencies: [claim-topic, scope, draft]
     executor: claude-agent
     attributes:
       schema:
@@ -104,7 +106,7 @@ nodes:
         required: [accepted]
     stores:
       - name: content
-        selector: "items/{{deps.claim-topic.area}}/{{deps.claim-topic.subtopic}}.md"
+        selector: "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md"
         intent: r
     inherits:
       - { claim: topics-ring }

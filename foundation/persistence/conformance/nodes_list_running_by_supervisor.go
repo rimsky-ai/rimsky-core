@@ -49,7 +49,6 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 				InstanceID:   fix.InstanceID,
 				NodeType:     "lrbs",
 				Executor:     "test-executor",
-				Dependencies: []shared.UUID{},
 			}, tx); err != nil {
 				return err
 			}

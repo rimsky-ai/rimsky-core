@@ -26,6 +26,69 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// ParkReason categorizes why an executor parked a node. Storage form
+// (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
+// from the enum symbol (e.g. PARK_REASON_AWAITING_HUMAN ->
+// awaiting_human). The same form is used on the diagnostics
+// endpoint, the rimsky-cli `parked list --reason=` flag, and the
+// Prometheus rimsky_parked_nodes_by_reason gauge label.
+//
+// @concept: parked-state
+type ParkReason int32
+
+const (
+	ParkReason_PARK_REASON_UNSPECIFIED    ParkReason = 0
+	ParkReason_PARK_REASON_TIME_WAIT      ParkReason = 1
+	ParkReason_PARK_REASON_SIGNAL_WAIT    ParkReason = 2
+	ParkReason_PARK_REASON_AWAITING_HUMAN ParkReason = 3
+	ParkReason_PARK_REASON_RETRY_BACKOFF  ParkReason = 4
+)
+
+// Enum value maps for ParkReason.
+var (
+	ParkReason_name = map[int32]string{
+		0: "PARK_REASON_UNSPECIFIED",
+		1: "PARK_REASON_TIME_WAIT",
+		2: "PARK_REASON_SIGNAL_WAIT",
+		3: "PARK_REASON_AWAITING_HUMAN",
+		4: "PARK_REASON_RETRY_BACKOFF",
+	}
+	ParkReason_value = map[string]int32{
+		"PARK_REASON_UNSPECIFIED":    0,
+		"PARK_REASON_TIME_WAIT":      1,
+		"PARK_REASON_SIGNAL_WAIT":    2,
+		"PARK_REASON_AWAITING_HUMAN": 3,
+		"PARK_REASON_RETRY_BACKOFF":  4,
+	}
+)
+
+func (x ParkReason) Enum() *ParkReason {
+	p := new(ParkReason)
+	*p = x
+	return p
+}
+
+func (x ParkReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ParkReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_executor_proto_enumTypes[0].Descriptor()
+}
+
+func (ParkReason) Type() protoreflect.EnumType {
+	return &file_executor_proto_enumTypes[0]
+}
+
+func (x ParkReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ParkReason.Descriptor instead.
+func (ParkReason) EnumDescriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{0}
+}
+
 // ExecuteRequest carries the full context of a node dispatch. Only `userdata`
 // is inert in rimsky — the rest is rimsky-populated. See spec §12.1.
 type ExecuteRequest struct {
@@ -668,9 +731,9 @@ func (x *Error) GetPayload() *structpb.Struct {
 // node; rimsky does not enforce this in-protocol.
 type Park struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Recommended non-empty; empty is permitted but logged WARN at the
-	// supervisor.
-	Reason string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	// Typed reason. Stored as lower_snake_case text in
+	// col:rimsky_node_runs.parked_reason.
+	Reason ParkReason `protobuf:"varint,1,opt,name=reason,proto3,enum=rimsky.v1.ParkReason" json:"reason,omitempty"`
 	// Inert to rimsky. Passed back as ResumeContext.payload on resume.
 	Payload []byte `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
 	// Optional. When non-zero, the supervisor's SweepParkedNodes sweep
@@ -679,7 +742,9 @@ type Park struct {
 	ResumeAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=resume_at,json=resumeAt,proto3" json:"resume_at,omitempty"`
 	// Optional. Inert to rimsky. Passed back as
 	// ResumeContext.session_token on resume.
-	SessionToken  string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	SessionToken string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
+	// Free-form human annotation. Inert in rimsky.
+	ReasonNote    string `protobuf:"bytes,5,opt,name=reason_note,json=reasonNote,proto3" json:"reason_note,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -714,11 +779,11 @@ func (*Park) Descriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *Park) GetReason() string {
+func (x *Park) GetReason() ParkReason {
 	if x != nil {
 		return x.Reason
 	}
-	return ""
+	return ParkReason_PARK_REASON_UNSPECIFIED
 }
 
 func (x *Park) GetPayload() []byte {
@@ -738,6 +803,13 @@ func (x *Park) GetResumeAt() *timestamppb.Timestamp {
 func (x *Park) GetSessionToken() string {
 	if x != nil {
 		return x.SessionToken
+	}
+	return ""
+}
+
+func (x *Park) GetReasonNote() string {
+	if x != nil {
+		return x.ReasonNote
 	}
 	return ""
 }
@@ -1098,12 +1170,14 @@ const file_executor_proto_rawDesc = "" +
 	"\x05Error\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
 	"errorClass\x121\n" +
-	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\"\x96\x01\n" +
-	"\x04Park\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\"\xce\x01\n" +
+	"\x04Park\x12-\n" +
+	"\x06reason\x18\x01 \x01(\x0e2\x15.rimsky.v1.ParkReasonR\x06reason\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x127\n" +
 	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12#\n" +
-	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\"l\n" +
+	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\x12\x1f\n" +
+	"\vreason_note\x18\x05 \x01(\tR\n" +
+	"reasonNote\"l\n" +
 	"\x12AwaitAsyncCallback\x12 \n" +
 	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
 	"asyncAckId\x124\n" +
@@ -1120,7 +1194,14 @@ const file_executor_proto_rawDesc = "" +
 	"\n" +
 	"NamedEvent\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload2K\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload*\xa0\x01\n" +
+	"\n" +
+	"ParkReason\x12\x1b\n" +
+	"\x17PARK_REASON_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15PARK_REASON_TIME_WAIT\x10\x01\x12\x1b\n" +
+	"\x17PARK_REASON_SIGNAL_WAIT\x10\x02\x12\x1e\n" +
+	"\x1aPARK_REASON_AWAITING_HUMAN\x10\x03\x12\x1d\n" +
+	"\x19PARK_REASON_RETRY_BACKOFF\x10\x042K\n" +
 	"\bExecutor\x12?\n" +
 	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x17.rimsky.v1.ExecuteEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
@@ -1136,53 +1217,56 @@ func file_executor_proto_rawDescGZIP() []byte {
 	return file_executor_proto_rawDescData
 }
 
+var file_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_executor_proto_goTypes = []any{
-	(*ExecuteRequest)(nil),        // 0: rimsky.v1.ExecuteRequest
-	(*ResumeContext)(nil),         // 1: rimsky.v1.ResumeContext
-	(*StoreHandle)(nil),           // 2: rimsky.v1.StoreHandle
-	(*ExecuteEvent)(nil),          // 3: rimsky.v1.ExecuteEvent
-	(*StreamClose)(nil),           // 4: rimsky.v1.StreamClose
-	(*Success)(nil),               // 5: rimsky.v1.Success
-	(*Error)(nil),                 // 6: rimsky.v1.Error
-	(*Park)(nil),                  // 7: rimsky.v1.Park
-	(*AwaitAsyncCallback)(nil),    // 8: rimsky.v1.AwaitAsyncCallback
-	(*AsyncCallbackBody)(nil),     // 9: rimsky.v1.AsyncCallbackBody
-	(*Heartbeat)(nil),             // 10: rimsky.v1.Heartbeat
-	(*NamedEvent)(nil),            // 11: rimsky.v1.NamedEvent
-	nil,                           // 12: rimsky.v1.ExecuteRequest.StoresEntry
-	(*structpb.Struct)(nil),       // 13: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(ParkReason)(0),               // 0: rimsky.v1.ParkReason
+	(*ExecuteRequest)(nil),        // 1: rimsky.v1.ExecuteRequest
+	(*ResumeContext)(nil),         // 2: rimsky.v1.ResumeContext
+	(*StoreHandle)(nil),           // 3: rimsky.v1.StoreHandle
+	(*ExecuteEvent)(nil),          // 4: rimsky.v1.ExecuteEvent
+	(*StreamClose)(nil),           // 5: rimsky.v1.StreamClose
+	(*Success)(nil),               // 6: rimsky.v1.Success
+	(*Error)(nil),                 // 7: rimsky.v1.Error
+	(*Park)(nil),                  // 8: rimsky.v1.Park
+	(*AwaitAsyncCallback)(nil),    // 9: rimsky.v1.AwaitAsyncCallback
+	(*AsyncCallbackBody)(nil),     // 10: rimsky.v1.AsyncCallbackBody
+	(*Heartbeat)(nil),             // 11: rimsky.v1.Heartbeat
+	(*NamedEvent)(nil),            // 12: rimsky.v1.NamedEvent
+	nil,                           // 13: rimsky.v1.ExecuteRequest.StoresEntry
+	(*structpb.Struct)(nil),       // 14: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
-	13, // 0: rimsky.v1.ExecuteRequest.userdata:type_name -> google.protobuf.Struct
-	13, // 1: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
-	13, // 2: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	12, // 3: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
-	1,  // 4: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
-	13, // 5: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
-	10, // 6: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
-	11, // 7: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
-	4,  // 8: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
-	5,  // 9: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
-	6,  // 10: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
-	7,  // 11: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
-	8,  // 12: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
-	13, // 13: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
-	13, // 14: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
-	14, // 15: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
-	11, // 16: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
-	5,  // 17: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
-	6,  // 18: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
-	7,  // 19: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	2,  // 20: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
-	0,  // 21: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	3,  // 22: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
-	22, // [22:23] is the sub-list for method output_type
-	21, // [21:22] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	14, // 0: rimsky.v1.ExecuteRequest.userdata:type_name -> google.protobuf.Struct
+	14, // 1: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
+	14, // 2: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
+	13, // 3: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
+	2,  // 4: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
+	14, // 5: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
+	11, // 6: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
+	12, // 7: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
+	5,  // 8: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
+	6,  // 9: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
+	7,  // 10: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
+	8,  // 11: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
+	9,  // 12: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
+	14, // 13: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
+	14, // 14: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
+	0,  // 15: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
+	15, // 16: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
+	12, // 17: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
+	6,  // 18: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
+	7,  // 19: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
+	8,  // 20: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
+	3,  // 21: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
+	1,  // 22: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	4,  // 23: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
+	23, // [23:24] is the sub-list for method output_type
+	22, // [22:23] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }
@@ -1211,13 +1295,14 @@ func file_executor_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_executor_proto_rawDesc), len(file_executor_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_executor_proto_goTypes,
 		DependencyIndexes: file_executor_proto_depIdxs,
+		EnumInfos:         file_executor_proto_enumTypes,
 		MessageInfos:      file_executor_proto_msgTypes,
 	}.Build()
 	File_executor_proto = out.File

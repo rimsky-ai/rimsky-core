@@ -72,11 +72,10 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 			return err
 		}
 		_, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           nodeID,
-			InstanceID:   instanceID,
-			NodeType:     "fixture-node-type",
-			Executor:     "test-executor",
-			Dependencies: []shared.UUID{},
+			ID:         nodeID,
+			InstanceID: instanceID,
+			NodeType:   "fixture-node-type",
+			Executor:   "test-executor",
 		}, tx)
 		return err
 	}); err != nil {

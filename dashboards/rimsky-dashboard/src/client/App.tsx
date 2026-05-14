@@ -23,6 +23,7 @@ import StoresPage from './routes/StoresPage';
 import StoreDetailPage from './routes/StoreDetailPage';
 import ExecutorsPage from './routes/ExecutorsPage';
 import ExecutorDetailPage from './routes/ExecutorDetailPage';
+import ParkedNodesPage from './routes/ParkedNodesPage';
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/stores/:name" element={<StoreDetailPage />} />
         <Route path="/executors" element={<ExecutorsPage />} />
         <Route path="/executors/:name" element={<ExecutorDetailPage />} />
+        <Route path="/parked-nodes" element={<ParkedNodesPage />} />
         <Route path="*" element={<SystemPage />} />
       </Routes>
     </Layout>

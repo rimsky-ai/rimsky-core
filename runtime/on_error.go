@@ -132,7 +132,19 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	case "retry", "discard_then_retry", "resume_then_retry":
 		if nd.State == cascade.NodeStateRunning {
 			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx)
+				if err := sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
+					return err
+				}
+				// Pessimistic-invalidate: running → stale is this
+				// sender's invalidation in this frame. Gate downstream
+				// subscribers across the retry round-trip.
+				//
+				//	@concept: cascade
+				//	@concept: wait-set
+				if nd.FrameID != nil {
+					return walkCascadeForInvalidatedNode(ctx, sb, args.Queue, tx, log, args.NodeID, nd.InstanceID, *nd.FrameID)
+				}
+				return nil
 			}); err != nil {
 				return err
 			}
@@ -149,75 +161,26 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			FrameID:        *nd.FrameID,
 		})
 
-	case "invalidate":
-		if nd.State == cascade.NodeStateRunning {
-			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateStale, cascade.ReasonPolicyInvalidate, "", tx)
-			}); err != nil {
-				return err
-			}
-		}
-		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
-
-		var other []persistence.NodeRow
-		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := sb.Nodes().ListByInstance(ctx, nd.InstanceID, tx)
-			other = rows
-			return err
-		}); err != nil {
-			return err
-		}
-		typeToID := make(map[string]shared.UUID, len(other))
-		for _, o := range other {
-			typeToID[o.NodeType] = o.ID
-		}
-		var resolvedTargets []shared.UUID
-		var unresolved []string
-		for _, t := range resolved.Targets {
-			if id, ok := typeToID[t]; ok {
-				resolvedTargets = append(resolvedTargets, id)
-			} else {
-				unresolved = append(unresolved, t)
-			}
-		}
-		if len(unresolved) > 0 {
-			_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return sb.Events().Append(ctx, persistence.EventAppendInput{
-					InstanceID: &args.InstanceID,
-					NodeID:     &args.NodeID,
-					Kind:       "unresolved_invalidate_target",
-					Payload: map[string]any{
-						"error_class":        args.ErrorClass,
-						"instance_id":        nd.InstanceID.String(),
-						"unresolved_targets": unresolved,
-						"resolved_targets":   uuidsToStrings(resolvedTargets),
-					},
-				}, tx)
-			})
-		}
-		src := args.NodeID
-		for _, tid := range resolvedTargets {
-			_ = InvalidateNode(ctx, InvalidateArgs{
-				Persist: sb, Queue: args.Queue,
-				Clock: args.Clock, Logger: log,
-				SourceNodeID: &src,
-				TargetNodeID: tid,
-				Reason:       "policy_invalidate",
-				SupervisorID: args.SupervisorID,
-				Frame:        resolved.Frame,
-				Metrics:      args.Metrics,
-			})
-		}
-		return nil
-
 	case "give_up":
 		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx)
+			if err := sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
+				return err
+			}
+			// Settled-state drain on failed: any wait-set rows gating
+			// receivers on this sender release.
+			//
+			//	@concept: wait-set
+			if nd.FrameID != nil {
+				return sb.WaitSet().DeleteBySender(ctx, *nd.FrameID, args.NodeID, tx)
+			}
+			return nil
 		}); err != nil {
 			return err
 		}
 		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
 	}
+	// `invalidate` action retired under the 2026-05-14 subscription-
+	// cascade resolution; the validator rejects it at deploy time.
 	return nil
 }
 
@@ -300,12 +263,4 @@ func requiredStoresForNode(ctx context.Context, sb persistence.Tables, nd *persi
 		return node.RequiredStores(td)
 	}
 	return nil
-}
-
-func uuidsToStrings(xs []shared.UUID) []string {
-	out := make([]string, 0, len(xs))
-	for _, x := range xs {
-		out = append(out, x.String())
-	}
-	return out
 }

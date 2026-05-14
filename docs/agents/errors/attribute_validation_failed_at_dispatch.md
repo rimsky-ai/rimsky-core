@@ -15,7 +15,7 @@ Most commonly when an upstream node's committed attributes don't match the consu
 
 ## What to do
 
-Check the executor trace and the named-source values (`{{deps.<source>.<field>}}` resolutions, `{{params.<key>}}` resolutions) against the node's `attributes:` schema. The error message will name the failing JSON-Schema path. Either correct the upstream value, adjust the schema, or fix the substitution-source declaration.
+Check the executor trace and the named-source values (`{{nodes.<source>.attribute.<field>}}` resolutions, `{{params.<key>}}` resolutions) against the node's `attributes:` schema. The error message will name the failing JSON-Schema path. Either correct the upstream value, adjust the schema, or fix the substitution-source declaration.
 
 ## See also
 

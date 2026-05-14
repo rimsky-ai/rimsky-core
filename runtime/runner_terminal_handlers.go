@@ -64,10 +64,9 @@ func applyTerminalError(
 		if err := applyErrorPolicy(ctx, args, acq, routedClass, payload); err != nil {
 			return err
 		}
-		if handler.Invalidate != nil {
-			frameID := acq.FrameID
-			emitHandlerInvalidate(ctx, args, acq.NodeID, acq.NodeType, acq.InstanceID, &frameID, handler.Invalidate)
-		}
+		// Per the 2026-05-14 subscription-cascade resolution, the
+		// invalidate-emit slot retired; cascade coupling is declared
+		// receiver-side via Subscribes.
 		return nil
 	}
 	// Validator should have caught any other resolve value.
@@ -98,6 +97,15 @@ func applyTerminalPass(
 			cascade.LastOutcomePassed, tx); err != nil {
 			return err
 		}
+		// Settled-state drain on fresh+passed: this sender reached a
+		// settled state, so any wait-set rows gating receivers on
+		// this sender release. Mirrors applyTerminalComplete's drain
+		// at running → fresh.
+		//
+		//	@concept: wait-set
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+			return err
+		}
 		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
 	}); err != nil {
 		return fmt.Errorf("applyTerminalPass: %w", err)
@@ -115,9 +123,9 @@ func applyTerminalPass(
 			},
 		}, tx)
 	})
-	if handler.Invalidate != nil {
-		frameID := acq.FrameID
-		emitHandlerInvalidate(ctx, args, acq.NodeID, acq.NodeType, acq.InstanceID, &frameID, handler.Invalidate)
-	}
+	// Per the 2026-05-14 subscription-cascade resolution, the
+	// invalidate-emit slot retired; cascade coupling is declared
+	// receiver-side via Subscribes.
+	_ = handler
 	return nil
 }

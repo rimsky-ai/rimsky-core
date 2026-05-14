@@ -201,9 +201,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Nodes.ListRunningBySupervisor", func() {
 			_, _ = store.Nodes().ListRunningBySupervisor(ctx, "sup", nil)
 		}},
-		{"Nodes.ListDependentsOf", func() {
-			_, _ = store.Nodes().ListDependentsOf(ctx, someID, nil)
-		}},
 		{"Nodes.ListWithStaleHeartbeat", func() {
 			_, _ = store.Nodes().ListWithStaleHeartbeat(ctx, time.Now(), nil)
 		}},

@@ -3,9 +3,15 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package attributes owns the per-node typed attribute object described in
-// stores-redesign spec §5.7: substitution of `{{deps...}}` / `{{claim...}}`
+// stores-redesign spec §5.7: substitution of `{{nodes...}}` / `{{claim...}}`
 // / `{{params...}}` directives at dispatch, JSON Schema validation at
 // dispatch and at commit, and the incremental writeback HTTP handler.
+//
+// Note: the `{{deps...}}` substitution prefix retired post-2026-05-14;
+// `{{nodes.<node>.attribute.<key>}}` is the canonical form. The change is
+// observable to template authors but produces no functional difference to
+// resolution; the inferred-subscription side-effect lives in the template
+// validator.
 //
 // Persistence for `rimsky_node_attributes` lives in
 // `foundation/persistence/postgres/node_attributes.go` and is exposed via
@@ -25,7 +31,7 @@
 //
 // Per spec §4.10 invariant 11, no code path in this package inspects, parses,
 // substitutes, or validates `userdata`. The substitution grammar enumerates
-// exactly three source kinds (deps / claim / params); userdata is not a
+// exactly three source kinds (nodes / claim / params); userdata is not a
 // source kind and never participates in resolution.
 //
 // Per spec §4.10 invariant 12, attributes are validated twice: once at

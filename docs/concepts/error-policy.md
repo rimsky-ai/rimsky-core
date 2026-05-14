@@ -2,13 +2,14 @@
 concept: error-policy
 definition: |
   The mechanism that maps an executor's error_class plus the run's
-  retry counters onto an action: retry, invalidate(targets),
-  give_up, or pass. Templates declare error_types per node;
-  rimsky's runtime resolves the policy at terminal time.
+  retry counters onto an action: retry, give_up, or pass.
+  Templates declare error_types per node; rimsky's runtime resolves
+  the policy at terminal time. Cascade coupling on failure is
+  declared receiver-side via `subscribes:` filters.
 proto_symbol: (none)
 config_field: rimsky.yml:scheduler.max_retries_without_progress
 api_surface: (none)
-related: [handlers, node, executor, parked]
+related: [handlers, node, executor, parked, subscription]
 deprecated_terms: []
 ---
 
@@ -17,9 +18,10 @@ deprecated_terms: []
 ## Definition
 
 The mechanism that maps an executor's `error_class` plus the run's
-retry counters onto an action: `retry`, `invalidate(targets)`,
-`give_up`, or `pass`. Templates declare `error_types` per node;
-rimsky's runtime resolves the policy at terminal time.
+retry counters onto an action: `retry`, `give_up`, or `pass`.
+Templates declare `error_types` per node; rimsky's runtime resolves
+the policy at terminal time. Cascade coupling on failure is declared
+receiver-side via `subscribes:` filters (see [`subscription.md`](subscription.md)).
 
 ## Why it exists
 
@@ -37,15 +39,17 @@ terminal time the runtime looks up the action for the executor-supplied
 `error_class` and dispatches:
 
 - `retry` — re-dispatch after a backoff.
-- `invalidate(targets)` — invalidate the named target nodes; the
-  emitted invalidates respect the optional `frame: in | next` setting.
 - `give_up` — fail the node with the executor-supplied error class.
 - `pass` — treat the failure as a no-op for cascade; transitions to
   `fresh+passed` without error routing.
 
 > The pre-2026-05-12 action flavors `discard_then_retry` and
 > `resume_then_retry` are retired; both now resolve to `retry`. The
-> supervisor releases acquired claims at terminal regardless.
+> supervisor releases acquired claims at terminal regardless. The
+> pre-2026-05-14 `action: invalidate` is also retired; cascade
+> coupling on failure is declared receiver-side via a `subscribes:`
+> entry on the impactee: `{node: <sender>, on: state, when: failed,
+> error_class: <class>}`.
 
 The three lifecycle handlers (`on_acquire_unavailable`,
 `on_executor_complete`, `on_executor_errored`) override or extend this
@@ -103,3 +107,4 @@ surfaces retry loops before they exhaust budget.
 - [`handlers.md`](handlers.md)
 - [`executor.md`](executor.md)
 - [`parked.md`](parked.md)
+- [`subscription.md`](subscription.md)

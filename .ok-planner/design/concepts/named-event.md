@@ -44,3 +44,7 @@ None live.
 
 (no live tensions.)
 
+
+## Notes
+
+- 2026-05-14: consumption paths updated. Two paths today are substitution + on_event-handler-invalidate; under the new model: substitution (unchanged) + subscription-to-event (`subscribes: [{node, on: event, name}]`). The `concept:on-event-handler` reference is dropped (retired). Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

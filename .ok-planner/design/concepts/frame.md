@@ -57,3 +57,7 @@ Owns: the per-instance concurrency rule (≤1 running frame), the coalesce/seria
 - Template-author `frame_resolution:` vs runtime-column `mode` vocabulary mismatch — see `tensions/frame-resolution-vs-mode-vocabulary.md`.
 - `LookupFrameResolutionMode` joins on every enqueue rather than denormalizing once per instance — see `tensions/frame-lookup-on-every-enqueue.md`.
 
+
+## Notes
+
+- 2026-05-14: `rimsky_wait_set` rows are cascade-deleted on frame close via `ON DELETE CASCADE` from `rimsky_frames(frame_id)`. See `concept:wait-set`. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

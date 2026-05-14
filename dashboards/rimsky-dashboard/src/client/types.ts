@@ -327,3 +327,18 @@ export type AdminViewResponse = {
   data: { rows: any[] };
   render_hint: string;
 };
+
+// --- Parked-node diagnostics ---
+
+export type ParkedNodeEntry = {
+  instance_id: string;
+  node_id: string;
+  parked_at: string;
+  resume_at?: string;
+  reason?: string;
+  reason_note?: string;
+};
+
+export type ParkedNodesResponse = {
+  parked_nodes: ParkedNodeEntry[];
+};

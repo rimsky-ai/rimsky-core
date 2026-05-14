@@ -42,6 +42,7 @@ func (noopStore) Supervisors() persistence.SupervisorTable       { return nil }
 func (noopStore) Frames() persistence.FrameTable                 { return nil }
 func (noopStore) BlobOrphans() persistence.BlobOrphanTable       { return nil }
 func (noopStore) NodeEvents() persistence.NodeEventTable         { return nil }
+func (noopStore) WaitSet() persistence.WaitSetTable              { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})
@@ -166,14 +167,15 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 			NodeID:     "22222222-2222-2222-2222-222222222222",
 			ParkedAt:   now,
 			ResumeAt:   now.Add(time.Hour),
-			Reason:     "rate_limit",
+			Reason:     "retry_backoff",
+			ReasonNote: "rate-limit; resume at +1h",
 			FrameID:    "33333333-3333-3333-3333-333333333333",
 		},
 		{
 			InstanceID: "11111111-1111-1111-1111-111111111111",
 			NodeID:     "44444444-4444-4444-4444-444444444444",
 			ParkedAt:   now,
-			Reason:     "human_review",
+			Reason:     "awaiting_human",
 		},
 	}
 	deps := AppDeps{
@@ -202,8 +204,10 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		t.Fatalf("want 2 parked rows, got %d", len(got.ParkedNodes))
 	}
 
-	// With reason filter.
-	resp2, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes?reason=rate_limit")
+	// With reason filter (post-2026-05-14 the enum projection
+	// validates: time_wait | signal_wait | awaiting_human |
+	// retry_backoff | unspecified).
+	resp2, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes?reason=retry_backoff")
 	if err != nil {
 		t.Fatalf("GET parked-nodes filtered: %v", err)
 	}
@@ -215,7 +219,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	if len(got2.ParkedNodes) != 1 {
 		t.Fatalf("filter want 1, got %d", len(got2.ParkedNodes))
 	}
-	if got2.ParkedNodes[0].Reason != "rate_limit" {
+	if got2.ParkedNodes[0].Reason != "retry_backoff" {
 		t.Fatalf("filter mismatch: %+v", got2.ParkedNodes)
 	}
 }

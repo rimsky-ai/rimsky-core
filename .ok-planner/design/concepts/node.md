@@ -37,3 +37,6 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its handl
 
 - The `4-vs-5 states` vocabulary drift across CLAUDE.md and `docs/concepts/node-state.md` (see `tensions/state-count-drift.md`).
 
+## Notes
+
+- 2026-05-14: `dependencies:` retires; `subscribes:` introduced (`see concept:subscription`); substitution refs auto-subscribe. The `on_event:` map retires; `concept:on-event-handler` is retired to `_retired/`. Lifecycle handlers lose their `invalidate.targets:` clauses. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

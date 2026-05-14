@@ -77,24 +77,26 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return nil
 	}
 
-	// Check all deps.
-	depsAllFresh := true
+	// Post-2026-05-14: gating predicate is "wait-set empty in this
+	// frame." The cascade-from-commit path inserts wait-set rows; the
+	// settled-state drain removes them. If any rows remain, the
+	// scheduler's ListReadyForDispatch will pick the row up on a later
+	// tick once the drain completes.
+	if target.FrameID == nil {
+		return nil
+	}
+	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		for _, depID := range target.Dependencies {
-			dep, err := sb.Nodes().Get(ctx, depID, tx)
-			if err != nil {
-				return err
-			}
-			if dep == nil || dep.State != cascade.NodeStateFresh {
-				depsAllFresh = false
-				return nil
-			}
+		rows, err := sb.WaitSet().ListForReceiver(ctx, *target.FrameID, target.ID, tx)
+		if err != nil {
+			return err
 		}
+		pending = len(rows)
 		return nil
 	}); err != nil {
 		return err
 	}
-	if !depsAllFresh {
+	if pending > 0 {
 		return nil
 	}
 

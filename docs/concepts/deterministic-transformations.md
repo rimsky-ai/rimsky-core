@@ -45,8 +45,8 @@ output.
 ## Confidence-driven branching
 
 Pattern: an agent emits a confidence score with its findings. The
-branch nodes use `on_executor_complete` with `resolve: by_changed` and
-an invalidate emit to route to the right downstream.
+branch nodes auto-subscribe via their attribute substitutions and
+diverge on quality-rule guards.
 
 ```yaml
 nodes:
@@ -69,8 +69,7 @@ nodes:
       schema:
         properties:
           category:
-            source: nodes.classify.value.category
-    deps: [classify]
+            source: nodes.classify.attribute.category
 
   low_confidence_path:
     executor: human-review
@@ -78,45 +77,50 @@ nodes:
       schema:
         properties:
           category:
-            source: nodes.classify.value.category
-    deps: [classify]
+            source: nodes.classify.attribute.category
 ```
 
 The `classify` node's `on_executor_complete` is empty (default
-`by_changed`). Downstream invalidation gating is handled at attribute-
-substitution time: nodes that reference `nodes.classify.value.category`
-trigger when classify completes and propagates. The branching is then
-done by quality-rule guards on each downstream that no-op (via a
+`by_changed`). Both downstream nodes auto-subscribe to `classify` via
+their `{{nodes.classify.attribute.category}}` substitution refs;
+they fire when `classify` completes and propagates. The branching is
+then done by quality-rule guards on each downstream that no-op (via a
 deterministic node returning unchanged) when their confidence
 condition isn't satisfied.
 
-For sharper branching, use named events:
+For sharper branching, use named-event subscriptions:
 
 ```yaml
 nodes:
   classify:
     executor: claude-agent
-    on_event:
-      high_confidence:
-        invalidate:
-          targets: [auto_finalize]
-      low_confidence:
-        invalidate:
-          targets: [needs_review]
+    # The executor emits `high_confidence` or `low_confidence` as a
+    # named event before its terminal `Complete`.
+
+  auto_finalize:
+    executor: deterministic-finalize
+    subscribes:
+      - { node: classify, on: event, name: high_confidence }
+
+  needs_review:
+    executor: human-review
+    subscribes:
+      - { node: classify, on: event, name: low_confidence }
 ```
 
-The `classify` executor emits `high_confidence` or `low_confidence` as
-a named event before its terminal `Complete`. Each `on_event` handler
-fires the appropriate downstream invalidate.
+Each branch node subscribes to a different named event from `classify`;
+the cascade walk stale-marks only the matching subscriber when the
+event fires.
 
 ## Agent self-blocks
 
 Pattern: an agent reaches a state where it cannot continue without
 external input — a missing parameter, a required artifact, an
-ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}` (not
-`Error{error_class}`) to signal "I produced output but explicitly chose not to
-claim success", paired with an `on_executor_errored` handler that
-routes the run downstream.
+ambiguity it cannot resolve from context. Use `Error{error_class: "executor_blocked"}`
+to signal "I produced output but explicitly chose not to claim success",
+paired with an `on_executor_errored` handler that suppresses the
+default error routing and a receiver-side subscription that routes the
+run downstream.
 
 ```yaml
 nodes:
@@ -124,14 +128,20 @@ nodes:
     executor: claude-agent
     on_executor_errored:
       resolve: pass
-      invalidate:
-        targets: [routing]
+
+  routing:
+    executor: routing-agent
+    subscribes:
+      - { node: draft, on: state, when: failed, error_class: executor_blocked }
 ```
 
-`draft` emits `Blocked { reason: "needs_review", payload: {...} }`. The
-handler routes through `routing` which decides next steps based on the
-blocked-payload context. See `docs/concepts/handlers.md` and
-`docs/protocols/executor.md` for the wire-shape details.
+`draft` emits `Error{error_class: "executor_blocked", payload: {...}}`.
+The `on_executor_errored: pass` handler treats the failure as a no-op
+for `draft`'s cascade gate; the `routing` node's filtered subscription
+fires on the `executor_blocked` class and decides next steps based on
+the blocked-payload context. See `docs/concepts/handlers.md`,
+`docs/concepts/subscription.md`, and `docs/protocols/executor.md`
+for the wire-shape details.
 
 ## Why this split matters
 

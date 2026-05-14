@@ -34,7 +34,9 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	foundationshared "github.com/fallguy/rimsky/foundation/shared"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
+	"github.com/fallguy/rimsky/graph/frame"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/graph/qualityrule"
 	qreval "github.com/fallguy/rimsky/graph/qualityrule/eval"
@@ -174,16 +176,42 @@ func applyTerminalComplete(
 			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
 			return err
 		}
-		// Cascade-firing gate: now expressed as last_outcome ==
-		// fresh_changed instead of t.Changed directly. Functionally
-		// identical under default by_changed; diverges under
-		// always_propagate (cascade fires even when t.Changed=false)
-		// and never_propagate (cascade does NOT fire even when
-		// t.Changed=true).
+		// Cascade-on-fresh_changed propagation: when this sender settles
+		// fresh_changed, the recursive subscription walk marks
+		// downstream subscribers stale-with-frame_id and gates the
+		// downstream subgraph (R=C, S=B; etc.). The same tx then drains
+		// rows where this sender is the gating sender (R=B, S=A) so
+		// direct subscribers can advance — the immediate inserts at
+		// the first-level (R=B, S=A) are intentionally transient
+		// (insert-then-drain in same tx is benign; the deeper levels
+		// gate properly). Cascade fires iff last_outcome == fresh_changed
+		// per `concept:cascade`'s firing gate invariant; diverges under
+		// always_propagate / never_propagate (lifecycle-handler.go).
+		//
+		// This walk is complementary to the cascade-on-invalidation
+		// walks at invalidateInFrame / applyResolvedAction / etc. The
+		// invalidation-side walks gate receivers across multiple
+		// in-flight senders (multi-invalidator); the settlement-side
+		// walk gates the initial-instance case (non-root subscribers
+		// that never went through an explicit invalidation transition
+		// from a settled state but still need frame_id stamping +
+		// wait-set rows seeded under the recursive deeper levels).
+		//
+		//	@concept: cascade
+		//	@concept: wait-set
 		if lastOutcome == cascade.LastOutcomeFreshChanged {
-			if err := cascadeChildrenStaleInTx(ctx, args, tx, acq); err != nil {
+			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
+				acq.NodeID, acq.NodeType, acq.InstanceID, acq.FrameID); err != nil {
 				return err
 			}
+		}
+		// Settled-state drain: the sender just reached `fresh`. Any
+		// wait-set rows the sender was gating get removed in bulk so
+		// downstream receivers can advance.
+		//
+		//	@concept: wait-set
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -221,19 +249,13 @@ func applyTerminalComplete(
 	if lastOutcome == cascade.LastOutcomeFreshChanged {
 		fanoutRecalculate(ctx, args, acq)
 	}
-	// Fire the optional handler.invalidate emit unconditionally (per
-	// spec §3.5: invalidate emits are orthogonal to resolve).
-	//
-	// For frame: in: the running-tx above committed state→fresh which
-	// cleared the source row's frame_id (defensive guard in
-	// nodes.UpdateState). Pass acq.FrameID explicitly so
-	// invalidateInFrame doesn't fall back to next-frame on the now-
-	// cleared source row. Per spec §5.2 "single frame for the entire
-	// drain" of an in-frame self-invalidate loop.
-	if completeHandler != nil && completeHandler.Invalidate != nil {
-		frameID := acq.FrameID
-		emitHandlerInvalidate(ctx, args, acq.NodeID, acq.NodeType, acq.InstanceID, &frameID, completeHandler.Invalidate)
-	}
+	// Per the 2026-05-14 subscription-cascade resolution, the
+	// invalidate-emit slot retired; cascade coupling is declared
+	// receiver-side via Subscribes. cascadeSubscribersStaleInTx
+	// (called above when last_outcome == fresh_changed) handles the
+	// recursive subscription walk + wait-set inserts for downstream
+	// receivers.
+	_ = completeHandler
 	return nil
 }
 
@@ -270,46 +292,239 @@ func emitQualityRuleFailures(
 	})
 }
 
-// cascadeChildrenStaleInTx marks dependent nodes stale + frame_id in
-// the same tx as the parent's commit so the next scheduler tick sees
-// the cascade atomically. Skipped on no-op commits per §4.4.
-func cascadeChildrenStaleInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
+// cascadeSubscribersStaleInTx marks subscriber nodes stale + frame_id
+// and inserts wait-set rows in the same tx as the sender's INVALIDATION
+// transition (settled → stale/running). Per the pessimistic-invalidate
+// rule (spec Piece 1), the walk fires at sender invalidation; receivers
+// are gated by their wait-set until every upstream sender resolves and
+// the settled-state drain releases the rows. The walk also fires at
+// the sender's fresh_changed settlement to cover the initial-instance
+// case (non-root subscribers that never went through an explicit
+// invalidation transition); the BFS recursion creates wait-set rows at
+// deeper levels (R=C, S=B) that DON'T immediately drain when only the
+// first-level sender's drain (sender=A) fires.
+//
+// The walk is recursive over the subscription graph within the
+// instance: each receiver R that is newly marked stale is itself an
+// invalidation site, so the walk processes R's subscribers in turn
+// (BFS over the inverse-edge map). A per-call visited set guards
+// against subscription cycles.
+//
+// Receivers are resolved from the cached per-template subscription-edge
+// inverse map. Edges with frame:in are processed in-tx (stale-mark +
+// wait-set insert against the sender's frame). Edges with frame:next
+// open a new frame via frame.EnqueueOrCoalesce; the receiver becomes
+// a frame source for the new frame and is stamped by
+// MarkSourceNodeStale at frame-open. No wait-set row is inserted for
+// frame:next at insertion time — by the time the new frame opens the
+// sender has already settled, so a gate keyed on the current sender
+// would never drain. The new frame's own cascade walks cover deeper
+// gating on the receiver's own subscribers.
+//
+// The settled-state drain (drainWaitSetOnSettled) removes the rows
+// when the sender reaches any settled state (fresh/failed/parked).
+// The pessimistic-invalidate rule inserts a wait-set row for every
+// subscription edge regardless of filter compatibility; idempotent
+// re-fire handles filter mismatch.
+//
+//	@concept: cascade
+//	@concept: wait-set
+func cascadeSubscribersStaleInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	senderID foundationshared.UUID,
+	senderNodeType string,
+	instanceID foundationshared.UUID,
+	senderFrameID foundationshared.UUID,
 ) error {
-	dependents, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, tx)
+	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil {
-		return fmt.Errorf("cascadeChildrenStaleInTx: list dependents: %w", err)
+		return fmt.Errorf("cascadeSubscribersStaleInTx: get instance: %w", err)
 	}
-	for _, dep := range dependents {
-		if err := args.Persist.Nodes().MarkStaleForCascade(ctx, dep.ID, acq.FrameID, tx); err != nil {
-			return fmt.Errorf("cascadeChildrenStaleInTx: dep %s: %w", dep.ID, err)
+	if inst == nil {
+		return nil
+	}
+	edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
+	if err != nil {
+		return fmt.Errorf("cascadeSubscribersStaleInTx: edges: %w", err)
+	}
+	if len(edges) == 0 {
+		return nil
+	}
+	// Resolve receiver node-types → node-IDs within the instance once.
+	instNodes, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
+	if err != nil {
+		return fmt.Errorf("cascadeSubscribersStaleInTx: list instance nodes: %w", err)
+	}
+	byType := make(map[string][]persistence.NodeRow, len(instNodes))
+	for _, n := range instNodes {
+		byType[n.NodeType] = append(byType[n.NodeType], n)
+	}
+	// BFS over the subscription graph rooted at the sender. Each
+	// receiver newly marked stale joins the queue so its own subscribers
+	// are processed in turn (cycle-guarded by visited).
+	type walkItem struct {
+		nodeID   foundationshared.UUID
+		nodeType string
+	}
+	queue := []walkItem{{nodeID: senderID, nodeType: senderNodeType}}
+	visited := map[foundationshared.UUID]struct{}{senderID: {}}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		candidateEdges := append([]node.SubscriptionEdge{}, edges[cur.nodeType]...)
+		candidateEdges = append(candidateEdges, edges[""]...)
+		if len(candidateEdges) == 0 {
+			continue
+		}
+		for _, edge := range candidateEdges {
+			receivers := byType[edge.ReceiverNodeType]
+			for _, r := range receivers {
+				if r.ID == cur.nodeID {
+					continue
+				}
+				switch edge.Frame {
+				case node.FrameNext:
+					// Open a new frame for the receiver's instance.
+					// Per spec Piece 1 "frame: next wait-set
+					// placement," frame:next subscriptions fire the
+					// receiver in the NEXT frame. EnqueueOrCoalesce
+					// writes to rimsky_frames in the caller's tx; the
+					// receiver becomes a frame source for the new
+					// frame and is stamped with the new frame's id by
+					// MarkSourceNodeStale at frame-open. We do NOT
+					// insert a wait-set row keyed on the current sender
+					// here — by the time the new frame opens, the
+					// sender has already settled, so a gate keyed on
+					// the current sender would never drain. The new
+					// frame's own cascade walks (firing on the
+					// receiver's own invalidation as a frame source)
+					// gate the receiver's downstream subscribers.
+					if _, fErr := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, instanceID, r.ID); fErr != nil {
+						return fmt.Errorf("cascadeSubscribersStaleInTx: enqueue next-frame for %s: %w", r.ID, fErr)
+					}
+					// If the receiver is parked, the next-frame open
+					// alone won't wake it (MarkSourceNodeStale skips
+					// parked rows because parked is settled-with-
+					// frame_id and the predicate gates fresh /
+					// stale-with-nil-frame). Drive the parked → stale
+					// wake here so the new frame can pick up the
+					// receiver as a source.
+					//
+					//	@concept: parked-state
+					//	@concept: cascade
+					if r.State == cascade.NodeStateParked {
+						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked next-frame %s: %w", r.ID, err)
+						}
+					}
+					continue
+				default: // FrameIn or empty (in-tx)
+					// Parked receivers need their parked node-run row
+					// resumed alongside the stale stamp; without that
+					// the queue still carries phase='parked' and the
+					// supervisor never picks the row up. Cascade walks
+					// previously skipped parked receivers (the unified
+					// InvalidateNode wake path was the only resumption
+					// route); per spec Piece 1 the cascade walk must
+					// cover parked receivers too.
+					//
+					//	@concept: parked-state
+					//	@concept: cascade
+					if r.State == cascade.NodeStateParked {
+						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
+						}
+					} else {
+						if err := args.Persist.Nodes().MarkStaleForCascade(ctx, r.ID, senderFrameID, tx); err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
+						}
+					}
+					if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+						FrameID:           senderFrameID,
+						ReceiverNodeID:    r.ID,
+						SenderNodeID:      cur.nodeID,
+						TopicKind:         edge.TopicKind,
+						SubscriptionScope: edge.SubscriptionScope,
+					}, tx); err != nil {
+						return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
+					}
+					// Recurse via BFS: the receiver R is itself newly
+					// invalidated, so its subscribers must also be
+					// marked stale + gated. The visited set guards
+					// subscription cycles.
+					if _, seen := visited[r.ID]; !seen {
+						visited[r.ID] = struct{}{}
+						queue = append(queue, walkItem{nodeID: r.ID, nodeType: r.NodeType})
+					}
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// fanoutRecalculate routes RecalculateNode at each
-// dependent post-commit. Walks ListDependentsOf a second time; the
-// in-tx walk in cascadeChildrenStaleInTx mutates child state, this
-// post-commit walk routes the recalculate event.
+// drainWaitSetOnSettled deletes every wait-set row in the current
+// frame where this sender appears, in bulk. Called wherever the sender
+// reaches any settled state (fresh/failed/parked). Idempotent.
+//
+//	@concept: wait-set
+func drainWaitSetOnSettled(
+	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderID foundationshared.UUID,
+) error {
+	return args.Persist.WaitSet().DeleteBySender(ctx, frameID, senderID, tx)
+}
+
+// fanoutRecalculate routes RecalculateNode at each subscribed receiver
+// post-commit. Resolves the receiver set from the per-template
+// subscription-edge inverse map (the same map cascadeSubscribersStaleInTx
+// walks in-tx); this post-commit walk routes the recalculate event so
+// the receiver re-evaluates its wait-set and may enqueue dispatch.
 func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
-	var dependents []persistence.NodeRow
+	var receivers []persistence.NodeRow
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.Nodes().ListDependentsOf(ctx, acq.NodeID, tx)
-		dependents = rows
-		return err
+		inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)
+		if err != nil || inst == nil {
+			return err
+		}
+		edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
+		if err != nil || len(edges) == 0 {
+			return err
+		}
+		candidate := append([]node.SubscriptionEdge{}, edges[acq.NodeType]...)
+		candidate = append(candidate, edges[""]...)
+		if len(candidate) == 0 {
+			return nil
+		}
+		// Resolve receiver node-types → node IDs.
+		receiverTypes := make(map[string]struct{}, len(candidate))
+		for _, e := range candidate {
+			receiverTypes[e.ReceiverNodeType] = struct{}{}
+		}
+		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		for _, n := range instNodes {
+			if n.ID == acq.NodeID {
+				continue
+			}
+			if _, ok := receiverTypes[n.NodeType]; ok {
+				receivers = append(receivers, n)
+			}
+		}
+		return nil
 	}); err != nil {
 		return
 	}
 	src := acq.NodeID
-	for _, dep := range dependents {
+	for _, r := range receivers {
 		_ = RecalculateNode(ctx, RecalculateArgs{
 			Persist:      args.Persist,
 			Queue:        args.Queue,
 			Clock:        args.Clock,
 			Logger:       args.Logger,
 			SourceNodeID: &src,
-			TargetNodeID: dep.ID,
+			TargetNodeID: r.ID,
 		})
 	}
 }

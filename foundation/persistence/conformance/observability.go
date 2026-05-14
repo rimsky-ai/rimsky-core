@@ -260,7 +260,6 @@ func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Datab
 				InstanceID:   instID,
 				NodeType:     "n",
 				Executor:     "e",
-				Dependencies: []shared.UUID{},
 			}, tx); err != nil {
 				return err
 			}

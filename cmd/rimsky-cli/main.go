@@ -40,6 +40,8 @@ func main() {
 		os.Exit(dispatchNode(os.Args[2:]))
 	case "admin":
 		os.Exit(dispatchAdmin(os.Args[2:]))
+	case "parked":
+		os.Exit(dispatchParked(os.Args[2:]))
 	case "ctx":
 		os.Exit(dispatchCtx(os.Args[2:]))
 	case "run":
@@ -168,6 +170,24 @@ func dispatchNode(args []string) int {
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky-cli node: unknown subcommand %q\n", args[0])
+	return 2
+}
+
+func dispatchParked(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli parked <list> ...")
+		return 2
+	}
+	ctx := context.Background()
+	rest := args[1:]
+	switch args[0] {
+	case "list":
+		return cli.RunParkedList(ctx, rest)
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli parked <list> ...")
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "rimsky-cli parked: unknown subcommand %q\n", args[0])
 	return 2
 }
 

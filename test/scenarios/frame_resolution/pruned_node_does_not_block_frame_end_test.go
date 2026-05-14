@@ -35,8 +35,10 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "source", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub", Dependencies: []string{"source"}}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub", Dependencies: []string{"middle"}}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "source", On: "state"})),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "leaf", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "middle", On: "state", When: "fresh", Outcome: "fresh_changed"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pruned", map[string]any{})

@@ -49,13 +49,14 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 // dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// dispatchDirectiveRe / directiveBodyRe accept the four substitution
-// kinds: `deps`, `claim`, `params`, and `nodes` (the latter for the F4
-// event-substitution path; see graph/attribute/substitution.go).
+// dispatchDirectiveRe / directiveBodyRe accept the three substitution
+// kinds: `claim`, `params`, and `nodes` (the latter handles both
+// attribute and event topic forms; see graph/attribute/substitution.go).
+// The legacy `deps.X.Y` form retired post-2026-05-14.
 //
 // directiveBodyRe further parses the inside of `{{...}}` against the
-// three known source kinds.
-var directiveBodyRe = regexp.MustCompile(`^(deps|claim|params|nodes)\.(.+)$`)
+// known source kinds.
+var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes)\.(.+)$`)
 
 // RegistryHooks bundles the registry-dependent lookups the validator
 // uses. All fields may be nil; a nil hook short-circuits to "skip the
@@ -138,7 +139,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
-		validateDependencies(n, base, declared, &res)
+		validateSubscribes(n, base, declared, hooks, spec, &res)
 		validateErrorTypes(n, base, declared, &res)
 		validateSchedule(n, base, cronParser, &res)
 		validateExecutorCoherence(n, base, &res)
@@ -146,17 +147,81 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, &res)
-		validateOnAcquireUnavailable(n, base, declared, &res)
-		validateOnExecutorComplete(n, base, declared, &res)
-		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", declared, &res)
-		validateOnEvent(n, base, declared, hooks, &res)
+		validateOnAcquireUnavailable(n, base, &res)
+		validateOnExecutorComplete(n, base, &res)
+		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", &res)
 		validateMaxParkDuration(n, base, &res)
 		validateUserdataAgainstSchema(n, base, hooks, &res)
 	}
 
-	detectCycles(spec.Nodes, &res)
+	// Post-pass: substitution-ref cross-check (T17). Iterate all
+	// `{{nodes.<X>.<kind>.<name>}}` directives in the attribute
+	// schemas and confirm the sender + attribute/event name are
+	// defined on the upstream node.
+	refs := ExtractSubstitutionRefsFromTemplate(*spec)
+	for receiverType, list := range refs {
+		for _, ref := range list {
+			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
+			senderIdx, declaredOk := declared[ref.SenderNodeType]
+			if !declaredOk {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("substitution ref `nodes.%s.%s.%s` references unknown node %q", ref.SenderNodeType, ref.TopicKind, ref.Name, ref.SenderNodeType),
+				})
+				continue
+			}
+			sender := spec.Nodes[senderIdx]
+			switch ref.TopicKind {
+			case "attribute":
+				if ref.Name == "" {
+					continue
+				}
+				if !attributeKeyDeclared(sender, ref.Name) {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: path,
+						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.SenderNodeType, ref.Name),
+					})
+				}
+			case "event":
+				if hooks.ExecutorDeclaredEvents != nil && sender.Executor != "" {
+					if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
+						found := false
+						for _, name := range names {
+							if name == ref.Name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							res.Errors = append(res.Errors, ValidationError{
+								Path: path,
+								Msg:  fmt.Sprintf("substitution ref `nodes.%s.event.%s` references an event not declared by executor %q", ref.SenderNodeType, ref.Name, sender.Executor),
+							})
+						}
+					}
+					// Silent skip when executor capabilities are not visible.
+				}
+			}
+		}
+	}
+
 	ValidateInheritance(spec, &res)
 	return res
+}
+
+// attributeKeyDeclared reports whether `key` appears under
+// sender.Attributes.Schema.properties. Pure-cascade senders or senders
+// without an attribute schema return false (no attribute to read).
+func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
+	if sender.Attributes == nil || len(sender.Attributes.Schema) == 0 {
+		return false
+	}
+	props, ok := sender.Attributes.Schema["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, declared := props[key]
+	return declared
 }
 
 // validateFrameResolution enforces the frame-resolution template
@@ -199,64 +264,38 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	}
 }
 
-func validateDependencies(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
-	for j, dep := range n.Dependencies {
-		if _, ok := declared[dep]; !ok {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("%s.dependencies[%d]", base, j),
-				Msg:  fmt.Sprintf("dependency %q does not reference a declared node", dep),
-			})
-		}
-	}
-}
-
-func validateErrorTypes(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, res *ValidationResult) {
 	for className, policy := range n.ErrorTypes {
 		for ai, action := range policy.Policy {
-			if action.Action != "invalidate" {
-				continue
-			}
-			for ti, target := range action.Targets {
-				if _, ok := declared[target]; !ok {
-					res.Errors = append(res.Errors, ValidationError{
-						Path: fmt.Sprintf("%s.error_types[%s].policy[%d].targets[%d]", base, className, ai, ti),
-						Msg:  fmt.Sprintf("target %q does not reference a declared node", target),
-					})
-				}
-			}
-			// Per the reactive-loops + lifecycle-handlers spec §5,
-			// PolicyAction.Frame is "" | "in" | "next"; empty defaults
-			// to next at dispatch time.
-			switch action.Frame {
-			case "", FrameIn, FrameNext:
-			default:
+			if action.Action == "invalidate" {
 				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("%s.error_types[%s].policy[%d].frame", base, className, ai),
-					Msg:  fmt.Sprintf("frame = %q is not valid (one of: %q, %q)", action.Frame, FrameIn, FrameNext),
+					Path: fmt.Sprintf("%s.error_types[%s].policy[%d].action", base, className, ai),
+					Msg:  "`action: invalidate` retired; receivers declare cascade coupling via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]`. See spec .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md Piece 1 migration table.",
 				})
+				continue
 			}
 		}
 	}
 }
 
 // validateOnAcquireUnavailable enforces the resolve vocabulary
-// (pass | retry | error), the error_class requirement when resolve=error,
-// and the optional invalidate sub-block. See spec §3.
-func validateOnAcquireUnavailable(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+// (pass | retry | error) and the error_class requirement when
+// resolve=error. The invalidate-emit slot retired post-2026-05-14.
+func validateOnAcquireUnavailable(n TemplateNodeDef, base string, res *ValidationResult) {
 	h := n.OnAcquireUnavailable
 	if h == nil {
 		return
 	}
 	hbase := base + ".on_acquire_unavailable"
-	if h.Resolve == "" && h.Invalidate == nil {
+	if h.Resolve == "" {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: hbase,
-			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+			Msg:  "handler is empty (resolve is required)",
 		})
 		return
 	}
 	switch h.Resolve {
-	case "", ResolvePass, ResolveRetry:
+	case ResolvePass, ResolveRetry:
 	case ResolveError:
 		if strings.TrimSpace(h.ErrorClass) == "" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -275,53 +314,51 @@ func validateOnAcquireUnavailable(n TemplateNodeDef, base string, declared map[s
 			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolvePass, ResolveRetry, ResolveError),
 		})
 	}
-	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
 }
 
 // validateOnExecutorComplete enforces the resolve vocabulary
-// (by_changed | always_propagate | never_propagate) and the optional
-// invalidate sub-block. See spec §3.
-func validateOnExecutorComplete(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+// (by_changed | always_propagate | never_propagate). The invalidate-
+// emit slot retired post-2026-05-14.
+func validateOnExecutorComplete(n TemplateNodeDef, base string, res *ValidationResult) {
 	h := n.OnExecutorComplete
 	if h == nil {
 		return
 	}
 	hbase := base + ".on_executor_complete"
-	if h.Resolve == "" && h.Invalidate == nil {
+	if h.Resolve == "" {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: hbase,
-			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+			Msg:  "handler is empty (resolve is required)",
 		})
 		return
 	}
 	switch h.Resolve {
-	case "", ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate:
+	case ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate:
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: hbase + ".resolve",
 			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate),
 		})
 	}
-	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
 }
 
 // validateOnExecutorTerminal enforces the resolve vocabulary
-// (error | pass) for on_executor_errored, the error_class
-// requirement when resolve=error, and the optional invalidate
-// sub-block. See spec §3.
-func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler, hbase string, declared map[string]int, res *ValidationResult) {
+// (error | pass) for on_executor_errored, plus the error_class
+// requirement when resolve=error. The invalidate-emit slot retired
+// post-2026-05-14.
+func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler, hbase string, res *ValidationResult) {
 	if h == nil {
 		return
 	}
-	if h.Resolve == "" && h.Invalidate == nil {
+	if h.Resolve == "" {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: hbase,
-			Msg:  "handler is empty (must declare resolve and/or invalidate)",
+			Msg:  "handler is empty (resolve is required)",
 		})
 		return
 	}
 	switch h.Resolve {
-	case "", ResolvePass:
+	case ResolvePass:
 	case ResolveError:
 		if strings.TrimSpace(h.ErrorClass) == "" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -340,41 +377,108 @@ func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler,
 			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q)", h.Resolve, ResolveError, ResolvePass),
 		})
 	}
-	validateHandlerInvalidate(h.Invalidate, declared, hbase, res)
 }
 
-// validateHandlerInvalidate validates an optional HandlerInvalidate
-// block. Targets must be non-empty; each target is "self" (literal)
-// or a declared node type; Frame must be "" | "in" | "next".
-func validateHandlerInvalidate(inv *HandlerInvalidate, declared map[string]int, base string, res *ValidationResult) {
-	if inv == nil {
-		return
-	}
-	ibase := base + ".invalidate"
-	if len(inv.Targets) == 0 {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: ibase + ".targets",
-			Msg:  "invalidate.targets must be non-empty",
-		})
-	}
-	for ti, target := range inv.Targets {
-		if target == SelfTarget {
+// validateSubscribes is T16: enforces SubscriptionEntry shape rules.
+//
+//	@concept: subscription
+func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
+	for i, s := range n.Subscribes {
+		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
+		// Mutual exclusion: Node and Instance.
+		if s.Node == "" && !s.Instance {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase,
+				Msg:  "must declare either `node:` or `instance: true`",
+			})
 			continue
 		}
-		if _, ok := declared[target]; !ok {
+		if s.Node != "" && s.Instance {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("%s.targets[%d]", ibase, ti),
-				Msg:  fmt.Sprintf("target %q does not reference a declared node (or %q)", target, SelfTarget),
+				Path: sbase,
+				Msg:  "`node:` and `instance: true` are mutually exclusive",
+			})
+			continue
+		}
+		// `node:` must reference a declared node-type.
+		if s.Node != "" {
+			if _, ok := declared[s.Node]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".node",
+					Msg:  fmt.Sprintf("subscription `node: %q` does not reference a declared node", s.Node),
+				})
+				continue
+			}
+		}
+		// `on:` is required and must be a known topic kind.
+		switch s.On {
+		case "state", "attribute", "event":
+		default:
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".on",
+				Msg:  fmt.Sprintf("`on:` must be one of \"state\" | \"attribute\" | \"event\", got %q", s.On),
+			})
+			continue
+		}
+		// On == "event" requires `name:`.
+		if s.On == "event" && s.Name == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".name",
+				Msg:  "`on: event` requires `name:`",
 			})
 		}
-	}
-	switch inv.Frame {
-	case "", FrameIn, FrameNext:
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: ibase + ".frame",
-			Msg:  fmt.Sprintf("frame = %q is not valid (one of: %q, %q)", inv.Frame, FrameIn, FrameNext),
-		})
+		// On != "state" forbids state-only filters.
+		if s.On != "state" {
+			if s.When != "" || s.Outcome != "" || s.ErrorClass != "" || s.Reason != "" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase,
+					Msg:  "state-only filters (when/outcome/error_class/reason) require `on: state`",
+				})
+			}
+		}
+		// `when:` must be a valid node state.
+		if s.When != "" {
+			switch s.When {
+			case "fresh", "stale", "running", "failed", "parked":
+			default:
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".when",
+					Msg:  fmt.Sprintf("`when: %q` is not a valid node state", s.When),
+				})
+			}
+		}
+		// `frame:` must be in | next | "".
+		switch s.Frame {
+		case "", FrameIn, FrameNext:
+		default:
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".frame",
+				Msg:  fmt.Sprintf("`frame:` must be empty | %q | %q, got %q", FrameIn, FrameNext, s.Frame),
+			})
+		}
+		// Cross-check `on: event` `name:` against the sender's executor's
+		// declared_events (silent-skip when unreachable).
+		if s.Node != "" && s.On == "event" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil {
+			senderIdx := declared[s.Node]
+			sender := tmpl.Nodes[senderIdx]
+			if sender.Executor != "" {
+				if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
+					found := false
+					for _, name := range names {
+						if name == s.Name {
+							found = true
+							break
+						}
+					}
+					if !found {
+						res.Errors = append(res.Errors, ValidationError{
+							Path: sbase + ".name",
+							Msg:  fmt.Sprintf("event %q not declared by sender %q's executor %q", s.Name, s.Node, sender.Executor),
+						})
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -639,7 +743,7 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	if bodyMatch == nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
-			Msg:  fmt.Sprintf("source directive %q must start with deps.|claim.|params.", body),
+			Msg:  fmt.Sprintf("source directive %q must start with claim.|params.|nodes.", body),
 		})
 		return
 	}
@@ -647,20 +751,6 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	rest := bodyMatch[2]
 	parts := strings.Split(rest, ".")
 	switch kind {
-	case "deps":
-		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("deps directive %q must be deps.<node>.<field>", body),
-			})
-			return
-		}
-		if _, ok := declared[parts[0]]; !ok {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("deps directive references unknown node %q", parts[0]),
-			})
-		}
 	case "claim":
 		// Valid forms: claim.<alias>.address, claim.<alias>.scope,
 		// claim.<alias>.payload.<field-path>.
@@ -710,26 +800,43 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 			})
 		}
 	case "nodes":
-		// F4 event substitution: nodes.<emitter>.event.<event_name>.<json-path>
-		if len(parts) < 4 || parts[0] == "" || parts[2] == "" {
+		// Post-2026-05-14 substitution forms:
+		//   nodes.<node>.attribute.<field>...      (replaces deps.X.Y)
+		//   nodes.<emitter>.event.<event_name>.<json-path>
+		if len(parts) < 3 || parts[0] == "" || parts[2] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<emitter>.event.<name>.<path>", body),
+				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.{attribute|event}.<...>", body),
 			})
 			return
 		}
-		if parts[1] != "event" {
+		switch parts[1] {
+		case "attribute":
+			// nodes.<node>.attribute.<field>...
+			if _, ok := declared[parts[0]]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("nodes directive references unknown node %q", parts[0]),
+				})
+			}
+		case "event":
+			if len(parts) < 4 {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.event.<name>.<path>", body),
+				})
+				return
+			}
+			if _, ok := declared[parts[0]]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("nodes directive references unknown node %q", parts[0]),
+				})
+			}
+		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'event'", body),
-			})
-			return
-		}
-		emitter := parts[0]
-		if _, ok := declared[emitter]; !ok {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: path,
-				Msg:  fmt.Sprintf("nodes directive references unknown node %q", emitter),
+				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'attribute' or 'event'", body),
 			})
 		}
 	default:
@@ -777,168 +884,16 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected deps.<n>.<f>, claim.<a>.{address|scope|payload.<f>}, params.<k>, or nodes.<n>.event.<name>.<path>)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload.<f>}, params.<k>, nodes.<n>.attribute.<f>, or nodes.<n>.event.<name>.<path>)", body),
 			})
 		}
 	}
 }
 
-// detectCycles runs a depth-first search over Dependencies and records
-// an error for each cycle found.
-func detectCycles(nodes []TemplateNodeDef, res *ValidationResult) {
-	idx := make(map[string]TemplateNodeDef, len(nodes))
-	for _, n := range nodes {
-		idx[n.Type] = n
-	}
-	const (
-		white = 0
-		gray  = 1
-		black = 2
-	)
-	color := make(map[string]int, len(nodes))
-	reported := make(map[string]bool)
-
-	var visit func(typ string, stack []string)
-	visit = func(typ string, stack []string) {
-		color[typ] = gray
-		stack = append(stack, typ)
-		node, ok := idx[typ]
-		if ok {
-			for _, dep := range node.Dependencies {
-				if _, known := idx[dep]; !known {
-					continue
-				}
-				switch color[dep] {
-				case white:
-					visit(dep, stack)
-				case gray:
-					cycle := extractCycle(stack, dep)
-					key := canonicalCycle(cycle)
-					if !reported[key] {
-						reported[key] = true
-						res.Errors = append(res.Errors, ValidationError{
-							Path: "nodes",
-							Msg:  fmt.Sprintf("dependency cycle detected: %s", strings.Join(cycle, " -> ")),
-						})
-					}
-				}
-			}
-		}
-		color[typ] = black
-	}
-
-	for _, n := range nodes {
-		if color[n.Type] == white {
-			visit(n.Type, nil)
-		}
-	}
-}
-
-func extractCycle(stack []string, start string) []string {
-	for i, s := range stack {
-		if s == start {
-			out := append([]string{}, stack[i:]...)
-			return append(out, start)
-		}
-	}
-	return append([]string{}, start)
-}
-
-func canonicalCycle(cycle []string) string {
-	if len(cycle) == 0 {
-		return ""
-	}
-	body := cycle
-	if len(body) > 1 && body[0] == body[len(body)-1] {
-		body = body[:len(body)-1]
-	}
-	if len(body) == 0 {
-		return ""
-	}
-	minIdx := 0
-	for i := 1; i < len(body); i++ {
-		if body[i] < body[minIdx] {
-			minIdx = i
-		}
-	}
-	rot := make([]string, 0, len(body))
-	for i := 0; i < len(body); i++ {
-		rot = append(rot, body[(minIdx+i)%len(body)])
-	}
-	return strings.Join(rot, "|")
-}
-
-// validateOnEvent enforces plan F1 + F6:
-//   - Each `on_event` key must be a non-empty event name.
-//   - When ExecutorDeclaredEvents is wired, every key must appear in the
-//     executor's declared_events list.
-//   - resolve, when set, must be one of pass | retry | error.
-//   - error_class is required when resolve == "error".
-//   - invalidate.targets reference declared node types or "self".
-//   - invalidate.frame, when set, must be in | next.
-func validateOnEvent(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, res *ValidationResult) {
-	if len(n.OnEvent) == 0 {
-		return
-	}
-	if n.Executor == "" {
-		// on_event has no meaning on a pure-cascade node — there is no
-		// executor to emit events.
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".on_event",
-			Msg:  "on_event is invalid on a node with no executor",
-		})
-		return
-	}
-	var declaredEvents map[string]struct{}
-	if hooks.ExecutorDeclaredEvents != nil {
-		if names, ok := hooks.ExecutorDeclaredEvents(n.Executor); ok {
-			declaredEvents = make(map[string]struct{}, len(names))
-			for _, name := range names {
-				declaredEvents[name] = struct{}{}
-			}
-		}
-	}
-	for eventName, h := range n.OnEvent {
-		hbase := fmt.Sprintf("%s.on_event[%q]", base, eventName)
-		if eventName == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase, Msg: "on_event key must be non-empty",
-			})
-			continue
-		}
-		// Cross-validate against declared_events when the executor's
-		// capabilities are visible. nil declaredEvents means we couldn't
-		// resolve the executor's capability cache (probably no
-		// observability handshake) — skip silently to avoid blocking
-		// development setups.
-		if declaredEvents != nil {
-			if _, ok := declaredEvents[eventName]; !ok {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: hbase,
-					Msg:  fmt.Sprintf("event %q not declared by executor %q", eventName, n.Executor),
-				})
-				continue
-			}
-		}
-		switch h.Resolve {
-		case "", ResolvePass, ResolveRetry, ResolveError:
-		default:
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".resolve",
-				Msg:  fmt.Sprintf("resolve must be empty | pass | retry | error, got %q", h.Resolve),
-			})
-		}
-		if h.Resolve == ResolveError && strings.TrimSpace(h.ErrorClass) == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".error_class",
-				Msg:  "error_class required when resolve=error",
-			})
-		}
-		if h.Invalidate != nil {
-			validateHandlerInvalidate(h.Invalidate, declared, hbase+".invalidate", res)
-		}
-	}
-}
+// (detectCycles + validateOnEvent removed by the 2026-05-14
+// subscription-cascade resolution: cycles are now a runtime concern
+// driven by the deferred `frame: next` queue, and `on_event:` is
+// retired in favor of receiver-side subscriptions.)
 
 // validateMaxParkDuration parses MaxParkDuration via time.ParseDuration
 // and rejects malformed values. Empty string is valid (= "use deployment

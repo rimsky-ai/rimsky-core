@@ -52,4 +52,5 @@ Pre-2026-05-12 the policy vocabulary included `discard_then_retry` and `resume_t
 ## Notes
 
 - Action vocabulary consolidated to four (`retry`, `invalidate(targets)`, `give_up`, `pass`) per `spec:2026-05-12-nomenclature-resolution` audit cross-layer #9. Implementation renamed to `code:runtime/runner_error_policy.go::applyErrorPolicy` (ride-along I.2). Wire-level `Blocked` event collapsed into `Error{error_class: "executor_blocked"}` (Group E.2); `on_executor_blocked` lifecycle-handler slot retired (E.10). Resolves `tension:_resolved/error-action-count-drift` and `tension:_resolved/blocked-vs-errored-routing`.
+- 2026-05-14: `action: invalidate` retires; the four-action set reduces to `retry | give_up | pass` (plus the historical `discard_then_retry` / `resume_then_retry` retry flavors). Receivers declare cascade coupling via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]`; the per-node retry-loop cap stays. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
 

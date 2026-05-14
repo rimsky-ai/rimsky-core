@@ -1,11 +1,11 @@
 ---
 concept: invalidate
 definition: |
-  Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and cascades the same message to dependents. The cascade engine is a pure reachability walk over the dependency graph rooted at the invalidated node.
+  Rimsky's only graph-level message. Sent to a node, it marks the node `stale`; the cascade walk then traverses the per-template subscription-edge inverse map and stale-marks each receiver that subscribed to the sender's transition.
 proto_symbol: (none)
 config_field: (none)
 api_surface: POST /nodes/{id}/invalidate
-related: [cascade, node, node-state]
+related: [cascade, node, node-state, subscription, wait-set]
 deprecated_terms: []
 ---
 
@@ -13,7 +13,7 @@ deprecated_terms: []
 
 ## Definition
 
-Rimsky's only graph-level message. Sent to a node, it marks the node `stale` and cascades the same message to dependents. The cascade engine is a pure reachability walk over the dependency graph rooted at the invalidated node.
+Rimsky's only graph-level message. Sent to a node, it marks the node `stale`; the cascade walk then traverses the per-template subscription-edge inverse map and stale-marks each receiver that subscribed to the sender's transition.
 
 ## Why it exists
 
@@ -21,40 +21,37 @@ Rimsky's reactive model is grounded in a single message because the system needs
 
 The single-message design keeps the cascade engine small and auditable. The state machine has five states; the message vocabulary has one entry. Together they specify the entire reactive-propagation semantics.
 
-`invalidate` can originate from three places:
+`invalidate` originates from these places:
 
 1. **Operator-driven**: a `POST /nodes/{id}/invalidate` request from the control API or `rimsky-cli`.
 2. **Schedule-driven**: a scheduled fire-time arriving at a node configured with a cron schedule.
-3. **Executor-driven**: an executor reports an `error_class` whose policy chain in the template resolves to the `invalidate(targets)` action. (The executor reports only the error class; the supervisor maps `(error_class, retry_counter)` to the action.)
+3. **Cascade-walk-driven**: the scheduler's cascade walk, evaluating the per-template subscription-edge inverse map at a sender's transition, stale-marks every receiver whose `subscribes:` entry could match (and inserts a wait-set row gating its eligibility until the sender settles).
 
-In all three cases, the propagation rule is identical.
-
-A fourth originator was added in the reactive-loops + lifecycle-handlers spec (May 2026): **lifecycle-handler-driven** invalidate emits. Each of the three declarable lifecycle handler slots plus the `on_event` map may declare an optional `invalidate: { targets: [...], frame: ... }` block that fires unconditionally when the handler runs. See [`node.md`](node.md).
+In all cases the propagation rule is identical: the receiver enters `stale` (idempotent if already stale) and its wait-set row blocks dispatch until the upstream sender resolves.
 
 ## `frame: in | next` — per-emit frame discipline
 
 Every invalidate emit declaration carries an optional `frame:` field controlling whether the emit joins the current cascade or buffers a new frame:
 
-- **`frame: next`** (default) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. This preserves today's behavior: cascades don't cross frame boundaries.
-- **`frame: in`** — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Useful for self-invalidation loops (`{ targets: [self], frame: in }`) that want a single frame to span all iterations.
+- **`frame: in`** (default for per-node subscriptions) — the emit joins the source's current frame, marking the target `stale` with the source's `frame_id` directly. Suitable for in-cascade reactive coupling.
+- **`frame: next`** (default for cross-cutting `instance: true` subscriptions and for operator API emits) — the emit goes through `frame.EnqueueOrCoalesce`, producing a new pending frame that runs only after the current frame ends. Useful for cross-cutting reactions that should not surprise the current frame's resolution.
 
 Where it can appear:
 
 - Operator API (`POST /nodes/{id}/invalidate { frame: ... }`).
-- Error-types policy invalidate action (`policy: [{action: invalidate, targets: [...], frame: ...}]`).
-- Lifecycle-handler invalidate (`on_*: { invalidate: { targets: [...], frame: ... } }`).
+- Per-subscription `frame:` modifier in a receiver's `subscribes:` entry.
 
-Default is `next` everywhere except the cascade-on-commit and pure-cascade scheduler walks (which are scheduler actions, not configurable invalidate emits).
+The cascade-walk-driven invalidates are scheduler actions; they obey the receiver-side subscription's per-edge `frame: in | next` setting rather than a sender-side flag.
 
 ## How you encounter it
 
 - **Control API**: `POST /nodes/{id}/invalidate` is the operator-facing trigger.
-- **Templates**: the `dependencies:` list of each node declaration determines the cascade target set.
-- **Error handling**: when an executor's terminal `Error{error_class}` event reports an `error_class` and the template's policy chain resolves it to the `invalidate(targets)` action, the named targets are cascaded.
+- **Templates**: a receiver declares `subscribes:` entries pointing at the senders whose transitions should invalidate it; substitution refs (`{{nodes.X.attribute.Y}}`, `{{nodes.X.event.Z.<path>}}`) auto-subscribe. The cascade walk at a sender's transition stale-marks every matching subscriber.
+- **Errors**: when an executor terminals with `Error{error_class}`, every receiver whose `subscribes:` entry matches `{node: <sender>, on: state, when: failed, error_class: <class>}` is invalidated by the cascade walk.
 
 ## Consumer-visible guarantees
 
-- Invalidate is idempotent: an already-`stale` node receiving an `invalidate` stays `stale`; the cascade still walks dependents (and they too may already be `stale`, in which case the walk is a no-op for them).
+- Invalidate is idempotent: an already-`stale` node receiving an `invalidate` stays `stale`; the cascade still walks subscribers (and they too may already be `stale`, in which case the walk is a no-op for them).
 - Invalidate does not preempt running work. An in-flight node will run to its terminal state; the invalidate either queues a new frame (`serial_queue`) or joins the pending coalesce (`coalesce`).
 
 ## Common mistakes
@@ -62,9 +59,11 @@ Default is `next` everywhere except the cascade-on-commit and pure-cascade sched
 - Confusing `invalidate` with "abort." Invalidate signals "the value is no longer current"; it does not interrupt or cancel anything mid-flight. Graceful preemption is not part of the model.
 - Treating `invalidate` like a function call that returns a result. Invalidate is fire-and-forget; the cascade walks the graph asynchronously and the scheduler picks up newly-stale nodes on the next tick.
 - Thinking there's a second message called "recalculate." There isn't. Recalculation is what the scheduler does to a stale node; `invalidate` is the only message that travels between nodes.
-- Trying to invalidate a non-existent target. The control-api endpoint returns an error; the executor's `invalidate(targets)` action references node names that must be present in the same template.
+- Trying to invalidate a non-existent target. The control-api endpoint returns an error; receivers' `subscribes:` entries are validated at template registration against the template's declared nodes.
 
 ## See also
 
 - [`cascade.md`](cascade.md)
+- [`subscription.md`](subscription.md)
+- [`wait-set.md`](wait-set.md)
 - [`node-state.md`](node-state.md)

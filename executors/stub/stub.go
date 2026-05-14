@@ -66,7 +66,8 @@ type script struct {
 	heartbeats        int
 	delay             time.Duration
 	// Park-terminal scripted fields.
-	parkReason       string
+	parkReason       genv1.ParkReason
+	parkReasonNote   string
 	parkPayload      []byte
 	parkResumeAt     time.Time // zero ⇒ indefinite park (no resume_at)
 	parkSessionToken string
@@ -177,17 +178,21 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 
 // Park configures the scripted terminal as a Park event.
 // resumeAt may be zero (indefinite park; resumes only via external
-// invalidate). reason may be empty (permitted but logged WARN supervisor-
-// side per plan E1). sessionToken is opaque to rimsky and round-tripped
-// to the executor on resume via ResumeContext.session_token.
+// invalidate). reason is the typed ParkReason enum (use
+// ParkReason_PARK_REASON_UNSPECIFIED for "unspecified", logged WARN
+// supervisor-side). reasonNote carries the optional free-form human
+// annotation. sessionToken is opaque to rimsky and round-tripped to
+// the executor on resume via ResumeContext.session_token.
 //
-// Per plan A3 / E1 / L2.
-func (b *TypeBuilder) Park(reason string, payload []byte, resumeAt time.Time, sessionToken string) *TypeBuilder {
+// Per plan A3 / E1 / L2; updated for 2026-05-14 Piece 2 (ParkReason
+// typed).
+func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, payload []byte, resumeAt time.Time, sessionToken string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
 	sc := b.s.scripts[b.typ]
 	sc.terminal = termPark
 	sc.parkReason = reason
+	sc.parkReasonNote = reasonNote
 	sc.parkPayload = payload
 	sc.parkResumeAt = resumeAt
 	sc.parkSessionToken = sessionToken
@@ -323,6 +328,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 	case termPark:
 		park := &genv1.Park{
 			Reason:       sc.parkReason,
+			ReasonNote:   sc.parkReasonNote,
 			Payload:      sc.parkPayload,
 			SessionToken: sc.parkSessionToken,
 		}

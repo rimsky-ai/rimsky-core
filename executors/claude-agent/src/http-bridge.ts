@@ -281,6 +281,7 @@ function outcomeToCallbackBody(
       async_ack_id: ackId,
       park_requested: {
         reason: outcome.reason,
+        reason_note: outcome.reasonNote ?? "",
         payload: encodeBase64(outcome.payload),
         ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
         session_token: outcome.sessionToken,

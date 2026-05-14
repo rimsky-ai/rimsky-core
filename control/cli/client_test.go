@@ -253,7 +253,7 @@ func TestClient_ListInstanceNodes(t *testing.T) {
 	srv := helperServer(t, http.MethodGet, "/instances/x/nodes", nil, http.StatusOK,
 		map[string]any{
 			"nodes": []map[string]any{
-				{"id": "n1", "instance_id": "x", "node_type": "hello", "state": "fresh", "dependencies": []string{}, "retry_counter": 0, "action_index": 0, "created_at": "2026-05-02T00:00:00Z", "updated_at": "2026-05-02T00:00:00Z"},
+				{"id": "n1", "instance_id": "x", "node_type": "hello", "state": "fresh", "retry_counter": 0, "action_index": 0, "created_at": "2026-05-02T00:00:00Z", "updated_at": "2026-05-02T00:00:00Z"},
 			},
 		},
 	)
@@ -270,7 +270,7 @@ func TestClient_ListInstanceNodes(t *testing.T) {
 
 func TestClient_GetNode(t *testing.T) {
 	srv := helperServer(t, http.MethodGet, "/nodes/n1", nil, http.StatusOK,
-		map[string]any{"id": "n1", "instance_id": "x", "node_type": "h", "state": "fresh", "dependencies": []string{}, "retry_counter": 0, "action_index": 0, "created_at": "t", "updated_at": "t"},
+		map[string]any{"id": "n1", "instance_id": "x", "node_type": "h", "state": "fresh", "retry_counter": 0, "action_index": 0, "created_at": "t", "updated_at": "t"},
 	)
 	defer srv.Close()
 	c := NewClient(srv.URL)

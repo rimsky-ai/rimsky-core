@@ -44,3 +44,7 @@ The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a six
 - `Store` vs `ClaimProducer` vocabulary split — see `tensions/store-vs-claim-producer-vocabulary.md`.
 - YAML `stores:` legacy alias of `claim_producers:` — see `tensions/yaml-stores-alias.md`.
 
+
+## Notes
+
+- 2026-05-14: atomic-staging pattern documented at `docs/agents/examples/atomic-staging.md` with a reference filesystem implementation under `examples/atomic-staging-fs-producer/`. Pattern is producer-side discipline; no rimsky-level surface change. Per spec Piece 3 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

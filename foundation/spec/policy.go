@@ -34,10 +34,19 @@ type ErrorTypePolicy struct {
 //     Release-routing for read-side state is not in scope for the
 //     2026-04-30 stores cleanup; if a future cycle reintroduces it,
 //     update both this comment and `applyResolvedAction` together.
-//   - "invalidate"         — return targets; per-claim release fires
-//     Abandon on the store.
 //   - "give_up"            — terminal failure; per-claim release
 //     fires Abandon on the store.
+//   - "pass"               — terminal: route to fresh+passed (no
+//     cascade-fire). Per the 2026-05-14 subscription-cascade
+//     resolution this slot is available in addition to give_up;
+//     emitting failed-state cascade lives receiver-side via
+//     SubscriptionEntry.
+//
+// The historical `"invalidate"` action retired per the 2026-05-14
+// subscription-cascade resolution; receivers declare cascade coupling
+// via SubscriptionEntry with `on: state, when: failed, error_class:
+// <class>`. The template validator rejects `action: invalidate` with
+// a migration message.
 type PolicyAction struct {
 	Action         string      `yaml:"action" json:"action"`
 	Count          int         `yaml:"count,omitempty" json:"count,omitempty"`
@@ -47,10 +56,9 @@ type PolicyAction struct {
 	MaxDelayMs     int         `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
 	Targets        []string    `yaml:"targets,omitempty" json:"targets,omitempty"`
 	ReasonTemplate string      `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
-	// Frame controls whether the invalidate emit (when Action ==
-	// "invalidate") joins the current cascade (FrameIn) or buffers
-	// through frame.EnqueueOrCoalesce as a new frame (FrameNext;
-	// default). See the reactive-loops + lifecycle-handlers spec §5.
+	// Frame is retired post-2026-05-14 (invalidate-emit retired on
+	// PolicyAction). Field retained for parse-compatibility through
+	// the retirement window; ignored by the runtime.
 	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
 }
 

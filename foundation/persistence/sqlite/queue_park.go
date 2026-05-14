@@ -45,6 +45,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		        parked_at = ?,
 		        resume_at = ?,
 		        parked_reason = ?,
+		        parked_reason_note = ?,
 		        session_token = ?,
 		        parked_payload_inline = ?,
 		        parked_payload_handle = ?,
@@ -53,7 +54,8 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		    AND claimed_by = ?
 		    AND phase = 'active'`,
 		formatTime(in.ParkedAt), resumeAt,
-		nullableString(in.Reason), nullableString(in.SessionToken),
+		nullableString(in.Reason), nullableString(in.ReasonNote),
+		nullableString(in.SessionToken),
 		payloadInline,
 		nullableString(in.PayloadHandle), nullableString(in.PayloadHandleBackend),
 		in.DispatchID.String(), in.ExpectedClaimedBy,
@@ -79,7 +81,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	}
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
@@ -106,7 +108,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	}
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
@@ -161,7 +163,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	}
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT n.instance_id, d.node_id, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.phase = 'parked'
@@ -182,9 +184,10 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			parkedAtStr string
 			resumeAtStr sql.NullString
 			reason      sql.NullString
+			reasonNote  sql.NullString
 			nodeID      string
 		)
-		if err := rows.Scan(&instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason); err != nil {
+		if err := rows.Scan(&instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason, &reasonNote); err != nil {
 			return nil, err
 		}
 		if instID.Valid {
@@ -209,6 +212,9 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		if reason.Valid {
 			r.Reason = reason.String
 		}
+		if reasonNote.Valid {
+			r.ReasonNote = reasonNote.String
+		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -221,7 +227,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.session_token,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
 		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
@@ -363,24 +369,25 @@ func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.T
 		handle      sql.NullString
 		backend     sql.NullString
 		reason      sql.NullString
+		reasonNote  sql.NullString
 		session     sql.NullString
 		wakeReason  sql.NullString
 		parkedAtStr sql.NullString
 	)
 	err := q.q(tx).QueryRowContext(ctx,
 		`SELECT parked_payload_inline, parked_payload_handle, parked_payload_handle_backend,
-		        parked_reason, session_token, wake_reason, parked_at
+		        parked_reason, parked_reason_note, session_token, wake_reason, parked_at
 		   FROM rimsky_node_runs
 		  WHERE id = ?`,
 		dispatchID.String(),
-	).Scan(&inline, &handle, &backend, &reason, &session, &wakeReason, &parkedAtStr)
+	).Scan(&inline, &handle, &backend, &reason, &reasonNote, &session, &wakeReason, &parkedAtStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("sqlite.LoadResumeMetadataInTx: %w", err)
 	}
-	if len(inline) == 0 && !handle.Valid && !backend.Valid && !reason.Valid && !session.Valid && !wakeReason.Valid && !parkedAtStr.Valid {
+	if len(inline) == 0 && !handle.Valid && !backend.Valid && !reason.Valid && !reasonNote.Valid && !session.Valid && !wakeReason.Valid && !parkedAtStr.Valid {
 		return nil, nil
 	}
 	out := &persistence.ResumeMetadataRow{PayloadInline: inline}
@@ -392,6 +399,9 @@ func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.T
 	}
 	if reason.Valid {
 		out.Reason = reason.String
+	}
+	if reasonNote.Valid {
+		out.ReasonNote = reasonNote.String
 	}
 	if session.Valid {
 		out.SessionToken = session.String
@@ -419,6 +429,7 @@ func (q *queueImpl) ClearResumeMetadataInTx(ctx context.Context, tx persistence.
 		`UPDATE rimsky_node_runs
 		    SET parked_at = NULL,
 		        parked_reason = NULL,
+		        parked_reason_note = NULL,
 		        parked_payload_inline = NULL,
 		        parked_payload_handle = NULL,
 		        parked_payload_handle_backend = NULL,
@@ -464,6 +475,7 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 		parkedAtStr            string
 		resumeAtStr            sql.NullString
 		reason, sessionToken   sql.NullString
+		reasonNote             sql.NullString
 		payloadInline          []byte
 		payloadHandle, backend sql.NullString
 		maxParkSec             sql.NullInt64
@@ -471,7 +483,7 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &executor, &storesStr, &frameIDStr,
-		&parkedAtStr, &resumeAtStr, &reason, &sessionToken,
+		&parkedAtStr, &resumeAtStr, &reason, &reasonNote, &sessionToken,
 		&payloadInline, &payloadHandle, &backend,
 		&maxParkSec, &consecutiveRetries,
 	); err != nil {
@@ -518,6 +530,9 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 	}
 	if reason.Valid {
 		out.Reason = reason.String
+	}
+	if reasonNote.Valid {
+		out.ReasonNote = reasonNote.String
 	}
 	if sessionToken.Valid {
 		out.SessionToken = sessionToken.String

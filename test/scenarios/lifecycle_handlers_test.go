@@ -44,10 +44,9 @@ func TestAlwaysPropagateResolution(t *testing.T) {
 				OnExecutorComplete: &node.OnExecutorCompleteHandler{Resolve: node.ResolveAlwaysPropagate},
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "b",
-				Executor:     "stub",
-				Dependencies: []string{"a"},
-			}),
+				Type:     "b",
+				Executor: "stub",
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-always", map[string]any{})
@@ -101,10 +100,9 @@ func TestNeverPropagateResolution(t *testing.T) {
 				OnExecutorComplete: &node.OnExecutorCompleteHandler{Resolve: node.ResolveNeverPropagate},
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "b",
-				Executor:     "stub",
-				Dependencies: []string{"a"},
-			}),
+				Type:     "b",
+				Executor: "stub",
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-never", map[string]any{})
@@ -152,10 +150,9 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "b",
-				Executor:     "stub",
-				Dependencies: []string{"a"},
-			}),
+				Type:     "b",
+				Executor: "stub",
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fucnc", map[string]any{})
@@ -207,10 +204,9 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 				},
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "b",
-				Executor:     "stub",
-				Dependencies: []string{"a"},
-			}),
+				Type:     "b",
+				Executor: "stub",
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fail-freeze", map[string]any{})
@@ -332,8 +328,10 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub", Dependencies: []string{"a"}}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub", Dependencies: []string{"b"}}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "b", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-op-inv-target", map[string]any{})
@@ -408,9 +406,8 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:         "p",
-				Dependencies: []string{"a"},
-			}),
+				Type: "p",
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pure-cascade", map[string]any{})

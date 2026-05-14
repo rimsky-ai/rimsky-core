@@ -141,7 +141,11 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
 
     expect(outcome.kind).toBe("park_requested");
     if (outcome.kind === "park_requested") {
-      expect(outcome.reason).toBe("rate_limit");
+      // Post-2026-05-14: rate-limit auto-park maps to the typed
+      // ParkReason value `time_wait`; the legacy free-form reason
+      // text moved to `reasonNote`.
+      expect(outcome.reason).toBe("time_wait");
+      expect(outcome.reasonNote).toContain("rate_limit");
       // sessionToken == runId so the resume path can bring the CLI
       // session back via --resume.
       expect(outcome.sessionToken).toBe(

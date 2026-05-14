@@ -20,19 +20,51 @@ package controlapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
+	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// registerAdminDiagnosticsRoutes wires the three new admin endpoints.
+// isKnownParkReasonFilter returns true when v matches the snake_case
+// projection of any ParkReason enum value. Empty input is rejected by
+// the caller; this helper only validates non-empty values.
+func isKnownParkReasonFilter(v string) bool {
+	upper := "PARK_REASON_" + strings.ToUpper(v)
+	_, ok := genv1.ParkReason_value[upper]
+	return ok
+}
+
+// knownParkReasonFilters returns the sorted set of snake_case
+// ParkReason values usable as the `?reason=` filter, excluding
+// PARK_REASON_UNSPECIFIED (a placeholder; not a real reason).
+func knownParkReasonFilters() []string {
+	out := make([]string, 0, len(genv1.ParkReason_name))
+	for _, name := range genv1.ParkReason_name {
+		if name == "PARK_REASON_UNSPECIFIED" {
+			continue
+		}
+		const prefix = "PARK_REASON_"
+		if strings.HasPrefix(name, prefix) {
+			out = append(out, strings.ToLower(name[len(prefix):]))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// registerAdminDiagnosticsRoutes wires the admin diagnostics endpoints.
 func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/held-frames", handleAdminHeldFrames(deps))
 	r.Get("/admin/diagnostics/parked-nodes", handleAdminParkedNodes(deps))
+	r.Get("/admin/diagnostics/wait-sets", handleAdminWaitSets(deps))
 	r.Post("/admin/instances/{instance}/nodes/{node_id}/invalidate", handleAdminInvalidateNode(deps))
 }
 
@@ -60,9 +92,10 @@ type HeldFrameEntry struct {
 
 // NodeStateRow is the per-node summary inside a HeldFrameEntry.
 type NodeStateRow struct {
-	NodeID string `json:"node_id"`
-	State  string `json:"state"`
-	Reason string `json:"reason,omitempty"`
+	NodeID     string `json:"node_id"`
+	State      string `json:"state"`
+	Reason     string `json:"reason,omitempty"`
+	ReasonNote string `json:"reason_note,omitempty"`
 }
 
 // ParkedNodesResponse is the body of GET /admin/diagnostics/parked-nodes.
@@ -77,6 +110,7 @@ type ParkedNodeEntry struct {
 	ParkedAt   time.Time  `json:"parked_at"`
 	ResumeAt   *time.Time `json:"resume_at,omitempty"`
 	Reason     string     `json:"reason,omitempty"`
+	ReasonNote string     `json:"reason_note,omitempty"`
 }
 
 // handleAdminHeldFrames lists every frame whose state is 'running' AND
@@ -108,6 +142,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 						NodeID:     p.NodeID,
 						ParkedAt:   p.ParkedAt,
 						Reason:     p.Reason,
+						ReasonNote: p.ReasonNote,
 					}
 					if !p.ResumeAt.IsZero() {
 						ra := p.ResumeAt
@@ -131,7 +166,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 				}
 				g.NodeIDs = append(g.NodeIDs, p.NodeID)
 				g.NodeStates = append(g.NodeStates, NodeStateRow{
-					NodeID: p.NodeID, State: "parked", Reason: p.Reason,
+					NodeID: p.NodeID, State: "parked", Reason: p.Reason, ReasonNote: p.ReasonNote,
 				})
 			}
 			for _, g := range groups {
@@ -148,11 +183,22 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 }
 
 // handleAdminParkedNodes returns every parked node_run row.
-// Optional ?reason=<name> filter; empty reason value is treated as
-// "no filter."
+// Optional ?reason=<snake_case> filter; empty reason value is treated
+// as "no filter." Per the 2026-05-14 ParkReason-typed cycle, the
+// `reason` query param is validated against the typed enum's
+// snake_case projection; unknown values return HTTP 400 with the
+// allowed set.
+//
+//	@concept: parked-state
 func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		reasonFilter := req.URL.Query().Get("reason")
+		if reasonFilter != "" && !isKnownParkReasonFilter(reasonFilter) {
+			badRequest(w, fmt.Sprintf(
+				"unknown park reason %q (allowed: %s)",
+				reasonFilter, strings.Join(knownParkReasonFilters(), ", ")))
+			return
+		}
 		out := ParkedNodesResponse{ParkedNodes: []ParkedNodeEntry{}}
 		err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			parked, err := listParkedDiagnostic(ctx, tx, deps, reasonFilter)
@@ -165,6 +211,7 @@ func handleAdminParkedNodes(deps AppDeps) http.HandlerFunc {
 					NodeID:     p.NodeID,
 					ParkedAt:   p.ParkedAt,
 					Reason:     p.Reason,
+					ReasonNote: p.ReasonNote,
 				}
 				if !p.ResumeAt.IsZero() {
 					ra := p.ResumeAt

@@ -36,7 +36,8 @@ nodes:
 
   - type: inheritor-a
     executor: stub
-    dependencies: [acquirer]
+    subscribes:
+      - { node: acquirer, on: state }
     inherits:
       - { claim: snapshot }
     attributes:
@@ -49,7 +50,8 @@ nodes:
 
   - type: inheritor-b
     executor: stub
-    dependencies: [acquirer]
+    subscribes:
+      - { node: acquirer, on: state }
     inherits:
       - { claim: snapshot }
     attributes:

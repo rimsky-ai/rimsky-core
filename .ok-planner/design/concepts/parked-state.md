@@ -39,3 +39,7 @@ The state was added under the platform-extensions design (2026-05-08); migration
 
 - "No destructive action" (frame-stuck) vs "destructive watchdog timeout" (parked) are sibling timeout disciplines with opposite policies — see `tensions/timeout-policy-asymmetry.md`.
 
+
+## Notes
+
+- 2026-05-14: `parked_reason` is now typed (proto enum `ParkReason`); the column stores the snake_case form (`time_wait` / `signal_wait` / `awaiting_human` / `retry_backoff`). New `parked_reason_note` column carries the free-form human annotation. The diagnostics endpoint `?reason=` filter validates against the enum. See spec Piece 2 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

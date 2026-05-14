@@ -235,8 +235,17 @@ func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
 			payloadBytes = []byte(payloadStr)
 		}
 	}
+	reasonStr := asString(m["reason"])
+	reasonEnum := genv1.ParkReason_PARK_REASON_UNSPECIFIED
+	if reasonStr != "" {
+		upper := "PARK_REASON_" + strings.ToUpper(reasonStr)
+		if v, ok := genv1.ParkReason_value[upper]; ok {
+			reasonEnum = genv1.ParkReason(v)
+		}
+	}
 	p := &genv1.Park{
-		Reason:       asString(m["reason"]),
+		Reason:       reasonEnum,
+		ReasonNote:   asString(m["reason_note"]),
 		Payload:      payloadBytes,
 		SessionToken: asString(m["session_token"]),
 	}

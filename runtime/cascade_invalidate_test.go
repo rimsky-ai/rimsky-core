@@ -204,9 +204,10 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	ctx := context.Background()
 	var n persistence.NodeRow
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_ = deps // legacy: dependency-edge resolution is now via subscription-edge map
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
-			Executor: executor, Dependencies: deps,
+			Executor: executor,
 		}, tx)
 		if err != nil {
 			return err
@@ -358,14 +359,30 @@ func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, after.State)
 }
 
-func TestRecalculateNode_StaleWithUnmetDep_IsNoOp(t *testing.T) {
+// TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp asserts that a
+// stale node with at least one wait-set row gating it on a sender stays
+// queued: RecalculateNode is a no-op when the wait-set is non-empty.
+// Under the post-2026-05-14 subscription-cascade model, the wait-set
+// row is the eligibility-gate; depsness retires.
+func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
-	// Dep is stale → target is not ready.
 	dep := f.createNodeInState(t, "worker", cascade.NodeStateStale)
-	target := f.createNodeInState(t, "worker", cascade.NodeStateStale, dep.ID)
+	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
+
+	// Seed a wait-set row gating target on dep in the running frame.
+	require.NotNil(t, target.FrameID)
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return f.persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID:           *target.FrameID,
+			ReceiverNodeID:    target.ID,
+			SenderNodeID:      dep.ID,
+			TopicKind:         "state",
+			SubscriptionScope: "direct",
+		}, tx)
+	}))
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
@@ -377,13 +394,18 @@ func TestRecalculateNode_StaleWithUnmetDep_IsNoOp(t *testing.T) {
 	require.Empty(t, eq)
 }
 
-func TestRecalculateNode_StaleWithAllDepsFreshAndExecutor_EnqueuesDispatch(t *testing.T) {
+// TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch
+// asserts the post-drain dispatch path: once the wait-set is empty (the
+// settled-state drain ran when the sender resolved), RecalculateNode
+// enqueues the target for dispatch.
+func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
-	dep := f.createNodeInState(t, "worker", cascade.NodeStateFresh)
-	target := f.createNodeInState(t, "runner", cascade.NodeStateStale, dep.ID)
+	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
+	require.NotNil(t, target.FrameID)
+	// No wait-set rows seeded — empty by default.
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
@@ -397,14 +419,15 @@ func TestRecalculateNode_StaleWithAllDepsFreshAndExecutor_EnqueuesDispatch(t *te
 	require.Equal(t, "runner", eq[0].ExecutorName)
 }
 
-func TestRecalculateNode_StaleWithAllDepsFreshButNoExecutor_NoEnqueue(t *testing.T) {
+// TestRecalculateNode_StaleNoExecutor_NoEnqueue confirms a pure-cascade
+// (empty executor) node is skipped by RecalculateNode regardless of
+// wait-set state — the scheduler's pure-cascade sweep handles it.
+func TestRecalculateNode_StaleNoExecutor_NoEnqueue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
 
-	dep := f.createNodeInState(t, "worker", cascade.NodeStateFresh)
-	// Empty executor → pure-cascade node; the scheduler sweep handles it.
-	target := f.createNodeInState(t, "", cascade.NodeStateStale, dep.ID)
+	target := f.createNodeInState(t, "", cascade.NodeStateStale)
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,

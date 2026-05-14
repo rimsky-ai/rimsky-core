@@ -1,0 +1,39 @@
+name: atomic-staging-example
+version: "1.0"
+frame_resolution_mode: serial_queue
+nodes:
+  - type: stage-data
+    executor: http-node
+    stores:
+      - { name: atomic-staging-fs, alias: target, selector: my-scope, intent: rw }
+    userdata: { url: "http://my-loader.internal:8080/load" }
+    attributes:
+      schema:
+        type: object
+        properties:
+          staging_path: { type: string, source: "{{claim.target.address}}" }
+        required: [staging_path]
+
+  - type: verify-staged
+    executor: http-node
+    inherits:
+      - { claim: target }
+    userdata: { url: "http://my-checks.internal:8080/verify-shape" }
+    attributes:
+      schema:
+        type: object
+        properties:
+          staging_path: { type: string, source: "{{nodes.stage-data.attribute.staging_path}}" }
+        required: [staging_path]
+
+  - type: verify-staged-domain
+    executor: http-node
+    inherits:
+      - { claim: target }
+    userdata: { url: "http://my-checks.internal:8080/verify-domain" }
+    attributes:
+      schema:
+        type: object
+        properties:
+          staging_path: { type: string, source: "{{nodes.stage-data.attribute.staging_path}}" }
+        required: [staging_path]

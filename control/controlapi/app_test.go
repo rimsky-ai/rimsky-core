@@ -134,7 +134,7 @@ func validTemplateBody(name string) map[string]any {
 			"frame_resolution_mode": "serial_queue",
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "worker"},
-				{"type": "child", "executor": "worker", "dependencies": []string{"root"}},
+				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "on": "state"}}},
 			},
 		},
 	}
@@ -182,9 +182,9 @@ func templateWithStoresAndLocks(name string) map[string]any {
 					},
 				},
 				{
-					"type":         "review",
-					"executor":     "worker",
-					"dependencies": []string{"claim-topic"},
+					"type":       "review",
+					"executor":   "worker",
+					"subscribes": []map[string]any{{"node": "claim-topic", "on": "state"}},
 					"stores": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},
@@ -301,6 +301,12 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 			"name":                  "cycle-" + uuid.NewString(),
 			"version":               "v1",
 			"frame_resolution_mode": "serial_queue",
+			// Post-2026-05-14: the legacy `dependencies:` field retired;
+			// the JSON decoder (`DisallowUnknownFields`) rejects bodies
+			// carrying it. Subscription cycles between two nodes are no
+			// longer rejected at deploy time — the wait-set semantics
+			// turn them into a defer-loop across frames — so this test
+			// pins the parse-time rejection of the retired field.
 			"nodes": []map[string]any{
 				{"type": "a", "executor": "worker", "dependencies": []string{"b"}},
 				{"type": "b", "executor": "worker", "dependencies": []string{"a"}},

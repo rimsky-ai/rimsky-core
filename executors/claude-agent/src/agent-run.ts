@@ -49,8 +49,17 @@ export type AgentOutcome =
       // J9 rate-limit auto-park (and any other voluntary park trigger).
       // The supervisor receives the `Park` terminal via the gRPC stream
       // or async callback (see plan A3).
+      //
+      // Post-2026-05-14 the `reason` field is the typed ParkReason
+      // snake_case value (time_wait | signal_wait | awaiting_human |
+      // retry_backoff). `reasonNote` is the free-form annotation
+      // (`col:rimsky_node_runs.parked_reason_note`). The MCP
+      // `report_park` tool resolves this same outcome shape; the
+      // rate-limit detection path emits `reason: time_wait` with a
+      // descriptive `reasonNote`.
       kind: "park_requested";
       reason: string;
+      reasonNote: string;
       payload: Uint8Array;
       resumeAt: Date | null; // null → indefinite park
       sessionToken: string;
@@ -576,6 +585,32 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         safeResolve({ kind: "errored", errorClass, payload });
       });
     },
+    onPark: async (reason, reasonNote, resumeAtISO, scheduleTeardown) => {
+      // Agent invoked the MCP report_park tool. Resolve the per-run
+      // outcome promise with the park_requested shape; the server-side
+      // gRPC bridge translates the typed reason / reasonNote into the
+      // Park terminal (PARK_REASON_<UPPER> + reason_note). Per
+      // 2026-05-14 Piece 2 the rate-limit path uses the same outcome
+      // shape; only the reason discriminator differs.
+      let parsedResumeAt: Date | null = null;
+      if (resumeAtISO !== null && resumeAtISO.length > 0) {
+        const d = new Date(resumeAtISO);
+        if (!Number.isNaN(d.getTime())) {
+          parsedResumeAt = d;
+        }
+      }
+      scheduleTeardown(async () => {
+        await teardownCli();
+        safeResolve({
+          kind: "park_requested",
+          reason,
+          reasonNote: reasonNote ?? "",
+          payload: new Uint8Array(),
+          resumeAt: parsedResumeAt,
+          sessionToken: runId,
+        });
+      });
+    },
     onAttributesSet,
   });
 
@@ -766,7 +801,17 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         );
         safeResolve({
           kind: "park_requested",
-          reason: signalRL.reason,
+          // J9 rate-limit auto-park maps to the typed enum value
+          // `time_wait` (the supervisor translates to
+          // PARK_REASON_TIME_WAIT). `reasonNote` preserves the prior
+          // free-form `reason` text so operators / dashboards still
+          // see "claude rate-limit detected; resume at <ts>".
+          reason: "time_wait",
+          reasonNote:
+            signalRL.reason !== ""
+              ? signalRL.reason
+              : "claude cli rate-limit detected; resume_at=" +
+                (signalRL.resumeAt?.toISOString() ?? "indefinite"),
           payload: new Uint8Array(),
           resumeAt: signalRL.resumeAt,
           // The CLI session id is the rimsky run id; resume passes

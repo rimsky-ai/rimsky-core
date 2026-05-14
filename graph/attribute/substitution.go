@@ -6,11 +6,16 @@
 //
 // Five recognized source kinds:
 //
-//   - {{deps.<node>.<field>}} — upstream node's persisted attributes
+//   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes
+//   - {{nodes.<node>.event.<event_name>.<field>}} — upstream node's most recent named-event payload
 //   - {{claim.<alias>.address}} — live claim's address bytes
 //   - {{claim.<alias>.payload.<field>}} — live claim's payload at named path
 //   - {{claim.<alias>.scope}} — live claim's scope bytes
 //   - {{params.<key>}} — instance-level config params
+//
+// The post-2026-05-14 `nodes.X.attribute.Y` form replaces the legacy
+// `deps.X.Y` form: per the subscription-cascade resolution, substitution
+// refs auto-subscribe the receiver to (sender=X, topic=attribute, name=Y).
 //
 // @blessed-invariant 11 — Userdata is inert in Rimsky.
 //
@@ -62,7 +67,11 @@ import (
 //
 //   - Deps: keyed by upstream node name (template-relative). Each entry
 //     is the upstream's rimsky_node_attributes.data as opaque
-//     json.RawMessage; resolution paths walk into it lazily.
+//     json.RawMessage; resolution paths walk into it lazily. The field
+//     name is historical — under the post-2026-05-14 grammar, callers
+//     populate it by walking the receiver's subscription-edge inverse
+//     map (every sender referenced by a `{{nodes.X.attribute.Y}}`
+//     directive or an explicit `subscribes:` entry).
 //   - Claim: keyed by per-claim alias (defaults to store name). Each
 //     entry carries Address / Payload / Scope as opaque bytes.
 //   - Params: rimsky_instances.params as opaque json.RawMessage.
@@ -76,7 +85,7 @@ import (
 // directive returns ErrMissingSource. The lookup returns
 // (payload, ok=true) when a row exists in the per-instance event ledger
 // for (emitter, event_name); the most recent emission wins. Payload
-// bytes are walked via the same walkPath machinery deps and claim
+// bytes are walked via the same walkPath machinery attribute and claim
 // payloads use, preserving @blessed-invariant 20 (and 11 by-extension —
 // userdata is not consulted here either).
 type ResolveContext struct {
@@ -159,6 +168,16 @@ func Substitute(rawValue string, ctx ResolveContext) (string, error) {
 // resolveDirective parses one directive (without surrounding braces)
 // and looks it up in ctx. Returns ErrMissingSource for unresolved
 // references or unknown source kinds.
+//
+// Recognized source kinds (post-2026-05-14):
+//
+//	nodes.<X>.attribute.<key>...   — upstream attribute walk
+//	nodes.<X>.event.<name>.<path>  — upstream named-event walk
+//	claim.<alias>.{address|scope|payload.<key>...}
+//	params.<key>...
+//
+// The legacy `deps.<X>.<key>` form is retired; callers receive a
+// migration-pointer error.
 func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 	parts := strings.Split(directive, ".")
 	if len(parts) < 2 {
@@ -166,7 +185,7 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 	}
 	switch parts[0] {
 	case "deps":
-		return resolveDeps(directive, parts[1:], ctx.Deps)
+		return "", &ErrMissingSource{Directive: directive, Reason: "`deps.<X>.<Y>` retired; use `nodes.<X>.attribute.<Y>` (see spec 2026-05-14)"}
 	case "claim":
 		return resolveClaim(directive, parts[1:], ctx.Claim)
 	case "params":
@@ -178,59 +197,56 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 	}
 }
 
-// resolveNodes handles the `nodes.<emitter>.event.<name>.<path>`
-// substitution form (plan F4). Falls back to ErrMissingSource when:
-//   - directive shape is wrong (not exactly nodes.<emitter>.event.<name>.<path...>)
-//   - ResolveContext.EventLookup is nil (no event source available)
-//   - the lookup returns ok=false (no emission yet)
-//   - the JSON path does not resolve inside the payload
+// resolveNodes handles two `nodes.<X>.<kind>.<...>` directive forms:
 //
-// Walks payload bytes via walkPath — the same sanctioned introspection
-// site used for deps and claim payload (@blessed-invariant 20).
+//   - `nodes.<node>.attribute.<field>...` — walks the upstream node's
+//     persisted attributes data; same path traversal as the legacy
+//     `deps.<node>.<field>` shape.
+//   - `nodes.<emitter>.event.<event_name>.<field>...` — walks the most
+//     recent named-event payload via ResolveContext.EventLookup.
+//
+// Walks bytes via walkPath — the sanctioned introspection site for
+// payload field-walks (@blessed-invariant 20).
 func resolveNodes(directive string, rest []string, ctx ResolveContext) (string, error) {
-	// Expected: <emitter>.event.<event_name>.<field-path…>
-	if len(rest) < 4 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <emitter>.event.<name>.<field>"}
-	}
-	emitter := rest[0]
-	if rest[1] != "event" {
-		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'event'"}
-	}
-	eventName := rest[2]
-	fieldPath := rest[3:]
-	if ctx.EventLookup == nil {
-		return "", &ErrMissingSource{Directive: directive, Reason: "no event lookup configured"}
-	}
-	payload, ok := ctx.EventLookup(emitter, eventName)
-	if !ok || len(payload) == 0 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "no emission for event"}
-	}
-	val, ok := walkPath(payload, fieldPath)
-	if !ok {
-		return "", &ErrMissingSource{Directive: directive, Reason: "event payload field path not found"}
-	}
-	return stringify(val), nil
-}
-
-// resolveDeps handles `deps.<node-name>.<field-path>`. The first
-// segment after `deps.` is the upstream node name; the remainder is a
-// dot-notation field path into that upstream's attributes data
-// (opaque bytes; lazy-decoded inside walkPath).
-func resolveDeps(directive string, rest []string, deps map[string]json.RawMessage) (string, error) {
-	if len(rest) < 2 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "deps directive needs <node>.<field>"}
+	if len(rest) < 3 {
+		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.{attribute|event}.<field>"}
 	}
 	nodeName := rest[0]
-	fieldPath := rest[1:]
-	data, ok := deps[nodeName]
-	if !ok {
-		return "", &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
+	kind := rest[1]
+	switch kind {
+	case "attribute":
+		fieldPath := rest[2:]
+		data, ok := ctx.Deps[nodeName]
+		if !ok {
+			return "", &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
+		}
+		val, ok := walkPath(data, fieldPath)
+		if !ok {
+			return "", &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
+		}
+		return stringify(val), nil
+	case "event":
+		// Expected: <node>.event.<event_name>.<field-path…>
+		if len(rest) < 4 {
+			return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.event.<name>.<field>"}
+		}
+		eventName := rest[2]
+		fieldPath := rest[3:]
+		if ctx.EventLookup == nil {
+			return "", &ErrMissingSource{Directive: directive, Reason: "no event lookup configured"}
+		}
+		payload, ok := ctx.EventLookup(nodeName, eventName)
+		if !ok || len(payload) == 0 {
+			return "", &ErrMissingSource{Directive: directive, Reason: "no emission for event"}
+		}
+		val, ok := walkPath(payload, fieldPath)
+		if !ok {
+			return "", &ErrMissingSource{Directive: directive, Reason: "event payload field path not found"}
+		}
+		return stringify(val), nil
+	default:
+		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute' or 'event'"}
 	}
-	val, ok := walkPath(data, fieldPath)
-	if !ok {
-		return "", &ErrMissingSource{Directive: directive, Reason: "field path not found"}
-	}
-	return stringify(val), nil
 }
 
 // resolveClaim handles three sub-shapes per spec §16.1:

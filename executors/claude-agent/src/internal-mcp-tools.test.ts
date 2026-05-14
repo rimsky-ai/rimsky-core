@@ -7,6 +7,7 @@ import {
   ReportCompleteInput,
   ReportBlockedInput,
   ReportErrorInput,
+  ReportParkInput,
   AttributesReadInput,
   AttributesSetInput,
   TOOL_DEFINITIONS,
@@ -71,7 +72,7 @@ describe("internal-mcp-tools schemas", () => {
     ).toThrow();
   });
 
-  it("TOOL_DEFINITIONS exposes the five tools", () => {
+  it("TOOL_DEFINITIONS exposes the six tools (incl. report_park)", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
@@ -79,6 +80,39 @@ describe("internal-mcp-tools schemas", () => {
       "report_blocked",
       "report_complete",
       "report_error",
+      "report_park",
     ]);
+  });
+
+  it("ReportParkInput accepts a typed reason + optional fields", () => {
+    const parsed = ReportParkInput.parse({
+      token: "tok",
+      reason: "awaiting_human",
+      reason_note: "operator review pending",
+      resume_at: "2026-05-15T12:00:00Z",
+    });
+    expect(parsed.reason).toBe("awaiting_human");
+    expect(parsed.reason_note).toBe("operator review pending");
+    expect(parsed.resume_at).toBe("2026-05-15T12:00:00Z");
+  });
+
+  it("ReportParkInput rejects `unspecified` (placeholder enum) and unknown reasons", () => {
+    expect(() =>
+      ReportParkInput.parse({ token: "tok", reason: "unspecified" }),
+    ).toThrow();
+    expect(() =>
+      ReportParkInput.parse({ token: "tok", reason: "not_a_real_reason" }),
+    ).toThrow();
+  });
+
+  it("ReportParkInput accepts a minimal payload (reason only)", () => {
+    const parsed = ReportParkInput.parse({
+      token: "tok",
+      reason: "time_wait",
+    });
+    expect(parsed.token).toBe("tok");
+    expect(parsed.reason).toBe("time_wait");
+    expect(parsed.reason_note).toBeUndefined();
+    expect(parsed.resume_at).toBeUndefined();
   });
 });

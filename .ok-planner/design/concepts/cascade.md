@@ -45,3 +45,4 @@ The phrase "reactive cascade" appears in sketches and human-facing onboarding do
 ## Notes
 
 - Three-word vocabulary (walk / propagation / fallthrough) introduced per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #10). Resolves `tension:cascade-walks-overloaded`.
+- 2026-05-14: the cascade walk's downstream traversal is driven by the per-template subscription-edge inverse map (see `concept:subscription`), not by a static dependency graph. Wait-set rows are inserted on every cascade-walk match (pessimistic invalidate); the bulk-delete-on-settled-state rule (see `concept:wait-set`) drains them as senders resolve. Eligibility = state=stale AND wait-set is empty for the current frame (predicate evaluated in the persistence-layer SweepReady query at `code:foundation/persistence/postgres/nodes.go::ListReadyForDispatch`). Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

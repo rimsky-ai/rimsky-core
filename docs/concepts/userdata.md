@@ -38,7 +38,7 @@ The "no substitution" rule is load-bearing. A `{{...}}` directive in `userdata` 
 ## Common mistakes
 
 - **Rimsky's userdata ≠ cloud-init userdata.** Cloud-init userdata IS parsed by the cloud provider (interpreted as a script or cloud-config YAML). Rimsky's userdata is bytes-in, bytes-out — Rimsky never parses or interprets it.
-- Putting `{{deps.foo.bar}}` in userdata and expecting it to substitute. It won't — substitution applies only to attribute schema `source:` fields. If you need the value, declare it as an attribute.
+- Putting `{{nodes.foo.attribute.bar}}` in userdata and expecting it to substitute. It won't — substitution applies only to attribute schema `source:` fields. If you need the value, declare it as an attribute.
 - Encrypting userdata for transport. Rimsky transports it as opaque bytes regardless; encryption is the operator's call (and the executor's responsibility to decrypt).
 
 ## See also

@@ -26,7 +26,6 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/node"
 )
 
@@ -94,6 +93,14 @@ func applyAcquirePass(
 			cascade.LastOutcomePassed, tx); err != nil {
 			return err
 		}
+		// Settled-state drain on fresh+passed: this sender reached
+		// a settled state, so any wait-set rows gating receivers on
+		// this sender release.
+		//
+		//	@concept: wait-set
+		if err := drainWaitSetOnSettled(ctx, args, tx, cand.FrameID, cand.NodeID); err != nil {
+			return err
+		}
 		// Mark the node-run as handled so the queue doesn't
 		// re-pick it. Mirrors the post-terminal cleanup.
 		if err := args.Queue.RemoveForNodeInTx(ctx, cand.NodeID, args.SupervisorID, tx); err != nil {
@@ -108,10 +115,10 @@ func applyAcquirePass(
 			},
 		}, tx)
 	})
-	if h.Invalidate != nil {
-		frameID := acq.FrameID
-		emitHandlerInvalidate(ctx, args, cand.NodeID, cand.NodeType, acq.InstanceID, &frameID, h.Invalidate)
-	}
+	// Per the 2026-05-14 subscription-cascade resolution, the
+	// invalidate-emit slot retired; cascade coupling is declared
+	// receiver-side via Subscribes.
+	_ = h
 }
 
 // applyAcquireError executes resolve=error on on_acquire_unavailable:
@@ -147,122 +154,13 @@ func applyAcquireError(
 		},
 		Metrics: args.Metrics,
 	})
-	if h.Invalidate != nil {
-		frameID := acq.FrameID
-		emitHandlerInvalidate(ctx, args, cand.NodeID, cand.NodeType, acq.InstanceID, &frameID, h.Invalidate)
-	}
+	// Per the 2026-05-14 subscription-cascade resolution, the
+	// invalidate-emit slot retired; cascade coupling is declared
+	// receiver-side via Subscribes.
 }
 
-// emitHandlerInvalidate resolves a HandlerInvalidate's Targets to
-// node UUIDs within the instance (with `self` resolving to the source
-// node's type) and fires InvalidateNode per Frame (default FrameNext).
-//
-// srcFrameID, when non-nil, is forwarded as InvalidateArgs.SourceFrameID
-// so frame=in can land on the source's frame even if the caller's tx
-// already cleared the source node row's frame_id (the post-Success-outcome
-// path; the running-tx commits state→fresh which clears frame_id, then
-// fires this emit).
-func emitHandlerInvalidate(
-	ctx context.Context, args RunArgs,
-	srcNodeID shared.UUID, srcNodeType string, instanceID shared.UUID,
-	srcFrameID *shared.UUID, inv *node.HandlerInvalidate,
-) {
-	targets := resolveHandlerTargets(ctx, args, srcNodeID, instanceID, srcNodeType, inv.Targets)
-	useFrame := inv.Frame
-	if useFrame == "" {
-		useFrame = node.FrameNext
-	}
-	src := srcNodeID
-	for _, tid := range targets {
-		ia := InvalidateArgs{
-			Persist:       args.Persist,
-			Queue:         args.Queue,
-			Clock:         args.Clock,
-			Logger:        args.Logger,
-			SourceNodeID:  &src,
-			SourceFrameID: srcFrameID,
-			TargetNodeID:  tid,
-			Reason:        "handler_invalidate",
-			SupervisorID:  args.SupervisorID,
-			Frame:         useFrame,
-			Metrics:       args.Metrics,
-		}
-		// Prefer the unified invalidate handler when configured (E3
-		// SweepParkedNodes wake, G3 admin invalidate, H2 on_event
-		// handler dispatch all share this path so handler-emitted
-		// invalidates correctly resume parked targets). Fall back to
-		// the bare InvalidateNode helper when no handler is wired —
-		// preserves the today behavior for tests / callers that don't
-		// set the handler.
-		if args.InvalidateHandler != nil {
-			_ = args.InvalidateHandler(ctx, ia)
-			continue
-		}
-		_ = InvalidateNode(ctx, ia)
-	}
-}
-
-// resolveHandlerTargets walks the instance's nodes and resolves each
-// target string to a node UUID. The literal "self" resolves to the
-// source node's type. Unknown targets emit an
-// `unresolved_invalidate_target` event for parity with
-// invalidateTargets (the error_types policy-chain path). The event is
-// keyed on srcNodeID so audit logs attribute the unresolved target to
-// the node that fired the emit.
-func resolveHandlerTargets(
-	ctx context.Context, args RunArgs, srcNodeID shared.UUID,
-	instanceID shared.UUID,
-	srcNodeType string, targets []string,
-) []shared.UUID {
-	var rows []persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		out, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
-		rows = out
-		return err
-	}); err != nil {
-		args.Logger.Warn("resolveHandlerTargets: ListByInstance failed",
-			"instance_id", instanceID.String(), "error", err.Error())
-		return nil
-	}
-	typeToID := make(map[string]shared.UUID, len(rows))
-	for _, r := range rows {
-		typeToID[r.NodeType] = r.ID
-	}
-	out := make([]shared.UUID, 0, len(targets))
-	var unresolved []string
-	for _, t := range targets {
-		switch t {
-		case node.SelfTarget:
-			if id, ok := typeToID[srcNodeType]; ok {
-				out = append(out, id)
-			} else {
-				unresolved = append(unresolved, t)
-			}
-		default:
-			if id, ok := typeToID[t]; ok {
-				out = append(out, id)
-			} else {
-				unresolved = append(unresolved, t)
-				args.Logger.Warn("emitHandlerInvalidate: unresolved target",
-					"target", t, "instance_id", instanceID.String(),
-					"source_node_type", srcNodeType)
-			}
-		}
-	}
-	if len(unresolved) > 0 {
-		nodeID := srcNodeID
-		instID := instanceID
-		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &nodeID, InstanceID: &instID,
-				Kind: "unresolved_invalidate_target",
-				Payload: map[string]any{
-					"unresolved_targets": unresolved,
-					"source":             "handler_invalidate",
-					"source_node_type":   srcNodeType,
-				},
-			}, tx)
-		})
-	}
-	return out
-}
+// emitHandlerInvalidate retired under the 2026-05-14 subscription-cascade
+// resolution. Cascade coupling is declared receiver-side via
+// `subscribes:`; the per-template subscription-edge inverse map drives
+// cascade walks. The send-side invalidate emit has no remaining call
+// sites — the function and its helper were removed.

@@ -477,21 +477,20 @@ func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListIn
 
 // Node is the shape returned by GET /nodes/{id}.
 type Node struct {
-	ID                   string   `json:"id"`
-	InstanceID           string   `json:"instance_id"`
-	NodeType             string   `json:"node_type"`
-	Executor             string   `json:"executor,omitempty"`
-	ScheduleCron         string   `json:"schedule_cron,omitempty"`
-	State                string   `json:"state"`
-	Dependencies         []string `json:"dependencies"`
-	CurrentErrorClass    string   `json:"current_error_class,omitempty"`
-	RetryCounter         int      `json:"retry_counter"`
-	ActionIndex          int      `json:"action_index"`
-	LastHeartbeatAt      *string  `json:"last_heartbeat_at,omitempty"`
-	AssignedSupervisorID string   `json:"assigned_supervisor_id,omitempty"`
-	FrameID              string   `json:"frame_id,omitempty"`
-	CreatedAt            string   `json:"created_at"`
-	UpdatedAt            string   `json:"updated_at"`
+	ID                   string  `json:"id"`
+	InstanceID           string  `json:"instance_id"`
+	NodeType             string  `json:"node_type"`
+	Executor             string  `json:"executor,omitempty"`
+	ScheduleCron         string  `json:"schedule_cron,omitempty"`
+	State                string  `json:"state"`
+	CurrentErrorClass    string  `json:"current_error_class,omitempty"`
+	RetryCounter         int     `json:"retry_counter"`
+	ActionIndex          int     `json:"action_index"`
+	LastHeartbeatAt      *string `json:"last_heartbeat_at,omitempty"`
+	AssignedSupervisorID string  `json:"assigned_supervisor_id,omitempty"`
+	FrameID              string  `json:"frame_id,omitempty"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
 }
 
 // InvalidateNodeRequest is the POST /nodes/{id}/invalidate body.
@@ -501,6 +500,39 @@ type InvalidateNodeRequest struct {
 	// Default "" → "next". See the reactive-loops + lifecycle-handlers
 	// spec §5.
 	Frame string `json:"frame,omitempty"`
+}
+
+// ParkedNodeEntry mirrors controlapi.ParkedNodeEntry on the wire.
+//
+//	@concept: parked-state
+type ParkedNodeEntry struct {
+	InstanceID string     `json:"instance_id"`
+	NodeID     string     `json:"node_id"`
+	ParkedAt   time.Time  `json:"parked_at"`
+	ResumeAt   *time.Time `json:"resume_at,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
+	ReasonNote string     `json:"reason_note,omitempty"`
+}
+
+// ParkedNodesResponse is the response body of
+// GET /admin/diagnostics/parked-nodes.
+type ParkedNodesResponse struct {
+	ParkedNodes []ParkedNodeEntry `json:"parked_nodes"`
+}
+
+// GetParkedNodes calls GET /admin/diagnostics/parked-nodes (with an
+// optional query string already appended by the caller, e.g.
+// "?reason=awaiting_human").
+func (c *Client) GetParkedNodes(ctx context.Context, path string) (*ParkedNodesResponse, error) {
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ParkedNodesResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // GetNode calls GET /nodes/{id}.

@@ -504,9 +504,16 @@ function outcomeToCallbackBody(
   if (outcome.kind === "park_requested") {
     // The proto-JSON convention for `bytes` fields is base64 — Go's
     // `encoding/json` decodes []byte fields from base64 strings.
+    //
+    // Post-2026-05-14 the supervisor consumes `reason` as a snake_case
+    // ParkReason enum projection (time_wait | signal_wait |
+    // awaiting_human | retry_backoff) and `reason_note` as the
+    // free-form human annotation. `reason` is the typed discriminator;
+    // `reason_note` is inert in rimsky.
     return {
       park: {
         reason: outcome.reason,
+        reason_note: outcome.reasonNote ?? "",
         payload: encodeBase64(outcome.payload),
         ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
         session_token: outcome.sessionToken,

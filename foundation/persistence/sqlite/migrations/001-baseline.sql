@@ -94,7 +94,11 @@ CREATE TABLE IF NOT EXISTS rimsky_nodes (
     executor                TEXT,
     schedule_cron           TEXT,
     state                   TEXT NOT NULL,
-    dependencies            TEXT NOT NULL DEFAULT '[]',
+    -- The retired `dependencies TEXT NOT NULL DEFAULT '[]'` column was
+    -- removed in the 2026-05-14 subscription-cascade resolution. Cascade
+    -- coupling is declared receiver-side via `subscribes:` in the
+    -- template; the per-template subscription-edge inverse map drives
+    -- cascade walks.
     current_error_class     TEXT,
     retry_counter           INTEGER NOT NULL DEFAULT 0,
     action_index            INTEGER NOT NULL DEFAULT 0,
@@ -146,6 +150,7 @@ CREATE TABLE IF NOT EXISTS rimsky_node_runs (
     parked_payload_handle_backend       TEXT,
     session_token                       TEXT,
     parked_reason                       TEXT,
+    parked_reason_note                  TEXT,
     wake_reason                         TEXT,
     consecutive_retries_no_progress     INTEGER NOT NULL DEFAULT 0,
     max_park_duration_seconds           INTEGER,
@@ -163,6 +168,34 @@ CREATE INDEX IF NOT EXISTS idx_rimsky_node_runs_frame_claimed
 CREATE INDEX IF NOT EXISTS idx_node_run_parked_resume
     ON rimsky_node_runs(resume_at)
     WHERE phase = 'parked' AND resume_at IS NOT NULL;
+
+-- Per-frame wait-set ledger driving dispatch eligibility under the
+-- subscription-cascade model. Cascade walks insert rows when a sender
+-- transitions out of a settled state (the "pessimistic invalidate");
+-- the drain rule deletes rows where sender_node_id = S in bulk when
+-- the sender reaches any settled state (fresh / failed / parked).
+-- Eligibility predicate: a stale node is dispatch-eligible iff no
+-- wait-set rows exist for it in the current frame.
+--
+-- subscription_scope distinguishes per-node ('direct') from
+-- cross-cutting ('instance') subscriptions so a receiver subscribed
+-- to a sender via BOTH a direct and a cross-cutting subscription
+-- gets two distinct rows that both must drain.
+--
+-- ON DELETE CASCADE from rimsky_frames(frame_id) cleans up stale
+-- wait-set rows when a frame closes.
+CREATE TABLE IF NOT EXISTS rimsky_wait_set (
+    frame_id            TEXT NOT NULL REFERENCES rimsky_frames(frame_id) ON DELETE CASCADE,
+    receiver_node_id    TEXT NOT NULL REFERENCES rimsky_nodes(id)        ON DELETE CASCADE,
+    sender_node_id      TEXT NOT NULL REFERENCES rimsky_nodes(id)        ON DELETE CASCADE,
+    topic_kind          TEXT NOT NULL CHECK (topic_kind IN ('state','attribute','event')),
+    subscription_scope  TEXT NOT NULL CHECK (subscription_scope IN ('direct','instance')),
+    topic_filter        TEXT,
+    inserted_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (frame_id, receiver_node_id, sender_node_id, topic_kind, subscription_scope)
+);
+CREATE INDEX IF NOT EXISTS idx_rimsky_wait_set_receiver ON rimsky_wait_set (frame_id, receiver_node_id);
+CREATE INDEX IF NOT EXISTS idx_rimsky_wait_set_sender   ON rimsky_wait_set (frame_id, sender_node_id);
 
 -- Schedules.
 CREATE TABLE IF NOT EXISTS rimsky_schedules (

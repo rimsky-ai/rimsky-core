@@ -1,6 +1,6 @@
 # Two-node template with a claim dependency
 
-Two nodes; the first declares a claim on the bundled stub claim producer; the second depends on the first via `dependencies:` and consumes the captured address through `{{deps.<source>.<field>}}`.
+Two nodes; the first declares a claim on the bundled stub claim producer; the second subscribes to the first via `subscribes:` and consumes the captured address through `{{nodes.<source>.attribute.<field>}}` (which also auto-subscribes the receiver to the sender's `attribute` topic).
 
 **Precondition:** the bundled docker-compose stack is up:
 
@@ -36,14 +36,19 @@ nodes:
 
   - type: consumer
     executor: stub
-    dependencies: [acquirer]
+    # The `{{nodes.acquirer.attribute.captured_address}}` substitution
+    # below auto-subscribes consumer to acquirer's `attribute` topic;
+    # the explicit `subscribes:` entry below makes that coupling
+    # obvious to readers.
+    subscribes:
+      - { node: acquirer, on: state }
     attributes:
       schema:
         type: object
         properties:
           relayed_address:
             type: string
-            source: "{{deps.acquirer.captured_address}}"
+            source: "{{nodes.acquirer.attribute.captured_address}}"
 ```
 
 The `stub` claim producer must be configured under `claim_producers:` in `rimsky.yml` (the bundled docker-compose ships one).

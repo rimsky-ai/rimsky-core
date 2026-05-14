@@ -36,7 +36,6 @@ type nodeResponse struct {
 	Executor             string     `json:"executor,omitempty"`
 	ScheduleCron         string     `json:"schedule_cron,omitempty"`
 	State                string     `json:"state"`
-	Dependencies         []string   `json:"dependencies"`
 	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
 	RetryCounter         int        `json:"retry_counter"`
 	ActionIndex          int        `json:"action_index"`
@@ -48,10 +47,6 @@ type nodeResponse struct {
 }
 
 func toNodeResponse(n persistence.NodeRow) nodeResponse {
-	deps := make([]string, 0, len(n.Dependencies))
-	for _, d := range n.Dependencies {
-		deps = append(deps, d.String())
-	}
 	frameID := ""
 	if n.FrameID != nil {
 		frameID = n.FrameID.String()
@@ -63,7 +58,6 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		Executor:             n.Executor,
 		ScheduleCron:         n.ScheduleCron,
 		State:                string(n.State),
-		Dependencies:         deps,
 		CurrentErrorClass:    n.CurrentErrorClass,
 		RetryCounter:         n.RetryCounter,
 		ActionIndex:          n.ActionIndex,

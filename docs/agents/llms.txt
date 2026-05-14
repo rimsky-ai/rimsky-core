@@ -14,15 +14,17 @@
 - [Holding subgraph](concepts/holding-subgraph.md): The set of nodes a held claim's lifetime spans; the claim resolves automatically at completion (commit on all-success, abandon on any-failure).
 - [Inheritance](concepts/inheritance.md): The DSL mechanism by which a downstream node declares it will use a live claim from an upstream acquirer.
 - [Instance](concepts/instance.md): A running execution of a template, identified by a Rimsky-generated UUID.
-- [Invalidate](concepts/invalidate.md): Rimsky's only graph-level message; marks a node `stale` and cascades the same message to dependents.
+- [Invalidate](concepts/invalidate.md): Rimsky's only graph-level message; marks a node `stale` and cascades the same message to receivers that subscribed to the sender's transition.
 - [Lifecycle subscriber](concepts/lifecycle-subscriber.md): An opt-in protocol for peers that want to react to template and instance state transitions.
 - [Named lock](concepts/named-lock.md): A scalar capacity counter at the deployment level.
 - [Node](concepts/node.md): The unit of work in a Rimsky template.
 - [Node state](concepts/node-state.md): The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`.
 - [Scope](concepts/scope.md): The slice of a producer's namespace under claim; canonicalized by the producer; compared byte-for-byte by Rimsky.
+- [Subscription](concepts/subscription.md): A receiver-side declaration ("fire me when this upstream topic transitions") across three topic kinds: `state`, `attribute`, `event`. Substitution refs auto-subscribe.
 - [Tag](concepts/tag.md): A movable alias from a string identifier to a template content hash.
 - [Template](concepts/template.md): A content-addressed bundle of node definitions, attribute schemas, claim and lock declarations, and frame-resolution config.
 - [Userdata](concepts/userdata.md): Free-form opaque bytes a template author attaches to a node's executor invocation; never inspected by Rimsky.
+- [Wait-set](concepts/wait-set.md): The per-frame ledger driving dispatch eligibility. Cascade walks insert rows pessimistically; the settled-state drain bulk-deletes rows when senders resolve.
 - [Write semantics](concepts/write-semantics.md): The per-claim verdict from `ClaimProducer.Open` describing how writes against the claimed scope are visible to other claims.
 
 ## Protocols

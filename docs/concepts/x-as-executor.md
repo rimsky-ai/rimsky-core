@@ -68,7 +68,8 @@ and emits `AwaitAsyncCallback` immediately. When the webhook return-payload
 arrives the wrapper POSTs the new-shape async-callback body
 (`{events: [...], terminal: {...}}`) to the supervisor's
 callback URL. Events from the body are persisted before the terminal,
-so an `on_event` handler can fire mid-flight.
+so any receiver with a `subscribes: [{node: <emitter>, on: event, name: <name>}]`
+entry fires mid-flight.
 
 This idiom is the right shape whenever the external work has its own
 durable state and can be re-entered from outside; the executor is a
@@ -83,10 +84,11 @@ completion, a rate-limit reset, a quorum vote.
 `Park.resume_at` schedules a time-based wake. Omit it for
 indefinite parks waiting on a signal. Resume happens via the admin
 endpoint `POST /admin/instances/{instance}/nodes/{node}/invalidate` or
-via an in-graph invalidate emitted by an `on_event` handler. The
-executor reads `ResumeContext.payload` and `ResumeContext.session_token`
-on the resume dispatch — so the wrapper can stash whatever resumption
-state it needs.
+via an in-graph invalidate produced by the cascade walk (when another
+node's transition matches a `subscribes:` entry that targets the
+parked node). The executor reads `ResumeContext.payload` and
+`ResumeContext.session_token` on the resume dispatch — so the wrapper
+can stash whatever resumption state it needs.
 
 The watchdog `max_park_duration` per-node cap fails the run with
 `error_class: "park_timeout"` if a park exceeds the configured budget;
@@ -106,19 +108,11 @@ nodes:
         system_prompt: "Analyze the document at {{params.path}}"
     on_executor_complete:
       resolve: by_changed
-      invalidate:
-        targets: [review_gate]
 
   review_gate:
     executor: project-alpha-review
-    on_event:
-      approved:
-        resolve: pass
-        invalidate:
-          targets: [summary]
-      rejected:
-        resolve: error
-        error_class: human_rejected
+    subscribes:
+      - { node: analysis, on: state, when: fresh, outcome: fresh_changed }
 
   summary:
     executor: project-alpha-agent
@@ -126,17 +120,18 @@ nodes:
       schema:
         properties:
           source:
-            source: nodes.analysis.value.findings
+            source: nodes.analysis.attribute.findings
           decision:
             source: nodes.review_gate.event.approved.payload
 ```
 
-`review_gate` emits `Park` on dispatch and waits. A human
-approves through a project-built UI that calls
-`POST /admin/instances/.../nodes/review_gate/invalidate`; the executor
-resumes, emits `approved` (a named event with the reviewer payload),
-then completes. `summary` runs against the resolved `decision`
-substitution.
+`review_gate` subscribes to `analysis` completing and emits `Park` on
+dispatch, waiting. A human approves through a project-built UI that
+calls `POST /admin/instances/.../nodes/review_gate/invalidate`; the
+executor resumes, emits `approved` (a named event with the reviewer
+payload), then completes. `summary` auto-subscribes to both `analysis`
+(via the attribute substitution) and `review_gate`'s `approved` event
+(via the event substitution); it runs once both upstream waits drain.
 
 ## Antipattern: blocking a frame on review
 

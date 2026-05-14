@@ -43,3 +43,7 @@ Pre-migration-004 code referenced `t.Changed` directly; the cascade gate was the
 
 - `TransitionReason` (cascade audit) and `last_outcome` (cascade gate) carry overlapping but distinct vocabularies — see `tensions/transition-reason-vs-last-outcome.md`.
 
+
+## Notes
+
+- 2026-05-14: values become filter predicates on `state` subscriptions (`outcome:` filter on `SubscriptionEntry`). Subscription validation cross-checks `outcome:` against the enum. See `concept:subscription`. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

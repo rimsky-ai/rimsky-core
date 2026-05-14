@@ -158,8 +158,24 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 }
 
 // invalidateNextFrame is the default path: enqueue or coalesce a frame
-// for the target's instance, sourced on the target's id. Today's
-// behavior, preserved unchanged.
+// for the target's instance, sourced on the target's id. The cascade
+// walk for the target's invalidation does NOT fire here — under
+// serial_queue mode the next-frame is queued behind the running
+// frame; a wait-set row keyed on the queued frame_id can only gate
+// receivers once that frame opens, by which time the cascade walk at
+// applyTerminalComplete (firing on the source's settlement in the
+// running frame) has propagated through the regular chain. The
+// coalesce mode is a similar story: the queued/running frame is the
+// same row, and the existing cascade walk at applyTerminalComplete
+// covers the gating. For the multi-invalidator scenario described in
+// spec Piece 1 the cascade walk at sender-invalidation transitions
+// (`invalidateInFrame`, `applyResolvedAction` retry, heartbeat-lost,
+// wake-parked) covers the in-flight gating; the next-frame variant
+// relies on the receiver-side cascade-on-fresh_changed chain rather
+// than seeding the queued frame eagerly.
+//
+//	@concept: cascade
+//	@concept: wait-set
 func invalidateNextFrame(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, log shared.Logger) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, target.InstanceID, target.ID)
@@ -227,15 +243,61 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		if err := args.Persist.Nodes().MarkStaleForCascade(ctx, target.ID, *frameID, tx); err != nil {
 			return err
 		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &target.ID, InstanceID: &target.InstanceID,
 			Kind: "state_transition",
 			Payload: map[string]any{
 				"from": "fresh", "to": "stale", "reason": "in_frame_invalidate",
 				"frame_id": frameID.String(),
 			},
-		}, tx)
+		}, tx); err != nil {
+			return err
+		}
+		// Pessimistic-invalidate per spec Piece 1: the target's
+		// invalidation triggers the cascade walk that gates the
+		// target's subscribers across multiple in-flight upstream
+		// senders. Without this, a receiver gated on N senders only
+		// sees one wait-set row at a time (whichever sender's
+		// settlement most recently fired the walk).
+		//
+		//	@concept: cascade
+		//	@concept: wait-set
+		return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
+			args.Logger, target.ID, target.InstanceID, *frameID)
 	})
+}
+
+// walkCascadeForInvalidatedNode invokes the runtime cascade walk for a
+// node that just transitioned from a settled state into stale/running.
+// Loads the node's type via a tx-bound read (the persistence-side
+// MarkStaleForCascade does not return the type) then drives the BFS
+// walk over the subscription edge map.
+//
+// Placed in cascade_invalidate.go so the cascade-on-invalidation entry
+// points can call it without depending on runtime/runner_terminal.go's
+// internal acquisition shape. The `queue` parameter is required so
+// the BFS walk can route parked receivers through
+// wakeParkedReceiverInTx (which dereferences args.Queue); pass the
+// caller's persistence.Queue handle through.
+//
+//	@concept: cascade
+//	@concept: wait-set
+func walkCascadeForInvalidatedNode(
+	ctx context.Context, sb persistence.Tables, queue persistence.Queue, tx persistence.Tx,
+	logger shared.Logger,
+	senderNodeID, instanceID, frameID shared.UUID,
+) error {
+	// Minimal RunArgs shape with what cascadeSubscribersStaleInTx
+	// reads (Persist for the subscription-edge cache miss path;
+	// Queue for the parked-receiver wake fallback).
+	args := RunArgs{Persist: sb, Queue: queue, Logger: logger}
+	// Look up the sender's node-type for the inverse-edge map key.
+	n, err := sb.Nodes().Get(ctx, senderNodeID, tx)
+	if err != nil || n == nil {
+		return err
+	}
+	return cascadeSubscribersStaleInTx(ctx, args, tx,
+		senderNodeID, n.NodeType, instanceID, frameID)
 }
 
 // invalidateSourceBucket classifies the Reason string into a small

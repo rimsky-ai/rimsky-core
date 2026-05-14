@@ -1,11 +1,11 @@
 ---
 concept: handlers
 definition: |
-  Per-node declarative slots that decide what the supervisor does with each terminal event from the executor protocol, plus the on_event slot for non-terminal NamedEvents. Four slots in total: on_acquire_unavailable, on_executor_complete, on_executor_errored, on_event.
+  Per-node declarative slots that decide what the supervisor does with each terminal event from the executor protocol. Three slots: on_acquire_unavailable, on_executor_complete, on_executor_errored. Each maps the event to a resolve verdict (`pass`, `retry`, `error`, or one of the cascade-gating verdicts for `on_executor_complete`). Cascade coupling is declared receiver-side via `subscribes:`.
 proto_symbol: ExecuteEvent in protocols/proto/v1/executor.proto
 config_field: rimsky.yml:nodes
 api_surface: (none)
-related: [node-state, parked, invalidate, executor]
+related: [node-state, parked, invalidate, executor, subscription]
 deprecated_terms: []
 ---
 
@@ -16,16 +16,17 @@ deprecated_terms: []
 A node's reactive policy is expressed as a set of declarative
 **handlers** in the template DSL. Each handler maps one event from
 the executor protocol to a small action vocabulary: `pass`, `retry`,
-`error`, plus an optional `invalidate` emit.
+or `error` (plus the cascade-gating verdicts for `on_executor_complete`).
 
 The supervisor terminal pipeline routes every event through the
-matching handler. The handler's `resolve` decides the cascade
-behavior; the optional `invalidate` slot fires unconditionally
-alongside `resolve`.
+matching handler. The handler's `resolve` decides the cascade gate.
+Cascade coupling between nodes is declared receiver-side via
+`subscribes:` (see [`subscription.md`](subscription.md)) — handlers
+no longer carry a send-side `invalidate:` slot.
 
 ## The slots
 
-Three declarable lifecycle handler slots plus the `on_event` map:
+Three lifecycle handler slots:
 
 - `on_acquire_unavailable` — when any required claim's `Open` returns
   `Unavailable`. Resolves: `pass | retry | error`.
@@ -36,11 +37,10 @@ Three declarable lifecycle handler slots plus the `on_event` map:
   this slot post-2026-05-12). Resolves: `pass | retry | error`. Use
   `error_types: { <error_class>: { action: ... } }` to discriminate by
   the producer-declared `error_class`.
-- `on_event` — a per-event-name map keyed by names declared in the
-  executor's `Capabilities.declared_events`. Each handler entry has
-  the same shape as the others: `resolve` + optional `invalidate`.
-  Non-terminal: a node may emit any number of named events between
-  start and its terminal event.
+
+Named events emitted by the executor are not handled by lifecycle
+handlers; receivers subscribe to them directly via
+`subscribes: [{node: <emitter>, on: event, name: <event-name>}]`.
 
 ## DSL example
 
@@ -53,47 +53,38 @@ nodes:
     error_types:
       executor_blocked:
         action: pass
-        invalidate:
-          targets: [low_confidence_review]
-          frame: next
     on_executor_errored:
       resolve: retry
-    on_event:
-      score_emitted:
-        invalidate:
-          targets: [aggregator]
-          frame: in
+
+  - type: low_confidence_review
+    executor: human-review
+    subscribes:
+      - { node: classifier, on: state, when: failed, error_class: executor_blocked }
+
+  - type: aggregator
+    executor: aggregate
+    subscribes:
+      - { node: classifier, on: event, name: score_emitted, frame: in }
 ```
 
 ## Resolve verdicts
 
 | Verdict             | Cascade behavior                                      | Valid in                                  |
 |---------------------|-------------------------------------------------------|-------------------------------------------|
-| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored, on_event |
-| `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored, on_event    |
-| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored, on_event |
+| `pass`              | Treats the event as no-op for cascade.                | acquire_unavailable, errored              |
+| `retry`             | Re-enqueues the dispatch after a backoff.             | acquire_unavailable, errored              |
+| `error`             | Forces the node to `failed` with `error_class`.       | acquire_unavailable, errored              |
 | `by_changed`        | Default for Complete: cascade fires iff `changed=true`. | complete                                |
 | `always_propagate`  | Force `fresh_changed`; cascade fires regardless of `changed`. | complete                          |
 | `never_propagate`   | Force `fresh_unchanged`; cascade does not fire even if `changed=true`. | complete                  |
 
-## Handler-emitted invalidate
-
-The `invalidate` slot fires unconditionally when its handler runs.
-Targets are template node types or `self`; `frame` is `in` (same frame
-the source dispatched in) or `next` (default — a fresh frame). The
-invalidate-emitted target can be a parked node — the unified
-invalidate handler wakes it the same way `POST
-/admin/instances/.../invalidate` does, with `resume_reason:
-"external_invalidate"`.
-
 ## Validation at template registration
 
-- `on_event` keys are cross-checked against the executor's
-  `Capabilities.declared_events`. Templates referring to an
-  undeclared event are rejected at registration.
 - `error_class` is required on `resolve: error`.
-- `invalidate.targets` must reference a declared node type or `self`.
-- `frame` must be `in` or `next`.
+- Subscriptions in `subscribes:` validate against the upstream node's
+  declared output topology (attribute names, declared events) when
+  reachable; see [`subscription.md`](subscription.md) for the validator
+  rules.
 
 When the executor's capabilities are not yet visible (e.g. service is
 unreachable at template-deploy time), the cross-check is skipped
@@ -106,3 +97,11 @@ Userdata is inert in Rimsky (`@blessed-invariant 11`); rimsky never
 inspects it. Handlers are rimsky-side and project-agnostic. Anything
 project-specific belongs in userdata; anything that drives
 state-machine behavior belongs in handlers.
+
+## See also
+
+- [`node-state.md`](node-state.md)
+- [`subscription.md`](subscription.md)
+- [`error-policy.md`](error-policy.md)
+- [`invalidate.md`](invalidate.md)
+- [`executor.md`](executor.md)

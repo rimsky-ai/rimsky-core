@@ -37,14 +37,14 @@ The default landing screen. Lists every instance Rimsky knows about, with curren
 Common diagnostic patterns:
 
 - An instance with a long-running `frame_state: running` and many `stale` nodes — the cascade is working through the dependency graph; check whether progress is being made by watching the `running` count over time.
-- An instance with `failed` nodes and a settled frame — the run is stuck pending the operator's response. Check the failed nodes' resolved error actions; nodes resolved to `give_up` won't auto-recover (those resolved to `retry`, `discard_then_retry`, `resume_then_retry`, or `invalidate(targets)` will).
+- An instance with `failed` nodes and a settled frame — the run is stuck pending the operator's response. Check the failed nodes' resolved error actions; nodes resolved to `give_up` won't auto-recover (those resolved to `retry`, `discard_then_retry`, or `resume_then_retry` will, as will any receiver that subscribed to the failure via a `subscribes: [{node, on: state, when: failed, error_class}]` entry).
 
 <!-- @source: concepts/instance.md -->
 > A running execution of a template, identified by a Rimsky-generated UUID. Instances bind to a specific template content hash at creation. An optional `instance_key` is a caller-supplied dedup key. Tag movement does not migrate live instances.
 
 ### Node graph view
 
-Drill-down into one instance. Shows the dependency graph with current node states overlaid. Each node renders with its state, its dependencies, and (where applicable) its claim/lock declarations.
+Drill-down into one instance. Shows the subscription graph with current node states overlaid. Each node renders with its state, its subscriptions, and (where applicable) its claim/lock declarations.
 
 Common diagnostic patterns:
 
