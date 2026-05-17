@@ -26,7 +26,6 @@ type NodeRow struct {
 	InstanceID           shared.UUID         `json:"instance_id"`
 	NodeType             string              `json:"node_type"`
 	Executor             string              `json:"executor"`
-	ScheduleCron         string              `json:"schedule_cron"`
 	State                cascade.NodeState   `json:"state"`
 	LastOutcome          cascade.LastOutcome `json:"last_outcome,omitempty"`
 	CurrentErrorClass    string              `json:"current_error_class,omitempty"`
@@ -41,11 +40,10 @@ type NodeRow struct {
 
 // NodeCreateInput is the per-row input for Create.
 type NodeCreateInput struct {
-	ID           shared.UUID
-	InstanceID   shared.UUID
-	NodeType     string
-	Executor     string
-	ScheduleCron string
+	ID         shared.UUID
+	InstanceID shared.UUID
+	NodeType   string
+	Executor   string
 }
 
 // NodeTable is the rimsky_nodes accessor.

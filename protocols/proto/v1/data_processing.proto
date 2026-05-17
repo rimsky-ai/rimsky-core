@@ -1,0 +1,120 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+// DataProcessing is a mix-in service-protocol for ClaimProducer
+// implementations that materialize content (Parquet files, PostGIS
+// tables, etc.) against partitioned writes. Producers advertise it
+// via CapabilitiesResponse.protocols (claim_producer.proto). The
+// supervisor calls BeginCandidate at fan-out leaf dispatch time and
+// CommitCandidate / AbandonCandidate at leaf terminal.
+//
+// Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Protocol surfaces / DataProcessing.
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+
+service DataProcessing {
+  rpc Capabilities(google.protobuf.Empty) returns (DataProcessingCapabilities);
+  rpc BeginCandidate(BeginCandidateRequest) returns (BeginCandidateResponse);
+  rpc CommitCandidate(CommitCandidateRequest) returns (CommitCandidateResponse);
+  rpc AbandonCandidate(AbandonCandidateRequest) returns (google.protobuf.Empty);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc ListPartitions(ListPartitionsRequest) returns (ListPartitionsResponse);
+  rpc GetVersionSchema(GetVersionSchemaRequest) returns (GetVersionSchemaResponse);
+}
+
+// DataProcessingCapabilities advertises the data shapes,
+// materializations, partition kinds, and aggregators the producer
+// supports. Rimsky cross-checks template `data:` declarations against
+// this set at canonicalization time when `validation` is also
+// advertised; producer-side Validate.Validate is the authoritative
+// gate.
+message DataProcessingCapabilities {
+  // e.g. "parquet", "geo-parquet", "postgis-table".
+  repeated string data_shapes = 1;
+  // e.g. "full", "partitioned", "iceberg".
+  repeated string materializations = 2;
+  // e.g. "date_range", "region_list", "hash", "bounding_box", "h3_grid",
+  // "attribute_value".
+  repeated string partition_kinds = 3;
+  // e.g. "map_partitioned", "union", "merge", "reduce", "collect", "first".
+  repeated string aggregators = 4;
+}
+
+// BeginCandidateRequest is called inside the rimsky-side acquisition
+// transaction for fan-out sub-claims. The producer allocates a staging
+// candidate (e.g. a unique S3 prefix) keyed by idempotency_key
+// (rimsky-side run_id-derived) and returns an opaque candidate_handle
+// rimsky persists on col:rimsky_claim_handles.producer_candidate_handle.
+message BeginCandidateRequest {
+  string claim_handle_id      = 1;
+  bytes  sub_scope_descriptor = 2;
+  string idempotency_key      = 3;
+}
+
+message BeginCandidateResponse {
+  bytes candidate_handle = 1;
+}
+
+// CommitCandidateRequest finalizes the candidate at leaf-run success.
+// candidate_metadata is opaque-to-rimsky producer-side info about the
+// candidate (e.g. row count, byte size, partition stats); surfaces via
+// the parent's writeback if the producer threads it through Commit.
+message CommitCandidateRequest {
+  bytes candidate_handle = 1;
+}
+
+message CommitCandidateResponse {
+  bytes candidate_metadata = 1;
+}
+
+// AbandonCandidateRequest is called at leaf-run failure or
+// strict-cancel-siblings cancellation. The producer GCs the candidate.
+message AbandonCandidateRequest {
+  bytes candidate_handle = 1;
+}
+
+message ListVersionsRequest {
+  string claim_handle_id = 1;
+}
+
+message ListVersionsResponse {
+  repeated VersionMetadata versions = 1;
+}
+
+message VersionMetadata {
+  string version_id = 1;
+  google.protobuf.Timestamp committed_at = 2;
+  bytes producer_metadata = 3;
+}
+
+message ListPartitionsRequest {
+  string claim_handle_id = 1;
+  string version_id      = 2;
+}
+
+message ListPartitionsResponse {
+  repeated PartitionDescriptor partitions = 1;
+}
+
+message PartitionDescriptor {
+  string partition_key   = 1;
+  bytes  partition_metadata = 2;
+}
+
+message GetVersionSchemaRequest {
+  string claim_handle_id = 1;
+  string version_id      = 2;
+}
+
+message GetVersionSchemaResponse {
+  // Typically a JSON Schema or Arrow schema bytes. Opaque to rimsky.
+  bytes schema = 1;
+}

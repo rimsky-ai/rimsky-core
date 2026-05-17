@@ -264,3 +264,94 @@ func TestSubstitute_NodesEvent(t *testing.T) {
 		}
 	})
 }
+
+// TestSubstitute_TriggerMessage exercises the
+// `{{trigger.message.payload.X}}` directive form added by spec §E14.
+func TestSubstitute_TriggerMessage(t *testing.T) {
+	t.Parallel()
+
+	payload := mustJSON(t, map[string]any{
+		"partition_request_override": map[string]any{
+			"date_range": map[string]any{
+				"start": "2024-01-01",
+				"end":   "2024-09-30",
+			},
+		},
+		"reason": "backfill-q3-2024",
+	})
+
+	ctx := ResolveContext{TriggerMessagePayload: payload}
+
+	t.Run("ok-shallow-leaf", func(t *testing.T) {
+		got, err := Substitute("{{trigger.message.payload.reason}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "backfill-q3-2024" {
+			t.Fatalf("got %q, want backfill-q3-2024", got)
+		}
+	})
+
+	t.Run("ok-deep-leaf", func(t *testing.T) {
+		got, err := Substitute("{{trigger.message.payload.partition_request_override.date_range.start}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "2024-01-01" {
+			t.Fatalf("got %q, want 2024-01-01", got)
+		}
+	})
+
+	t.Run("missing-field", func(t *testing.T) {
+		_, err := Substitute("{{trigger.message.payload.no_such_field}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("no-trigger-bound", func(t *testing.T) {
+		_, err := Substitute("{{trigger.message.payload.reason}}", ResolveContext{})
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("malformed-shape", func(t *testing.T) {
+		_, err := Substitute("{{trigger.message.reason}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}
+
+// TestSubstitute_ChildPartitionKey exercises the `{{child.partition_key}}`
+// directive form added by spec §E14.
+func TestSubstitute_ChildPartitionKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ok-bound", func(t *testing.T) {
+		ctx := ResolveContext{ChildPartitionKey: "2024-Q3"}
+		got, err := Substitute("{{child.partition_key}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "2024-Q3" {
+			t.Fatalf("got %q, want 2024-Q3", got)
+		}
+	})
+
+	t.Run("not-bound", func(t *testing.T) {
+		_, err := Substitute("{{child.partition_key}}", ResolveContext{})
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("only-partition_key-segment-recognized", func(t *testing.T) {
+		ctx := ResolveContext{ChildPartitionKey: "x"}
+		_, err := Substitute("{{child.something_else}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}

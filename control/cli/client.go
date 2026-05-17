@@ -481,7 +481,6 @@ type Node struct {
 	InstanceID           string  `json:"instance_id"`
 	NodeType             string  `json:"node_type"`
 	Executor             string  `json:"executor,omitempty"`
-	ScheduleCron         string  `json:"schedule_cron,omitempty"`
 	State                string  `json:"state"`
 	CurrentErrorClass    string  `json:"current_error_class,omitempty"`
 	RetryCounter         int     `json:"retry_counter"`
@@ -514,15 +513,16 @@ type ParkedNodeEntry struct {
 	ReasonNote string     `json:"reason_note,omitempty"`
 }
 
-// ParkedNodesResponse is the response body of
-// GET /admin/diagnostics/parked-nodes.
+// ParkedNodesResponse is the response body of the parked-nodes
+// diagnostics endpoint (spec-named `/diagnostics/parked`; admin
+// alias `/admin/diagnostics/parked-nodes`).
 type ParkedNodesResponse struct {
 	ParkedNodes []ParkedNodeEntry `json:"parked_nodes"`
 }
 
-// GetParkedNodes calls GET /admin/diagnostics/parked-nodes (with an
-// optional query string already appended by the caller, e.g.
-// "?reason=awaiting_human").
+// GetParkedNodes issues GET against the path the caller supplied
+// (spec-named `/diagnostics/parked` per F7 with optional `?reason=`,
+// or the admin alias `/admin/diagnostics/parked-nodes`).
 func (c *Client) GetParkedNodes(ctx context.Context, path string) (*ParkedNodesResponse, error) {
 	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -637,20 +637,6 @@ func (c *Client) ListEvents(ctx context.Context, q ListEventsQuery) (*ListEvents
 }
 
 // ---------------------------------------------------------------------
-// Admin
-// ---------------------------------------------------------------------
-
-// AdminForceFire calls POST /admin/scheduled-nodes/{node_id}/force-fire
-// and returns nil on 204.
-func (c *Client) AdminForceFire(ctx context.Context, nodeID string) error {
-	req, err := c.request(ctx, http.MethodPost, "/admin/scheduled-nodes/"+url.PathEscape(nodeID)+"/force-fire", nil)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
-}
-
-// ---------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------
 
@@ -677,6 +663,428 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 		return nil, err
 	}
 	var out HealthResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ---------------------------------------------------------------------
+// Messages (F1/F2 — G3)
+// ---------------------------------------------------------------------
+
+// MessageItem mirrors the JSON projection of `persistence.MessageRow`
+// returned by GET /instances/{id}/messages and GET /messages/{id}.
+// Payload bytes are forwarded verbatim per `@blessed-invariant 21`.
+type MessageItem struct {
+	ID                  string          `json:"id"`
+	InstanceID          string          `json:"instance_id"`
+	Kind                string          `json:"kind"`
+	Sender              string          `json:"sender"`
+	SenderKind          string          `json:"sender_kind"`
+	Target              string          `json:"target,omitempty"`
+	Payload             json.RawMessage `json:"payload,omitempty"`
+	BackfillOperationID string          `json:"backfill_operation_id,omitempty"`
+	ReceivedAt          time.Time       `json:"received_at"`
+	DeliveredAt         *time.Time      `json:"delivered_at,omitempty"`
+	FrameID             string          `json:"frame_id,omitempty"`
+	Cancelled           bool            `json:"cancelled,omitempty"`
+}
+
+// ListMessagesQuery is the GET /instances/{id}/messages filter shape.
+// Mirrors `persistence.MessageListFilter` plus the pagination knobs.
+type ListMessagesQuery struct {
+	Kind                string
+	SenderKind          string
+	Target              string
+	BackfillOperationID string
+	DeliveredAfter      string
+	DeliveredBefore     string
+	Cursor              string
+	Limit               int
+}
+
+// ListMessagesResponse is the GET /instances/{id}/messages body shape.
+type ListMessagesResponse struct {
+	Messages   []MessageItem `json:"messages"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+}
+
+// ListInstanceMessages calls GET /instances/{id}/messages.
+func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q ListMessagesQuery) (*ListMessagesResponse, error) {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.SenderKind != "" {
+		v.Set("sender_kind", q.SenderKind)
+	}
+	if q.Target != "" {
+		v.Set("target", q.Target)
+	}
+	if q.BackfillOperationID != "" {
+		v.Set("backfill_operation_id", q.BackfillOperationID)
+	}
+	if q.DeliveredAfter != "" {
+		v.Set("delivered_after", q.DeliveredAfter)
+	}
+	if q.DeliveredBefore != "" {
+		v.Set("delivered_before", q.DeliveredBefore)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/instances/" + url.PathEscape(instanceID) + "/messages"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ListMessagesResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetMessage calls GET /messages/{id}.
+func (c *Client) GetMessage(ctx context.Context, id string) (*MessageItem, error) {
+	req, err := c.request(ctx, http.MethodGet, "/messages/"+url.PathEscape(id), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out MessageItem
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ---------------------------------------------------------------------
+// Backfills (F4 — G2)
+// ---------------------------------------------------------------------
+
+// CreateBackfillRequest is the POST /instances/{id}/backfills body.
+type CreateBackfillRequest struct {
+	TargetNode               string          `json:"target_node"`
+	PartitionRequestOverride json.RawMessage `json:"partition_request_override,omitempty"`
+	Reason                   string          `json:"reason,omitempty"`
+}
+
+// CreateBackfillResponse is the POST response.
+type CreateBackfillResponse struct {
+	MessageID           string `json:"message_id"`
+	BackfillOperationID string `json:"backfill_operation_id"`
+}
+
+// BackfillItem is the projection of a backfill-class message.
+type BackfillItem struct {
+	OperationID string     `json:"operation_id"`
+	MessageID   string     `json:"message_id"`
+	TargetNode  string     `json:"target_node"`
+	Reason      string     `json:"reason,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	FrameID     string     `json:"frame_id,omitempty"`
+	Cancelled   bool       `json:"cancelled,omitempty"`
+}
+
+// ListBackfillsResponse is the GET /instances/{id}/backfills body.
+type ListBackfillsResponse struct {
+	Backfills  []BackfillItem `json:"backfills"`
+	NextCursor string         `json:"next_cursor,omitempty"`
+}
+
+// BackfillPartitionRow is one element of GET /backfills/{op}/partitions.
+type BackfillPartitionRow struct {
+	RunID       string `json:"run_id"`
+	NodeID      string `json:"node_id"`
+	ChildKey    string `json:"child_key,omitempty"`
+	State       string `json:"state"`
+	LastOutcome string `json:"last_outcome,omitempty"`
+}
+
+// BackfillPartitionsResponse is the GET /backfills/{op}/partitions body.
+type BackfillPartitionsResponse struct {
+	Partitions []BackfillPartitionRow `json:"partitions"`
+}
+
+// CreateBackfill calls POST /instances/{id}/backfills.
+func (c *Client) CreateBackfill(ctx context.Context, instanceID string, body CreateBackfillRequest) (*CreateBackfillResponse, error) {
+	req, err := c.request(ctx, http.MethodPost, "/instances/"+url.PathEscape(instanceID)+"/backfills", body)
+	if err != nil {
+		return nil, err
+	}
+	var out CreateBackfillResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListBackfills calls GET /instances/{id}/backfills.
+func (c *Client) ListBackfills(ctx context.Context, instanceID string) (*ListBackfillsResponse, error) {
+	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(instanceID)+"/backfills", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ListBackfillsResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetBackfill calls GET /backfills/{op_id}.
+func (c *Client) GetBackfill(ctx context.Context, opID string) (*BackfillItem, error) {
+	req, err := c.request(ctx, http.MethodGet, "/backfills/"+url.PathEscape(opID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out BackfillItem
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetBackfillPartitions calls GET /backfills/{op_id}/partitions.
+func (c *Client) GetBackfillPartitions(ctx context.Context, opID string) (*BackfillPartitionsResponse, error) {
+	req, err := c.request(ctx, http.MethodGet, "/backfills/"+url.PathEscape(opID)+"/partitions", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out BackfillPartitionsResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CancelBackfill calls POST /backfills/{op_id}/cancel.
+func (c *Client) CancelBackfill(ctx context.Context, opID string) (map[string]any, error) {
+	req, err := c.request(ctx, http.MethodPost, "/backfills/"+url.PathEscape(opID)+"/cancel", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------
+// Assets (F5 — G1)
+// ---------------------------------------------------------------------
+
+// AssetItem is one element of GET /instances/{id}/assets.
+type AssetItem struct {
+	Alias        string          `json:"alias"`
+	ClaimID      string          `json:"claim_id"`
+	ProducerName string          `json:"producer_name"`
+	Scope        json.RawMessage `json:"scope,omitempty"`
+	VersionID    string          `json:"version_id,omitempty"`
+	HeldDurable  bool            `json:"held_durable"`
+	ClaimedAt    time.Time       `json:"claimed_at"`
+	HolderNodeID string          `json:"holder_node_id"`
+	NodeType     string          `json:"node_type,omitempty"`
+}
+
+// ListAssetsResponse is the GET /instances/{id}/assets body.
+type ListAssetsResponse struct {
+	Assets []AssetItem `json:"assets"`
+}
+
+// ListAssets calls GET /instances/{id}/assets.
+func (c *Client) ListAssets(ctx context.Context, instanceID string) (*ListAssetsResponse, error) {
+	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(instanceID)+"/assets", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ListAssetsResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetAsset calls GET /instances/{id}/assets/{alias}.
+func (c *Client) GetAsset(ctx context.Context, instanceID, alias string) (*AssetItem, error) {
+	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out AssetItem
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AssetVersionsResponse is the GET /instances/{id}/assets/{alias}/versions
+// body. Live-server response is 501 until M-section wires DataProcessing;
+// we accept whatever shape the response carries (defensively).
+type AssetVersionsResponse struct {
+	Versions []map[string]any `json:"versions,omitempty"`
+	Error    string           `json:"error,omitempty"`
+}
+
+// GetAssetVersions calls GET /instances/{id}/assets/{alias}/versions.
+func (c *Client) GetAssetVersions(ctx context.Context, instanceID, alias string) (*AssetVersionsResponse, error) {
+	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/versions"
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out AssetVersionsResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// MaterializeAssetRequest is the POST .../materialize body shape.
+type MaterializeAssetRequest struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Reason  string          `json:"reason,omitempty"`
+}
+
+// MaterializeAsset calls POST /instances/{id}/assets/{alias}/materialize.
+func (c *Client) MaterializeAsset(ctx context.Context, instanceID, alias string, body MaterializeAssetRequest) (map[string]any, error) {
+	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialize"
+	req, err := c.request(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteAsset calls DELETE /instances/{id}/assets/{alias}.
+func (c *Client) DeleteAsset(ctx context.Context, instanceID, alias string) error {
+	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
+	req, err := c.request(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
+// AssetMaterializationHistoryResponse is the GET .../materialization-history body.
+type AssetMaterializationHistoryResponse struct {
+	MaterializationHistory []LineageRecordItem `json:"materialization_history"`
+}
+
+// GetAssetMaterializationHistory calls GET .../materialization-history.
+func (c *Client) GetAssetMaterializationHistory(ctx context.Context, instanceID, alias string) (*AssetMaterializationHistoryResponse, error) {
+	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialization-history"
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out AssetMaterializationHistoryResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ---------------------------------------------------------------------
+// Lineage (F6 — G1 asset lineage + G4 prune)
+// ---------------------------------------------------------------------
+
+// LineageRecordItem mirrors the JSON projection of persistence.LineageRow.
+type LineageRecordItem struct {
+	ID         string          `json:"id"`
+	RecordKind string          `json:"record_kind"`
+	InstanceID string          `json:"instance_id"`
+	FrameID    string          `json:"frame_id"`
+	ObservedAt time.Time       `json:"observed_at"`
+	Record     json.RawMessage `json:"record"`
+}
+
+// LineageAncestorsResponse is GET /lineage/{run|claim}/{id}/ancestors body.
+type LineageAncestorsResponse struct {
+	Ancestors []LineageRecordItem `json:"ancestors"`
+	Depth     int                 `json:"depth"`
+}
+
+// GetClaimAncestors calls GET /lineage/claims/{claim_handle_id}/ancestors.
+func (c *Client) GetClaimAncestors(ctx context.Context, claimHandleID string, depth int) (*LineageAncestorsResponse, error) {
+	v := url.Values{}
+	if depth > 0 {
+		v.Set("depth", strconv.Itoa(depth))
+	}
+	path := "/lineage/claims/" + url.PathEscape(claimHandleID) + "/ancestors"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out LineageAncestorsResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PruneLineageRequest is the POST /admin/lineage/prune body.
+type PruneLineageRequest struct {
+	Before string `json:"before"`
+}
+
+// PruneLineage calls POST /admin/lineage/prune. Returns the affected-row
+// summary the server emits.
+func (c *Client) PruneLineage(ctx context.Context, before string) (map[string]any, error) {
+	req, err := c.request(ctx, http.MethodPost, "/admin/lineage/prune", PruneLineageRequest{Before: before})
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------
+// Template register with warnings_as_errors (G6)
+// ---------------------------------------------------------------------
+
+// RegisterTemplateOptions extends RegisterTemplateRequest with the
+// runtime-only `warnings_as_errors` query parameter introduced by F9.
+// Stored in this struct rather than the request body since the
+// control-api reads it from the URL query, not JSON.
+type RegisterTemplateOptions struct {
+	WarningsAsErrors bool
+}
+
+// RegisterTemplateWithOptions calls POST /templates with the
+// `?warnings_as_errors=true` query param when set. Mirrors
+// RegisterTemplate; kept as a separate method to avoid breaking the
+// existing single-body call shape.
+func (c *Client) RegisterTemplateWithOptions(ctx context.Context, body RegisterTemplateRequest, opts RegisterTemplateOptions) (*Template, error) {
+	path := "/templates"
+	if opts.WarningsAsErrors {
+		path += "?warnings_as_errors=true"
+	}
+	req, err := c.request(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var out Template
 	if err := c.do(req, &out); err != nil {
 		return nil, err
 	}

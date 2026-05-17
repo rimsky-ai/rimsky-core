@@ -215,8 +215,9 @@ func seedFixtureNode(t *testing.T, rawDB *sql.DB) uuid.UUID {
 	if err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
+	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	_, err = rawDB.ExecContext(context.Background(),
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, state) VALUES (?, ?, 'fixture', 'fresh')`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
 		nodeID.String(), instanceID,
 	)
 	if err != nil {

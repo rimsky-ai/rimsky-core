@@ -45,10 +45,11 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Drop any auto-created frames so we have full control.
+	// Drop any auto-created frames so we have full control. Post-
+	// stage-3 cutover: state lives on rimsky_node_runs.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	// Seed a wedged frame with last_progress_at 5 minutes in the past
 	// against a 60s timeout; the source node is stale within this frame
@@ -60,8 +61,13 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '10 minutes', now() - interval '5 minutes', now() - interval '5 minutes', $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID), int64(timeoutMs)}, &frameID)
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'stale', frame_id = $1, updated_at = now() WHERE id = $2`,
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
+	h.ExecSQL(`
+		INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2)
+	`, uuid.UUID(worker.ID), frameID)
 
 	// Capture log output via a buffer-backed slog handler.
 	var buf bytes.Buffer
@@ -83,8 +89,14 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 		"stuck-frame warning must not transition the frame to terminal")
 
 	// The wedged source node must keep its state — no fail-fanout.
+	// Post-stage-3: read state from the in-flight run row.
 	var nodeState string
-	h.QueryRowSQL(`SELECT state FROM rimsky_nodes WHERE id = $1`,
+	h.QueryRowSQL(`SELECT COALESCE(r.state, 'fresh')
+	                 FROM rimsky_nodes n
+	                 LEFT JOIN rimsky_node_runs r
+	                        ON r.node_id = n.id
+	                       AND r.phase IN ('pending','active','held','parked')
+	                WHERE n.id = $1`,
 		[]any{uuid.UUID(worker.ID)}, &nodeState)
 	require.Equal(t, "stale", nodeState,
 		"warning must not mutate node state")

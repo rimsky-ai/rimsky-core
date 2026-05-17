@@ -17,13 +17,13 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-const claimHolderCols = `id, claim_handle_id, holder_node_id, state, completed_at`
+const claimHolderCols = `id, claim_handle_id, holder_run_id, state, completed_at`
 
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_node_id, state, frame_id)
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
 		 VALUES (?, ?, ?, 'active', ?)`,
-		in.ID.String(), in.ClaimHandleID.String(), in.HolderNodeID.String(), nullableUUID(in.FrameID),
+		in.ID.String(), in.ClaimHandleID.String(), in.HolderRunID.String(), nullableUUID(in.FrameID),
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Insert: %w", err)
@@ -58,11 +58,11 @@ func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, claimHandleI
 	return collectClaimHolders(rows)
 }
 
-func (s *claimHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
+func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE holder_node_id = ?
-		 ORDER BY id ASC`, holderNodeID.String(),
+		 WHERE holder_run_id = ?
+		 ORDER BY id ASC`, holderRunID.String(),
 	)
 	if err != nil {
 		return nil, err
@@ -98,20 +98,20 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 	return nil
 }
 
-func (s *claimHoldersImpl) CompleteByClaimHandleAndNode(
-	ctx context.Context, claimHandleID, holderNodeID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
+func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
+	ctx context.Context, claimHandleID, holderRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_holders
 		    SET state = ?,
 		        completed_at = ?
 		  WHERE claim_handle_id = ?
-		    AND holder_node_id = ?
+		    AND holder_run_id = ?
 		    AND state = 'active'`,
-		string(state), nowUTC(), claimHandleID.String(), holderNodeID.String(),
+		string(state), nowUTC(), claimHandleID.String(), holderRunID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndNode: %w", err)
+		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: %w", err)
 	}
 	return nil
 }
@@ -152,11 +152,11 @@ func scanClaimHolder(sc scannable) (persistence.ClaimHolderRow, error) {
 		r                persistence.ClaimHolderRow
 		idStr            string
 		claimHandleIDStr string
-		holderNodeIDStr  string
+		holderRunIDStr   string
 		state            string
 		completedAtStr   sql.NullString
 	)
-	if err := sc.Scan(&idStr, &claimHandleIDStr, &holderNodeIDStr, &state, &completedAtStr); err != nil {
+	if err := sc.Scan(&idStr, &claimHandleIDStr, &holderRunIDStr, &state, &completedAtStr); err != nil {
 		return persistence.ClaimHolderRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -167,13 +167,13 @@ func scanClaimHolder(sc scannable) (persistence.ClaimHolderRow, error) {
 	if err != nil {
 		return persistence.ClaimHolderRow{}, err
 	}
-	holderNodeID, err := uuid.Parse(holderNodeIDStr)
+	holderRunID, err := uuid.Parse(holderRunIDStr)
 	if err != nil {
 		return persistence.ClaimHolderRow{}, err
 	}
 	r.ID = id
 	r.ClaimHandleID = claimHandleID
-	r.HolderNodeID = holderNodeID
+	r.HolderRunID = holderRunID
 	r.State = persistence.ClaimHolderState(state)
 	if completedAtStr.Valid {
 		t, err := parseTime(completedAtStr.String)

@@ -3,11 +3,13 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // ClaimHolderTable is the postgres accessor for `rimsky_claim_holders`.
-// One row per (lock_holder, holder_node) pair from the §18.4 holding
-// subgraph. Rows transition `'active'` → `'completed'` (success) or
-// `'failed'` (give-up/failure) per §4.10 invariant 13. The claim_handle_id FK cascades
-// deletes when the parent rimsky_claim_handles row is removed at
-// auto-terminal.
+// One row per (lock_holder, holder_run) pair from the holding subgraph.
+// Rows transition `'active'` → `'completed'` (success) or `'failed'`
+// (give-up/failure) per `@blessed-invariant 13`. The claim_handle_id FK
+// cascades deletes when the parent rimsky_claim_handles row is removed
+// at auto-terminal. Post-stage-5 the holder is keyed by `holder_run_id`
+// (a `rimsky_node_runs.id`); see migration
+// `005-claim-holders-wait-set-run-level.sql` for the cutover rationale.
 package postgres
 
 import (
@@ -24,16 +26,16 @@ import (
 
 // ClaimHolderTable is the postgres ClaimHolderTable implementation.
 
-const claimHolderCols = `id, claim_handle_id, holder_node_id, state, completed_at`
+const claimHolderCols = `id, claim_handle_id, holder_run_id, state, completed_at`
 
 // Insert satisfies persistence.ClaimHolderTable. Rows are inserted in
 // 'active' state.
 func (s *claimHoldersImpl) Insert(ctx context.Context, in persistence.ClaimHolderInsertInput, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
-		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_node_id, state, frame_id)
+		`INSERT INTO rimsky_claim_holders (id, claim_handle_id, holder_run_id, state, frame_id)
 		 VALUES ($1, $2, $3, 'active', $4)`,
-		in.ID, in.ClaimHandleID, in.HolderNodeID, in.FrameID,
+		in.ID, in.ClaimHandleID, in.HolderRunID, in.FrameID,
 	)
 	if err != nil {
 		return fmt.Errorf("claim_holders.Insert: %w", err)
@@ -72,13 +74,13 @@ func (s *claimHoldersImpl) ListByClaimHandleID(ctx context.Context, claimHandleI
 	return collectClaimHolders(rows)
 }
 
-// ListByHolderNode satisfies persistence.ClaimHolderTable.
-func (s *claimHoldersImpl) ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
+// ListByHolderRun satisfies persistence.ClaimHolderTable.
+func (s *claimHoldersImpl) ListByHolderRun(ctx context.Context, holderRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHolderRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+claimHolderCols+` FROM rimsky_claim_holders
-		 WHERE holder_node_id = $1
-		 ORDER BY id ASC`, holderNodeID,
+		 WHERE holder_run_id = $1
+		 ORDER BY id ASC`, holderRunID,
 	)
 	if err != nil {
 		return nil, err
@@ -119,12 +121,12 @@ func (s *claimHoldersImpl) Complete(ctx context.Context, id shared.UUID, state p
 	return nil
 }
 
-// CompleteByClaimHandleAndNode satisfies persistence.ClaimHolderTable. Single
-// targeted UPDATE on the unique (claim_handle_id, holder_node_id) pair —
+// CompleteByClaimHandleAndRun satisfies persistence.ClaimHolderTable. Single
+// targeted UPDATE on the unique (claim_handle_id, holder_run_id) pair —
 // avoids the read-then-write round-trip the supervisor's terminal-release
 // path would otherwise pay per held alias.
-func (s *claimHoldersImpl) CompleteByClaimHandleAndNode(
-	ctx context.Context, claimHandleID, holderNodeID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
+func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
+	ctx context.Context, claimHandleID, holderRunID shared.UUID, state persistence.ClaimHolderState, tx persistence.Tx,
 ) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -132,12 +134,12 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndNode(
 		    SET state = $3,
 		        completed_at = now()
 		  WHERE claim_handle_id = $1
-		    AND holder_node_id = $2
+		    AND holder_run_id = $2
 		    AND state = 'active'`,
-		claimHandleID, holderNodeID, string(state),
+		claimHandleID, holderRunID, string(state),
 	)
 	if err != nil {
-		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndNode: %w", err)
+		return fmt.Errorf("claim_holders.CompleteByClaimHandleAndRun: %w", err)
 	}
 	return nil
 }
@@ -184,7 +186,7 @@ func scanClaimHolder(sc scannable) (persistence.ClaimHolderRow, error) {
 		completedAt *time.Time
 	)
 	if err := sc.Scan(
-		&r.ID, &r.ClaimHandleID, &r.HolderNodeID,
+		&r.ID, &r.ClaimHandleID, &r.HolderRunID,
 		&state, &completedAt,
 	); err != nil {
 		return persistence.ClaimHolderRow{}, err

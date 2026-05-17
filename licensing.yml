@@ -22,7 +22,6 @@ apache:
   - graph/node/
   - graph/shared/
   - graph/template/canonical/
-  - graph/qualityrule/  # spec types only; runtime is at graph/qualityrule/eval/ (AGPL)
   - conformance/
   - stores/
   - executors/
@@ -54,7 +53,6 @@ agpl:
   - graph/frame/
   - internal/
   - control/observability/
-  - graph/qualityrule/eval/  # runtime evaluators + registry
   - graph/scenario/
   - graph/scheduler/
   - cmd/rimsky-scheduler/

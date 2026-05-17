@@ -48,18 +48,34 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.NotNil(t, n)
 
 	// Force the node to running with a stale heartbeat (>>HeartbeatTimeout=5s).
-	_, err := h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_nodes
-		   SET state = 'running',
-		       last_heartbeat_at = NOW() - INTERVAL '30 seconds',
-		       assigned_supervisor_id = 'zombie-sup'
-		 WHERE id = $1`,
-		n.ID,
-	)
+	// Post-stage-3 cutover: state / last_heartbeat_at / claimed_by live
+	// on rimsky_node_runs; rimsky_nodes carries only identity + frame_id.
+	// The active zombie run row is seeded below.
+	_, err := h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, n.ID)
 	require.NoError(t, err)
 
-	// Remove any auto-enqueued dispatch row so we can observe re-enqueue.
+	// Replace any auto-enqueued dispatch row with an explicitly-seeded
+	// active zombie row tied to the same supervisor + stale heartbeat
+	// the rimsky_nodes mirror carries.
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
+	require.NoError(t, err)
+	// Reuse the instance's already-running frame (the harness creates one
+	// at instance-create time; uq_rimsky_frames_running enforces one
+	// running frame per instance, so we read it rather than INSERT).
+	var frameID uuid.UUID
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+		uuid.UUID(iid),
+	).Scan(&frameID))
+	_, err = h.Pool.Exec(h.Ctx,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
+		                               enqueued_at, claimed_by, claimed_at,
+		                               last_heartbeat_at, phase, state, frame_id)
+		 VALUES (gen_random_uuid(), $1, 'stub', '{}', NOW(), 'zombie-sup',
+		         NOW() - INTERVAL '30 seconds', NOW() - INTERVAL '30 seconds',
+		         'active', 'running', $2)`,
+		n.ID, frameID,
+	)
 	require.NoError(t, err)
 
 	// Seed an expired `rimsky_claim_handles` row tied to the zombie node +

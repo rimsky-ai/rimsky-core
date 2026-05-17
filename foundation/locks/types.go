@@ -159,3 +159,14 @@ func ParseWriteSemantics(s string) (WriteSemantics, bool) {
 // MUST be a subset of the advertised set; rimsky validates strict subset
 // at startup.
 type Capabilities = claimproducer.Capabilities
+
+// SplitScopeRequest / SplitScopeResponse / SubScopeDescriptor are Go
+// type aliases for the canonical types in protocols/claimproducer.
+type SplitScopeRequest = claimproducer.SplitScopeRequest
+
+// SplitScopeResponse is the producer's reply to SplitScope.
+type SplitScopeResponse = claimproducer.SplitScopeResponse
+
+// SubScopeDescriptor identifies one of the sub-scopes the producer
+// partitioned the parent into. Per spec §Fan-out template DSL.
+type SubScopeDescriptor = claimproducer.SubScopeDescriptor

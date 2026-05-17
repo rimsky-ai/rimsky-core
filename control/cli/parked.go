@@ -2,8 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// parked.go — `rimsky-cli parked list`. Surfaces the
-// /admin/diagnostics/parked-nodes endpoint as a table.
+// parked.go — `rimsky-cli parked list`. Surfaces the spec-named
+// `/diagnostics/parked` endpoint (F7) as a table. The admin alias
+// path `/admin/diagnostics/parked-nodes` still resolves the same
+// handler server-side for backwards compatibility.
 //
 //	@concept: parked-state
 package cli
@@ -49,7 +51,9 @@ func RunParkedList(ctx context.Context, args []string) int {
 	if *reason != "" {
 		q.Set("reason", *reason)
 	}
-	path := "/admin/diagnostics/parked-nodes"
+	// G5 forwards to F7's spec-named path; the admin-named path stays
+	// available server-side as a backwards-compat alias.
+	path := "/diagnostics/parked"
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}

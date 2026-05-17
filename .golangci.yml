@@ -26,10 +26,12 @@ linters-settings:
           - "!**/internal/pgtest/**"
           - "!**/graph/scenario/**"
           - "!**/stores/**"
+          - "!**/sensors/**"
+          - "!**/subscribers/**"
           - "!**/test/smoke/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, internal/pgtest/, graph/scenario/, stores/, and test/smoke/. Use the persistence interfaces."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, internal/pgtest/, graph/scenario/, stores/, sensors/, subscribers/, and test/smoke/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"

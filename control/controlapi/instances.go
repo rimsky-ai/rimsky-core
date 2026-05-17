@@ -48,7 +48,7 @@ import (
 	foundationshared "github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/frame"
 	nodepkg "github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scheduler"
+	"github.com/fallguy/rimsky/runtime"
 )
 
 type createInstanceRequest struct {
@@ -67,6 +67,13 @@ type createInstanceRequest struct {
 	// @blessed-invariant 11 the fragment values themselves are opaque to
 	// rimsky — only the keys are inspected (for routing / validation).
 	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
+	// FrameDeliveryMode selects per-instance message-delivery semantics
+	// for `DeliverPendingMessages` at frame creation
+	// (col:rimsky_instances.frame_delivery_mode). Valid values:
+	// "serial_queue" (deliver oldest pending message; the rest stay
+	// pending) or "coalesce" (deliver all pending). Optional — when
+	// omitted the column's default ("coalesce") is used.
+	FrameDeliveryMode *string `json:"frame_delivery_mode,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -82,18 +89,20 @@ type instanceItem struct {
 	InstanceKey       *string        `json:"instance_key,omitempty"`
 	Params            map[string]any `json:"params"`
 	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
+	FrameDeliveryMode string         `json:"frame_delivery_mode"`
 	CreatedAt         time.Time      `json:"created_at"`
 	TerminatedAt      *time.Time     `json:"terminated_at,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	out := instanceItem{
-		ID:           r.ID.String(),
-		TemplateHash: r.TemplateHash,
-		InstanceKey:  r.InstanceKey,
-		Params:       ApplyParamsRedact(r.Params, redact),
-		CreatedAt:    r.CreatedAt,
-		TerminatedAt: r.TerminatedAt,
+		ID:                r.ID.String(),
+		TemplateHash:      r.TemplateHash,
+		InstanceKey:       r.InstanceKey,
+		Params:            ApplyParamsRedact(r.Params, redact),
+		FrameDeliveryMode: r.FrameDeliveryMode,
+		CreatedAt:         r.CreatedAt,
+		TerminatedAt:      r.TerminatedAt,
 	}
 	if len(r.UserdataOverrides) > 0 {
 		out.UserdataOverrides = r.UserdataOverrides
@@ -126,6 +135,17 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		if strings.TrimSpace(body.Template) == "" {
 			badRequest(w, "template is required (tag or hash)")
 			return
+		}
+		// Validate frame_delivery_mode early so a typo surfaces as 400
+		// rather than a SQL CHECK violation deep in provisionInstanceTx.
+		if body.FrameDeliveryMode != nil {
+			switch *body.FrameDeliveryMode {
+			case "serial_queue", "coalesce":
+				// ok
+			default:
+				badRequest(w, fmt.Sprintf("frame_delivery_mode %q invalid (want \"serial_queue\" or \"coalesce\")", *body.FrameDeliveryMode))
+				return
+			}
 		}
 		hash, err := resolveTagOrHash(req.Context(), deps, body.Template)
 		if err != nil {
@@ -192,10 +212,15 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return nil
 				}
 			}
+			deliveryMode := ""
+			if body.FrameDeliveryMode != nil {
+				deliveryMode = *body.FrameDeliveryMode
+			}
 			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
 				InstanceKey:       body.InstanceKey,
 				Params:            params,
 				UserdataOverrides: body.UserdataOverrides,
+				FrameDeliveryMode: deliveryMode,
 			})
 			if err != nil {
 				return err
@@ -241,6 +266,22 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				"details": perStore,
 			})
 			return
+		}
+		// F8: walk the template's `sensors:` block and issue
+		// Sensor.StartWatch for each. Per spec §Per-instance
+		// parameterization, sensor startup failures are non-blocking
+		// — the watch row stays at `state = failed` for operator-
+		// recoverable retries via the resync sweeper.
+		if len(tplSpec.Sensors) > 0 && !existedKey {
+			instUUID, parseErr := uuid.Parse(respOut.InstanceID)
+			if parseErr == nil {
+				_ = runtime.StartWatchesForInstance(req.Context(), runtime.SensorLifecycleDeps{
+					Persist: deps.Persist,
+					Sensors: deps.Sensors,
+					Clock:   deps.Clock,
+					Logger:  deps.Logger,
+				}, foundationshared.UUID(instUUID), params, tplSpec.Sensors)
+			}
 		}
 		status := http.StatusCreated
 		if existedKey {
@@ -423,6 +464,44 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
+		// F8: walk active sensor watches for this instance and call
+		// `Sensor.StopWatch` on each before dropping rows. Non-blocking
+		// per spec §Per-instance parameterization — failures are
+		// logged + retried by the resync sweeper.
+		_ = runtime.StopWatchesForInstance(req.Context(), runtime.SensorLifecycleDeps{
+			Persist: deps.Persist,
+			Sensors: deps.Sensors,
+			Clock:   deps.Clock,
+			Logger:  deps.Logger,
+		}, inst.ID)
+		// E9: walk held-durable claim_handles for this instance and call
+		// `ClaimProducer.Release` on each before dropping rows. Per
+		// `@blessed-invariant 22` durable claim handles persist past
+		// auto-terminal; the only sanctioned release paths are the
+		// operator-driven asset delete (`DELETE /instances/{id}/assets/{alias}`)
+		// and instance-termination cleanup. Without this, an instance
+		// with held-durable assets would leave producer-side state
+		// dangling forever. Failures are logged + retained on the row
+		// for retry rather than blocking instance deletion. Spec
+		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+		// §Held-durable claim lifecycle.
+		if deps.Stores != nil {
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				_, rErr := runtime.ReleaseHeldDurableClaims(ctx,
+					runtime.RunArgs{
+						Persist:       deps.Persist,
+						ClaimHandles:  deps.Persist.ClaimHandles(),
+						StoreRegistry: deps.Stores,
+						Clock:         deps.Clock,
+						Logger:        deps.Logger,
+					}, tx, inst.ID, deps.Logger)
+				return rErr
+			}); err != nil && deps.Logger != nil {
+				deps.Logger.Warn("handleDeleteInstance: ReleaseHeldDurableClaims failed",
+					"instance_id", inst.ID.String(),
+					"error", err.Error())
+			}
+		}
 		// Defensive: per spec §1.6 any remaining lifecycle rows for
 		// scope='instance' on this id are deleted with the instance.
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -513,6 +592,9 @@ type provisionArgs struct {
 	InstanceKey       *string
 	Params            map[string]any
 	UserdataOverrides map[string]any
+	// FrameDeliveryMode is one of "serial_queue" / "coalesce". Empty
+	// string falls through to the column DEFAULT 'coalesce'.
+	FrameDeliveryMode string
 }
 
 // provisionInstanceTx is the instance-factory routine. Runs the create
@@ -541,6 +623,7 @@ func provisionInstanceTx(
 		InstanceKey:       args.InstanceKey,
 		Params:            args.Params,
 		UserdataOverrides: args.UserdataOverrides,
+		FrameDeliveryMode: args.FrameDeliveryMode,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err
@@ -575,30 +658,17 @@ func provisionInstanceTx(
 			}
 		}
 
-		// Create node row.
+		// Create node row. Per the 2026-05-15 data-platform-extensions
+		// plan D7/E16/B10 the per-node `schedule:` field and the
+		// rimsky_schedules table are retired; the bundled `sensor-cron`
+		// service owns cron firing via the Sensor protocol.
 		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           nodeID,
-			InstanceID:   inst.ID,
-			NodeType:     def.Type,
-			Executor:     def.Executor,
-			ScheduleCron: def.Schedule,
+			ID:         nodeID,
+			InstanceID: inst.ID,
+			NodeType:   def.Type,
+			Executor:   def.Executor,
 		}, tx); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
-		}
-
-		// Register schedule if declared.
-		if def.Schedule != "" {
-			next, err := scheduler.NextFireAt(def.Schedule, deps.Clock.Now())
-			if err != nil {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: invalid cron on node %q: %w", def.Type, err)
-			}
-			if err := deps.Persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
-				NodeID:     nodeID,
-				CronExpr:   def.Schedule,
-				NextFireAt: next,
-			}, tx); err != nil {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: register schedule on node %q: %w", def.Type, err)
-			}
 		}
 	}
 

@@ -61,9 +61,15 @@ func knownParkReasonFilters() []string {
 }
 
 // registerAdminDiagnosticsRoutes wires the admin diagnostics endpoints.
+//
+// F7 — `GET /diagnostics/parked?reason=` is the spec-named operator
+// surface (§Parked-state taxonomy / Control-api filter); it shares
+// the handler with the older `/admin/diagnostics/parked-nodes` path
+// so both shapes are valid and exhibit identical behaviour.
 func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/held-frames", handleAdminHeldFrames(deps))
 	r.Get("/admin/diagnostics/parked-nodes", handleAdminParkedNodes(deps))
+	r.Get("/diagnostics/parked", handleAdminParkedNodes(deps))
 	r.Get("/admin/diagnostics/wait-sets", handleAdminWaitSets(deps))
 	r.Post("/admin/instances/{instance}/nodes/{node_id}/invalidate", handleAdminInvalidateNode(deps))
 }

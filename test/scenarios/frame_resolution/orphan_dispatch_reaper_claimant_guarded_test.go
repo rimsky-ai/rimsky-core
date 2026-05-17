@@ -97,9 +97,10 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		VALUES ($1, $2, 'ck-orphan-`+instanceID.String()[:8]+`', '{}'::jsonb)
 	`, instanceID, templateHash)
 	nodeID := uuid.New()
+	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	h.ExecSQL(`
-		INSERT INTO rimsky_nodes (id, instance_id, node_type, state)
-		VALUES ($1, $2, 'n', 'fresh')
+		INSERT INTO rimsky_nodes (id, instance_id, node_type)
+		VALUES ($1, $2, 'n')
 	`, nodeID, instanceID)
 	frameID := uuid.New()
 	now := time.Now()

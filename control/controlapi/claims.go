@@ -29,7 +29,7 @@ import (
 type claimHolderResponse struct {
 	ID            string     `json:"id"`
 	ClaimHandleID string     `json:"claim_handle_id"`
-	HolderNodeID  string     `json:"holder_node_id"`
+	HolderRunID   string     `json:"holder_run_id"`
 	State         string     `json:"state"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
@@ -38,7 +38,7 @@ func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 	return claimHolderResponse{
 		ID:            r.ID.String(),
 		ClaimHandleID: r.ClaimHandleID.String(),
-		HolderNodeID:  r.HolderNodeID.String(),
+		HolderRunID:   r.HolderRunID.String(),
 		State:         string(r.State),
 		CompletedAt:   r.CompletedAt,
 	}

@@ -1,0 +1,51 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+package spec
+
+import "testing"
+
+func TestAggregationPolicy_Validate(t *testing.T) {
+	cases := []struct {
+		name    string
+		policy  AggregationPolicy
+		wantErr bool
+	}{
+		{"strict with cancel siblings", AggregationPolicy{Kind: AggregationKindStrict, CancelSiblings: true}, false},
+		{"strict bare", AggregationPolicy{Kind: AggregationKindStrict}, false},
+		{"threshold with max_failures", AggregationPolicy{Kind: AggregationKindThreshold, MaxFailures: 3}, false},
+		{"threshold missing max_failures", AggregationPolicy{Kind: AggregationKindThreshold}, true},
+		{"threshold with cancel_siblings", AggregationPolicy{Kind: AggregationKindThreshold, MaxFailures: 1, CancelSiblings: true}, true},
+		{"best_effort", AggregationPolicy{Kind: AggregationKindBestEffort}, false},
+		{"first", AggregationPolicy{Kind: AggregationKindFirst}, false},
+		{"empty kind", AggregationPolicy{}, true},
+		{"unknown kind", AggregationPolicy{Kind: "unknown"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.policy.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("got err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParkReason_IsValid(t *testing.T) {
+	valid := []ParkReason{
+		ParkReasonTimeWait, ParkReasonCallbackWait, ParkReasonRetryBackoff,
+		ParkReasonOther, ParkReasonSignalWait, ParkReasonAwaitingHuman,
+	}
+	for _, r := range valid {
+		if !r.IsValid() {
+			t.Errorf("ParkReason(%q).IsValid() = false, want true", r)
+		}
+	}
+	if ParkReasonUnspecified.IsValid() {
+		t.Errorf("ParkReasonUnspecified.IsValid() = true, want false")
+	}
+	if ParkReason("garbage").IsValid() {
+		t.Errorf("garbage.IsValid() = true, want false")
+	}
+}

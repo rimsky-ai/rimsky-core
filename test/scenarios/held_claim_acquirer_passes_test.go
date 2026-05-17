@@ -133,10 +133,13 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 		"no claim_handle rows should exist when the producer returned Unavailable")
 
 	// No rimsky_claim_holders rows for the held subgraph either.
+	// Post-stage-5 the holder row keys on holder_run_id; join through
+	// rimsky_node_runs → rimsky_nodes to scope by instance.
 	var chCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_holders ch
-		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		   JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
+		   JOIN rimsky_nodes n ON n.id = r.node_id
 		  WHERE n.instance_id = $1`, uuid.UUID(iid),
 	).Scan(&chCount))
 	require.Equal(t, 0, chCount,

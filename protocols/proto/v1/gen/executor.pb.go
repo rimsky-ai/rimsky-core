@@ -28,10 +28,19 @@ const (
 
 // ParkReason categorizes why an executor parked a node. Storage form
 // (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_AWAITING_HUMAN ->
-// awaiting_human). The same form is used on the diagnostics
+// from the enum symbol (e.g. PARK_REASON_CALLBACK_WAIT ->
+// callback_wait). The same form is used on the diagnostics
 // endpoint, the rimsky-cli `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
+//
+// The spec's 4-reason taxonomy (TIME_WAIT / CALLBACK_WAIT /
+// RETRY_BACKOFF / OTHER; see
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Parked-state taxonomy) is the canonical set for new emitters;
+// SIGNAL_WAIT and AWAITING_HUMAN are kept for existing emit sites
+// and map to OTHER in the rolled-up per-reason caps when not
+// explicitly configured. OTHER requires reason_label non-empty
+// (validated at the supervisor's terminal handler).
 //
 // @concept: parked-state
 type ParkReason int32
@@ -42,16 +51,20 @@ const (
 	ParkReason_PARK_REASON_SIGNAL_WAIT    ParkReason = 2
 	ParkReason_PARK_REASON_AWAITING_HUMAN ParkReason = 3
 	ParkReason_PARK_REASON_RETRY_BACKOFF  ParkReason = 4
+	ParkReason_PARK_REASON_CALLBACK_WAIT  ParkReason = 5
+	ParkReason_PARK_REASON_OTHER          ParkReason = 99
 )
 
 // Enum value maps for ParkReason.
 var (
 	ParkReason_name = map[int32]string{
-		0: "PARK_REASON_UNSPECIFIED",
-		1: "PARK_REASON_TIME_WAIT",
-		2: "PARK_REASON_SIGNAL_WAIT",
-		3: "PARK_REASON_AWAITING_HUMAN",
-		4: "PARK_REASON_RETRY_BACKOFF",
+		0:  "PARK_REASON_UNSPECIFIED",
+		1:  "PARK_REASON_TIME_WAIT",
+		2:  "PARK_REASON_SIGNAL_WAIT",
+		3:  "PARK_REASON_AWAITING_HUMAN",
+		4:  "PARK_REASON_RETRY_BACKOFF",
+		5:  "PARK_REASON_CALLBACK_WAIT",
+		99: "PARK_REASON_OTHER",
 	}
 	ParkReason_value = map[string]int32{
 		"PARK_REASON_UNSPECIFIED":    0,
@@ -59,6 +72,8 @@ var (
 		"PARK_REASON_SIGNAL_WAIT":    2,
 		"PARK_REASON_AWAITING_HUMAN": 3,
 		"PARK_REASON_RETRY_BACKOFF":  4,
+		"PARK_REASON_CALLBACK_WAIT":  5,
+		"PARK_REASON_OTHER":          99,
 	}
 )
 
@@ -336,9 +351,17 @@ type StoreHandle struct {
 	// Producer-supplied Address bytes returned by ClaimProducer.Open,
 	// wrapped as a google.protobuf.Struct so JSON-shaped addresses
 	// round-trip cleanly. Inert to Rimsky per @blessed-invariant 20.
-	Handle        *structpb.Struct `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Handle *structpb.Struct `protobuf:"bytes,2,opt,name=handle,proto3" json:"handle,omitempty"`
+	// candidate_handle is set by the supervisor for
+	// DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
+	// rimsky; the executor passes this back to its own writes against
+	// the producer (see proto:data_processing.proto::CommitCandidate).
+	// Empty for non-DataProcessing claims and non-fan-out claims. Per
+	// @blessed-invariant 20 the bytes are inert in rimsky — passed
+	// verbatim from the sub-claim row to the wire.
+	CandidateHandle []byte `protobuf:"bytes,6,opt,name=candidate_handle,json=candidateHandle,proto3" json:"candidate_handle,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *StoreHandle) Reset() {
@@ -381,6 +404,13 @@ func (x *StoreHandle) GetKind() string {
 func (x *StoreHandle) GetHandle() *structpb.Struct {
 	if x != nil {
 		return x.Handle
+	}
+	return nil
+}
+
+func (x *StoreHandle) GetCandidateHandle() []byte {
+	if x != nil {
+		return x.CandidateHandle
 	}
 	return nil
 }
@@ -744,7 +774,13 @@ type Park struct {
 	// ResumeContext.session_token on resume.
 	SessionToken string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	// Free-form human annotation. Inert in rimsky.
-	ReasonNote    string `protobuf:"bytes,5,opt,name=reason_note,json=reasonNote,proto3" json:"reason_note,omitempty"`
+	ReasonNote string `protobuf:"bytes,5,opt,name=reason_note,json=reasonNote,proto3" json:"reason_note,omitempty"`
+	// reason_label is a freeform tag that MUST be set when
+	// reason = PARK_REASON_OTHER (validated at the supervisor's
+	// terminal handler). For taxonomy-mapped reasons it is optional
+	// additional context. Persisted on
+	// col:rimsky_node_runs.parked_reason_label.
+	ReasonLabel   string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -810,6 +846,13 @@ func (x *Park) GetSessionToken() string {
 func (x *Park) GetReasonNote() string {
 	if x != nil {
 		return x.ReasonNote
+	}
+	return ""
+}
+
+func (x *Park) GetReasonLabel() string {
+	if x != nil {
+		return x.ReasonLabel
 	}
 	return ""
 }
@@ -1146,10 +1189,11 @@ const file_executor_proto_rawDesc = "" +
 	"\rResumeContext\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12#\n" +
 	"\rsession_token\x18\x02 \x01(\tR\fsessionToken\x12#\n" +
-	"\rresume_reason\x18\x03 \x01(\tR\fresumeReason\"\x8a\x01\n" +
+	"\rresume_reason\x18\x03 \x01(\tR\fresumeReason\"\xb5\x01\n" +
 	"\vStoreHandle\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12/\n" +
-	"\x06handle\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06handleJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\rwrite_regionsR\fread_regionsR\aresumed\"\xc4\x01\n" +
+	"\x06handle\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06handle\x12)\n" +
+	"\x10candidate_handle\x18\x06 \x01(\fR\x0fcandidateHandleJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\rwrite_regionsR\fread_regionsR\aresumed\"\xc4\x01\n" +
 	"\fExecuteEvent\x124\n" +
 	"\theartbeat\x18\x01 \x01(\v2\x14.rimsky.v1.HeartbeatH\x00R\theartbeat\x128\n" +
 	"\vnamed_event\x18\x02 \x01(\v2\x15.rimsky.v1.NamedEventH\x00R\n" +
@@ -1170,14 +1214,15 @@ const file_executor_proto_rawDesc = "" +
 	"\x05Error\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
 	"errorClass\x121\n" +
-	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\"\xce\x01\n" +
+	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\"\xf1\x01\n" +
 	"\x04Park\x12-\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x15.rimsky.v1.ParkReasonR\x06reason\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x127\n" +
 	"\tresume_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\bresumeAt\x12#\n" +
 	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\x12\x1f\n" +
 	"\vreason_note\x18\x05 \x01(\tR\n" +
-	"reasonNote\"l\n" +
+	"reasonNote\x12!\n" +
+	"\freason_label\x18\x06 \x01(\tR\vreasonLabel\"l\n" +
 	"\x12AwaitAsyncCallback\x12 \n" +
 	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
 	"asyncAckId\x124\n" +
@@ -1194,14 +1239,16 @@ const file_executor_proto_rawDesc = "" +
 	"\n" +
 	"NamedEvent\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload*\xa0\x01\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload*\xd6\x01\n" +
 	"\n" +
 	"ParkReason\x12\x1b\n" +
 	"\x17PARK_REASON_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15PARK_REASON_TIME_WAIT\x10\x01\x12\x1b\n" +
 	"\x17PARK_REASON_SIGNAL_WAIT\x10\x02\x12\x1e\n" +
 	"\x1aPARK_REASON_AWAITING_HUMAN\x10\x03\x12\x1d\n" +
-	"\x19PARK_REASON_RETRY_BACKOFF\x10\x042K\n" +
+	"\x19PARK_REASON_RETRY_BACKOFF\x10\x04\x12\x1d\n" +
+	"\x19PARK_REASON_CALLBACK_WAIT\x10\x05\x12\x15\n" +
+	"\x11PARK_REASON_OTHER\x10c2K\n" +
 	"\bExecutor\x12?\n" +
 	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x17.rimsky.v1.ExecuteEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 

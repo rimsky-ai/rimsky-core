@@ -1,0 +1,249 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// Forensics scenario — force_cancelled_lineage.
+//
+// Pin: under `strict.cancel_siblings: true`, the parent's cancel walker
+// in `runtime/terminal_decision.go::cancelInFlightSiblings` fires
+// force-Abandon on each remaining in-flight sibling. Those force-Abandon
+// resolutions emit `rimsky_lineage` rows with
+// `outcome: force_cancelled` and `Cause: sibling_cancel`, distinguishing
+// them from the triggering child's natural Abandon (`outcome: abandoned`).
+//
+// Spec: 2026-05-16 dispatch attached to plans/2026-05-15-data-platform-
+// extensions-plan (lineage + events forensics extensions).
+//
+// @concept: claim-tree
+// @concept: cancel-siblings
+// @concept: lineage
+
+package lineage
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/locks/storetest"
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguy/rimsky/internal/pgtest"
+	"github.com/fallguy/rimsky/runtime"
+)
+
+func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	inst, frameID, parentRunID, parentNodeID := seedForceCancelScenario(ctx, t, backend, "force-cancel")
+	reg := locks.NewRegistry()
+	store := storetest.NewFake("cancel-store", locks.Capabilities{
+		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	})
+	reg.Add("cancel-store", store)
+	args := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		SupervisorID:  "sup-FC",
+		Clock:         shared.SystemClock{},
+	}
+
+	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentRunID, parentNodeID, frameID,
+		"sup-FC", "cancel-store", 3,
+		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
+
+	// Drive sub[0] to a natural Abandon. The strict.cancel_siblings walker
+	// force-Abandons sub[1] and sub[2] inside the same tx, and the parent
+	// aggregator finalizes the parent's own Abandon.
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return runtime.ResolveClaimHandleTerminal(ctx, args, tx, runtime.TerminalDecision{
+			ClaimHandleID:       subIDs[0],
+			SupervisorID:        args.SupervisorID,
+			Source:              runtime.ActiveTerminal,
+			Outcome:             runtime.AggregateAbandon,
+			Producer:            store,
+			Scope:               []byte(`"sub-scope"`),
+			Address:             []byte(`"sub-addr"`),
+			Lifetime:            "subgraph",
+			ProducerName:        "cancel-store",
+			ParentClaimHandleID: &parentID,
+			LineageHint: runtime.ClaimLineageHint{
+				InstanceID:   inst,
+				FrameID:      frameID,
+				RunID:        parentRunID,
+				NodeID:       parentNodeID,
+				ProducerName: "cancel-store",
+			},
+		})
+	}))
+
+	// Producer-side: all three sub-claims received Abandon (1 natural,
+	// 2 force-cancelled), plus the parent.
+	for i, sid := range subIDs {
+		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),
+			"sub-claim %d must receive exactly one Abandon", i)
+	}
+	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
+		"parent claim must receive its own Abandon (aggregator decision)")
+
+	// Lineage rows: triggering sub[0] is "abandoned"; sub[1]/sub[2] are
+	// "force_cancelled" with Cause="sibling_cancel"; parent is "abandoned".
+	verifyLineageOutcome(ctx, t, backend, subIDs[0], persistence.LineageOutcomeAbandoned, "")
+	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
+	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
+	verifyLineageOutcome(ctx, t, backend, parentID, persistence.LineageOutcomeAbandoned, "")
+
+	// Events: claim_resolution.abandon events for every cancelled sibling
+	// carry cause=sibling_cancel.
+	var page persistence.EventListResult
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, err := backend.Events().List(ctx, persistence.EventListFilter{
+			InstanceID: &inst,
+			Kind:       "claim_resolution.abandon",
+		}, persistence.ListPagination{Limit: 50}, tx)
+		page = p
+		return err
+	}))
+	cancelCount := 0
+	naturalCount := 0
+	for _, ev := range page.Events {
+		switch ev.Payload["cause"] {
+		case "sibling_cancel":
+			cancelCount++
+		case "natural":
+			naturalCount++
+		}
+	}
+	require.Equal(t, 2, cancelCount, "two siblings must emit cause=sibling_cancel events")
+	require.GreaterOrEqual(t, naturalCount, 1, "the triggering child + parent emit cause=natural events")
+}
+
+// verifyLineageOutcome asserts that the lineage row for claimID carries
+// the expected outcome + cause discriminator. The cause check is
+// skipped when the expected value is empty (Commit / natural Abandon).
+func verifyLineageOutcome(
+	ctx context.Context, t *testing.T, backend persistence.Tables,
+	claimID shared.UUID, expectedOutcome, expectedCause string,
+) {
+	t.Helper()
+	rows, err := backend.Lineage().GetByClaimHandleID(ctx, claimID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rows), 1, "claim_terminal row must exist for %s", claimID)
+	row := rows[len(rows)-1]
+	require.Equal(t, persistence.LineageRecordKindClaimTerminal, row.RecordKind,
+		"row for %s must be claim_terminal", claimID)
+	require.Equal(t, expectedOutcome, row.Outcome,
+		"outcome for %s: got %q want %q", claimID, row.Outcome, expectedOutcome)
+	if expectedCause == "" {
+		return
+	}
+	var rec runtime.ClaimTerminalRecord
+	require.NoError(t, json.Unmarshal(row.Record, &rec))
+	require.Equal(t, expectedCause, rec.Cause,
+		"cause for %s: got %q want %q", claimID, rec.Cause, expectedCause)
+}
+
+func seedForceCancelScenario(
+	ctx context.Context, t *testing.T, backend persistence.Tables, instanceKey string,
+) (shared.UUID, shared.UUID, shared.UUID, shared.UUID) {
+	t.Helper()
+	tmpl := seedDeployedTemplate(ctx, t, backend, "force-cancel-tmpl")
+	ik := instanceKey
+	var inst persistence.InstanceRow
+	var nodeRow persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ik, Params: map[string]any{},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		inst = i
+		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		nodeRow = n
+		return nil
+	}))
+	frameID := seedFrameRow(ctx, t, backend, inst.ID, nodeRow.ID)
+	runID := seedRunRow(ctx, t, backend, nodeRow.ID, frameID)
+	return inst.ID, frameID, runID, nodeRow.ID
+}
+
+// seedFanOutTree inserts a parent claim_handle row + n sub-claim rows
+// under it, with the supplied aggregation policy snapshotted on the
+// parent. Returns the parent id + sub-claim ids in insertion order.
+//
+// @source: runtime/auto_terminal_test.go::seedFanOutParentAndSubclaims
+func seedFanOutTree(
+	ctx context.Context, t *testing.T, backend persistence.Tables,
+	parentRunID, parentNodeID, frameID shared.UUID,
+	supervisorID, producerName string, n int,
+	policy spec.AggregationPolicy,
+) (shared.UUID, []shared.UUID) {
+	t.Helper()
+	parentID := shared.UUID(uuid.New())
+	subIDs := make([]shared.UUID, 0, n)
+	policyBytes, mErr := persistence.MarshalAggregationPolicy(policy)
+	require.NoError(t, mErr)
+	intent := "rw"
+	pName := producerName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &pName,
+			ScopeData:          []byte(`"parent-scope"`),
+			Address:            []byte(`"parent-addr"`),
+			Intent:             &intent,
+			HolderSupervisorID: supervisorID,
+			HolderNodeID:       parentNodeID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentRunID,
+			FrameID:            &frameID,
+			AggregationPolicy:  policyBytes,
+		}, tx); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			sid := shared.UUID(uuid.New())
+			parent := parentID
+			if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+				ID:                  sid,
+				LockKind:            persistence.LockKindScope,
+				ProducerName:        &pName,
+				ScopeData:           []byte(`"sub-scope"`),
+				Address:             []byte(`"sub-addr"`),
+				Intent:              &intent,
+				HolderSupervisorID:  supervisorID,
+				HolderNodeID:        parentNodeID,
+				ExpiresAt:           time.Now().Add(10 * time.Minute),
+				NodeRunID:           &parentRunID,
+				FrameID:             &frameID,
+				ParentClaimHandleID: &parent,
+			}, tx); err != nil {
+				return err
+			}
+			subIDs = append(subIDs, sid)
+			if err := backend.ClaimHandles().BumpExpectedChildrenCount(ctx, parentID, supervisorID, 1, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	return parentID, subIDs
+}

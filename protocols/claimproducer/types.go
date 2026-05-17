@@ -122,8 +122,26 @@ type OpenOutcome struct {
 // claim_producers[*].write_semantics_allowed) declares a permitted
 // subset that MUST be a subset of the advertised set; rimsky validates
 // strict subset at startup.
+//
+// SupportsSplitScope and SupportsScopesConflict declare whether the
+// producer implements the optional partitioning RPCs (see
+// proto:claim_producer.proto::ClaimProducer.SplitScope and
+// ClaimProducer.ScopesConflict). When SupportsScopesConflict is false
+// rimsky uses byte-equal scope conflict as the trivial default per
+// @blessed-invariant 4b.
+//
+// Protocols lists mix-in service-protocol names the binary implements
+// alongside ClaimProducer (e.g. "data_processing", "validation",
+// "lifecycle_subscriber"). ValidationSupportedRoles is set when the
+// "validation" mix-in is advertised; lists the role discriminators the
+// service is willing to validate ("executor" | "claim_producer" |
+// "lifecycle_subscriber" | "sensor").
 type Capabilities struct {
-	WriteSemanticsAllowed []WriteSemantics
+	WriteSemanticsAllowed    []WriteSemantics
+	SupportsSplitScope       bool
+	SupportsScopesConflict   bool
+	Protocols                []string
+	ValidationSupportedRoles []string
 }
 
 // Contains reports whether the advertised allowed set includes w.
@@ -135,3 +153,50 @@ func (c Capabilities) Contains(w WriteSemantics) bool {
 	}
 	return false
 }
+
+// AdvertisesProtocol reports whether the producer advertises the named
+// mix-in protocol (e.g. "data_processing", "validation").
+func (c Capabilities) AdvertisesProtocol(p string) bool {
+	for _, v := range c.Protocols {
+		if v == p {
+			return true
+		}
+	}
+	return false
+}
+
+// SplitScopeRequest is the rimsky-side input to ClaimProducer.SplitScope.
+// The parent claim handle MUST already be Open'd. partition_request is
+// producer-interpreted opaque bytes. Per spec §Fan-out template DSL.
+type SplitScopeRequest struct {
+	ClaimHandleID    string
+	PartitionRequest []byte
+}
+
+// SubScopeDescriptor identifies one of the sub-scopes the producer
+// partitioned the parent into. ScopeData is producer-canonicalized
+// bytes (same shape rimsky stores on rimsky_claim_handles.scope_data);
+// PartitionKey is the human-readable key rimsky persists in
+// col:rimsky_node_runs.child_key for run-tree bookkeeping;
+// ProducerMetadata is opaque per-sub-scope info the producer wants
+// persisted on the row.
+type SubScopeDescriptor struct {
+	ScopeData        []byte
+	PartitionKey     string
+	ProducerMetadata []byte
+}
+
+// SplitScopeResponse is the producer's reply to SplitScope.
+type SplitScopeResponse struct {
+	SubScopes []SubScopeDescriptor
+}
+
+// Mix-in protocol names producers may advertise in
+// Capabilities.Protocols. Constants live here so callers compare
+// against a single source of truth.
+const (
+	ProtocolDataProcessing      = "data_processing"
+	ProtocolValidation          = "validation"
+	ProtocolLifecycleSubscriber = "lifecycle_subscriber"
+	ProtocolSensor              = "sensor"
+)

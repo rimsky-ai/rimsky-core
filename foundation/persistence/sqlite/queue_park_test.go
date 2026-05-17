@@ -61,9 +61,11 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
+	// Post-stage-3 cutover: state lives on rimsky_node_runs; the
+	// rimsky_nodes row carries only identity + frame_id.
 	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_nodes (id, instance_id, node_type, state, frame_id)
-		 VALUES (?, ?, 'fixture', 'running', ?)`,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
+		 VALUES (?, ?, 'fixture', ?)`,
 		nodeID.String(), instanceID, frameID.String(),
 	); err != nil {
 		t.Fatalf("seed node: %v", err)

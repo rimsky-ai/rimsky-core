@@ -43,7 +43,22 @@ import (
 func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	resumeAt := time.Now().Add(2 * time.Second)
+	// resumeAt must be far enough in the future that the entire setup-
+	// through-parked-state-probe sequence — testcontainers cold-start,
+	// template deploy, instance create, the parked-state SQL probes
+	// below — completes BEFORE `SweepParkedNodes` can pick the parked
+	// row up. Otherwise the sweep dispatches under the still-Park script
+	// (the resume's Success script is registered below, AFTER the parked
+	// probes), the node re-parks (Park scripts overwrite-then-stay until
+	// `WhenType` replaces them), and the test times out on
+	// `WaitForNodeState(..., Fresh)`. Observed parallel-setup latency on
+	// a loaded host can exceed 2s; 10s gives clear buffer while keeping
+	// the resume comfortably inside the post-resume 30s
+	// `WaitForNodeState` windows. The historical 2s budget was the
+	// documented flake source flagged in cycles 4, 6, 7 (mirrors the
+	// 1s→10s tightening already applied to
+	// `TestParkedLifecycleHeldClaimRetentionAcrossPark`).
+	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("worker").
 		Park(genv1.ParkReason_PARK_REASON_RETRY_BACKOFF, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
 
@@ -67,6 +82,17 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.True(t, h.WaitForEventKind(worker.ID, "park_requested", 5*time.Second),
 		"park_requested audit event should be recorded")
 
+	// Reschedule the worker for the resume dispatch BEFORE the parked-
+	// state SQL probes run. `WhenType` replaces the entire script in the
+	// stub's per-type map; once swapped, the next Execute call on
+	// "worker" returns a Success terminal. Pairing the swap with the
+	// generous `resumeAt` above closes the time-based wake race: even
+	// under heavy testcontainer load the Success script is in place long
+	// before `SweepParkedNodes` can fire the wake (mirrors the same
+	// ordering applied to
+	// `TestParkedLifecycleHeldClaimRetentionAcrossPark`).
+	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
+
 	// Verify the node-run row is in phase='parked' with the
 	// resume_at set as we requested.
 	var phase string
@@ -80,9 +106,6 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.NotNil(t, resumeAtStored, "resume_at should be persisted")
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
-
-	// Reschedule so the resume can dispatch.
-	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")

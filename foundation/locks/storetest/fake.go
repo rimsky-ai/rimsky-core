@@ -5,12 +5,14 @@
 package storetest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sync"
 	"sync/atomic"
 
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/protocols/claimproducer"
 )
 
 // fakeSequenceCounter is a process-global monotonic counter assigned
@@ -45,6 +47,19 @@ type Fake struct {
 	// errors on a specific verb. Receives the verb name; returning
 	// non-nil short-circuits the call.
 	ErrorFunc func(verb string, claimID locks.ClaimID) error
+
+	// SplitScopeFunc is an optional override the test sets to control
+	// the SubScopeDescriptor list returned by SplitScope. Default
+	// behavior returns ErrSplitScopeUnsupported (the fake does not
+	// advertise SupportsSplitScope unless caps say so; scenarios that
+	// need split set this function explicitly).
+	SplitScopeFunc func(req locks.SplitScopeRequest) (locks.SplitScopeResponse, error)
+
+	// ScopesConflictFunc is an optional override the test sets to
+	// control the boolean returned by ScopesConflict. Default
+	// behavior is byte-equal (the trivial @blessed-invariant 4b
+	// default).
+	ScopesConflictFunc func(a, b []byte) (bool, error)
 }
 
 type fakeState struct {
@@ -258,6 +273,40 @@ func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedR
 
 func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
 	return f.recordLifecycle("on_instance_terminated", req.TemplateHash, req.InstanceID)
+}
+
+// SplitScope records the call and delegates to SplitScopeFunc. When
+// no function is set the fake returns ErrSplitScopeUnsupported —
+// scenarios that want sub-scope fan-out must register a function.
+func (f *Fake) SplitScope(_ context.Context, req locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, FakeCall{
+		Verb:     "split_scope",
+		Sequence: nextFakeSequence(),
+	})
+	fn := f.SplitScopeFunc
+	f.mu.Unlock()
+	if fn == nil {
+		return locks.SplitScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+	}
+	return fn(req)
+}
+
+// ScopesConflict records the call and delegates to ScopesConflictFunc.
+// Default is byte-equal comparison — the trivial @blessed-invariant 4b
+// default.
+func (f *Fake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, FakeCall{
+		Verb:     "scopes_conflict",
+		Sequence: nextFakeSequence(),
+	})
+	fn := f.ScopesConflictFunc
+	f.mu.Unlock()
+	if fn == nil {
+		return bytes.Equal(a, b), nil
+	}
+	return fn(a, b)
 }
 
 func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {

@@ -42,6 +42,14 @@ func main() {
 		os.Exit(dispatchAdmin(os.Args[2:]))
 	case "parked":
 		os.Exit(dispatchParked(os.Args[2:]))
+	case "messages":
+		os.Exit(dispatchMessages(os.Args[2:]))
+	case "backfill":
+		os.Exit(dispatchBackfill(os.Args[2:]))
+	case "asset":
+		os.Exit(dispatchAsset(os.Args[2:]))
+	case "lineage":
+		os.Exit(dispatchLineage(os.Args[2:]))
 	case "ctx":
 		os.Exit(dispatchCtx(os.Args[2:]))
 	case "run":
@@ -193,23 +201,111 @@ func dispatchParked(args []string) int {
 
 func dispatchAdmin(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin <force-fire|invalidate|reset> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin <invalidate|reset> ...")
 		return 2
 	}
 	ctx := context.Background()
 	rest := args[1:]
 	switch args[0] {
-	case "force-fire":
-		return cli.RunAdminForceFire(ctx, rest)
 	case "invalidate":
 		return cli.RunAdminInvalidate(ctx, rest)
 	case "reset":
 		return cli.RunAdminReset(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli admin <force-fire|invalidate|reset> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli admin <invalidate|reset> ...")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky-cli admin: unknown subcommand %q\n", args[0])
+	return 2
+}
+
+func dispatchMessages(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli messages <tail|show> ...")
+		return 2
+	}
+	ctx := context.Background()
+	rest := args[1:]
+	switch args[0] {
+	case "tail":
+		return cli.RunMessagesTail(ctx, rest)
+	case "show":
+		return cli.RunMessagesShow(ctx, rest)
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli messages <tail|show> ...")
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "rimsky-cli messages: unknown subcommand %q\n", args[0])
+	return 2
+}
+
+func dispatchBackfill(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill <create|list|show|cancel> ...")
+		return 2
+	}
+	ctx := context.Background()
+	rest := args[1:]
+	switch args[0] {
+	case "create":
+		return cli.RunBackfillCreate(ctx, rest)
+	case "list":
+		return cli.RunBackfillList(ctx, rest)
+	case "show":
+		return cli.RunBackfillShow(ctx, rest)
+	case "cancel":
+		return cli.RunBackfillCancel(ctx, rest)
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli backfill <create|list|show|cancel> ...")
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "rimsky-cli backfill: unknown subcommand %q\n", args[0])
+	return 2
+}
+
+func dispatchAsset(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset <list|show|materialize|versions|delete|lineage> ...")
+		return 2
+	}
+	ctx := context.Background()
+	rest := args[1:]
+	switch args[0] {
+	case "list":
+		return cli.RunAssetList(ctx, rest)
+	case "show":
+		return cli.RunAssetShow(ctx, rest)
+	case "materialize":
+		return cli.RunAssetMaterialize(ctx, rest)
+	case "versions":
+		return cli.RunAssetVersions(ctx, rest)
+	case "delete":
+		return cli.RunAssetDelete(ctx, rest)
+	case "lineage":
+		return cli.RunAssetLineage(ctx, rest)
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli asset <list|show|materialize|versions|delete|lineage> ...")
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "rimsky-cli asset: unknown subcommand %q\n", args[0])
+	return 2
+}
+
+func dispatchLineage(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli lineage <prune> ...")
+		return 2
+	}
+	ctx := context.Background()
+	rest := args[1:]
+	switch args[0] {
+	case "prune":
+		return cli.RunLineagePrune(ctx, rest)
+	case "help", "--help", "-h":
+		fmt.Fprintln(os.Stdout, "usage: rimsky-cli lineage <prune> ...")
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "rimsky-cli lineage: unknown subcommand %q\n", args[0])
 	return 2
 }
 
@@ -267,7 +363,12 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  tag create | list | get | mv | rm")
 	fmt.Fprintln(w, "  instance create | list | get | delete | nodes | events")
 	fmt.Fprintln(w, "  node get")
-	fmt.Fprintln(w, "  admin force-fire | invalidate | reset")
+	fmt.Fprintln(w, "  admin invalidate | reset")
+	fmt.Fprintln(w, "  messages tail | show")
+	fmt.Fprintln(w, "  backfill create | list | show | cancel")
+	fmt.Fprintln(w, "  asset list | show | materialize | versions | delete | lineage")
+	fmt.Fprintln(w, "  lineage prune")
+	fmt.Fprintln(w, "  parked list")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Context:")
 	fmt.Fprintln(w, "  ctx list | use | add | rm | current")

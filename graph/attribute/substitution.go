@@ -97,6 +97,25 @@ type ResolveContext struct {
 	// the (emitter, eventName) pair. ok=false means "no emission yet" and
 	// translates to ErrMissingSource.
 	EventLookup func(emitter, eventName string) (payload json.RawMessage, ok bool)
+
+	// TriggerMessagePayload is the opaque payload bytes of the trigger
+	// message bound to this frame (the rimsky_messages row whose
+	// frame_id matches the dispatch). Empty / nil → no trigger; any
+	// `{{trigger.message.payload.X}}` directive returns ErrMissingSource.
+	// Bound by the runtime at dispatch time from the frame's trigger
+	// message lookup. Inert in rimsky per @blessed-invariant 11/20/21.
+	//
+	// Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Substitution-layer extensions.
+	TriggerMessagePayload json.RawMessage
+
+	// ChildPartitionKey is the per-child-run partition key value bound
+	// for fan-out leaf dispatches. Empty string → no binding; any
+	// `{{child.partition_key}}` directive returns ErrMissingSource.
+	// Bound by the runtime fan-out dispatcher (E7) at child dispatch.
+	// Per spec §Substitution-layer extensions.
+	ChildPartitionKey string
 }
 
 // ErrMissingSource is returned by Substitute when a directive cannot
@@ -192,9 +211,72 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 		return resolveParams(directive, parts[1:], ctx.Params)
 	case "nodes":
 		return resolveNodes(directive, parts[1:], ctx)
+	case "trigger":
+		return resolveTrigger(directive, parts[1:], ctx)
+	case "child":
+		return resolveChild(directive, parts[1:], ctx)
 	default:
 		return "", &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
+}
+
+// resolveTrigger handles `{{trigger.message.payload.<field-path>}}`
+// directives — the spec §Substitution-layer extensions form that binds
+// the trigger message of the current frame into the substitution
+// context. The trigger message is the rimsky_messages row whose
+// frame_id matches the dispatched run's frame; the runtime resolves it
+// at dispatch and threads the payload bytes via
+// ResolveContext.TriggerMessagePayload.
+//
+// Walks payload bytes via walkPath, the sanctioned introspection site
+// for @blessed-invariant 11/20/21.
+//
+// @blessed-invariant: messages are inert in rimsky. Message payload
+// bytes are read by rimsky only here (via `walkPath` substitution
+// against the trigger message) and at the persistence-layer fetch in
+// `GET /messages/{id}` (control/controlapi/messages.go). Rimsky never
+// logs, formats with `%v`, validates beyond schema gates, transforms,
+// or includes payload bytes in error messages. Same opacity discipline
+// as `@blessed-invariant 11/20/21` (userdata, claim content, blob
+// content / named-event payloads).
+func resolveTrigger(directive string, rest []string, ctx ResolveContext) (string, error) {
+	// Expected form: trigger.message.payload.<field-path…>
+	if len(rest) < 3 {
+		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload.<field>"}
+	}
+	if rest[0] != "message" {
+		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive second segment must be 'message'"}
+	}
+	if rest[1] != "payload" {
+		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive third segment must be 'payload'"}
+	}
+	if len(ctx.TriggerMessagePayload) == 0 {
+		return "", &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
+	}
+	val, ok := walkPath(ctx.TriggerMessagePayload, rest[2:])
+	if !ok {
+		return "", &ErrMissingSource{Directive: directive, Reason: "trigger payload field path not found"}
+	}
+	return stringify(val), nil
+}
+
+// resolveChild handles `{{child.partition_key}}` directives — the spec
+// §Substitution-layer extensions form that binds the per-child-run
+// partition key for fan-out leaf dispatches. Bound by the runtime
+// fan-out dispatcher (E7) at child dispatch via
+// ResolveContext.ChildPartitionKey.
+//
+// Only `child.partition_key` is recognized currently. Per
+// @blessed-invariant 11/20/21 the partition_key value is forwarded
+// verbatim — no parsing, normalization, or logging.
+func resolveChild(directive string, rest []string, ctx ResolveContext) (string, error) {
+	if len(rest) != 1 || rest[0] != "partition_key" {
+		return "", &ErrMissingSource{Directive: directive, Reason: "child directive must be child.partition_key"}
+	}
+	if ctx.ChildPartitionKey == "" {
+		return "", &ErrMissingSource{Directive: directive, Reason: "no partition_key bound (fan-out leaf dispatch context only)"}
+	}
+	return ctx.ChildPartitionKey, nil
 }
 
 // resolveNodes handles two `nodes.<X>.<kind>.<...>` directive forms:

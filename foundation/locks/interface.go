@@ -55,4 +55,14 @@ import (
 // lock-shaped predicates. The reader-lease serialization pattern is not
 // a valid implementation choice for staged_async; honest support
 // requires snapshot delegation or native MVCC pass-through.
+//
+// @blessed-invariant 4b: single-writer-per-scope; overlap is producer-
+// defined, byte-equal as the trivial default. The acquisition predicate
+// rejects a new claim_handle row that conflicts with an existing held
+// row for the same producer-claimed scope. Producers that advertise
+// `SupportsScopesConflict: true` may define overlap via `ScopesConflict`
+// (e.g. range-overlap, prefix-containment, MVCC snapshot overlap);
+// producers that don't advertise default to byte-equal comparison of
+// `rimsky_claim_handles.scope_data`. Either way, two writers cannot
+// simultaneously hold the same logical scope.
 type ClaimProducer = claimproducer.ClaimProducer

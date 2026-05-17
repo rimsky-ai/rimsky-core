@@ -1,0 +1,79 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// N7 scenario — leaf_run_record_creation.
+//
+// At every leaf-run terminal write the supervisor calls
+// runtime.WriteLeafRunLineage in the same transaction as the
+// terminal-state write. The record_kind="leaf_run" row carries the
+// run identity + state + last_outcome + per-bytes hashes.
+package lineage
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/runtime"
+)
+
+func TestLeafRunRecordCreation(t *testing.T) {
+	t.Parallel()
+	lt := &fakeLineage{}
+	ctx := context.Background()
+	frameID := shared.UUID(uuid.New())
+	instanceID := shared.UUID(uuid.New())
+	rec := runtime.LeafRunRecord{
+		RunID:       shared.UUID(uuid.New()),
+		NodeID:      shared.UUID(uuid.New()),
+		FrameID:     frameID,
+		ChildKey:    "partition-7",
+		State:       "fresh",
+		LastOutcome: "fresh_changed",
+	}
+	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(), rec); err != nil {
+		t.Fatalf("WriteLeafRunLineage: %v", err)
+	}
+	if len(lt.rows) != 1 {
+		t.Fatalf("expected 1 lineage row, got %d", len(lt.rows))
+	}
+	row := lt.rows[0]
+	if row.RecordKind != persistence.LineageRecordKindLeafRun {
+		t.Errorf("record_kind: got %s want leaf_run", row.RecordKind)
+	}
+	if row.InstanceID != instanceID {
+		t.Errorf("instance_id mismatch")
+	}
+	if row.FrameID != frameID {
+		t.Errorf("frame_id mismatch")
+	}
+	// Pin the payload shape: must JSON-decode to a LeafRunRecord with
+	// preserved fields.
+	var decoded runtime.LeafRunRecord
+	if err := json.Unmarshal(row.Record, &decoded); err != nil {
+		t.Fatalf("payload not JSON-decodable: %v", err)
+	}
+	if decoded.RunID != rec.RunID || decoded.ChildKey != "partition-7" || decoded.State != "fresh" {
+		t.Errorf("payload roundtrip mismatch: %+v", decoded)
+	}
+}
+
+func TestLeafRunRecordCreation_RequiresState(t *testing.T) {
+	t.Parallel()
+	lt := &fakeLineage{}
+	rec := runtime.LeafRunRecord{
+		RunID:   shared.UUID(uuid.New()),
+		FrameID: shared.UUID(uuid.New()),
+	}
+	err := runtime.WriteLeafRunLineage(context.Background(), nil, lt,
+		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)
+	if err == nil {
+		t.Fatal("expected error when state is empty")
+	}
+}

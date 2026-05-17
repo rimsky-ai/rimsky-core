@@ -9,6 +9,7 @@ package scheduler
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -75,6 +76,9 @@ func (f *fakeQueue) CountLive(_ context.Context, _ persistence.DispatchListFilte
 }
 func (f *fakeQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
+}
+func (f *fakeQueue) GetInFlightRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (shared.UUID, bool, error) {
+	return shared.UUID{}, false, nil
 }
 
 // Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
@@ -200,29 +204,85 @@ func pcCreateNodeWithType(ctx context.Context, t *testing.T, f *pcFixture, insta
 	return n
 }
 
-// forceState bypasses the state machine and writes a literal state via
-// pgtest.ExecForTest. The pure-cascade tests need a stale node at
-// create time even though Create() defaults to fresh.
+// forceState bypasses the state machine and seeds a node's state via a
+// directly-inserted in-flight rimsky_node_runs row (post-stage-3
+// cutover: state lives on rimsky_node_runs).
+//
+// Reuses an existing running frame for the instance if one exists;
+// otherwise inserts a fresh one (so callers don't have to pre-seed).
 func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID, state string) {
 	t.Helper()
+	if state == "fresh" {
+		// 'fresh' is the no-run-row state — delete any in-flight rows.
+		pgtest.ExecForTest(ctx, t, f.driver,
+			`DELETE FROM rimsky_node_runs WHERE node_id = $1
+			    AND phase IN ('pending','active','held','parked')`, id)
+		return
+	}
+	// Resolve the node's executor + instance_id + frame_id.
+	var (
+		executorN  sql.NullString
+		instanceID shared.UUID
+		frameN     sql.NullString
+	)
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT executor, instance_id::text, frame_id::text FROM rimsky_nodes WHERE id = $1`,
+		[]any{id}, &executorN, &instanceID, &frameN)
+	if !frameN.Valid {
+		// Look for an existing running frame for the instance first; if
+		// missing, seed a new one.
+		var count int
+		pgtest.QueryRowForTest(ctx, t, f.driver,
+			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+			[]any{instanceID}, &count)
+		var fid shared.UUID
+		if count == 0 {
+			fid = pcSeedFrame(ctx, t, f, instanceID, id)
+		} else {
+			pgtest.QueryRowForTest(ctx, t, f.driver,
+				`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+				[]any{instanceID}, &fid)
+			pgtest.ExecForTest(ctx, t, f.driver,
+				`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, fid, id)
+		}
+		frameN = sql.NullString{String: fid.String(), Valid: true}
+	}
+	runPhase := "pending"
+	if state == "running" {
+		runPhase = "active"
+	}
 	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, state, id)
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
+		                               enqueued_at, phase, state, frame_id)
+		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, $4, $5::uuid)`,
+		id, executorN.String, runPhase, state, frameN.String)
 }
 
-// pcSeedFrame inserts a running rimsky_frames row for the given instance,
-// assigns the frame_id to the given node, and returns the frame id. Used
-// to satisfy blessed-invariant 19 (no NULL frame_id on in-flight dispatch
-// enqueue) for tests that drive ProcessPureCascade against pre-existing
-// stale nodes.
+// pcSeedFrame inserts a running rimsky_frames row for the given instance
+// (or reuses the existing running frame; only one is allowed per
+// instance), assigns the frame_id to the given node, and returns the
+// frame id. Used to satisfy blessed-invariant 19 (no NULL frame_id on
+// in-flight dispatch enqueue) for tests that drive ProcessPureCascade
+// against pre-existing stale nodes.
 func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, nodeID shared.UUID) shared.UUID {
 	t.Helper()
+	var count int
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		[]any{instanceID}, &count)
 	var frameID shared.UUID
-	pgtest.QueryRowForTest(ctx, t, f.driver, `
-        INSERT INTO rimsky_frames
-            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-        VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
-        RETURNING frame_id
-    `, []any{instanceID, nodeID}, &frameID)
+	if count == 0 {
+		pgtest.QueryRowForTest(ctx, t, f.driver, `
+            INSERT INTO rimsky_frames
+                (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+            RETURNING frame_id
+        `, []any{instanceID, nodeID}, &frameID)
+	} else {
+		pgtest.QueryRowForTest(ctx, t, f.driver,
+			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
+			[]any{instanceID}, &frameID)
+	}
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, nodeID)
 	return frameID

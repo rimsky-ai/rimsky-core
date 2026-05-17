@@ -47,6 +47,16 @@ type (
 	OnAcquireUnavailableHandler = spec.OnAcquireUnavailableHandler
 	OnExecutorCompleteHandler   = spec.OnExecutorCompleteHandler
 	OnExecutorTerminalHandler   = spec.OnExecutorTerminalHandler
+
+	// 2026-05-15 data-platform extensions row-types re-exported here
+	// so existing call sites do not need to import foundation/spec
+	// directly.
+	GraphSpec         = spec.GraphSpec
+	HoldsBinding      = spec.HoldsBinding
+	FanOutSpec        = spec.FanOutSpec
+	SensorSpec        = spec.SensorSpec
+	OnObservationSpec = spec.OnObservationSpec
+	AggregationPolicy = spec.AggregationPolicy
 )
 
 // Frame-resolution constants re-exported from foundation/spec.
@@ -55,6 +65,12 @@ const (
 	FrameResolutionSerialQueue = spec.FrameResolutionSerialQueue
 	FrameTimeoutDefaultMs      = spec.FrameTimeoutDefaultMs
 	FrameTimeoutMinMs          = spec.FrameTimeoutMinMs
+
+	// MainGraphName mirrors the reserved graph name for the top-level
+	// graph in a multi-graph template. Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Sub-graphs / Identity.
+	MainGraphName = spec.MainGraphName
 )
 
 // Resolve constants per handler. The validator at template-deploy

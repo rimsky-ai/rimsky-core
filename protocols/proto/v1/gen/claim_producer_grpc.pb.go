@@ -41,11 +41,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ClaimProducer_Capabilities_FullMethodName = "/rimsky.v1.ClaimProducer/Capabilities"
-	ClaimProducer_Open_FullMethodName         = "/rimsky.v1.ClaimProducer/Open"
-	ClaimProducer_Commit_FullMethodName       = "/rimsky.v1.ClaimProducer/Commit"
-	ClaimProducer_Abandon_FullMethodName      = "/rimsky.v1.ClaimProducer/Abandon"
-	ClaimProducer_Release_FullMethodName      = "/rimsky.v1.ClaimProducer/Release"
+	ClaimProducer_Capabilities_FullMethodName   = "/rimsky.v1.ClaimProducer/Capabilities"
+	ClaimProducer_Open_FullMethodName           = "/rimsky.v1.ClaimProducer/Open"
+	ClaimProducer_Commit_FullMethodName         = "/rimsky.v1.ClaimProducer/Commit"
+	ClaimProducer_Abandon_FullMethodName        = "/rimsky.v1.ClaimProducer/Abandon"
+	ClaimProducer_Release_FullMethodName        = "/rimsky.v1.ClaimProducer/Release"
+	ClaimProducer_SplitScope_FullMethodName     = "/rimsky.v1.ClaimProducer/SplitScope"
+	ClaimProducer_ScopesConflict_FullMethodName = "/rimsky.v1.ClaimProducer/ScopesConflict"
 )
 
 // ClaimProducerClient is the client API for ClaimProducer service.
@@ -82,6 +84,19 @@ type ClaimProducerClient interface {
 	// Release tears down producer-internal read state created at Open.
 	// For producers that registered no per-claim state, typically a no-op.
 	Release(ctx context.Context, in *ReleaseRequest, opts ...grpc.CallOption) (*ReleaseResponse, error)
+	// SplitScope is optional. Producers that advertise
+	// CapabilitiesResponse.supports_split_scope = true MUST implement
+	// this RPC. The supervisor calls it inside the rimsky-side
+	// acquisition transaction for fan-out nodes: the parent claim is
+	// already Open'd, then SplitScope partitions the parent scope into
+	// sub-scope descriptors used to seed sub-claim rows. The shape of
+	// partition_request bytes is producer-defined.
+	SplitScope(ctx context.Context, in *SplitScopeRequest, opts ...grpc.CallOption) (*SplitScopeResponse, error)
+	// ScopesConflict is optional. Producers that advertise
+	// CapabilitiesResponse.supports_scopes_conflict = true MUST
+	// implement this RPC. When unsupported, rimsky falls back to the
+	// byte-equal default (per @blessed-invariant 4b).
+	ScopesConflict(ctx context.Context, in *ScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error)
 }
 
 type claimProducerClient struct {
@@ -142,6 +157,26 @@ func (c *claimProducerClient) Release(ctx context.Context, in *ReleaseRequest, o
 	return out, nil
 }
 
+func (c *claimProducerClient) SplitScope(ctx context.Context, in *SplitScopeRequest, opts ...grpc.CallOption) (*SplitScopeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SplitScopeResponse)
+	err := c.cc.Invoke(ctx, ClaimProducer_SplitScope_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *claimProducerClient) ScopesConflict(ctx context.Context, in *ScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ScopesConflictResponse)
+	err := c.cc.Invoke(ctx, ClaimProducer_ScopesConflict_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ClaimProducerServer is the server API for ClaimProducer service.
 // All implementations must embed UnimplementedClaimProducerServer
 // for forward compatibility.
@@ -176,6 +211,19 @@ type ClaimProducerServer interface {
 	// Release tears down producer-internal read state created at Open.
 	// For producers that registered no per-claim state, typically a no-op.
 	Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error)
+	// SplitScope is optional. Producers that advertise
+	// CapabilitiesResponse.supports_split_scope = true MUST implement
+	// this RPC. The supervisor calls it inside the rimsky-side
+	// acquisition transaction for fan-out nodes: the parent claim is
+	// already Open'd, then SplitScope partitions the parent scope into
+	// sub-scope descriptors used to seed sub-claim rows. The shape of
+	// partition_request bytes is producer-defined.
+	SplitScope(context.Context, *SplitScopeRequest) (*SplitScopeResponse, error)
+	// ScopesConflict is optional. Producers that advertise
+	// CapabilitiesResponse.supports_scopes_conflict = true MUST
+	// implement this RPC. When unsupported, rimsky falls back to the
+	// byte-equal default (per @blessed-invariant 4b).
+	ScopesConflict(context.Context, *ScopesConflictRequest) (*ScopesConflictResponse, error)
 	mustEmbedUnimplementedClaimProducerServer()
 }
 
@@ -200,6 +248,12 @@ func (UnimplementedClaimProducerServer) Abandon(context.Context, *AbandonRequest
 }
 func (UnimplementedClaimProducerServer) Release(context.Context, *ReleaseRequest) (*ReleaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Release not implemented")
+}
+func (UnimplementedClaimProducerServer) SplitScope(context.Context, *SplitScopeRequest) (*SplitScopeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SplitScope not implemented")
+}
+func (UnimplementedClaimProducerServer) ScopesConflict(context.Context, *ScopesConflictRequest) (*ScopesConflictResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ScopesConflict not implemented")
 }
 func (UnimplementedClaimProducerServer) mustEmbedUnimplementedClaimProducerServer() {}
 func (UnimplementedClaimProducerServer) testEmbeddedByValue()                       {}
@@ -312,6 +366,42 @@ func _ClaimProducer_Release_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ClaimProducer_SplitScope_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SplitScopeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClaimProducerServer).SplitScope(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClaimProducer_SplitScope_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClaimProducerServer).SplitScope(ctx, req.(*SplitScopeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ClaimProducer_ScopesConflict_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScopesConflictRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClaimProducerServer).ScopesConflict(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClaimProducer_ScopesConflict_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClaimProducerServer).ScopesConflict(ctx, req.(*ScopesConflictRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ClaimProducer_ServiceDesc is the grpc.ServiceDesc for ClaimProducer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -338,6 +428,14 @@ var ClaimProducer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Release",
 			Handler:    _ClaimProducer_Release_Handler,
+		},
+		{
+			MethodName: "SplitScope",
+			Handler:    _ClaimProducer_SplitScope_Handler,
+		},
+		{
+			MethodName: "ScopesConflict",
+			Handler:    _ClaimProducer_ScopesConflict_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

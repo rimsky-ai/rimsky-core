@@ -63,7 +63,13 @@ func Dial(ctx context.Context, name, endpoint string) (*Client, error) {
 		name: name,
 		conn: conn,
 		rpc:  rpc,
-		caps: locks.Capabilities{WriteSemanticsAllowed: envelope},
+		caps: locks.Capabilities{
+			WriteSemanticsAllowed:    envelope,
+			SupportsSplitScope:       resp.GetSupportsSplitScope(),
+			SupportsScopesConflict:   resp.GetSupportsScopesConflict(),
+			Protocols:                resp.GetProtocols(),
+			ValidationSupportedRoles: resp.GetValidationSupportedRoles(),
+		},
 	}, nil
 }
 

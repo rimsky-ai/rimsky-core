@@ -17,13 +17,14 @@ import NodeRunsPage from './routes/NodeRunsPage';
 import NodeRunDetailPage from './routes/NodeRunDetailPage';
 import LockHoldersPage from './routes/LockHoldersPage';
 import LockHolderDetailPage from './routes/LockHolderDetailPage';
-import SchedulesPage from './routes/SchedulesPage';
 import EventsPage from './routes/EventsPage';
 import StoresPage from './routes/StoresPage';
 import StoreDetailPage from './routes/StoreDetailPage';
 import ExecutorsPage from './routes/ExecutorsPage';
 import ExecutorDetailPage from './routes/ExecutorDetailPage';
 import ParkedNodesPage from './routes/ParkedNodesPage';
+import AssetsPage from './routes/assets/AssetsPage';
+import AssetDetailPage from './routes/assets/AssetDetailPage';
 
 export default function App() {
   return (
@@ -41,13 +42,17 @@ export default function App() {
         <Route path="/node-runs/:id" element={<NodeRunDetailPage />} />
         <Route path="/lock-holders" element={<LockHoldersPage />} />
         <Route path="/lock-holders/:id" element={<LockHolderDetailPage />} />
-        <Route path="/schedules" element={<SchedulesPage />} />
         <Route path="/events" element={<EventsPage />} />
         <Route path="/stores" element={<StoresPage />} />
         <Route path="/stores/:name" element={<StoreDetailPage />} />
         <Route path="/executors" element={<ExecutorsPage />} />
         <Route path="/executors/:name" element={<ExecutorDetailPage />} />
         <Route path="/parked-nodes" element={<ParkedNodesPage />} />
+        <Route path="/assets" element={<AssetsPage />} />
+        <Route
+          path="/instances/:instanceId/assets/:alias"
+          element={<AssetDetailPage />}
+        />
         <Route path="*" element={<SystemPage />} />
       </Routes>
     </Layout>

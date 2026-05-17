@@ -2,7 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// admin.go — `admin force-fire/invalidate/reset`.
+// admin.go — `admin invalidate/reset`. The `admin force-fire`
+// subcommand retired with the 2026-05-15 data-platform-extensions plan
+// B10 / D7 / E16 schedule-retirement cascade; cron firing is owned by
+// the bundled `sensors/sensor-cron/` service.
 package cli
 
 import (
@@ -11,25 +14,6 @@ import (
 	"fmt"
 	"os"
 )
-
-// RunAdminForceFire implements `admin force-fire`.
-func RunAdminForceFire(ctx context.Context, args []string) int {
-	fs, _, endpoint, code := runWithCommon("admin force-fire", args, nil)
-	if code != 0 {
-		return code
-	}
-	rest := fs.Args()
-	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin force-fire <node-id>")
-		return 2
-	}
-	c := NewClient(endpoint)
-	if err := c.AdminForceFire(ctx, rest[0]); err != nil {
-		return reportError(err)
-	}
-	fmt.Fprintf(os.Stdout, "force-fire dispatched for %s\n", rest[0])
-	return 0
-}
 
 // RunAdminInvalidate implements `admin invalidate`.
 func RunAdminInvalidate(ctx context.Context, args []string) int {

@@ -58,9 +58,11 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	require.NotNil(t, worker)
 
 	// Drop any auto-created frame for this instance so we have full control.
+	// Post-stage-3 cutover: state lives on rimsky_node_runs; deleting
+	// the in-flight run rows + clearing the node-row frame_id resets.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	// Insert a wedged frame: last_progress_at 2 minutes ago (past the 60s
 	// timeout), state=running, no claimed dispatches, but the source node
@@ -75,10 +77,16 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
 
-	// Mark the source node stale with this frame_id but no dispatch row.
+	// Mark the source node stale by binding rimsky_nodes.frame_id + an
+	// in-flight pending stale run row (post-stage-3: state lives on
+	// the run row).
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
+		frameID, uuid.UUID(worker.ID))
 	h.ExecSQL(`
-		UPDATE rimsky_nodes SET state = 'stale', frame_id = $1, updated_at = now() WHERE id = $2
-	`, frameID, uuid.UUID(worker.ID))
+		INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2)
+	`, uuid.UUID(worker.ID), frameID)
 
 	// Capture log output via a buffer-backed slog handler.
 	var buf bytes.Buffer
@@ -101,10 +109,15 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	require.Equal(t, "running", state,
 		"stuck-frame warning must not transition the frame to terminal")
 
-	// Wedged node keeps its state.
+	// Wedged node keeps its state (post-stage-3: read from the in-flight run row).
 	var nodeState string
 	h.QueryRowSQL(
-		`SELECT state FROM rimsky_nodes WHERE id = $1`,
+		`SELECT COALESCE(r.state, 'fresh')
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.phase IN ('pending','active','held','parked')
+		  WHERE n.id = $1`,
 		[]any{uuid.UUID(worker.ID)}, &nodeState)
 	require.Equal(t, "stale", nodeState,
 		"warning must not mutate node state")

@@ -103,6 +103,9 @@ type controlAPIHandle struct {
 	terminator      *controlapi.InstanceTerminator
 	cancelLoops     context.CancelFunc
 	cancelDiscovery context.CancelFunc
+	// peerClosers releases any non-locks gRPC clients (sensors,
+	// validators, data-processing producers) dialed at startup.
+	peerClosers []func()
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
@@ -126,6 +129,9 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	}
 	if h.lifecycleReg != nil {
 		h.lifecycleReg.Close()
+	}
+	for _, c := range h.peerClosers {
+		c()
 	}
 	if h.terminator != nil {
 		h.terminator.Stop()
@@ -198,6 +204,17 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
+	// Dial the per-protocol registries any peer advertised in its
+	// `protocols:` block (sensor / validation / data_processing). Each
+	// registry is non-nil even when no peer advertises the protocol —
+	// controlapi treats nil and empty registries identically downstream.
+	sensorReg, validationReg, dataProcessorReg, peerClosers, err := DialSensorAndValidationRegistries(context.Background(), cfg.Stores, cfg.Executors)
+	if err != nil {
+		cancelDiscovery()
+		registry.Close()
+		lifecycleReg.Close()
+		return nil, fmt.Errorf("StartControlAPI: %w", err)
+	}
 	deps := controlapi.AppDeps{
 		Persist:       persistStore,
 		Queue:         persistQueue,
@@ -247,7 +264,10 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Discovery: disc,
 			})
 		},
-		Metrics: cfg.Metrics,
+		Metrics:        cfg.Metrics,
+		Sensors:        sensorReg,
+		Validators:     validationReg,
+		DataProcessors: dataProcessorReg,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
@@ -255,6 +275,9 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelDiscovery()
 		registry.Close()
 		lifecycleReg.Close()
+		for _, c := range peerClosers {
+			c()
+		}
 		return nil, fmt.Errorf("StartControlAPI: listen: %w", err)
 	}
 	srv := &http.Server{Handler: app}
@@ -268,6 +291,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		terminator:      terminator,
 		cancelLoops:     cancelLoops,
 		cancelDiscovery: cancelDiscovery,
+		peerClosers:     peerClosers,
 	}
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed && cfg.Logger != nil {

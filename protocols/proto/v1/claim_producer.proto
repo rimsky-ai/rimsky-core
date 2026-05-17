@@ -60,6 +60,21 @@ service ClaimProducer {
   // Release tears down producer-internal read state created at Open.
   // For producers that registered no per-claim state, typically a no-op.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
+
+  // SplitScope is optional. Producers that advertise
+  // CapabilitiesResponse.supports_split_scope = true MUST implement
+  // this RPC. The supervisor calls it inside the rimsky-side
+  // acquisition transaction for fan-out nodes: the parent claim is
+  // already Open'd, then SplitScope partitions the parent scope into
+  // sub-scope descriptors used to seed sub-claim rows. The shape of
+  // partition_request bytes is producer-defined.
+  rpc SplitScope(SplitScopeRequest) returns (SplitScopeResponse);
+
+  // ScopesConflict is optional. Producers that advertise
+  // CapabilitiesResponse.supports_scopes_conflict = true MUST
+  // implement this RPC. When unsupported, rimsky falls back to the
+  // byte-equal default (per @blessed-invariant 4b).
+  rpc ScopesConflict(ScopesConflictRequest) returns (ScopesConflictResponse);
 }
 
 // WriteSemantics declares how a claim handle's writes coexist with
@@ -82,8 +97,29 @@ message CapabilitiesRequest {}
 // write_semantics_allowed: per claim_producers entry) declares a
 // permitted subset that MUST be a subset of this set; rimsky validates
 // strict subset at startup.
+//
+// protocols advertises the mix-in service protocols this binary
+// implements alongside ClaimProducer (e.g. "data_processing",
+// "validation", "lifecycle_subscriber"). validation_supported_roles
+// lists the role discriminators this service is willing to validate
+// when it advertises the "validation" protocol.
 message CapabilitiesResponse {
   repeated WriteSemantics write_semantics_allowed = 1;
+  // supports_split_scope: producer implements SplitScope. Required for
+  // templates that fan out against this producer; rimsky rejects such
+  // templates at registration when the producer advertises false.
+  bool supports_split_scope = 2;
+  // supports_scopes_conflict: producer implements ScopesConflict.
+  // When false, rimsky uses byte-equal default (per @blessed-invariant 4b).
+  bool supports_scopes_conflict = 3;
+  // protocols advertises the mix-in service protocols this binary
+  // implements alongside ClaimProducer (e.g. "data_processing",
+  // "validation", "lifecycle_subscriber").
+  repeated string protocols = 4;
+  // validation_supported_roles: when "validation" is in protocols,
+  // the set of role discriminators this service is willing to validate
+  // ("executor" | "claim_producer" | "lifecycle_subscriber" | "sensor").
+  repeated string validation_supported_roles = 5;
 }
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
@@ -138,7 +174,16 @@ message CommitRequest {
   bytes  address  = 3;
 }
 
-message CommitResponse {}
+message CommitResponse {
+  // Set by DataProcessing-capable producers; opaque to rimsky;
+  // persisted in col:rimsky_claim_handles.version_id and
+  // table:rimsky_lineage for record_kind: claim_commit.
+  string version_id = 1;
+  // Optional producer-supplied metadata bytes. Inert in rimsky per
+  // @blessed-invariant 20; surfaced verbatim in the parent run's
+  // writeback row at fan-out parent terminal (spec §Output aggregation).
+  bytes producer_metadata = 2;
+}
 
 message AbandonRequest {
   string claim_id = 1;
@@ -155,3 +200,43 @@ message ReleaseRequest {
 }
 
 message ReleaseResponse {}
+
+// SplitScopeRequest asks the producer to partition a parent scope.
+// claim_handle_id is the rimsky-side parent claim_handle id;
+// partition_request is producer-interpreted bytes (e.g., a date range,
+// a list of regions, a hash bucket count). Called inside the
+// rimsky-side acquisition tx for fan-out nodes.
+message SplitScopeRequest {
+  string claim_handle_id  = 1;
+  bytes  partition_request = 2;
+}
+
+// SubScopeDescriptor identifies one of the sub-scopes the producer
+// partitioned the parent into. scope_data is producer-canonicalized
+// bytes (same shape rimsky stores on rimsky_claim_handles.scope_data);
+// partition_key is the human-readable key rimsky persists in
+// col:rimsky_node_runs.child_key for run-tree bookkeeping;
+// producer_metadata is opaque per-sub-scope info the producer wants
+// persisted on the row.
+message SubScopeDescriptor {
+  bytes  scope_data       = 1;
+  string partition_key    = 2;
+  bytes  producer_metadata = 3;
+}
+
+message SplitScopeResponse {
+  repeated SubScopeDescriptor sub_scopes = 1;
+}
+
+// ScopesConflictRequest asks the producer whether two scope_data byte
+// strings should conflict (single-writer-per-scope serialization).
+// When unsupported (CapabilitiesResponse.supports_scopes_conflict =
+// false), rimsky uses byte-equal as the trivial default.
+message ScopesConflictRequest {
+  bytes scope_a = 1;
+  bytes scope_b = 2;
+}
+
+message ScopesConflictResponse {
+  bool conflicts = 1;
+}

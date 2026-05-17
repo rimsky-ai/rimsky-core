@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/protocols/claimproducer"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -118,6 +119,51 @@ func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, addr
 		return fmt.Errorf("remote producer %q: Release: %w", c.name, err)
 	}
 	return nil
+}
+
+// SplitScope RPCs to the remote producer. Per spec §Fan-out template
+// DSL — used inside the rimsky-side acquisition tx for fan-out nodes.
+// Producers that do not advertise SupportsSplitScope return
+// ErrSplitScopeUnsupported; rimsky validates at registration so this
+// path is normally unreachable.
+func (c *Client) SplitScope(ctx context.Context, req locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+	if !c.caps.SupportsSplitScope {
+		return locks.SplitScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+	}
+	resp, err := c.rpc.SplitScope(ctx, &genv1.SplitScopeRequest{
+		ClaimHandleId:    req.ClaimHandleID,
+		PartitionRequest: req.PartitionRequest,
+	})
+	if err != nil {
+		return locks.SplitScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
+	}
+	out := locks.SplitScopeResponse{}
+	for _, sub := range resp.GetSubScopes() {
+		out.SubScopes = append(out.SubScopes, locks.SubScopeDescriptor{
+			ScopeData:        sub.GetScopeData(),
+			PartitionKey:     sub.GetPartitionKey(),
+			ProducerMetadata: sub.GetProducerMetadata(),
+		})
+	}
+	return out, nil
+}
+
+// ScopesConflict RPCs to the remote producer. Per @blessed-invariant
+// 4b: when SupportsScopesConflict is false rimsky uses byte-equal as
+// the trivial default; callers should consult the cached Capabilities
+// rather than relying on this method's fallback.
+func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) {
+	if !c.caps.SupportsScopesConflict {
+		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
+	}
+	resp, err := c.rpc.ScopesConflict(ctx, &genv1.ScopesConflictRequest{
+		ScopeA: a,
+		ScopeB: b,
+	})
+	if err != nil {
+		return false, fmt.Errorf("remote producer %q: ScopesConflict: %w", c.name, err)
+	}
+	return resp.GetConflicts(), nil
 }
 
 // Close releases the gRPC connection. Called by Registry.Close on

@@ -141,18 +141,6 @@ export type InstanceDetail = {
   cascade_graph: CascadeNode[];
 };
 
-export type ScheduleRow = {
-  node_id: string;
-  cron_expr: string;
-  next_fire_at: string;
-  last_fired_at?: string | null;
-};
-
-export type ScheduleListResponse = {
-  schedules: ScheduleRow[];
-  next_cursor?: string;
-};
-
 export type FrameRow = {
   frame_id: string;
   instance_id: string;
@@ -341,4 +329,61 @@ export type ParkedNodeEntry = {
 
 export type ParkedNodesResponse = {
   parked_nodes: ParkedNodeEntry[];
+};
+
+// --- Asset surface (2026-05-15 data-platform-extensions) ---
+//
+// Assets are the documented compound: claim against a `DataProcessing`-
+// capable producer + `lifetime: durable`. The dashboard's asset-primary
+// panel reads these via the control-api `/instances/{id}/assets/...`
+// endpoint family.
+
+export type AssetRow = {
+  instance_id: string;
+  alias: string;
+  producer_name: string;
+  scope_data_hash: string;
+  current_version_id?: string | null;
+  held_durable: boolean;
+  created_at: string;
+};
+
+export type AssetListResponse = {
+  assets: AssetRow[];
+  next_cursor?: string;
+};
+
+export type AssetVersionRow = {
+  version_id: string;
+  committed_at: string;
+  metadata?: unknown;
+};
+
+export type AssetVersionsResponse = {
+  versions: AssetVersionRow[];
+};
+
+export type AssetMaterializationRow = {
+  version_id: string;
+  parent_run_id?: string | null;
+  frame_id?: string | null;
+  committed_at: string;
+};
+
+export type AssetMaterializationHistoryResponse = {
+  materializations: AssetMaterializationRow[];
+};
+
+export type AssetLineageEdge = {
+  run_id?: string;
+  claim_handle_id?: string;
+  kind: string;
+};
+
+export type AssetDetail = {
+  asset: AssetRow;
+  versions: AssetVersionRow[];
+  materializations: AssetMaterializationRow[];
+  upstream?: AssetLineageEdge[];
+  downstream?: AssetLineageEdge[];
 };

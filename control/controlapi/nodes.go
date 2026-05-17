@@ -34,7 +34,6 @@ type nodeResponse struct {
 	InstanceID           string     `json:"instance_id"`
 	NodeType             string     `json:"node_type"`
 	Executor             string     `json:"executor,omitempty"`
-	ScheduleCron         string     `json:"schedule_cron,omitempty"`
 	State                string     `json:"state"`
 	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
 	RetryCounter         int        `json:"retry_counter"`
@@ -56,7 +55,6 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		InstanceID:           n.InstanceID.String(),
 		NodeType:             n.NodeType,
 		Executor:             n.Executor,
-		ScheduleCron:         n.ScheduleCron,
 		State:                string(n.State),
 		CurrentErrorClass:    n.CurrentErrorClass,
 		RetryCounter:         n.RetryCounter,

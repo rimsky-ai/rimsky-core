@@ -193,18 +193,10 @@ func (s *Server) registerCoreTools() {
 				"/admin/instances/"+url.PathEscape(a.Instance)+"/nodes/"+url.PathEscape(a.NodeID)+"/invalidate", nil)
 		},
 	)
-	s.RegisterTool(
-		Tool{Name: "force_fire_scheduled", Description: "Force-fire a scheduled node.", InputSchema: []byte(`{"type":"object","properties":{"node_id":{"type":"string"}},"required":["node_id"]}`)},
-		func(ctx context.Context, args json.RawMessage) (any, error) {
-			var a struct {
-				NodeID string `json:"node_id"`
-			}
-			if err := json.Unmarshal(args, &a); err != nil {
-				return nil, err
-			}
-			return s.callJSON(ctx, http.MethodPost, "/admin/scheduled-nodes/"+url.PathEscape(a.NodeID)+"/force-fire", nil)
-		},
-	)
+	// (The "force_fire_scheduled" MCP tool retired with the 2026-05-15
+	// plan B10 / D7 / E16 schedule-retirement cascade. Cron firing is
+	// owned by `sensors/sensor-cron/`; operators that need to force a
+	// claim-topic-style fire use `node_invalidate` against the target.)
 
 	// Diagnostics.
 	s.RegisterTool(

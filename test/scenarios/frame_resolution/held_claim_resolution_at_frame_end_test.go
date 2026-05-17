@@ -4,13 +4,15 @@
 
 // Verifies the stores redesign ClaimHolderInsertInput shape round-
 // trips through the storage interface and the (claim_handle_id,
-// holder_node_id) uniqueness constraint holds.
+// holder_run_id) uniqueness constraint holds.
 //
 // The pre-redesign test in this position exercised ClaimID/ProducerName/
 // OnCommit/OnGiveUp/FrameID columns on rimsky_claim_holders — all
 // removed by the redesign. Per-row resolution actions now live in
 // template metadata; rows simply record subgraph membership and
-// per-member terminal state (auto-terminal: spec §4.10 invariant 13).
+// per-member terminal state (auto-terminal: `@blessed-invariant 13`).
+// Post-stage-5 of the run-row lifecycle cutover, the row keys on
+// `holder_run_id` (a `rimsky_node_runs.id`).
 package frame_resolution
 
 import (
@@ -42,9 +44,31 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Seed a scope-kind lock-holder anchored to worker; needed to
-	// satisfy the FK on rimsky_claim_holders.claim_handle_id. Both
-	// inserts run inside a single Tx — required by Insert per §7.3.
+	// Seed a frame + run row so the FK on rimsky_claim_holders.holder_run_id
+	// resolves. Post-stage-5 the holder ledger keys on run id. The
+	// instance's initial frame + source-node run row are enqueued by
+	// the harness's CreateInstance path; reuse them rather than seeding
+	// fresh rows (the partial UNIQUE index `uq_rimsky_frames_running`
+	// and the in-flight-run-per-node unique index would both reject a
+	// second insert).
+	var frameID shared.UUID
+	h.QueryRowSQL(`
+		SELECT frame_id FROM rimsky_frames WHERE instance_id = $1
+		 ORDER BY queued_at DESC LIMIT 1
+	`, []any{uuid.UUID(iid)}, &frameID)
+	h.ExecSQL(`UPDATE rimsky_frames SET state = 'running', started_at = COALESCE(started_at, now()),
+		         last_progress_at = COALESCE(last_progress_at, now())
+		   WHERE frame_id = $1`, frameID)
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
+		frameID, uuid.UUID(worker.ID))
+	var runID shared.UUID
+	h.QueryRowSQL(`
+		SELECT id FROM rimsky_node_runs
+		 WHERE node_id = $1 AND frame_id = $2
+		   AND phase IN ('pending','active','held','parked')
+		 ORDER BY enqueued_at DESC LIMIT 1
+	`, []any{uuid.UUID(worker.ID), frameID}, &runID)
+
 	producerName := "scenario-store"
 	intent := "rw"
 	lockHolderID := shared.UUID(uuid.New())
@@ -65,7 +89,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            holderID,
 			ClaimHandleID: lockHolderID,
-			HolderNodeID:  worker.ID,
+			HolderRunID:   runID,
 		}, tx)
 	}))
 
@@ -77,16 +101,16 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	}))
 	require.NotNil(t, row)
 	require.Equal(t, lockHolderID, row.ClaimHandleID)
-	require.Equal(t, worker.ID, row.HolderNodeID)
+	require.Equal(t, runID, row.HolderRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
-	// Second insert on same (claim_handle_id, holder_node_id) must fail
-	// per the §12.11 unique index.
+	// Second insert on same (claim_handle_id, holder_run_id) must fail
+	// per the unique index.
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            shared.UUID(uuid.New()),
 			ClaimHandleID: lockHolderID,
-			HolderNodeID:  worker.ID,
+			HolderRunID:   runID,
 		}, tx)
 	})
 	require.Error(t, err)

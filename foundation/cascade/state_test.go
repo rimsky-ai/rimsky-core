@@ -32,6 +32,8 @@ var allReasons = []TransitionReason{
 	ReasonHandlerPark,
 	ReasonHandlerResume,
 	ReasonParkTimeout,
+	ReasonChildTransitioned,
+	ReasonSubGraphInternalCascadeFired,
 }
 
 var allStates = []NodeState{
@@ -306,6 +308,79 @@ func TestParkedToParkedRejected(t *testing.T) {
 				require.Error(t, err, "reason=%s", reason.Kind)
 				require.True(t, errors.Is(err, ErrIllegalTransition))
 			}
+		})
+	}
+}
+
+// TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly confirms
+// the subgraph_internal_cascade_fired reason is only legal from
+// running. Per spec §State machine — sub-graph parents stay running
+// while internal cascade fires.
+func TestNextStateParent_SubGraphInternalCascadeFired_RunningOnly(t *testing.T) {
+	t.Parallel()
+	got, err := NextStateParent(NodeStateRunning, ReasonSubGraphInternalCascadeFired)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateRunning, got)
+
+	for _, from := range []NodeState{NodeStateFresh, NodeStateStale, NodeStateFailed, NodeStateParked} {
+		from := from
+		t.Run("illegal/"+string(from), func(t *testing.T) {
+			_, err := NextStateParent(from, ReasonSubGraphInternalCascadeFired)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrIllegalTransition))
+		})
+	}
+}
+
+// TestNextStateParent_ChildTransitioned_AggregateOK confirms the
+// aggregation-OK sentinel is returned for every source state.
+// Callers (state-propagation engine) compute the target state.
+func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
+	t.Parallel()
+	for _, from := range allStates {
+		from := from
+		t.Run(string(from), func(t *testing.T) {
+			_, err := NextStateParent(from, ReasonChildTransitioned)
+			require.Error(t, err)
+			require.True(t, IsParentAggregateOK(err),
+				"expected aggregate-OK sentinel, got %v", err)
+		})
+	}
+}
+
+// TestNextStateParent_LeafReasonsStillRouteToNextState confirms
+// non-parent-specific reasons (e.g., handler_complete, handler_park)
+// continue to flow through the leaf transition table when called via
+// NextStateParent.
+func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
+	t.Parallel()
+	// running → fresh under handler_complete (leaf path).
+	got, err := NextStateParent(NodeStateRunning, ReasonHandlerComplete)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateFresh, got)
+
+	// running → parked under handler_park (leaf path).
+	got, err = NextStateParent(NodeStateRunning, ReasonHandlerPark)
+	require.NoError(t, err)
+	require.Equal(t, NodeStateParked, got)
+
+	// Illegal leaf transitions stay illegal under NextStateParent.
+	_, err = NextStateParent(NodeStateRunning, ReasonDispatchClaimed)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrIllegalTransition))
+}
+
+// TestNextState_ChildTransitionedIsIllegalForLeafRuns confirms the
+// new reason does NOT leak into NextState (leaf rows) — it's
+// parent-only.
+func TestNextState_ChildTransitionedIsIllegalForLeafRuns(t *testing.T) {
+	t.Parallel()
+	for _, from := range allStates {
+		from := from
+		t.Run(string(from), func(t *testing.T) {
+			_, err := NextState(from, ReasonChildTransitioned)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrIllegalTransition))
 		})
 	}
 }

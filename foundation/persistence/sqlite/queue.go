@@ -52,6 +52,15 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	return q.EnqueueInTx(ctx, req, nil)
 }
 
+// EnqueueInTx inserts a fresh dispatch row when no in-flight row exists
+// for the node, otherwise no-ops. Mirrors the postgres impl post-
+// stage-1 lifecycle flip: terminal rows (phase IN ('completed','failed'))
+// are retained on the table so frame-end / retention / run-tree
+// aggregation can read their terminal state. The uq_node_runs_in_flight
+// partial unique index enforces the runtime "at most one in-flight row
+// per node" invariant; the WHERE NOT EXISTS gate turns the constraint
+// into a friendly no-op for the pure-cascade-sweep / retry-after-retry
+// paths that may try to enqueue a row that already exists in 'pending'.
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredStores
 	if stores == nil {
@@ -60,22 +69,18 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.FrameID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
 	}
-	now := nowUTC()
 	_, err := q.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?)
-		 ON CONFLICT(node_id) DO UPDATE
-		   SET enqueued_at = excluded.enqueued_at,
-		       executor_name = excluded.executor_name,
-		       required_stores = excluded.required_stores,
-		       frame_id = excluded.frame_id
-		   WHERE rimsky_node_runs.claimed_by IS NULL
-		     AND rimsky_node_runs.phase = 'pending'
-		     AND rimsky_node_runs.enqueued_at <= ?`,
+		 SELECT ?, ?, ?, ?, ?, 'pending', ?
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM rimsky_node_runs
+		     WHERE node_id = ?
+		       AND phase IN ('pending','active','held','parked')
+		  )`,
 		uuid.New().String(), req.NodeID.String(),
 		nullableString(req.ExecutorName), marshalStringArray(stores),
 		formatTime(req.EnqueuedAt), req.FrameID.String(),
-		now,
+		req.NodeID.String(),
 	)
 	return err
 }
@@ -129,9 +134,12 @@ func (q *queueImpl) SelectCandidates(
 	}
 	defer rows.Close()
 
-	executorAccepted := func(executor string) bool {
+	// Post-stage-3 cutover: native-only rows (executor == "") need a
+	// non-empty required_stores to be dispatch-eligible; pure-cascade
+	// rows (no executor, no stores) are state-only and excluded.
+	executorAccepted := func(executor string, required []string) bool {
 		if executor == "" {
-			return true // native node
+			return len(required) > 0
 		}
 		for _, a := range acceptedExecutors {
 			if a == executor {
@@ -182,7 +190,7 @@ func (q *queueImpl) SelectCandidates(
 			return nil, err
 		}
 		c.RequiredStores = stores
-		if !executorAccepted(c.ExecutorName) || !storeAccepted(c.RequiredStores) {
+		if !executorAccepted(c.ExecutorName, c.RequiredStores) || !storeAccepted(c.RequiredStores) {
 			continue
 		}
 		if c.DispatchID, err = uuid.Parse(dispatchIDStr); err != nil {
@@ -235,16 +243,36 @@ func (q *queueImpl) ClaimDispatchRow(
 	return n == 1, nil
 }
 
+// Complete retires the in-flight run row identified by dispatchID. Post-
+// stage-1 lifecycle flip: flips phase to a terminal value rather than
+// deleting the row so frame-end / retention / run-tree aggregation can
+// read the terminal `state` / `last_outcome` after the active phase
+// closes. See the postgres impl for the full rationale.
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
+	now := nowUTC()
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
-			`DELETE FROM rimsky_node_runs WHERE id = ? AND claimed_by = ?`,
-			dispatchID.String(), expectedClaimedBy,
+			`UPDATE rimsky_node_runs
+			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+			        claimed_by = NULL,
+			        last_heartbeat_at = NULL,
+			        active_terminal_at = ?
+			  WHERE id = ?
+			    AND claimed_by = ?
+			    AND phase IN ('pending','active','held','parked')`,
+			now, dispatchID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.db.ExecContext(ctx,
-		`DELETE FROM rimsky_node_runs WHERE id = ?`, dispatchID.String(),
+		`UPDATE rimsky_node_runs
+		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+		        claimed_by = NULL,
+		        last_heartbeat_at = NULL,
+		        active_terminal_at = ?
+		  WHERE id = ?
+		    AND phase IN ('pending','active','held','parked')`,
+		now, dispatchID.String(),
 	)
 	return err
 }
@@ -253,16 +281,35 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 	return q.RemoveForNodeInTx(ctx, nodeID, expectedClaimedBy, nil)
 }
 
+// RemoveForNodeInTx retires the in-flight run row for a node by flipping
+// phase to a terminal value. See the postgres impl for the rationale.
+//
+// @blessed-invariant 4: claimant-guarded release.
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+	now := nowUTC()
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).ExecContext(ctx,
-			`DELETE FROM rimsky_node_runs WHERE node_id = ? AND claimed_by = ?`,
-			nodeID.String(), expectedClaimedBy,
+			`UPDATE rimsky_node_runs
+			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+			        claimed_by = NULL,
+			        last_heartbeat_at = NULL,
+			        active_terminal_at = ?
+			  WHERE node_id = ?
+			    AND claimed_by = ?
+			    AND phase IN ('pending','active','held','parked')`,
+			now, nodeID.String(), expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).ExecContext(ctx,
-		`DELETE FROM rimsky_node_runs WHERE node_id = ?`, nodeID.String(),
+		`UPDATE rimsky_node_runs
+		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+		        claimed_by = NULL,
+		        last_heartbeat_at = NULL,
+		        active_terminal_at = ?
+		  WHERE node_id = ?
+		    AND phase IN ('pending','active','held','parked')`,
+		now, nodeID.String(),
 	)
 	return err
 }
@@ -449,11 +496,14 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		args = append(args, formatTime(oc), id.String())
 	}
 	args = append(args, limit)
+	// Post-stage-1 lifecycle flip: terminal rows survive past active
+	// terminal; the "live" observability surface filters to in-flight
+	// phases so the listing keeps its prior shape.
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE 1=1` +
+	  WHERE d.phase IN ('pending','active','held','parked')` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)` +
@@ -490,7 +540,7 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 	q1 := `SELECT COUNT(*)
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-	  WHERE 1=1` +
+	  WHERE d.phase IN ('pending','active','held','parked')` +
 		stateClause +
 		` AND (? IS NULL OR d.executor_name = ?)
 	    AND (? IS NULL OR n.instance_id = ?)`
@@ -528,14 +578,15 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 }
 
 // GetByID returns the live dispatch row for id, or (nil, nil) when no
-// such row exists. Mirrors the postgres impl for the observability
-// dispatch-detail handler.
+// such row exists (or the row has reached terminal phase). Mirrors the
+// postgres impl for the observability dispatch-detail handler.
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
 		   FROM rimsky_node_runs d
-		  WHERE d.id = ?`, id.String(),
+		  WHERE d.id = ?
+		    AND d.phase IN ('pending','active','held','parked')`, id.String(),
 	)
 	var (
 		idStr             string
@@ -602,6 +653,31 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		r.RequiredStores = []string{}
 	}
 	return &r, nil
+}
+
+// GetInFlightRunForNode resolves the in-flight rimsky_node_runs.id for
+// the (node, frame) pair. Mirrors the postgres impl. See
+// persistence.Queue.GetInFlightRunForNode for usage.
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+	row := q.q(tx).QueryRowContext(ctx,
+		`SELECT id FROM rimsky_node_runs
+		  WHERE node_id = ? AND frame_id = ?
+		    AND phase IN ('pending','active','held','parked')
+		  ORDER BY enqueued_at DESC, id DESC
+		  LIMIT 1`,
+		nodeID.String(), frameID.String())
+	var idStr string
+	if err := row.Scan(&idStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return shared.UUID{}, false, nil
+		}
+		return shared.UUID{}, false, fmt.Errorf("sqlite.GetInFlightRunForNode: %w", err)
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return shared.UUID{}, false, fmt.Errorf("sqlite.GetInFlightRunForNode: parse %q: %w", idStr, err)
+	}
+	return id, true, nil
 }
 
 func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClause string, executor any, instanceID any) {

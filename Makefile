@@ -6,7 +6,8 @@ proto-gen:
 	cd protocols/proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  executor.proto events.proto claim_producer.proto lifecycle.proto \
-	  executor_observability.proto claim_producer_observability.proto
+	  executor_observability.proto claim_producer_observability.proto \
+	  data_processing.proto validation.proto sensor.proto
 
 test:
 	go test ./...

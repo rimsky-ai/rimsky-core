@@ -26,7 +26,7 @@ import (
 // identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, userdata_overrides, created_at, terminated_at`
+const instanceCols = `id, template_hash, instance_key, params, userdata_overrides, frame_delivery_mode, created_at, terminated_at`
 
 // Create inserts a new rimsky_instances row. The caller supplies a
 // pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
@@ -51,11 +51,19 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 	id := in.ID
+	// Empty string → fall through to the column DEFAULT 'coalesce'. Any
+	// other value is sent verbatim; the CHECK constraint enforces the
+	// {serial_queue, coalesce} vocabulary so a bad value surfaces as a
+	// 23514 from Postgres.
+	var deliveryMode any
+	if in.FrameDeliveryMode != "" {
+		deliveryMode = in.FrameDeliveryMode
+	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, userdata_overrides)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, userdata_overrides, frame_delivery_mode)
+		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'))
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -303,10 +311,11 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		instanceKey  *string
 		params       []byte
 		overrides    []byte
+		deliveryMode string
 		createdAt    time.Time
 		terminatedAt *time.Time
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -327,6 +336,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		InstanceKey:       instanceKey,
 		Params:            m,
 		UserdataOverrides: ov,
+		FrameDeliveryMode: deliveryMode,
 		CreatedAt:         createdAt,
 		TerminatedAt:      terminatedAt,
 	}, nil

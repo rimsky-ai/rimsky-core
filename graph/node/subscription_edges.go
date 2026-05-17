@@ -43,6 +43,17 @@ type SubscriptionFilter struct {
 	ErrorClass string // "" | error_class
 	Reason     string // "" | snake_case ParkReason
 	Name       string // "" | attribute key OR event name
+
+	// Message-envelope filter fields. Only meaningful when the parent
+	// SubscriptionEdge.TopicKind == "message". Empty values match any
+	// value on the corresponding envelope field (see
+	// foundation/persistence/messages.go::MessageRow). Spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Unified message layer / Subscriptions.
+	Kind       string // "" | envelope kind (e.g. "invalidate")
+	Sender     string // "" | envelope sender
+	SenderKind string // "" | "operator" | "sensor" | "instance"
+	Target     string // "" | node alias the message addressed
 }
 
 // SubscriptionEdgeMap is keyed by sender node-type. The empty key ""
@@ -248,6 +259,11 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) Subscri
 			When: s.When, Outcome: s.Outcome,
 			ErrorClass: s.ErrorClass, Reason: s.Reason,
 			Name: s.Name,
+			// Message-envelope filter fields carry through only when
+			// On == "message"; they're zero-valued for other topics
+			// per spec §Unified message layer / Subscriptions.
+			Kind: s.Kind, Sender: s.Sender,
+			SenderKind: s.SenderKind, Target: s.Target,
 		},
 		Frame: frame,
 	}

@@ -60,23 +60,35 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
 		"frame did not end despite leaf pruning")
 
-	// Leaf should never have entered stale (it stays fresh).
+	// Leaf should never have entered stale (it stays fresh). Post-
+	// stage-3 cutover: state comes from the in-flight run row; fresh
+	// = no in-flight row exists for this node.
 	var leafState string
 	err := h.Pool.QueryRow(context.Background(),
-		`SELECT state FROM rimsky_nodes WHERE id = $1`, uuid.UUID(leaf.ID)).Scan(&leafState)
+		`SELECT COALESCE(r.state, 'fresh')
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.phase IN ('pending','active','held','parked')
+		  WHERE n.id = $1`, uuid.UUID(leaf.ID)).Scan(&leafState)
 	require.NoError(t, err)
 	require.Equal(t, "fresh", leafState,
 		"pruned leaf should remain fresh")
 
-	// No dispatch rows for the pruned leaf in this frame.
+	// No in-flight dispatch rows for the pruned leaf in this frame.
+	// Post-stage-1 lifecycle flip: terminal rows survive past active
+	// terminal so frame-end / retention / run-tree aggregation can read
+	// the terminal state. The "pruned leaf has no dispatch rows" check
+	// preserves its intent by filtering on the in-flight phase predicate.
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	var leafDispatchCount int
 	err = h.Pool.QueryRow(context.Background(), `
 		SELECT count(*) FROM rimsky_node_runs
 		WHERE frame_id = $1 AND node_id = $2
+		  AND phase IN ('pending','active','held','parked')
 	`, frames[0].FrameID, uuid.UUID(leaf.ID)).Scan(&leafDispatchCount)
 	require.NoError(t, err)
 	require.Equal(t, 0, leafDispatchCount,
-		"pruned leaf must have no dispatch rows for this frame")
+		"pruned leaf must have no in-flight dispatch rows for this frame")
 }

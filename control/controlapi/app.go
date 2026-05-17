@@ -3,9 +3,9 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package controlapi implements the HTTP+JSON control API for rimsky
-// orchestrators. Routes are registered in sibling files
-// (templates.go, instances.go, nodes.go, events.go, claims.go,
-// admin_force_fire.go, health.go). Errors thrown inside handlers are
+// orchestrators. Routes are registered in sibling files (templates.go,
+// instances.go, nodes.go, events.go, claims.go,
+// admin_diagnostics.go, health.go). Errors thrown inside handlers are
 // mapped to HTTP responses via setErrorHandler.
 package controlapi
 
@@ -84,6 +84,38 @@ type AppDeps struct {
 	// from here is fine because controlapi already imports integration.
 	// Nil → no-op.
 	Metrics runtime.MetricsHook
+
+	// Sensors is the per-process sensor-client registry. Used by the
+	// instance-create / instance-terminate flow to issue Sensor.StartWatch
+	// / StopWatch per the template's `sensors:` block. Nil → sensor
+	// lifecycle calls are skipped; the watch row stays at `state =
+	// failed` and operators recover via the resync sweeper. Plan F8.
+	Sensors runtime.SensorRegistry
+
+	// Validators is the per-process Validation-mix-in registry. Used by
+	// `POST /templates` to fire the Validation pipeline against each
+	// service the template references that advertises the
+	// `validation` protocol. Nil → the pipeline is skipped and the
+	// template registers on the static-check pass alone. Plan F9.
+	Validators runtime.ValidationRegistry
+
+	// DataProcessors is the per-process DataProcessing-mix-in registry.
+	// Resolves a producer name to a `runtime.DataProcessingClient` for
+	// the fan-out / candidate / version surface
+	// (`BeginCandidate` / `CommitCandidate` / `AbandonCandidate` /
+	// `ListVersions` / `ListPartitions` / `GetVersionSchema`). Wired by
+	// `control/config.StartControlAPI` from the per-peer `protocols:`
+	// declarations. Nil → asset endpoints (`/instances/{id}/assets/...`)
+	// that need version metadata return 503 and the fan-out path skips
+	// candidate-handle persistence. Spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Protocol surfaces / DataProcessing.
+	DataProcessors runtime.DataProcessingRegistry
+
+	// UnreachableValidatorPolicy controls the pipeline's reaction to a
+	// per-service RPC failure: `strict` rejects; `permissive_warn`
+	// (default) surfaces a warning. Plan F9 step 4.
+	UnreachableValidatorPolicy runtime.UnreachableValidatorPolicy
 }
 
 // ObservabilityRouter is the seam controlapi uses to mount the
@@ -159,7 +191,11 @@ func NewApp(deps AppDeps) http.Handler {
 		registerNodesRoutes(rr, deps)
 		registerEventsRoutes(rr, deps)
 		registerClaimsRoutes(rr, deps)
-		registerAdminScheduleRoutes(rr, deps)
+		registerMessagesRoutes(rr, deps)
+		registerSensorObservationsRoutes(rr, deps)
+		registerBackfillsRoutes(rr, deps)
+		registerAssetsRoutes(rr, deps)
+		registerLineageRoutes(rr, deps)
 		registerAdminDiagnosticsRoutes(rr, deps)
 		registerHealthRoutes(rr, deps)
 	})

@@ -37,17 +37,19 @@
 //	Do not relax the `holder_supervisor_id = $1` predicate on the
 //	heartbeat UPDATE.
 //
-// @blessed-invariant 10: Lock acquisition is atomic with dispatch
-// claim (rimsky-side). Per v3 spec §4.10:
+// @blessed-invariant 10: Lock acquisition is atomic with parent-run
+// claim acquisition. Per spec §4.10 + the 2026-05-15 data-platform-
+// extensions §Recursive scope partitioning:
 //
-//	The §7.3 acquisition transaction either claims the dispatch row
-//	AND inserts every required `rimsky_claim_handles` row AND records
-//	the `ClaimProducer.Open`-returned address, or none of these. The producer's
-//	own state mutations run in a producer-internal transaction
-//	decoupled from rimsky's. Single-writer-per-scope (invariant 4b)
-//	holds because rimsky's conflict predicate gates lock-holder
-//	INSERTs against `rimsky_claim_handles` only. The acquisition tx
-//	lives in `foundation/integration/runner_acquire.go`; this file's
+//	The §7.3 acquisition transaction either claims the parent run
+//	AND inserts the parent `rimsky_claim_handles` row AND inserts all
+//	sub-claim handle rows for opted-into partitioning AND records the
+//	`ClaimProducer.Open`-returned addresses, or none of these. The
+//	producer's own state mutations run in a producer-internal
+//	transaction decoupled from rimsky's. Single-writer-per-scope
+//	(invariant 4b) holds because rimsky's conflict predicate gates
+//	lock-holder INSERTs against `rimsky_claim_handles` only. The
+//	acquisition tx lives in `runtime/runner_acquire.go`; this file's
 //	contribution is structural — the heartbeat refresh below MUST
 //	NOT extend rows for nodes that have transitioned out of
 //	`running`. The `holder_node_id IN (running-nodes)` filter keeps
@@ -135,6 +137,15 @@ type Config struct {
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
 	// hook (plan I1/I2/I3). Optional; nil → no-op everywhere.
 	Metrics MetricsHook
+	// MaxParkDuration is the deployment-level per-reason max_park_duration
+	// cap map (keys are ParkReason storage-form strings; values are
+	// caps). Threaded into the conductor's SweepParkedNodes path so the
+	// watchdog can fail parked runs that overrun their per-reason cap
+	// even when the per-row col:rimsky_node_runs.max_park_duration_seconds
+	// is NULL. Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Parked-state taxonomy. Empty / nil → only per-row caps fire.
+	MaxParkDuration map[string]time.Duration
 }
 
 // Handle is returned by Start. Callers drive lifecycle via Shutdown and

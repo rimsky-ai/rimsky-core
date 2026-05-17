@@ -48,10 +48,11 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Drop any auto-created frames so we have full control.
+	// Drop any auto-created frames so we have full control. Post-
+	// stage-3 cutover: state lives on rimsky_node_runs.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	// Seed a running frame with timeout = 60000ms (schema floor). The
 	// node is stale within the frame; no claimed dispatches.
@@ -62,8 +63,13 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '5 minutes', now() - interval '5 minutes', now(), $3)
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID), int64(timeoutMs)}, &frameID)
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'stale', frame_id = $1, updated_at = now() WHERE id = $2`,
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
+	h.ExecSQL(`
+		INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2)
+	`, uuid.UUID(worker.ID), frameID)
 
 	// Drive 5 progress refreshes simulating a self-invalidate loop. Each
 	// iteration sets last_progress_at to NOW() — modeling the supervisor's

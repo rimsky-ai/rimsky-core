@@ -56,6 +56,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		        resume_at = $4,
 		        parked_reason = $5,
 		        parked_reason_note = NULLIF($10, ''),
+		        parked_reason_label = NULLIF($11, ''),
 		        session_token = NULLIF($6, ''),
 		        parked_payload_inline = $7,
 		        parked_payload_handle = $8,
@@ -65,7 +66,7 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		    AND phase = 'active'`,
 		in.DispatchID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
 		in.Reason, in.SessionToken, payloadInline,
-		payloadHandle, payloadHandleBackend, in.ReasonNote,
+		payloadHandle, payloadHandleBackend, in.ReasonNote, in.ReasonLabel,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.ParkActiveInTx: %w", err)

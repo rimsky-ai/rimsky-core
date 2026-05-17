@@ -33,9 +33,16 @@ type invTestQueue struct {
 	mu           sync.Mutex
 	enqueued     []persistence.DispatchRequest
 	removedNodes []shared.UUID
+	// real, when non-nil, is the underlying postgres queue; the fake
+	// delegates GetInFlightRunForNode to it so the post-stage-5 cascade
+	// walker can resolve receiver / sender run ids without re-
+	// implementing the SQL here.
+	real persistence.Queue
 }
 
-func newInvTestQueue() *invTestQueue { return &invTestQueue{} }
+func newInvTestQueueWithReal(real persistence.Queue) *invTestQueue {
+	return &invTestQueue{real: real}
+}
 
 func (f *invTestQueue) Enqueue(_ context.Context, req persistence.DispatchRequest) error {
 	f.mu.Lock()
@@ -94,6 +101,12 @@ func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFi
 }
 func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
+}
+func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+	if f.real != nil {
+		return f.real.GetInFlightRunForNode(ctx, tx, nodeID, frameID)
+	}
+	return shared.UUID{}, false, nil
 }
 
 // Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
@@ -187,7 +200,7 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{
 		driver:   d,
 		persist:  d.Tables(),
-		q:        newInvTestQueue(),
+		q:        newInvTestQueueWithReal(d.Queue()),
 		clock:    shared.SystemClock{},
 		log:      shared.SilentLogger{},
 		instance: inst,
@@ -197,6 +210,11 @@ func newFixture(t *testing.T) *fixture {
 // createNodeInState inserts a node, then forces its state via a direct SQL
 // UPDATE so the test can exercise specific state paths without routing
 // through the state machine's legal-transition constraints. Stale/running
+// createNodeInState seeds a node in the requested state. Post-stage-3
+// cutover: state lives on rimsky_node_runs, so 'stale' / 'running' are
+// seeded by inserting an in-flight run row with the desired state. The
+// 'fresh' case requires only the rimsky_nodes row (no run row).
+//
 // nodes get a frame_id so the dispatch enqueue path satisfies blessed-
 // invariant 19.
 func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
@@ -215,39 +233,44 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 		n = row
 		return nil
 	}))
-
-	// Always UPDATE: Create() now defaults to 'fresh' (frame-resolution
-	// model), so any test asking for a non-fresh state must override.
-	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, string(state), n.ID)
-	n.State = state
-	if state == cascade.NodeStateStale || state == cascade.NodeStateRunning {
-		// Reuse the existing running frame for this instance if any (the
-		// uq_rimsky_frames_running partial unique index limits one running
-		// frame per instance); otherwise insert a fresh one.
-		var count int
-		pgtest.QueryRowForTest(ctx, t, f.driver,
-			`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
-			[]any{f.instance.ID}, &count)
-		var frameID shared.UUID
-		if count == 0 {
-			pgtest.QueryRowForTest(ctx, t, f.driver, `
-                INSERT INTO rimsky_frames
-                    (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-                VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
-                RETURNING frame_id
-            `, []any{f.instance.ID, n.ID}, &frameID)
-		} else {
-			pgtest.QueryRowForTest(ctx, t, f.driver, `
-                SELECT frame_id FROM rimsky_frames
-                WHERE instance_id = $1 AND state = 'running'
-                LIMIT 1
-            `, []any{f.instance.ID}, &frameID)
-		}
-		pgtest.ExecForTest(ctx, t, f.driver,
-			`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
-		n.FrameID = &frameID
+	if state == cascade.NodeStateFresh {
+		return n
 	}
+	// Reuse existing running frame for this instance if any; otherwise
+	// insert a fresh one.
+	var count int
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1 AND state = 'running'`,
+		[]any{f.instance.ID}, &count)
+	var frameID shared.UUID
+	if count == 0 {
+		pgtest.QueryRowForTest(ctx, t, f.driver, `
+            INSERT INTO rimsky_frames
+                (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+            RETURNING frame_id
+        `, []any{f.instance.ID, n.ID}, &frameID)
+	} else {
+		pgtest.QueryRowForTest(ctx, t, f.driver, `
+            SELECT frame_id FROM rimsky_frames
+            WHERE instance_id = $1 AND state = 'running'
+            LIMIT 1
+        `, []any{f.instance.ID}, &frameID)
+	}
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
+	n.FrameID = &frameID
+	// Insert the in-flight run row in the requested state.
+	runPhase := "pending"
+	if state == cascade.NodeStateRunning {
+		runPhase = "active"
+	}
+	pgtest.ExecForTest(ctx, t, f.driver, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+        VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, $4, $5)
+    `, n.ID, executor, runPhase, string(state), frameID)
+	n.State = state
 	return n
 }
 
@@ -373,12 +396,21 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 
 	// Seed a wait-set row gating target on dep in the running frame.
+	// Post-stage-5 the wait-set keys on run id, so resolve each node's
+	// in-flight run id via the queue.
 	require.NotNil(t, target.FrameID)
+	var depRunID, targetRunID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
+		[]any{dep.ID, *target.FrameID}, &depRunID)
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 AND frame_id = $2`,
+		[]any{target.ID, *target.FrameID}, &targetRunID)
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return f.persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID:           *target.FrameID,
-			ReceiverNodeID:    target.ID,
-			SenderNodeID:      dep.ID,
+			ReceiverRunID:     targetRunID,
+			SenderRunID:       depRunID,
 			TopicKind:         "state",
 			SubscriptionScope: "direct",
 		}, tx)

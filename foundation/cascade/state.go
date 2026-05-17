@@ -148,6 +148,25 @@ var (
 	// transitioned the node to failed with last_outcome=failed and
 	// error_class="park_timeout".
 	ReasonParkTimeout = TransitionReason{Kind: "park_timeout"}
+
+	// ReasonChildTransitioned — parent-run-only. Fired by the
+	// state-propagation engine in runtime/state_propagation.go when a
+	// child run transitions and the parent re-aggregates. Allowed
+	// transitions under this reason are constrained to parent rows
+	// (rimsky_node_runs.parent_run_id IS NULL is FALSE for the child's
+	// parent), but the state machine cannot inspect persistence — the
+	// caller is responsible for restricting NextStateParent to parent
+	// rows. Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §State machine.
+	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
+
+	// ReasonSubGraphInternalCascadeFired — parent-run-only. Fired when
+	// a sub-graph's entry node completed (success terminal) and the
+	// parent stays running while internal cascade dispatches the
+	// internal child nodes. Same parent-row restriction as
+	// ReasonChildTransitioned.
+	ReasonSubGraphInternalCascadeFired = TransitionReason{Kind: "subgraph_internal_cascade_fired"}
 )
 
 // NextState returns the new state for a transition.
@@ -245,4 +264,96 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		}
 	}
 	return "", fmt.Errorf("%w: from=%s reason=%s", ErrIllegalTransition, current, reason.Kind)
+}
+
+// NextStateParent is the parent-run-only state machine. It accepts the
+// leaf-run transition table (delegates to NextState) PLUS the
+// parent-run-only transitions described in spec
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §State machine:
+//
+//   - terminal → stale (re-trigger of a parent run after frame
+//     restart): from fresh|failed under invalidate_received |
+//     operator_invalidate. Already legal under NextState.
+//   - terminal → running (parent's first child began running for a
+//     new frame): from fresh|failed under child_transitioned.
+//   - running → running (state-aggregation re-fires while children
+//     are still in flight; the parent stays running because the
+//     aggregation rule produced no new terminal): under
+//     child_transitioned or subgraph_internal_cascade_fired.
+//   - running → stale (parent re-marked stale by child cascade that
+//     fires invalidate-style on the parent before any child went
+//     terminal): under child_transitioned. Permitted because
+//     aggregation may yield stale.
+//   - running → fresh / failed / parked (parent terminal, computed
+//     by aggregation): under child_transitioned. The leaf transition
+//     table already allows running → fresh (handler_complete) and
+//     running → failed (policy_give_up); for parents the same final
+//     states are reached via aggregation, not the executor handler.
+//
+// Callers MUST restrict invocations of NextStateParent to rows known
+// to be parent runs (rimsky_node_runs.parent_run_id IS NULL is FALSE
+// for some child). NextState (the leaf-run variant) preserves the
+// strict leaf-only transition table.
+//
+// @blessed-invariant 1: the state machine never silently accepts an
+// illegal transition. For parent rows, NextStateParent extends the
+// allowed set as documented above; for leaf rows, NextState is
+// unchanged.
+func NextStateParent(current NodeState, reason TransitionReason) (NodeState, error) {
+	switch reason.Kind {
+	case "child_transitioned":
+		// Parent re-aggregates from child state. The new state is
+		// determined by the aggregation rule in runtime; the state
+		// machine's contract is to accept any of the legitimate
+		// parent target states from any of the legitimate parent
+		// source states. The state-propagation engine writes the
+		// computed state directly; the machine permits it.
+		switch current {
+		case NodeStateFresh, NodeStateFailed:
+			// Permit fresh/failed → running (new frame starting) or
+			// fresh/failed → stale (re-trigger).
+			return "", &parentAggregateOK{From: current}
+		case NodeStateStale, NodeStateRunning:
+			// Permit running → running | fresh | failed | parked | stale.
+			// Permit stale → running | fresh | failed | parked.
+			return "", &parentAggregateOK{From: current}
+		case NodeStateParked:
+			// Parked → running is permitted when an external
+			// invalidate or wake fires for the parent; otherwise
+			// illegal.
+			return "", &parentAggregateOK{From: current}
+		}
+	case "subgraph_internal_cascade_fired":
+		// Only valid when parent is running.
+		if current == NodeStateRunning {
+			return NodeStateRunning, nil
+		}
+	}
+	// Fall through to the standard leaf transition table for the
+	// remaining reasons. (Parent runs share all leaf transitions
+	// except they're broader on the reasons above.)
+	return NextState(current, reason)
+}
+
+// parentAggregateOK is a sentinel error type returned by
+// NextStateParent when the caller is expected to choose the target
+// state itself (the aggregation engine computes it; the state
+// machine permits the write). Callers detect via errors.As.
+type parentAggregateOK struct {
+	From NodeState
+}
+
+func (e *parentAggregateOK) Error() string {
+	return fmt.Sprintf("parent aggregation in progress from=%s (caller chooses target)", e.From)
+}
+
+// IsParentAggregateOK reports whether err is the sentinel returned by
+// NextStateParent when the aggregation engine is responsible for
+// choosing the parent's new state. Callers that receive this error
+// MUST themselves validate the chosen target is one of {stale,
+// running, fresh, failed, parked} before writing.
+func IsParentAggregateOK(err error) bool {
+	var pok *parentAggregateOK
+	return errors.As(err, &pok)
 }

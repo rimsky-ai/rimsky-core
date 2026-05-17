@@ -142,6 +142,22 @@ func applyErrorPolicy(
 			},
 		}, tx)
 	})
+	// Run-tree state propagation (E2): give_up is a terminal failure;
+	// the child's state has transitioned to NodeStateFailed and any
+	// parent must aggregate. Retry / discard_then_retry leave the node
+	// in a non-terminal state so propagation skips them.
+	if resolved.Kind == "give_up" {
+		// E8: emit leaf-run lineage record for the failed terminal.
+		EmitLeafRunLineage(ctx, args,
+			acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
+			string(cascade.NodeStateFailed), string(cascade.LastOutcomeFailed), errorClass,
+			acq.InstanceParams, acq.InstanceUserdataOverrides)
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
+			cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
+			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
+				"run_id", acq.DispatchID.String(), "error", err.Error())
+		}
+	}
 	// `invalidate` action retired under the 2026-05-14 subscription-
 	// cascade resolution; the validator rejects it at deploy time.
 	return nil
@@ -167,9 +183,10 @@ func applyResolvedAction(
 			}
 			// Pessimistic-invalidate: running → stale is the sender's
 			// invalidation in this frame. Gate downstream subscribers
-			// so they don't race the retry.
+			// so they don't race the retry. acq.DispatchID is the
+			// sender's run id (post-stage-5 wait-set keys on run id).
 			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.InstanceID, acq.FrameID); err != nil {
+				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
 				return err
 			}
 		}
@@ -191,8 +208,8 @@ func applyResolvedAction(
 			}
 		}
 		// Settled-state drain on failed: any wait-set rows gating
-		// receivers on this sender release.
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+		// receivers on this sender's run release.
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
 		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)

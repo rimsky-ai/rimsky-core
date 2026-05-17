@@ -7,7 +7,6 @@ package conformance
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -200,113 +199,8 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}
 }
 
-// testSchedulesDenseSameTimestampPagination guards the round-2
-// scheduleCursor fix. The cursor pairs (next_fire_at, node_id) and
-// the predicate is `(next_fire_at, node_id) > ($t, $id)` — without
-// the secondary node_id key, paginating across rows that share a
-// next_fire_at can either drop or duplicate entries depending on the
-// driver's tie-breaking. We register multiple schedules with the same
-// next_fire_at, page through with Limit=2, and assert all rows surface
-// across pages with no drops, no duplicates.
-func testSchedulesDenseSameTimestampPagination(t *testing.T, d persistence.Database) {
-	t.Helper()
-	defer d.Close()
-	ctx := context.Background()
-	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	store := d.Tables()
-
-	// Seed a template + instance so the FK on rimsky_schedules.node_id
-	// is satisfied. The frame seeded by seedFixtureSet is unused here —
-	// schedules attach to nodes regardless of frame state.
-	tmpl := "sha256-" + uuid.NewString()
-	instID := uuid.New()
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
-			ID: tmpl,
-			Spec: spec.TemplateSpec{
-				Name: "schedules-dense", Version: "1",
-				FrameResolutionMode: spec.FrameResolutionSerialQueue,
-				FrameTimeoutMs:      600000,
-				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
-			},
-			State:  persistence.TemplateStateRegistered,
-			Source: "direct",
-		}, tx); err != nil {
-			return err
-		}
-		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           instID,
-			TemplateHash: tmpl,
-			Params:       map[string]any{},
-		}, tx)
-		return err
-	}); err != nil {
-		t.Fatalf("template/instance create: %v", err)
-	}
-
-	// Register 5 schedules sharing the same next_fire_at so dense
-	// pagination has to break ties via node_id. 5 with Limit=2 forces
-	// 3 page boundaries, exercising both first-page and mid-traverse.
-	const numSchedules = 5
-	nextFire := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
-	expected := make(map[string]struct{}, numSchedules)
-	for i := 0; i < numSchedules; i++ {
-		nodeID := uuid.New()
-		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-				ID:           nodeID,
-				InstanceID:   instID,
-				NodeType:     "n",
-				Executor:     "e",
-			}, tx); err != nil {
-				return err
-			}
-			return store.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
-				NodeID:     nodeID,
-				CronExpr:   "* * * * *",
-				NextFireAt: nextFire,
-			}, tx)
-		}); err != nil {
-			t.Fatalf("node+schedule create: %v", err)
-		}
-		expected[nodeID.String()] = struct{}{}
-	}
-
-	seen := map[string]int{}
-	cursor := ""
-	for page := 0; page < numSchedules+2; page++ {
-		var res persistence.PaginatedListResult[persistence.ScheduleRow]
-		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			r, err := store.Schedules().ListForObservability(ctx,
-				persistence.ScheduleListFilter{},
-				persistence.ListPagination{Limit: 2, Cursor: cursor},
-				tx,
-			)
-			res = r
-			return err
-		}); err != nil {
-			t.Fatalf("ListForObservability page=%d: %v", page, err)
-		}
-		for _, row := range res.Rows {
-			seen[row.NodeID.String()]++
-		}
-		cursor = res.NextCursor
-		if cursor == "" {
-			break
-		}
-	}
-	if cursor != "" {
-		t.Fatalf("pagination did not terminate after numSchedules+2 pages; cursor=%q", cursor)
-	}
-
-	if len(seen) != numSchedules {
-		t.Fatalf("dense-pagination saw %d distinct rows; want %d. seen=%v", len(seen), numSchedules, seen)
-	}
-	for id := range expected {
-		if seen[id] != 1 {
-			t.Fatalf("dense-pagination: row %s seen %d times (want 1)", id, seen[id])
-		}
-	}
-}
+// (testSchedulesDenseSameTimestampPagination retired by the 2026-05-15
+// data-platform-extensions plan B10 / D7 / E16 schedule-retirement
+// cascade. The rimsky_schedules table and the
+// `ScheduleTable.ListForObservability` helper it exercised are gone;
+// cron firing is owned by `sensors/sensor-cron/`.)

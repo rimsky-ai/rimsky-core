@@ -126,6 +126,14 @@ message StoreHandle {
   // (spec §11.5).
   reserved 3, 4, 5;
   reserved "write_regions", "read_regions", "resumed";
+  // candidate_handle is set by the supervisor for
+  // DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
+  // rimsky; the executor passes this back to its own writes against
+  // the producer (see proto:data_processing.proto::CommitCandidate).
+  // Empty for non-DataProcessing claims and non-fan-out claims. Per
+  // @blessed-invariant 20 the bytes are inert in rimsky — passed
+  // verbatim from the sub-claim row to the wire.
+  bytes candidate_handle = 6;
 }
 
 // ExecuteEvent is the per-record event type in the gRPC response stream.
@@ -171,10 +179,19 @@ message Error {
 
 // ParkReason categorizes why an executor parked a node. Storage form
 // (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_AWAITING_HUMAN ->
-// awaiting_human). The same form is used on the diagnostics
+// from the enum symbol (e.g. PARK_REASON_CALLBACK_WAIT ->
+// callback_wait). The same form is used on the diagnostics
 // endpoint, the rimsky-cli `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
+//
+// The spec's 4-reason taxonomy (TIME_WAIT / CALLBACK_WAIT /
+// RETRY_BACKOFF / OTHER; see
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Parked-state taxonomy) is the canonical set for new emitters;
+// SIGNAL_WAIT and AWAITING_HUMAN are kept for existing emit sites
+// and map to OTHER in the rolled-up per-reason caps when not
+// explicitly configured. OTHER requires reason_label non-empty
+// (validated at the supervisor's terminal handler).
 //
 // @concept: parked-state
 enum ParkReason {
@@ -183,6 +200,8 @@ enum ParkReason {
   PARK_REASON_SIGNAL_WAIT    = 2;
   PARK_REASON_AWAITING_HUMAN = 3;
   PARK_REASON_RETRY_BACKOFF  = 4;
+  PARK_REASON_CALLBACK_WAIT  = 5;
+  PARK_REASON_OTHER          = 99;
 }
 
 // Park signals that the executor wants to pause the node and resume
@@ -207,6 +226,12 @@ message Park {
   string session_token = 4;
   // Free-form human annotation. Inert in rimsky.
   string reason_note = 5;
+  // reason_label is a freeform tag that MUST be set when
+  // reason = PARK_REASON_OTHER (validated at the supervisor's
+  // terminal handler). For taxonomy-mapped reasons it is optional
+  // additional context. Persisted on
+  // col:rimsky_node_runs.parked_reason_label.
+  string reason_label = 6;
 }
 
 // AwaitAsyncCallback (formerly AsyncAccepted) signals that the executor

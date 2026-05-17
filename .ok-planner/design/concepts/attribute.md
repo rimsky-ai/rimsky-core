@@ -19,7 +19,9 @@ Attributes give nodes a typed, validated contract for their inputs and outputs. 
 
 ## Boundaries
 
-Owns: the schema, the substitution grammar, the two validation gates, the writeback ledger. Does NOT own: userdata (separate inert stream — see `concept:inertness`), claim payload (lives on `claim`), quality rules (semantic validation lives in `quality-rule`). Adjacent: `node`, `quality-rule`, `userdata` (deliberately separate), `named-event`, `inertness`.
+Owns: the schema, the substitution grammar, the two validation gates, the writeback ledger. Does NOT own: userdata (separate inert stream — see `concept:inertness`), claim payload (lives on `claim`), assets (assets are claims, not attributes — see `concept:asset`), semantic validation (the retired `quality-rule` concept; today the verifier-executor pattern covers that surface — see `executors/verifier-shape-checks/`). Adjacent: `node`, `userdata` (deliberately separate), `named-event`, `inertness`, `asset`.
+
+Clarifying note (per 2026-05-15 data-platform-extensions): attributes are typed node I/O; assets are claims with `lifetime: durable` against a `DataProcessing`-capable producer. Templates author both side-by-side — attributes for transient run inputs/outputs, assets for durable datasets. Don't conflate.
 
 ## Invariants
 

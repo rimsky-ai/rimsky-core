@@ -158,7 +158,14 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("RemoveForNodeInTx with wrong supervisor was not a no-op: kind=%q", owner.Kind)
 	}
 
-	// ---- RemoveForNodeInTx: commit deletes the row ----
+	// ---- RemoveForNodeInTx: commit retires the row to terminal phase ----
+	//
+	// Post-stage-1 lifecycle flip (per the data-platform-extensions plan):
+	// RemoveForNodeInTx no longer deletes the row; it flips the row to
+	// terminal phase and clears claimed_by / last_heartbeat_at so the
+	// orphan-claim reaper and the in-flight predicate both stop treating
+	// the row as active. The row itself survives so frame-end / retention
+	// / run-tree aggregation can read the terminal state + last_outcome.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, supID, tx)
 	}); err != nil {
@@ -166,10 +173,28 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	}
 	_, owner, err = q.GetDispatchNode(ctx, dispatchID)
 	if err != nil {
-		t.Fatalf("GetDispatchNode after delete: err: %v", err)
+		t.Fatalf("GetDispatchNode after retire: err: %v", err)
 	}
-	if owner.Kind != "not_found" {
-		t.Fatalf("RemoveForNodeInTx commit did not delete row: kind=%q", owner.Kind)
+	if owner.Kind != "unclaimed" {
+		t.Fatalf("RemoveForNodeInTx commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
+	}
+	// The retired row is no longer in-flight; a fresh EnqueueInTx must
+	// admit a new row alongside it (the partial unique index
+	// uq_node_runs_in_flight_per_node allows this; the terminal row sits
+	// outside the in-flight predicate).
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:         fix.NodeID,
+			ExecutorName:   "test-executor",
+			RequiredStores: []string{},
+			EnqueuedAt:     time.Now().Add(-1 * time.Second),
+			FrameID:        fix.FrameID,
+		}, tx)
+	}); err != nil {
+		t.Fatalf("EnqueueInTx after retire: %v", err)
+	}
+	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found == (shared.UUID{}) {
+		t.Fatalf("EnqueueInTx after retire: no fresh in-flight row visible")
 	}
 }
 

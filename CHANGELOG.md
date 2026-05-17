@@ -2,6 +2,1254 @@
 
 ## Unreleased
 
+- Land lineage + events forensics extensions (2026-05-16, dispatch
+  attached to the data-platform-extensions plan): every claim-handle
+  terminal — `Commit`, natural `Abandon`, and force-cancelled `Abandon`
+  — now lands a row in `table:rimsky_lineage` and a matching event in
+  `table:rimsky_events`, closing the forensics gap left by the 2026-05-15
+  delivery (which emitted lineage only on Commit and was silent on
+  events for the new code paths). Pre-v1 break-freely (per
+  `file:.claude/rules/rules.md`): the prior `record_kind: claim_commit`
+  is renamed to `claim_terminal`; rows discriminate via a new
+  `col:rimsky_lineage.outcome` column (`committed | abandoned |
+  force_cancelled`); persistence-layer constants rename to
+  `LineageRecordKindClaimTerminal` + `LineageOutcome{Committed,
+  Abandoned, ForceCancelled}`.
+  - **`file:foundation/persistence/postgres/migrations/008-claim-lineage-outcome.sql`
+    + `file:foundation/persistence/sqlite/migrations/008-claim-lineage-outcome.sql`.**
+    Adds the `outcome TEXT NOT NULL DEFAULT 'committed'` column with a
+    CHECK constraint on the three allowed values; rewrites the
+    `record_kind` CHECK constraint to swap `claim_commit` →
+    `claim_terminal` (postgres uses ALTER … DROP/ADD CONSTRAINT; SQLite
+    uses the standard table-rename pattern because it does not support
+    DROP CONSTRAINT on CHECK). Pre-existing `claim_commit` rows are
+    rewritten to `claim_terminal` with `outcome='committed'`.
+  - **`code:runtime/lineage_writer.go::WriteClaimTerminalLineage`** (was
+    `WriteClaimCommitLineage`). New signature carries `Outcome` + `Cause`
+    fields on the `ClaimTerminalRecord` (was `ClaimCommitRecord`). The
+    `outcome` column is populated from the record's `Outcome` field; the
+    `cause` discriminator (`sibling_cancel` / `descendant_cancel`) lives
+    in the JSON payload because it's only meaningful on
+    `force_cancelled` rows.
+  - **`code:runtime/terminal_decision.go::ResolveClaimHandleTerminal`**.
+    The prior Commit-only lineage-emit block becomes an unconditional
+    call to the new `emitTerminalForensics` helper, which writes the
+    `claim_terminal` row + emits the matching
+    `claim_resolution.commit` / `claim_resolution.abandon` event in a
+    single best-effort pass. Both writes tolerate missing dependencies
+    (nil Persist / Clock / Lineage / Events) and log on error — the
+    surrounding terminal-decision tx still commits because the
+    forensics surfaces are observability metadata, not control-plane
+    state. A new `TerminalCause` field on `TerminalDecision`
+    distinguishes natural Abandon from sibling-/descendant-cancel; the
+    `cancelInFlightSiblings` and `cancelDescendantClaims` walkers now
+    set the matching cause on their recursive force-Abandon calls so
+    the lineage + event surfaces preserve provenance.
+  - **`code:runtime/runner_subclaim.go::AcquireSubClaims`** emits
+    `subclaim.begin_candidate` per accepted candidate (carries the
+    candidate-handle SIZE, not bytes — `@blessed-invariant:20`) and a
+    single `subclaim.acquired` summary after the loop. The events
+    capture rimsky-side identifiers + descriptor count; no scope_data,
+    no candidate bytes, no userdata.
+  - **`code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller`**
+    emits `subgraph.dispatched` alongside the existing
+    `subgraph_internal_cascade_fired` (the legacy kind stays for
+    transitioning observers). The new
+    `code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphExit`
+    emits `subgraph.exit_carry` after the writeback carry-rule fires
+    (`@blessed-invariant: exit-node-writeback flows to parent run
+    writeback`).
+  - **`code:runtime/fanout_dispatch.go::dispatchFanOutChildren`** emits
+    `fanout.children_created` alongside the legacy `fan_out_dispatched`
+    event; payload carries `parent_run_id`, `parent_node_id`,
+    `child_count`, `partition_keys_count` (no scope bytes per
+    `@blessed-invariant:20`).
+  - **`code:subscribers/openlineage/emitter.go::MakeClaimTerminalEvent`**
+    (was `MakeClaimCommitEvent`) maps the new `outcome` field to the
+    OpenLineage event type (`COMPLETE` for `committed`, `ABORT` for
+    `abandoned` / `force_cancelled`); the `cause` discriminator surfaces
+    on the per-dataset `rimsky_cause` facet.
+  - **Scenario coverage.** New tests pin the per-outcome lineage rows
+    and the matching events:
+    `file:test/scenarios/lineage/claim_abandon_lineage_test.go` (natural
+    Abandon → `outcome:abandoned`, `cause:natural` event),
+    `file:test/scenarios/lineage/force_cancelled_lineage_test.go`
+    (`strict.cancel_siblings:true` → triggering child stays
+    `abandoned`, cancelled siblings + descendants land
+    `force_cancelled` with `cause:sibling_cancel`), and
+    `file:test/scenarios/forensics/fanout_post_mortem_test.go`
+    (threshold-policy fan-out with mixed Commit/Abandon outcomes pins
+    that every child + the parent emits one `claim_terminal` row + one
+    `claim_resolution.*` event). Plus unit tests in
+    `file:runtime/terminal_decision_test.go` (`terminalOutcomeKey`,
+    `preferVersionID`) and updated unit tests in
+    `file:runtime/lineage_writer_test.go` that cover all three
+    outcomes.
+
+- Data Platform Extensions — ninth-pass post-review fixes (2026-05-16):
+  closes 5 fixer-cycle-9 findings on top of the eighth-pass dispatches.
+  Substantive correctness work on the `strict.cancel_siblings`
+  proactive walk — the cycle-8 implementation landed single-level
+  cancellation only (sibling Abandon under a single parent); cycle 9
+  closes the spec's recursive-descent requirement (fan-out of fan-out)
+  and tightens the row-lock + observability gaps the reviewer
+  surfaced on the cycle-8 work. No schema changes.
+  - **Recursive-descent cancellation under `strict.cancel_siblings: true` (`code:runtime/terminal_decision.go::cancelDescendantClaims`).**
+    Spec `§435` requires that when a sibling is force-Abandoned under `strict.cancel_siblings: true` and that sibling is itself a fan-out parent (fan-out of fan-out, sub-graphs containing fan-out), cancellation walks recursively through the descendant claim-tree. The cycle-8 implementation walked only the parent's direct children — a force-Abandoned sibling's grandchildren never received `Producer.Abandon`, and after the FK `parent_claim_handle_id ON DELETE SET NULL` fired on the sibling's Delete, the grandchildren were orphaned in-flight (their running holders would never transition to `failed{error_class: "sibling_failed"}`). The new helper `code:runtime/terminal_decision.go::cancelDescendantClaims` runs inside `ResolveClaimHandleTerminal` on `AggregateAbandon` BEFORE the row's own Delete: walks `ListChildClaimHandles(rowID)`, applies the same filters as `cancelInFlightSiblings` (skip held-durable, skip mismatched-supervisor), `LockForUpdate`s each descendant, then recursively `ResolveClaimHandleTerminal`s each as Abandon (which itself runs `cancelDescendantClaims` on its own descendants — handles arbitrary tree depth). The recursive call passes `ParentClaimHandleID: nil` for every descendant at every depth so the descendant's counter-bump + `resolveParentClaimChain` doesn't re-enter on a row that's itself mid-resolution in an outer frame. This is safe because each descendant's parent is itself being force-Abandoned in an outer recursion frame; the parent's row is about to be Deleted, so its aggregation counters are no longer load-bearing for the rest of the tree.
+  - **`LockForUpdate` on sibling rows in `code:runtime/terminal_decision.go::cancelInFlightSiblings`.**
+    The function's documented locking precondition (the `ResolveClaimHandleTerminal` contract) requires callers to serialize concurrent terminations via `SELECT … FOR UPDATE`. The cycle-8 cancel walker called `Get` (plain SELECT) on each sibling before recursing — a parallel worker on the same supervisor could be terminating the sibling natively (Commit/Abandon via the executor path) while our cancel walker fired a force-Abandon for the same `claim_id`; the producer would see two distinct verbs (Commit and Abandon) for the same claim and `claim_id` idempotency cannot reconcile them. The same-supervisor filter only handled the cross-supervisor case. Replaced `Get` with `LockForUpdate` to take a row lock on the sibling for the duration of the recursive call.
+  - **`HeldDurable` guard on parent in `code:runtime/terminal_decision.go::cancelInFlightSiblings`.**
+    Other auto-terminal paths (`code:runtime/auto_terminal.go::CheckAndFireResolution`, `code:runtime/auto_terminal.go::resolveParentClaimChain`) both guard on `parent.HeldDurable` and return nil; the cycle-8 cancel walker did not. Added the symmetric guard so cancel_siblings does not retroactively force-Abandon children whose parent already committed durably.
+  - **Log malformed `aggregation_policy` JSONB in `code:runtime/terminal_decision.go::cancelInFlightSiblings`.**
+    When `persistence.UnmarshalAggregationPolicy` failed, the walker returned nil with no log line; the operator never learned of the misconfiguration. Now emits a `Logger.Warn` line citing `parent_claim_handle_id` and the unmarshal error before returning nil (preserves the safe runtime behavior — the parent's `aggregateParentOutcome` walker applies the safe default at post-resolution — while making the misconfiguration visible).
+  - **New scenario `TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchildren` in `code:runtime/auto_terminal_test.go`.**
+    Pins the spec §435 load-bearing recursive-descent requirement. Seeds PARENT → [sub[0], sub[1]] with sub[1] → [g1, g2] (sub[1] is itself a fan-out parent with two grandchildren in-flight). Resolves sub[0] → Abandon. Asserts (a) all 5 claim_handle rows deleted (sub[0], sub[1], g1, g2, PARENT), (b) each row received exactly one `Producer.Abandon` (5 verbs total), (c) no Commits fired. Without `cancelDescendantClaims` the grandchildren would survive in-flight with `parent_claim_handle_id = NULL`.
+  - **Verification:** `cmd:make build-all`, `cmd:make lint`, `cmd:make test-all` all green. The new `TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchildren` scenario passes alongside the existing cycle-8 `TestResolveParentClaimChain_StrictCancelSiblings_*` family (two scenarios) and the broader `TestResolveParentClaimChain_*` + `TestCheckAndFireResolution_*` families.
+
+- Data Platform Extensions — eighth-pass post-review fixes (2026-05-16):
+  closes 2 fixer-cycle-8 findings on top of the seventh-pass dispatches.
+  One substantive correctness implementation (`strict.cancel_siblings`
+  proactive walk) + one test-fixture race-window tightening on the
+  parked-resume scenario. No schema changes.
+  - **`strict.cancel_siblings: true` proactive sibling cancellation in `code:runtime/terminal_decision.go::ResolveClaimHandleTerminal`.**
+    The aggregation-policy field `cancel_siblings` was already snapshotted onto `col:rimsky_claim_handles.aggregation_policy` (cycle-4 migration 007) but the post-resolution aggregator at `code:runtime/auto_terminal.go::aggregateParentOutcome` only computed the post-resolution verdict — it did not walk the parent's other in-flight sub-claims to force-Abandon them at the first child failure. The spec's intent (per `concept:fan-out` / `concept:claim-tree`) is that when a sub-claim resolves to `AggregateAbandon` under a parent whose `AggregationPolicy.Kind == strict && CancelSiblings == true`, the supervisor walks the parent's other in-flight sub-claim handles and force-Abandons each. The new helper `code:runtime/terminal_decision.go::cancelInFlightSiblings` runs after the bumped-counter step and BEFORE `code:runtime/auto_terminal.go::resolveParentClaimChain`. It reads the parent's snapshotted policy; if `strict + cancel_siblings`, walks `ListChildClaimHandles(parentID)`, skips (a) the triggering child, (b) held-durable siblings (durable-Commit contract — Abandon would violate it), (c) mismatched-supervisor siblings (`invariant:4` claimant-guard), and (d) already-deleted siblings (the recursive walker may have raced ahead via inner `cancelInFlightSiblings` calls). Each remaining sibling is force-Abandoned via a recursive `ResolveClaimHandleTerminal` call with `Outcome: AggregateAbandon`. This cycle landed single-level cancellation only — the spec's recursive-descent requirement for fan-out-of-fan-out (descendants of force-Abandoned siblings) was deferred to cycle 9 (see the cycle-9 entry below). Two new scenarios in `code:runtime/auto_terminal_test.go`: `TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren` asserts n=3 siblings → one Abandon triggers force-Abandon of two siblings + parent Abandon (4 producer Abandon verbs total, all rows deleted); `TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling` asserts the durable-sibling filter — n=3 with one promoted to `held_durable=TRUE` → only the non-durable in-flight sibling is force-Abandoned, the durable child survives + remains held_durable=TRUE.
+  - **`code:test/scenarios/parked_lifecycle_test.go::TestParkedLifecycleResumeOnDeadline` race-window tightening.**
+    Mirrored the cycle-7-era fix already applied to `code:test/scenarios/parked_lifecycle_test.go::TestParkedLifecycleHeldClaimRetentionAcrossPark`. The original 2s `resumeAt` budget assumed cold-container speeds; under heavy testcontainer-parallel load, the setup-through-parked-state-probe sequence could exceed 2s, allowing `SweepParkedNodes` to fire the resume BEFORE the test's `WhenType("worker").Success(...)` script swap landed — the resume would then re-Park the worker and `WaitForNodeState(..., Fresh)` would time out. Two changes: bumped `resumeAt` from 2s to 10s (matching the held-retention test), and reordered the Success-script swap to run BEFORE the parked-state SQL probes (so the Success script is in place the moment the sweep elapses, regardless of how slow the probes run). The flake was the intermittent failure historically flagged across dispatches 14, 17, and cleanup cycles 4, 6, 7 — always passing on rerun but degrading CI signal.
+  - **Verification:** `cmd:make build-all`, `cmd:make lint`, `cmd:make test-all` all green. The two new `TestResolveParentClaimChain_StrictCancelSiblings_*` scenarios pass alongside the existing `TestCheckAndFireResolution_*` and `TestResolveParentClaimChain_*` families. `TestParkedLifecycleResumeOnDeadline` passes 50 times consecutively post-fix (no flake reproduced before or after the timing tightening; the fix is preventive).
+
+- Data Platform Extensions — sixth-pass post-review fixes (2026-05-16):
+  closes 2 fixer-cycle-6 findings on top of the fifth-pass dispatches.
+  One defense-in-depth correctness guard at the parent-aggregation
+  surface + one documentation backfill. No schema changes.
+  - **Children-quorum defense-in-depth guard in `code:runtime/auto_terminal.go::CheckAndFireResolution`.**
+    The children-aggregation branch (entered when `col:rimsky_claim_handles.expected_children_count > 0`) assumes every fan-out child has already resolved (and bumped its outcome counter via `code:runtime/terminal_decision.go::ResolveClaimHandleTerminal`) before the parent's `CheckAndFireResolution` runs. This holds in normal operation because the run-tree `Aggregate` orders parent terminal strictly after all children — but the assumption was not enforced inside the function. A future caller that fired `CheckAndFireResolution` on a fan-out parent before all children had terminated would see incomplete counters and compute the wrong verdict (e.g. `best_effort` could read `committed_children_count == 0` mid-flight → Abandon despite pending Commits). The new guard returns nil when `committed_children_count + abandoned_children_count < expected_children_count`; the next child's terminal will re-invoke `code:runtime/auto_terminal.go::resolveParentClaimChain`, which performs the same children-completeness check via `ListChildClaimHandles` row presence and re-evaluates the parent's verdict through the same counters via `code:runtime/auto_terminal.go::aggregateParentOutcome`. The two paths converge on the same Commit/Abandon decision. New scenario `TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve` in `code:runtime/auto_terminal_test.go` pins the guard's defer behavior + the subsequent `resolveParentClaimChain`-driven Commit once quorum is met.
+  - **Cycle-5 notes-file backfill (`file:.ok-planner/plans/2026-05-15-data-platform-extensions-plan-notes.md`).**
+    The fifth-pass landed without an entry in the plan-notes file documenting cycle-5's three changes (durable-Commit counter bug fix, `TestStoreMethodsRejectNilTx` enumeration, test rename). The notes file now carries a parallel `## Cycle 5 fixer pass` section mirroring the cycle-3 / cycle-4 sections, so the implementation history of the plan is contiguous.
+  - **Verification:** `cmd:make build-all`, `cmd:make lint`, `cmd:make test-all` all green. The new `TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve` scenario passes alongside the existing `TestCheckAndFireResolution_*` and `TestResolveParentClaimChain_*` families.
+
+- Data Platform Extensions — fifth-pass post-review fixes (2026-05-16):
+  closes 3 fixer-cycle-5 findings on top of the fourth-pass
+  dispatches. All fixes are localized to the recursive-aggregation
+  surface + the structural deadlock-guard test enumeration; no schema
+  changes.
+  - **Durable-Commit children now bump parent counters + invoke recursive walker (`code:runtime/terminal_decision.go::ResolveClaimHandleTerminal`).**
+    The cycle-4 path early-returned on `td.Outcome == AggregateCommit && td.Lifetime == "durable"` after `SetHeldDurable(true)`, skipping the per-outcome counter bump + `resolveParentClaimChain` call. Under `best_effort` / `first` aggregation (`committed > 0 → Commit; else Abandon`) this caused fan-out parents with all-durable-Commit children to compute `committed_children_count == 0` → flipped verdict to `AggregateAbandon`. The held-durable promotion + non-durable Delete branches now share a single trailing block that bumps the parent counter and recurses into `resolveParentClaimChain` regardless of which branch dropped or promoted the row. New scenario `TestResolveParentClaimChain_BestEffort_AllDurableCommits` in `code:runtime/auto_terminal_test.go` pins this.
+  - **`TestStoreMethodsRejectNilTx` enumerates the seven missing `ClaimHandleTable` methods (`code:foundation/persistence/sqlite/deadlock_guard_test.go`).**
+    The structural nil-tx-deadlock guard's own contract ("New methods added to the Store interface MUST be added here") was unmet for the cycle-3/cycle-4 additions: `ListChildClaimHandles`, `SetHeldDurable`, `SetVersionID`, `ListHeldDurableByInstance`, `SetAggregationPolicy`, `BumpExpectedChildrenCount`, `BumpChildOutcomeCount`. Adding the seven cases ensures any future regression introducing a `s.q(nil)` silent auto-commit on these methods is caught under SQLite `MaxOpenConns=1`.
+  - **`TestResolveParentClaimChain_StrictCancelSiblings_AbandonsOnAnyFail` renamed to drop misleading sibling-cancellation claim (`code:runtime/auto_terminal_test.go`).**
+    The test's prior policy carried `CancelSiblings: true`, but the cycle-4 `aggregateParentOutcome` aggregator computes only a post-resolution verdict — proactive sibling cancellation is not implemented. The policy field is stored but unused. Renamed to `TestResolveParentClaimChain_Strict_AbandonsOnAnyFail` and dropped the `CancelSiblings: true` from the policy so the test name reflects what it actually exercises.
+  - **Verification:** `cmd:make build-all`, `cmd:make lint`, `cmd:make test-all` all green. The new + existing `TestResolveParentClaimChain_*` family pass; the deadlock-guard test now enumerates the previously-missing ClaimHandle methods.
+
+- Data Platform Extensions — fourth-pass post-review fixes (2026-05-16):
+  closes 4 fixer-cycle-4 findings layered on top of the third-pass
+  dispatches. Two coverage-gap closures and two spec-level tensions
+  resolved in the recursive claim-tree resolution path. Pre-v1
+  break-freely (per `.claude/rules/rules.md`): new persistence columns
+  via `code:foundation/persistence/postgres/migrations/007-claim-handles-parent-aggregation.sql`
+  + SQLite mirror; no compat shim.
+  - **Sub-claim recursion assertion (`code:runtime/runner_subclaim_test.go::TestSubClaim_BeginThenCommitFlowsThroughRuntime`).**
+    Cycle 3 added the recursion in `runtime/auto_terminal.go::resolveParentClaimChain` but the existing test pinned only per-sub-claim BeginCandidate / CommitCandidate / AbandonCandidate verbs. The test now also asserts the parent ClaimID receives the corresponding standard `ClaimProducer.Abandon` from the recursive walk + the parent `rimsky_claim_handles` row is deleted. A regression reverting fix 8 would no longer pass.
+  - **`target: self` empty-target rejection asserted end-to-end (`code:test/scenarios/messages/message_cascade_e2e_test.go`).**
+    The unit test pinned `messageEdgeMatches` directly via a synthetic loop, but the e2e `TestMessageCascadeE2E_SubscriberFlipsStale` exercised only the targeted-message path. The scenario now also creates a `self_receiver` node subscribing with `target: self` and enqueues a SECOND empty-target (broadcast) envelope; asserts `self_receiver` is NOT stale-marked (the receiver-resolution stage in `cascadeMessageSubscribersInTx` rejects a `target: self` subscription against an empty envelope target).
+  - **True children-aggregation in `code:runtime/auto_terminal.go::resolveParentClaimChain`.**
+    The pre-cycle-4 path picked parent Commit/Abandon from the just-resolved child's `seedOutcome` alone — correct for `strict.cancel_siblings:true` (where Abandon propagates to all leaves) but wrong for `best_effort`, `threshold(N)`, and (depending on resolution order) `strict.cancel_siblings:false`. Fix:
+    - New columns on `rimsky_claim_handles`: `aggregation_policy JSONB`, `expected_children_count INT`, `committed_children_count INT`, `abandoned_children_count INT` (migration 007). `expected_children_count` is bumped by `AcquireSubClaims` per sub-scope INSERT; `committed_children_count` / `abandoned_children_count` are bumped by `ResolveClaimHandleTerminal` before the recursive parent walk. Counters live entirely inside the rimsky-side atomic tx so the walker sees a consistent view.
+    - New `ClaimHandleTable.SetAggregationPolicy` / `BumpExpectedChildrenCount` / `BumpChildOutcomeCount` methods, claimant-guarded on `holder_supervisor_id`.
+    - `runtime/auto_terminal.go::aggregateParentOutcome` implements the four policy kinds mapped onto the Commit/Abandon binary: `strict` → any abandoned → Abandon; `threshold(N)` → abandoned > N → Abandon; `best_effort` / `first` → committed > 0 → Commit, else Abandon. `code:runtime/auto_terminal.go::CheckAndFireResolution` also calls the aggregator when the row is a fan-out parent (`expected_children_count > 0`).
+    - Snapshot wired through `code:runtime/runner_acquire.go::tryAcquire` → `AcquireSubClaims` from `nodeDef.FanOut.ErrorPolicy`.
+    - New scenario tests in `code:runtime/auto_terminal_test.go`: `TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits`, `TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax`, `TestResolveParentClaimChain_StrictCancelSiblings_AbandonsOnAnyFail`.
+  - **Held parent defers parent resolution while co-holders are still active (`code:runtime/auto_terminal.go::resolveParentClaimChain`).**
+    When the parent claim handle is itself held with active `rimsky_claim_holders` rows, the recursive walker now checks via `ListByClaimHandleID` and returns nil if any holder is still `'active'`. The parent's normal `CheckAndFireResolution` path re-drives parent resolution once the last holder transitions to non-active, so the lineage record fires at the true settle point (sub-claims-all-done AND holders-all-done). New scenario `TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers` asserts: 2 children commit + 1 co-holder still active → parent does NOT Commit yet; co-holder completes → CheckAndFireResolution fires + parent Commits.
+  - **Verification:** `cmd:make build-all`, `cmd:make lint`, `cmd:make test-all` all green. The new pgtest-backed scenario tests run alongside the existing `TestCheckAndFireResolution_*` family in `runtime/auto_terminal_test.go`. The `test/scenarios/messages/` package's e2e gains a second receiver node + second message; all `test/scenarios/*` and `foundation/persistence/conformance/` tests pass unchanged.
+
+- Data Platform Extensions — third-pass post-review fixes (2026-05-16):
+  closes 8 fixer-cycle-3 findings on top of the second-pass dispatches.
+  All fixes preserve behaviour for non-DataProcessing producers and
+  non-durable claims; the held-durable + fan-out surfaces gain
+  end-to-end pgtest-backed coverage.
+  - **Held-durable promotion double-Commit guard (`code:runtime/auto_terminal.go::CheckAndFireResolution`).**
+    After `SetHeldDurable(true)` flips a `lifetime: durable` row, the
+    row survives auto-terminal; a late sibling terminal re-entering
+    `CheckAndFireResolution` previously re-fired `Commit` and emitted
+    a duplicate `claim_commit` lineage row. The function now early-
+    returns when `row.HeldDurable == true`, matching the posture
+    `resolveParentClaimChain` already used for held-durable children.
+  - **Held-durable rows participate in scope-conflict (`code:foundation/persistence/postgres/claim_handles.go::ListByProducerScope` + sqlite mirror).**
+    Held-durable rows carry a stale `expires_at` (the orphan reaper
+    skips them); the previous `expires_at > now()` predicate let a
+    new acquirer take the same byte-equal scope while a durable
+    holder was still live, breaking `invariant:4b`. The clause is
+    now `(expires_at > now() OR held_durable = TRUE)`.
+  - **Sub-claim recursive resolution fires from both release branches
+    (`code:runtime/terminal_decision.go::ResolveClaimHandleTerminal`).**
+    `TerminalDecision` grows a `ParentClaimHandleID` field; after the
+    non-durable Delete branch commits the row removal, the engine
+    invokes `resolveParentClaimChain` so the parent's auto-terminal
+    walks the entire claim tree regardless of which release branch
+    dropped the sub-claim. The held-terminal path in
+    `CheckAndFireResolution` and the active-terminal path in
+    `releaseClaim` both pass the row's `ParentClaimHandleID` through.
+  - **`target: "self"` filter no longer delivers empty-target envelopes
+    (`code:runtime/message_delivery.go::cascadeMessageSubscribersInTx`).**
+    Removed the `msg.Target != ""` guard so an unaddressed envelope
+    is correctly skipped for every `target: self` subscription.
+    Senders use `*` for broadcast; an empty `target` field is not a
+    self-target.
+  - **`ListHeldDurableByInstance` SQL bugfix
+    (`code:foundation/persistence/postgres/claim_handles.go::ListHeldDurableByInstance`
+    + sqlite mirror).** The JOIN against `rimsky_nodes n` introduced
+    a second `id` column; the unqualified `SELECT id, ...` raised
+    `column reference "id" is ambiguous` at execution time. A
+    `qualifiedLockHolderCols("ch")` helper prefixes every selected
+    column with the table alias.
+  - **`PropagateChildState` → `PropagateFromChildState` in comments +
+    test names.** Six comment sites across `code:runtime/runner_terminal.go`,
+    `code:runtime/subgraph_dispatch.go`, `code:runtime/fanout_dispatch.go`
+    + three test functions in `code:runtime/state_propagation_test.go`
+    now reference the post-rename name.
+  - **Coverage:**
+    - `code:test/scenarios/asset/durable_lifetime_e2e_test.go::TestDurableLifetimeE2E`
+      drives the full chain auto-terminal → `SetHeldDurable` →
+      `ListHeldDurableByInstance` → `ReleaseHeldDurableClaims` against
+      a real Postgres.
+    - `code:runtime/auto_terminal_test.go::TestCheckAndFireResolution_DurableLifetimeIdempotency`
+      pins the re-entry guard added above.
+    - `code:test/scenarios/messages/message_cascade_e2e_test.go::TestMessageCascadeE2E_SubscriberFlipsStale`
+      drives `EnqueueMessage` → `SweepDeliverMessagesForRunningFrames`
+      → cascade walker → asserts the receiver's
+      `rimsky_nodes.state` flips to stale + `frame_id` stamped.
+    - `code:runtime/runner_subclaim_test.go::TestSubClaim_BeginThenCommitFlowsThroughRuntime`
+      pins the `BeginCandidate` / `CommitCandidate` / `AbandonCandidate`
+      dispatch through `runtime.RunArgs.DataProcessors`.
+    - `code:runtime/message_delivery_test.go::TestMessageEdgeMatches_FilterPermutations`
+      + `TestMessageEdgeMatches_TargetSelfWithEmptyEnvelopeTarget` —
+      table-driven coverage for `messageEdgeMatches` filter shape.
+
+- Data Platform Extensions — second-pass post-review fixes (2026-05-16):
+  closes 10 follow-up review findings on the 2026-05-15 dispatches. All
+  fixes preserve existing behaviour for non-DataProcessing producers
+  and non-durable claims; the DataProcessing + asset surface is now
+  end-to-end functional.
+  - **Held-durable promotion wired in `ResolveClaimHandleTerminal`.**
+    `TerminalDecision` grows a `Lifetime` field; on `AggregateCommit`
+    with `Lifetime == "durable"` the engine calls `SetHeldDurable(true)`
+    and skips the claimant-guarded `Delete` so the row survives
+    auto-terminal. The three call sites (active-terminal release,
+    held-claim auto-terminal, recursive parent-claim resolution) now
+    pass the row's `Lifetime` through. Without this the asset endpoints
+    (`GET /instances/{id}/assets`, `DELETE /.../assets/{alias}`) and
+    `ReleaseHeldDurableClaims` had no live rows to operate on.
+  - **Message-delivery cascade walks subscribers.**
+    `deliverForRunningFrame` now consumes the `DeliveredMessages` from
+    `DeliverPendingMessages` and walks the per-template subscription
+    edges keyed on `TopicKind=="message"`. Receivers whose envelope
+    filters (`kind`, `sender`, `sender_kind`, `target`, including
+    `target: self`) match the just-delivered envelope are
+    `MarkStaleForCascade`'d in the same tx. Without this, sensors
+    enqueued messages, `MarkDelivered` stamped them, and downstream
+    receivers slept forever. The `SubscriptionFilter` struct grows the
+    four message-envelope filter fields and `edgeFromSubscription`
+    propagates them through. Spec
+    `spec:2026-05-15-data-platform-extensions-design.md` §Delivery.
+  - **DataProcessing registry threaded through `AppDeps` / `RunArgs`.**
+    `control/config.DialSensorAndValidationRegistries` now returns its
+    third value (the `DataProcessingRegistry`); `StartControlAPI` wires
+    it into `controlapi.AppDeps.DataProcessors`. `runtime.RunArgs`
+    grows the same field so the supervisor's acquisition path can
+    dispatch on producers advertising the `data_processing` protocol.
+    `handleAssetVersions` resolves the asset to its claim handle,
+    looks up the matching client, and forwards to `ListVersions`
+    (returning 503 when no DataProcessing peer is configured).
+  - **`PropagateChildState` renamed to `PropagateFromChildState`.**
+    The function no longer redundantly rewrites the child's row — the
+    terminal-handler chain has already written the row by the time
+    propagation fires. Removing the unconditional
+    `UpdateStateAndOutcome` prevents the `give_up` path from
+    clobbering a previously-resolved `last_outcome`. Tests now write
+    the child terminal state explicitly before invoking the walker.
+  - **`applyTerminalPark` emits leaf-run lineage.**
+    Park is a settled leaf state and now records a lineage row with
+    `state="parked"` + empty `last_outcome`, matching the other three
+    terminal handlers. Dashboard run-history and the
+    `materialization-history` endpoint no longer miss the parked-leaf
+    class.
+  - **closeAll closure-capture documented.** One-line comment on
+    `DialSensorAndValidationRegistries` notes that the per-protocol
+    client maps are captured by reference and reflect whatever has
+    accumulated at invocation time (intended for the per-peer
+    dial-error rollback path).
+  - **`(parent_run_id, child_key)` CHECK constraint on
+    `rimsky_node_runs`.** Postgres treats two rows with the same
+    `parent_run_id` and both `child_key=NULL` as distinct under a
+    multi-column unique index; the new CHECK
+    `(parent_run_id IS NULL OR child_key IS NOT NULL)` makes the
+    schema self-defending against future writers that forget to set
+    `child_key`. SQLite mirror lives on the column ADD itself
+    (SQLite does not support adding table-level CHECKs via
+    `ALTER TABLE` post-creation).
+  - **Sub-claim `is_held` inherits from parent.**
+    `AcquireSubClaimsInput.ParentIsHeld` propagates the parent
+    `claim_handle.is_held` into per-sub-claim INSERTs so the rows
+    survive the fan-out leaf's active terminal until
+    `resolveParentClaimChain` walks them. Without inheritance the
+    non-held sub-claim row dropped at the leaf's active terminal and
+    the parent's aggregation saw an empty children set, Committing
+    prematurely. `AcquiredLock` grows an `IsHeld` field so the
+    caller in `tryAcquire` can plumb the value through.
+  - **DataProcessing candidate verbs wired at acquire + terminal.**
+    `AcquireSubClaims` now calls `BeginCandidate` per sub-claim when
+    the producer advertises the protocol and persists the returned
+    `producer_candidate_handle`. `TerminalDecision` grows
+    `CandidateHandle` + `ProducerName` fields and
+    `ResolveClaimHandleTerminal` dispatches `CommitCandidate` on
+    `AggregateCommit` (persisting the producer-returned
+    `version_id` via `SetVersionID`) or `AbandonCandidate` on
+    `AggregateAbandon` BEFORE the standard `ClaimProducer.Commit` /
+    `Abandon`. Auto-terminal + active-terminal release paths thread
+    these from the claim_handle row.
+  - **`ReleaseHeldDurableClaims` wired into `handleDeleteInstance`.**
+    The control-api instance-delete handler now invokes the cleanup
+    inside its own short tx after the lifecycle-event fan-out. Per
+    `@blessed-invariant 22` durable claim handles survive
+    auto-terminal; without the release call instance deletion would
+    orphan the durable claim handles and leak producer-side state.
+    Failures log + retain the row for retry rather than blocking
+    deletion.
+
+- Data Platform Extensions — post-review fixes (2026-05-16):
+  closes 15 review findings on the 2026-05-15 dispatches. Each fix
+  is surgical and aligned with the data-platform-extensions design;
+  no rollback of prior dispatches.
+  - **F8b — `frame_delivery_mode` on `POST /instances`.** The body
+    field is now plumbed end-to-end (controlapi → InstanceCreateInput
+    → postgres + sqlite INSERT) so operators can opt instances into
+    `serial_queue` delivery; `coalesce` remains the default. Round-
+    trips on GET responses + scenario coverage in
+    `instance_frame_delivery_mode_test.go`.
+  - **Run-tree state propagation wired into all terminal handlers.**
+    A new `PropagateIfChildAfterTerminal` helper aggregates per
+    `AggregationPolicy` up the run-tree at the success terminal
+    (`applyTerminalComplete`), park terminal (`applyTerminalPark`),
+    error give_up (`applyErrorPolicy`), and pass terminal
+    (`applyTerminalPass`).
+  - **DeliverPendingMessages wired into the scheduler tick.** New
+    `SweepDeliverMessagesForRunningFrames` iterates running frames
+    per the per-instance `frame_delivery_mode` and is idempotent on
+    re-fire. Hooked into `graph/scheduler.go::tick` after
+    `frame.RunTick`.
+  - **Lineage writers wired at leaf-run terminal + claim Commit.**
+    `EmitLeafRunLineage` is called from every success-path /
+    pass-path / give_up-path terminal handler;
+    `ResolveClaimHandleTerminal` grows a `LineageHint` field and
+    emits a `claim_commit` row on successful Commit. Best-effort
+    writes — failures are logged but do not roll back the
+    surrounding terminal.
+  - **Sub-graph child dispatch fully wired.**
+    `applyTerminalCompleteSubgraphCaller` now creates child runs for
+    every non-entry internal node via `CreateChildRun` and stale-marks
+    the corresponding `rimsky_nodes` rows so the next dispatcher tick
+    picks them up.
+  - **Fan-out unique-index split.** The partial UNIQUE index on
+    `rimsky_node_runs` used to gate solely on `(node_id)` which
+    collided with fan-out children sharing the parent's node id.
+    Split into a root-run index keyed on `(node_id) WHERE
+    parent_run_id IS NULL` and a child-run index keyed on
+    `(parent_run_id, child_key) WHERE parent_run_id IS NOT NULL`,
+    both partial on the in-flight phases. Postgres + SQLite
+    migrations updated; pre-v1 break-freely (no shim).
+  - **`runtime/remote/` gains data_processing / validation / sensor
+    clients.** Three new gRPC client adapters mapping the
+    corresponding proto bindings into the rimsky-side runtime
+    interfaces (`runtime.DataProcessingClient`,
+    `runtime.ValidationClient`, `runtime.SensorClient`).
+  - **Production `AppDeps.Sensors` / `Validators` populated.**
+    `control/config` now dials per-protocol registries
+    (`DialSensorAndValidationRegistries`) when peers advertise
+    `sensor` / `validation` / `data_processing` in their
+    `protocols:` list; `StartControlAPI` threads the resulting
+    registries into `AppDeps`.
+  - **Asset alias projection fix.** `GET /instances/{id}/assets`
+    now emits the precise `{node_type}.{claim_alias}` form derived
+    from the template's `stores:` declaration rather than the
+    `{node_type}.{producer_name}` approximation.
+  - **Sensor-webhook route-leak fix.** Replaced the per-watch
+    `router.Post(path, ...)` (chi has no unregister) with a single
+    catch-all `POST /*` dispatcher that resolves the inbound path
+    via an in-memory `pathToWatch` map. StopWatch now removes the
+    map entry; the chi tree is never mutated after construction.
+  - **Sub-claim selector double-encoding fix.** Per-sub-claim
+    `Open` call removed from `AcquireSubClaims`: SplitScope's
+    response IS the per-sub-claim acquisition. The proto
+    `OpenRequest.selector` field is a `string` that cannot
+    losslessly carry arbitrary `scope_data` bytes — re-issuing
+    Open with `string(desc.ScopeData)` double-encoded the
+    canonicalized scope into a substitution-time selector. Sub-claim
+    disposition flows through `CommitCandidate` / `AbandonCandidate`
+    on the DataProcessing surface.
+  - **Held-durable rows excluded from heartbeat + orphan-delete
+    loop.** `ExtendHeartbeat` and `DeleteIfExpired` both grew
+    explicit `held_durable = FALSE` predicates so a concurrent
+    `SetHeldDurable` (fired by the auto-terminal Commit path)
+    cannot race the orphan reaper. Mirror in postgres + sqlite.
+  - **Smoke flake fix.** `assertFinalState` now polls the items
+    table with a bounded retry loop instead of a single-shot read.
+    The dispatch-12 flake ("1/100 items not released") was a race
+    between rimsky's bookkeeping settling and the producer's
+    items-table state catching up (decoupled tx per
+    `@blessed-invariant 10`).
+
+- Data Platform Extensions — dispatch 17 (2026-05-15): O1 smoke
+  extension + Q concept-catalog mutations + R blessed-invariant
+  updates + S dashboard reframe + T2..T6 documentation and cleanup.
+  Final implementation dispatch before review + archive.
+  - **O1 smoke fixture extension.** New `test/smoke/data_platform_smoke_test.go`
+    covers three new wire surfaces: the stub-store DataProcessing
+    extension end-to-end over gRPC (the seven RPCs); the sensor-http
+    poll → match → push wire contract against a fake HTTP upstream +
+    fake rimsky receiver; the openlineage emitter wire contract
+    against a fake Marquez receiver. Force-fire was retired in
+    dispatch 13 alongside cron; the existing 100-invalidate cascade
+    smoke remains the canonical end-to-end exerciser.
+  - **R1/R2: invariant 4b and 10 text updates.** `foundation/locks/interface.go`
+    gains the canonical `@blessed-invariant 4b` annotation
+    ("single-writer-per-scope; overlap is producer-defined, byte-equal
+    as the trivial default"). `runtime/runner.go` and
+    `runtime/supervisor.go` update `@blessed-invariant 10` text to
+    reflect the parent-run + sub-claim atomicity shape from spec
+    §Recursive scope partitioning.
+  - **R3: three new invariants annotated in code.**
+    - `runtime/auto_terminal.go::resolveParentClaimChain` — held-durable
+      claim handles persist across instance dispatches (the
+      `c.HeldDurable` skip is the load-bearing site).
+    - `runtime/subgraph_dispatch.go::CarryExitWriteback` — exit-node
+      writeback flows to parent-run writeback (already annotated in
+      round 14; verified).
+    - `graph/attribute/substitution.go::resolveTrigger` +
+      `control/controlapi/messages.go::handleGetMessage` +
+      `runtime/message_delivery.go` — messages are inert in rimsky;
+      payload bytes read only at the substitution leaf and the
+      persistence-layer fetch.
+  - **R4: CLAUDE.md invariant catalog.** Updated entries for 4b and
+    10; appended invariants 22 (held-durable persistence), 23 (exit
+    writeback carry-rule), 24 (messages inert).
+  - **Q1: fifteen new concept files** under `.ok-planner/design/concepts/`:
+    `graph`, `sub-graph`, `delegation`, `fan-out`, `asset`,
+    `claim-lifetime`, `claim-co-holdership`, `data-processing`,
+    `validation`, `sensor`, `message`, `lineage`, `lineage-record`,
+    `atomic-staging`, `backfill`. Each follows the existing
+    frontmatter + definition/boundaries/invariants/annotation-sites
+    shape.
+  - **Q2: fourteen existing concept files updated** with 2026-05-15
+    sections: `attribute`, `claim`, `claim-handle`, `claim-producer`,
+    `cascade`, `node-run`, `frame`, `parked-state`, `invalidate`,
+    `subscription`, `service`, `named-event`, `event-log`,
+    `inertness`.
+  - **Q3: three concept files retired** to `concepts/_retired/`:
+    `node-state` (state lives on `rimsky_node_runs` now),
+    `quality-rule` (replaced by verifier-executor pattern),
+    `schedule` (replaced by bundled `sensor-cron`).
+  - **Q4: `concepts.md` TOC regenerated** by hand (file marked
+    auto-generated; this dispatch refreshes the listing manually,
+    pending a generator script). New entries sorted alphabetically;
+    retired entries moved to a `## Retired concepts` section.
+  - **S1: dashboard asset-primary panel.** Adds an "Assets" top-nav
+    item alongside Templates / Instances / Events. New routes
+    `/assets` (cross-instance list with instance picker) and
+    `/instances/:instanceId/assets/:alias` (detail with current
+    version, version history, materialization history, lineage
+    walks, Materialize / Delete buttons). API surface extended in
+    `api.ts` with `listAssets` / `getAsset` / `listAssetVersions` /
+    `listAssetMaterializations` / `materializeAsset` /
+    `deleteAsset`. Types added to `client/types.ts`. Test:
+    `tests/unit/AssetsPage.test.tsx`. Also retires the legacy
+    `SchedulesPage` route (schedule was retired in dispatch 13);
+    removed the unused `listSchedules` API helper and the
+    `ScheduleListResponse` / `ScheduleRow` types.
+  - **T2: CLAUDE.md + depguard.** Verified `.golangci.yml`'s
+    `pgx-isolation` rule already includes `sensors/` and
+    `subscribers/`. The "Package import rules" section already
+    mentions the new directories. The "Schema" section is expanded
+    with the post-2026-05-15 schema (run-tree extension, claim-handle
+    extensions, `rimsky_messages`, `rimsky_lineage`,
+    `rimsky_sensor_watches`, dropped `rimsky_schedules`). New
+    "Non-obvious gotchas" entries added for sub-graph absorption,
+    held-durable persistence, frame-delivery mode default, sensor
+    watches, schedule retirement, backfill cancellation, BeginCandidate
+    timing, messages-inert.
+  - **T3: module-layout doc.** Updated to mention `sensors/`,
+    `subscribers/`, `examples/` as new top-level directories.
+  - **T4: dead-code sweep.** Removed `dashboards/rimsky-dashboard/src/client/routes/SchedulesPage.tsx`
+    plus its references in `App.tsx`, `Nav.tsx`, `api.ts`, `types.ts`.
+    Other retired identifiers (`QualityRule`, `qualityRule`,
+    `QualityRules` Go-side; `Schedule` on `TemplateNodeDef`; `on_event:`
+    map field; `rimsky_schedules` table refs in active code) were
+    already cleaned in dispatch 13.
+  - **T5: feature-index.md.** Confirmed not applicable — rimsky
+    doesn't maintain one (zonebase convention only).
+- Data Platform Extensions — dispatch 16 (2026-05-15): Section M
+  conformance binaries + stub-store DataProcessing extension; broad
+  N-scenario coverage (N1 + N4..N10).
+  - **Stub-store DataProcessing extension (M1 prep).** New package
+    `stores/stub/dataprocessing/` implements the seven RPC
+    DataProcessing surface as an in-memory fixture. Capabilities
+    advertise `data_shapes: [stub]`, `materializations: [full]`,
+    `partition_kinds: [attribute_value]`, `aggregators: [union]`.
+    `BeginCandidate` / `CommitCandidate` / `AbandonCandidate`
+    round-trip cleanly with idempotency on the
+    (claim_handle_id, idempotency_key) pair; `ListVersions` /
+    `ListPartitions` / `GetVersionSchema` return fixture data.
+    `SplitScope` accepts a `{partition_keys: [...]}` JSON
+    partition_request and emits N descriptors. The extension is
+    enabled via `server.Config.EnableDataProcessing`; the test
+    fixture turns it on by default. The stub-store's ClaimProducer
+    surface now also implements `SplitScope` + `ScopesConflict`
+    (delegating to the DataProcessing impl when present; byte-equal
+    fallback otherwise) and advertises
+    `SupportsSplitScope: true` + `SupportsScopesConflict: true` in
+    Capabilities, with `Protocols` including `data_processing`
+    when the extension is wired.
+  - **runtime/remote/dial caps pass-through.** `remote.Dial` now
+    threads `SupportsSplitScope`, `SupportsScopesConflict`,
+    `Protocols`, and `ValidationSupportedRoles` from the
+    Capabilities handshake into the cached `locks.Capabilities`
+    struct. Previously only `WriteSemanticsAllowed` flowed through,
+    so the runtime client would silently fall back to the
+    no-advertise paths even when the producer advertised the
+    optional verbs. Bug-fix surfaced by the M4 conformance binary.
+  - **M1.** New `cmd/rimsky-data-processing-conformance/` binary
+    runs the seven-RPC conformance battery against any
+    DataProcessing-advertising producer; self-test passes against
+    the stub-store extension.
+  - **M2.** New `cmd/rimsky-validation-conformance/` binary
+    exercises the Validate RPC per role (executor /
+    claim_producer / lifecycle_subscriber / sensor); self-test
+    passes against an in-process Validation server that mirrors
+    the verifier-shape-checks shape. The
+    `executors/verifier-shape-checks/` binary now registers a
+    `ValidationServer` (new `validation.go` +
+    `validation_test.go`) that validates `role="executor"`
+    requests against the shape-check userdata schema, surfacing
+    `unsupported_role`, `missing_context`, `invalid_userdata`,
+    `missing_checks`, `empty_checks`, `malformed_check`, and
+    `missing_check_kind` errors plus an `unknown_check_kind`
+    warning.
+  - **M3.** New `cmd/rimsky-sensor-conformance/` binary exercises
+    the Sensor lifecycle (Capabilities / StartWatch / StopWatch /
+    ListWatches + idempotency) plus an optional observation-push
+    check that asserts observations land at a fake rimsky receiver.
+    Self-test passes against an in-process sensor fixture.
+  - **M4.** Extended `cmd/rimsky-claim-producer-conformance/` with
+    `optional_checks.go` carrying `SplitScope` + `ScopesConflict`
+    probes. Each surfaces a `SplitScopeSkipped` /
+    `ScopesConflictSkipped` marker when the producer does not
+    advertise. New self-test against the storetest fake confirms
+    the skip path; the stub-store self-test confirms the run-the-
+    full-check path.
+  - **M5.** Extended `cmd/rimsky-executor-conformance/` via two
+    new conformance scenarios under `conformance/scenarios/`:
+    `park_reason_emission` (asserts the executor's Park.reason is
+    typed, not UNSPECIFIED) and `park_reason_other_requires_label`
+    (probes the executor's handling of `PARK_REASON_OTHER` without
+    a `reason_label`). The bundled stub executor (`executors/stub/`)
+    now honors a `probe_park` userdata flag in stub mode that
+    emits a Park terminal with the requested reason / label /
+    note; a small `parkReasonFromStorageForm` helper maps the
+    storage form back to the enum.
+  - **N1 (run-tree).** `test/scenarios/run_tree/` covers
+    state-propagation, fan-out aggregation, the
+    strict-cancel-siblings action, error-policy (threshold +
+    best-effort + first), deep-tree shapes (sub-graph-of-fan-out
+    + fan-out-of-sub-graph), and candidate-handle threading.
+  - **N4 (messages).** `test/scenarios/messages/` covers the
+    enqueue→deliver round-trip for operator + sensor senders,
+    multi-receiver match in coalesce mode, dead-letter filtering
+    on cancelled rows, and both `serial_queue` and `coalesce`
+    delivery modes.
+  - **N5 (sensor).** `test/scenarios/sensor/` covers
+    StartWatch/StopWatch/ListWatches lifecycle, idempotency on
+    retry, and the observation routing shape
+    (`POST /sensors/{watch_id}/observations`).
+  - **N6 (asset).** `test/scenarios/asset/` pins the durable
+    lifetime taxonomy + ClaimHandleInsertInput.Lifetime shape;
+    drives durable claims through Begin → Commit and pins the
+    version survives the "run-completion" boundary; pins the
+    HeldDurableReleaseReport invariant; drives staging-then-swap
+    across multiple concurrent candidates.
+  - **N7 (lineage).** `test/scenarios/lineage/` covers
+    LeafRunRecord + ClaimCommitRecord write-shape, the
+    HashCanonicalJSON / HashBytes stability, multi-leaf rows
+    sharing a frame, and an OpenLineage emission roundtrip
+    against a fake Marquez-shaped receiver.
+  - **N8 (atomic-staging).** `test/scenarios/atomic_staging/`
+    covers Commit-on-all-success, Abandon-on-any-failure,
+    concurrent staging under N goroutines, and a verifier-
+    failure → Abandon scenario against the example store.
+  - **N9 (backfill).** `test/scenarios/backfill/` covers
+    partition_selector_override threading through the message
+    payload, CancelBackfill marking pending rows, GetBackfillStatus
+    payload field extraction, and lineage-chain BackfillOperationID
+    threading.
+  - **N10 (verifier + co-holder).** `test/scenarios/verifier/`
+    covers the verifier-pattern success/failure shape contract,
+    mixed-outcomes aggregation under each policy kind, and
+    cross-table verifier's claim_aliases pass-through.
+- Data Platform Extensions — dispatch 15 (2026-05-15): E6 + E7
+  runner-tx integration + N2 / N3 scenario suites.
+  - **E6 canonicalizer markers.** `IsSubgraphEntryAbsorbed` on
+    `foundation/spec/TemplateNodeDef` and `ResolvesViaCallingNode` on
+    `foundation/spec/SubscriptionEntry`. `graph/node/template_validator_graphs.go::flatten`
+    emits both markers at canonicalization: the calling node
+    (Delegate set) carries `IsSubgraphEntryAbsorbed: true`;
+    subscription edges from non-entry internal nodes targeting the
+    graph's entry alias carry `ResolvesViaCallingNode: true`. New
+    tests in `graph/node/template_validator_graphs_test.go` pin both
+    markers.
+  - **E6 terminal-handler routing.**
+    `runtime/runner_terminal.go::applyTerminalComplete` routes
+    through the new
+    `runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller`
+    when the run's node-def carries the absorption marker. The
+    caller helper keeps the parent run `running` (state-machine
+    self-transition under `ReasonSubGraphInternalCascadeFired`),
+    persists the absorbed entry's writeback, and emits a
+    `subgraph_internal_cascade_fired` audit event. Exit-node
+    terminals route through `applyTerminalCompleteSubgraphExit` →
+    `CarryExitWriteback` to carry exit's writeback onto the parent
+    run row per @blessed-invariant 20.
+  - **E7 dispatcher-side child-run loop.**
+    `runtime/runner.go::RunNode` detects fan-out post-acquisition
+    (`acq.SubClaims` non-empty + `IsFanOutNode`) and routes to
+    `runtime/fanout_dispatch.go::dispatchFanOutChildren` which
+    snapshots the fan-out node's `error_policy` as the parent's
+    AggregationPolicy, projects sub-claims into per-child plans via
+    `PlanFanOutChildren`, INSERTs the child runs via
+    `CreateFanOutChildren`, and emits a `fan_out_dispatched` audit
+    event. The parent's leaf-dispatch is intentionally skipped —
+    children dispatch on subsequent runner ticks; the standard
+    state-propagation engine settles the parent at aggregator
+    terminal.
+  - **E7 parent-terminal rendezvous.**
+    `runtime/auto_terminal.go::resolveParentClaimChain` now takes a
+    `seedOutcome` so a sub-claim's Abandon propagates to parent
+    Abandon. Previously the recursive walk hard-coded
+    `AggregateCommit`; the new signature carries the just-resolved
+    child's verdict up the claim-tree so "any-sub-claim-Abandon →
+    parent Abandon" holds at every level.
+  - **N3 scenarios.** `test/scenarios/subgraph/`:
+    `entry_absorption_test.go`, `internal_cascade_test.go`,
+    `exit_carry_rule_test.go`, `nested_subgraph_test.go`,
+    `main_graph_rejection_test.go`. Each exercises the canonicalizer
+    markers + the runtime predicates (`IsSubgraphCaller`,
+    `IsSubgraphExit`, `SubgraphParentSuccessCascade`) in unit-style
+    against the in-memory template. The exit-carry-rule scenario
+    uses a per-test `RunTreeTable` stand-in to drive the
+    `CarryExitWriteback` helper's load-parent-by-run-id path.
+  - **N2 scenarios.** `test/scenarios/fanout/`:
+    `split_scope_emits_n_sub_claims_test.go`,
+    `child_runs_per_partition_key_test.go`,
+    `parent_aggregates_via_policy_test.go`,
+    `parent_terminal_rendezvous_test.go`,
+    `aggregator_set_advertised_subset_test.go`. Each pins one
+    property of the fan-out integration: per-sub-claim child
+    projection; per-partition-key idempotency; aggregation rule
+    table over `strict` / `threshold` / `best_effort` / `first`;
+    parallelism-semaphore correctness under concurrent acquire;
+    aggregator-kind fallback to strict on unknown kinds.
+
+- Data Platform Extensions — dispatch 14 (2026-05-15): E6 + E7 dispatch
+  primitives, J2 / J3 / J4 bundled sensors, and L1 atomic-staging example
+  verification.
+  - **E6.** Sub-graph dispatch primitives in
+    `runtime/subgraph_dispatch.go`. `SubgraphParentSuccessCascade`
+    returns the non-entry internal nodes to stale-mark as children of
+    the calling-node parent run on entry-success terminal, paired with
+    the `ReasonSubGraphInternalCascadeFired` state-machine transition.
+    `CarryExitWriteback` implements the exit-node writeback carry-rule
+    (annotated `@blessed-invariant: exit-node-writeback flows to parent
+    run writeback`). `IsSubgraphCaller` / `IsSubgraphExit` cheap
+    predicates. Helpers are pure (no DB-touching glue) so they can be
+    exercised in unit tests; the runner-terminal integration follows
+    when the canonicalizer-side entry-absorption markers land.
+  - **E7.** Fan-out dispatch primitives in `runtime/fanout_dispatch.go`.
+    `PlanFanOutChildren` projects acquired sub-claims into per-child
+    `FanOutChildRunPlan`s; `CreateFanOutChildren` INSERTs them via
+    `persistence.RunTreeTable.CreateChildRun` (idempotent on
+    `(parent_run_id, child_key)`). `FanOutParallelismSemaphore` +
+    `FanOutSemaphoreRegistry` carry the per-parent-run parallelism cap;
+    `IsFanOutNode` / `FanOutAggregationPolicy` cheap predicates.
+  - **J2.** `sensors/sensor-http/` — bundled HTTP-poll sensor. Per
+    watch, polls a configured URL on a fixed interval, applies a match
+    predicate (status code + JSONPath substring), pushes observations
+    when the response body's SHA-256 changes vs. the prior watermark.
+  - **J3.** `sensors/sensor-object-store/` — bundled object-store
+    sensor with backend abstraction (`ObjectLister` interface; ships
+    "memory" backend by default for smoke testing; S3 / GCS / Azure
+    backends register via `SetBackend` at process startup). Per
+    watch, polls bucket+prefix on a fixed interval, emits one
+    observation per new object (watermark `name` or `last_modified`).
+  - **J4.** `sensors/sensor-webhook/` — bundled inbound-webhook
+    sensor. Runs a chi HTTP server on a dedicated port; each
+    `StartWatch` registers a route under `path_prefix`. Inbound POSTs
+    push observations to rimsky. Optional idempotency-key header
+    suppresses duplicate emissions per-watch.
+  - **L1.** `examples/atomic-staging-fs-producer/` verified — pre-
+    existing reference implementation passes `go test ./...`. No
+    new code required for this dispatch.
+
+- Data Platform Extensions — dispatch 13 (2026-05-15): retirement cascade
+  + bundled OpenLineage subscriber.
+  - **P1.** Retired `graph/qualityrule/` (the `Evaluator` interface,
+    `eval/` registry, `Spec`/`Failure`/`EvalInput` aliases). The
+    `TemplateNodeDef.QualityRules` field is gone; `foundation/spec/qualityrule.go`
+    is gone. The `quality_rule_failed` event is gone — verifier
+    executors (Section I) emit `executor_errored` with
+    `error_class: "verifier_failed"` instead. Proto wire numbers
+    18 (`QualityRuleFailedPayload`) and the `quality_failed` string in
+    `WorkCompletedPayload.outcome` are reserved.
+    `runtime/runner_terminal.go::applyTerminalComplete` no longer
+    runs per-node quality rules; the bundled
+    `executors/verifier-shape-checks/` + `executors/verifier-http/`
+    own the shape-check role. License-check config + `licensing.yml`
+    drop the dual Apache/AGPL split that used to apply to
+    `graph/qualityrule/{,eval/}`.
+  - **D7 + E16 + B10 + P2 + P3.** Schedule-retirement cascade. The
+    per-node `schedule:` field retired from `TemplateNodeDef`; the
+    `validateSchedule` validator + `cron` import are gone (templates
+    with `schedule:` now reject via `DisallowUnknownFields`).
+    `rimsky-scheduler` drops the cron-fire tick (`ProcessSchedules`
+    + `schedule_ticker.go` + `scheduleDispatcherAdapter` deleted).
+    The `rimsky_schedules` table drops via the new
+    `006-drop-schedules.sql` migration (both Postgres + SQLite);
+    `foundation/persistence/schedules.go` + the driver impls are
+    gone; `Tables.Schedules()` is gone. The `rimsky_nodes.schedule_cron`
+    column drops alongside it (`NodeRow.ScheduleCron` + `NodeCreateInput.ScheduleCron`
+    gone). The `POST /admin/scheduled-nodes/{node_id}/force-fire`
+    endpoint retires; `control/controlapi/admin_force_fire.go`,
+    `cli.RunAdminForceFire`, `Client.AdminForceFire`, the
+    `force_fire_scheduled` MCP tool, and the `rimsky-cli admin
+    force-fire` subcommand are gone. The `schedule_fired` /
+    `schedule_dispatch_failed` proto payloads retire (wire numbers
+    24 + 27 reserved). Smoke fixture (`test/smoke/stores_redesign_smoke_test.go`)
+    swaps force-fire for `POST /admin/instances/{id}/nodes/{node_id}/invalidate`
+    against the `claim-topic` source node; the scenario test
+    `scheduled_node_test.go` is removed; `fan_out_pattern_test.go`
+    drops `Schedule:` and relies on initial-frame fire-on-create.
+    Cron firing is owned by the bundled `sensors/sensor-cron/`
+    service.
+  - **P4.** Per-node `on_event:` map retirement confirmed: the parsing
+    path was already retired by the 2026-05-14 subscription-cascade
+    resolution; `validateOnEvent` + the `OnEvent` map field on
+    `TemplateNodeDef` were absent before this dispatch. `concept:event`
+    consumption is via `subscribes: [{on: event, ...}]` only.
+  - **K.** New bundled subscriber `subscribers/openlineage/` — polls
+    `table:rimsky_lineage` for new rows since a stored cursor and emits
+    OpenLineage 1.x JSON events to a configured backend (Marquez /
+    DataHub). Per the plan's pre-resolved decision, polling (not
+    LifecycleSubscriber events) is the V1 transport; the subscriber
+    maintains its own cursor table (`rimsky_openlineage_cursor`) keyed
+    by namespace. Apache-licensed standalone binary. The
+    `.golangci.yml` `pgx-isolation` allowlist gains `subscribers/`.
+    Tests cover: leaf-run + claim-commit mapping; HTTP emitter
+    (success / non-2xx / empty-backend no-op); end-to-end polling
+    against real Postgres (testcontainers); cursor advancement on
+    success; cursor halt on emit failure. New top-level `subscribers/`
+    directory (sibling of `executors/`, `stores/`, `sensors/`).
+- Data Platform Extensions — dispatch 12 (2026-05-15): Section G CLI
+  subcommands, Section I bundled verifier executors, and Section J1
+  bundled `sensor-cron` sensor landed.
+  - **G1–G6.** `rimsky-cli` gains `asset` (list/show/materialize/
+    versions/delete/lineage), `backfill` (create/list/show/cancel),
+    `messages` (tail/show), `lineage prune`, and `parked list --reason=`
+    forwards to the spec-named `/diagnostics/parked` path. G6 adds
+    `--warnings-as-errors` to `template register`; the flag forwards as
+    `?warnings_as_errors=true` and surfaces `validation_warnings` /
+    `validation_errors` from the 400 body on rejection. New CLI files:
+    `control/cli/asset.go`, `backfill.go`, `messages.go`, `lineage.go`,
+    plus client methods on `control/cli/client.go`
+    (`ListInstanceMessages`, `GetMessage`, `CreateBackfill` and 4 more,
+    `ListAssets`/`GetAsset`/`MaterializeAsset`/`DeleteAsset`/
+    `GetAssetVersions`/`GetAssetMaterializationHistory`,
+    `GetClaimAncestors`, `PruneLineage`,
+    `RegisterTemplateWithOptions`). The control-api gains
+    `POST /admin/lineage/prune` for G4 (wraps
+    `LineageTable.DeleteOlderThan`). Per-sub-task tests:
+    `asset_test.go`, `backfill_test.go`, `messages_test.go`,
+    `lineage_test.go` exercise the client methods + happy/error CLI
+    paths via httptest; templates_test.go gains 2 new cases for G6's
+    query-param forwarding + rejection surface.
+  - **I1.** New bundled executor `executors/verifier-shape-checks/`
+    implements the 8 shape checks (`no_nulls`,
+    `nullable_fields_present`, `pk_unique`, `row_count_ratio`,
+    `row_count_absolute`, `value_in_set`, `regex_match`,
+    `numeric_range`) over a JSON-shaped `rows` payload supplied via
+    userdata. Apache-licensed (SPDX headers + LICENSE-APACHE upstream
+    pattern). Failure aggregates to a single
+    `Error{error_class: "verifier_failed"}` terminal with per-check
+    failure summary in the payload; success surfaces a small
+    `attributes_delta` with `verifier_pass: true`. Stub-mode short-
+    circuits via `stub_probe: true` for the conformance probe.
+  - **I2.** New bundled executor `executors/verifier-http/` POSTs a
+    payload to a configured URL and checks the response status against
+    `expected_status` (default `[200]`); mismatch →
+    `Error{error_class: "verifier_failed"}`; match →
+    `Success{changed: false}` with `verifier_status` in the delta.
+  - **I3.** `executors/claude-agent/src/agent-run.ts` rate-limit auto-
+    park now classifies as `retry_backoff` (per spec §Parked-state
+    taxonomy / Bundled emitter updates) rather than `time_wait`; the
+    free-form rate-limit detail moves to `reasonNote`.
+    `lifecycle.e2e.test.ts` asserts the new mapping. `http-node` and
+    `stub` carry no Park-emission sites today; the stub README updates
+    the DSL signature to reflect the typed-ParkReason API.
+  - **J1.** New top-level `sensors/` directory at the repo root
+    (alongside `executors/`, `stores/`); `sensors/sensor-cron/` is the
+    first bundled sensor. Implements the Sensor gRPC protocol
+    (`Capabilities` / `StartWatch` / `StopWatch` / `ListWatches`),
+    parses 5-field cron expressions via `robfig/cron/v3` (same library
+    the retired internal scheduler used), and POSTs an observation to
+    rimsky's `POST /sensors/{watch_id}/observations` endpoint on each
+    fire. Missed-fire policy mirrors the retired scheduler: cron
+    advancement is from the prior `next_fire_at`, not `clock.Now()`,
+    so a long outage produces a single post-outage fire (no thundering
+    herd). State is in-memory by default. The `.golangci.yml`
+    `pgx-isolation` allowlist gains `sensors/` so future sensors can
+    persist watch state via pgx without violating the rule. New cmd
+    binary `cmd/rimsky-sensor-cron/` is the planned entrypoint (not
+    yet present; the sensor IS its own binary at
+    `sensors/sensor-cron/`).
+  - **Bug fix uncovered during verification:** the smoke test
+    `test/smoke/stores_redesign_smoke_test.go` carried stale references
+    to `rimsky_claim_holders.holder_node_id` (the pre-B5 column name)
+    in its deferred-cleanup diagnostic dump path. The diagnostic SQL
+    failed at runtime when the test asserted leaked items, surfacing
+    a `column ch.holder_node_id does not exist` error message that
+    masked the actual assertion failure. Updated both queries to use
+    `holder_run_id` (FK to `rimsky_node_runs`) per the 2026-05-12
+    nomenclature resolution.
+  - **D7 / E16 / B10 (retiring per-node `schedule:` field +
+    `rimsky-scheduler` cron-fire path + `rimsky_schedules` table)
+    DEFERRED:** J1 unblocks them; the cascade touches
+    `graph/scheduler/`, `foundation/persistence/{postgres,sqlite}/
+    schedules.go`, all node-row spec sites that carry `ScheduleCron`,
+    plus the YAML config + every existing scenario that seeds a
+    schedule. Logged as a follow-up dispatch.
+
+- Data Platform Extensions — dispatch 11 (2026-05-15): Section F
+  control-API endpoints landed end-to-end (F1–F9 + D8). New files
+  `control/controlapi/messages.go` (POST + list + detail per spec
+  §Messages / Control-api endpoints), `sensors.go` (sensor observation
+  push per F3 + §Observation flow), `backfills.go` (5 endpoints per F4
+  + §Backfills / Control-api), `assets.go` (asset list / detail /
+  versions / materialization-history / materialize / delete per F5 +
+  §Lifetime and the asset pattern), `lineage.go` (7 endpoints per F6 +
+  §Content lineage / Query surface), plus F7 alias route
+  `GET /diagnostics/parked?reason=` sharing the existing handler at
+  `/admin/diagnostics/parked-nodes` so both spec-named and admin-named
+  shapes resolve. F8 sensor lifecycle wires `Sensor.StartWatch` at
+  instance-create (post-canonicalization, post-lifecycle-fan-out,
+  non-blocking — failed RPC leaves `state = failed` per the
+  spec's permissive-warn pattern) and `Sensor.StopWatch` at instance-
+  terminate (`DELETE /instances/{id}`); rimsky generates `watch_id`
+  (UUIDv7) per template `sensors:` entry, resolves `config`
+  substitution against instance params, INSERTs the
+  `rimsky_sensor_watches` row with `state = active`, then RPC. F9
+  validation pipeline runs after canonicalization + static check but
+  before persistence: for each service the template references that
+  advertises the `validation` mix-in, rimsky fires `Validate`; errors
+  reject with `400`; warnings surface without rejection unless the
+  request carries `?warnings_as_errors=true` (the operator-facing
+  parity for the upcoming G6 `--warnings-as-errors` CLI flag). New
+  runtime helpers: `runtime/sensors.go` carrying
+  `StartWatchesForInstance` / `StopWatchesForInstance` /
+  `ResyncSensorWatches` against a `SensorRegistry` interface; the
+  remote gRPC client is a follow-up (J-section); 
+  `runtime/validation_pipeline.go` carrying `RunValidationPipeline` +
+  `ValidationClient` / `ValidationRegistry` interfaces;
+  `UnreachableValidatorPolicy` controls strict-vs-permissive_warn for
+  per-service RPC failure. `AppDeps` gains `Sensors`,  `Validators`,
+  `UnreachableValidatorPolicy` fields. Tests cover the new endpoints
+  end-to-end via the pgtest harness with fake `SensorRegistry` /
+  `ValidationRegistry` implementations (no live wire dependencies):
+  `messages_test.go`, `backfills_test.go`, `sensors_test.go`,
+  `validation_pipeline_test.go` — 11 new test cases total. Plan F1–F9
+  + D8 closed (D8 the canonicalizer-side hook to fire the validation
+  pipeline IS the F9 work). `@concept:` annotations: `message`,
+  `sensor`, `backfill`, `asset`, `lineage-record`, `parked-state`,
+  `validation` reach the new handler / runtime files. The asset
+  `versions` endpoint stubs at `501 Not Implemented` until the
+  DataProcessing client lands in Section M's wiring; the materialize
+  endpoint is wired today (an invalidate-class message; spec §F5 step
+  5). Plan F8b (`frame_delivery_mode` request-body field) deferred —
+  depends on the Go-side `InstanceRow.FrameDeliveryMode` field which
+  B11 added at the migration layer but not yet on the row struct;
+  separate sub-task per the dispatch brief. The handlers preserve
+  `@blessed-invariant 21` for message payload / observation /
+  validation context bytes throughout — no `%v` formatting, no logging
+  of opaque content, only named-field path lookups for substitution.
+
+- Data Platform Extensions — dispatch 10 (2026-05-15): Stage 5 of the
+  run-row-lifecycle cutover (B5 + B6 + E4b co-holder dispatch wiring;
+  `@blessed-invariant 10` extends to include claim-holders rows in the
+  acquisition tx, `@blessed-invariant 13` unchanged). Migration
+  `005-claim-holders-wait-set-run-level.sql` (both drivers) renames
+  `rimsky_claim_holders.holder_node_id` → `holder_run_id` (FK →
+  `rimsky_node_runs(id) ON DELETE CASCADE`) and
+  `rimsky_wait_set.{receiver,sender}_node_id` →
+  `{receiver,sender}_run_id` (same FK target); both tables DROP +
+  CREATE per pre-v1 break-freely. The eager
+  `insertHeldClaimHoldersAtAcquire` path now inserts ONLY the
+  acquirer's own row at acquire-time (`holder_run_id =
+  cand.DispatchID`); the previous all-members eager INSERT retired.
+  New `insertCoHolderClaimHoldersAtAcquire` runs at the
+  inheritor/co-holder's own acquire-tx and inserts holder rows for
+  each `holds:` declaration (post-co-holdership) plus each legacy
+  `inherits:` declaration; the upstream claim handle is resolved by
+  walking the template `holds:` `from:` / holding-subgraph
+  membership to the upstream node row and looking up its
+  `rimsky_claim_handles` row by producer_name. `acquisition.HeldClaims`
+  carries the per-alias `ClaimResult` so `buildStoreHandles` /
+  `makeHeldClaimHandle` bind co-held addresses into the leaf's
+  `ExecuteRequest.stores` alongside `claims:`-acquired addresses (same
+  wire shape; the leaf cannot distinguish acquired vs co-held — spec
+  §Claim co-holdership). Cascade walker
+  (`cascadeSubscribersStaleInTx`, `walkCascadeForInvalidatedNode`,
+  `RecalculateNode`, the error-policy retry path) threads
+  `sender_run_id` through wait-set INSERTs; receiver run id resolved
+  via a new `Queue.GetInFlightRunForNode(ctx, tx, nodeID, frameID)`
+  helper (postgres + sqlite). `drainWaitSetOnSettled` keys on sender's
+  run id; `ListReadyForDispatch` / `ListPureCascadeReady` join the
+  wait-set gate against the receiver's run id (`nodeSelect` exposes
+  `r.id` for the join). `releaseClaim` / `releaseInheritedClaimsInTx`
+  mark holder rows by `(claim_handle_id, holder_run_id)` via the
+  renamed `ClaimHolders.CompleteByClaimHandleAndRun` /
+  `ListByHolderRun`. `CheckAndFireResolution` gains an
+  expected-inheritor guard (consults
+  `node.HoldingSubgraphsForTemplate`) so auto-terminal defers firing
+  while the holder set is incomplete — skipped when any holder is
+  failed because a failed acquirer drives Abandon immediately
+  (downstream inheritors will never dispatch).
+  `loadInheritedClaimsForNode` rewritten to start from the template
+  `holds:` / `inherits:` directive and walk to the upstream claim
+  handle directly (replaces the pre-stage-5
+  join-through-pre-inserted-rows path); fast-paths when neither
+  directive is declared. Scenario test fixtures flipped from
+  `holder_node_id`-keyed inserts / queries to `holder_run_id`
+  (runtime auto-terminal tests, controlapi admin-routes tests,
+  held-claim scenario tests, subscription-cascade tests).
+  Conformance suite gains `seedConformanceRunForNode` helper so
+  per-area tests can enqueue an in-flight run row alongside the
+  shared fixture set; the `fk` and `wait_set` areas seed runs that
+  way rather than at fixture-set construction (the queue-in-tx area's
+  rollback assertion would otherwise see the pre-enqueued row).
+  `ExtendHeartbeat` (postgres + sqlite) re-rooted to read `claimed_by`
+  + `state` from `rimsky_node_runs` (rather than the dropped
+  `rimsky_nodes` columns), and to walk
+  `rimsky_claim_holders → rimsky_node_runs` for held-claim
+  membership.
+
+- Data Platform Extensions — dispatch 9 (2026-05-15): Stage 3 of the
+  run-row-lifecycle cutover. Migration
+  `004-rimsky-nodes-drop-state-columns.sql` (both drivers) drops the
+  `state`, `last_outcome`, `last_heartbeat_at`, and
+  `assigned_supervisor_id` columns from `rimsky_nodes`; SQLite uses a
+  full table rebuild. The dual-write scaffold in
+  `NodeTable.UpdateState` retires; state lives entirely on
+  `rimsky_node_runs` post-cutover. A new "most-relevant run row"
+  lookup (LATERAL subquery in postgres; ROW_NUMBER window in SQLite)
+  ranks in-flight rows above terminal rows, so the projected
+  `NodeRow.State` surfaces in-flight state when one is in progress
+  and terminal state (failed terminal, or completed-with-last_outcome)
+  when no in-flight row exists. `MarkSourceNodeStale` and
+  `MarkStaleForCascade` flip from `UPDATE rimsky_nodes SET
+  state='stale'` to inserting a pending stale `rimsky_node_runs` row
+  when no in-flight row exists; both helpers populate
+  `required_stores` from the template node-def via a JSON sub-query so
+  the supervisor's `SelectCandidates` pool predicate routes the row
+  correctly. `enforceAndUpdate` reads current state from the in-flight
+  run row (with terminal-failed fallback for failed→stale reset
+  paths) and writes state + last_outcome to that row; the
+  `rimsky_nodes` UPDATE narrows to `updated_at` +
+  frame_id-clear-on-fresh. `UpdateHeartbeat`, `ClearLastOutcome`, and
+  `ClearSupervisorAssignment` redirect to the in-flight run row.
+  `SelectCandidates` excludes pure-cascade rows (NULL executor, empty
+  required_stores) from dispatch eligibility — their run row exists
+  for state tracking only and is advanced by
+  `ProcessPureCascade::transitionPureCascade`. Frame-end predicates
+  drop the COALESCE-through-rimsky_nodes fallback now that the run
+  row is the sole state authority. ~16 scenario / conformance / smoke
+  tests updated: raw `UPDATE rimsky_nodes SET state='X'` fixture
+  writes flip to seeding an in-flight `rimsky_node_runs` row directly
+  or via `Queue.EnqueueInTx` + `Nodes().UpdateState`; raw `SELECT
+  state FROM rimsky_nodes` reads flip to the LEFT JOIN +
+  `COALESCE(r.state, 'fresh')` pattern. B5 (rename
+  `rimsky_claim_holders.holder_node` → `holder_run_id`), B6 (run-level
+  wait_set), and E4b (co-holder dispatch wiring) remain deferred —
+  see plan implementation-notes for the staging plan. `make
+  build-all && make lint && make test-all` clean; `go test
+  ./runtime/... -race -count=1` clean.
+
+- Data Platform Extensions — dispatch 8 (2026-05-15): run-row lifecycle
+  flip + C5 frame-end re-root + E10 retention body. Migration
+  `003-run-row-lifecycle.sql` (both drivers) drops the hard
+  `UNIQUE(node_id)` constraint from `rimsky_node_runs`, replaces it
+  with a partial unique index over the in-flight phases
+  (`pending`/`active`/`held`/`parked`), and widens the phase CHECK to
+  admit `'failed'` as a terminal value. Terminal handlers
+  (`Queue.RemoveForNodeInTx`, `Queue.Complete`) flip from `DELETE` to
+  `UPDATE phase = CASE state WHEN 'failed' THEN 'failed' ELSE
+  'completed' END, claimed_by = NULL, last_heartbeat_at = NULL,
+  active_terminal_at = NOW()` so terminal rows survive past active
+  terminal — letting frame-end + retention + run-tree aggregation read
+  the terminal `state` / `last_outcome`. `EnqueueInTx` rewrites the
+  `ON CONFLICT(node_id) DO UPDATE` upsert to `INSERT ... SELECT ...
+  WHERE NOT EXISTS (in-flight row)` so retry / pure-cascade re-enqueue
+  paths admit a fresh row alongside the retained terminal one.
+  Dispatch-readiness readers (`ListRunning`, `ListRunningBySupervisor`,
+  `ListWithStaleHeartbeat`, `CountByState`) source state from
+  `rimsky_node_runs` (with `COALESCE(r.state, n.state)` fallback for
+  the brief window between `MarkSourceNodeStale` and the SweepReady
+  enqueue). Frame-end predicates (`HasFailedNode`,
+  `ListRunningFramesNoPendingNodes`, `MarkInstanceTerminatedIfDone`)
+  re-rooted to source from `rimsky_node_runs.state` via the same
+  COALESCE pattern. New persistence surface
+  `FrameTable.PruneOldRunsForRetention(recentFramesKept)` uses
+  `ROW_NUMBER() OVER (PARTITION BY instance_id ORDER BY
+  COALESCE(ended_at, queued_at) DESC, frame_id DESC)` to keep the
+  N-most-recent terminal frames per instance and delete the rest;
+  wired into `runtime/retention_sweeps.go::SweepRunTreeRetention` so
+  the existing watchdog tick body now has a working retention sweep.
+  Pre-v1 break-freely: scenario fixtures that direct-UPDATE
+  `rimsky_nodes.state` for running nodes (heartbeat-loss, parked-
+  lifecycle, scheduler tests) now also seed an in-flight
+  `rimsky_node_runs` row matching the rimsky_nodes mirror; the
+  `WaitForWorkerRequestDeleted` harness polls on the in-flight phase
+  predicate rather than total row count. B3 (drop state cols from
+  `rimsky_nodes`), B5 (rename `holder_node` → `holder_run_id`), B6
+  (run-level wait_set), and E4b (co-holder dispatch wiring) remain
+  deferred to follow-up dispatches — see plan implementation-notes
+  file for the pending list. `make build-all && make lint && make
+  test-all` clean.
+
+- Data Platform Extensions — dispatch 6 (2026-05-15): E4 sub-claim
+  acquisition wiring. New `runtime/runner_subclaim.go::AcquireSubClaims`
+  is the E4 hot-path helper: given an already-acquired parent claim,
+  call `ClaimProducer.SplitScope`, then for each `SubScopeDescriptor`
+  INSERT a sub-claim row (with `parent_claim_handle_id` pointing at the
+  parent, `lifetime` inherited from the parent), RPC `Open` against the
+  producer, and persist the returned address. Atomic per
+  `@blessed-invariant 10` — every sub-claim INSERT + producer `Open`
+  call runs inside the caller's tx; failure on any sub-claim aborts the
+  fan-out. Wired into `runtime/runner_acquire.go::tryAcquire`: after
+  the parent's locks all acquire successfully, if the template node
+  declares `fan_out:` referencing an alias present in the acquired
+  list, `AcquireSubClaims` runs in the same tx and the resulting
+  `[]SubClaim` is carried on `acquisition.SubClaims` for the leaf
+  dispatcher (E7, follow-up) to consume. `BeginCandidate` /
+  `producer_candidate_handle` persistence remains a slot to be filled
+  when the DataProcessing remote client lands; the column already
+  exists on `rimsky_claim_handles` from dispatch 1's B4. Two unit tests
+  cover unknown-producer + unsupported-split error paths in
+  `runner_subclaim_test.go`. B3 / B5 / B6 / C5 / E6 / E7 / E10
+  run-tree-retention all remain deferred — see plan implementation-
+  notes file for the pending list. `make build-all && make lint &&
+  make test-all` clean.
+
+- Data Platform Extensions — dispatch 5 (2026-05-15): partial E2 cutover
+  (run-tree state column populated via dual-write in
+  `foundation/persistence/{postgres,sqlite}/nodes.go::enforceAndUpdate`
+  — every state write on `rimsky_nodes` mirrors the new state +
+  last_outcome to all non-terminal `rimsky_node_runs` rows for the same
+  node); E9 orphan-claim reaper extension (added
+  `AND held_durable = FALSE` to `ListExpired` in both drivers so
+  held-durable claims survive the reaper sweep — annotated as the new
+  held-durable-persistence invariant on the SQL); partial C5 cutover
+  exploration (re-rooted predicate proven correct under happy-path but
+  reverted because the give_up / failure path deletes the run row at
+  terminal — full re-root gates on either keeping run rows past
+  terminal or threading RunID through every state-write callsite).
+  B3 / B5 / B6 / E4 / E6 / E7 destructive migrations + dispatch
+  rewrites remain deferred — see plan implementation-notes file for the
+  pending list. `make build-all && make lint && make test-all` clean.
+
+- Data Platform Extensions — E2 additive state-propagation cutover, E1
+  persistence helpers, E3 recursive claim-tree resolution, E5 message
+  delivery, E8 lineage writer, E9 held-durable lifecycle, E10 retention
+  skeletons, E15 backfill operations (2026-05-15, dispatch 4). Built
+  the persistence + runtime spine the spec's run-tree, recursive
+  claim-tree, message-delivery, and lineage projections rely on. (1)
+  Run-tree persistence accessor `RunTreeTable` in
+  `foundation/persistence/run_tree.go` with `CreateRootRun`,
+  `CreateChildRun`, `GetByID`, `GetByParentChildKey`, `LockTreeForUpdate`,
+  `ListChildren`, `UpdateStateAndOutcome`, `UpdateAggregationPolicy`;
+  postgres + sqlite impls. State + last_outcome + aggregation_policy +
+  parent_run_id + child_key (additively migrated in dispatch 1's B2)
+  are now read/written through the new surface. (2)
+  `runtime/state_propagation.go::PropagateChildState` walks the
+  run-tree upward under `LockTreeForUpdate`, applies the pure
+  `Aggregate` function from dispatch 3, writes parent state with
+  `ReasonChildTransitioned`, and returns `[]CancelAction` describing
+  strict.cancel_siblings / first-cancel-non-winners follow-ups. Three
+  unit tests cover leaf→root, strict cancel-siblings, and nested
+  three-level propagation. (3) `runtime/run_tree.go` adds runtime
+  wrappers `CreateRootRun`, `CreateChildRun` (idempotent on
+  `(parent_run_id, child_key)`), `GetRunTree` (BFS traversal). (4)
+  Recursive claim-tree resolution extends
+  `runtime/auto_terminal.go::CheckAndFireResolution` to walk upward
+  along `parent_claim_handle_id`. Extended `ClaimHandleRow` +
+  `ClaimHandleInsertInput` with `ParentClaimHandleID`, `Lifetime`,
+  `HeldDurable`, `VersionID`, `ProducerCandidateHandle`. Added
+  `ListChildClaimHandles`, `SetHeldDurable`, `SetVersionID`,
+  `ListHeldDurableByInstance` to the `ClaimHandleTable` interface;
+  both driver impls land the new columns + methods. (5) Message
+  delivery — `runtime/message_delivery.go` ships `EnqueueMessage`
+  (envelope validation) and `DeliverPendingMessages` (frame-boundary
+  delivery; coalesce | serial_queue modes; skips `cancelled` rows
+  for backfill cancellations). Four unit tests cover validation +
+  delivery semantics. (6) Lineage writer —
+  `runtime/lineage_writer.go` writes leaf_run + claim_commit records
+  to `rimsky_lineage` with stable sha256-hex hashes for the
+  params/userdata/scope_data fields. (7) Held-durable lifecycle —
+  `runtime/instance_termination.go::ReleaseHeldDurableClaims` walks
+  held-durable claim handles at instance-termination time and calls
+  `ClaimProducer.Release` (sequentially; failures collected for
+  operator follow-up; does not block termination completion). (8)
+  Retention sweeps — `runtime/retention_sweeps.go` ships
+  `SweepLineageRetention` (functional; invokes
+  `LineageTable.DeleteOlderThan` over the retention window) and
+  `SweepRunTreeRetention` (skeleton; logs intent until the
+  destructive B3 cutover gates open). (9) Backfill operations —
+  `runtime/backfill.go::CreateBackfill` enqueues an invalidate-class
+  message with `backfill_operation_id` / payload-override / reason;
+  `CancelBackfill` marks pending rows cancelled;
+  `GetBackfillStatus` resolves message-side fields. Deferred to
+  follow-up dispatches: the destructive B3 / B5 / C5 / B6 / B10
+  cutovers (touch ~30 call sites across runtime / scheduler /
+  control / scenario); E4 (sub-claim atomic acquisition +
+  BeginCandidate); E4b (co-holder dispatch); E6 (sub-graph dispatch
+  entry-absorption + cascade marker); E7 (fan-out dispatch
+  parallelism + per-leaf wiring); the orphan-claim reaper
+  `held_durable=FALSE` predicate edit; Section F control-api
+  endpoints.
+
+- Data Platform Extensions — D1 multi-graph canonicalization, run-tree
+  Aggregate pure function, per-reason `max_park_duration`, Park
+  `reason_label` capture, and substitution-layer `{{trigger.message.payload.X}}`
+  / `{{child.partition_key}}` directives (2026-05-15, dispatch 3).
+  Continuation of the scaffolding dispatches: (1) Added
+  `graph/node/template_validator_graphs.go::canonicalizeGraphs` to
+  normalize the nested `graphs:` template shape into the existing
+  flat `Nodes` projection and reject the 11 spec §Edge-case rejection
+  classes (`graphs_and_nodes_both_set`, `subgraph_missing_main`,
+  `subgraph_main_has_entry_or_exit`, `subgraph_missing_entry/exit`,
+  `subgraph_entry_equals_exit`, `subgraph_unknown_entry/exit`,
+  `subgraph_disconnected_internal_node`, `subgraph_recursion_unsupported`,
+  `subgraph_internal_references_outer`). Sub-graph entry-absorption /
+  exit identity / declarative shared-internal-node-row rewrite (D2 step
+  2-4) remains for runtime sub-graph dispatch (E6). (2) Declared the
+  run-tree in-memory shape (`RunTreeNode`, `ChildState`,
+  `AggregateAction`, `AggregateResult`) plus the pure `Aggregate`
+  function implementing the spec §State aggregation rule table for
+  all four AggregationPolicy kinds (strict / threshold / best_effort /
+  first), including `strict.cancel_siblings` and `first`'s
+  cancel-non-winners follow-up actions. (3) Added per-reason
+  `max_park_duration` deployment config (`rimsky.yml` key
+  `max_park_duration:`); threaded through SupervisorConfig +
+  runtime.Config + scheduler.Config into ParkedSweepArgs; extended
+  `SweepParkedNodes` with `sweepParkedByReason` so the watchdog can
+  fail parked rows that overrun their per-reason cap when the per-row
+  `col:rimsky_node_runs.max_park_duration_seconds` is NULL. The per-row
+  column always takes priority. (4) Added `Park.reason_label` capture
+  on both the streaming dispatch (`oc.Park.ReasonLabel`) and the
+  async-callback body (`asyncCallbackPark.ReasonLabel`); persisted to
+  `col:rimsky_node_runs.parked_reason_label` via `ParkActiveInput.ReasonLabel`
+  in both driver impls. Runner-side guard rejects park terminals with
+  `reason == OTHER` and empty `reason_label`. (5) Added the two
+  substitution namespaces `{{trigger.message.payload.<field-path>}}`
+  and `{{child.partition_key}}` to the substitution resolver and the
+  template validator's directive grammar; both obey @blessed-invariant
+  11/20/21 — bytes are read only via the sanctioned `walkPath` site.
+  Downstream runtime work (E2 state-propagation cutover, E3 recursive
+  auto-terminal, E4 sub-claim acquisition, E5 message delivery, E6
+  sub-graph dispatch, E7 fan-out, E8 lineage writer, E9 held-durable
+  lifecycle, E10 retention sweeps, E15 backfill) and the destructive
+  B migrations (B3, B5, B6, B10) remain deferred.
+
+- Data Platform Extensions — foundation types, interfaces, and
+  template validation (2026-05-15, dispatch 2). Continuation of the
+  scaffolding dispatch: (1) extended `foundation/cascade/state.go`
+  with two new transition reasons (`ReasonChildTransitioned`,
+  `ReasonSubGraphInternalCascadeFired`) and a parent-run-only state
+  machine variant (`NextStateParent`) admitting the four spec
+  §State machine parent-row transitions (terminal → stale, terminal
+  → running, running → running, plus the aggregation-OK sentinel
+  for caller-chosen target states); the leaf-only `NextState` is
+  unchanged. (2) Extended the `ClaimProducer` Go interface
+  (`protocols/claimproducer/claimproducer.go`) with `SplitScope` and
+  `ScopesConflict` method signatures plus the supporting types
+  (`SplitScopeRequest`, `SplitScopeResponse`, `SubScopeDescriptor`,
+  `Capabilities.AdvertisesProtocol`, mix-in `ProtocolXxx` constants,
+  `ErrSplitScopeUnsupported`, `ErrScopesConflictUnsupported`).
+  `foundation/locks/types.go` re-exports the new types as Go aliases.
+  `runtime/remote/client.go` implements both methods (consults
+  `Capabilities.SupportsSplitScope` / `SupportsScopesConflict` before
+  dispatching, falls back to byte-equal for the latter when
+  unsupported). The `storetest.Fake` defaults — `SplitScope` returns
+  `ErrSplitScopeUnsupported`; `ScopesConflict` byte-equals — match the
+  @blessed-invariant 4b trivial default. (3) Added per-row-type
+  persistence-driver interfaces for the three new tables
+  (`MessagesTable`, `LineageTable`, `SensorWatchesTable`); extended
+  the `Tables` umbrella with the three accessors; postgres + SQLite
+  impls in place exercising the migration columns. (4) Added template
+  validation for `holds:`, `fan_out:`, `claims: lifetime:` /
+  `claims: data:`, and `subscribes: on: message`. New rejection
+  classes: `holds_from_not_dependency`, `holds_unknown_claim_alias`,
+  `fan_out_unknown_claim_alias`, and the four lifetime / error_policy
+  / parallelism / partition_request shape checks. `delegate:` and
+  `executor:` are now mutually exclusive at the validator (D2). New
+  registry hooks `StoreAdvertisesDataProcessing` and
+  `StoreAdvertisesSplitScope` gate the capability-dependent checks
+  silently when the cache is not available. The downstream runtime
+  orchestration (Section E), control-API endpoints (Section F),
+  bundled services (H/I/J/K), and the destructive B migrations
+  remain deferred to follow-up dispatches.
+
+- Data Platform Extensions — protocol + schema scaffolding
+  (2026-05-15). Landed the foundational layers of the
+  `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`
+  spec: (1) three new service-protocol files in `protocols/proto/v1/`
+  (`data_processing.proto`, `validation.proto`, `sensor.proto`)
+  alongside extensions to `claim_producer.proto` (new `SplitScope` and
+  `ScopesConflict` RPCs; `supports_split_scope` / `supports_scopes_conflict`
+  / `protocols` / `validation_supported_roles` advertised in
+  `CapabilitiesResponse`; `version_id` + `producer_metadata` on
+  `CommitResponse`) and `executor.proto` (new `PARK_REASON_CALLBACK_WAIT`
+  and `PARK_REASON_OTHER` enum values; `Park.reason_label`;
+  `StoreHandle.candidate_handle` for DataProcessing-capable fan-out
+  leaf dispatch); (2) one consolidated additive schema migration per
+  driver (`002-data-platform-extensions.sql`) adding the run-tree
+  columns on `rimsky_node_runs` (`parent_run_id`, `child_key`,
+  `aggregation_policy`, `state`, `last_outcome`, `parked_reason_label`,
+  `parked_resume_at`), the claim-handle extensions
+  (`parent_claim_handle_id`, `lifetime`, `held_durable`, `version_id`,
+  `producer_candidate_handle`), the new tables (`rimsky_messages`,
+  `rimsky_lineage`, `rimsky_sensor_watches`), and
+  `rimsky_instances.frame_delivery_mode`; (3) new `foundation/spec`
+  primitive types (`ParkReason` enum, `AggregationPolicy`, `GraphSpec`,
+  `HoldsBinding`, `FanOutSpec`, `SensorSpec`, `OnObservationSpec`,
+  `MainGraphName`, claim-lifetime constants) plus additive fields on
+  `TemplateSpec` (`Graphs`, `Sensors`) and `TemplateNodeDef`
+  (`Delegate`, `Holds`, `FanOut`) and on `NodeStoreRef` (`Lifetime`,
+  `Data`). Protocols module Go-side wrapper extended (`Capabilities`
+  gains `SupportsSplitScope`, `SupportsScopesConflict`, `Protocols`,
+  `ValidationSupportedRoles`). The downstream runtime + canonicalizer
+  + bundled-services work from the same spec is sequenced separately
+  (large, multi-dispatch); the artifacts landing in this slice unblock
+  it without touching live code paths. Pre-v1 break-freely; the
+  destructive parts of the spec's persistence shape (drop state
+  columns from `rimsky_nodes`; rename `rimsky_claim_holders.holder_node`
+  → `holder_run_id`; drop `rimsky_schedules`; run-level
+  `rimsky_wait_set`) are deferred to a follow-up migration after the
+  Go-side state-propagation work lands.
+
 - Public-doc migration to the subscription-cascade model (2026-05-14, T55
   follow-up). The 2026-05-14 subscription-cascade resolution plan
   migrated runtime + scenario code; this pass migrates the remaining

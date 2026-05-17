@@ -28,17 +28,43 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// seedNode inserts a minimal rimsky_nodes row in the given state. Bypasses
-// NodeTable.Create+UpdateState because the test seeds out-of-band states
-// (e.g. failed) that the state machine would reject when re-traversed.
+// seedNode inserts a minimal rimsky_nodes row plus (when the requested
+// state is not 'fresh') a matching in-flight rimsky_node_runs row.
+// Post-stage-3 cutover: state lives on the run row; 'fresh' is the
+// no-run-row state.
+//
+// Bypasses NodeTable.Create+UpdateState because the test seeds
+// out-of-band states (e.g. failed) that the state machine would reject
+// when re-traversed.
 func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	instanceID uuid.UUID, nodeID uuid.UUID, state string, frameID *uuid.UUID) {
 	t.Helper()
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_nodes
-            (id, instance_id, node_type, state, frame_id)
-        VALUES ($1, $2, 'n', $3, $4)
-    `, nodeID, instanceID, state, frameID)
+            (id, instance_id, node_type, frame_id)
+        VALUES ($1, $2, 'n', $3)
+    `, nodeID, instanceID, frameID)
+	if state == "fresh" || state == "" {
+		return
+	}
+	if frameID == nil {
+		t.Fatalf("seedNode: state=%q requires a non-nil frame_id (rimsky_node_runs.frame_id NOT NULL)", state)
+	}
+	// Pending for stale, active for running, terminal for failed.
+	phase := "pending"
+	switch state {
+	case "running":
+		phase = "active"
+	case "failed":
+		phase = "failed"
+	case "parked":
+		phase = "parked"
+	}
+	pgtest.ExecForTest(ctx, t, d, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, $3, $4)
+    `, nodeID, phase, state, frameID)
 }
 
 // seedFrameRow inserts a rimsky_frames row with explicit fields. Goes
@@ -163,10 +189,16 @@ func TestRunTick_AdvanceQueued_SerialQueue(t *testing.T) {
 	require.Equal(t, "queued", s2)
 
 	// First frame's source must now be stale with frame_id = id1.
+	// Post-stage-3: state lives on the in-flight run row.
 	var nodeState string
 	var nodeFrameID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1`, []any{srcA}, &nodeState, &nodeFrameID)
+		`SELECT COALESCE(r.state, 'fresh'), n.frame_id
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.phase IN ('pending','active','held','parked')
+		  WHERE n.id = $1`, []any{srcA}, &nodeState, &nodeFrameID)
 	require.Equal(t, "stale", nodeState)
 	require.Equal(t, id1, nodeFrameID)
 }
@@ -237,7 +269,12 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameID}, &fState)
 	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_nodes WHERE id = $1`, []any{src}, &nState)
+		`SELECT COALESCE(r.state, 'fresh')
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.phase IN ('pending','active','held','parked')
+		  WHERE n.id = $1`, []any{src}, &nState)
 	require.Equal(t, "running", fState,
 		"frame must stay running after stuck-frame observation; warning is non-destructive")
 	require.Equal(t, "stale", nState,

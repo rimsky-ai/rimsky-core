@@ -18,6 +18,14 @@ references:
 
 A claim producer is an out-of-process service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `runtime/remote/`.
 
+Post-2026-05-15 the protocol gains three optional methods, each advertised in `Capabilities`:
+
+- **`SplitScope(parent_claim_handle, partition_request) → [sub_scope_descriptor]`** — partitions a claim's scope into sub-scopes for fan-out. Advertised by `SupportsSplitScope: true`. Rimsky opens one sub-claim per sub-scope at parent-acquisition time.
+- **`ScopesConflict(scope_a, scope_b) → {conflicts: bool}`** — producer-aware overlap predicate. Advertised by `SupportsScopesConflict: true`. Producers that don't advertise default to byte-equal comparison (`@blessed-invariant 4b`).
+- **`Validation` (mix-in)** — same `Validate(request) → response` RPC any service can advertise via `protocols: [..., validation]`. Validates a node's userdata at template-registration time against the producer's domain (claim bindings, scopes). Inert `userdata` per `@blessed-invariant 11` — rimsky forwards opaque bytes; receives a verdict.
+
+A fourth optional mix-in, **`DataProcessing`** (`protocols: [..., data_processing]`), is the control-plane surface for typed-data version lifecycle: `BeginCandidate` / `CommitCandidate` / `AbandonCandidate` / `ListVersions` / `ListPartitions` / `GetVersionSchema`. Data motion stays substrate-direct via `ClaimResult.address`; the protocol carries control-plane only. See `concept:data-processing`.
+
 ## Purpose
 
 Out-of-process producers let rimsky stay project-agnostic: the producer knows what "the same data" means in its own domain (path canonicalization, MVCC, queue keys) and emits canonical scope bytes; rimsky's conflict predicate is byte-equal. A producer can be written in any language; protocol wire compatibility is the only requirement.

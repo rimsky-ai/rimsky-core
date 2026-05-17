@@ -330,22 +330,8 @@ func TestClient_ListEvents(t *testing.T) {
 	}
 }
 
-func TestClient_AdminForceFire(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method %s", r.Method)
-		}
-		if !strings.HasPrefix(r.URL.Path, "/admin/scheduled-nodes/") {
-			t.Errorf("path %s", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-	c := NewClient(srv.URL)
-	if err := c.AdminForceFire(context.Background(), "n1"); err != nil {
-		t.Fatal(err)
-	}
-}
+// (TestClient_AdminForceFire retired by the 2026-05-15 plan B10 / D7
+// / E16 schedule-retirement cascade.)
 
 func TestClient_Health(t *testing.T) {
 	srv := helperServer(t, http.MethodGet, "/health", nil, http.StatusOK,

@@ -11,9 +11,9 @@ import (
 )
 
 // Severity / BackoffKind / JitterKind are aliased from foundation/spec
-// because they appear on persisted row types (quality-rule severities
-// in TemplateSpec.Nodes[].QualityRules; policy-action backoff/jitter
-// in TemplateSpec.Nodes[].ErrorTypes). The canonical home is
+// because they appear on persisted row types (policy-action backoff /
+// jitter in TemplateSpec.Nodes[].ErrorTypes; the Severity enum is also
+// re-used by service-side observability events). The canonical home is
 // foundation/spec; this package re-exports for graph-layer call sites.
 
 type Severity = spec.Severity

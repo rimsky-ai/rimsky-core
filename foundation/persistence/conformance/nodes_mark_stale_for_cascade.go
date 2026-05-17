@@ -17,6 +17,7 @@ package conformance
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -56,51 +57,78 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 	staleNullFrameID := uuid.New()
 	runningID := uuid.New()
 
+	// Post-stage-3 cutover: state lives on rimsky_node_runs. Stale /
+	// running rows are seeded by inserting an in-flight pending /
+	// active run row via Queue.EnqueueInTx + Nodes().UpdateState.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		// fresh node: created in 'fresh' by NodeTable.Create.
+		// fresh node: created in 'fresh' by NodeTable.Create — no
+		// in-flight run row.
 		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           freshID,
-			InstanceID:   fix.InstanceID,
-			NodeType:     "cascade-fresh",
-			Executor:     "test-executor",
+			ID:         freshID,
+			InstanceID: fix.InstanceID,
+			NodeType:   "cascade-fresh",
+			Executor:   "test-executor",
 		}, tx); err != nil {
 			return err
 		}
 
-		// stale node with NULL frame_id: created fresh, then transitioned to
-		// stale via operator_invalidate, frame_id left at NULL.
+		// stale node with NULL node-row frame_id: created fresh, then
+		// transitioned to stale by inserting a pending run row pinned
+		// to the cascade frame. (Pre-cutover this row had a NULL
+		// rimsky_nodes.frame_id; under the cutover the node.frame_id
+		// is the cascade frame after MarkStaleForCascade. The "stale +
+		// NULL frame" pre-cutover predicate has no direct post-cutover
+		// equivalent — the closest analogue is "in-flight stale row
+		// already exists; MarkStaleForCascade is a no-op". We test the
+		// no-op-on-existing-in-flight-stale case below.)
 		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           staleNullFrameID,
-			InstanceID:   fix.InstanceID,
-			NodeType:     "cascade-stale-null",
-			Executor:     "test-executor",
+			ID:         staleNullFrameID,
+			InstanceID: fix.InstanceID,
+			NodeType:   "cascade-stale-null",
+			Executor:   "test-executor",
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.Nodes().UpdateState(ctx, staleNullFrameID,
-			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+		// Seed an in-flight stale run row for staleNullFrameID pinned
+		// to the cascade frame so the cascade target is a no-op.
+		if err := d.Queue().EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:       staleNullFrameID,
+			ExecutorName: "test-executor",
+			EnqueuedAt:   time.Now().UTC(),
+			FrameID:      cascadeFrameID,
+		}, tx); err != nil {
+			return err
+		}
+		// Pin the node row to the cascade frame too — pre-cutover the
+		// "stale + NULL frame" row had MarkStaleForCascade re-bind it;
+		// post-cutover this is the equivalent state.
+		if err := store.Nodes().SetFrameID(ctx, staleNullFrameID, &cascadeFrameID, tx); err != nil {
 			return err
 		}
 
-		// running node: fresh -> stale -> running.
+		// running node: pending run row → claimed → running. Pin its
+		// node-row frame_id to otherFrameID so the assertion can check
+		// that MarkStaleForCascade did not overwrite it.
 		if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-			ID:           runningID,
-			InstanceID:   fix.InstanceID,
-			NodeType:     "cascade-running",
-			Executor:     "test-executor",
+			ID:         runningID,
+			InstanceID: fix.InstanceID,
+			NodeType:   "cascade-running",
+			Executor:   "test-executor",
 		}, tx); err != nil {
 			return err
 		}
-		if err := store.Nodes().UpdateState(ctx, runningID,
-			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+		if err := d.Queue().EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:       runningID,
+			ExecutorName: "test-executor",
+			EnqueuedAt:   time.Now().UTC(),
+			FrameID:      otherFrameID,
+		}, tx); err != nil {
 			return err
 		}
 		if err := store.Nodes().UpdateState(ctx, runningID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
 			return err
 		}
-		// Pin the running node's frame_id to a different frame; the cascade
-		// must NOT overwrite it.
 		return store.Nodes().SetFrameID(ctx, runningID, &otherFrameID, tx)
 	}); err != nil {
 		t.Fatalf("seed nodes: %v", err)

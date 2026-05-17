@@ -60,10 +60,16 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 	return q.EnqueueInTx(ctx, req, nil)
 }
 
-// EnqueueInTx inserts or refreshes a dispatch row inside the caller's tx
-// (or auto-commits when tx == nil). On UNIQUE(node_id) conflict the row
-// is updated only when still unclaimed and already eligible — a claimed
-// or future-dated row is left alone.
+// EnqueueInTx inserts a fresh dispatch row inside the caller's tx (or
+// auto-commits when tx == nil) when no in-flight row exists for the
+// node, otherwise no-ops. Post-stage-1 lifecycle flip: terminal rows
+// (phase IN ('completed','failed')) are retained on the table so frame-
+// end + retention + run-tree aggregation can read their terminal state.
+// The uq_node_runs_in_flight_per_node partial unique index enforces the
+// "at most one in-flight row per node" invariant; the EXISTS gate below
+// turns the constraint into a friendly no-op for the pure-cascade-sweep
+// and retry-after-retry paths that may try to enqueue a row that already
+// exists in 'pending'.
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredStores
 	if stores == nil {
@@ -75,15 +81,12 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	_, err := q.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
-		 VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pending', $5)
-		 ON CONFLICT (node_id) DO UPDATE
-		   SET enqueued_at = EXCLUDED.enqueued_at,
-		       executor_name = EXCLUDED.executor_name,
-		       required_stores = EXCLUDED.required_stores,
-		       frame_id = EXCLUDED.frame_id
-		   WHERE rimsky_node_runs.claimed_by IS NULL
-		     AND rimsky_node_runs.phase = 'pending'
-		     AND rimsky_node_runs.enqueued_at <= NOW()`,
+		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM rimsky_node_runs
+		     WHERE node_id = $1
+		       AND phase IN ('pending','active','held','parked')
+		  )`,
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID,
 	)
 	return err
@@ -121,6 +124,13 @@ func (q *queueImpl) SelectCandidates(
 	// Without phase='pending' the supervisor would claim parked rows
 	// directly and skip the wake path. Per the 2026-05-08 platform-
 	// extensions plan E2/E3.
+	// Post-stage-3 cutover: pure-cascade nodes (no executor, no stores
+	// in the template) have a run row only for state tracking; they
+	// are not dispatch candidates. The template-lookup at insert time
+	// populates required_stores for native-claim-only nodes (NULL
+	// executor, non-empty stores). The supervisor's native-claim path
+	// remains reachable for those rows; pure-cascade rows are
+	// excluded here via the non-empty required_stores guard.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
 		   FROM rimsky_node_runs d
@@ -128,7 +138,10 @@ func (q *queueImpl) SelectCandidates(
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
 		    AND d.required_stores <@ $1::text[]
-		    AND (d.executor_name = ANY($2::text[]) OR d.executor_name IS NULL)
+		    AND (
+		      d.executor_name = ANY($2::text[])
+		      OR (d.executor_name IS NULL AND COALESCE(array_length(d.required_stores, 1), 0) > 0)
+		    )
 		    AND d.enqueued_at <= NOW()
 		  ORDER BY d.enqueued_at
 		  LIMIT $3
@@ -191,16 +204,40 @@ func (q *queueImpl) ClaimDispatchRow(
 	return cmd.RowsAffected() == 1, nil
 }
 
+// Complete retires the in-flight run row identified by dispatchID. Post-
+// stage-1 lifecycle flip: flips phase to a terminal value rather than
+// deleting the row so frame-end / retention / run-tree aggregation can
+// read the terminal `state` / `last_outcome` after the active phase
+// closes. The terminal phase is derived from the row's state column —
+// `state='failed'` ⇒ phase='failed', everything else ⇒ phase='completed'.
+//
+// expectedClaimedBy is the claimant-guard (blessed-invariant 4); when
+// non-empty, the flip only fires for rows claimed by the expected
+// supervisor.
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
-			`DELETE FROM rimsky_node_runs WHERE id = $1 AND claimed_by = $2`,
+			`UPDATE rimsky_node_runs
+			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+			        claimed_by = NULL,
+			        last_heartbeat_at = NULL,
+			        active_terminal_at = NOW()
+			  WHERE id = $1
+			    AND claimed_by = $2
+			    AND phase IN ('pending','active','held','parked')`,
 			dispatchID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.pool.Exec(ctx,
-		`DELETE FROM rimsky_node_runs WHERE id = $1`, dispatchID,
+		`UPDATE rimsky_node_runs
+		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+		        claimed_by = NULL,
+		        last_heartbeat_at = NULL,
+		        active_terminal_at = NOW()
+		  WHERE id = $1
+		    AND phase IN ('pending','active','held','parked')`,
+		dispatchID,
 	)
 	return err
 }
@@ -209,18 +246,47 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 	return q.RemoveForNodeInTx(ctx, nodeID, expectedClaimedBy, nil)
 }
 
-// RemoveForNodeInTx mirrors RemoveForNode but executes through the
-// caller's tx (or auto-commit when tx == nil).
+// RemoveForNodeInTx retires the in-flight run row for a node by flipping
+// phase to a terminal value (the new run-row lifecycle: rows survive
+// past active terminal so frame-end / retention / run-tree aggregation
+// can read state + last_outcome). Determines the terminal phase from
+// the row's `state` column — `state='failed'` ⇒ phase='failed',
+// everything else ⇒ phase='completed'. Clears claimed_by /
+// last_heartbeat_at and stamps active_terminal_at so the orphan-claim
+// reaper and the in-flight predicate both stop treating the row as
+// active.
+//
+// expectedClaimedBy is the claimant-guard. When non-empty, the row only
+// retires if claimed_by matches — so a stale supervisor's terminal call
+// cannot retire a row a fresh supervisor has re-claimed. When empty,
+// any in-flight row for the node retires (the park-timeout / sweep
+// paths use this shape).
+//
+// @blessed-invariant 4: claimant-guarded release.
 func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).Exec(ctx,
-			`DELETE FROM rimsky_node_runs WHERE node_id = $1 AND claimed_by = $2`,
+			`UPDATE rimsky_node_runs
+			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+			        claimed_by = NULL,
+			        last_heartbeat_at = NULL,
+			        active_terminal_at = NOW()
+			  WHERE node_id = $1
+			    AND claimed_by = $2
+			    AND phase IN ('pending','active','held','parked')`,
 			nodeID, expectedClaimedBy,
 		)
 		return err
 	}
 	_, err := q.q(tx).Exec(ctx,
-		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
+		`UPDATE rimsky_node_runs
+		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
+		        claimed_by = NULL,
+		        last_heartbeat_at = NULL,
+		        active_terminal_at = NOW()
+		  WHERE node_id = $1
+		    AND phase IN ('pending','active','held','parked')`,
+		nodeID,
 	)
 	return err
 }
@@ -373,12 +439,16 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if filter.InstanceID != nil {
 		instanceID = *filter.InstanceID
 	}
+	// Post-stage-1 lifecycle flip: terminal rows survive past active
+	// terminal; the "live" observability surface filters to in-flight
+	// phases so the listing keeps its prior shape.
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
+		  WHERE d.phase IN ('pending','active','held','parked')
+		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)
 		    AND ($4::timestamptz IS NULL OR (d.enqueued_at, d.id) < ($4, $5))
@@ -436,7 +506,8 @@ func (q *queueImpl) CountLive(ctx context.Context, filter persistence.DispatchLi
 		`SELECT COUNT(*)
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
-		  WHERE ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
+		  WHERE d.phase IN ('pending','active','held','parked')
+		    AND ($1::bool IS NULL OR (d.claimed_by IS NOT NULL) = $1)
 		    AND ($2::text IS NULL OR d.executor_name = $2)
 		    AND ($3::uuid IS NULL OR n.instance_id = $3)`,
 		stateClaimed, executor, instanceID,
@@ -474,13 +545,15 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 }
 
 // GetByID returns the live dispatch row for id, or (nil, nil) when no
-// such row exists. Used by the observability dispatch-detail handler.
+// such row exists (or the row has reached terminal phase). Used by the
+// observability dispatch-detail handler.
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
 		   FROM rimsky_node_runs d
-		  WHERE d.id = $1`, id,
+		  WHERE d.id = $1
+		    AND d.phase IN ('pending','active','held','parked')`, id,
 	)
 	var r persistence.DispatchRow
 	if err := row.Scan(
@@ -496,6 +569,28 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 		r.RequiredStores = []string{}
 	}
 	return &r, nil
+}
+
+// GetInFlightRunForNode resolves the in-flight rimsky_node_runs.id for
+// the (node, frame) pair. Returns (zero, false, nil) when no in-flight
+// row exists. See persistence.Queue.GetInFlightRunForNode for usage.
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+	ex := q.q(tx)
+	var id shared.UUID
+	err := ex.QueryRow(ctx,
+		`SELECT id FROM rimsky_node_runs
+		  WHERE node_id = $1 AND frame_id = $2
+		    AND phase IN ('pending','active','held','parked')
+		  ORDER BY enqueued_at DESC, id DESC
+		  LIMIT 1`,
+		nodeID, frameID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return shared.UUID{}, false, nil
+		}
+		return shared.UUID{}, false, fmt.Errorf("postgres.GetInFlightRunForNode: %w", err)
+	}
+	return id, true, nil
 }
 
 // ---- dispatch cursor encoding ----

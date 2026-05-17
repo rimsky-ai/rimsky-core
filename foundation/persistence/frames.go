@@ -189,4 +189,15 @@ type FrameTable interface {
 	// /admin/diagnostics/held-frames. Used by the metrics gauge
 	// refresher (`rimsky_held_frames`). Tx must be open.
 	CountHeldFrames(ctx context.Context, tx Tx) (int, error)
+
+	// PruneOldRunsForRetention deletes rimsky_node_runs rows belonging
+	// to frames older than the `recentFramesKept`-th most-recent
+	// terminal frame per instance. Only terminal frames (state IN
+	// ('completed','failed')) are eligible to be pruned-against;
+	// in-flight frames (queued/running) are never considered for
+	// retention. Returns the number of run rows deleted.
+	//
+	// Spec §Run-tree retention. Default `recentFramesKept` = 100 (via
+	// cfg:retention.recent_frames_kept).
+	PruneOldRunsForRetention(ctx context.Context, recentFramesKept int) (int, error)
 }

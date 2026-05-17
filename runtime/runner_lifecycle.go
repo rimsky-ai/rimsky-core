@@ -95,10 +95,11 @@ func applyAcquirePass(
 		}
 		// Settled-state drain on fresh+passed: this sender reached
 		// a settled state, so any wait-set rows gating receivers on
-		// this sender release.
+		// this sender's run release. cand.DispatchID is this run's
+		// rimsky_node_runs.id post-stage-5.
 		//
 		//	@concept: wait-set
-		if err := drainWaitSetOnSettled(ctx, args, tx, cand.FrameID, cand.NodeID); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, tx, cand.FrameID, cand.DispatchID); err != nil {
 			return err
 		}
 		// Mark the node-run as handled so the queue doesn't

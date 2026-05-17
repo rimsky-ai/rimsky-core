@@ -25,6 +25,7 @@ package stub
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,21 @@ import (
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
+
+// parkReasonFromStorageForm maps the lower_snake_case storage form
+// (e.g. "callback_wait") back to the proto enum value. Unknown
+// inputs map to PARK_REASON_UNSPECIFIED. Mirrors the runtime helper
+// of the same name to keep the stub self-contained.
+func parkReasonFromStorageForm(s string) genv1.ParkReason {
+	if s == "" {
+		return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+	}
+	upper := "PARK_REASON_" + strings.ToUpper(s)
+	if v, ok := genv1.ParkReason_value[upper]; ok {
+		return genv1.ParkReason(v)
+	}
+	return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+}
 
 type terminalKind int
 
@@ -247,6 +263,28 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 	s.mu.Unlock()
 
 	if stubMode {
+		// Park-emission probe path: rimsky-executor-conformance --check-park
+		// drives stub mode with userdata `{probe_park: true,
+		// park_reason: "<storage-form>", park_reason_label: "..."}`. The
+		// probe asserts the executor's Park.reason taxonomy + reason_label
+		// requirement (when reason = OTHER, reason_label must be set). The
+		// stub honors the probe by emitting a Park with the requested
+		// fields verbatim — production executors are expected to do the
+		// same. Per plan §M5.
+		userdata := req.GetUserdata().AsMap()
+		if probe, _ := userdata["probe_park"].(bool); probe {
+			reasonStr, _ := userdata["park_reason"].(string)
+			reasonLabel, _ := userdata["park_reason_label"].(string)
+			reasonNote, _ := userdata["park_reason_note"].(string)
+			park := &genv1.Park{
+				Reason:      parkReasonFromStorageForm(reasonStr),
+				ReasonLabel: reasonLabel,
+				ReasonNote:  reasonNote,
+			}
+			return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+				StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
+			}})
+		}
 		delta, err := structpb.NewStruct(StubAttributesFor(req.GetNodeType()))
 		if err != nil {
 			return err

@@ -54,18 +54,23 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wipe any auto-enqueued initial frame for this instance so the test
-	// starts from a clean state.
+	// Wipe any auto-enqueued initial frame + in-flight rows for this
+	// instance so the test starts clean. Post-stage-3 cutover: state
+	// lives on rimsky_node_runs.
 	_, err := h.Pool.Exec(h.Ctx,
+		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, uuid.UUID(worker.ID))
+	require.NoError(t, err)
+	_, err = h.Pool.Exec(h.Ctx,
 		`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	require.NoError(t, err)
 	_, err = h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_nodes SET state='fresh', frame_id=NULL WHERE id=$1`,
+		`UPDATE rimsky_nodes SET frame_id=NULL WHERE id=$1`,
 		uuid.UUID(worker.ID))
 	require.NoError(t, err)
 
-	// Manually create a running frame; mark the worker stale +
-	// frame_id (simulating what advanceOneFrame does at frame-start).
+	// Manually create a running frame; mark the worker stale via an
+	// in-flight pending run row pinned to the frame (simulating what
+	// advanceOneFrame does at frame-start).
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids,
@@ -73,26 +78,20 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
 		RETURNING frame_id
 	`, uuid.UUID(iid), uuid.UUID(worker.ID)).Scan(&frameID))
+	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id=$1 WHERE id=$2`,
+		frameID, uuid.UUID(worker.ID))
+	require.NoError(t, err)
+	// Insert the in-flight active running run row (state machine reads
+	// current state from here for the retry simulation below).
 	_, err = h.Pool.Exec(h.Ctx, `
-		UPDATE rimsky_nodes SET state='stale', frame_id=$1 WHERE id=$2
-	`, frameID, uuid.UUID(worker.ID))
+		INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'active', 'running', $2)
+	`, uuid.UUID(worker.ID), frameID)
 	require.NoError(t, err)
 
-	// Simulate the runner's retry path: the supervisor flipped the node
-	// from running → stale via ReasonPolicyRetry. The state machine's
-	// running → stale is allowed under that reason; in production the
-	// transition happens via UpdateState, which now also clears frame_id
-	// only when the target is 'fresh' (the defensive guard added for
-	// review Issue 24). For 'stale', frame_id must be preserved.
-	//
-	// We directly assert the property at the storage layer: an
-	// UpdateState(running→stale, ReasonPolicyRetry) must NOT null
-	// frame_id. To exercise that, set state='running' first, then call
-	// UpdateState.
-	_, err = h.Pool.Exec(h.Ctx,
-		`UPDATE rimsky_nodes SET state='running' WHERE id=$1`,
-		uuid.UUID(worker.ID))
-	require.NoError(t, err)
+	// Simulate the runner's retry path: UpdateState(running → stale,
+	// ReasonPolicyRetry) must preserve the node-row frame_id.
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx,
 			worker.ID, "stale", cascade.ReasonPolicyRetry, "", tx)
@@ -105,17 +104,17 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NotNil(t, preservedFrameID, "retry must preserve frame_id on the stale node")
 	require.Equal(t, frameID, *preservedFrameID)
 
-	// The frame-end predicate counts in-flight nodes by `n.frame_id =
-	// f.frame_id AND n.state IN ('stale','running')`. With the retried
-	// node in stale + matching frame_id, the predicate must not fire.
+	// The frame-end predicate counts in-flight run rows in state
+	// IN ('stale','running') for the frame. With the retried node in
+	// stale + matching frame_id, the predicate must not fire.
 	var inflight int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
-		SELECT count(*) FROM rimsky_nodes n
-		JOIN rimsky_frames f ON f.frame_id = n.frame_id
+		SELECT count(*) FROM rimsky_node_runs r
+		JOIN rimsky_frames f ON f.frame_id = r.frame_id
 		WHERE f.state = 'running'
-		  AND n.state IN ('stale','running')
-		  AND n.frame_id = f.frame_id
+		  AND r.phase IN ('pending','active','held','parked')
+		  AND r.state IN ('stale','running')
 	`).Scan(&inflight))
 	require.Equal(t, 1, inflight,
-		"retried-stale node must still register as in-flight under the running frame")
+		"retried-stale run row must still register as in-flight under the running frame")
 }

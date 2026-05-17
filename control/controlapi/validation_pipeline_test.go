@@ -1,0 +1,198 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// validation_pipeline_test.go — F9 integration tests for the
+// Validation-mix-in pipeline at template registration. Uses a fake
+// ValidationRegistry so the test surface stays in-process.
+
+package controlapi
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/locks/storetest"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/internal/pgtest"
+	"github.com/fallguy/rimsky/runtime"
+)
+
+// fakeValidator implements runtime.ValidationClient with configurable
+// outcomes per role.
+type fakeValidator struct {
+	name           string
+	supportedRoles []string
+
+	mu        sync.Mutex
+	errs      []runtime.ValidationFinding
+	warns     []runtime.ValidationFinding
+	rpcErr    error
+	executor  int
+	producer  int
+	sensor    int
+	lifecycle int
+}
+
+func (f *fakeValidator) Name() string             { return f.name }
+func (f *fakeValidator) SupportedRoles() []string { return f.supportedRoles }
+
+func (f *fakeValidator) ValidateExecutor(_ context.Context, _ runtime.ValidateExecutorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executor++
+	return f.errs, f.warns, f.rpcErr
+}
+func (f *fakeValidator) ValidateClaimProducer(_ context.Context, _ runtime.ValidateClaimProducerInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.producer++
+	return f.errs, f.warns, f.rpcErr
+}
+func (f *fakeValidator) ValidateSensor(_ context.Context, _ runtime.ValidateSensorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sensor++
+	return f.errs, f.warns, f.rpcErr
+}
+func (f *fakeValidator) ValidateLifecycleSubscriber(_ context.Context, _ runtime.ValidateLifecycleSubscriberInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lifecycle++
+	return f.errs, f.warns, f.rpcErr
+}
+
+// fakeValidatorRegistry is a tiny in-memory ValidationRegistry.
+type fakeValidatorRegistry struct {
+	byName map[string]runtime.ValidationClient
+}
+
+func newFakeValidatorRegistry(validators ...*fakeValidator) *fakeValidatorRegistry {
+	out := &fakeValidatorRegistry{byName: map[string]runtime.ValidationClient{}}
+	for _, v := range validators {
+		out.byName[v.Name()] = v
+	}
+	return out
+}
+
+func (r *fakeValidatorRegistry) Get(name string) (runtime.ValidationClient, bool) {
+	c, ok := r.byName[name]
+	return c, ok
+}
+
+// validatorHarness wires a NewApp with the supplied validator registry.
+type validatorHarness struct {
+	*harness
+	validator *fakeValidator
+}
+
+func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeValidator) (*validatorHarness, func()) {
+	t.Helper()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+
+	reg := locks.NewRegistry()
+	contentFake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	reg.Add("content", contentFake)
+	lcReg := locks.NewLifecycleRegistry()
+	lcReg.Add("content", contentFake)
+
+	capLog := shared.NewCapturingLogger()
+	app := NewApp(AppDeps{
+		Persist:       d.Tables(),
+		Queue:         d.Queue(),
+		Clock:         shared.SystemClock{},
+		Logger:        capLog,
+		Stores:        reg,
+		LifecycleSubs: lcReg,
+		Executors: map[string]ExecutorEntry{
+			"worker": {Transport: "grpc", Endpoint: "localhost:0"},
+		},
+		Validators:                 vr,
+		UnreachableValidatorPolicy: runtime.UnreachableValidatorPermissiveWarn,
+	})
+	srv := httptest.NewServer(app)
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	vh := &validatorHarness{harness: h, validator: vfake}
+	return vh, func() {
+		srv.Close()
+	}
+}
+
+// TestValidationPipeline_RejectsOnError — when a validator returns
+// errors, template registration fails with 400 and surfaces the
+// findings.
+func TestValidationPipeline_RejectsOnError(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		errs: []runtime.ValidationFinding{{
+			Class:   "userdata_shape_invalid",
+			Message: "missing required field foo",
+			Path:    "/executor/userdata/foo",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-err-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/templates", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Contains(t, out["error"], "validation pipeline")
+	errs, _ := out["validation_errors"].([]any)
+	require.NotEmpty(t, errs)
+	require.GreaterOrEqual(t, vfake.executor, 1)
+}
+
+// TestValidationPipeline_PassesOnWarningsOnly — warnings alone do not
+// reject registration unless ?warnings_as_errors=true.
+func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		warns: []runtime.ValidationFinding{{
+			Class:   "userdata_deprecated_field",
+			Message: "field bar is deprecated",
+			Path:    "/executor/userdata/bar",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-warn-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/templates", body)
+	require.Equal(t, http.StatusCreated, status, out)
+	require.NotEmpty(t, out["template_id"])
+}
+
+// TestValidationPipeline_WarningsAsErrorsRejects — with
+// ?warnings_as_errors=true, warnings escalate to errors.
+func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
+	t.Parallel()
+	vfake := &fakeValidator{
+		name:           "worker",
+		supportedRoles: []string{"executor"},
+		warns: []runtime.ValidationFinding{{
+			Class: "userdata_deprecated_field",
+		}},
+	}
+	vr := newFakeValidatorRegistry(vfake)
+	vh, teardown := newValidatorHarness(t, vr, vfake)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("vp-waserrs-" + uuid.NewString())
+	status, out := vh.httpJSON(t, "POST", "/templates?warnings_as_errors=true", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Equal(t, true, out["warnings_as_errors"])
+}

@@ -64,6 +64,14 @@ type SupervisorConfig struct {
 	// Optional; nil → no-op everywhere. Production wiring constructs an
 	// observability.RegistryHook from the per-process MetricsRegistry.
 	Metrics runtime.MetricsHook
+	// MaxParkDuration is the deployment-level per-reason max_park_duration
+	// cap map. Threaded into the SweepParkedNodes path so the watchdog
+	// can fail parked runs that overrun their per-reason cap even when
+	// the per-row col:rimsky_node_runs.max_park_duration_seconds is NULL.
+	// Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Parked-state taxonomy. Empty / nil → only per-row caps fire.
+	MaxParkDuration map[string]time.Duration
 }
 
 // SupervisorHandle is the lifecycle handle returned by StartSupervisor.
@@ -128,6 +136,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		BlobSpillThreshold:    cfg.BlobSpillThreshold,
 		UserdataValidator:     cfg.UserdataValidator,
 		Metrics:               cfg.Metrics,
+		MaxParkDuration:       cfg.MaxParkDuration,
 	})
 	if err != nil {
 		registry.Close()

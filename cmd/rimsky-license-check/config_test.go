@@ -54,16 +54,19 @@ exempt:
 }
 
 func TestClassifyAGPLOverrideUnderApacheParent(t *testing.T) {
-	// graph/qualityrule/eval/ is AGPL despite living under graph/qualityrule/ Apache.
+	// More-specific AGPL prefix overrides a parent Apache prefix. The
+	// concrete example used to be graph/qualityrule/{,eval/}; the
+	// quality-rule package retired in 2026-05-15 plan P1, so the test
+	// uses synthetic paths to exercise the classifier shape.
 	cfg := writeLicensingYAML(t, t.TempDir(), `apache:
-  - graph/qualityrule/
+  - graph/example/
 agpl:
-  - graph/qualityrule/eval/
+  - graph/example/agpl/
 `)
-	if got := cfg.classify("graph/qualityrule/spec.go"); got != classApache {
+	if got := cfg.classify("graph/example/spec.go"); got != classApache {
 		t.Errorf("parent path want apache, got %v", got)
 	}
-	if got := cfg.classify("graph/qualityrule/eval/runner.go"); got != classAGPL {
+	if got := cfg.classify("graph/example/agpl/runner.go"); got != classAGPL {
 		t.Errorf("AGPL override want agpl, got %v", got)
 	}
 }

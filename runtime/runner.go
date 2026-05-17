@@ -39,17 +39,25 @@
 // MVCC snapshot isolation; the bail here is what catches the rare
 // cross-transaction handoff and keeps the ownership invariant intact.
 //
-// @blessed-invariant 10: Lock acquisition is atomic with dispatch
-// claim (rimsky-side). Per spec §4.10 (revised in v3): the §7.3
-// atomic acquisition transaction either claims the dispatch row AND
-// inserts every required `rimsky_claim_handles` row AND records the
-// `ClaimProducer.Open`-returned address, or none of these. The
-// producer's own state mutations run in a producer-internal
-// transaction decoupled from rimsky's — the v2 tx-sharing mechanism
-// (`locks.WithTx`) is gone. Single-writer-per-scope (invariant 4b)
-// holds because rimsky's conflict predicate gates claim-handle
-// INSERTs against `rimsky_claim_handles` only — producer orphan
-// state is invisible to the predicate.
+// @blessed-invariant 10: Lock acquisition is atomic with parent-run
+// claim acquisition. Per spec §4.10 + the 2026-05-15 data-platform-
+// extensions §Recursive scope partitioning: the §7.3 atomic acquisition
+// transaction either claims the parent run AND inserts the parent
+// `rimsky_claim_handles` row AND inserts all sub-claim handle rows for
+// opted-into partitioning (via `ClaimProducer.SplitScope`) AND records
+// the `ClaimProducer.Open`-returned addresses AND registers any co-holder
+// / inheritor `rimsky_claim_holders` rows declared by the node's template
+// (`holds:` / `inherits:`), or none of these. The producer's own state
+// mutations run in a producer-internal transaction decoupled from
+// rimsky's — the v2 tx-sharing mechanism (`locks.WithTx`) is gone.
+// Single-writer-per-scope (invariant 4b) holds because rimsky's conflict
+// predicate gates claim-handle INSERTs against `rimsky_claim_handles`
+// only — producer orphan state is invisible to the predicate.
+//
+// Post-stage-5 of the run-row lifecycle cutover: claim-holders rows
+// land in the same acquisition tx, keyed by `holder_run_id` (this
+// run's `rimsky_node_runs.id`). A run is either fully bound (own
+// claims acquired AND co-held claims registered) or not bound at all.
 package runtime
 
 import (
@@ -197,6 +205,20 @@ type RunArgs struct {
 	// prometheus dependency. Production wiring constructs an adapter
 	// over control/observability.MetricsRegistry; tests pass nil.
 	Metrics MetricsHook
+
+	// DataProcessors resolves a producer name to a
+	// `DataProcessingClient` for the fan-out / candidate / version
+	// surface (`BeginCandidate` / `CommitCandidate` /
+	// `AbandonCandidate`). Threaded through so the supervisor's
+	// sub-claim acquisition path (`AcquireSubClaims`) and the
+	// auto-terminal Commit path can dispatch on producers that
+	// advertise the `data_processing` protocol in their
+	// `protocols:` block. Nil → the candidate-handle slot stays empty
+	// and the leaf executor falls back to scope_data + parent address
+	// alone (still correct for non-DataProcessing producers). Spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Protocol surfaces / DataProcessing.
+	DataProcessors DataProcessingRegistry
 }
 
 // MetricsHook is the metric-instrumentation surface foundation calls
@@ -294,9 +316,9 @@ type AsyncContext struct {
 	// re-enqueue the dispatch row on retry / infra_reenqueue branches.
 	Executor string
 	// NodeDef is the candidate's per-node-type template definition. The
-	// terminal handler reads it for the policy chain (`error_types`)
-	// and the quality rules (`runQualityRules`). May be nil when the
-	// runner could not locate a matching def at acquisition.
+	// terminal handler reads it for the policy chain (`error_types`).
+	// May be nil when the runner could not locate a matching def at
+	// acquisition.
 	NodeDef *node.TemplateNodeDef
 	// ResolvedAttributes is the post-substitution attribute map the
 	// runner produced at dispatch time. The Success-outcome branch of
@@ -329,6 +351,12 @@ type AcquiredLock struct {
 	// Alias is the per-claim alias for ClaimSpec acquisitions; "" for
 	// NamedLockSpec.
 	Alias string
+	// IsHeld carries the `is_held` value written to the claim_handle
+	// row. Sub-claim acquisition (`AcquireSubClaims`) propagates this
+	// into per-sub-claim INSERTs so the rows persist past the leaf
+	// active-terminal until the parent's recursive resolution walks
+	// them. Always false for NamedLockSpec.
+	IsHeld bool
 }
 
 // RunNode runs one full claim-and-execute cycle. The eight-stage outline
@@ -380,6 +408,31 @@ func RunNode(
 	// Step 2 (formerly OpenHandle) — retired: the store's Open
 	// returns the address inside the acquisition tx; there is no
 	// separate native-handle stage.
+
+	// Step 2a — E7 fan-out dispatcher. When the acquisition returned
+	// sub-claims (the node declared `fan_out:` and acquireCandidate
+	// called SplitScope inside the acquisition tx), create one child
+	// run per sub-claim and DEFER leaf-dispatch to the children. The
+	// parent run stays `running`; the per-child state propagation
+	// (`state_propagation.go::PropagateFromChildState`) settles the parent
+	// at child-aggregate-terminal time.
+	//
+	// Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Fan-out template DSL "Mechanics at dispatch" steps 3-5.
+	//
+	//	@concept: fan-out
+	//	@concept: run-tree
+	if len(acq.SubClaims) > 0 && IsFanOutNode(acq.NodeDef) {
+		if err := dispatchFanOutChildren(ctx, args, &acq); err != nil {
+			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
+		}
+		// Children dispatch independently on subsequent runner ticks
+		// (their rows are now eligible candidates the SelectCandidates
+		// helper will pick up). The parent run stays `running` until
+		// the aggregator settles it.
+		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
+	}
 
 	// Step 3 — resolve attribute source-directives. Failure here raises
 	// template_resolution_failed and routes through the policy chain.

@@ -26,16 +26,18 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 )
 
+// Post-stage-3: state lives on rimsky_node_runs only. The pending-set
+// predicate looks at in-flight run rows whose state is stale/running.
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).QueryContext(ctx, `
         SELECT f.frame_id, f.instance_id
         FROM rimsky_frames f
         WHERE f.state = 'running'
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = f.instance_id
-                AND n.frame_id = f.frame_id
-                AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              WHERE r.frame_id = f.frame_id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `)
 	if err != nil {
@@ -64,14 +66,18 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 	return out, rows.Err()
 }
 
+// HasFailedNode — post-stage-3: state lives on rimsky_node_runs only.
+// Terminal failed rows survive past active terminal (per the stage-1
+// lifecycle flip), so the predicate reads the failure flavor directly.
 func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx persistence.Tx) (bool, error) {
 	var anyFailed int
 	err := s.q(tx).QueryRowContext(ctx, `
         SELECT EXISTS (
-            SELECT 1 FROM rimsky_nodes n
+            SELECT 1 FROM rimsky_node_runs r
+            JOIN rimsky_nodes n ON n.id = r.node_id
             WHERE n.instance_id = ?
-              AND n.frame_id = ?
-              AND n.state = 'failed'
+              AND r.frame_id = ?
+              AND r.state = 'failed'
         )
     `, instanceID.String(), frameID.String()).Scan(&anyFailed)
 	if err != nil {
@@ -101,6 +107,42 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 	return n == 1, nil
 }
 
+// PruneOldRunsForRetention deletes rimsky_node_runs rows whose owning
+// frame is older than the `recentFramesKept`-th most-recent terminal
+// frame for the same instance. Mirrors the postgres impl; SQLite's
+// ROW_NUMBER() OVER PARTITION is supported natively from 3.25+ (the
+// modernc.org driver tracks the modern SQLite source).
+func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesKept int) (int, error) {
+	if recentFramesKept <= 0 {
+		return 0, nil
+	}
+	res, err := s.q(nil).ExecContext(ctx, `
+        DELETE FROM rimsky_node_runs
+         WHERE frame_id IN (
+            SELECT frame_id FROM (
+                SELECT f.frame_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY f.instance_id
+                           ORDER BY COALESCE(f.ended_at, f.queued_at) DESC, f.frame_id DESC
+                       ) AS rk
+                  FROM rimsky_frames f
+                 WHERE f.state IN ('completed','failed')
+            ) ranked
+            WHERE ranked.rk > ?
+         )
+    `, recentFramesKept)
+	if err != nil {
+		return 0, fmt.Errorf("frames.PruneOldRunsForRetention: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// MarkInstanceTerminatedIfDone — post-stage-3: predicate parity with
+// ListRunningFramesNoPendingNodes; state lives on rimsky_node_runs.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `
         UPDATE rimsky_instances
@@ -112,8 +154,11 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               WHERE f.instance_id = rimsky_instances.id AND f.state IN ('queued','running')
           )
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = rimsky_instances.id AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              JOIN rimsky_nodes n ON n.id = r.node_id
+              WHERE n.instance_id = rimsky_instances.id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `, nowUTC(), instanceID.String())
 	if err != nil {
@@ -190,24 +235,69 @@ func (s *framesImpl) PromoteQueuedFrameToRunning(ctx context.Context, frameID sh
 	return n == 1, nil
 }
 
+// MarkSourceNodeStale — post-stage-3 cutover. See postgres mirror for
+// rationale. Binds rimsky_nodes.frame_id then INSERTs a fresh pending
+// stale run row when no in-flight row exists; falls back to the
+// "already in-flight pending stale row for this frame" predicate for
+// under-contention re-entry.
 func (s *framesImpl) MarkSourceNodeStale(
 	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	res, err := s.q(tx).ExecContext(ctx, `
+	if _, err := s.q(tx).ExecContext(ctx, `
         UPDATE rimsky_nodes
-        SET state = 'stale', frame_id = ?, updated_at = ?
+        SET frame_id = ?, updated_at = ?
         WHERE instance_id = ? AND id = ?
-          AND (state IN ('fresh','failed')
-               OR (state = 'stale' AND frame_id IS NULL))
-    `, frameID.String(), nowUTC(), instanceID.String(), nodeID.String())
+    `, frameID.String(), nowUTC(), instanceID.String(), nodeID.String()); err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
+	}
+	// Populate required_stores from the template node-def via a JSON
+	// lookup; see postgres mirror for rationale.
+	res, err := s.q(tx).ExecContext(ctx, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+        SELECT ?, n.id, n.executor,
+               COALESCE((
+                 SELECT json_group_array(json_extract(store.value, '$.name'))
+                   FROM rimsky_instances i
+                   JOIN rimsky_templates t ON t.id = i.template_hash
+                   JOIN json_each(t.spec, '$.nodes') AS nd
+                   JOIN json_each(nd.value, '$.stores') AS store
+                  WHERE i.id = n.instance_id
+                    AND json_extract(nd.value, '$.type') = n.node_type
+               ), '[]'),
+               ?, 'pending', 'stale', ?
+          FROM rimsky_nodes n
+         WHERE n.id = ?
+           AND n.instance_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM rimsky_node_runs r
+              WHERE r.node_id = ?
+                AND r.phase IN ('pending','active','held','parked')
+           )
+    `, uuid.New().String(), nowUTC(), frameID.String(), nodeID.String(), instanceID.String(), nodeID.String())
 	if err != nil {
-		return false, fmt.Errorf("frames.MarkSourceNodeStale: %w", err)
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
 	}
-	return n == 1, nil
+	if n == 1 {
+		return true, nil
+	}
+	var anyMatched int
+	if err := s.q(tx).QueryRowContext(ctx, `
+        SELECT EXISTS (
+            SELECT 1 FROM rimsky_node_runs r
+             WHERE r.node_id = ?
+               AND r.phase = 'pending'
+               AND r.state = 'stale'
+               AND r.frame_id = ?
+        )
+    `, nodeID.String(), frameID.String()).Scan(&anyMatched); err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: existence check: %w", err)
+	}
+	return anyMatched != 0, nil
 }
 
 // ListStuckRunningFrames returns running frames past their timeout with
@@ -228,8 +318,11 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
           )
           AND EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = f.instance_id AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              JOIN rimsky_nodes n ON n.id = r.node_id
+              WHERE n.instance_id = f.instance_id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `)
 	if err != nil {

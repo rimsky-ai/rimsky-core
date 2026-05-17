@@ -468,20 +468,28 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 	return false
 }
 
-// WaitForWorkerRequestDeleted polls until no rimsky_node_runs rows
-// remain for the given node. Used by tests that need to assert post-
-// terminal queue cleanup deterministically: `Queue.Complete` runs
+// WaitForWorkerRequestDeleted polls until no in-flight rimsky_node_runs
+// rows remain for the given node. Used by tests that need to assert
+// post-terminal queue cleanup deterministically: `Queue.Complete` runs
 // inside the supervisor's poll-goroutine AFTER `applyTerminalComplete`
 // returns, so a "wait for fresh state, then check the queue row is
-// gone" sequence races. Polling on the row-count directly removes the
-// race.
+// gone" sequence races. Polling on the in-flight-phase predicate
+// directly removes the race.
+//
+// Post-stage-1 lifecycle flip: terminal rows (phase IN
+// ('completed','failed')) survive past active terminal so frame-end +
+// retention + run-tree aggregation can read their terminal state. The
+// "deleted" semantic this helper preserves is "no longer in flight" —
+// the in-flight predicate filters on the active phases only.
 func (h *Harness) WaitForWorkerRequestDeleted(nodeID shared.UUID, timeout time.Duration) bool {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_node_runs WHERE node_id = $1`, nodeID,
+			`SELECT count(*) FROM rimsky_node_runs
+			  WHERE node_id = $1
+			    AND phase IN ('pending','active','held','parked')`, nodeID,
 		).Scan(&count)
 		if err == nil && count == 0 {
 			return true
@@ -568,9 +576,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if len(n.Userdata) > 0 {
 		nd["userdata"] = n.Userdata
 	}
-	if n.Schedule != "" {
-		nd["schedule"] = n.Schedule
-	}
 	if len(n.Subscribes) > 0 {
 		subs := make([]map[string]any, 0, len(n.Subscribes))
 		for _, s := range n.Subscribes {
@@ -619,20 +624,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	}
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nd["attributes"] = map[string]any{"schema": n.Attributes.Schema}
-	}
-	if len(n.QualityRules) > 0 {
-		qrs := make([]map[string]any, 0, len(n.QualityRules))
-		for _, qr := range n.QualityRules {
-			item := map[string]any{"type": qr.Type}
-			if len(qr.Config) > 0 {
-				item["config"] = qr.Config
-			}
-			if qr.Severity != "" {
-				item["severity"] = string(qr.Severity)
-			}
-			qrs = append(qrs, item)
-		}
-		nd["quality_rules"] = qrs
 	}
 	if len(n.Inherits) > 0 {
 		ihs := make([]map[string]any, 0, len(n.Inherits))

@@ -289,15 +289,27 @@ func walkCascadeForInvalidatedNode(
 ) error {
 	// Minimal RunArgs shape with what cascadeSubscribersStaleInTx
 	// reads (Persist for the subscription-edge cache miss path;
-	// Queue for the parked-receiver wake fallback).
+	// Queue for the parked-receiver wake fallback + the new
+	// GetInFlightRunForNode resolver on the receiver side).
 	args := RunArgs{Persist: sb, Queue: queue, Logger: logger}
 	// Look up the sender's node-type for the inverse-edge map key.
 	n, err := sb.Nodes().Get(ctx, senderNodeID, tx)
 	if err != nil || n == nil {
 		return err
 	}
+	// Resolve the sender's in-flight run id for the post-stage-5 wait-set
+	// (rimsky_wait_set keys on the sender's run id). When the sender has
+	// no in-flight row in this frame the cascade walk has nothing to
+	// gate on; bail out quietly.
+	senderRunID, ok, err := queue.GetInFlightRunForNode(ctx, tx, senderNodeID, frameID)
+	if err != nil {
+		return fmt.Errorf("walkCascadeForInvalidatedNode: resolve sender run: %w", err)
+	}
+	if !ok {
+		return nil
+	}
 	return cascadeSubscribersStaleInTx(ctx, args, tx,
-		senderNodeID, n.NodeType, instanceID, frameID)
+		senderNodeID, n.NodeType, senderRunID, instanceID, frameID)
 }
 
 // invalidateSourceBucket classifies the Reason string into a small

@@ -39,7 +39,9 @@ func TestObservabilitySmoke(t *testing.T) {
 		{"/v1/observability/executors", "executors"},
 		{"/v1/observability/frames", "frames"},
 		{"/v1/observability/node-runs", "node_runs"},
-		{"/v1/observability/schedules", "schedules"},
+		// /v1/observability/schedules retired by the 2026-05-15 plan
+		// B10 / D7 / E16 schedule-retirement cascade; cron firing is
+		// owned by `sensors/sensor-cron/`.
 		{"/v1/observability/events", "events"},
 	}
 	for _, tc := range cases {
@@ -78,7 +80,7 @@ func TestObservabilityDispatchEndToEnd(t *testing.T) {
 	templateID := deploySmokeTemplate(t, stack)
 	instanceID := createSmokeInstance(t, stack, templateID)
 	claimTopicID := findNodeIDByType(t, stack, instanceID, "claim-topic")
-	fireOnceAndWait(t, stack, claimTopicID, 1, 5*time.Second, 50*time.Millisecond)
+	fireOnceAndWait(t, stack, instanceID, claimTopicID, 1, 5*time.Second, 50*time.Millisecond)
 
 	// Wait briefly for the cascade to populate.
 	deadline := time.Now().Add(15 * time.Second)

@@ -25,8 +25,10 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Seed a second node so we have a (receiver, sender) pair plus a
-	// third node as an unrelated sender to demonstrate scoping.
+	// Seed three additional nodes so we have a (receiver, sender) pair plus
+	// a third unrelated sender. Post-stage-5, rimsky_wait_set is keyed by
+	// run id, so each node also gets a pending run row enqueued via the
+	// per-area helper.
 	receiverID := uuid.New()
 	senderAID := uuid.New()
 	senderBID := uuid.New()
@@ -53,30 +55,33 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("seed nodes: %v", err)
 	}
+	receiverRunID := seedConformanceRunForNode(ctx, t, d, receiverID, fix.FrameID)
+	senderARunID := seedConformanceRunForNode(ctx, t, d, senderAID, fix.FrameID)
+	senderBRunID := seedConformanceRunForNode(ctx, t, d, senderBID, fix.FrameID)
 
 	// Insert wait-set rows: receiver waits on senderA (state, direct) and
 	// senderB (attribute, instance with filter).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverNodeID: receiverID,
-			SenderNodeID: senderAID,
-			TopicKind:    "state", SubscriptionScope: "direct",
+			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
+			SenderRunID: senderARunID,
+			TopicKind:   "state", SubscriptionScope: "direct",
 		}, tx); err != nil {
 			return err
 		}
 		// Duplicate insert is idempotent.
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverNodeID: receiverID,
-			SenderNodeID: senderAID,
-			TopicKind:    "state", SubscriptionScope: "direct",
+			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
+			SenderRunID: senderARunID,
+			TopicKind:   "state", SubscriptionScope: "direct",
 		}, tx); err != nil {
 			return err
 		}
 		filter, _ := json.Marshal(map[string]string{"name": "result"})
 		return store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-			FrameID: fix.FrameID, ReceiverNodeID: receiverID,
-			SenderNodeID: senderBID,
-			TopicKind:    "attribute", SubscriptionScope: "instance",
+			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
+			SenderRunID: senderBRunID,
+			TopicKind:   "attribute", SubscriptionScope: "instance",
 			TopicFilter: filter,
 		}, tx)
 	}); err != nil {
@@ -86,7 +91,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	// ListForReceiver returns both rows.
 	var byReceiver []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverID, tx)
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
 		byReceiver = rows
 		return err
 	}); err != nil {
@@ -111,13 +116,13 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 
 	// DeleteBySender(senderA) removes the state-direct row only.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderAID, tx)
+		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
 		t.Fatalf("DeleteBySender: %v", err)
 	}
 	var remaining []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverID, tx)
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
 		remaining = rows
 		return err
 	}); err != nil {
@@ -126,8 +131,8 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	if len(remaining) != 1 {
 		t.Fatalf("after DeleteBySender(senderA): got %d rows want 1", len(remaining))
 	}
-	if remaining[0].SenderNodeID != senderBID {
-		t.Fatalf("remaining row sender=%v want %v", remaining[0].SenderNodeID, senderBID)
+	if remaining[0].SenderRunID != senderBRunID {
+		t.Fatalf("remaining row sender=%v want %v", remaining[0].SenderRunID, senderBRunID)
 	}
 	if remaining[0].TopicKind != "attribute" {
 		t.Fatalf("remaining row topic_kind=%q want %q", remaining[0].TopicKind, "attribute")
@@ -135,7 +140,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 
 	// DeleteBySender(senderB) drains the remainder.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderBID, tx)
+		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderBRunID, tx)
 	}); err != nil {
 		t.Fatalf("DeleteBySender senderB: %v", err)
 	}

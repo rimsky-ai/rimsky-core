@@ -21,11 +21,21 @@ type Tables interface {
 	NodeAttributes() NodeAttributeTable
 	ClaimHolders() ClaimHolderTable
 	Events() EventTable
-	Schedules() ScheduleTable
 	Supervisors() SupervisorTable
 	Frames() FrameTable
 	BlobOrphans() BlobOrphanTable
 	NodeEvents() NodeEventTable
 	WaitSet() WaitSetTable
+
+	// Per-row-type tables introduced by the 2026-05-15 data-platform
+	// extensions. Each driver must return a concrete implementation;
+	// a nil return is a wiring bug.
+	Messages() MessagesTable
+	Lineage() LineageTable
+	SensorWatches() SensorWatchesTable
+	// RunTree is the parent/child/state accessor on `rimsky_node_runs`.
+	// Spec §Run-tree and aggregation.
+	RunTree() RunTreeTable
+
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx Tx) error) error
 }

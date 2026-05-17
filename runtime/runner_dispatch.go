@@ -58,6 +58,7 @@ type terminalEvent struct {
 	// Park fields — set when Kind == terminalKindPark.
 	ParkReason       genv1.ParkReason
 	ParkReasonNote   string
+	ParkReasonLabel  string // freeform label required when ParkReason == PARK_REASON_OTHER (spec E12)
 	ParkPayload      []byte
 	ParkResumeAt     time.Time // zero ⇒ indefinite
 	ParkSessionToken string
@@ -304,6 +305,7 @@ func readExecutorStream(
 					Kind:             terminalKindPark,
 					ParkReason:       oc.Park.Reason,
 					ParkReasonNote:   oc.Park.ReasonNote,
+					ParkReasonLabel:  oc.Park.ReasonLabel,
 					ParkPayload:      oc.Park.Payload,
 					ParkSessionToken: oc.Park.SessionToken,
 					NamedEvents:      pending,
@@ -712,11 +714,17 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 }
 
 // buildStoreHandles converts each ClaimSpec acquisition into a per-
-// store StoreHandle proto entry. The handle's `handle` struct carries
-// the store-supplied address bytes verbatim under the "address"
-// key — opaque to Rimsky per @blessed-invariant 20.
+// store StoreHandle proto entry, then layers any co-held claims
+// (`holds:` / legacy `inherits:`) on top under their local alias. The
+// handle's `handle` struct carries the store-supplied address bytes
+// verbatim under the "address" key — opaque to Rimsky per
+// `@blessed-invariant 20`. The leaf executor cannot tell from
+// `ExecuteRequest` whether a given claim was acquired (`claims:`) or
+// co-held (`holds:`) — same wire shape per spec §Claim co-holdership.
+//
+// @concept: claim-co-holdership
 func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
-	out := make(map[string]*genv1.StoreHandle, len(acq.Locks))
+	out := make(map[string]*genv1.StoreHandle, len(acq.Locks)+len(acq.HeldClaims))
 	for _, lk := range acq.Locks {
 		spec, ok := lk.Spec.(locks.ClaimSpec)
 		if !ok {
@@ -740,6 +748,53 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 		}
 		out[key] = h
 	}
+	for alias, claim := range acq.HeldClaims {
+		if _, alreadyPresent := out[alias]; alreadyPresent {
+			// `claims:` ALREADY bound this alias for this run; the held
+			// entry is informational only.
+			continue
+		}
+		h, err := makeHeldClaimHandle(alias, claim)
+		if err != nil {
+			return nil, err
+		}
+		out[alias] = h
+	}
+	return out, nil
+}
+
+// makeHeldClaimHandle builds a `StoreHandle` proto entry for a co-held
+// claim (the upstream's address presented under this run's local alias).
+// Mirrors `makeClaimHandle` for the bytes-shape contract, but draws the
+// address + payload from the upstream `ClaimResult` rather than this
+// run's own `AcquiredLock`. `Intent` is unset (the co-holder does not
+// own an intent against the producer); the executor reads only the
+// `address` field for held claims.
+//
+// @blessed-invariant 20 (wire-encoding site exception): the same JSON
+// round-trip discipline as `makeClaimHandle`.
+func makeHeldClaimHandle(alias string, claim locks.ClaimResult) (*genv1.StoreHandle, error) {
+	out := &genv1.StoreHandle{}
+	fields := map[string]any{"alias": alias}
+	if len(claim.Address) > 0 {
+		var addrAny any
+		if err := json.Unmarshal(claim.Address, &addrAny); err != nil {
+			return nil, fmt.Errorf("makeHeldClaimHandle: claim address bytes not JSON-decodable: %w", err)
+		}
+		fields["address"] = addrAny
+	}
+	if len(claim.Payload) > 0 {
+		var payloadAny any
+		if err := json.Unmarshal(claim.Payload, &payloadAny); err != nil {
+			return nil, fmt.Errorf("makeHeldClaimHandle: claim payload bytes not JSON-decodable: %w", err)
+		}
+		fields["payload"] = payloadAny
+	}
+	s, err := structpb.NewStruct(fields)
+	if err != nil {
+		return nil, fmt.Errorf("makeHeldClaimHandle: structpb: %w", err)
+	}
+	out.Handle = s
 	return out, nil
 }
 

@@ -21,10 +21,15 @@ const (
 )
 
 // ClaimHolderRow mirrors a row of rimsky_claim_holders.
+//
+// Post-stage-5 of the run-row lifecycle cutover the holder is keyed by
+// HolderRunID (a `rimsky_node_runs.id`), not by node id — co-holdership
+// (`holds:` template directive) and inheritor membership both bind to a
+// specific run, so per-run identity is what auto-terminal walks.
 type ClaimHolderRow struct {
 	ID            shared.UUID      `json:"id"`
 	ClaimHandleID shared.UUID      `json:"claim_handle_id"`
-	HolderNodeID  shared.UUID      `json:"holder_node_id"`
+	HolderRunID   shared.UUID      `json:"holder_run_id"`
 	State         ClaimHolderState `json:"state"`
 	CompletedAt   *time.Time       `json:"completed_at,omitempty"`
 }
@@ -33,7 +38,7 @@ type ClaimHolderRow struct {
 type ClaimHolderInsertInput struct {
 	ID            shared.UUID
 	ClaimHandleID shared.UUID
-	HolderNodeID  shared.UUID
+	HolderRunID   shared.UUID
 	FrameID       *shared.UUID
 }
 
@@ -42,10 +47,10 @@ type ClaimHolderTable interface {
 	Insert(ctx context.Context, in ClaimHolderInsertInput, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHolderRow, error)
 	ListByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
-	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
+	ListByHolderRun(ctx context.Context, holderRunID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
-	CompleteByClaimHandleAndNode(ctx context.Context, claimHandleID, holderNodeID shared.UUID, state ClaimHolderState, tx Tx) error
+	CompleteByClaimHandleAndRun(ctx context.Context, claimHandleID, holderRunID shared.UUID, state ClaimHolderState, tx Tx) error
 	// FailAllActiveByClaimHandle marks every still-'active' row for the
 	// given claim_handle as 'failed'. Used by the held-claim
 	// acquirer-failure path (on_executor_errored: pass /

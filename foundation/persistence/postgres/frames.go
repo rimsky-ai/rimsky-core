@@ -24,25 +24,22 @@ import (
 )
 
 // ListRunningFramesNoPendingNodes returns running frames whose nodes in
-// the same (instance_id, frame_id) scope are all out of stale/running.
+// the same (instance_id, frame_id) scope have no in-flight run row in
+// state IN ('stale','running').
 //
-// The NOT EXISTS predicate filters by `n.frame_id = f.frame_id` so a
-// stale/running node from a different (concurrent or later) frame cannot
-// block this frame's end. Under v1 there is at most one frame per
-// instance in 'running' state (uq_rimsky_frames_running) and any
-// in-flight node carries that frame's frame_id; the per-frame filter
-// is robust under future Rule 3b parallel-buffered semantics
-// (spec §10.6).
+// Post-stage-3: state lives on rimsky_node_runs only. `parked` and
+// `failed` terminal rows do not count toward the frame's pending set
+// (parked is held but not actively contributing; failed is terminal).
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT f.frame_id, f.instance_id
         FROM rimsky_frames f
         WHERE f.state = 'running'
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = f.instance_id
-                AND n.frame_id = f.frame_id
-                AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              WHERE r.frame_id = f.frame_id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `)
 	if err != nil {
@@ -60,16 +57,22 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 	return out, rows.Err()
 }
 
-// HasFailedNode returns true when any rimsky_nodes row for the given
-// (instanceID, frameID) is in state='failed'.
+// HasFailedNode returns true when any run row for the given
+// (instanceID, frameID) reached state='failed'.
+//
+// Post-stage-3: state lives on rimsky_node_runs only; terminal failed
+// rows survive past active terminal (per the stage-1 lifecycle flip)
+// so this query reads the failure flavor directly without back-joining
+// through rimsky_nodes.
 func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx persistence.Tx) (bool, error) {
 	var anyFailed bool
 	err := s.q(tx).QueryRow(ctx, `
         SELECT EXISTS (
-            SELECT 1 FROM rimsky_nodes n
+            SELECT 1 FROM rimsky_node_runs r
+            JOIN rimsky_nodes n ON n.id = r.node_id
             WHERE n.instance_id = $1
-              AND n.frame_id = $2
-              AND n.state = 'failed'
+              AND r.frame_id = $2
+              AND r.state = 'failed'
         )
     `, instanceID, frameID).Scan(&anyFailed)
 	if err != nil {
@@ -100,6 +103,11 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 
 // MarkInstanceTerminatedIfDone sets rimsky_instances.terminated_at=now()
 // when the terminal predicate holds. Idempotent set-once.
+//
+// Post-stage-3: the "still working" predicate is "an in-flight run row
+// in state IN ('stale','running') exists for any node in this
+// instance". Mirrors ListRunningFramesNoPendingNodes' predicate so
+// frame-end and instance-terminated agree.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx, `
         UPDATE rimsky_instances i
@@ -111,8 +119,11 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               WHERE f.instance_id = i.id AND f.state IN ('queued','running')
           )
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = i.id AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              JOIN rimsky_nodes n ON n.id = r.node_id
+              WHERE n.instance_id = i.id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `, instanceID)
 	if err != nil {
@@ -165,23 +176,89 @@ func (s *framesImpl) PromoteQueuedFrameToRunning(ctx context.Context, frameID sh
 	return cmd.RowsAffected() == 1, nil
 }
 
-// MarkSourceNodeStale flips a frame's source node to stale-with-frame_id.
-// Accepts the in-bounds states: fresh, failed, or stale-with-NULL-frame_id.
-// Returns matched=true when exactly one row moved.
+// MarkSourceNodeStale binds a frame's source node to the frame. Post-
+// stage-3 cutover: state lives on rimsky_node_runs only, so this helper:
+//   - binds rimsky_nodes.frame_id = $1 (idempotent re-bind for sources
+//     already pinned to another in-flight frame is gated by the
+//     in-bounds predicate below),
+//   - INSERTs a fresh pending run row with state='stale' + frame_id=$1
+//     when no in-flight row exists (the source was 'fresh', 'failed',
+//     or completed since the last frame).
+//
+// In-bounds: the partial unique index uq_node_runs_in_flight_per_node
+// guarantees at most one in-flight row per node. A source that's
+// already in-flight (e.g., a redelivered frame-start under contention)
+// produces zero rows inserted; the caller's `matched=true` predicate
+// must therefore include the "already in-flight stale row for this
+// frame" case so the engine doesn't roll back the promotion.
+//
+// Returns matched=true when:
+//   - the INSERT moved one row (the typical fresh→stale source path),
+//   - OR an in-flight stale run row already exists for this node+frame
+//     (under-contention re-entry; safe to treat as a no-op success).
+//
+// Out-of-bounds (matched=false) covers: source already in a different
+// frame's in-flight run row, or running, or parked.
 func (s *framesImpl) MarkSourceNodeStale(
 	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	cmd, err := s.q(tx).Exec(ctx, `
+	// Bind the node's frame_id (idempotent for re-entry).
+	if _, err := s.q(tx).Exec(ctx, `
         UPDATE rimsky_nodes
-        SET state = 'stale', frame_id = $1, updated_at = now()
+        SET frame_id = $1, updated_at = now()
         WHERE instance_id = $2 AND id = $3
-          AND (state IN ('fresh','failed')
-               OR (state = 'stale' AND frame_id IS NULL))
-    `, frameID, instanceID, nodeID)
-	if err != nil {
-		return false, fmt.Errorf("frames.MarkSourceNodeStale: %w", err)
+    `, frameID, instanceID, nodeID); err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
-	return cmd.RowsAffected() == 1, nil
+	// INSERT a fresh pending run row when no in-flight row exists.
+	// Populates required_stores from the template node-def so the
+	// supervisor's SelectCandidates pool-predicate
+	// (required_stores ⊆ accepted_stores) routes the row correctly.
+	tag, err := s.q(tx).Exec(ctx, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+        SELECT gen_random_uuid(), n.id, n.executor,
+               COALESCE((
+                 SELECT array_agg(store->>'name')
+                   FROM rimsky_instances i
+                   JOIN rimsky_templates t ON t.id = i.template_hash
+                   CROSS JOIN LATERAL jsonb_array_elements(t.spec->'nodes') AS nd
+                   LEFT JOIN LATERAL jsonb_array_elements(nd->'stores') AS store ON true
+                  WHERE i.id = n.instance_id
+                    AND nd->>'type' = n.node_type
+                    AND store IS NOT NULL
+               ), ARRAY[]::text[]) AS required_stores,
+               NOW(), 'pending', 'stale', $1
+          FROM rimsky_nodes n
+         WHERE n.id = $2
+           AND n.instance_id = $3
+           AND NOT EXISTS (
+             SELECT 1 FROM rimsky_node_runs r
+              WHERE r.node_id = $2
+                AND r.phase IN ('pending','active','held','parked')
+           )
+    `, frameID, nodeID, instanceID)
+	if err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: insert run row: %w", err)
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	// No INSERT — fall back to "already in-flight stale row pinned to
+	// this frame" (under-contention re-entry).
+	var anyMatched bool
+	if err := s.q(tx).QueryRow(ctx, `
+        SELECT EXISTS (
+            SELECT 1 FROM rimsky_node_runs r
+             WHERE r.node_id = $1
+               AND r.phase = 'pending'
+               AND r.state = 'stale'
+               AND r.frame_id = $2
+        )
+    `, nodeID, frameID).Scan(&anyMatched); err != nil {
+		return false, fmt.Errorf("frames.MarkSourceNodeStale: existence check: %w", err)
+	}
+	return anyMatched, nil
 }
 
 // ListStuckRunningFrames returns running frames where last_progress_at
@@ -204,8 +281,11 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
           )
           AND EXISTS (
-              SELECT 1 FROM rimsky_nodes n
-              WHERE n.instance_id = f.instance_id AND n.state IN ('stale','running')
+              SELECT 1 FROM rimsky_node_runs r
+              JOIN rimsky_nodes n ON n.id = r.node_id
+              WHERE n.instance_id = f.instance_id
+                AND r.phase IN ('pending','active','held')
+                AND r.state IN ('stale','running')
           )
     `)
 	if err != nil {
@@ -433,6 +513,48 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 		return fmt.Errorf("frames.RefreshProgress: %w", err)
 	}
 	return nil
+}
+
+// PruneOldRunsForRetention deletes rimsky_node_runs rows whose owning
+// frame is older than the `recentFramesKept`-th most-recent terminal
+// frame for the same instance. Returns the number of rows deleted.
+//
+// In-flight frames (queued/running) are exempt from retention — the
+// "keep N most-recent" cap counts only terminal frames so an
+// long-running instance can accumulate retention beyond N if many of
+// its frames are concurrently in flight (a degenerate case that the
+// retention warning surface — outside this method — picks up).
+func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesKept int) (int, error) {
+	if recentFramesKept <= 0 {
+		return 0, nil
+	}
+	// PARTITION BY instance_id ORDER BY ended_at DESC gives each frame a
+	// per-instance rank (1 = most recent terminal). Anything with rank >
+	// recentFramesKept is a prune candidate. DELETE from rimsky_node_runs
+	// where frame_id matches the candidates. The ON DELETE CASCADE from
+	// rimsky_frames to rimsky_node_runs would also fire if we deleted
+	// the frames themselves — but the retention sweep keeps the frame
+	// row (so observability can still surface it) and deletes only the
+	// associated run rows.
+	tag, err := s.q(nil).Exec(ctx, `
+        DELETE FROM rimsky_node_runs
+        WHERE frame_id IN (
+            SELECT frame_id FROM (
+                SELECT f.frame_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY f.instance_id
+                           ORDER BY COALESCE(f.ended_at, f.queued_at) DESC, f.frame_id DESC
+                       ) AS rk
+                  FROM rimsky_frames f
+                 WHERE f.state IN ('completed','failed')
+            ) ranked
+            WHERE ranked.rk > $1
+        )
+    `, recentFramesKept)
+	if err != nil {
+		return 0, fmt.Errorf("frames.PruneOldRunsForRetention: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // CountHeldFrames returns the number of running frames that have at

@@ -9,6 +9,10 @@
 // never talks to control-api / executors / stores directly.
 
 import type {
+  AssetDetail,
+  AssetListResponse,
+  AssetMaterializationHistoryResponse,
+  AssetVersionsResponse,
   ClaimDetail,
   ClaimList,
   NodeRunDetail,
@@ -22,7 +26,6 @@ import type {
   NodeDetail,
   PeerEntry,
   PeerListResponse,
-  ScheduleListResponse,
   SystemHealth,
   SystemSummary,
   TemplateDetail,
@@ -73,9 +76,6 @@ export const api = {
     get<InstanceListResponse>(`/api/control/instances${qs({ ...filters, cursor })}`),
   getInstance: (id: string) => get<InstanceDetail>(`/api/control/instances/${id}`),
 
-  listSchedules: (cursor?: string) =>
-    get<ScheduleListResponse>(`/api/control/schedules${qs({ cursor })}`),
-
   listFrames: (filters: Record<string, string | undefined> = {}, cursor?: string) =>
     get<FrameListResponse>(`/api/control/frames${qs({ ...filters, cursor })}`),
   getFrame: (id: string) => get<{ frame: FrameRow }>(`/api/control/frames/${id}`),
@@ -113,4 +113,39 @@ export const api = {
     get<ParkedNodesResponse>(
       `/api/control/admin/diagnostics/parked-nodes${qs({ reason })}`,
     ),
+
+  // Asset surface (2026-05-15 data-platform-extensions). Reads from the
+  // control-api `/instances/{id}/assets/...` endpoint family. The asset
+  // is a documented compound (`DataProcessing`-capable producer +
+  // `lifetime: durable` claim); the surface is a query alias over
+  // `rimsky_claim_handles`, `rimsky_lineage`, and the DataProcessing
+  // protocol's `ListVersions` / `ListPartitions` / `GetVersionSchema`.
+  listAssets: (instanceId: string, cursor?: string) =>
+    get<AssetListResponse>(`/api/control/instances/${instanceId}/assets${qs({ cursor })}`),
+  getAsset: (instanceId: string, alias: string) =>
+    get<AssetDetail>(`/api/control/instances/${instanceId}/assets/${alias}`),
+  listAssetVersions: (instanceId: string, alias: string) =>
+    get<AssetVersionsResponse>(`/api/control/instances/${instanceId}/assets/${alias}/versions`),
+  listAssetMaterializations: (instanceId: string, alias: string) =>
+    get<AssetMaterializationHistoryResponse>(
+      `/api/control/instances/${instanceId}/assets/${alias}/materialization-history`,
+    ),
+  materializeAsset: async (instanceId: string, alias: string): Promise<void> => {
+    const r = await fetch(`/api/control/instances/${instanceId}/assets/${alias}/materialize`, {
+      method: 'POST',
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '');
+      throw new Error(`${r.status} ${r.statusText}: ${detail}`);
+    }
+  },
+  deleteAsset: async (instanceId: string, alias: string): Promise<void> => {
+    const r = await fetch(`/api/control/instances/${instanceId}/assets/${alias}`, {
+      method: 'DELETE',
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '');
+      throw new Error(`${r.status} ${r.statusText}: ${detail}`);
+    }
+  },
 };

@@ -57,7 +57,9 @@ func Routes(r chi.Router, deps Deps) {
 	r.Get("/templates/{hash}", handleGetTemplate(deps))
 	r.Get("/instances", handleListInstances(deps))
 	r.Get("/instances/{id}", handleGetInstance(deps))
-	r.Get("/schedules", handleListSchedules(deps))
+	// (/schedules retired by the 2026-05-15 plan B10 / D7 / E16
+	// schedule-retirement cascade; cron firing is owned by
+	// sensors/sensor-cron/.)
 
 	r.Get("/frames", handleListFrames(deps))
 	r.Get("/frames/{id}", handleGetFrame(deps))
@@ -218,7 +220,7 @@ func peerExists(peers []PeerSpec, name string) bool {
 	return false
 }
 
-// ---- Templates / instances / schedules ----
+// ---- Templates / instances ----
 
 func handleListTemplates(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -352,38 +354,6 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"instance":      row,
 			"cascade_graph": graph,
-		})
-	}
-}
-
-func handleListSchedules(deps Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		pag, err := parsePagination(r)
-		if err != nil {
-			badRequest(w, err.Error())
-			return
-		}
-		filter := persistence.ScheduleListFilter{}
-		if v := r.URL.Query().Get("node_id"); v != "" {
-			id, err := uuid.Parse(v)
-			if err != nil {
-				badRequest(w, "invalid node_id")
-				return
-			}
-			filter.NodeID = &id
-		}
-		var res persistence.PaginatedListResult[persistence.ScheduleRow]
-		if err := inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
-			r2, err := deps.Tables.Schedules().ListForObservability(ctx, filter, pag, tx)
-			res = r2
-			return err
-		}); err != nil {
-			internalErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"schedules":   res.Rows,
-			"next_cursor": res.NextCursor,
 		})
 	}
 }

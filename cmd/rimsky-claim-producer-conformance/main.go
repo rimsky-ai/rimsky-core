@@ -89,7 +89,7 @@ type CheckResult struct {
 // checks against the supplied producer. Each check is independent;
 // failures do not short-circuit so the operator sees the full surface.
 func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []CheckResult {
-	results := make([]CheckResult, 0, 8)
+	results := make([]CheckResult, 0, 10)
 	caps, err := c.Capabilities(ctx)
 	if err != nil {
 		results = append(results, CheckResult{Name: "Capabilities", Err: err})
@@ -101,6 +101,9 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 			Name: "EnvelopeNonEmpty",
 			Err:  fmt.Errorf("write_semantics_allowed is empty"),
 		})
+		// Optional checks still run; their advertise-gates handle the
+		// pre-condition (empty envelope is independent of partitioning).
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	results = append(results, CheckResult{Name: "EnvelopeNonEmpty"})
@@ -117,6 +120,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 	out1, err := c.Open(ctx, locks.ClaimID(uuid.New().String()), spec)
 	if err != nil {
 		results = append(results, CheckResult{Name: "OpenFirst", Err: err})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	if !out1.Available {
@@ -124,6 +128,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 			Name: "OpenFirst",
 			Err:  fmt.Errorf("producer returned Unavailable for synthetic selector — cannot exercise uniformity"),
 		})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	if out1.Result.RealizedWriteSemantics == locks.WriteSemanticsUnknown {
@@ -131,6 +136,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 			Name: "OpenFirst",
 			Err:  fmt.Errorf("RealizedWriteSemantics is empty/UNKNOWN; producer must declare a concrete value"),
 		})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	if !caps.Contains(out1.Result.RealizedWriteSemantics) {
@@ -138,6 +144,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 			Name: "OpenFirst",
 			Err:  fmt.Errorf("RealizedWriteSemantics %q not in advertised envelope %v", out1.Result.RealizedWriteSemantics, caps.WriteSemanticsAllowed),
 		})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	results = append(results, CheckResult{Name: "OpenFirst"})
@@ -145,12 +152,14 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 	out2, err := c.Open(ctx, locks.ClaimID(uuid.New().String()), spec)
 	if err != nil {
 		results = append(results, CheckResult{Name: "OpenSecond", Err: err})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	if !out2.Available {
 		// Some producers (pick-policy queues) drain after Open. Skip
 		// the uniformity check rather than fail.
 		results = append(results, CheckResult{Name: "OpenSecond"})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	results = append(results, CheckResult{Name: "OpenSecond"})
@@ -163,6 +172,7 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 	// equal scopes is stricter than the invariant requires.
 	if !bytes.Equal(out1.Result.Scope, out2.Result.Scope) {
 		fmt.Fprintln(os.Stdout, "uniformity-untested-this-run: producer returned non-byte-equal scopes across two Open calls (e.g. pick-policy producer); spec §2.5 uniformity invariant only applies to byte-equal scopes.")
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	if out2.Result.RealizedWriteSemantics != out1.Result.RealizedWriteSemantics {
@@ -171,9 +181,11 @@ func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []C
 			Err: fmt.Errorf("byte-equal Scope did not produce identical RealizedWriteSemantics: %q vs %q",
 				out1.Result.RealizedWriteSemantics, out2.Result.RealizedWriteSemantics),
 		})
+		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	results = append(results, CheckResult{Name: "Uniformity"})
 
+	results = append(results, runOptionalChecks(ctx, c, caps)...)
 	return results
 }

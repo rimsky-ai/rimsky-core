@@ -103,7 +103,7 @@ func applyTerminalPass(
 		// at running → fresh.
 		//
 		//	@concept: wait-set
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
 		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
@@ -123,6 +123,19 @@ func applyTerminalPass(
 			},
 		}, tx)
 	})
+	// E8: emit leaf-run lineage record for the passed terminal.
+	EmitLeafRunLineage(ctx, args,
+		acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
+		string(cascade.NodeStateFresh), string(cascade.LastOutcomePassed), errorClass,
+		acq.InstanceParams, acq.InstanceUserdataOverrides)
+	// Run-tree state propagation (E2): pass settles the run as
+	// fresh+passed, so child→parent aggregation must fire if this run is
+	// itself a child.
+	if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
+		cascade.NodeStateFresh, cascade.LastOutcomePassed); err != nil {
+		args.Logger.Warn("applyTerminalPass: run-tree propagation failed",
+			"run_id", acq.DispatchID.String(), "error", err.Error())
+	}
 	// Per the 2026-05-14 subscription-cascade resolution, the
 	// invalidate-emit slot retired; cascade coupling is declared
 	// receiver-side via Subscribes.

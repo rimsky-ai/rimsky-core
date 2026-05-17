@@ -43,7 +43,7 @@ don't need it.
    h.Stub.WhenType("blocked-worker").
        Error("executor_blocked", map[string]any{"reason": "waiting"})
    h.Stub.WhenType("snoozer").
-       Park("rate_limit", payload, resumeAt, sessionToken)
+       Park(genv1.ParkReason_PARK_REASON_RETRY_BACKOFF, "rate_limit", payload, resumeAt, sessionToken)
    h.Stub.WhenType("async-worker").
        AwaitAsyncCallback("ack-1", 5000)
    ```
@@ -68,7 +68,7 @@ terminal outcomes on the wire (mirroring the executor protocol's
 |---|---|
 | `.Success(result, changed, summary)` | `StreamClose.Success` |
 | `.Error(class, payload)` | `StreamClose.Error` (use `class="executor_blocked"` for the executor-blocked path) |
-| `.Park(reason, payload, resumeAt, sessionToken)` | `StreamClose.Park` |
+| `.Park(reason, reasonNote, payload, resumeAt, sessionToken)` | `StreamClose.Park` |
 | `.AwaitAsyncCallback(ackID, expectedMs)` | `StreamClose.AwaitAsyncCallback` |
 
 Plus modifiers:

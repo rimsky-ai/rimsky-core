@@ -187,6 +187,16 @@ type Queue interface {
 	// ListLive scan.
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
+	// GetInFlightRunForNode resolves the in-flight `rimsky_node_runs.id`
+	// for the (node, frame) pair. Used by the cascade walker and the
+	// co-holder dispatch-time INSERT into `rimsky_claim_holders` (post-
+	// stage-5 of the run-row lifecycle cutover, both `rimsky_wait_set`
+	// and `rimsky_claim_holders` key on run id rather than node id). A
+	// row is "in-flight" when its phase is one of pending / active /
+	// held / parked. Returns (zero, false, nil) when no in-flight row
+	// exists for that (node, frame).
+	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error)
+
 	// ParkActive transitions a node-run row from phase='active' to
 	// phase='parked' under the claimant's id. Persists the park metadata
 	// (parked_at, resume_at, parked_reason, session_token) and the
@@ -309,6 +319,13 @@ type ResumeMetadataRow struct {
 // stored in col:rimsky_node_runs.parked_reason; ReasonNote is the
 // free-form human annotation stored in
 // col:rimsky_node_runs.parked_reason_note (inert in rimsky).
+//
+// ReasonLabel is the freeform classification tag persisted on
+// col:rimsky_node_runs.parked_reason_label. Spec
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Parked-state taxonomy requires this when Reason == "other"; the
+// runner-side guard rejects park terminals that violate that rule.
+// Inert in rimsky.
 type ParkActiveInput struct {
 	DispatchID           shared.UUID
 	ExpectedClaimedBy    string
@@ -316,6 +333,7 @@ type ParkActiveInput struct {
 	ResumeAt             time.Time // zero ⇒ NULL (no deadline-based resume)
 	Reason               string
 	ReasonNote           string
+	ReasonLabel          string
 	SessionToken         string
 	PayloadInline        []byte
 	PayloadHandle        string

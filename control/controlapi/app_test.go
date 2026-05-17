@@ -161,7 +161,6 @@ func templateWithStoresAndLocks(name string) map[string]any {
 				{
 					"type":     "claim-topic",
 					"executor": "worker",
-					"schedule": "* * * * *",
 					"stores": []map[string]any{
 						{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
 					},
@@ -432,7 +431,8 @@ func TestOperatorInvalidate(t *testing.T) {
 	ctx := context.Background()
 	inst := seedInstance(t, h, "op-inv-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
+	// Post-stage-3: 'fresh' = no in-flight run row. Delete any.
+	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
 
 	status, out := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "manual-poke",
@@ -467,7 +467,20 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='failed' WHERE id=$1`, nodeRow.ID)
+	// Post-stage-3: state lives on rimsky_node_runs. Seed a failed
+	// terminal row to put the node in the failed state.
+	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
+	// We need a frame_id for the run row's NOT NULL constraint. Find
+	// any frame for this instance, or insert one.
+	var frameID uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver, `
+        SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1
+    `, []any{inst.ID}, &frameID)
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_node_runs
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at)
+        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', 'failed', $2, now())
+    `, nodeRow.ID, frameID)
 	status, _ = h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 
@@ -508,7 +521,7 @@ func TestEventsList(t *testing.T) {
 
 	inst := seedInstance(t, h, "ev-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	pgtest.ExecForTest(ctx, t, h.driver, `UPDATE rimsky_nodes SET state='fresh' WHERE id=$1`, nodeRow.ID)
+	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
 	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "ev-test",
 	})
@@ -549,14 +562,9 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	require.Empty(t, holders)
 }
 
-func TestAdminForceFire_RouteWired(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	status, _ := h.httpJSON(t, "POST", "/admin/scheduled-nodes/"+uuid.NewString()+"/force-fire", nil)
-	require.Equal(t, http.StatusNoContent, status)
-}
+// (TestAdminForceFire_RouteWired retired by the 2026-05-15 plan B10 /
+// D7 / E16 schedule-retirement cascade. The /admin/scheduled-nodes/.../
+// force-fire endpoint is gone.)
 
 func seedInstance(t *testing.T, h *harness, tplName string) persistence.InstanceRow {
 	t.Helper()

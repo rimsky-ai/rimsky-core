@@ -7,7 +7,7 @@
 //
 // Branches per terminal StreamClose outcome (post-E.2 wire shape):
 //
-//   - Success{changed: true}   → validate attributes, run quality rules,
+//   - Success{changed: true}   → validate attributes,
 //                                 fire per-claim release path (held vs.
 //                                 non-held branches per §7.6),
 //                                 persist final attributes, state→fresh,
@@ -38,9 +38,6 @@ import (
 	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/frame"
 	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/qualityrule"
-	qreval "github.com/fallguy/rimsky/graph/qualityrule/eval"
-	"github.com/fallguy/rimsky/graph/shared"
 )
 
 // applyTerminal is the omnibus runner's terminal-event entry point.
@@ -100,6 +97,20 @@ func terminalClassFor(k terminalKind) string {
 // applyTerminalComplete runs the §7.6 success-branch release tx
 // alongside the state→fresh transition, final attribute upsert, and
 // cascade message-pass to dependents.
+//
+// Sub-graph caller routing (E6): when this run is a sub-graph caller
+// (the canonicalizer-emitted `IsSubgraphEntryAbsorbed` marker is set
+// on the node-def), the success branch routes through
+// `applyTerminalCompleteSubgraphCaller` instead. The sub-graph caller
+// holds its locks across the internal-cascade fire and only releases
+// at the parent run's aggregated terminal (driven by
+// `state_propagation.go::PropagateFromChildState` on the last internal
+// child's terminal). Per spec
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Sub-graphs / Invocation semantics + §Identity and absorption.
+//
+//	@concept: sub-graph
+//	@concept: delegation
 func applyTerminalComplete(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -122,13 +133,34 @@ func applyTerminalComplete(
 		}
 	}
 
-	if acq.NodeDef != nil && len(acq.NodeDef.QualityRules) > 0 {
-		if errs := runQualityRules(acq.NodeDef.QualityRules, merged); len(errs) > 0 {
-			emitQualityRuleFailures(ctx, args, acq, errs)
-			return applyErrorPolicy(ctx, args, acq, "quality_rule_failed",
-				map[string]any{"errors": errs})
-		}
+	// E6 sub-graph caller routing. The canonicalizer flagged this node
+	// with `IsSubgraphEntryAbsorbed: true` so the supervisor knows that
+	// the executor that just terminated was the absorbed entry. On the
+	// success branch the parent run stays `running` and the sub-graph's
+	// non-entry internals dispatch as children of this run.
+	if acq.NodeDef != nil && acq.NodeDef.IsSubgraphEntryAbsorbed {
+		return applyTerminalCompleteSubgraphCaller(ctx, args, acq, merged, t)
 	}
+
+	// Exit-node carry-rule: when this run is a sub-graph exit, copy its
+	// writeback bytes onto the parent run's writeback row in the same tx
+	// that records exit's terminal. Per spec §Sub-graphs / Writeback
+	// carry-rule for exit.
+	if isSubgraphExitNode(ctx, args, acq) {
+		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged); err != nil {
+			return err
+		}
+		// Fall through to the standard release/cascade path below so
+		// exit's own state transitions to `fresh` and the parent
+		// aggregator picks up the child's terminal via
+		// PropagateFromChildState.
+	}
+
+	// Per-node quality-rule evaluation retired by the 2026-05-15
+	// data-platform-extensions plan P1. The verifier-shape-checks /
+	// verifier-http executors (Section I) replace inline quality rules;
+	// failures surface as `executor_errored` with
+	// `error_class: "verifier_failed"`.
 
 	// Resolve the on_executor_complete handler. Default = by_changed
 	// (today's behavior).
@@ -201,7 +233,7 @@ func applyTerminalComplete(
 		//	@concept: wait-set
 		if lastOutcome == cascade.LastOutcomeFreshChanged {
 			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.InstanceID, acq.FrameID); err != nil {
+				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
 				return err
 			}
 		}
@@ -210,7 +242,7 @@ func applyTerminalComplete(
 		// downstream receivers can advance.
 		//
 		//	@concept: wait-set
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.NodeID); err != nil {
+		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
 		return nil
@@ -249,6 +281,21 @@ func applyTerminalComplete(
 	if lastOutcome == cascade.LastOutcomeFreshChanged {
 		fanoutRecalculate(ctx, args, acq)
 	}
+	// E8: emit leaf-run lineage record. Spec §Content lineage. Bytes
+	// are inert in rimsky (@blessed-invariant 20/21); the lineage row
+	// carries hashes + run identifiers + last_outcome, not raw bytes.
+	EmitLeafRunLineage(ctx, args,
+		acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
+		string(cascade.NodeStateFresh), string(lastOutcome), "",
+		acq.InstanceParams, acq.InstanceUserdataOverrides)
+	// Run-tree state propagation (E2): if this run is a child (fan-out
+	// or sub-graph internal), aggregate up to the parent. No-op on root
+	// runs.
+	if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
+		cascade.NodeStateFresh, lastOutcome); err != nil {
+		args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
+			"run_id", acq.DispatchID.String(), "error", err.Error())
+	}
 	// Per the 2026-05-14 subscription-cascade resolution, the
 	// invalidate-emit slot retired; cascade coupling is declared
 	// receiver-side via Subscribes. cascadeSubscribersStaleInTx
@@ -257,39 +304,6 @@ func applyTerminalComplete(
 	// receivers.
 	_ = completeHandler
 	return nil
-}
-
-// emitQualityRuleFailures appends one quality_rule_failed event per
-// failure entry. Called from the Success-outcome branch when the merged
-// attribute object fails one or more rules. Opens a single
-// `Persist.Transaction(...)` for the whole batch — the caller is OUT-
-// SIDE any open tx so a fresh tx is safe; batching keeps the per-
-// failure rows in one atomic append. (Mirror of emitLockReleased's
-// tx-required pattern: the inner Append uses the just-opened tx, never
-// a nil tx.)
-func emitQualityRuleFailures(
-	ctx context.Context, args RunArgs, acq *acquisition, errs []qualityrule.Failure,
-) {
-	if len(errs) == 0 {
-		return
-	}
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		for _, qe := range errs {
-			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "quality_rule_failed",
-				Payload: map[string]any{
-					"rule_type":   qe.RuleType,
-					"rule_config": qe.Config,
-					"severity":    string(qe.Severity),
-					"details":     qe.Details,
-				},
-			}, tx); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 // cascadeSubscribersStaleInTx marks subscriber nodes stale + frame_id
@@ -333,6 +347,7 @@ func cascadeSubscribersStaleInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID foundationshared.UUID,
 	senderNodeType string,
+	senderRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 ) error {
@@ -361,12 +376,15 @@ func cascadeSubscribersStaleInTx(
 	}
 	// BFS over the subscription graph rooted at the sender. Each
 	// receiver newly marked stale joins the queue so its own subscribers
-	// are processed in turn (cycle-guarded by visited).
+	// are processed in turn (cycle-guarded by visited). `runID` carries
+	// the in-flight run id for each node visited so wait-set INSERTs
+	// (post-stage-5 keyed by run id) bind to the right run.
 	type walkItem struct {
 		nodeID   foundationshared.UUID
 		nodeType string
+		runID    foundationshared.UUID
 	}
-	queue := []walkItem{{nodeID: senderID, nodeType: senderNodeType}}
+	queue := []walkItem{{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}}
 	visited := map[foundationshared.UUID]struct{}{senderID: {}}
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -439,10 +457,26 @@ func cascadeSubscribersStaleInTx(
 							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
 						}
 					}
+					// Resolve the receiver's in-flight run id (just
+					// inserted/refreshed by MarkStaleForCascade or
+					// wakeParkedReceiverInTx) so the wait-set row keys on
+					// per-run identity post-stage-5.
+					receiverRunID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, senderFrameID)
+					if err != nil {
+						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
+					}
+					if !ok {
+						// No in-flight run row — either the receiver is
+						// already terminal in this frame (race with a
+						// concurrent dispatcher) or the stale-mark path
+						// elected not to enqueue. Skip the wait-set INSERT;
+						// without a run row there's no gate to install.
+						continue
+					}
 					if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 						FrameID:           senderFrameID,
-						ReceiverNodeID:    r.ID,
-						SenderNodeID:      cur.nodeID,
+						ReceiverRunID:     receiverRunID,
+						SenderRunID:       cur.runID,
 						TopicKind:         edge.TopicKind,
 						SubscriptionScope: edge.SubscriptionScope,
 					}, tx); err != nil {
@@ -454,7 +488,7 @@ func cascadeSubscribersStaleInTx(
 					// subscription cycles.
 					if _, seen := visited[r.ID]; !seen {
 						visited[r.ID] = struct{}{}
-						queue = append(queue, walkItem{nodeID: r.ID, nodeType: r.NodeType})
+						queue = append(queue, walkItem{nodeID: r.ID, nodeType: r.NodeType, runID: receiverRunID})
 					}
 				}
 			}
@@ -464,14 +498,16 @@ func cascadeSubscribersStaleInTx(
 }
 
 // drainWaitSetOnSettled deletes every wait-set row in the current
-// frame where this sender appears, in bulk. Called wherever the sender
-// reaches any settled state (fresh/failed/parked). Idempotent.
+// frame where this sender's run appears, in bulk. Called wherever the
+// sender reaches any settled state (fresh/failed/parked). Idempotent.
+// Post-stage-5 of the run-row lifecycle cutover, the wait-set ledger
+// keys on the sender's run id rather than the sender node id.
 //
 //	@concept: wait-set
 func drainWaitSetOnSettled(
-	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderID foundationshared.UUID,
+	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderRunID foundationshared.UUID,
 ) error {
-	return args.Persist.WaitSet().DeleteBySender(ctx, frameID, senderID, tx)
+	return args.Persist.WaitSet().DeleteBySender(ctx, frameID, senderRunID, tx)
 }
 
 // fanoutRecalculate routes RecalculateNode at each subscribed receiver
@@ -587,22 +623,4 @@ func outcomeForChanged(changed bool) string {
 		return "committed"
 	}
 	return "no_op"
-}
-
-// runQualityRules walks the per-node quality rules against a populated
-// attributes object and returns the failures.
-func runQualityRules(rules []qualityrule.Spec, attrs map[string]any) []qualityrule.Failure {
-	if len(rules) == 0 {
-		return nil
-	}
-	errs, _, err := qreval.EvaluateAll(context.Background(), rules,
-		qualityrule.EvalInput{NewData: attrs})
-	if err != nil {
-		return []qualityrule.Failure{{
-			RuleType: "evaluation_error",
-			Severity: shared.SeverityError,
-			Details:  err.Error(),
-		}}
-	}
-	return errs
 }

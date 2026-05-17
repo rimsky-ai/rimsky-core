@@ -15,7 +15,7 @@ const sections: { title: string; links: { path: string; label: string }[] }[] = 
     links: [
       { path: '/templates', label: 'Templates' },
       { path: '/instances', label: 'Instances' },
-      { path: '/schedules', label: 'Schedules' },
+      { path: '/assets', label: 'Assets' },
       { path: '/events', label: 'Events' },
     ],
   },

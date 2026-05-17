@@ -37,12 +37,15 @@ func (noopStore) ClaimHandles() persistence.ClaimHandleTable     { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributeTable { return nil }
 func (noopStore) ClaimHolders() persistence.ClaimHolderTable     { return nil }
 func (noopStore) Events() persistence.EventTable                 { return nil }
-func (noopStore) Schedules() persistence.ScheduleTable           { return nil }
 func (noopStore) Supervisors() persistence.SupervisorTable       { return nil }
 func (noopStore) Frames() persistence.FrameTable                 { return nil }
 func (noopStore) BlobOrphans() persistence.BlobOrphanTable       { return nil }
 func (noopStore) NodeEvents() persistence.NodeEventTable         { return nil }
 func (noopStore) WaitSet() persistence.WaitSetTable              { return nil }
+func (noopStore) Messages() persistence.MessagesTable            { return nil }
+func (noopStore) Lineage() persistence.LineageTable              { return nil }
+func (noopStore) SensorWatches() persistence.SensorWatchesTable  { return nil }
+func (noopStore) RunTree() persistence.RunTreeTable              { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})
@@ -116,6 +119,9 @@ func (f *fakeDiagnosticQueue) CountParkedByReason(context.Context) (map[string]i
 }
 func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
+}
+func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
+	return shared.UUID{}, false, nil
 }
 func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, persistence.ParkActiveInput) error {
 	return nil

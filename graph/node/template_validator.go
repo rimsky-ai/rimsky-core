@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
@@ -49,14 +48,14 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 // dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// dispatchDirectiveRe / directiveBodyRe accept the three substitution
-// kinds: `claim`, `params`, and `nodes` (the latter handles both
-// attribute and event topic forms; see graph/attribute/substitution.go).
-// The legacy `deps.X.Y` form retired post-2026-05-14.
+// dispatchDirectiveRe / directiveBodyRe accept the five substitution
+// kinds: `claim`, `params`, `nodes`, `trigger`, and `child`. The
+// legacy `deps.X.Y` form retired post-2026-05-14. The `trigger` and
+// `child` kinds were added by spec §E14 (data-platform-extensions).
 //
 // directiveBodyRe further parses the inside of `{{...}}` against the
 // known source kinds.
-var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes)\.(.+)$`)
+var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child)\.(.+)$`)
 
 // RegistryHooks bundles the registry-dependent lookups the validator
 // uses. All fields may be nil; a nil hook short-circuits to "skip the
@@ -94,6 +93,19 @@ type RegistryHooks struct {
 	// (plan A1 / F7). Empty bytes mean "no schema; accept any
 	// userdata." nil → skip the check.
 	ExecutorUserdataSchema func(name string) ([]byte, bool)
+
+	// StoreAdvertisesDataProcessing returns true when the named store's
+	// Capabilities.Protocols includes "data_processing". Used to gate
+	// `claims: lifetime: durable` per spec §Lifetime and the asset
+	// pattern (the asset pattern requires DataProcessing-capable
+	// producers). nil → skip the check.
+	StoreAdvertisesDataProcessing func(name string) bool
+
+	// StoreAdvertisesSplitScope returns true when the named store's
+	// Capabilities.SupportsSplitScope is set. Used to gate
+	// `fan_out:` declarations per spec §Fan-out template DSL.
+	// nil → skip the check.
+	StoreAdvertisesSplitScope func(name string) bool
 }
 
 // ValidateTemplate walks a parsed template and reports errors per spec
@@ -112,6 +124,14 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		res.Errors = append(res.Errors, ValidationError{Path: "version", Msg: "version is required"})
 	}
 	validateFrameResolution(spec, &res)
+
+	// D1 — canonicalize nested `graphs:` shape into flat Nodes for the
+	// downstream per-node validation. Pre-v1 accepts both shapes; the
+	// canonicalizer rejects templates that mix them. Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Sub-graphs.
+	canonicalizeGraphs(spec, &res)
+
 	if len(spec.Nodes) == 0 {
 		res.Errors = append(res.Errors, ValidationError{Path: "nodes", Msg: "template must declare at least one node"})
 		return res
@@ -135,13 +155,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		declared[n.Type] = i
 	}
 
-	cronParser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
 		validateSubscribes(n, base, declared, hooks, spec, &res)
 		validateErrorTypes(n, base, declared, &res)
-		validateSchedule(n, base, cronParser, &res)
 		validateExecutorCoherence(n, base, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateStores(n, base, hooks, &res)
@@ -152,6 +169,9 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", &res)
 		validateMaxParkDuration(n, base, &res)
 		validateUserdataAgainstSchema(n, base, hooks, &res)
+		// D3 + D4 — data-platform-extensions additions.
+		validateHolds(n, base, spec, declared, &res)
+		validateFanOut(n, base, hooks, &res)
 	}
 
 	// Post-pass: substitution-ref cross-check (T17). Iterate all
@@ -412,11 +432,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 		}
 		// `on:` is required and must be a known topic kind.
 		switch s.On {
-		case "state", "attribute", "event":
+		case "state", "attribute", "event", "message":
 		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".on",
-				Msg:  fmt.Sprintf("`on:` must be one of \"state\" | \"attribute\" | \"event\", got %q", s.On),
+				Msg:  fmt.Sprintf("`on:` must be one of \"state\" | \"attribute\" | \"event\" | \"message\", got %q", s.On),
 			})
 			continue
 		}
@@ -433,6 +453,29 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase,
 					Msg:  "state-only filters (when/outcome/error_class/reason) require `on: state`",
+				})
+			}
+		}
+		// `on: message` validations: SenderKind must be one of the
+		// three legal values when set; message-specific filters
+		// (kind/sender/sender_kind/target) are only meaningful for
+		// `on: message` subscriptions.
+		if s.On == "message" {
+			switch s.SenderKind {
+			case "", "operator", "sensor", "instance":
+			default:
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".sender_kind",
+					Msg: fmt.Sprintf(
+						"`sender_kind: %q` is not valid (one of: operator, sensor, instance)",
+						s.SenderKind),
+				})
+			}
+		} else {
+			if s.Kind != "" || s.Sender != "" || s.SenderKind != "" || s.Target != "" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase,
+					Msg:  "message-only filters (kind/sender/sender_kind/target) require `on: message`",
 				})
 			}
 		}
@@ -491,36 +534,41 @@ func isBuiltinErrorClass(name string) bool {
 	switch name {
 	case "template_resolution_failed",
 		"attributes_schema_failed",
-		"quality_rule_failed",
 		"executor_blocked",
 		"executor_errored",
-		"acquire_unavailable":
+		"acquire_unavailable",
+		"verifier_failed":
 		return true
 	}
 	return false
 }
 
-func validateSchedule(n TemplateNodeDef, base string, parser cron.Parser, res *ValidationResult) {
-	if n.Schedule == "" {
-		return
-	}
-	if _, err := parser.Parse(n.Schedule); err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: fmt.Sprintf("%s.schedule", base),
-			Msg:  fmt.Sprintf("invalid cron expression %q: %v", n.Schedule, err),
-		})
-	}
-}
-
 func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationResult) {
-	if n.Executor != "" {
-		return
-	}
-	if len(n.Userdata) > 0 {
-		res.Warnings = append(res.Warnings, ValidationWarning{
-			Path: fmt.Sprintf("%s.userdata", base),
-			Msg:  "pure-cascade node has userdata; userdata is only consumed by executors",
+	// D2 — `delegate:` and `executor:` are mutually exclusive. Per
+	// spec §Sub-graphs / Identity and absorption, a node declares
+	// EITHER a leaf executor OR a sub-graph delegation. Both set or
+	// neither set is rejected. The "neither set" rejection is
+	// constrained to nodes that have neither claims nor holds —
+	// pure-cascade pseudo-nodes remain legal.
+	hasExecutor := n.Executor != ""
+	hasDelegate := n.Delegate != ""
+	if hasExecutor && hasDelegate {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("%s.delegate", base),
+			Msg: fmt.Sprintf(
+				"delegate and executor are mutually exclusive (executor=%q, delegate=%q)",
+				n.Executor, n.Delegate),
 		})
+	}
+	if !hasExecutor && !hasDelegate {
+		// Pure-cascade pseudo-node — legal. Warn only if userdata
+		// is present (it has no consumer).
+		if len(n.Userdata) > 0 {
+			res.Warnings = append(res.Warnings, ValidationWarning{
+				Path: fmt.Sprintf("%s.userdata", base),
+				Msg:  "pure-cascade node has userdata; userdata is only consumed by executors",
+			})
+		}
 	}
 }
 
@@ -597,8 +645,45 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			continue
 		}
 		seenAlias[alias] = j
+
+		// D5: claim `lifetime:` validation. Per spec
+		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+		// §Lifetime and the asset pattern.
+		switch s.Lifetime {
+		case "", ClaimLifetimeSubgraph, ClaimLifetimeDurable:
+		default:
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".lifetime",
+				Msg: fmt.Sprintf(
+					"lifetime = %q is not valid (one of: %q, %q)",
+					s.Lifetime, ClaimLifetimeSubgraph, ClaimLifetimeDurable),
+			})
+		}
+		// `lifetime: durable` requires the producer to advertise the
+		// DataProcessing mix-in protocol. The hook reports per-store
+		// capability snapshot when available; silent skip when the
+		// hook is nil (e.g. unit-test paths without a registry).
+		if s.Lifetime == ClaimLifetimeDurable && hooks.StoreAdvertisesDataProcessing != nil {
+			if !hooks.StoreAdvertisesDataProcessing(name) {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".lifetime",
+					Msg: fmt.Sprintf(
+						"lifetime = %q requires store %q to advertise the data_processing protocol (asset pattern)",
+						ClaimLifetimeDurable, name),
+				})
+			}
+		}
 	}
 }
+
+// ClaimLifetimeSubgraph and ClaimLifetimeDurable mirror the constants
+// in foundation/spec; they're re-declared here as local constants only
+// for readability inside the validator. The canonical source is
+// foundation/spec/graphs.go.
+const (
+	ClaimLifetimeSubgraph = "subgraph"
+	ClaimLifetimeDurable  = "durable"
+)
 
 // validateLocks enforces the named-lock declarations. Limit lives in
 // operator config (named_locks: block); the template only references
@@ -839,6 +924,22 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'attribute' or 'event'", body),
 			})
 		}
+	case "trigger":
+		// trigger.message.payload.<field-path>
+		if len(parts) < 3 || parts[0] != "message" || parts[1] != "payload" || parts[2] == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload.<field>", body),
+			})
+		}
+	case "child":
+		// child.partition_key
+		if len(parts) != 1 || parts[0] != "partition_key" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("child directive %q must be child.partition_key", body),
+			})
+		}
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
@@ -884,7 +985,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload.<f>}, params.<k>, nodes.<n>.attribute.<f>, or nodes.<n>.event.<name>.<path>)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload.<f>}, params.<k>, nodes.<n>.attribute.<f>, nodes.<n>.event.<name>.<path>, trigger.message.payload.<f>, or child.partition_key)", body),
 			})
 		}
 	}

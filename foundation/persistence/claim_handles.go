@@ -55,6 +55,52 @@ type ClaimHandleRow struct {
 	// active terminal until the holding-subgraph completes (auto-
 	// terminal mechanism per foundation contract §5.5).
 	IsHeld bool `json:"is_held"`
+	// ParentClaimHandleID is the parent claim handle in a sub-claim
+	// tree (fan-out parent → leaf sub-claims). NULL for root claims.
+	// FK rimsky_claim_handles.parent_claim_handle_id with
+	// ON DELETE SET NULL so sub-claim rows outlive parent during
+	// auto-terminal staging. Spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Recursive claim-tree resolution.
+	ParentClaimHandleID *shared.UUID `json:"parent_claim_handle_id,omitempty"`
+	// Lifetime is "subgraph" (default) or "durable". Durable claims
+	// persist past auto-terminal as held_durable=TRUE rows until
+	// instance termination explicitly Releases them.
+	Lifetime string `json:"lifetime,omitempty"`
+	// HeldDurable marks a row that survived auto-terminal Commit on
+	// a `lifetime: durable` claim. Cleared by instance-termination
+	// Release path; skipped by the orphan-claim reaper while TRUE.
+	HeldDurable bool `json:"held_durable"`
+	// VersionID is the DataProcessing-producer-returned canonical
+	// version identifier persisted on Commit for durable claims. Empty
+	// for non-DataProcessing producers or pre-Commit rows. Inert in
+	// rimsky (@blessed-invariant 20-class).
+	VersionID string `json:"version_id,omitempty"`
+	// ProducerCandidateHandle is the per-sub-claim handle returned by
+	// `DataProcessing.BeginCandidate`. Used by the leaf-dispatch path
+	// (`runtime/runner_dispatch.go`) to populate
+	// `ExecuteRequest.StoreHandle.CandidateHandle`. Inert in rimsky.
+	ProducerCandidateHandle []byte `json:"-"`
+	// AggregationPolicy is the snapshotted parent-aggregation policy
+	// for fan-out parents. Set at parent claim_handle Insert time when
+	// the row represents a fan-out parent (sub-claim children expected);
+	// NULL on leaf / non-fan-out claim handles. Drives
+	// `runtime/auto_terminal.go::resolveParentClaimChain`'s Commit /
+	// Abandon decision over the children's outcomes.
+	AggregationPolicy json.RawMessage `json:"aggregation_policy,omitempty"`
+	// ExpectedChildrenCount is the number of sub-claim children
+	// expected for a fan-out parent. Bumped by `AcquireSubClaims` per
+	// sub-scope INSERT. The recursive walker compares it against
+	// committed+abandoned counts to decide whether all children have
+	// resolved. Zero on leaf / non-fan-out claim handles (no recursion
+	// reaches them).
+	ExpectedChildrenCount int `json:"expected_children_count,omitempty"`
+	// CommittedChildrenCount + AbandonedChildrenCount accumulate per-child
+	// outcomes as sub-claims resolve. Bumped atomically inside the same
+	// tx as the child's terminal Delete; read inside the parent's
+	// SELECT … FOR UPDATE so the aggregate decision is consistent.
+	CommittedChildrenCount int `json:"committed_children_count,omitempty"`
+	AbandonedChildrenCount int `json:"abandoned_children_count,omitempty"`
 }
 
 // ClaimHandleInsertInput is the per-row input for Insert.
@@ -78,6 +124,27 @@ type ClaimHandleInsertInput struct {
 	// outcome resolution when all rimsky_claim_holders rows for a held
 	// claim_handle reach a non-active state.
 	IsHeld bool
+	// ParentClaimHandleID is the sub-claim parent in a fan-out tree.
+	// NULL for root claims (the standard case); set for fan-out
+	// children produced by `ClaimProducer.SplitScope`. Spec
+	// §Recursive claim-tree resolution.
+	ParentClaimHandleID *shared.UUID
+	// Lifetime is "subgraph" (default; the row drops at auto-terminal)
+	// or "durable" (the row persists with held_durable=TRUE past
+	// auto-terminal). Empty defaults to "subgraph".
+	Lifetime string
+	// ProducerCandidateHandle is the bytes returned by
+	// `DataProcessing.BeginCandidate` per sub-claim. Empty for
+	// non-DataProcessing producers and non-fan-out claims.
+	ProducerCandidateHandle []byte
+	// AggregationPolicy is the parent-aggregation policy snapshot at
+	// fan-out parent acquisition time. Encoded via
+	// `MarshalAggregationPolicy`. Nil bytes / empty policy → NULL on the
+	// row (the recursive walker defaults to `strict` semantics when the
+	// column is NULL). Spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §State aggregation rules.
+	AggregationPolicy json.RawMessage
 }
 
 // ClaimHandleTable is the rimsky_claim_handles accessor exposed on Store.
@@ -142,6 +209,57 @@ type ClaimHandleTable interface {
 	// resolve node-run → claim_id without a full per-node scan. Returns
 	// (nil, nil) when no matching row exists.
 	GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (*ClaimHandleRow, error)
+
+	// ListChildClaimHandles returns claim_handles rows whose
+	// parent_claim_handle_id equals parentID. Used by the recursive
+	// claim-tree resolution path (`runtime/auto_terminal.go::
+	// CheckAndFireResolution`) to confirm all sub-claims have
+	// terminated before firing the parent's resolution.
+	// Spec §Recursive claim-tree resolution.
+	ListChildClaimHandles(ctx context.Context, parentID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
+
+	// SetHeldDurable flips the held_durable column to TRUE so the row
+	// survives auto-terminal. Claimant-guarded on supervisorID.
+	// Used at parent-claim Commit time on `lifetime: durable` claims.
+	SetHeldDurable(ctx context.Context, id shared.UUID, supervisorID string, heldDurable bool, tx Tx) error
+
+	// SetVersionID persists the DataProcessing-producer-returned
+	// canonical version_id from `ClaimProducer.Commit`. Claimant-guarded.
+	// Inert in rimsky (@blessed-invariant 20-class).
+	SetVersionID(ctx context.Context, id shared.UUID, supervisorID string, versionID string, tx Tx) error
+
+	// ListHeldDurableByInstance returns claim_handles rows held-durable
+	// for the given instance. Used by the instance-termination cleanup
+	// path to walk the durable claims for `ClaimProducer.Release`.
+	// The join goes through rimsky_node_runs → rimsky_nodes.
+	ListHeldDurableByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
+
+	// SetAggregationPolicy writes the parent-claim aggregation policy
+	// snapshot on a claim_handle row. Called once per fan-out parent at
+	// sub-claim acquisition time so the recursive walker
+	// (`runtime/auto_terminal.go::resolveParentClaimChain`) can compute a
+	// true aggregate Commit/Abandon decision across all children — not
+	// just the just-resolved seedOutcome. Claimant-guarded on
+	// supervisorID. Empty `policy` bytes clear the column. Spec
+	// §Recursive scope partitioning.
+	SetAggregationPolicy(ctx context.Context, id shared.UUID, supervisorID string, policy json.RawMessage, tx Tx) error
+
+	// BumpExpectedChildrenCount adds `delta` to the parent's
+	// `expected_children_count`. Called by `AcquireSubClaims` per
+	// sub-claim INSERT so the recursive walker can detect "all children
+	// resolved" via committed+abandoned == expected. Claimant-guarded on
+	// supervisorID. Spec §Recursive scope partitioning.
+	BumpExpectedChildrenCount(ctx context.Context, id shared.UUID, supervisorID string, delta int, tx Tx) error
+
+	// BumpChildOutcomeCount adds `delta` to either
+	// `committed_children_count` (when outcome == "commit") or
+	// `abandoned_children_count` (when outcome == "abandon"). Called by
+	// the recursive walker before firing the parent's terminal verb;
+	// runs inside the parent's SELECT … FOR UPDATE so the aggregate
+	// decision sees a consistent counter view. Claimant-guarded on
+	// supervisorID. The outcome string is restricted to {"commit","abandon"}
+	// — any other value returns an error.
+	BumpChildOutcomeCount(ctx context.Context, id shared.UUID, supervisorID string, outcome string, delta int, tx Tx) error
 }
 
 // LockHolderListFilter is the observability browse filter for the

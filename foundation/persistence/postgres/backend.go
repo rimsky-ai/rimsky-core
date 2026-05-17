@@ -147,7 +147,6 @@ type (
 	nodeAttributesImpl       tablesImpl
 	claimHoldersImpl         tablesImpl
 	eventsImpl               tablesImpl
-	schedulesImpl            tablesImpl
 	supervisorsImpl          tablesImpl
 	framesImpl               tablesImpl
 )
@@ -164,7 +163,6 @@ var (
 	_ persistence.NodeAttributeTable        = (*nodeAttributesImpl)(nil)
 	_ persistence.ClaimHolderTable          = (*claimHoldersImpl)(nil)
 	_ persistence.EventTable                = (*eventsImpl)(nil)
-	_ persistence.ScheduleTable             = (*schedulesImpl)(nil)
 	_ persistence.SupervisorTable           = (*supervisorsImpl)(nil)
 	_ persistence.FrameTable                = (*framesImpl)(nil)
 )
@@ -182,7 +180,6 @@ func (s *tablesImpl) ClaimHandles() persistence.ClaimHandleTable     { return (*
 func (s *tablesImpl) NodeAttributes() persistence.NodeAttributeTable { return (*nodeAttributesImpl)(s) }
 func (s *tablesImpl) ClaimHolders() persistence.ClaimHolderTable     { return (*claimHoldersImpl)(s) }
 func (s *tablesImpl) Events() persistence.EventTable                 { return (*eventsImpl)(s) }
-func (s *tablesImpl) Schedules() persistence.ScheduleTable           { return (*schedulesImpl)(s) }
 func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*supervisorsImpl)(s) }
 
 func (s *tablesImpl) Frames() persistence.FrameTable { return (*framesImpl)(s) }
@@ -197,6 +194,5 @@ func (b *claimHandlesImpl) q(tx persistence.Tx) querier         { return (*table
 func (b *nodeAttributesImpl) q(tx persistence.Tx) querier       { return (*tablesImpl)(b).q(tx) }
 func (b *claimHoldersImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
 func (b *eventsImpl) q(tx persistence.Tx) querier               { return (*tablesImpl)(b).q(tx) }
-func (b *schedulesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
 func (b *supervisorsImpl) q(tx persistence.Tx) querier          { return (*tablesImpl)(b).q(tx) }
 func (b *framesImpl) q(tx persistence.Tx) querier               { return (*tablesImpl)(b).q(tx) }

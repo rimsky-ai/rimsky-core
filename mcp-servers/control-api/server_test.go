@@ -63,7 +63,7 @@ func TestServerInitializeAndToolsList(t *testing.T) {
 	bs, _ := json.Marshal(got2)
 	wants := []string{
 		"template_list", "template_register", "instance_create", "instance_terminate",
-		"node_invalidate", "force_fire_scheduled", "held_frames_list", "parked_nodes_list",
+		"node_invalidate", "held_frames_list", "parked_nodes_list",
 	}
 	body2 := string(bs)
 	for _, name := range wants {

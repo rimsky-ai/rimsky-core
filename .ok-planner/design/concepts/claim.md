@@ -22,6 +22,12 @@ A claim is a node's request to access a producer-managed resource: an items-tabl
 
 Claims are how a graph node says "I need exclusive (or coexisting) access to this thing while I run." The producer parses the selector from its own DSL and emits canonical scope bytes; rimsky enforces the conflict matrix byte-equally.
 
+Per the 2026-05-15 data-platform-extensions, claims gain three orthogonal extensions:
+
+- **Lifetime** (`subgraph | durable`; default `subgraph`): governs auto-terminal behavior. A `durable` claim's row persists past holding-subgraph completion (marked `held_durable: true`), released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.
+- **Sub-claim chains**: a claim's scope may be partitioned via `ClaimProducer.SplitScope` into sub-claims that hold sub-scopes. Persisted via `parent_claim_handle_id` on `rimsky_claim_handles`. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`.
+- **Co-holdership**: multiple node-runs may hold the same `claim_handle` via the `holds:` template directive. Each co-holder gets a row in `rimsky_claim_holders` keyed by `holder_run_id`. The holding subgraph extends to all co-holders; auto-terminal fires only after every co-holder reaches a non-active state. See `concept:claim-co-holdership`.
+
 ## Boundaries
 
 Owns: the claim declaration, the address/payload/scope returned at `Open`, the post-terminal verb (`Commit | Abandon | Release`). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its `### Held variant` subsection — the dropped `held-claim` concept's content lives there), `claim-producer`, `scope`, `write-semantics`, `auto-terminal`, `inertness`.

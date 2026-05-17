@@ -13,17 +13,35 @@
 
 package spec
 
+import "encoding/json"
+
 // TemplateSpec is the top-level template structure, parsed from YAML
 // or JSON.
+//
+// Pre-spec-2026-05-15 templates declared a single flat list under
+// `nodes:`; the data-platform-extensions spec introduces `graphs:`
+// (one `main` graph plus zero or more named sub-graphs with
+// entry/exit aliases) and `sensors:` (per-instance sensor watches).
+// Both shapes are accepted at parse time; the canonicalizer rejects
+// templates that declare both (the legacy flat `Nodes` and a
+// non-empty `Graphs`). Per spec
+// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Sub-graphs.
 type TemplateSpec struct {
 	Name                string            `yaml:"name" json:"name"`
 	Version             string            `yaml:"version" json:"version"`
 	Description         string            `yaml:"description,omitempty" json:"description,omitempty"`
 	FrameResolutionMode string            `yaml:"frame_resolution_mode" json:"frame_resolution_mode"`
 	FrameTimeoutMs      int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
-	Nodes               []TemplateNodeDef `yaml:"nodes" json:"nodes"`
-	ParamsSchema        map[string]any    `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
-	ParamsRedact        []string          `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+	Nodes               []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	// Graphs is the post-spec-2026-05-15 nested form. When non-empty,
+	// the canonicalizer rejects any non-empty `Nodes` field.
+	Graphs []GraphSpec `yaml:"graphs,omitempty" json:"graphs,omitempty"`
+	// Sensors declares per-instance sensor watches. Each entry seeds
+	// one row in table:rimsky_sensor_watches at instance creation.
+	Sensors      []SensorSpec   `yaml:"sensors,omitempty" json:"sensors,omitempty"`
+	ParamsSchema map[string]any `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
+	ParamsRedact []string       `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 }
 
 // Frame-resolution constants (per docs/history/2026-04-26-frame-resolution-design.md).
@@ -39,17 +57,15 @@ const (
 // handler and is only used to express subscription fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
-	Type         string                     `yaml:"type" json:"type"`
-	Description  string                     `yaml:"description,omitempty" json:"description,omitempty"`
-	Executor     string                     `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
-	Userdata     map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
-	Schedule     string                     `yaml:"schedule,omitempty" json:"schedule,omitempty"` // cron expr; optional
-	Stores       []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
-	Locks        []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
-	Attributes   *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
-	QualityRules []QualityRuleSpec          `yaml:"quality_rules,omitempty" json:"quality_rules,omitempty"`
-	Inherits     []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
-	ErrorTypes   map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
+	Type        string                     `yaml:"type" json:"type"`
+	Description string                     `yaml:"description,omitempty" json:"description,omitempty"`
+	Executor    string                     `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
+	Userdata    map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
+	Stores      []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
+	Locks       []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
+	Attributes  *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	Inherits    []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
+	ErrorTypes  map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
 	// Subscribes declares the node's reactive surface. Each entry names an
 	// upstream node (or instance: true for cross-cutting) plus a topic kind
@@ -97,6 +113,43 @@ type TemplateNodeDef struct {
 	// (default 100); 0 = disable cap entirely (infinite retries
 	// permitted); N>0 = use N. Per plan F3.
 	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
+
+	// Delegate names a sub-graph (a GraphSpec.Name other than "main")
+	// the node delegates to. Mutually exclusive with Executor: the
+	// canonicalizer rejects nodes that set both, and absorbs the
+	// referenced sub-graph's entry node's executor into this node at
+	// canonicalization (per spec §Sub-graphs / Identity and absorption).
+	Delegate string `yaml:"delegate,omitempty" json:"delegate,omitempty"`
+
+	// Holds declares the node co-holds upstream claims. The outer key
+	// is the local alias; the value names the upstream node whose
+	// claim is being co-held. The supervisor INSERTs rows into
+	// table:rimsky_claim_holders at dispatch time and binds the
+	// upstream's address into the leaf's ExecuteRequest per-claim
+	// slot using the local alias. Per spec §Claim co-holdership.
+	Holds map[string]HoldsBinding `yaml:"holds,omitempty" json:"holds,omitempty"`
+
+	// FanOut, when set, declares the node fans out across sub-scopes
+	// of one of its `claims:` aliases. The supervisor calls
+	// ClaimProducer.SplitScope inside the acquisition tx and dispatches
+	// one leaf run per sub-scope. Per spec §Fan-out template DSL.
+	FanOut *FanOutSpec `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+
+	// IsSubgraphEntryAbsorbed is set by the canonicalizer when this
+	// node is a sub-graph caller (has a non-empty Delegate). Its
+	// `rimsky_nodes` row carries the absorbed entry node's executor +
+	// any sub-graph-internal claims/holds/userdata declared on the
+	// entry, merged with what the calling node declared externally.
+	// At runtime the supervisor consults this marker on the success
+	// branch of `applyTerminalComplete` to route through the sub-graph
+	// internal-cascade fire instead of the standard single-run
+	// resolution. Persisted as JSON so the canonicalizer's emission
+	// survives spec hashing.
+	//
+	// Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Sub-graphs / Identity and absorption.
+	IsSubgraphEntryAbsorbed bool `yaml:"is_subgraph_entry_absorbed,omitempty" json:"is_subgraph_entry_absorbed,omitempty"`
 }
 
 // OnAcquireUnavailableHandler declares the supervisor's behavior when
@@ -154,11 +207,22 @@ const (
 // name within the node, used in {{claim.<alias>.<...>}} substitution
 // paths and in inheritance references; defaults to Name (the
 // producer name) when not set.
+//
+// Lifetime is "subgraph" (default) or "durable" (the claim survives
+// past holding-subgraph completion — the asset pattern). When
+// "durable" the canonicalizer requires the producer advertise the
+// DataProcessing mix-in protocol.
+//
+// Data is the opaque-to-rimsky producer-targeted bytes (the `data:`
+// block on the claim in YAML). Per @blessed-invariant 20 rimsky
+// forwards verbatim to the producer; never inspects.
 type NodeStoreRef struct {
-	Name     string `yaml:"name" json:"name"`
-	Selector string `yaml:"selector" json:"selector"`
-	Intent   string `yaml:"intent" json:"intent"` // "r" | "rw"
-	Alias    string `yaml:"alias,omitempty" json:"alias,omitempty"`
+	Name     string          `yaml:"name" json:"name"`
+	Selector string          `yaml:"selector" json:"selector"`
+	Intent   string          `yaml:"intent" json:"intent"` // "r" | "rw"
+	Alias    string          `yaml:"alias,omitempty" json:"alias,omitempty"`
+	Lifetime string          `yaml:"lifetime,omitempty" json:"lifetime,omitempty"` // "subgraph" (default) | "durable"
+	Data     json.RawMessage `yaml:"data,omitempty" json:"data,omitempty"`
 }
 
 // AliasOf returns the claim alias for this store ref — defaults to

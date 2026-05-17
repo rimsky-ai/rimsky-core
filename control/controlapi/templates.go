@@ -34,6 +34,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/graph/template/canonical"
+	"github.com/fallguy/rimsky/runtime"
 )
 
 // readAllBody reads the request body in full.
@@ -179,6 +180,35 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		log.Debug("register.hash.done", "elapsed_ms", time.Since(tHash).Milliseconds())
 		if err != nil {
 			writeError(w, err)
+			return
+		}
+
+		// F9: Validation pipeline. After canonicalization + static-
+		// check pass, fire `Validate` RPCs to advertising services.
+		// Errors at this step reject the registration; warnings fail
+		// only when `?warnings_as_errors=true` is set on the request.
+		// Spec §Protocol surfaces / Validation / Pipeline integration.
+		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
+		tValidatePipeline := time.Now()
+		outcome, vErr := runtime.RunValidationPipeline(
+			req.Context(), deps.Validators, spec, hash, deps.UnreachableValidatorPolicy,
+		)
+		log.Debug("register.validate_pipeline.done",
+			"elapsed_ms", time.Since(tValidatePipeline).Milliseconds(),
+			"errors", len(outcome.Errors),
+			"warnings", len(outcome.Warnings),
+			"err", vErr)
+		if vErr != nil {
+			writeError(w, vErr)
+			return
+		}
+		if len(outcome.Errors) > 0 || (warningsAsErrors && len(outcome.Warnings) > 0) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":               "template validation pipeline rejected the registration",
+				"validation_errors":   outcome.Errors,
+				"validation_warnings": outcome.Warnings,
+				"warnings_as_errors":  warningsAsErrors,
+			})
 			return
 		}
 

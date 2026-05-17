@@ -1,0 +1,51 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// N4 scenario — sensor_invalidate_to_cascade.
+//
+// A sensor POSTs an `observation` message via
+// `POST /sensors/{watch_id}/observations`; at frame boundary the
+// scheduler delivers it. The scenario pins enqueue → deliver shape
+// with sender_kind="sensor".
+package messages
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/runtime"
+)
+
+func TestSensorInvalidateToCascade(t *testing.T) {
+	t.Parallel()
+	m := newFakeMessages()
+	ctx := context.Background()
+	instanceID := shared.UUID(uuid.New())
+	frameID := shared.UUID(uuid.New())
+	now := time.Now().UTC()
+	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
+		ID:         shared.UUID(uuid.New()),
+		InstanceID: instanceID,
+		Kind:       "observation",
+		Sender:     "sensor-cron",
+		SenderKind: "sensor",
+		Target:     "*",
+		Payload:    []byte(`{"observed_at":"2026-05-15T12:00:00Z"}`),
+		ReceivedAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueMessage: %v", err)
+	}
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now)
+	if err != nil {
+		t.Fatalf("DeliverPendingMessages: %v", err)
+	}
+	if len(delivered.Messages) != 1 || delivered.Messages[0].SenderKind != "sensor" {
+		t.Errorf("expected one sensor-sender delivered, got %+v", delivered.Messages)
+	}
+}

@@ -51,6 +51,7 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Database, rawExec 
 	t.Run("InstancesUserdataOverridesMigrationBackfill", func(t *testing.T) { testInstancesUserdataOverridesMigrationBackfill(t, factory(t), rawExec) })
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
-	t.Run("SchedulesDenseSameTimestampPagination", func(t *testing.T) { testSchedulesDenseSameTimestampPagination(t, factory(t)) })
+	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15
+	// plan B10 / D7 / E16 schedule-retirement cascade.)
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 }

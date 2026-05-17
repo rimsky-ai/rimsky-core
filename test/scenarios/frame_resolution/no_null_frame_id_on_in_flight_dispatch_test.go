@@ -62,24 +62,37 @@ func TestNoNullFrameIDOnInFlightDispatch(t *testing.T) {
 	require.Equal(t, 0, nullDispatches,
 		"invariant 19 violated: %d rimsky_node_runs rows have NULL frame_id", nullDispatches)
 
-	// Invariant: no non-fresh rimsky_nodes row with NULL frame_id.
+	// Invariant: no in-flight run row in state IN ('stale','running')
+	// with NULL frame_id (post-stage-3: state lives on the run row).
+	// rimsky_node_runs.frame_id is NOT NULL so this is structurally
+	// guaranteed, but we keep the predicate for symmetry with the
+	// invariant 19 audit.
 	var nullNodes int
 	err = h.Pool.QueryRow(context.Background(), `
-		SELECT count(*) FROM rimsky_nodes
-		WHERE state IN ('stale','running') AND frame_id IS NULL
+		SELECT count(*) FROM rimsky_node_runs
+		WHERE state IN ('stale','running')
+		  AND phase IN ('pending','active','held','parked')
+		  AND frame_id IS NULL
 	`).Scan(&nullNodes)
 	require.NoError(t, err)
 	require.Equal(t, 0, nullNodes,
-		"invariant 19 violated: %d non-fresh rimsky_nodes rows have NULL frame_id", nullNodes)
+		"invariant 19 violated: %d non-fresh in-flight run rows have NULL frame_id", nullNodes)
 
-	// On completion: nodes return to fresh and frame_id is cleared
-	// (per spec §6.2 — completed clears frame_id, failed preserves it).
+	// On completion: nodes return to fresh and rimsky_nodes.frame_id is
+	// cleared (per spec §6.2 — completed clears frame_id, failed
+	// preserves it). Post-stage-3: state comes from the in-flight run
+	// row; fresh = no in-flight row.
 	for _, nodeType := range []string{"worker", "middle", "leaf"} {
 		nID := h.FindNode(iid, nodeType).ID
 		var state string
 		var frameID *uuid.UUID
 		err := h.Pool.QueryRow(context.Background(),
-			`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1`,
+			`SELECT COALESCE(r.state, 'fresh'), n.frame_id
+			   FROM rimsky_nodes n
+			   LEFT JOIN rimsky_node_runs r
+			          ON r.node_id = n.id
+			         AND r.phase IN ('pending','active','held','parked')
+			  WHERE n.id = $1`,
 			uuid.UUID(nID)).Scan(&state, &frameID)
 		require.NoError(t, err)
 		if state == string(cascade.NodeStateFresh) {

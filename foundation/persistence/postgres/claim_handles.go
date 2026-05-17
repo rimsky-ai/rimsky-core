@@ -43,7 +43,11 @@ const lockHolderCols = `
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id,
-  node_run_id, is_held
+  node_run_id, is_held,
+  parent_claim_handle_id, lifetime, held_durable, version_id,
+  producer_candidate_handle,
+  aggregation_policy, expected_children_count,
+  committed_children_count, abandoned_children_count
 `
 
 // Insert writes a new lock-holder row inside the caller-provided
@@ -57,14 +61,24 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		v := in.RealizedWriteSemantics
 		rws = &v
 	}
+	lifetime := in.Lifetime
+	if lifetime == "" {
+		lifetime = "subgraph"
+	}
+	var candidateHandle any
+	if len(in.ProducerCandidateHandle) > 0 {
+		candidateHandle = in.ProducerCandidateHandle
+	}
 	_, err := s.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_claim_handles (
 		   id, lock_kind, lock_name, producer_name, scope_data, address, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, last_heartbeat_at, expires_at, frame_id,
-		   node_run_id, is_held
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		   node_run_id, is_held,
+		   parent_claim_handle_id, lifetime, producer_candidate_handle,
+		   aggregation_policy
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		in.ID, string(in.LockKind),
 		in.LockName, in.ProducerName,
 		nullableJSONB(in.ScopeData), nullableJSONB(in.Address),
@@ -73,6 +87,8 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		in.HolderSupervisorID, in.HolderNodeID,
 		now, now, in.ExpiresAt, in.FrameID,
 		in.NodeRunID, in.IsHeld,
+		in.ParentClaimHandleID, lifetime, candidateHandle,
+		nullableJSONB(in.AggregationPolicy),
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.Insert: %w", err)
@@ -205,6 +221,96 @@ func (s *claimHandlesImpl) GetByFrameAndNode(ctx context.Context, nodeID shared.
 	return &out, nil
 }
 
+// ListChildClaimHandles returns every claim handle whose
+// parent_claim_handle_id equals parentID. Used by the recursive
+// claim-tree resolution path (spec §Recursive claim-tree resolution).
+func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
+		 WHERE parent_claim_handle_id = $1`,
+		parentID)
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListChildClaimHandles: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
+}
+
+// SetHeldDurable flips the held_durable column claimant-guarded.
+func (s *claimHandlesImpl) SetHeldDurable(
+	ctx context.Context, id shared.UUID, supervisorID string, heldDurable bool, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles SET held_durable = $1
+		 WHERE id = $2 AND holder_supervisor_id = $3`,
+		heldDurable, id, supervisorID)
+	if err != nil {
+		return fmt.Errorf("lockholders.SetHeldDurable: %w", err)
+	}
+	return nil
+}
+
+// SetVersionID persists the producer-returned canonical version_id
+// claimant-guarded. Inert in rimsky (@blessed-invariant 20-class).
+func (s *claimHandlesImpl) SetVersionID(
+	ctx context.Context, id shared.UUID, supervisorID string, versionID string, tx persistence.Tx,
+) error {
+	var v *string
+	if versionID != "" {
+		v = &versionID
+	}
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles SET version_id = $1
+		 WHERE id = $2 AND holder_supervisor_id = $3`,
+		v, id, supervisorID)
+	if err != nil {
+		return fmt.Errorf("lockholders.SetVersionID: %w", err)
+	}
+	return nil
+}
+
+// ListHeldDurableByInstance returns claim_handles rows held-durable for
+// the given instance. Used by the instance-termination cleanup path
+// (`runtime/instance_termination.go`).
+//
+// Column qualification: every column selected MUST be prefixed `ch.`
+// because the JOIN against `rimsky_nodes n` introduces the `id` column
+// from both tables; an unqualified `id` in the SELECT raises
+// "column reference id is ambiguous" at execution time.
+func (s *claimHandlesImpl) ListHeldDurableByInstance(
+	ctx context.Context, instanceID shared.UUID, tx persistence.Tx,
+) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT `+qualifiedLockHolderCols("ch")+`
+		   FROM rimsky_claim_handles ch
+		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		  WHERE ch.held_durable = TRUE AND n.instance_id = $1`,
+		instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListHeldDurableByInstance: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
+}
+
+// qualifiedLockHolderCols returns the lock-holder column list prefixed
+// with the given alias. Used by JOIN queries (e.g.,
+// `ListHeldDurableByInstance`) where unqualified column names would be
+// ambiguous against the joined table's columns.
+func qualifiedLockHolderCols(alias string) string {
+	return alias + `.id, ` + alias + `.lock_kind, ` + alias + `.lock_name, ` +
+		alias + `.producer_name, ` + alias + `.scope_data, ` + alias + `.address, ` +
+		alias + `.intent, ` + alias + `.realized_write_semantics, ` +
+		alias + `.holder_supervisor_id, ` + alias + `.holder_node_id, ` +
+		alias + `.claimed_at, ` + alias + `.last_heartbeat_at, ` + alias + `.expires_at, ` +
+		alias + `.frame_id, ` + alias + `.node_run_id, ` + alias + `.is_held, ` +
+		alias + `.parent_claim_handle_id, ` + alias + `.lifetime, ` +
+		alias + `.held_durable, ` + alias + `.version_id, ` +
+		alias + `.producer_candidate_handle, ` +
+		alias + `.aggregation_policy, ` + alias + `.expected_children_count, ` +
+		alias + `.committed_children_count, ` + alias + `.abandoned_children_count`
+}
+
 // ListBySupervisor returns every row owned by supervisorID.
 func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
@@ -222,28 +328,40 @@ func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID st
 // ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
 // owned by supervisorID whose lifetime should currently be active. Per
 // spec §7.5; the heartbeat keeps lock-holder rows alive against the
-// orphan reaper.
+// orphan reaper. Post-stage-3 / stage-5 the "running for this supervisor"
+// predicate sources from `rimsky_node_runs` (state + claimed_by); holder
+// membership joins through `rimsky_claim_holders.holder_run_id` →
+// `rimsky_node_runs`.
 func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	heartbeatSeconds := int(time.Until(expiresAt).Seconds())
 	if heartbeatSeconds < 1 {
 		heartbeatSeconds = 1
 	}
+	// held_durable rows are excluded from the heartbeat: their lifetime
+	// is unbounded (released only by instance termination via
+	// `ReleaseHeldDurableClaims`), so they do not need expires_at
+	// refresh. Coupled with the matching exclusion in `ListExpired` /
+	// `DeleteIfExpired`, this keeps held-durable rows entirely outside
+	// the orphan-reaper feedback loop.
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles lh
 		   SET last_heartbeat_at = now(),
 		       expires_at = now() + ($2 * interval '1 second')
 		 WHERE lh.holder_supervisor_id = $1
+		   AND lh.held_durable = FALSE
 		   AND (
-		        lh.holder_node_id IN (
-		            SELECT id FROM rimsky_nodes
-		             WHERE assigned_supervisor_id = $1 AND state = 'running'
+		        EXISTS (
+		            SELECT 1 FROM rimsky_node_runs r
+		             WHERE r.node_id = lh.holder_node_id
+		               AND r.claimed_by = $1
+		               AND r.state = 'running'
 		        )
 		        OR EXISTS (
 		            SELECT 1 FROM rimsky_claim_holders ch
-		              JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		              JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
 		             WHERE ch.claim_handle_id = lh.id
 		               AND ch.state = 'active'
-		               AND n.state = 'running'
+		               AND r.state = 'running'
 		        )
 		   )`,
 		supervisorID, heartbeatSeconds,
@@ -256,10 +374,16 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 
 // ListExpired returns rows whose expires_at < now(). The scheduler's
 // orphan-reap sweep iterates these.
+//
+// @blessed-invariant held-durable-persistence: rows with
+// held_durable = TRUE are skipped — these claims survive past their
+// holding subgraph's terminal and are released only by instance
+// termination via ReleaseHeldDurableClaims. The orphan-reaper does
+// not heartbeat them, so they MUST NOT be reaped on age alone (plan E9 step 3).
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
-		 WHERE expires_at < now()
+		 WHERE expires_at < now() AND held_durable = FALSE
 		 ORDER BY expires_at ASC`,
 	)
 	if err != nil {
@@ -301,14 +425,23 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 	return n, nil
 }
 
-// ListByProducerScope returns every unexpired scope-kind row for
-// producerName. Used by the supervisor's scope-conflict re-check (§7.3
-// step 4a/4b).
+// ListByProducerScope returns every scope-kind row for producerName
+// that is either unexpired OR held-durable. Used by the supervisor's
+// scope-conflict re-check (§7.3 step 4a/4b).
+//
+// Held-durable inclusion: rows with `held_durable = TRUE` carry a stale
+// `expires_at` because `ExtendHeartbeat` and `DeleteIfExpired` both
+// skip them (they live unbounded until instance termination via
+// `ReleaseHeldDurableClaims`). Filtering them out by `expires_at` alone
+// would let a new acquirer take the same byte-equal scope while a
+// durable holder is still live, breaking @blessed-invariant 4b
+// (single-writer-per-scope). The `OR held_durable = TRUE` clause keeps
+// durable rows in the conflict-detection set. Mirrored in SQLite.
 func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE lock_kind = 'scope' AND producer_name = $1
-		   AND expires_at > now()
+		   AND (expires_at > now() OR held_durable = TRUE)
 		 ORDER BY claimed_at ASC`,
 		producerName,
 	)
@@ -320,15 +453,27 @@ func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName
 }
 
 // DeleteIfExpired removes the row keyed by id, claimant-guarded on
-// supervisor_id AND only when expires_at is still in the past. Used by
-// the orphan reaper. Returns deleted=true on success; false on no-op
-// (claimant mismatch or fresh heartbeat extended the row).
+// supervisor_id AND only when expires_at is still in the past AND only
+// when held_durable = FALSE. Used by the orphan reaper. Returns
+// deleted=true on success; false on no-op (claimant mismatch, fresh
+// heartbeat extended the row, or the row flipped held_durable=TRUE
+// between ListExpired and this DELETE — racing with `SetHeldDurable`
+// fired by the auto-terminal Commit path).
+//
+// The `held_durable = FALSE` belt-and-suspenders mirrors the
+// `ListExpired` predicate (`@blessed-invariant held-durable-
+// persistence`): held-durable claims survive past their holding
+// subgraph's terminal and are released only by instance termination
+// via `ReleaseHeldDurableClaims`. Re-checking the column inside the
+// DELETE eliminates the LISTexpired → race → DELETE window where a
+// fresh `SetHeldDurable` could otherwise be undone.
 func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	tag, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1
 		   AND holder_supervisor_id = $2
-		   AND expires_at < now()`,
+		   AND expires_at < now()
+		   AND held_durable = FALSE`,
 		id, supervisorID,
 	)
 	if err != nil {
@@ -443,21 +588,95 @@ func decodeLockHolderCursor(s string) (time.Time, shared.UUID, error) {
 	return c.C, c.I, nil
 }
 
+// SetAggregationPolicy writes the parent-claim aggregation policy
+// snapshot on a claim_handle row. Claimant-guarded on supervisorID;
+// mismatches no-op.
+func (s *claimHandlesImpl) SetAggregationPolicy(
+	ctx context.Context, id shared.UUID, supervisorID string, policy json.RawMessage, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET aggregation_policy = $1
+		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		nullableJSONB(policy), id, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.SetAggregationPolicy: %w", err)
+	}
+	return nil
+}
+
+// BumpExpectedChildrenCount adds delta to the parent's
+// `expected_children_count`. Used by `runtime/runner_subclaim.go` per
+// sub-claim INSERT. Claimant-guarded on supervisorID; mismatches no-op.
+func (s *claimHandlesImpl) BumpExpectedChildrenCount(
+	ctx context.Context, id shared.UUID, supervisorID string, delta int, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET expected_children_count = expected_children_count + $1
+		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		delta, id, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.BumpExpectedChildrenCount: %w", err)
+	}
+	return nil
+}
+
+// BumpChildOutcomeCount adds delta to either
+// `committed_children_count` (outcome="commit") or
+// `abandoned_children_count` (outcome="abandon"). Used by the recursive
+// walker (`runtime/auto_terminal.go::resolveParentClaimChain`) before
+// firing the parent's terminal verb. Claimant-guarded on supervisorID.
+func (s *claimHandlesImpl) BumpChildOutcomeCount(
+	ctx context.Context, id shared.UUID, supervisorID string, outcome string, delta int, tx persistence.Tx,
+) error {
+	var column string
+	switch outcome {
+	case "commit":
+		column = "committed_children_count"
+	case "abandon":
+		column = "abandoned_children_count"
+	default:
+		return fmt.Errorf("lockholders.BumpChildOutcomeCount: unknown outcome %q (want commit|abandon)", outcome)
+	}
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET `+column+` = `+column+` + $1
+		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		delta, id, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.BumpChildOutcomeCount: %w", err)
+	}
+	return nil
+}
+
 // ---- helpers ----
 
 func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	var (
-		r               persistence.ClaimHandleRow
-		kind            string
-		lockName        *string
-		producerName    *string
-		scopeData       []byte
-		address         []byte
-		intent          *string
-		rws             *string
-		frameID         *shared.UUID
-		workerRequestID *shared.UUID
-		isHeld          bool
+		r                persistence.ClaimHandleRow
+		kind             string
+		lockName         *string
+		producerName     *string
+		scopeData        []byte
+		address          []byte
+		intent           *string
+		rws              *string
+		frameID          *shared.UUID
+		workerRequestID  *shared.UUID
+		isHeld           bool
+		parentClaimID    *shared.UUID
+		lifetime         *string
+		heldDurable      bool
+		versionID        *string
+		candidateHandle  []byte
+		aggregation      []byte
+		expectedChildren int
+		committed        int
+		abandoned        int
 	)
 	if err := sc.Scan(
 		&r.ID, &kind,
@@ -466,6 +685,10 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		&r.HolderSupervisorID, &r.HolderNodeID,
 		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
 		&workerRequestID, &isHeld,
+		&parentClaimID, &lifetime, &heldDurable, &versionID,
+		&candidateHandle,
+		&aggregation, &expectedChildren,
+		&committed, &abandoned,
 	); err != nil {
 		return persistence.ClaimHandleRow{}, err
 	}
@@ -481,6 +704,19 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	r.FrameID = frameID
 	r.NodeRunID = workerRequestID
 	r.IsHeld = isHeld
+	r.ParentClaimHandleID = parentClaimID
+	if lifetime != nil {
+		r.Lifetime = *lifetime
+	}
+	r.HeldDurable = heldDurable
+	if versionID != nil {
+		r.VersionID = *versionID
+	}
+	r.ProducerCandidateHandle = candidateHandle
+	r.AggregationPolicy = aggregation
+	r.ExpectedChildrenCount = expectedChildren
+	r.CommittedChildrenCount = committed
+	r.AbandonedChildrenCount = abandoned
 	return r, nil
 }
 
@@ -506,4 +742,14 @@ func nullableJSONB(b json.RawMessage) any {
 		return nil
 	}
 	return []byte(b)
+}
+
+// nullableBytes is the []byte twin of nullableJSONB — callers that
+// already hold a []byte slice (e.g. json.Marshal output) avoid an
+// extra conversion to RawMessage.
+func nullableBytes(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }

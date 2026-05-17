@@ -32,6 +32,8 @@ Owns: the `rimsky_events` schema, the CRUD path, the read pattern feeding `casca
 
 Pre-`2026-05-11-design-log-convergence`, this concept also covered `rimsky_node_events` (named-event ledger). That material moved to `concepts/named-event.md` "Ledger storage" subsection. Filename `event-log.md` retained; content is now audit-log-only.
 
+Post-2026-05-15: `rimsky_events` remains the audit log for **events** (executor emissions, state transitions, error classifications). The new **messages** primitive (`concept:message`) has its own audit table `rimsky_messages` with operational columns (`kind`, `sender`, `sender_kind`, `target`, `payload`, `delivered_at`, `frame_id`, `cancelled`, `backfill_operation_id`). The two tables are siblings — events are internal-to-rimsky and frame-synchronous; messages are boundary-crossing and frame-bounded. See `concept:message`, `concept:named-event`.
+
 ## Open within this concept
 
 - `rimsky_events.kind` is free-form — see `tensions/events-kind-no-enum.md`.

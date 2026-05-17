@@ -167,11 +167,19 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				return err
 			}
 			// Settled-state drain on failed: any wait-set rows gating
-			// receivers on this sender release.
+			// receivers on this sender's run release. Post-stage-5 the
+			// wait-set keys on sender_run_id; resolve via the queue
+			// helper.
 			//
 			//	@concept: wait-set
 			if nd.FrameID != nil {
-				return sb.WaitSet().DeleteBySender(ctx, *nd.FrameID, args.NodeID, tx)
+				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, *nd.FrameID)
+				if err != nil {
+					return err
+				}
+				if ok {
+					return sb.WaitSet().DeleteBySender(ctx, *nd.FrameID, runID, tx)
+				}
 			}
 			return nil
 		}); err != nil {

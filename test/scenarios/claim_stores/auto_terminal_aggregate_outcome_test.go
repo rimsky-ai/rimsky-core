@@ -124,7 +124,8 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	).Scan(&lhCount))
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_holders ch
-		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		   JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
+		   JOIN rimsky_nodes n ON n.id = r.node_id
 		  WHERE n.instance_id = $1`, iid,
 	).Scan(&chCount))
 	require.Equal(t, 0, lhCount, "lock-holder rows must be cleaned up after auto-terminal commit")

@@ -87,18 +87,28 @@ func readSpecFile(path string) (node.TemplateSpec, error) {
 const ReservedTagPrefix = "compose:"
 
 // RunTemplateRegister implements `template register`.
+//
+// G6 adds the `--warnings-as-errors` flag. When set, the CLI forwards
+// `?warnings_as_errors=true` to the control-API; the server rejects
+// the registration if the validation pipeline produced any warnings
+// (in addition to errors). The CLI surfaces the body's
+// `validation_warnings` array on stderr when the rejection is
+// warning-driven so the operator sees what was escalated.
 func RunTemplateRegister(ctx context.Context, args []string) int {
 	var tag, source string
+	var warningsAsErrors bool
 	fs, common, endpoint, code := runWithCommon("template register", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
 		fs.StringVar(&source, "source", "", "free-form source description")
+		fs.BoolVar(&warningsAsErrors, "warnings-as-errors", false,
+			"reject registration if the validation pipeline produced any warnings")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template register <file>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template register <file> [--warnings-as-errors]")
 		return 2
 	}
 	if strings.HasPrefix(tag, ReservedTagPrefix) {
@@ -111,8 +121,22 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
-	tpl, err := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: tag, Source: source})
+	tpl, err := c.RegisterTemplateWithOptions(ctx,
+		RegisterTemplateRequest{Spec: spec, Tag: tag, Source: source},
+		RegisterTemplateOptions{WarningsAsErrors: warningsAsErrors},
+	)
 	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == 400 && apiErr.Body != nil {
+			if w, ok := apiErr.Body["validation_warnings"]; ok {
+				fmt.Fprintln(os.Stderr, "validation warnings:")
+				_ = EmitJSON(os.Stderr, w)
+			}
+			if e, ok := apiErr.Body["validation_errors"]; ok {
+				fmt.Fprintln(os.Stderr, "validation errors:")
+				_ = EmitJSON(os.Stderr, e)
+			}
+		}
 		return reportError(err)
 	}
 	if common.Format == FormatJSON {

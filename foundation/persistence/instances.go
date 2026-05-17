@@ -20,12 +20,18 @@ import (
 // opaque to rimsky at dispatch (@blessed-invariant 11). Empty map = no
 // overrides; the column has NOT NULL DEFAULT '{}' so dispatch-time
 // reads are unconditional.
+//
+// FrameDeliveryMode selects per-instance message-delivery semantics for
+// `DeliverPendingMessages` at frame creation
+// (col:rimsky_instances.frame_delivery_mode). One of "serial_queue" or
+// "coalesce"; the column default is "coalesce".
 type InstanceRow struct {
 	ID                shared.UUID    `json:"id"`
 	TemplateHash      string         `json:"template_hash"` // FK to rimsky_templates.id
 	InstanceKey       *string        `json:"instance_key"`  // nullable
 	Params            map[string]any `json:"params"`
 	UserdataOverrides map[string]any `json:"userdata_overrides"`
+	FrameDeliveryMode string         `json:"frame_delivery_mode"`
 	CreatedAt         time.Time      `json:"created_at"`
 	TerminatedAt      *time.Time     `json:"terminated_at"` // nullable; set at terminal-state detection
 }
@@ -54,12 +60,17 @@ type InstanceTable interface {
 // UserdataOverrides is the validated overrides blob. Persistence does
 // not re-validate; it serialises and stores. nil/empty are equivalent
 // and persisted as `{}`.
+//
+// FrameDeliveryMode, when empty, falls back to the column default
+// ("coalesce"). Otherwise the value is written verbatim — the column's
+// CHECK constraint enforces the discriminator vocabulary.
 type InstanceCreateInput struct {
 	ID                shared.UUID
 	TemplateHash      string
 	InstanceKey       *string // nullable
 	Params            map[string]any
 	UserdataOverrides map[string]any
+	FrameDeliveryMode string
 }
 
 // InstanceListFilter is the observability/list filter for instances.

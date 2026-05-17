@@ -25,9 +25,17 @@ message Event {
   string kind = 5;
   // Reserved field numbers for removed payloads (per proto3 best-practice):
   //   16 = CommitPayload          (superseded by attributes_committed)
+  //   18 = QualityRuleFailedPayload (retired by the 2026-05-15
+  //                                  data-platform-extensions plan P1;
+  //                                  verifier executors emit
+  //                                  `executor_errored` with
+  //                                  `error_class: "verifier_failed"`)
+  //   24 = ScheduleFiredPayload         (retired by the 2026-05-15 plan
+  //                                      B10 / D7 / E16 schedule cascade)
   //   26 = PureCascadeCommitPayload (commit semantics fold into attributes)
-  reserved 16, 26;
-  reserved "commit", "pure_cascade_commit";
+  //   27 = ScheduleDispatchFailedPayload (retired with the schedule cascade)
+  reserved 16, 18, 24, 26, 27;
+  reserved "commit", "quality_rule_failed", "schedule_fired", "pure_cascade_commit", "schedule_dispatch_failed";
   // Reserved field numbers held vacant for future event-kind additions.
   // Keeping them reserved prevents accidental reuse if a payload is
   // removed from the 40+ block and a new one slots into 28/29 instead.
@@ -40,15 +48,12 @@ message Event {
     WorkStartedPayload work_started = 14;
     WorkCompletedPayload work_completed = 15;
     NoOpCommitPayload no_op_commit = 17;
-    QualityRuleFailedPayload quality_rule_failed = 18;
     HeartbeatLostPayload heartbeat_lost = 19;
     OperatorOverridePayload operator_override = 20;
     OrphanedClaimReleasedPayload orphaned_claim_released = 21;
     OrphanedClaimLostRacePayload orphaned_claim_lost_race = 22;
     WorkRejectedPayload work_rejected = 23;
-    ScheduleFiredPayload schedule_fired = 24;
     UnresolvedExecutorPayload unresolved_executor = 25;
-    ScheduleDispatchFailedPayload schedule_dispatch_failed = 27;
 
     // New event kinds added by the stores-redesign (spec §9.8). Numbers
     // start at 40 to skip past the existing top-level `payload_raw = 30`.
@@ -107,18 +112,11 @@ message WorkStartedPayload {
 }
 
 message WorkCompletedPayload {
-  string outcome = 1;  // "committed" | "no_op" | "rejected" | "errored" | "infra_errored" | "quality_failed"
+  string outcome = 1;  // "committed" | "no_op" | "rejected" | "errored" | "infra_errored"
 }
 
 message NoOpCommitPayload {
   string reason = 1;
-}
-
-message QualityRuleFailedPayload {
-  string rule_type = 1;
-  google.protobuf.Struct rule_config = 2;
-  string severity = 3;
-  string details = 4;
 }
 
 message HeartbeatLostPayload {
@@ -155,21 +153,10 @@ message WorkRejectedPayload {
   google.protobuf.Struct errors = 2;
 }
 
-message ScheduleFiredPayload {
-  string node_id = 1;
-  string cron_expr = 2;
-  google.protobuf.Timestamp fired_at = 3;
-}
-
 message UnresolvedExecutorPayload {
   string node_id = 1;
   string executor_name = 2;
   string supervisor_id = 3;
-}
-
-message ScheduleDispatchFailedPayload {
-  string node_id = 1;
-  string error = 2;
 }
 
 // ---------------------------------------------------------------------------

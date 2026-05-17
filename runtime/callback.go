@@ -215,6 +215,7 @@ type asyncCallbackPark struct {
 	// enum's lower_snake_case projection; see parkReasonStorageForm).
 	Reason       string `json:"reason,omitempty"`
 	ReasonNote   string `json:"reason_note,omitempty"`
+	ReasonLabel  string `json:"reason_label,omitempty"` // required when Reason == "other" per spec E12
 	Payload      []byte `json:"payload,omitempty"`
 	ResumeAt     string `json:"resume_at,omitempty"` // RFC3339; empty = absent
 	SessionToken string `json:"session_token,omitempty"`
@@ -320,6 +321,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 			Kind:             terminalKindPark,
 			ParkReason:       parkReasonFromStorageForm(body.Park.Reason),
 			ParkReasonNote:   body.Park.ReasonNote,
+			ParkReasonLabel:  body.Park.ReasonLabel,
 			ParkPayload:      body.Park.Payload,
 			ParkSessionToken: body.Park.SessionToken,
 		}

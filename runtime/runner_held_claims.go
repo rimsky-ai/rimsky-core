@@ -3,12 +3,22 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Held-claim runtime helpers (release path §7.6 / auto-terminal
-// §4.10 invariant 13).
+// `@blessed-invariant 13`).
 //
-// Held-claim rimsky_claim_holders rows are inserted at acquisition
-// (in runner_acquire.go::insertHeldClaimHoldersAtAcquire), not at
-// terminal. This file owns the per-acquired-claim release-path
-// helpers used by runner_terminal.go's release loop.
+// Post-stage-5 of the run-row lifecycle cutover, `rimsky_claim_holders`
+// rows are keyed by `holder_run_id` (a `rimsky_node_runs.id`):
+//
+//   - The acquirer's own holder row is inserted at acquire time when
+//     the claim is held (deploy-time computation via
+//     `HoldingSubgraphsForTemplate`).
+//   - Co-holders' rows are inserted at the co-holder's dispatch time
+//     (per the `holds:` template directive, runtime entry point in
+//     `runner_dispatch.go::insertCoHolderClaimHoldersAtDispatch`).
+//   - Legacy `inherits:` rows are also inserted at the inheritor's
+//     dispatch time (same path, derived from the holding subgraph).
+//
+// This file owns the per-acquired-claim release-path helpers used by
+// `runner_terminal.go`'s release loop.
 
 package runtime
 
@@ -34,40 +44,41 @@ func isAliasHeld(subgraphs []node.HoldingSubgraph, acquirerType, alias string) b
 	return false
 }
 
-// markClaimHolderForNode flips this node's rimsky_claim_holders row
+// markClaimHolderForRun flips this run's rimsky_claim_holders row
 // (for the given claim_handle_id) to 'completed' or 'failed' via a single
-// targeted UPDATE keyed on the unique (claim_handle_id, holder_node_id)
+// targeted UPDATE keyed on the unique (claim_handle_id, holder_run_id)
 // pair. Used by the terminal release path for both acquirer-of-held and
 // inheritor-of-held branches.
-func markClaimHolderForNode(
+func markClaimHolderForRun(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	claimHandleID, nodeID shared.UUID, success bool,
+	claimHandleID, runID shared.UUID, success bool,
 ) error {
 	state := persistence.ClaimHolderStateCompleted
 	if !success {
 		state = persistence.ClaimHolderStateFailed
 	}
-	if err := args.Persist.ClaimHolders().CompleteByClaimHandleAndNode(
-		ctx, claimHandleID, nodeID, state, tx,
+	if err := args.Persist.ClaimHolders().CompleteByClaimHandleAndRun(
+		ctx, claimHandleID, runID, state, tx,
 	); err != nil {
-		return fmt.Errorf("markClaimHolderForNode: CompleteByClaimHandleAndNode: %w", err)
+		return fmt.Errorf("markClaimHolderForRun: CompleteByClaimHandleAndRun: %w", err)
 	}
 	return nil
 }
 
-// findInheritedAliasesForNode resolves one (acquirerType, alias,
-// claimHandleID) entry per held subgraph this node is a non-acquirer
+// findInheritedAliasesForRun resolves one (acquirerType, alias,
+// claimHandleID) entry per held subgraph this run is a non-acquirer
 // member of. Used by the inheritor branch of the §7.6 release path.
 //
-// Per claim-holders row this node owns, the function reads the parent
-// lock-holder row to find the acquirer node, looks up the acquirer's
-// NodeType, and selects the matching (acquirerType, alias) pair from
-// the precomputed holding-subgraph metadata. The acquirer's lock-holder
-// row carries `producer_name`; when an acquirer declares multiple
-// aliases against the same producer_name, we further disambiguate by
-// matching the lock-holder row's `scope_data` against the alias's
-// substituted selector — falling back to the first matching alias if
-// the row has not yet had its store-chosen scope written.
+// Per claim-holders row this run owns (keyed by holder_run_id post-
+// stage-5), the function reads the parent lock-holder row to find the
+// acquirer node, looks up the acquirer's NodeType, and selects the
+// matching (acquirerType, alias) pair from the precomputed
+// holding-subgraph metadata. The acquirer's lock-holder row carries
+// `producer_name`; when an acquirer declares multiple aliases against
+// the same producer_name, we further disambiguate by matching the
+// lock-holder row's `scope_data` against the alias's substituted
+// selector — falling back to the first matching alias if the row has
+// not yet had its store-chosen scope written.
 //
 // This is deterministic on a per-row basis (no cartesian product) and
 // agrees with the acquirer-side computation that drove the original
@@ -76,16 +87,16 @@ func markClaimHolderForNode(
 // All persistence reads share the caller's tx — option C / no-nil-tx
 // (the release path is inside an open Persist.Transaction; passing
 // nil here would self-deadlock under the SQLite single-conn pool).
-func findInheritedAliasesForNode(
+func findInheritedAliasesForRun(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	subgraphs []node.HoldingSubgraph, nodeType string, nodeID, instanceID shared.UUID,
+	subgraphs []node.HoldingSubgraph, nodeType string, runID, instanceID shared.UUID,
 ) ([]inheritedAlias, error) {
 	if len(subgraphs) == 0 {
 		return nil, nil
 	}
-	rows, err := args.Persist.ClaimHolders().ListByHolderNode(ctx, nodeID, tx)
+	rows, err := args.Persist.ClaimHolders().ListByHolderRun(ctx, runID, tx)
 	if err != nil {
-		return nil, fmt.Errorf("findInheritedAliasesForNode: ListByHolderNode: %w", err)
+		return nil, fmt.Errorf("findInheritedAliasesForRun: ListByHolderRun: %w", err)
 	}
 	if len(rows) == 0 {
 		return nil, nil

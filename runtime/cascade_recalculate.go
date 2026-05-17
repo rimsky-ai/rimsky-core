@@ -81,13 +81,24 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	// frame." The cascade-from-commit path inserts wait-set rows; the
 	// settled-state drain removes them. If any rows remain, the
 	// scheduler's ListReadyForDispatch will pick the row up on a later
-	// tick once the drain completes.
+	// tick once the drain completes. Post-stage-5 the wait-set keys on
+	// receiver_run_id; resolve the target's in-flight run for the frame
+	// via the queue. Absent run means we can't gate-check here — bail to
+	// the next scheduler tick which seeds the run row via the source.
 	if target.FrameID == nil {
 		return nil
 	}
 	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := sb.WaitSet().ListForReceiver(ctx, *target.FrameID, target.ID, tx)
+		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, *target.FrameID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			pending = 0
+			return nil
+		}
+		rows, err := sb.WaitSet().ListForReceiver(ctx, *target.FrameID, runID, tx)
 		if err != nil {
 			return err
 		}

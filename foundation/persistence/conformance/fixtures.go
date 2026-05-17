@@ -10,6 +10,7 @@ package conformance
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -107,6 +108,53 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		NodeID:       nodeID,
 		FrameID:      frameID,
 	}
+}
+
+// seedConformanceRunForNode enqueues a pending `rimsky_node_runs` row
+// for the given node + frame and returns the run id. Post-stage-5 of the
+// run-row lifecycle cutover, claim-holders / wait-set rows key on run
+// id, so fixture-driven seeds that exercise those tables need a real
+// run id. Lives alongside the fixture-set helpers so individual
+// conformance areas (fk, wait_set, etc.) can enqueue runs without
+// every fixture seed paying the cost.
+func seedConformanceRunForNode(
+	ctx context.Context, t *testing.T, d persistence.Database,
+	nodeID, frameID shared.UUID,
+) shared.UUID {
+	t.Helper()
+	store := d.Tables()
+	q := d.Queue()
+	var runID shared.UUID
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:         nodeID,
+			ExecutorName:   "test-executor",
+			RequiredStores: []string{},
+			EnqueuedAt:     time.Now().Add(-1 * time.Second),
+			FrameID:        frameID,
+		}, tx); err != nil {
+			return err
+		}
+		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+			AcceptedExecutors: []string{"test-executor"},
+			AcceptedStores:    []string{},
+			Limit:             16,
+		})
+		if err != nil {
+			return err
+		}
+		for _, c := range cands {
+			if c.NodeID == nodeID {
+				runID = c.DispatchID
+				return nil
+			}
+		}
+		t.Fatalf("seedConformanceRunForNode: candidate not surfaced for %s", nodeID)
+		return nil
+	}); err != nil {
+		t.Fatalf("seedConformanceRunForNode: %v", err)
+	}
+	return runID
 }
 
 // inTx wraps fn in a fresh Persist.Transaction for use in test-helper

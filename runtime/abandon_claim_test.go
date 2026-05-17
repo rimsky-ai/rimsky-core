@@ -52,6 +52,14 @@ func (s *abandonStub) Release(context.Context, locks.ClaimID, []byte, []byte) er
 	return errors.New("Release not implemented in stub")
 }
 
+func (s *abandonStub) SplitScope(context.Context, locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+	return locks.SplitScopeResponse{}, errors.New("SplitScope not implemented in stub")
+}
+
+func (s *abandonStub) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
+	return string(a) == string(b), nil
+}
+
 func TestAbandonOpenedClaim(t *testing.T) {
 	t.Parallel()
 

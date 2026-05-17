@@ -12,13 +12,8 @@ import (
 	"github.com/fallguy/rimsky/control/cli/internal/clitest"
 )
 
-func TestRunAdminForceFire(t *testing.T) {
-	srv := setupClitest(t)
-	_ = srv
-	if got := cli.RunAdminForceFire(context.Background(), []string{"some-node"}); got != 0 {
-		t.Errorf("exit %d", got)
-	}
-}
+// (TestRunAdminForceFire retired by the 2026-05-15 plan B10 / D7 / E16
+// schedule-retirement cascade.)
 
 func TestRunAdminInvalidate(t *testing.T) {
 	srv := setupClitest(t)

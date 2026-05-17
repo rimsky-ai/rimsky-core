@@ -13,11 +13,18 @@ import (
 
 // WaitSetRow is one row of rimsky_wait_set.
 //
+// Post-stage-5 of the run-row lifecycle cutover the receiver / sender
+// columns lift to per-run identity (`rimsky_node_runs.id`) — the
+// wait-set ledger that gates dispatch under the subscription-cascade
+// model now binds to specific runs so two in-flight runs of the same
+// node-type (in different frames, or under future sub-graph invocations)
+// don't conflate their wait-sets.
+//
 //	@concept: wait-set
 type WaitSetRow struct {
 	FrameID           shared.UUID
-	ReceiverNodeID    shared.UUID
-	SenderNodeID      shared.UUID
+	ReceiverRunID     shared.UUID
+	SenderRunID       shared.UUID
 	TopicKind         string          // "state" | "attribute" | "event"
 	SubscriptionScope string          // "direct" | "instance"
 	TopicFilter       json.RawMessage // nullable; carried for observability
@@ -36,15 +43,15 @@ type WaitSetTable interface {
 	Insert(ctx context.Context, row WaitSetRow, tx Tx) error
 
 	// DeleteBySender bulk-deletes every wait-set row where
-	// (frame_id, sender_node_id) match. Drains the sender from every
+	// (frame_id, sender_run_id) match. Drains the sender from every
 	// receiver's wait-set in one statement. Called by the cascade walk
 	// when a sender reaches any settled state (fresh / failed / parked).
-	DeleteBySender(ctx context.Context, frameID, senderID shared.UUID, tx Tx) error
+	DeleteBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx Tx) error
 
 	// ListForReceiver returns the wait-set rows currently gating the
-	// receiver. Used by /admin/diagnostics/wait-sets for stuck-frame
+	// receiver run. Used by /admin/diagnostics/wait-sets for stuck-frame
 	// debugging.
-	ListForReceiver(ctx context.Context, frameID, receiverID shared.UUID, tx Tx) ([]WaitSetRow, error)
+	ListForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx) ([]WaitSetRow, error)
 
 	// ListForFrame returns every wait-set row in a frame. Used by
 	// /admin/diagnostics/wait-sets without a receiver filter.

@@ -19,11 +19,13 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/google/uuid"
 )
 
 // ParkedSweepArgs bundles the dependencies for SweepParkedNodes.
@@ -49,6 +51,16 @@ type ParkedSweepArgs struct {
 	// so `rimsky_invalidates_total` covers parked-resume sweeps. Nil →
 	// no-op.
 	Metrics MetricsHook
+	// PerReasonMaxPark holds the deployment-level per-reason cap. The
+	// per-row col:rimsky_node_runs.max_park_duration_seconds always
+	// takes priority — when set, it overrides any per-reason cap. When
+	// the per-row column is NULL and the row's parked_reason matches
+	// a key here, the per-reason cap applies. Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Parked-state taxonomy. Recommended defaults:
+	//   time_wait: 1h, callback_wait: 7d, retry_backoff: 1h, other: 1h.
+	// Empty / nil → no per-reason cap is applied (only per-row caps fire).
+	PerReasonMaxPark map[string]time.Duration
 }
 
 // SweepParkedNodes runs both the deadline-elapsed wake path and the
@@ -105,7 +117,90 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 				"node_id", row.NodeID.String(), "error", err.Error())
 		}
 	}
+
+	// 3. Per-reason max_park_duration overrun (spec E11): for rows whose
+	//    per-row col:rimsky_node_runs.max_park_duration_seconds is NULL
+	//    (no per-row cap), apply the deployment-level per-reason cap when
+	//    a matching entry exists in args.PerReasonMaxPark.
+	if len(args.PerReasonMaxPark) > 0 {
+		if err := sweepParkedByReason(ctx, args, now, log); err != nil {
+			log.Warn("SweepParkedNodes: per-reason sweep failed", "error", err.Error())
+		}
+	}
 	return nil
+}
+
+// sweepParkedByReason applies the deployment-level per-reason caps. It
+// loads parked rows for each configured reason via ListParkedDiagnostic
+// (which already filters by reason), then re-queries the per-row cap via
+// GetParkedByNode to skip rows where the per-row column is set (those
+// were handled by ListParkedOverdue in step 2). For rows without a
+// per-row cap, parked_at + per-reason-cap < now triggers the standard
+// fail-overdue pipeline.
+//
+// The two-query pass (ListParkedDiagnostic to find candidates;
+// GetParkedByNode to load the full ParkedRow) is intentional: it keeps
+// the persistence layer's read-projection split (the diagnostic
+// projection is index-friendly but lacks the full payload columns the
+// fail path needs).
+func sweepParkedByReason(ctx context.Context, args ParkedSweepArgs, now time.Time, log shared.Logger) error {
+	for reason, cap := range args.PerReasonMaxPark {
+		if cap <= 0 {
+			continue
+		}
+		diagnostic, err := listParkedForReason(ctx, args, reason)
+		if err != nil {
+			log.Warn("SweepParkedNodes: ListParkedDiagnostic per-reason failed",
+				"reason", reason, "error", err.Error())
+			continue
+		}
+		for _, d := range diagnostic {
+			// Per-row column takes priority: if the row has its own cap
+			// set, the overdue path in step 2 already covered it.
+			nodeID, err := uuid.Parse(d.NodeID)
+			if err != nil {
+				log.Warn("SweepParkedNodes: parse node_id", "node_id", d.NodeID, "error", err.Error())
+				continue
+			}
+			row, err := args.Queue.GetParkedByNode(ctx, nodeID)
+			if err != nil || row == nil {
+				continue
+			}
+			if row.MaxParkDurationSeconds != nil {
+				continue // covered by ListParkedOverdue
+			}
+			deadline := row.ParkedAt.Add(cap)
+			if deadline.After(now) {
+				continue
+			}
+			// resume_at race-guard mirroring ListParkedOverdue's filter:
+			// if resume_at has already elapsed, the deadline-elapsed wake
+			// will pick the row up first.
+			if row.ResumeAt != nil && !row.ResumeAt.After(now) {
+				continue
+			}
+			if err := failOverdueParkedRow(ctx, args, *row, log); err != nil {
+				log.Warn("SweepParkedNodes: fail overdue (per-reason) failed",
+					"node_id", row.NodeID.String(), "reason", reason, "error", err.Error())
+			}
+		}
+	}
+	return nil
+}
+
+// listParkedForReason wraps the diagnostic-list helper that needs a
+// transaction. Opens a read-only tx for the duration of the listing.
+func listParkedForReason(ctx context.Context, args ParkedSweepArgs, reason string) ([]persistence.ParkedDiagnosticRow, error) {
+	var out []persistence.ParkedDiagnosticRow
+	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := args.Queue.ListParkedDiagnostic(ctx, tx, reason)
+		if err != nil {
+			return err
+		}
+		out = rows
+		return nil
+	})
+	return out, err
 }
 
 // failOverdueParkedRow forces a parked node to failed with
@@ -135,10 +230,12 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		// rows that landed between park-time and timeout (e.g. via a
 		// concurrent cascade walk) must release. Defensive correctness
 		// per `concept:wait-set` invariant "Bulk-delete on sender
-		// resolution covers every topic kind uniformly."
+		// resolution covers every topic kind uniformly." Post-stage-5
+		// the wait-set keys on sender_run_id; the parked row's
+		// DispatchID is the run id.
 		//
 		//	@concept: wait-set
-		if err := args.Persist.WaitSet().DeleteBySender(ctx, row.FrameID, row.NodeID, tx); err != nil {
+		if err := args.Persist.WaitSet().DeleteBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
 			return err
 		}
 		// Auto-terminal Abandon for any held claims anchored on this

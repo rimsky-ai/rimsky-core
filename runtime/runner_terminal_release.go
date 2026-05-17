@@ -26,6 +26,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // releaseLocksInTx is the release-tx body. Walks the acquired-locks
@@ -94,7 +95,7 @@ func releaseClaim(
 ) error {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, spec.Alias)
 	if held {
-		if err := markClaimHolderForNode(ctx, args, tx, lk.ClaimHandleID, acq.NodeID, success); err != nil {
+		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.DispatchID, success); err != nil {
 			return err
 		}
 		// Held-claim acquirer-failure semantics: when the acquirer
@@ -134,14 +135,47 @@ func releaseClaim(
 	if !success {
 		outcome = AggregateAbandon
 	}
+	// Build the lineage hint from the claim-handle row + the active
+	// acquisition context. Used by the terminal-decision engine to
+	// record the `claim_terminal` lineage row + claim_resolution event
+	// per spec §Content lineage + the 2026-05-16 forensics extension.
+	hint := ClaimLineageHint{
+		InstanceID: acq.InstanceID,
+		FrameID:    acq.FrameID,
+		RunID:      acq.DispatchID,
+		NodeID:     acq.NodeID,
+	}
+	if row != nil && row.ProducerName != nil {
+		hint.ProducerName = *row.ProducerName
+	}
+	if row != nil {
+		hint.VersionID = row.VersionID
+	}
+	lifetime := ""
+	var candidateHandle []byte
+	producerName := ""
+	var parentClaimHandleID *shared.UUID
+	if row != nil {
+		lifetime = row.Lifetime
+		candidateHandle = row.ProducerCandidateHandle
+		if row.ProducerName != nil {
+			producerName = *row.ProducerName
+		}
+		parentClaimHandleID = row.ParentClaimHandleID
+	}
 	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
-		ClaimHandleID: lk.ClaimHandleID,
-		SupervisorID:  args.SupervisorID,
-		Source:        ActiveTerminal,
-		Outcome:       outcome,
-		Producer:      lk.Producer,
-		Scope:         scope,
-		Address:       address,
+		ClaimHandleID:       lk.ClaimHandleID,
+		SupervisorID:        args.SupervisorID,
+		Source:              ActiveTerminal,
+		Outcome:             outcome,
+		Producer:            lk.Producer,
+		Scope:               scope,
+		Address:             address,
+		Lifetime:            lifetime,
+		CandidateHandle:     candidateHandle,
+		ProducerName:        producerName,
+		LineageHint:         hint,
+		ParentClaimHandleID: parentClaimHandleID,
 	}); err != nil {
 		return fmt.Errorf("releaseClaim: %w", err)
 	}
@@ -156,12 +190,12 @@ func releaseClaim(
 func releaseInheritedClaimsInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
 ) error {
-	inherited, err := findInheritedAliasesForNode(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.NodeID, acq.InstanceID)
+	inherited, err := findInheritedAliasesForRun(ctx, args, tx, acq.HeldSubgraphs, acq.NodeType, acq.DispatchID, acq.InstanceID)
 	if err != nil {
 		return err
 	}
 	for _, ia := range inherited {
-		if err := markClaimHolderForNode(ctx, args, tx, ia.ClaimHandleID, acq.NodeID, success); err != nil {
+		if err := markClaimHolderForRun(ctx, args, tx, ia.ClaimHandleID, acq.DispatchID, success); err != nil {
 			return err
 		}
 		if err := CheckAndFireResolution(ctx, args, tx, ia.ClaimHandleID); err != nil {

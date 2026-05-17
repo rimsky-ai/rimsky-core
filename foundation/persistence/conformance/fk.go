@@ -22,6 +22,9 @@ import (
 func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
+	// Claim-holders rows key on holder_run_id post-stage-5; seed an
+	// in-flight run row for the fixture node.
+	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	store := d.Tables()
 
 	lockHolderID := uuid.New()
@@ -53,7 +56,7 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 		if err := store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            claimHolderID,
 			ClaimHandleID: lockHolderID,
-			HolderNodeID:  fix.NodeID,
+			HolderRunID:   runID,
 		}, tx); err != nil {
 			return err
 		}

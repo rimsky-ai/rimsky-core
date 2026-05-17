@@ -7,7 +7,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/fallguy/rimsky/stores/internal/bridge"
+	dataprocessing "github.com/fallguy/rimsky/stores/stub/dataprocessing"
 	"github.com/fallguy/rimsky/stores/stub/lifecycle"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 
@@ -35,6 +38,15 @@ type Config struct {
 	// service alongside ClaimProducer. The stub's lifecycle subscriber
 	// is a no-op (returns nil from every method).
 	EnableLifecycle bool
+	// EnableDataProcessing, when true, registers the DataProcessing
+	// gRPC service alongside ClaimProducer and flips Capabilities to
+	// advertise `data_processing` in Protocols.
+	//
+	// SplitScope and ScopesConflict are always implemented on the
+	// ClaimProducer surface (advertised via SupportsSplitScope /
+	// SupportsScopesConflict in Capabilities) — the stub is the
+	// M / N6 / N7 / O1 self-test target and both are cheap.
+	EnableDataProcessing bool
 }
 
 // Run starts the gRPC + HTTP listeners and serves until ctx is
@@ -50,11 +62,15 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis net.Listener) error {
 // already-constructed *stubstore.Store so they can keep a handle for
 // test assertions while the server's lifetime is bounded by ctx.
 func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis, httpLis net.Listener) error {
-	srv := &Server{Store: st}
+	srv := &Server{Store: st, EnableDataProcessing: cfg.EnableDataProcessing}
 	grpcSrv := grpc.NewServer()
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
 	if cfg.EnableLifecycle {
 		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
+	}
+	if cfg.EnableDataProcessing {
+		srv.DataProcessing = dataprocessing.New()
+		genv1.RegisterDataProcessingServer(grpcSrv, srv.DataProcessing)
 	}
 	RegisterObservability(grpcSrv)
 	go func() {
@@ -81,20 +97,41 @@ func RunWithStore(ctx context.Context, cfg Config, st *stubstore.Store, grpcLis,
 	return nil
 }
 
-// Server implements genv1.ClaimProducerServer.
+// Server implements genv1.ClaimProducerServer. SplitScope and
+// ScopesConflict are implemented in-process on this surface; the
+// stub-store advertises both via Capabilities so M / N6 / N7 / O1
+// can drive the SplitScope fan-out path without a separate fixture.
 type Server struct {
 	genv1.UnimplementedClaimProducerServer
-	Store *stubstore.Store
+	Store          *stubstore.Store
+	DataProcessing *dataprocessing.Server
+	// EnableDataProcessing mirrors Config.EnableDataProcessing so
+	// Capabilities flips the `data_processing` protocol advertisement
+	// without reading DataProcessing == nil (which a test might
+	// inject for the no-DP case).
+	EnableDataProcessing bool
 }
 
 // Capabilities returns the store's advertised capability struct.
+// SplitScope and ScopesConflict are always advertised on the
+// stub-store wire so the M / N / O suites can pin against a single
+// fixture without juggling per-test caps.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.Store.Capabilities()
 	out := make([]genv1.WriteSemantics, 0, len(c.WriteSemanticsAllowed))
 	for _, ws := range c.WriteSemanticsAllowed {
 		out = append(out, bridge.WriteSemanticsToProto(string(ws)))
 	}
-	return &genv1.CapabilitiesResponse{WriteSemanticsAllowed: out}, nil
+	protocols := []string{"claim_producer"}
+	if s.EnableDataProcessing {
+		protocols = append(protocols, "data_processing")
+	}
+	return &genv1.CapabilitiesResponse{
+		WriteSemanticsAllowed:  out,
+		SupportsSplitScope:     true,
+		SupportsScopesConflict: true,
+		Protocols:              protocols,
+	}, nil
 }
 
 // Open delegates. Validates `intent` against the wire schema (only "r"
@@ -145,4 +182,42 @@ func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1
 		return nil, err
 	}
 	return &genv1.ReleaseResponse{}, nil
+}
+
+// SplitScope partitions the parent claim's scope into N sub-scopes
+// per partition_request. The stub-store delegates to the
+// DataProcessing impl when present (so both surfaces share the same
+// decoder); falls back to the standalone decoder otherwise. Per spec
+// §Fan-out template DSL and concept:fan-out.
+func (s *Server) SplitScope(ctx context.Context, req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
+	if s.DataProcessing != nil {
+		return s.DataProcessing.SplitScope(ctx, req)
+	}
+	var decoded struct {
+		PartitionKeys []string `json:"partition_keys"`
+	}
+	if err := json.Unmarshal(req.GetPartitionRequest(), &decoded); err != nil {
+		return nil, fmt.Errorf("stub.SplitScope: decode partition_request: %w", err)
+	}
+	if len(decoded.PartitionKeys) == 0 {
+		return nil, fmt.Errorf("stub.SplitScope: partition_request.partition_keys must be non-empty")
+	}
+	out := make([]*genv1.SubScopeDescriptor, 0, len(decoded.PartitionKeys))
+	for _, key := range decoded.PartitionKeys {
+		scope, _ := json.Marshal(map[string]string{"partition_key": key})
+		out = append(out, &genv1.SubScopeDescriptor{
+			ScopeData:    scope,
+			PartitionKey: key,
+		})
+	}
+	return &genv1.SplitScopeResponse{SubScopes: out}, nil
+}
+
+// ScopesConflict returns true iff a and b are byte-equal. The
+// stub-store has no producer-specific overlap semantics, so it
+// honors the trivial byte-equal default while still advertising
+// SupportsScopesConflict so test suites can exercise the wire
+// path. Per @blessed-invariant 4b's fallback semantics.
+func (s *Server) ScopesConflict(_ context.Context, req *genv1.ScopesConflictRequest) (*genv1.ScopesConflictResponse, error) {
+	return &genv1.ScopesConflictResponse{Conflicts: bytes.Equal(req.GetScopeA(), req.GetScopeB())}, nil
 }

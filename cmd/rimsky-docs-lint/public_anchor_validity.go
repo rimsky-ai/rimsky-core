@@ -24,7 +24,7 @@ var (
 	protoSymbolRE = regexp.MustCompile(`(?m)^\s*(?:message|enum|service)\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	configFieldRE = regexp.MustCompile(`^rimsky\.yml:[A-Za-z_][A-Za-z0-9_.\[\]]*$`)
 	// Real rimsky control-api routes contain underscores
-	// (e.g. `/worker_requests/{id}/trace`, `/admin/scheduled-nodes/{node_id}/force-fire`).
+	// (e.g. `/worker_requests/{id}/trace`, `/admin/instances/{instance}/nodes/{node_id}/invalidate`).
 	apiSurfaceRE = regexp.MustCompile(`^(GET|POST|PUT|DELETE|PATCH)\s+/[A-Za-z0-9_/\-{}]*$`)
 )
 

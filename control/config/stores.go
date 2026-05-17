@@ -53,6 +53,9 @@ const (
 	ProtocolClaimProducer       = "claim_producer"
 	ProtocolExecutor            = "executor"
 	ProtocolLifecycleSubscriber = "lifecycle_subscriber"
+	ProtocolSensor              = "sensor"
+	ProtocolValidation          = "validation"
+	ProtocolDataProcessing      = "data_processing"
 )
 
 // StoreEntry is the per-claim-producer config from rimsky.yml. The
@@ -155,6 +158,17 @@ type RimskyConfig struct {
 	Stores     RemoteStoresConfig
 	NamedLocks locks.NamedLocksConfig
 	Executors  ExecutorsConfig
+	// MaxParkDuration is the per-reason max_park_duration cap map. The
+	// keys are ParkReason storage-form strings ("time_wait",
+	// "callback_wait", "retry_backoff", "other"); the values are
+	// time.Duration caps. The per-row col:rimsky_node_runs.max_park_duration_seconds
+	// always takes priority — these are deployment-level fall-backs.
+	// Per spec
+	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Parked-state taxonomy / Per-reason `max_park_duration` config.
+	// Recommended defaults: time_wait: 1h, callback_wait: 7d,
+	// retry_backoff: 1h, other: 1h.
+	MaxParkDuration map[string]time.Duration
 }
 
 // LoadRimskyConfigYAML reads rimsky.yml: the unified deployment-shape
@@ -226,6 +240,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Stores     map[string]yamlClaimProducerEntry `yaml:"stores"`
 		NamedLocks map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors  map[string]yamlExecutorEntry      `yaml:"executors"`
+		// MaxParkDuration is the per-reason max_park_duration map. Keys
+		// are ParkReason storage-form strings ("time_wait" / "callback_wait"
+		// / "retry_backoff" / "other"); values are time.Duration. Spec
+		// §Parked-state taxonomy.
+		MaxParkDuration map[string]time.Duration `yaml:"max_park_duration"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
@@ -341,13 +360,42 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
 	}
 
+	// Validate per-reason max_park_duration keys against the known
+	// ParkReason storage forms. Unknown keys reject at startup so
+	// operators get a precise error rather than silently-ignored config.
+	if err := validateMaxParkDurationKeys(wrapper.MaxParkDuration); err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
 	return RimskyConfig{
-		Persistence: pcfg,
-		Blob:        bcfg,
-		Stores:      stores,
-		NamedLocks:  locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		Executors:   executors,
+		Persistence:     pcfg,
+		Blob:            bcfg,
+		Stores:          stores,
+		NamedLocks:      locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		Executors:       executors,
+		MaxParkDuration: wrapper.MaxParkDuration,
 	}, nil
+}
+
+// validateMaxParkDurationKeys rejects unknown ParkReason storage-form
+// keys. Per spec §Parked-state taxonomy the four legal storage forms
+// are `time_wait`, `callback_wait`, `retry_backoff`, and `other`.
+// Pre-existing wider reason vocabulary (`signal_wait`, `awaiting_human`)
+// is accepted for backward compatibility with the proto's
+// ParkReason enum; the runner's storage form preserves all of them.
+func validateMaxParkDurationKeys(m map[string]time.Duration) error {
+	for k, v := range m {
+		switch k {
+		case "time_wait", "callback_wait", "retry_backoff", "other",
+			"signal_wait", "awaiting_human", "unspecified":
+		default:
+			return fmt.Errorf("max_park_duration: unknown reason key %q (one of: time_wait, callback_wait, retry_backoff, other)", k)
+		}
+		if v < 0 {
+			return fmt.Errorf("max_park_duration[%q]: duration must be non-negative", k)
+		}
+	}
+	return nil
 }
 
 // parseAllowed normalizes the operator-declared write_semantics_allowed
@@ -379,12 +427,14 @@ func parseAllowed(name string, allowed []string) ([]locks.WriteSemantics, error)
 	return deduped, nil
 }
 
-// validateProtocols rejects unknown protocol values. Known: claim_producer,
-// executor, lifecycle_subscriber.
+// validateProtocols rejects unknown protocol values. Known set: the
+// declared protocol constants in this package. Unknown protocols fail
+// at startup with a precise error.
 func validateProtocols(name string, protocols []string) error {
 	for _, p := range protocols {
 		switch p {
-		case ProtocolClaimProducer, ProtocolExecutor, ProtocolLifecycleSubscriber:
+		case ProtocolClaimProducer, ProtocolExecutor, ProtocolLifecycleSubscriber,
+			ProtocolSensor, ProtocolValidation, ProtocolDataProcessing:
 		default:
 			return fmt.Errorf("peer %q: unknown protocol %q", name, p)
 		}

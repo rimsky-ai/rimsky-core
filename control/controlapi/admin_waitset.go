@@ -21,10 +21,13 @@ import (
 )
 
 // WaitSetEntry is one wait-set row surfaced via /admin/diagnostics/wait-sets.
+// Post-stage-5 of the run-row lifecycle cutover, the receiver / sender
+// columns key on rimsky_node_runs(id) — see migration
+// `005-claim-holders-wait-set-run-level.sql`.
 type WaitSetEntry struct {
 	FrameID           uuid.UUID `json:"frame_id"`
-	ReceiverNodeID    uuid.UUID `json:"receiver_node_id"`
-	SenderNodeID      uuid.UUID `json:"sender_node_id"`
+	ReceiverRunID     uuid.UUID `json:"receiver_run_id"`
+	SenderRunID       uuid.UUID `json:"sender_run_id"`
 	TopicKind         string    `json:"topic_kind"`
 	SubscriptionScope string    `json:"subscription_scope"`
 	TopicFilter       any       `json:"topic_filter,omitempty"`
@@ -36,12 +39,19 @@ type WaitSetResponse struct {
 }
 
 // handleAdminWaitSets handles GET /admin/diagnostics/wait-sets.
-// Required query param: frame=<uuid>. Optional: node=<uuid> (filter to
-// rows where the receiver_node_id matches).
+// Required query param: frame=<uuid>. Optional: receiver_run=<uuid>
+// (filter to rows where the receiver_run_id matches). Post-stage-5 of
+// the run-row lifecycle cutover, the legacy `node=<uuid>` parameter
+// remains accepted as an alias for `receiver_run` so operators driving
+// the endpoint from saved tooling don't see a hard break, but the
+// underlying ledger keys on run id.
 func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		frameStr := req.URL.Query().Get("frame")
-		nodeStr := req.URL.Query().Get("node")
+		runStr := req.URL.Query().Get("receiver_run")
+		if runStr == "" {
+			runStr = req.URL.Query().Get("node")
+		}
 		if frameStr == "" {
 			badRequest(w, "missing required ?frame= query param")
 			return
@@ -52,10 +62,10 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var receiver *uuid.UUID
-		if nodeStr != "" {
-			rid, err := uuid.Parse(nodeStr)
+		if runStr != "" {
+			rid, err := uuid.Parse(runStr)
 			if err != nil {
-				badRequest(w, "invalid node id")
+				badRequest(w, "invalid receiver_run id")
 				return
 			}
 			receiver = &rid
@@ -75,8 +85,8 @@ func handleAdminWaitSets(deps AppDeps) http.HandlerFunc {
 			for _, r := range rows {
 				entry := WaitSetEntry{
 					FrameID:           r.FrameID,
-					ReceiverNodeID:    r.ReceiverNodeID,
-					SenderNodeID:      r.SenderNodeID,
+					ReceiverRunID:     r.ReceiverRunID,
+					SenderRunID:       r.SenderRunID,
 					TopicKind:         r.TopicKind,
 					SubscriptionScope: r.SubscriptionScope,
 				}

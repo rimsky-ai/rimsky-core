@@ -31,6 +31,7 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
+	q := d.Queue()
 
 	// Four sibling nodes against the same instance:
 	//   - runningSelf:   state=running, supervisor=sup-A — must surface for sup-A.
@@ -45,10 +46,10 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		for _, id := range []shared.UUID{runningSelfID, runningOtherID, staleSelfID, runningUnassignedID} {
 			if _, err := store.Nodes().Create(ctx, persistence.NodeCreateInput{
-				ID:           id,
-				InstanceID:   fix.InstanceID,
-				NodeType:     "lrbs",
-				Executor:     "test-executor",
+				ID:         id,
+				InstanceID: fix.InstanceID,
+				NodeType:   "lrbs",
+				Executor:   "test-executor",
 			}, tx); err != nil {
 				return err
 			}
@@ -58,14 +59,43 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed nodes: %v", err)
 	}
 
-	// Drive each row through the legal cascade transitions. UpdateHeartbeat
-	// stamps assigned_supervisor_id when the supervisorID arg is non-empty.
+	// Post-stage-3 cutover: state lives on rimsky_node_runs. Enqueue
+	// drives the row into pending+stale; ClaimDispatchRow flips phase
+	// to active; UpdateState(running) writes state='running' on the
+	// in-flight row.
 	transitionToRunning := func(id shared.UUID, supervisorID string) {
 		t.Helper()
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
-			if err := store.Nodes().UpdateState(ctx, id,
-				cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+			if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+				NodeID:         id,
+				ExecutorName:   "test-executor",
+				RequiredStores: []string{},
+				EnqueuedAt:     time.Now().Add(-1 * time.Second),
+				FrameID:        fix.FrameID,
+			}, tx); err != nil {
 				return err
+			}
+			if supervisorID != "" {
+				cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
+					AcceptedExecutors: []string{"test-executor"},
+					AcceptedStores:    []string{},
+					Limit:             100,
+				})
+				if err != nil {
+					return err
+				}
+				for _, c := range cands {
+					if c.NodeID != id {
+						continue
+					}
+					ok, err := q.ClaimDispatchRow(ctx, tx, c.DispatchID, supervisorID)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						t.Fatalf("ClaimDispatchRow returned !ok for %s/%s", id, supervisorID)
+					}
+				}
 			}
 			if err := store.Nodes().UpdateState(ctx, id,
 				cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
@@ -80,10 +110,18 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	transitionToRunning(runningOtherID, "sup-B")
 	transitionToRunning(runningUnassignedID, "")
 
-	// staleSelf: fresh -> stale (no run), supervisor stamped via heartbeat.
+	// staleSelf: seed a pending stale run row pinned to the fixture
+	// frame; UpdateHeartbeat then stamps the supervisor. Post-cutover
+	// `state='stale'` is the run row's state; the test row stays in
+	// phase='pending' (never claimed).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Nodes().UpdateState(ctx, staleSelfID,
-			cascade.NodeStateStale, cascade.ReasonOperatorInvalidate, "", tx); err != nil {
+		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:         staleSelfID,
+			ExecutorName:   "test-executor",
+			RequiredStores: []string{},
+			EnqueuedAt:     time.Now().Add(-1 * time.Second),
+			FrameID:        fix.FrameID,
+		}, tx); err != nil {
 			return err
 		}
 		return store.Nodes().UpdateHeartbeat(ctx, staleSelfID, time.Now(), "sup-A", tx)

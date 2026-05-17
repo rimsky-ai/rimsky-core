@@ -4,9 +4,10 @@
 
 package spec
 
-// Severity classifies the consequence of a quality-rule failure: an
-// "error" failure blocks the commit, a "warning" failure is logged but
-// allows the run to succeed.
+// Severity classifies the consequence of a failure: an "error" failure
+// blocks the commit, a "warning" failure is logged but allows the run
+// to succeed. Used by policy-action declarations and by service-side
+// observability events.
 type Severity string
 
 const (

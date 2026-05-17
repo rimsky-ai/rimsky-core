@@ -20,6 +20,14 @@ references:
 
 `rimsky_claim_handles` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, scope}`, `lock_name`, `scope_data`, `holder_supervisor_id`, `expires_at`, `is_held`, `realized_write_semantics`, optional `node_run_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
 
+Post-2026-05-15 the row also carries:
+
+- `parent_claim_handle_id UUID NULL` — FK self, pointing at the parent claim in a sub-claim chain. NULL for top-level claims; non-NULL for sub-claims spawned via `ClaimProducer.SplitScope`. Auto-terminal walks bottom-up over this FK.
+- `lifetime TEXT NOT NULL` — `subgraph` (default) | `durable`. Selects auto-terminal behavior: `subgraph` deletes the row on holding-subgraph completion; `durable` flips `held_durable: true` and persists past completion.
+- `held_durable BOOLEAN NOT NULL DEFAULT FALSE` — marks a row that survived auto-terminal Commit on a `lifetime: durable` claim. Released only by explicit operator action (`DELETE /instances/{id}/assets/{alias}`) or instance termination. The orphan-claim reaper skips `held_durable = true` rows.
+- `version_id TEXT NULL` — the canonical version_id returned by `ClaimProducer.Commit` for DataProcessing-capable claims; surfaces in lineage records (`record_kind: claim_commit`) and asset version-history queries.
+- `producer_candidate_handle BYTEA NULL` — opaque candidate_handle from `DataProcessing.BeginCandidate`; lives on sub-claim rows for fan-out-with-DataProcessing flows. Threaded through to the leaf executor's `ExecuteRequest.candidate_handle`.
+
 ## Purpose
 
 The single source of truth for "who holds what right now." Conflict-check predicates walk this table only; orphan reaping operates on this table; held-claim resolution deletes from this table. Decouples rimsky-side bookkeeping from producer-side state.
@@ -38,7 +46,9 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the `is_held`
 
 ### Held variant
 
-A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared inheritor. Marked by `col:rimsky_claim_handles.is_held = TRUE`. Per-member state tracked in `table:rimsky_claim_holders` rows keyed by `(claim_handle_id, holder_node_id)` with `state ∈ {active, completed, failed}`.
+A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared inheritor. Marked by `col:rimsky_claim_handles.is_held = TRUE`. Per-member state tracked in `table:rimsky_claim_holders` rows keyed by `(claim_handle_id, holder_run_id)` with `state ∈ {active, completed, failed}`.
+
+Post-2026-05-15 the holder key is `holder_run_id` (FK to `rimsky_node_runs.id`), not the legacy `holder_node_id`. This reflects the run-tree extension: holders are runs, not nodes. The acquirer's own holder row is inserted at acquire-time (`runner_acquire.go::insertHeldClaimHoldersAtAcquire`); co-holder rows (declared via `holds:`) are inserted at the co-holder's own acquire-time (`runner_acquire.go::insertCoHolderClaimHoldersAtAcquire`).
 
 Held-variant invariants:
 
@@ -46,6 +56,7 @@ Held-variant invariants:
 - Auto-terminal fires exactly once per held claim, race-safe via `SELECT … FOR UPDATE` on the row.
 - Held handles persist across the `rimsky_node_runs` parent's deletion (`ON DELETE SET NULL`, not `CASCADE`).
 - `col:rimsky_claim_holders.state` CHECK forbids non-{active,completed,failed} values; once a holder is `failed`, the aggregate is `failed` (no `discard_then_retry` recovery in scope).
+- **Held-durable claim handles persist across instance dispatches** (post-2026-05-15 `@blessed-invariant 22`). A claim handle with `held_durable = true` is not deleted by holding-subgraph auto-terminal; only by explicit operator action or instance termination. The orphan-claim reaper skips `held_durable = true` rows.
 
 ### Authoring: held vs unheld
 

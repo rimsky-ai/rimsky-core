@@ -41,10 +41,13 @@ func TestFrameStartAtomicity(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Reset to a clean queued frame state for full control.
+	// Reset to a clean queued frame state for full control. Post-
+	// stage-3 cutover: state lives on rimsky_node_runs; clearing the
+	// in-flight run rows + the node-row frame_id is the equivalent
+	// reset.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
-	h.ExecSQL(`UPDATE rimsky_nodes SET state = 'fresh', frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
@@ -79,10 +82,16 @@ func TestFrameStartAtomicity(t *testing.T) {
 	require.Equal(t, "running", state)
 	require.NotNil(t, startedAt, "running frame must have started_at set atomically")
 
+	// Post-stage-3 cutover: state comes from the in-flight run row.
 	var nodeState string
 	var nodeFrameID *uuid.UUID
 	h.QueryRowSQL(
-		`SELECT state, frame_id FROM rimsky_nodes WHERE id = $1`,
+		`SELECT COALESCE(r.state, 'fresh'), n.frame_id
+		   FROM rimsky_nodes n
+		   LEFT JOIN rimsky_node_runs r
+		          ON r.node_id = n.id
+		         AND r.phase IN ('pending','active','held','parked')
+		  WHERE n.id = $1`,
 		[]any{uuid.UUID(worker.ID)}, &nodeState, &nodeFrameID)
 	require.NotNil(t, nodeFrameID,
 		"source node must have frame_id set atomically with frame-start")

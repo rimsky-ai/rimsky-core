@@ -5,12 +5,22 @@
 // Spec §10 — smoke fixture (acceptance criterion for the stores redesign).
 //
 // Drives the §11.5 four-node template (claim-topic / scope / draft / review)
-// against the in-process stack from setup.go: 100 sequential force-fires of
-// the claim-topic source node, then poll for the downstream cascade to
+// against the in-process stack from setup.go: 100 sequential invalidations
+// of the claim-topic source node, then poll for the downstream cascade to
 // drain.
 //
+// Pre-2026-05-15 the claim-topic node carried a `schedule:` field and the
+// fixture drove fires via `POST /admin/scheduled-nodes/{id}/force-fire`.
+// The 2026-05-15 plan D7 + E16 + B10 schedule-retirement cascade retired
+// both the field and the endpoint; cron firing is now owned by
+// `sensors/sensor-cron/`. The fixture drives the claim-topic node via
+// the unified `POST /admin/instances/{instance}/nodes/{node_id}/invalidate`
+// endpoint, which the smoke uses to simulate the sensor-cron observation
+// that would otherwise enqueue an invalidate-class message targeting the
+// claim-topic node.
+//
 // Wall-clock structure (§10):
-//   - Phase 1 (force-fires, sequential): 100 × per-fire wait. Per-fire
+//   - Phase 1 (invalidates, sequential): 100 × per-fire wait. Per-fire
 //     timeout 5s; happy path is sub-second per fire. Fail-fast on the
 //     first per-fire timeout.
 //   - Phase 2 (cascade drain, polling): 300s budget for downstream nodes
@@ -53,15 +63,15 @@ func TestStoresRedesignSmoke(t *testing.T) {
 	// ---- Find the claim-topic node ID for this instance ----
 	claimTopicID := findNodeIDByType(t, stack, instanceID, "claim-topic")
 
-	// ---- Phase 1: 100 sequential force-fires ----
+	// ---- Phase 1: 100 sequential invalidations ----
 	const phase1PerFireTimeout = 5 * time.Second
 	const phase1PollInterval = 50 * time.Millisecond
 
 	startPhase1 := time.Now()
 	for n := 1; n <= 100; n++ {
-		fireOnceAndWait(t, stack, claimTopicID, n, phase1PerFireTimeout, phase1PollInterval)
+		fireOnceAndWait(t, stack, instanceID, claimTopicID, n, phase1PerFireTimeout, phase1PollInterval)
 	}
-	t.Logf("phase 1 complete: 100 force-fires in %v", time.Since(startPhase1))
+	t.Logf("phase 1 complete: 100 invalidations in %v", time.Since(startPhase1))
 
 	// ---- Phase 2: poll for downstream-cascade steady-state ----
 	const phase2Timeout = 300 * time.Second
@@ -114,12 +124,10 @@ func bulkInsertItems(t *testing.T, stack *SmokeStack, count int) {
 // The `model-budget` lock limit is set to 50 per §10 to keep executor
 // parallelism unconstrained.
 //
-// The §11.5 example carries a `quality_rules` entry with type
-// `must_match_regex`. v1 only ships `row_count_ratio` / `no_nulls` /
-// `nullable_fields_present` (see graph/qualityrule/eval/rules.go); the smoke
-// fixture omits the rule from the deployed template body so the
-// supervisor's per-commit evaluator does not error on an unregistered
-// type. The fixtures/template.yml file documents the spec'd rule alongside.
+// The §11.5 example used to carry a `quality_rules` entry; per the
+// 2026-05-15 data-platform-extensions plan P1 the per-node quality-rule
+// path is retired in favor of bundled verifier executors (see
+// `executors/verifier-shape-checks/`).
 func deploySmokeTemplate(t *testing.T, stack *SmokeStack) string {
 	t.Helper()
 	status, raw := stack.PostJSON("/templates", smokeTemplateBody())
@@ -169,16 +177,22 @@ func findNodeIDByType(t *testing.T, stack *SmokeStack, instanceID uuid.UUID, nod
 	return id
 }
 
-// fireOnceAndWait POSTs a force-fire and polls the source node row until
-// it (a) leaves its current state and (b) returns to fresh. Per spec
-// §10 we want one full cycle per force-fire (no coalescing) — the
+// fireOnceAndWait POSTs an admin-invalidate and polls the source node
+// row until it (a) leaves its current state and (b) returns to fresh.
+// Per spec §10 we want one full cycle per fire (no coalescing) — the
 // `updated_at` snapshot before the POST guarantees we count only the new
 // cycle's transitions. Times out after `timeout` and fails the test
 // (fail-fast: a single per-fire timeout terminates Phase 1).
+//
+// Post-2026-05-15 D7 / E16 / B10 schedule-retirement cascade: the
+// per-node `schedule:` field and the `/admin/scheduled-nodes/.../
+// force-fire` endpoint are retired. The smoke drives the source node
+// via the unified `/admin/instances/{instance}/nodes/{node_id}/invalidate`
+// endpoint.
 func fireOnceAndWait(
 	t *testing.T,
 	stack *SmokeStack,
-	nodeID uuid.UUID,
+	instanceID, nodeID uuid.UUID,
 	fireN int,
 	timeout time.Duration,
 	pollInterval time.Duration,
@@ -187,22 +201,34 @@ func fireOnceAndWait(
 	ctx := context.Background()
 
 	// Snapshot the current updated_at so we can detect a NEW transition
-	// to fresh after the force-fire (not the prior fresh state).
+	// to fresh after the invalidate (not the prior fresh state).
 	var beforeUpdatedAt time.Time
 	err := stack.Pool.QueryRow(ctx,
 		`SELECT updated_at FROM rimsky_nodes WHERE id = $1`, nodeID,
 	).Scan(&beforeUpdatedAt)
 	require.NoError(t, err, "fire %d: read updated_at", fireN)
 
-	status, raw := stack.PostJSON(fmt.Sprintf("/admin/scheduled-nodes/%s/force-fire", nodeID), nil)
-	require.Equal(t, http.StatusNoContent, status, "fire %d: force-fire: %s", fireN, string(raw))
+	status, raw := stack.PostJSON(
+		fmt.Sprintf("/admin/instances/%s/nodes/%s/invalidate", instanceID, nodeID),
+		nil,
+	)
+	require.Equal(t, http.StatusOK, status, "fire %d: invalidate: %s", fireN, string(raw))
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		// Post-stage-3 cutover: state lives on the in-flight
+		// rimsky_node_runs row; a node returns to 'fresh' when no
+		// in-flight run row exists for it (the LEFT JOIN produces NULL
+		// → COALESCE 'fresh').
 		var state string
 		var updatedAt time.Time
 		err := stack.Pool.QueryRow(ctx,
-			`SELECT state, updated_at FROM rimsky_nodes WHERE id = $1`, nodeID,
+			`SELECT COALESCE(r.state, 'fresh'), n.updated_at
+			   FROM rimsky_nodes n
+			   LEFT JOIN rimsky_node_runs r
+			          ON r.node_id = n.id
+			         AND r.phase IN ('pending','active','held','parked')
+			  WHERE n.id = $1`, nodeID,
 		).Scan(&state, &updatedAt)
 		if err == nil && state == "fresh" && updatedAt.After(beforeUpdatedAt) {
 			return
@@ -349,7 +375,7 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	// usually explains "node stuck"
 	rows, err = stack.Pool.Query(ctx,
 		`SELECT node_id, kind, payload FROM rimsky_events
-		  WHERE kind IN ('error','quality_rule_failed','attributes_schema_failed','unresolved_executor','orphaned_claim_lost_race','lock_orphan_reaped','schedule_dispatch_failed')
+		  WHERE kind IN ('error','attributes_schema_failed','unresolved_executor','orphaned_claim_lost_race','lock_orphan_reaped','schedule_dispatch_failed')
 		  ORDER BY occurred_at DESC LIMIT 10`)
 	if err == nil {
 		t.Logf("recent error events:")
@@ -369,23 +395,44 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 // the items table contains exactly 100 rows (ring buffer never deletes),
 // and the control-api /health endpoint is reachable.
 //
+// Polling rationale: `cascadeAtSteadyState` (the upstream barrier)
+// observes the rimsky-side bookkeeping (`rimsky_claim_handles` empty,
+// `rimsky_claim_holders` non-active). The producer's items-table state
+// is written in a *producer-internal* transaction decoupled from
+// rimsky's per `@blessed-invariant 10`, so there can be a brief tail
+// between rimsky reaching steady state and the producer's items rows
+// settling back to `state = 'available'`. The single-shot read used to
+// hit this race intermittently (dispatch-12 notes flagged it as
+// "1/100 items not released"). Polling with a short, bounded retry
+// loop matches the discipline used in `cascadeAtSteadyState` and
+// terminates fast in the common case.
+//
 // On failure of the not-available check we dump the offending items
 // table rows + their associated rimsky_claim_holders rows + dispatch
 // history so a regression can be diagnosed without re-running with
-// hand-rolled psql instrumentation. The dump is harmless on success
-// (gated by the failed-count check) and stays in place per Issue A's
-// fix-instructions.
+// hand-rolled psql instrumentation.
 func assertFinalState(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	t.Helper()
 
+	const itemsSettleTimeout = 30 * time.Second
+	const itemsSettlePollInterval = 100 * time.Millisecond
+
 	var notAvailable int
-	require.NoError(t, stack.Pool.QueryRow(ctx,
-		fmt.Sprintf(`SELECT count(*) FROM %s WHERE state != 'available'`, stack.ItemsTable),
-	).Scan(&notAvailable))
-	if notAvailable != 0 {
-		dumpStuckItemsDiagnostics(t, ctx, stack)
+	deadline := time.Now().Add(itemsSettleTimeout)
+	for {
+		require.NoError(t, stack.Pool.QueryRow(ctx,
+			fmt.Sprintf(`SELECT count(*) FROM %s WHERE state != 'available'`, stack.ItemsTable),
+		).Scan(&notAvailable))
+		if notAvailable == 0 {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			dumpStuckItemsDiagnostics(t, ctx, stack)
+			break
+		}
+		time.Sleep(itemsSettlePollInterval)
 	}
-	require.Equal(t, 0, notAvailable, "all items should be released back to available")
+	require.Equal(t, 0, notAvailable, "all items should be released back to available within %v", itemsSettleTimeout)
 
 	var available int
 	require.NoError(t, stack.Pool.QueryRow(ctx,
@@ -453,8 +500,10 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		// claim-holders rows key on claim_handle_id (FK to
 		// rimsky_claim_handles); we join both so the dump shows the
 		// full ledger for items still held by some node's claim.
+		// Post-B5 (2026-05-12 nomenclature resolution) the holder
+		// column is `holder_run_id` (FK to rimsky_node_runs).
 		hrows, herr := stack.Pool.Query(ctx,
-			`SELECT ch.id, ch.claim_handle_id, ch.holder_node_id,
+			`SELECT ch.id, ch.claim_handle_id, ch.holder_run_id,
 			        ch.state, ch.completed_at,
 			        lh.producer_name, lh.scope_data
 			   FROM rimsky_claim_holders ch
@@ -473,32 +522,33 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			var (
 				hid          uuid.UUID
 				lockHolderID uuid.UUID
-				holderNodeID uuid.UUID
+				holderRunID  uuid.UUID
 				state        string
 				completedAt  *time.Time
 				storeName    string
 				scopeData    []byte
 			)
-			_ = hrows.Scan(&hid, &lockHolderID, &holderNodeID,
+			_ = hrows.Scan(&hid, &lockHolderID, &holderRunID,
 				&state, &completedAt, &storeName, &scopeData)
 			cAt := "<nil>"
 			if completedAt != nil {
 				cAt = completedAt.Format(time.RFC3339Nano)
 			}
-			t.Logf("  claim_holder id=%s lock_holder=%s store=%s holder_node=%s state=%s completed_at=%s scope=%s",
-				hid, lockHolderID, storeName, holderNodeID, state, cAt, string(scopeData))
+			t.Logf("  claim_holder id=%s lock_holder=%s store=%s holder_run=%s state=%s completed_at=%s scope=%s",
+				hid, lockHolderID, storeName, holderRunID, state, cAt, string(scopeData))
 		}
 		hrows.Close()
 		if !anyHolders {
 			t.Logf("  (no rimsky_claim_holders rows for this item_id)")
 		}
 
-		// Per-item: any in-flight dispatch rows that may still reference
-		// the holder nodes for this claim.
+		// Per-item: any in-flight dispatch rows that may still
+		// reference the holder runs for this claim. Post-B5 the join
+		// goes through holder_run_id → rimsky_node_runs.id.
 		drows, derr := stack.Pool.Query(ctx,
 			`SELECT d.id, d.node_id, d.claimed_by, d.enqueued_at, d.frame_id
 			   FROM rimsky_node_runs d
-			   JOIN rimsky_claim_holders ch ON ch.holder_node_id = d.node_id
+			   JOIN rimsky_claim_holders ch ON ch.holder_run_id = d.id
 			   JOIN rimsky_claim_handles lh ON lh.id = ch.claim_handle_id
 			  WHERE lh.scope_data::text = $1`,
 			fmt.Sprintf("%q", s.ItemID),
@@ -578,15 +628,18 @@ func smokeTemplateBody() map[string]any {
 	}
 }
 
-// claimTopicNode is the source: cron-scheduled, holds a pick-policy
-// claim against `topics-ring` selected via the `@review-queue` selector.
-// No executor (native claim-only path); per-claim resolution declared
-// on this node since it is the acquirer of the held subgraph and
-// downstream `review` inherits the claim.
+// claimTopicNode is the source: holds a pick-policy claim against
+// `topics-ring` selected via the `@review-queue` selector. No executor
+// (native claim-only path); per-claim resolution declared on this node
+// since it is the acquirer of the held subgraph and downstream `review`
+// inherits the claim. Pre-2026-05-15 this node carried a `schedule:`
+// field; the smoke now drives it through
+// `/admin/instances/.../nodes/.../invalidate` (which models what
+// `sensors/sensor-cron/` would do via observation-push at every cron
+// fire).
 func claimTopicNode() map[string]any {
 	return map[string]any{
-		"type":     "claim-topic",
-		"schedule": "* * * * *",
+		"type": "claim-topic",
 		"stores": []map[string]any{
 			{"name": "topics-ring", "selector": "@review-queue", "intent": "rw"},
 		},
@@ -647,9 +700,9 @@ func scopeNode() map[string]any {
 // the `content` filesystem store substituted from upstream attributes.
 // Stub returns an empty attributes_delta.
 //
-// `quality_rules` from §11.5 (must_match_regex) is intentionally omitted —
-// the rule type isn't registered in v1 (see graph/qualityrule/eval/rules.go);
-// the YAML fixture file documents what the spec example carries.
+// `quality_rules` from §11.5 is retired (2026-05-15 plan P1); verifier
+// executors take over the quality-rule role. The YAML fixture is
+// historical and retains the per-node block for reference only.
 func draftNode() map[string]any {
 	return map[string]any{
 		"type":     "draft",

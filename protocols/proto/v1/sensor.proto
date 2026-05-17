@@ -1,0 +1,83 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+// Sensor is the service-protocol bundled sensor services
+// (sensors/sensor-cron, sensors/sensor-http, sensors/sensor-object-store,
+// sensors/sensor-webhook) implement. Rimsky's control-api drives
+// sensor lifecycle at instance create / terminate via StartWatch /
+// StopWatch, and reconciles sensor state after a rimsky restart via
+// ListWatches.
+//
+// Sensors observe external events; on observation they POST to
+// rimsky's HTTP endpoint `POST /sensors/{watch_id}/observations`
+// which rimsky deposits onto the unified message queue.
+//
+// Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+// §Sensors as a service kind.
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+
+service Sensor {
+  rpc Capabilities(google.protobuf.Empty) returns (SensorCapabilities);
+  rpc StartWatch(StartWatchRequest) returns (StartWatchResponse);
+  rpc StopWatch(StopWatchRequest) returns (StopWatchResponse);
+  rpc ListWatches(google.protobuf.Empty) returns (ListWatchesResponse);
+}
+
+// SensorCapabilities advertises the kinds this binary supports and
+// any mix-in protocols (e.g. "validation"). Rimsky reads it at
+// startup and caches in the discovery cache.
+message SensorCapabilities {
+  repeated SensorKindCapability supported_kinds = 1;
+  // protocols advertises mix-in service protocols (e.g. "sensor",
+  // "validation").
+  repeated string protocols = 2;
+  // validation_supported_roles: set when "validation" is in protocols
+  // (e.g. ["sensor"]).
+  repeated string validation_supported_roles = 3;
+}
+
+message SensorKindCapability {
+  string kind          = 1;
+  // config_schema is the JSON Schema for the resolved_config the
+  // sensor accepts at StartWatch for this kind. Opaque to rimsky;
+  // surfaces to operator tooling.
+  bytes  config_schema = 2;
+}
+
+message StartWatchRequest {
+  string watch_id        = 1;
+  string instance_id     = 2;
+  string kind            = 3;
+  // resolved_config is the per-instance config the sensor watches
+  // against (e.g. cron expression, HTTP URL, S3 bucket+prefix).
+  // Substituted by rimsky from the template `sensors:` block before
+  // dispatch.
+  bytes  resolved_config = 4;
+}
+
+message StartWatchResponse {}
+
+message StopWatchRequest {
+  string watch_id = 1;
+}
+
+message StopWatchResponse {}
+
+message ListWatchesResponse {
+  repeated WatchDescriptor watches = 1;
+}
+
+message WatchDescriptor {
+  string watch_id    = 1;
+  string instance_id = 2;
+  string kind        = 3;
+  google.protobuf.Timestamp started_at = 4;
+}

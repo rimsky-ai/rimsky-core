@@ -8,7 +8,7 @@
 //
 //   - graph/scenario/harness.go — scenario tests seed fixtures via raw
 //     SQL (executor_blocked_test, etc.).
-//   - test/smoke/setup.go — the smoke fixture's force-fire driver.
+//   - test/smoke/setup.go — the smoke fixture's diagnostics driver.
 //   - foundation/internal/pgtest — exposes StartPostgres for legacy callers.
 //
 // Production code MUST go through the persistence.Database interface.

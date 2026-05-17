@@ -7,32 +7,33 @@
 // This is the graph-layer scheduler — it composes the foundation
 // integration sweeps (advisory-lock tick gate, stale-heartbeat sweep,
 // dispatch-claim orphan sweep, lock-holder orphan reap, ready sweep)
-// with the graph-layer sweeps (cron schedules, pure-cascade
-// transitions, frame-engine tick).
+// with the graph-layer sweeps (pure-cascade transitions, frame-engine
+// tick). The cron-fire sweep retired with the 2026-05-15 plan B10 / D7
+// / E16; cron firing is owned by the bundled `sensors/sensor-cron/`
+// service via the Sensor protocol + POST /sensors/{watch_id}/observations.
 //
 // Per tick:
 //  1. AdvisoryLocker-guarded TrySchedulerTick skips ticks when another
 //     replica holds the lock. Best-effort — if lock acquisition errors we
 //     fall through to an unlocked tick rather than dropping work.
-//  2. ProcessSchedules — fire due cron schedules, emit invalidate per target.
-//  3. ProcessPureCascade — transition pure-cascade nodes (no executor) to
+//  2. ProcessPureCascade — transition pure-cascade nodes (no executor) to
 //     fresh inline and emit recalculate to dependents.
-//  4. runtime.SweepStaleHeartbeats — running nodes whose last_heartbeat
+//  3. runtime.SweepStaleHeartbeats — running nodes whose last_heartbeat
 //     is older than the cutoff are forced running→stale, supervisor
 //     assignment is cleared, a heartbeat_lost event is appended, and the
 //     node is re-enqueued (no retry bump — infra event, not application
 //     error).
-//  5. runtime.SweepOrphanedNodeRuns — dispatch rows whose
+//  4. runtime.SweepOrphanedNodeRuns — dispatch rows whose
 //     `last_heartbeat_at` is older than the cutoff are released
 //     claimant-guarded so a fresh supervisor can pick them up.
-//  6. runtime.SweepOrphanedClaimHandles — `rimsky_claim_handles` rows whose
+//  5. runtime.SweepOrphanedClaimHandles — `rimsky_claim_handles` rows whose
 //     `expires_at < now()` are deleted claimant-guarded. Per v3 spec
 //     §7.5, ClaimProducer.Abandon is NOT called — the store's own TTL/sweep
 //     handles its internal state. Cascade FK on
 //     `rimsky_claim_holders.claim_handle_id` cleans up held-claim rows.
-//  7. runtime.SweepReady — executor-backed stale nodes whose deps
+//  6. runtime.SweepReady — executor-backed stale nodes whose deps
 //     are all fresh get enqueued for the next claim cycle.
-//  8. frame.RunTick — frame-end detection, queue advancement,
+//  7. frame.RunTick — frame-end detection, queue advancement,
 //     stuck-frame warning (advisory only), orphan-frame-dispatch reap.
 package scheduler
 
@@ -101,6 +102,13 @@ type Config struct {
 	// parked-resume sweep) so `rimsky_invalidates_total` reflects the
 	// scheduler's contribution. Nil → no-op.
 	Metrics runtime.MetricsHook
+	// MaxParkDuration is the deployment-level per-reason
+	// max_park_duration cap map (spec §Parked-state taxonomy /
+	// Per-reason `max_park_duration` config). Threaded into
+	// SweepParkedNodes so the per-reason cap can fire when the per-row
+	// col:rimsky_node_runs.max_park_duration_seconds is NULL. Empty /
+	// nil → only per-row caps fire.
+	MaxParkDuration map[string]time.Duration
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -135,12 +143,12 @@ func (h *Handle) Shutdown(ctx context.Context) error {
 // the loop never returns on its own unless Handle.Shutdown is invoked.
 //
 // Panics if cfg.Persist is nil — every code path that emits an invalidate
-// (cron fire, pure-cascade) calls frame.EnqueueOrCoalesce on cfg.Persist,
-// so a nil here is a wiring bug that surfaces as an unhelpful NPE deep in
-// the tick loop. Fail loudly at Start() instead.
+// (pure-cascade) calls frame.EnqueueOrCoalesce on cfg.Persist, so a nil
+// here is a wiring bug that surfaces as an unhelpful NPE deep in the tick
+// loop. Fail loudly at Start() instead.
 func Start(cfg Config) *Handle {
 	if cfg.Persist == nil {
-		panic("scheduler.Start: Config.Persist is required (frame engine, invalidate path, schedule firing all dereference it)")
+		panic("scheduler.Start: Config.Persist is required (frame engine and invalidate path dereference it)")
 	}
 	if cfg.TickInterval == 0 {
 		cfg.TickInterval = 1500 * time.Millisecond
@@ -233,20 +241,9 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 2. ProcessSchedules (cron fire → invalidate).
-	if _, err := ProcessSchedules(ctx,
-		cfg.Persist,
-		scheduleDispatcherAdapter{
-			Persist: cfg.Persist, Queue: cfg.Queue,
-			Clock: cfg.Clock, Logger: log,
-			Metrics: cfg.Metrics,
-		},
-		cfg.Clock, log,
-	); err != nil {
-		log.Warn("tick: ProcessSchedules failed", "error", err.Error())
-	}
-
-	// 3. Pure-cascade sweep.
+	// 2. Pure-cascade sweep. (The cron-fire sweep retired with the
+	//    2026-05-15 plan B10 / D7 / E16; cron firing is owned by the
+	//    bundled `sensors/sensor-cron/` service.)
 	if _, err := ProcessPureCascade(ctx, PureCascadeArgs{
 		Persist: cfg.Persist, Queue: cfg.Queue,
 		Clock: cfg.Clock, Logger: log,
@@ -305,15 +302,16 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	// failure on rows that overran max_park_duration_seconds.
 	if cfg.SupervisorID != "" {
 		if err := runtime.SweepParkedNodes(ctx, runtime.ParkedSweepArgs{
-			Persist:        cfg.Persist,
-			Queue:          cfg.Queue,
-			Clock:          cfg.Clock,
-			Logger:         log,
-			SupervisorID:   cfg.SupervisorID,
-			ClaimHandles:   cfg.ClaimHandles,
-			AdvisoryLocker: cfg.AdvisoryLocker,
-			StoreRegistry:  cfg.StoreRegistry,
-			Metrics:        cfg.Metrics,
+			Persist:          cfg.Persist,
+			Queue:            cfg.Queue,
+			Clock:            cfg.Clock,
+			Logger:           log,
+			SupervisorID:     cfg.SupervisorID,
+			ClaimHandles:     cfg.ClaimHandles,
+			AdvisoryLocker:   cfg.AdvisoryLocker,
+			StoreRegistry:    cfg.StoreRegistry,
+			Metrics:          cfg.Metrics,
+			PerReasonMaxPark: cfg.MaxParkDuration,
 		}); err != nil {
 			log.Warn("tick: SweepParkedNodes failed", "error", err.Error())
 		}
@@ -349,6 +347,18 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
 		}
 	}
+
+	// 11. Message-delivery sweep — for each running frame, deliver
+	// pending messages per the per-instance frame_delivery_mode. Fired
+	// after frame.RunTick so newly-promoted running frames pick up
+	// their messages on the same tick. Idempotent re-fire is safe: a
+	// row that's already delivered_at + frame_id is filtered out by
+	// `ListPendingForInstance`. Per spec §Unified message layer.
+	if cfg.Persist != nil && cfg.Clock != nil {
+		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, log, cfg.Clock.Now()); err != nil {
+			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
+		}
+	}
 	return nil
 }
 
@@ -368,31 +378,4 @@ type frameDurationOnly struct {
 
 func (a frameDurationOnly) ObserveFrameDuration(seconds float64) {
 	a.hook.ObserveFrameDuration(seconds)
-}
-
-// --- Adapter bridging InvalidateNode to MessageDispatcher. --------------
-
-// scheduleDispatcherAdapter implements MessageDispatcher by calling
-// InvalidateNode with the scheduler's persistence + queue + clock.
-type scheduleDispatcherAdapter struct {
-	Persist persistence.Tables
-	Queue   persistence.Queue
-	Clock   shared.Clock
-	Logger  shared.Logger
-	// Metrics threaded through so cron-fire invalidates increment
-	// `rimsky_invalidates_total{source="scheduler"}`. Nil → no-op.
-	Metrics runtime.MetricsHook
-}
-
-func (a scheduleDispatcherAdapter) EmitInvalidate(ctx context.Context, req InvalidateRequest) error {
-	return runtime.InvalidateNode(ctx, runtime.InvalidateArgs{
-		Persist:      a.Persist,
-		Queue:        a.Queue,
-		Clock:        a.Clock,
-		Logger:       a.Logger,
-		SourceNodeID: req.SourceNodeID,
-		TargetNodeID: req.TargetNodeID,
-		Reason:       req.Reason,
-		Metrics:      a.Metrics,
-	})
 }

@@ -9,6 +9,7 @@ package scheduler
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -101,23 +102,31 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 		n = row
 		return nil
 	})
-	// Always UPDATE: Create() now defaults to 'fresh' (frame-resolution
-	// model), so any test asking for a non-fresh state must override.
-	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_nodes SET state = $1 WHERE id = $2`, string(state), n.ID)
-	n.State = state
-	if state == cascade.NodeStateStale || state == cascade.NodeStateRunning {
-		// Reuse the existing running frame for this instance if any (the
-		// uq_rimsky_frames_running partial unique index limits one running
-		// frame per instance); otherwise insert a fresh one.
-		frameID, ok := lookupRunningFrame(ctx, t, f, f.instance.ID)
-		if !ok {
-			frameID = insertRunningFrame(ctx, t, f, f.instance.ID, n.ID)
-		}
-		pgtest.ExecForTest(ctx, t, f.driver,
-			`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
-		n.FrameID = &frameID
+	// Post-stage-3 cutover: state lives on rimsky_node_runs. The
+	// 'fresh' case requires no run row; stale / running seed an
+	// in-flight run row in the requested state.
+	if state == cascade.NodeStateFresh {
+		return n
 	}
+	frameID, ok := lookupRunningFrame(ctx, t, f, f.instance.ID)
+	if !ok {
+		frameID = insertRunningFrame(ctx, t, f, f.instance.ID, n.ID)
+	}
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
+	n.FrameID = &frameID
+	runPhase := "pending"
+	if state == cascade.NodeStateRunning {
+		runPhase = "active"
+	}
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
+		                               enqueued_at, claimed_by, claimed_at, last_heartbeat_at,
+		                               phase, state, frame_id)
+		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL, NULL,
+		         $3, $4, $5)`,
+		n.ID, executor, runPhase, string(state), frameID)
+	n.State = state
 	return n
 }
 
@@ -157,11 +166,16 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	return frameID
 }
 
-// setHeartbeat forces last_heartbeat_at + assigned_supervisor_id directly.
+// setHeartbeat forces last_heartbeat_at + claimed_by directly on the
+// in-flight run row. Post-stage-3 cutover: heartbeat / supervisor live
+// on the run row only.
 func (f *schedFixture) setHeartbeat(t *testing.T, nodeID shared.UUID, at time.Time, sup string) {
 	t.Helper()
 	pgtest.ExecForTest(context.Background(), t, f.driver,
-		`UPDATE rimsky_nodes SET last_heartbeat_at = $1, assigned_supervisor_id = $2 WHERE id = $3`,
+		`UPDATE rimsky_node_runs
+		    SET last_heartbeat_at = $1, claimed_by = $2, claimed_at = $1
+		  WHERE node_id = $3
+		    AND phase IN ('pending','active','held','parked')`,
 		at, sup, nodeID,
 	)
 }
@@ -356,19 +370,23 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 		t.Fatal("tick did not return within 10s while other replica held the lock")
 	}
 
-	// Skipped tick means the ready-sweep did NOT run → no dispatch row.
-	var count int
+	// Skipped tick means the ready-sweep did NOT run; the in-flight
+	// stale run row seeded by createNode stays in phase='pending' with
+	// claimed_by NULL. Post-stage-3 cutover the run row carries state,
+	// so a "dispatch happened" symptom is "phase advanced to active or
+	// row claimed" — neither should occur while the lock is held.
+	var (
+		phase     string
+		claimedBy sql.NullString
+	)
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
-		[]any{target.ID}, &count)
-	assert.Equal(t, 0, count, "tick should have skipped under advisory-lock contention")
+		`SELECT phase, claimed_by FROM rimsky_node_runs
+		   WHERE node_id = $1
+		     AND phase IN ('pending','active','held','parked')`,
+		[]any{target.ID}, &phase, &claimedBy)
+	assert.Equal(t, "pending", phase, "tick should have skipped (run row not claimed) under advisory-lock contention")
+	assert.False(t, claimedBy.Valid, "run row should not be claimed under advisory-lock contention")
 }
-
-// --- Compile-time wiring check ----------------------------------------
-//
-// Ensures the dispatcher adapter continues to satisfy the MessageDispatcher
-// surface even after future storage/queue changes.
-var _ MessageDispatcher = scheduleDispatcherAdapter{}
 
 // Suppress unused-variable warning from `sync` if the file gets trimmed.
 var _ = sync.Mutex{}

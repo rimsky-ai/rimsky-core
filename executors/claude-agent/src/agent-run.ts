@@ -50,13 +50,14 @@ export type AgentOutcome =
       // The supervisor receives the `Park` terminal via the gRPC stream
       // or async callback (see plan A3).
       //
-      // Post-2026-05-14 the `reason` field is the typed ParkReason
-      // snake_case value (time_wait | signal_wait | awaiting_human |
-      // retry_backoff). `reasonNote` is the free-form annotation
+      // Post-2026-05-15 (I3) the `reason` field is the typed
+      // ParkReason snake_case value (time_wait | callback_wait |
+      // retry_backoff | other | signal_wait | awaiting_human).
+      // `reasonNote` is the free-form annotation
       // (`col:rimsky_node_runs.parked_reason_note`). The MCP
       // `report_park` tool resolves this same outcome shape; the
-      // rate-limit detection path emits `reason: time_wait` with a
-      // descriptive `reasonNote`.
+      // rate-limit detection path emits `reason: retry_backoff` with
+      // a descriptive `reasonNote`.
       kind: "park_requested";
       reason: string;
       reasonNote: string;
@@ -801,12 +802,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         );
         safeResolve({
           kind: "park_requested",
-          // J9 rate-limit auto-park maps to the typed enum value
-          // `time_wait` (the supervisor translates to
-          // PARK_REASON_TIME_WAIT). `reasonNote` preserves the prior
-          // free-form `reason` text so operators / dashboards still
-          // see "claude rate-limit detected; resume at <ts>".
-          reason: "time_wait",
+          // I3: rate-limit-aware waits classify as PARK_REASON_RETRY_BACKOFF
+          // per spec §Parked-state taxonomy / Bundled emitter updates.
+          // `reasonNote` preserves the prior free-form `reason` text
+          // so operators / dashboards still see "claude rate-limit
+          // detected; resume at <ts>".
+          reason: "retry_backoff",
           reasonNote:
             signalRL.reason !== ""
               ? signalRL.reason

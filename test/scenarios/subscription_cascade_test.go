@@ -259,11 +259,18 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 		"worker should re-reach fresh")
 
 	// Monitor must stay fresh; never transition to running. Allow
-	// 3 seconds for any spurious cascade.
+	// 3 seconds for any spurious cascade. Post-stage-3: state lives on
+	// the in-flight run row; no row = fresh.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		var state cascade.NodeState
-		err := h.Pool.QueryRow(h.Ctx, `SELECT state FROM rimsky_nodes WHERE id = $1`, monitor.ID).Scan(&state)
+		err := h.Pool.QueryRow(h.Ctx,
+			`SELECT COALESCE(r.state, 'fresh')
+			   FROM rimsky_nodes n
+			   LEFT JOIN rimsky_node_runs r
+			          ON r.node_id = n.id
+			         AND r.phase IN ('pending','active','held','parked')
+			  WHERE n.id = $1`, monitor.ID).Scan(&state)
 		require.NoError(t, err)
 		if state != cascade.NodeStateFresh {
 			t.Fatalf("monitor should remain fresh (no subscription edge to worker); observed state=%s", state)
@@ -310,7 +317,8 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 		var count int
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT count(*) FROM rimsky_wait_set w
-			 JOIN rimsky_nodes n ON n.id = w.receiver_node_id
+			 JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
+			 JOIN rimsky_nodes n ON n.id = r.node_id
 			 WHERE n.instance_id = $1
 		`, iid).Scan(&count)
 		require.NoError(t, err)
@@ -322,7 +330,8 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 	var leftover int
 	err := h.Pool.QueryRow(h.Ctx, `
 		SELECT count(*) FROM rimsky_wait_set w
-		 JOIN rimsky_nodes n ON n.id = w.receiver_node_id
+		 JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
+		 JOIN rimsky_nodes n ON n.id = r.node_id
 		 WHERE n.instance_id = $1
 	`, iid).Scan(&leftover)
 	require.NoError(t, err)

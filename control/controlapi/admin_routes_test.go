@@ -6,11 +6,12 @@
 // stores-redesign-v3 surface:
 //
 //   - GET  /lock-holders/{claim_handle_id}/claim-holders
-//   - POST /admin/scheduled-nodes/{node_id}/force-fire
 //
 // (The pick-policy items endpoint was removed in v3; item seeding is
 // done by talking to the store-service's own admin surface — see
-// docs/operator-guide.md §3.4.X.)
+// docs/operator-guide.md §3.4.X. The /admin/scheduled-nodes/.../
+// force-fire endpoint retired with the 2026-05-15 plan B10 / D7 / E16
+// schedule-retirement cascade.)
 package controlapi
 
 import (
@@ -95,14 +96,17 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Empty(t, emptyResp.Holders)
 
 	// Insert a lock-holder + claim-holder pair, then re-fetch.
+	// Post-stage-5 the claim-holders row keys on holder_run_id, so seed
+	// a real run row alongside the node.
 	holderNodeID := seedThrowawayNode(t, h)
+	holderRunID := seedRunForNode(ctx, t, h, holderNodeID)
 	lockHolderID := seedScopeClaimHandle(ctx, t, h, holderNodeID)
 	claimHolderID := uuid.New()
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            claimHolderID,
 			ClaimHandleID: lockHolderID,
-			HolderNodeID:  holderNodeID,
+			HolderRunID:   holderRunID,
 		}, tx)
 	}))
 
@@ -115,55 +119,14 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Len(t, resp.Holders, 1)
 	require.Equal(t, claimHolderID.String(), resp.Holders[0]["id"])
 	require.Equal(t, lockHolderID.String(), resp.Holders[0]["claim_handle_id"])
-	require.Equal(t, holderNodeID.String(), resp.Holders[0]["holder_node_id"])
+	require.Equal(t, holderRunID.String(), resp.Holders[0]["holder_run_id"])
 	require.Equal(t, "active", resp.Holders[0]["state"])
 }
 
-func TestAdminForceFireRoute(t *testing.T) {
-	t.Parallel()
-	h := newAdminHarness(t)
-	ctx := context.Background()
-
-	deps := AppDeps{
-		Persist: h.persist,
-		Logger:  shared.SilentLogger{},
-	}
-	router := buildRouter(registerAdminScheduleRoutes, deps)
-
-	nodeID := seedThrowawayNode(t, h)
-	future := time.Now().Add(24 * time.Hour)
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return h.persist.Schedules().Register(ctx, persistence.ScheduleRegisterInput{
-			NodeID:     nodeID,
-			CronExpr:   "*/5 * * * *",
-			NextFireAt: future,
-		}, tx)
-	}))
-
-	status, _ := doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/not-a-uuid/force-fire", nil)
-	require.Equal(t, http.StatusBadRequest, status)
-
-	const skewGrace = 5 * time.Second
-	before := time.Now().Add(-skewGrace)
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/"+nodeID.String()+"/force-fire", nil)
-	require.Equal(t, http.StatusNoContent, status)
-
-	var rows []persistence.ScheduleRow
-	err := h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, e := h.persist.Schedules().ListAll(ctx, tx)
-		rows = r
-		return e
-	})
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, nodeID, rows[0].NodeID)
-	require.False(t, rows[0].NextFireAt.Before(before))
-	require.True(t, rows[0].NextFireAt.Before(future.Add(-time.Hour)))
-
-	missing := uuid.New()
-	status, _ = doJSON(t, router, http.MethodPost, "/admin/scheduled-nodes/"+missing.String()+"/force-fire", nil)
-	require.Equal(t, http.StatusNoContent, status)
-}
+// (TestAdminForceFireRoute retired by the 2026-05-15 plan B10 / D7 /
+// E16 schedule-retirement cascade. The /admin/scheduled-nodes/.../
+// force-fire endpoint and the rimsky_schedules table are gone; cron
+// firing is owned by `sensors/sensor-cron/`.)
 
 // seedThrowawayNode inserts a minimal template + instance + node and
 // returns the node ID. Bypasses validation/handlers and uses raw SQL so
@@ -189,18 +152,48 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
 		instID, tplHash, "ck-"+uuid.NewString(),
 	)
+	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, schedule_cron, state,
+		   id, instance_id, node_type, executor,
 		   current_error_class, retry_counter, action_index,
 		   created_at, updated_at
 		 ) VALUES (
-		   $1, $2, 'root', 'worker', '', 'fresh',
+		   $1, $2, 'root', 'worker',
 		   '', 0, 0, now(), now()
 		 )`,
 		nodeID, instID,
 	)
 	return nodeID
+}
+
+// seedRunForNode enqueues an in-flight `rimsky_node_runs` row for the
+// given node and returns the run id. Post-stage-5 of the run-row
+// lifecycle cutover, claim-holders rows key on `holder_run_id`, so the
+// claim-holders route tests need a real run id per fixture row.
+func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
+	t.Helper()
+	// Seed a 'running' frame for the node's instance first so the FK
+	// rimsky_node_runs.frame_id resolves.
+	var instID, frameID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT instance_id FROM rimsky_nodes WHERE id = $1`,
+		[]any{nodeID}, &instID,
+	)
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		 VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), now(), 600000)
+		 RETURNING frame_id`,
+		[]any{instID, nodeID}, &frameID,
+	)
+	var runID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'pending', 'stale', $2)
+		 RETURNING id`,
+		[]any{nodeID, frameID}, &runID,
+	)
+	return runID
 }
 
 // seedScopeClaimHandle inserts a scope-kind lock-holder row anchored to

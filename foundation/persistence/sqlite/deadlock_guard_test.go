@@ -277,6 +277,27 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.GetByFrameAndNode", func() {
 			_, _ = store.ClaimHandles().GetByFrameAndNode(ctx, someID, someID, nil)
 		}},
+		{"ClaimHandles.ListChildClaimHandles", func() {
+			_, _ = store.ClaimHandles().ListChildClaimHandles(ctx, someID, nil)
+		}},
+		{"ClaimHandles.SetHeldDurable", func() {
+			_ = store.ClaimHandles().SetHeldDurable(ctx, someID, "sup", true, nil)
+		}},
+		{"ClaimHandles.SetVersionID", func() {
+			_ = store.ClaimHandles().SetVersionID(ctx, someID, "sup", "v1", nil)
+		}},
+		{"ClaimHandles.ListHeldDurableByInstance", func() {
+			_, _ = store.ClaimHandles().ListHeldDurableByInstance(ctx, someID, nil)
+		}},
+		{"ClaimHandles.SetAggregationPolicy", func() {
+			_ = store.ClaimHandles().SetAggregationPolicy(ctx, someID, "sup", nil, nil)
+		}},
+		{"ClaimHandles.BumpExpectedChildrenCount", func() {
+			_ = store.ClaimHandles().BumpExpectedChildrenCount(ctx, someID, "sup", 1, nil)
+		}},
+		{"ClaimHandles.BumpChildOutcomeCount", func() {
+			_ = store.ClaimHandles().BumpChildOutcomeCount(ctx, someID, "sup", "commit", 1, nil)
+		}},
 		// NodeAttributes
 		{"NodeAttributes.Get", func() {
 			_, _ = store.NodeAttributes().Get(ctx, someID, nil)
@@ -297,8 +318,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHolders.ListByClaimHandleID", func() {
 			_, _ = store.ClaimHolders().ListByClaimHandleID(ctx, someID, nil)
 		}},
-		{"ClaimHolders.ListByHolderNode", func() {
-			_, _ = store.ClaimHolders().ListByHolderNode(ctx, someID, nil)
+		{"ClaimHolders.ListByHolderRun", func() {
+			_, _ = store.ClaimHolders().ListByHolderRun(ctx, someID, nil)
 		}},
 		{"ClaimHolders.ListActiveByClaimHandleID", func() {
 			_, _ = store.ClaimHolders().ListActiveByClaimHandleID(ctx, someID, nil)
@@ -306,8 +327,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHolders.Complete", func() {
 			_ = store.ClaimHolders().Complete(ctx, someID, persistence.ClaimHolderStateCompleted, nil)
 		}},
-		{"ClaimHolders.CompleteByClaimHandleAndNode", func() {
-			_ = store.ClaimHolders().CompleteByClaimHandleAndNode(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
+		{"ClaimHolders.CompleteByClaimHandleAndRun", func() {
+			_ = store.ClaimHolders().CompleteByClaimHandleAndRun(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
 		}},
 		// Events
 		{"Events.Append", func() {
@@ -319,25 +340,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Events.LastTerminalByNodes", func() {
 			_, _ = store.Events().LastTerminalByNodes(ctx, []shared.UUID{someID}, nil)
 		}},
-		// Schedules
-		{"Schedules.Register", func() {
-			_ = store.Schedules().Register(ctx, persistence.ScheduleRegisterInput{}, nil)
-		}},
-		{"Schedules.DueBefore", func() {
-			_, _ = store.Schedules().DueBefore(ctx, time.Now(), nil)
-		}},
-		{"Schedules.RecordFired", func() {
-			_ = store.Schedules().RecordFired(ctx, someID, time.Now(), time.Now(), nil)
-		}},
-		{"Schedules.ListAll", func() {
-			_, _ = store.Schedules().ListAll(ctx, nil)
-		}},
-		{"Schedules.ForceFire", func() {
-			_ = store.Schedules().ForceFire(ctx, someID, nil)
-		}},
-		{"Schedules.ListForObservability", func() {
-			_, _ = store.Schedules().ListForObservability(ctx, persistence.ScheduleListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
+		// (Schedules retired by the 2026-05-15 data-platform-extensions
+		// plan B10 / D7 / E16; cron firing is owned by sensors/sensor-cron/.)
 		// Supervisors
 		{"Supervisors.Register", func() {
 			_ = store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{}, nil)
