@@ -21,6 +21,7 @@ vendor/
 /rimsky-docs-lint
 /rimsky-docs-llms-full
 /http-node
+/openlineage
 
 # Node executor deps / build output
 executors/*/node_modules/
