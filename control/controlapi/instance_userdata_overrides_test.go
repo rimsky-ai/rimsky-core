@@ -4,7 +4,7 @@
 
 // HTTP-level coverage for the per-instance userdata_overrides field on
 // POST /instances. Pairs with the deep-merge unit tests in
-// foundation/integration/userdata_overrides_test.go and the validator
+// runtime/userdata_overrides_test.go and the validator
 // unit tests in userdata_overrides_test.go.
 
 package controlapi

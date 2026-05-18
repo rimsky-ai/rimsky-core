@@ -8,7 +8,7 @@
 //
 // The Registry is a simple name→ClaimProducer map populated externally:
 // each rimsky process's cmd binary loads rimsky.yml, dials a remote
-// gRPC client per entry (foundation/integration/remote/), validates
+// gRPC client per entry (runtime/remote/), validates
 // the Capabilities() handshake (operator envelope ⊆ producer envelope),
 // and Add()s the result. There is no Factory interface, no per-kind
 // dispatch.

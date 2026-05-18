@@ -4,10 +4,11 @@
 
 // N4 scenario — sensor_invalidate_to_cascade.
 //
-// A sensor POSTs an `observation` message via
-// `POST /sensors/{watch_id}/observations`; at frame boundary the
-// scheduler delivers it. The scenario pins enqueue → deliver shape
-// with sender_kind="sensor".
+// A publisher (bundled sensor) POSTs a message envelope to the generic
+// `POST /instances/{instance_id}/messages` endpoint with
+// `sender_kind: "publisher"` + a `publisher_subscription_id` capability
+// token. At frame boundary the scheduler delivers it. The scenario
+// pins enqueue → deliver shape with sender_kind="publisher".
 package messages
 
 import (
@@ -32,9 +33,9 @@ func TestSensorInvalidateToCascade(t *testing.T) {
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
 		ID:         shared.UUID(uuid.New()),
 		InstanceID: instanceID,
-		Kind:       "observation",
+		Kind:       "invalidate",
 		Sender:     "sensor-cron",
-		SenderKind: "sensor",
+		SenderKind: "publisher",
 		Target:     "*",
 		Payload:    []byte(`{"observed_at":"2026-05-15T12:00:00Z"}`),
 		ReceivedAt: now,
@@ -45,7 +46,7 @@ func TestSensorInvalidateToCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}
-	if len(delivered.Messages) != 1 || delivered.Messages[0].SenderKind != "sensor" {
-		t.Errorf("expected one sensor-sender delivered, got %+v", delivered.Messages)
+	if len(delivered.Messages) != 1 || delivered.Messages[0].SenderKind != "publisher" {
+		t.Errorf("expected one publisher-sender delivered, got %+v", delivered.Messages)
 	}
 }

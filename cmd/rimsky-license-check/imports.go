@@ -47,6 +47,12 @@ func init() {
 
 // verifyImports parses each Apache-classified Go file and checks every
 // rimsky import. AGPL files are not checked (they can import freely).
+//
+// Test files (`*_test.go`) are exempt from the import-direction rule:
+// tests routinely need internal scaffolding (testcontainers fixtures,
+// in-process database harnesses) and don't ship in published binaries
+// or libraries. Apache-licensed test files may therefore import AGPL
+// helpers such as `internal/pgtest/` without the lint complaining.
 func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 	var out []violation
 	fset := token.NewFileSet()
@@ -55,6 +61,9 @@ func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 			continue
 		}
 		if f.classification != classApache {
+			continue
+		}
+		if strings.HasSuffix(f.relPath, "_test.go") {
 			continue
 		}
 		af, err := parser.ParseFile(fset, f.absPath, nil, parser.ImportsOnly)

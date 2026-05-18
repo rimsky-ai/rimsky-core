@@ -19,9 +19,11 @@ import (
 // looks for in the first 10 lines of an existing file.
 
 const (
-	markerLicensedUnder = "Licensed under"           // any "Licensed under …" line counts as a header
-	markerApache        = "Apache License"           // distinguishes apache headers
-	markerDualAGPL      = "Dual-licensed under AGPL" // distinguishes agpl headers
+	markerLicensedUnder = "Licensed under"                      // any "Licensed under …" line counts as a header
+	markerApache        = "Apache License"                      // distinguishes apache headers (full-text form)
+	markerDualAGPL      = "Dual-licensed under AGPL"            // distinguishes agpl headers
+	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0" // distinguishes apache headers (SPDX short form)
+	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
 )
 
 const apacheHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
@@ -121,6 +123,18 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 			isApache = true
 		}
 		if strings.Contains(line, markerDualAGPL) {
+			isAGPL = true
+			hasHeader = true
+		}
+		// SPDX short-form headers: the bundled services (sensors/,
+		// subscribers/, executors/verifier-*) use the SPDX one-liner
+		// rather than the multi-line "Licensed under …" boilerplate.
+		// Recognize both Apache and the dual-license AGPL SPDX form.
+		if strings.Contains(line, markerSPDXApache) {
+			isApache = true
+			hasHeader = true
+		}
+		if strings.Contains(line, markerSPDXDualAGPL) {
 			isAGPL = true
 			hasHeader = true
 		}

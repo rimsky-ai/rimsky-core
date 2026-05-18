@@ -87,7 +87,7 @@ func applyAcquirePass(
 	ctx context.Context, args RunArgs, acq acquisition,
 	cand persistence.Candidate, h *node.OnAcquireUnavailableHandler,
 ) {
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := args.Persist.Nodes().UpdateState(ctx, cand.NodeID,
 			cascade.NodeStateFresh, cascade.ReasonAcquirePass,
 			cascade.LastOutcomePassed, tx); err != nil {
@@ -115,7 +115,12 @@ func applyAcquirePass(
 				"last_outcome": "passed",
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyAcquirePass: state-transition tx failed",
+			"node_id", cand.NodeID.String(),
+			"dispatch_id", cand.DispatchID.String(),
+			"error", err.Error())
+	}
 	// Per the 2026-05-14 subscription-cascade resolution, the
 	// invalidate-emit slot retired; cascade coupling is declared
 	// receiver-side via Subscribes.

@@ -16,12 +16,14 @@ vendor/
 /rimsky-executor-conformance
 /rimsky-claim-producer-conformance
 /rimsky-blob-backend-conformance
+/rimsky-publisher-conformance
 /rimsky-entrypoint
 /rimsky-docs-glossary
 /rimsky-docs-lint
 /rimsky-docs-llms-full
 /http-node
 /openlineage
+/subscribers/openlineage/openlineage
 
 # Node executor deps / build output
 executors/*/node_modules/

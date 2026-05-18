@@ -5,7 +5,7 @@
 // Scope-conflict race scenario coverage — invariant 4b (single-
 // writer-per-scope), with explicit regression cover for the cycle-4
 // fix at `foundation/persistence/postgres/advisory_locker.go::TakeScopeLockInTx`
-// (called from `foundation/integration/runner_acquire.go::acquireClaim`).
+// (called from `runtime/runner_acquire.go::acquireClaim`).
 //
 // Setup:
 //   - One harness with a loopback stub fixture under a single store name.

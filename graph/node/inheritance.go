@@ -260,7 +260,7 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 // explicit `subscribes:` entries plus any `{{nodes.<X>...}}`
 // substitution refs in the node's attribute-schema sources.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 func transitiveAncestors(nodes []TemplateNodeDef) map[string]map[string]struct{} {
 	directDeps := make(map[string][]string, len(nodes))
 	for _, n := range nodes {

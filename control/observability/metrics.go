@@ -5,7 +5,7 @@
 // metrics.go declares the rimsky-side Prometheus metric set and wires
 // the /metrics endpoint into a chi router. The metric instrumentation
 // hooks are call-site wrappers (Inc / Observe / Set) that production
-// code in foundation/integration, graph/scheduler, and
+// code in runtime, graph/scheduler, and
 // control/controlapi can call without importing prometheus directly —
 // keeps the operator-visible metric surface centralised.
 //

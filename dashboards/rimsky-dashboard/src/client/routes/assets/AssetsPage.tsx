@@ -68,16 +68,17 @@ export default function AssetsPage() {
               <th className="py-2 px-3">alias</th>
               <th className="py-2 px-3">producer</th>
               <th className="py-2 px-3">version</th>
-              <th className="py-2 px-3">held_durable</th>
-              <th className="py-2 px-3">created</th>
+              <th className="py-2 px-3">state</th>
+              <th className="py-2 px-3">lifetime</th>
+              <th className="py-2 px-3">claimed</th>
             </tr>
           </thead>
           <tbody>
             {assetsQuery.data.assets.map((row: AssetRow) => (
-              <tr key={`${row.instance_id}/${row.alias}`} className="border-b hover:bg-accent">
+              <tr key={`${effectiveInstance}/${row.alias}`} className="border-b hover:bg-accent">
                 <td className="py-2 px-3">
                   <Link
-                    to={`/instances/${row.instance_id}/assets/${row.alias}`}
+                    to={`/instances/${effectiveInstance}/assets/${row.alias}`}
                     className="text-primary underline"
                   >
                     {row.alias}
@@ -85,15 +86,16 @@ export default function AssetsPage() {
                 </td>
                 <td className="py-2 px-3 font-mono text-xs">{row.producer_name}</td>
                 <td className="py-2 px-3 font-mono text-xs">
-                  {row.current_version_id ?? '—'}
+                  {row.version_id ?? '—'}
                 </td>
-                <td className="py-2 px-3">{row.held_durable ? 'yes' : 'no'}</td>
-                <td className="py-2 px-3">{new Date(row.created_at).toLocaleString()}</td>
+                <td className="py-2 px-3">{row.state}</td>
+                <td className="py-2 px-3">{row.lifetime}</td>
+                <td className="py-2 px-3">{new Date(row.claimed_at).toLocaleString()}</td>
               </tr>
             ))}
             {assetsQuery.data.assets.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-4 px-3 text-center text-muted-foreground">
+                <td colSpan={6} className="py-4 px-3 text-center text-muted-foreground">
                   No assets in this instance.
                 </td>
               </tr>

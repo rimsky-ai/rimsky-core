@@ -42,6 +42,30 @@ type RetentionConfig struct {
 	// LineageTrailing is the trailing window for the lineage sweep.
 	// Default 30 days; zero disables the sweep.
 	LineageTrailing time.Duration
+	// ClaimHandlesTrailing is the trailing window for the claim-handle
+	// retention sweep. Default 30 days; zero disables the sweep.
+	//
+	// Post-Stage-3 of the claim-handle state-column refactor: terminal
+	// claim-handle rows persist past the auto-terminal Promote until
+	// this window elapses, then are reaped by
+	// `SweepClaimHandleRetention`. Durable-committed rows (state=
+	// 'committed' AND lifetime='durable') are exempt — they're the
+	// asset surface, released only by `ReleaseHeldDurableClaims` or
+	// the operator `DELETE /instances/{id}/assets/{alias}` handler.
+	//
+	// @concept: claim-handle
+	// @concept: retention
+	ClaimHandlesTrailing time.Duration
+
+	// MessageIdempotenciesTrailing is the trailing window for the
+	// rimsky_message_idempotencies sweep. Default 24h; zero disables
+	// the sweep. Dedup rows reaped past the window allow a
+	// long-deferred retry to land as a fresh message; this is the
+	// intended behavior — dedup tokens are short-lived.
+	//
+	// @concept: message
+	// @concept: retention
+	MessageIdempotenciesTrailing time.Duration
 }
 
 // SweepLineageRetention runs `DeleteOlderThan` on the lineage table.

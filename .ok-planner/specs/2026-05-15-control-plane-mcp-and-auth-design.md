@@ -36,7 +36,7 @@ The composition is load-bearing. Auth without MCP doesn't enable agentic supervi
 - **Action** — verb-noun string identifying one logical operation, e.g. `instance:create`, `node:read`, `message:send`, `template:register`. Each action maps to at most one HTTP route family and at most one MCP tool.
 - **Wildcard** — `*` matches any action; `*:read` matches actions with the `:read` verb; `instance:*` matches actions with the `instance:` noun. No infix wildcards; no regex.
 - **Mode** — per-grant-entry modifier; `execute` (default) or `dry_run`. Only meaningful for write actions; ignored on read actions.
-- **Role template** — CLI-bundled JSON resource (e.g. `admin.json`, `operator.json`, `read-only.json`, `agent-supervisor.json`, `sensor-service.json`) that expands into a permission grant at key-creation time. Server doesn't know about roles.
+- **Role template** — CLI-bundled JSON resource (e.g. `admin.json`, `operator.json`, `read-only.json`, `agent-supervisor.json`, `publisher-service.json`) that expands into a permission grant at key-creation time. Server doesn't know about roles.
 - **Anonymous mode** — derived deployment state where `rimsky_api_keys` has zero active rows. Every request gets a synthetic admin identity; audit records reflect this; loud startup warnings.
 
 ### Updated nouns
@@ -201,7 +201,6 @@ Actions are `<noun>:<verb>` strings. The canonical set for V1 (each maps to one 
 | `asset:read` | `GET /instances/{id}/assets`, `GET /instances/{id}/assets/{alias}`, `GET /instances/{id}/assets/{alias}/versions`, `GET /instances/{id}/assets/{alias}/materialization-history` | `asset_list`, `asset_get`, `asset_versions`, `asset_materialization_history` | read |
 | `asset:materialize` | `POST /instances/{id}/assets/{alias}/materialize` | `asset_materialize` | write |
 | `asset:delete` | `DELETE /instances/{id}/assets/{alias}` | `asset_delete` | write |
-| `sensor:observe` | `POST /sensors/{watch_id}/observations` | (none in V1; service-to-service callback) | write |
 | `diagnostics:read` | `GET /admin/diagnostics/held-frames` | `held_frames_list` | read |
 | `auth:read` | `GET /auth/keys`, `GET /auth/keys/{name-or-id}`, `GET /auth/status` | `auth_list`, `auth_get`, `auth_status` | read |
 | `auth:create` | `POST /auth/keys` | `auth_create_key` | write |
@@ -212,7 +211,7 @@ Actions are `<noun>:<verb>` strings. The canonical set for V1 (each maps to one 
 
 **Node-reset is distinct from invalidate.** `node:reset` (`POST /nodes/{id}/reset`) is a recovery verb for failed nodes: it drives the failed→stale transition through the frame engine and is rejected if the node is not in `failed`. Different from invalidate (which is the general "mark stale and re-fire" verb). Both are operator/agent-shaped writes.
 
-**Sensor observations are service-to-service.** `sensor:observe` exists to gate `POST /sensors/{watch_id}/observations`, which sensor services push to. Bundled sensors (cron, http, object-store, webhook) get keys whose grant is `[{ "action": "sensor:observe" }]` — narrow by design. Operator-facing roles don't need this action.
+**Publisher services authenticate as message senders.** Bundled publishers (sensor-cron, sensor-http, sensor-object-store, sensor-webhook — the four reference impls of the `Publisher` protocol; "sensor" is the bundled-services-layer name for these specific publishers) push messages to the same `POST /instances/{id}/messages` endpoint operators use. They get keys whose grant is `[{ "action": "message:send" }]` — narrow by design. The messages handler additionally validates the request's `publisher_subscription_id` against the caller's identity (the publisher-subscription record links the publisher to the instance); that capability check is part of the messages handler, not the auth/permission layer. There is no separate `sensor:observe` or `publisher:observe` action.
 
 **Multiple routes for one action.** Some actions map to multiple HTTP routes. Where legacy paths coexist with canonical ones (e.g. `POST /admin/instances/{instance}/nodes/{node_id}/invalidate` alongside `POST /nodes/{id}/invalidate`; `GET /admin/diagnostics/parked-nodes` alongside `GET /diagnostics/parked`), both routes share the action gate. Route-consolidation (retiring legacy aliases) is a separate cleanup not covered by this spec; until that cleanup lands, the action registry lists every live route alongside the action.
 
@@ -270,7 +269,7 @@ The `cmd:rimsky` binary embeds JSON resources at `cmd/rimsky/roles/*.json`. The 
 }
 ```
 
-**`operator.json`** — full operational access; can read auth state but cannot mint, revoke, or rotate keys (those are admin-only in V1). Sensor observation is not included (operators are not sensors). Self-rotation as a separate gate is a V2 consideration if it earns its place.
+**`operator.json`** — full operational access; can read auth state but cannot mint, revoke, or rotate keys (those are admin-only in V1). Self-rotation as a separate gate is a V2 consideration if it earns its place. (Bundled publisher services use the narrower `publisher-service` role below rather than `operator`.)
 ```json
 {
   "name": "operator",
@@ -317,13 +316,13 @@ The `cmd:rimsky` binary embeds JSON resources at `cmd/rimsky/roles/*.json`. The 
 }
 ```
 
-**`sensor-service.json`** — for keys minted for bundled sensor services (cron, http, object-store, webhook). Narrow by design: a sensor's only job is to push observations; it has no need to read platform state or invoke other endpoints.
+**`publisher-service.json`** — for keys minted for bundled publisher services (the `Publisher` protocol's reference impls: sensor-cron, sensor-http, sensor-object-store, sensor-webhook). Narrow by design: a publisher's only job is to push messages into rimsky via `POST /instances/{id}/messages`; it has no need to read platform state or invoke other endpoints. The messages handler validates `publisher_subscription_id` capability internally.
 ```json
 {
-  "name": "sensor-service",
-  "description": "Minimal grant for a bundled sensor service: push observations only.",
+  "name": "publisher-service",
+  "description": "Minimal grant for a bundled publisher service: send messages only.",
   "permissions": [
-    { "action": "sensor:observe" }
+    { "action": "message:send" }
   ]
 }
 ```

@@ -19,8 +19,9 @@ import (
 // extraction (graph/attribute/substitution.go::walkPath); never
 // logged, formatted, or otherwise inspected.
 //
-// SenderKind is one of {"operator", "sensor", "instance"} per spec
-// §Unified message layer.
+// SenderKind is one of {"operator", "publisher", "instance"} per spec
+// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification.
 type MessageRow struct {
 	ID                  shared.UUID
 	InstanceID          shared.UUID

@@ -29,7 +29,7 @@ Owns:
 - The eligibility predicate used by `code:foundation/persistence/postgres/nodes.go::ListReadyForDispatch`.
 
 Does NOT own:
-- Subscription declaration (lives in `concept:subscription`).
+- Subscription declaration (lives in `concept:node-subscription`).
 - The cascade walk logic (lives in `concept:cascade`).
 - Frame lifecycle (lives in `concept:frame`).
 

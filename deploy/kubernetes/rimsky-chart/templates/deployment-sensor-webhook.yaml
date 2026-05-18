@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-sensor-webhook
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sensor-webhook
+spec:
+  replicas: {{ .Values.sensorWebhook.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sensor-webhook
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sensor-webhook
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: sensor-webhook
+          image: "{{ .Values.image.repository }}/sensor-webhook:{{ .Values.sensorWebhook.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RIMSKY_ENDPOINT
+              value: "{{ .Values.rimskyEndpoint | default (printf "http://%s-control-api:8080" (include "rimsky.fullname" .)) }}"
+            - name: RIMSKY_SENSOR_WEBHOOK_HOST
+              value: "0.0.0.0"
+            - name: RIMSKY_SENSOR_WEBHOOK_PORT
+              value: "9084"
+            - name: RIMSKY_SENSOR_WEBHOOK_HTTP_PORT
+              value: "9184"
+            {{- with .Values.sensorWebhook.stateDSN }}
+            - name: RIMSKY_SENSOR_WEBHOOK_STATE_DSN
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: 9084
+            - name: http
+              containerPort: 9184

@@ -102,8 +102,16 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 // `lock_orphan_reaped`. This avoids false-positive observability noise
 // when the reaper loses the race.
 func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persistence.ClaimHandleRow, log shared.Logger) error {
+	if lh.HolderSupervisorID == nil {
+		// Non-active row (state ∈ {committed, abandoned}) cannot be
+		// reaped — the orphan reaper targets active rows only. Skip
+		// silently; `ListExpired` ordinarily filters to active rows but
+		// the defense-in-depth guard avoids a panic / mis-match on a
+		// promoted row that slipped into the batch.
+		return nil
+	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		deleted, err := args.ClaimHandles.DeleteIfExpired(ctx, lh.ID, lh.HolderSupervisorID, tx)
+		deleted, err := args.ClaimHandles.DeleteIfExpired(ctx, lh.ID, *lh.HolderSupervisorID, tx)
 		if err != nil {
 			return fmt.Errorf("delete lock-holder row: %w", err)
 		}
@@ -140,10 +148,14 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 // content (scope_data, address). We surface only operator-relevant
 // identifiers.
 func lockReapPayload(lh persistence.ClaimHandleRow) map[string]any {
+	supervisorID := ""
+	if lh.HolderSupervisorID != nil {
+		supervisorID = *lh.HolderSupervisorID
+	}
 	payload := map[string]any{
 		"claim_handle_id": lh.ID.String(),
 		"lock_kind":       string(lh.LockKind),
-		"supervisor_id":   lh.HolderSupervisorID,
+		"supervisor_id":   supervisorID,
 		"holder_node_id":  lh.HolderNodeID.String(),
 		"expires_at":      lh.ExpiresAt,
 		"claimed_at":      lh.ClaimedAt,

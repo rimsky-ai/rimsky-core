@@ -22,8 +22,9 @@ import (
 
 // WaitSetEntry is one wait-set row surfaced via /admin/diagnostics/wait-sets.
 // Post-stage-5 of the run-row lifecycle cutover, the receiver / sender
-// columns key on rimsky_node_runs(id) — see migration
-// `005-claim-holders-wait-set-run-level.sql`.
+// columns key on rimsky_node_runs(id) — see the flattened baseline
+// `001-baseline.sql` (the run-level cutover was historically migration
+// 005, collapsed into the baseline pre-v1).
 type WaitSetEntry struct {
 	FrameID           uuid.UUID `json:"frame_id"`
 	ReceiverRunID     uuid.UUID `json:"receiver_run_id"`

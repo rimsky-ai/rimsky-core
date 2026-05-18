@@ -54,8 +54,7 @@ type (
 	GraphSpec         = spec.GraphSpec
 	HoldsBinding      = spec.HoldsBinding
 	FanOutSpec        = spec.FanOutSpec
-	SensorSpec        = spec.SensorSpec
-	OnObservationSpec = spec.OnObservationSpec
+	PublisherSpec     = spec.PublisherSpec
 	AggregationPolicy = spec.AggregationPolicy
 )
 

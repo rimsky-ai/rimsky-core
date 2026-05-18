@@ -132,7 +132,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 
 	ep, ok := args.Resolver.Resolve(acq.Executor)
 	if !ok {
-		_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: "unresolved_executor",
@@ -141,7 +141,12 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 					"supervisor_id": args.SupervisorID,
 				},
 			}, tx)
-		})
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("runner_dispatch: append unresolved_executor event failed",
+				"node_id", acq.NodeID.String(),
+				"executor_name", acq.Executor,
+				"error", err.Error())
+		}
 		return terminalEvent{
 			Kind:       terminalKindErrored,
 			ErrorClass: "unresolved_executor",
@@ -188,9 +193,14 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	// fresh via applyTerminalInfraError — by design, since the
 	// executor already saw the resume payload.
 	if dctx.Acquired.Resume != nil {
-		_ = dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return dctx.Args.Queue.ClearResumeMetadataInTx(ctx, tx, dctx.Acquired.DispatchID)
-		})
+		}); err != nil {
+			dctx.Args.Logger.Warn("runner_dispatch: clear resume metadata failed",
+				"dispatch_id", dctx.Acquired.DispatchID.String(),
+				"node_id", dctx.Acquired.NodeID.String(),
+				"error", err.Error())
+		}
 	}
 	terminal, asyncAck := readExecutorStream(ctx, dctx, stream)
 	_ = stream.Close()
@@ -266,9 +276,13 @@ func readExecutorStream(
 		}
 		switch e := ev.Event.(type) {
 		case *genv1.ExecuteEvent_Heartbeat:
-			_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx)
-			})
+			}); err != nil && args.Logger != nil {
+				args.Logger.Warn("runner_dispatch: update heartbeat failed",
+					"node_id", acq.NodeID.String(),
+					"error", err.Error())
+			}
 			_ = e
 		case *genv1.ExecuteEvent_NamedEvent:
 			pending = append(pending, namedEventRecord{
@@ -350,7 +364,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, err
 	}
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "attributes_substituted",
@@ -358,7 +372,11 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 				"substituted_fields": fieldNames(resolved),
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("runner_dispatch: append attributes_substituted event failed",
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
 	return resolved, schema, nil
 }
 
@@ -412,7 +430,7 @@ func lookupEventPayload(
 ) (json.RawMessage, bool) {
 	var out json.RawMessage
 	var found bool
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		// Map emitter node-type → emitter node-id within the instance.
 		rows, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 		if err != nil {
@@ -467,7 +485,13 @@ func lookupEventPayload(
 				"error", ferr.Error())
 		}
 		return nil
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("lookupEventPayload: tx failed; substitution will see empty",
+			"event_name", eventName,
+			"emitter_type", emitterType,
+			"instance_id", instanceID.String(),
+			"error", err.Error())
+	}
 	return out, found
 }
 
@@ -583,17 +607,21 @@ func fieldNames(m map[string]any) []string {
 // + runtime/subscription_loaders.go) — no longer reads the retired
 // nodes.dependencies column.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
 	var out map[string]json.RawMessage
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		senders, err := resolveSubscribedSenders(ctx, args, acq.NodeID, tx)
 		if err != nil {
 			return nil
 		}
 		out = loadSubscribedNodeAttributes(ctx, args, tx, senders)
 		return nil
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("loadSubscribedNodeAttributesByID: tx failed",
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
 	return out
 }
 
@@ -612,6 +640,12 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		baseUserdata = def.Userdata
 	}
 	merged := applyUserdataOverrides(baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
+	// Snapshot the merged userdata on the acquisition so the lineage
+	// writer can hash the exact shape that shipped to the executor (not
+	// the pre-merge override blob). See `acquisition.MergedUserdata`
+	// docstring for the contract. Per @blessed-invariant 11 the merge
+	// is shape-blind; rimsky stores only the hash.
+	acq.MergedUserdata = merged
 	// Plan F7: dispatch-time userdata schema validation. Runs after
 	// applyUserdataOverrides so per-instance overrides are validated
 	// too. Failure routes through on_executor_errored (handled by the
@@ -668,11 +702,16 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
 	var prior *persistence.NodeAttributesRow
-	_ = dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := dctx.Args.Persist.NodeAttributes().Get(ctx, acq.NodeID, tx)
 		prior = p
 		return err
-	})
+	}); err != nil {
+		dctx.Args.Logger.Warn("runner_dispatch: read prior node attributes for run_attempt failed",
+			"dispatch_id", acq.DispatchID.String(),
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
 	runAttempt := 1
 	if prior != nil {
 		runAttempt = prior.RunAttempt

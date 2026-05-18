@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Subscription-edge inverse map. Computed at template registration
 // by the validator (template_validator.go::validateSubscribes plus the
@@ -12,7 +12,7 @@
 // invalidate gate (the pessimistic-invalidate rule inserts wait-set
 // rows regardless of filter compatibility — see spec Piece 1).
 //
-//	@concept: subscription
+//	@concept: node-subscription
 //	@concept: wait-set
 package node
 
@@ -52,7 +52,7 @@ type SubscriptionFilter struct {
 	// §Unified message layer / Subscriptions.
 	Kind       string // "" | envelope kind (e.g. "invalidate")
 	Sender     string // "" | envelope sender
-	SenderKind string // "" | "operator" | "sensor" | "instance"
+	SenderKind string // "" | "operator" | "publisher" | "instance"
 	Target     string // "" | node alias the message addressed
 }
 
@@ -123,6 +123,37 @@ func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]su
 	return out
 }
 
+// SubstitutionRefSpec is the exported per-directive substitution-ref
+// shape: sender node-type + topic kind (`attribute` | `event`) + the
+// name (attribute key or event name) the directive read. Returned by
+// `SubstitutionRefsFromAttributes` for callers outside the graph
+// package (e.g. the lineage writer in `runtime/lineage_writer.go`) that
+// need the full directive shape, not just the upstream sender set.
+//
+//	@concept: node-subscription
+type SubstitutionRefSpec struct {
+	SenderNodeType string // upstream node-type the directive named
+	TopicKind      string // "attribute" | "event"
+	Name           string // attribute key or event name
+}
+
+// SubstitutionRefsFromAttributes returns the per-directive substitution
+// refs parsed from the receiver's attribute schema. Self-references are
+// excluded. Distinct from `UpstreamNodeTypesFromAttributes`, which
+// returns just the deduped upstream type set — this returns one entry
+// per (sender, kind, name) directive so callers can populate per-ref
+// lineage rows.
+//
+//	@concept: node-subscription
+func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
+	refs := parseSubstitutionRefsFromAttributes(n)
+	out := make([]SubstitutionRefSpec, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, SubstitutionRefSpec(r))
+	}
+	return out
+}
+
 // UpstreamNodeTypesFromAttributes returns the distinct sender
 // node-types referenced by `{{nodes.<X>.attribute.<Y>}}` /
 // `{{nodes.<X>.event.<Y>}}` directives in the receiver's attribute
@@ -130,7 +161,7 @@ func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]su
 // callers that need the receiver's upstream set without exposing the
 // full substitution-ref type.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	seen := make(map[string]struct{})
 	for _, ref := range parseSubstitutionRefsFromAttributes(n) {

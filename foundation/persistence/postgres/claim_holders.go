@@ -8,8 +8,9 @@
 // (give-up/failure) per `@blessed-invariant 13`. The claim_handle_id FK
 // cascades deletes when the parent rimsky_claim_handles row is removed
 // at auto-terminal. Post-stage-5 the holder is keyed by `holder_run_id`
-// (a `rimsky_node_runs.id`); see migration
-// `005-claim-holders-wait-set-run-level.sql` for the cutover rationale.
+// (a `rimsky_node_runs.id`); see the flattened baseline migration
+// `001-baseline.sql` (the run-level cutover was historically migration
+// 005, collapsed into the baseline pre-v1).
 package postgres
 
 import (

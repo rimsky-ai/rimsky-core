@@ -267,20 +267,20 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// F8: walk the template's `sensors:` block and issue
-		// Sensor.StartWatch for each. Per spec §Per-instance
-		// parameterization, sensor startup failures are non-blocking
-		// — the watch row stays at `state = failed` for operator-
-		// recoverable retries via the resync sweeper.
-		if len(tplSpec.Sensors) > 0 && !existedKey {
+		// Walk the template's `publishers:` block and issue
+		// Publisher.Subscribe for each. Per spec §Per-instance
+		// parameterization, publisher startup failures are non-blocking
+		// — the publisher-subscription row stays at `state = failed`
+		// for operator-recoverable retries via the resync sweeper.
+		if len(tplSpec.Publishers) > 0 && !existedKey {
 			instUUID, parseErr := uuid.Parse(respOut.InstanceID)
 			if parseErr == nil {
-				_ = runtime.StartWatchesForInstance(req.Context(), runtime.SensorLifecycleDeps{
-					Persist: deps.Persist,
-					Sensors: deps.Sensors,
-					Clock:   deps.Clock,
-					Logger:  deps.Logger,
-				}, foundationshared.UUID(instUUID), params, tplSpec.Sensors)
+				_ = runtime.StartPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
+					Persist:    deps.Persist,
+					Publishers: deps.Publishers,
+					Clock:      deps.Clock,
+					Logger:     deps.Logger,
+				}, foundationshared.UUID(instUUID), params, tplSpec.Publishers)
 			}
 		}
 		status := http.StatusCreated
@@ -351,11 +351,16 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			redact, ok := redactCache[r.TemplateHash]
 			if !ok {
 				var tpl *persistence.TemplateRow
-				_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 					t, err := deps.Persist.Templates().GetByHash(ctx, r.TemplateHash, tx)
 					tpl = t
 					return err
-				})
+				}); err != nil && deps.Logger != nil {
+					deps.Logger.Warn("handleListInstances: load template for params_redact failed; skipping redaction",
+						"instance_id", r.ID.String(),
+						"template_hash", r.TemplateHash,
+						"error", err.Error())
+				}
 				if tpl != nil {
 					redact = tpl.Spec.ParamsRedact
 				}
@@ -382,11 +387,16 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var tpl *persistence.TemplateRow
-		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 			tpl = t
 			return err
-		})
+		}); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleGetInstance: load template for params_redact failed; skipping redaction",
+				"instance_id", inst.ID.String(),
+				"template_hash", inst.TemplateHash,
+				"error", err.Error())
+		}
 		var redact []string
 		if tpl != nil {
 			redact = tpl.Spec.ParamsRedact
@@ -464,15 +474,15 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		// F8: walk active sensor watches for this instance and call
-		// `Sensor.StopWatch` on each before dropping rows. Non-blocking
-		// per spec §Per-instance parameterization — failures are
-		// logged + retried by the resync sweeper.
-		_ = runtime.StopWatchesForInstance(req.Context(), runtime.SensorLifecycleDeps{
-			Persist: deps.Persist,
-			Sensors: deps.Sensors,
-			Clock:   deps.Clock,
-			Logger:  deps.Logger,
+		// Walk active publisher-subscriptions for this instance and call
+		// `Publisher.Unsubscribe` on each before dropping rows.
+		// Non-blocking per spec §Per-instance parameterization —
+		// failures are logged + retried by the resync sweeper.
+		_ = runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
+			Persist:    deps.Persist,
+			Publishers: deps.Publishers,
+			Clock:      deps.Clock,
+			Logger:     deps.Logger,
 		}, inst.ID)
 		// E9: walk held-durable claim_handles for this instance and call
 		// `ClaimProducer.Release` on each before dropping rows. Per
@@ -635,8 +645,8 @@ func provisionInstanceTx(
 		nodeIDs[def.Type] = uuid.New()
 	}
 
-	// Phase 1: create nodes (Create defaults to 'fresh' per migration 002 +
-	// spec §3.1) + register schedules. Phase 2 enqueues an initial frame
+	// Phase 1: create nodes (Create defaults to 'fresh' per the baseline
+	// schema + spec §3.1) + register schedules. Phase 2 enqueues an initial frame
 	// for each root.
 	//
 	// Post-2026-05-14: cascade-coupling is declared receiver-side via

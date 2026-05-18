@@ -85,24 +85,25 @@ func CheckAndFireResolution(
 		// subgraph (race-safe per §4.10 invariant 13.2).
 		return nil
 	}
-	if row.HolderSupervisorID != args.SupervisorID {
-		// UUID re-use case (defensive: should be impossible given
-		// UUID v4). Not the acquirer-supervisor-crash case — the
-		// orphan reaper deletes the row outright, so a crashed
-		// supervisor's row would have been LockForUpdate'd nil
-		// above, not surfaced with a mismatching holder id.
+	if row.HolderSupervisorID == nil || *row.HolderSupervisorID != args.SupervisorID {
+		// Either a non-active row (NULL holder per the migration-009
+		// CHECK pair) or the UUID re-use defensive case. Both branches
+		// are no-ops here: the active-state guard immediately below
+		// would already filter non-active rows, but checking the
+		// claimant guard first matches the original cycle-5 ordering.
 		return nil
 	}
 	// Held-durable promotion already fired. A previous holding-subgraph
-	// completion flipped held_durable=TRUE and skipped the Delete (see
+	// completion promoted the row to state='committed' and skipped the
+	// Delete (held-durable Promote contract per @blessed-invariant 22; see
 	// `ResolveClaimHandleTerminal`); a late sibling terminal re-entering
 	// CheckAndFireResolution would otherwise re-fire Commit and emit a
 	// duplicate `claim_terminal` lineage row. The recursive
-	// `resolveParentClaimChain` already treats held-durable children as
-	// resolved-and-deleted; this matches that posture. Spec
+	// `resolveParentClaimChain` already treats committed-durable children
+	// as resolved-and-deleted; this matches that posture. Spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Held-durable claim lifecycle.
-	if row.HeldDurable {
+	if row.State != spec.ClaimHandleStateActive {
 		return nil
 	}
 
@@ -343,209 +344,6 @@ func expectedInheritorsMissing(
 		}
 	}
 	return false, nil
-}
-
-// resolveParentClaimChain walks upward from a sub-claim's parent. At
-// each level, the parent's resolution fires only when:
-//
-//  1. The parent's own holding subgraph (if any) has settled — every
-//     `rimsky_claim_holders` row for the parent_claim_handle_id is
-//     non-active. When the parent is itself held with co-holders still
-//     working, the parent's normal `CheckAndFireResolution` path will
-//     re-drive this walk later (cycle 4 issue D).
-//  2. Every sub-claim row beneath it has resolved — either via the
-//     non-durable Delete branch (rows disappear) or via the held-durable
-//     promotion (rows linger with `held_durable=TRUE` but do not block
-//     the parent).
-//
-// Once those preconditions hold, the parent's aggregate Commit/Abandon
-// decision is computed across ALL children's outcomes per the
-// snapshotted `aggregation_policy` — not just the seedOutcome of the
-// just-resolved child (cycle 4 issue C). The aggregation rules mirror
-// `runtime/run_tree.go::Aggregate` for run-state aggregation, mapped
-// onto the Commit/Abandon binary the claim layer carries:
-//
-//	strict (default)        — any abandoned → Abandon; else Commit
-//	threshold(max_failures) — abandoned > max_failures → Abandon; else Commit
-//	best_effort             — committed > 0 → Commit; else Abandon
-//	first                   — committed > 0 → Commit; else Abandon
-//
-// Counters (`expected_children_count`, `committed_children_count`,
-// `abandoned_children_count`) are bumped atomically inside the same tx
-// as each child's terminal Delete (`ResolveClaimHandleTerminal`), so
-// the read here under SELECT … FOR UPDATE sees a consistent view.
-//
-// @concept: claim-tree
-// @concept: fan-out
-// @concept: auto-terminal
-func resolveParentClaimChain(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	parentClaimHandleID shared.UUID, seedOutcome AggregateOutcome,
-) error {
-	parent, err := args.ClaimHandles.LockForUpdate(ctx, parentClaimHandleID, tx)
-	if err != nil {
-		return err
-	}
-	if parent == nil {
-		// Already resolved.
-		return nil
-	}
-	if parent.HolderSupervisorID != args.SupervisorID {
-		return nil
-	}
-	if parent.HeldDurable {
-		// Already held-durable — auto-terminal already fired on this row.
-		// Mirrors the CheckAndFireResolution guard.
-		return nil
-	}
-	// Issue D guard: if the parent is itself a held claim with active
-	// co-holders, defer parent resolution. The parent's normal
-	// `CheckAndFireResolution` path will re-enter this walk after the
-	// last holder transitions to non-active.
-	holders, err := args.Persist.ClaimHolders().ListByClaimHandleID(ctx, parentClaimHandleID, tx)
-	if err != nil {
-		return fmt.Errorf("resolveParentClaimChain: ListByClaimHandleID: %w", err)
-	}
-	for _, h := range holders {
-		if h.State == persistence.ClaimHolderStateActive {
-			// Parent's holding subgraph not yet complete; the
-			// CheckAndFireResolution path will re-drive when the last
-			// holder transitions. Skip parent resolution this round.
-			return nil
-		}
-	}
-	children, err := args.ClaimHandles.ListChildClaimHandles(ctx, parentClaimHandleID, tx)
-	if err != nil {
-		return fmt.Errorf("resolveParentClaimChain: ListChildClaimHandles: %w", err)
-	}
-	// If any sub-claim is still present AND not held-durable, the
-	// parent isn't ready to resolve yet.
-	//
-	// @blessed-invariant: held-durable claim handles persist across
-	// instance dispatches. A claim handle with `held_durable = true` is
-	// not deleted by holding-subgraph auto-terminal; only by explicit
-	// operator action (`DELETE /instances/{id}/assets/{alias}`) or
-	// instance termination (`ReleaseHeldDurableClaims`). The orphan-
-	// claim reaper skips `held_durable = true` rows. Recursive parent-
-	// claim resolution treats a held-durable child the same as a
-	// resolved-and-deleted child: it does not block the parent from
-	// firing its own auto-terminal. The child stays available for
-	// future co-holdership via `holds:` until explicit release.
-	for _, c := range children {
-		if !c.HeldDurable {
-			return nil
-		}
-	}
-	// Issue C: aggregate across ALL children using the snapshotted
-	// policy + per-outcome counters. `expected_children_count` reflects
-	// the total fan-out width set at AcquireSubClaims time; committed +
-	// abandoned reflect resolved children (terminal Delete bumped each
-	// counter in ResolveClaimHandleTerminal). If for some reason the
-	// counters are uninitialized (e.g. a non-fan-out leaf that happened
-	// to set ParentClaimHandleID), fall back to seedOutcome — the
-	// pre-cycle-4 posture — so we don't strand the parent.
-	outcome := aggregateParentOutcome(parent, seedOutcome)
-	producerName := ""
-	if parent.ProducerName != nil {
-		producerName = *parent.ProducerName
-	}
-	producer, ok := args.StoreRegistry.Get(producerName)
-	if !ok {
-		return fmt.Errorf("resolveParentClaimChain: unknown producer %q", producerName)
-	}
-	// Lineage hint for the parent claim resolution. Same shape as the
-	// held-claim path in CheckAndFireResolution above.
-	parentHint := ClaimLineageHint{
-		ProducerName: producerName,
-		VersionID:    parent.VersionID,
-		NodeID:       parent.HolderNodeID,
-	}
-	if parent.FrameID != nil {
-		parentHint.FrameID = *parent.FrameID
-	}
-	if parent.NodeRunID != nil {
-		parentHint.RunID = *parent.NodeRunID
-	}
-	if acquirer, aErr := args.Persist.Nodes().Get(ctx, parent.HolderNodeID, tx); aErr == nil && acquirer != nil {
-		parentHint.InstanceID = acquirer.InstanceID
-	}
-	// Recurse upward by forwarding ParentClaimHandleID through
-	// ResolveClaimHandleTerminal: the engine's non-durable Delete path
-	// invokes `resolveParentClaimChain` on a non-nil parent so the chain
-	// walks the entire claim tree without an explicit recursive call here.
-	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
-		ClaimHandleID:       parentClaimHandleID,
-		SupervisorID:        args.SupervisorID,
-		Source:              HeldTerminal,
-		Outcome:             outcome,
-		Producer:            producer,
-		Scope:               []byte(parent.ScopeData),
-		Address:             []byte(parent.Address),
-		Lifetime:            parent.Lifetime,
-		CandidateHandle:     parent.ProducerCandidateHandle,
-		ProducerName:        producerName,
-		LineageHint:         parentHint,
-		ParentClaimHandleID: parent.ParentClaimHandleID,
-	}); err != nil {
-		return err
-	}
-	return nil
-}
-
-// aggregateParentOutcome computes the parent's Commit/Abandon verdict
-// from the snapshotted aggregation policy + the per-outcome counters on
-// the parent claim_handle row. Falls back to `seedOutcome` when the
-// counters indicate "no fan-out children expected" (legacy callers that
-// set ParentClaimHandleID on a non-fan-out leaf) so we never strand
-// the parent.
-//
-// Rule table (mapped from spec §State aggregation rules onto the
-// Commit/Abandon binary):
-//
-//	strict (default)        — any abandoned → Abandon; else Commit
-//	threshold(max_failures) — abandoned > max_failures → Abandon; else Commit
-//	best_effort             — committed > 0 → Commit; else Abandon
-//	first                   — committed > 0 → Commit; else Abandon
-//	(unknown kind)          — defaults to strict for safety
-func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome AggregateOutcome) AggregateOutcome {
-	if parent == nil {
-		return seedOutcome
-	}
-	if parent.ExpectedChildrenCount == 0 {
-		// Non-fan-out parent on this row — no aggregation needed; carry
-		// the seed.
-		return seedOutcome
-	}
-	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
-	if err != nil || policy.Kind == "" {
-		// Missing / malformed policy → default to strict.
-		policy = spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
-	}
-	committed := parent.CommittedChildrenCount
-	abandoned := parent.AbandonedChildrenCount
-	switch policy.Kind {
-	case spec.AggregationKindStrict:
-		if abandoned > 0 {
-			return AggregateAbandon
-		}
-		return AggregateCommit
-	case spec.AggregationKindThreshold:
-		if abandoned > policy.MaxFailures {
-			return AggregateAbandon
-		}
-		return AggregateCommit
-	case spec.AggregationKindBestEffort, spec.AggregationKindFirst:
-		if committed > 0 {
-			return AggregateCommit
-		}
-		return AggregateAbandon
-	default:
-		// Unknown kind: safest is strict semantics.
-		if abandoned > 0 {
-			return AggregateAbandon
-		}
-		return AggregateCommit
-	}
 }
 
 // (lockClaimHandleRow + scanClaimHandleForResolution were retired when

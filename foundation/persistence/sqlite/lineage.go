@@ -37,13 +37,12 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}
-	outcome := row.Outcome
-	if outcome == "" {
-		outcome = persistence.LineageOutcomeCommitted
-	}
+	// `leaf_run` rows carry outcome="" by design; `claim_terminal`
+	// writers (`runtime.WriteClaimTerminalLineage`) reject empty
+	// outcome at the call site. Pass row.Outcome through verbatim.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertLineageSQL,
 		row.ID.String(), row.RecordKind, row.InstanceID.String(),
-		row.FrameID.String(), row.ObservedAt, row.Record, outcome)
+		row.FrameID.String(), row.ObservedAt, row.Record, row.Outcome)
 	if err != nil {
 		return fmt.Errorf("sqlite.Lineage.Insert: %w", err)
 	}
@@ -122,6 +121,25 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out}, nil
 }
 
+const sqliteQueryByParentRunIDSQL = `
+SELECT id, record_kind, instance_id, frame_id, observed_at, record, outcome
+  FROM rimsky_lineage
+ WHERE record_kind = 'leaf_run' AND json_extract(record, '$.parent_run_id') = ?
+ ORDER BY observed_at ASC, id ASC
+ LIMIT ?`
+
+func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := (*tablesImpl)(b).db.QueryContext(ctx, sqliteQueryByParentRunIDSQL, parentRunID.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Lineage.QueryByParentRunID: %w", err)
+	}
+	defer rows.Close()
+	return scanLineage(rows)
+}
+
 const sqliteDeleteOlderThanSQL = `
 DELETE FROM rimsky_lineage
  WHERE observed_at < ?
@@ -154,15 +172,21 @@ func scanLineage(rows *sql.Rows) ([]persistence.LineageRow, error) {
 		); err != nil {
 			return nil, err
 		}
-		if u, err := uuid.Parse(idStr); err == nil {
-			r.ID = u
+		u, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("scan lineage uuid (id): %w", err)
 		}
-		if u, err := uuid.Parse(instanceStr); err == nil {
-			r.InstanceID = u
+		r.ID = u
+		u, err = uuid.Parse(instanceStr)
+		if err != nil {
+			return nil, fmt.Errorf("scan lineage uuid (instance_id): %w", err)
 		}
-		if u, err := uuid.Parse(frameStr); err == nil {
-			r.FrameID = u
+		r.InstanceID = u
+		u, err = uuid.Parse(frameStr)
+		if err != nil {
+			return nil, fmt.Errorf("scan lineage uuid (frame_id): %w", err)
 		}
+		r.FrameID = u
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

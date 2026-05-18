@@ -18,6 +18,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks/storetest"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/internal/pgtest"
 	"github.com/fallguy/rimsky/runtime"
@@ -421,13 +422,17 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.False(t, parentCommitSeen,
 		"parent must NOT Commit when the last-resolved sub-claim seeded AggregateAbandon")
 
-	// And the parent claim_handle row must be gone (non-durable Delete fired).
+	// And the parent claim_handle row must be promoted to state=abandoned
+	// by the recursive resolution walk (Promote-not-delete; preserved
+	// past terminal for forensics / retention).
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, parentClaimID, tx)
 		parentRow = r
 		return err
 	}))
-	require.Nil(t, parentRow,
-		"parent claim_handle row must be deleted by the recursive resolution walk")
+	require.NotNil(t, parentRow,
+		"parent claim_handle row must be preserved past terminal (Promote-not-delete)")
+	require.Equal(t, spec.ClaimHandleStateAbandoned, parentRow.State,
+		"parent claim_handle row must be promoted to state=abandoned by the recursive resolution walk")
 }

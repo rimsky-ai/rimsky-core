@@ -24,7 +24,7 @@ Owns: the `parent_claim_handle_id` FK on `rimsky_claim_handles`, the `ListChildC
 - Each non-root claim_handle row is reachable from exactly one root via the parent chain. The tree shape is enforced structurally (single parent FK column).
 - The recursive walker terminates because each Delete strictly reduces the tree size; bounded by claim-tree depth.
 - The parent's aggregation counters (`expected_children_count`, `committed_children_count`, `abandoned_children_count` per `migration 007`) are claimant-guarded — bumped only by the supervisor that holds the parent. See `@blessed-invariant 4`.
-- For `lifetime: durable` children, `SetHeldDurable(true)` keeps the row alive past terminal; the row participates in the parent's aggregation counter but is skipped by the descendant-cancel walker (durable-Commit contract — don't undo a successful promotion).
+- For terminal children (committed or abandoned), the row is preserved by `Promote(committed|abandoned)` and participates in the parent's aggregation counter; the descendant-cancel walker skips all non-`active` rows (`state != 'active'`), so committed-durable children preserve the durable-Commit contract (no force-Abandon undoes a successful promotion) and committed-subgraph + abandoned rows aren't candidates for re-cancellation either.
 
 ## Annotation sites
 
@@ -42,3 +42,5 @@ Owns: the `parent_claim_handle_id` FK on `rimsky_claim_handles`, the `ListChildC
 ## Notes
 
 Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The naming "claim-tree" is internal — the persisted shape is a self-referential FK on `rimsky_claim_handles`, not a separate tree table. Recursion is bounded by structure, not by depth-limit configuration; deeply nested fan-out (fan-out of fan-out) is supported and exercised by `TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchildren`.
+
+State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: the descendant-cancel walker now uses `state != 'active'` as its skip filter (replacing the historical `held_durable = TRUE`). Functionally identical because (a) committed-durable rows have `state = committed`; (b) committed-subgraph and abandoned rows likewise aren't `active` and shouldn't be re-cancelled.

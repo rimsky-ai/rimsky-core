@@ -37,6 +37,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguy/rimsky/protocols/claimproducer"
 	stubstore "github.com/fallguy/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
@@ -63,7 +64,7 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 				"alpha": {
 					Endpoint:     "grpc://" + endpoint,
 					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
-					Protocols:    []string{config.ProtocolClaimProducer, config.ProtocolLifecycleSubscriber},
+					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolLifecycleSubscriber},
 				},
 			},
 		},

@@ -446,7 +446,7 @@ type SensorContext struct {
 	// kind is the sensor-kind discriminator (e.g. "cron", "http").
 	Kind string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	// resolved_config is the per-instance config the sensor will receive
-	// at StartWatch.
+	// at Subscribe.
 	ResolvedConfig []byte `protobuf:"bytes,3,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

@@ -194,7 +194,7 @@ type RunArgs struct {
 	// the on_executor_errored handler with
 	// error_class="userdata_validation_failed".
 	//
-	// The hook lives outside foundation/integration so the jsonschema
+	// The hook lives outside runtime so the jsonschema
 	// dependency stays in the graph layer (foundation has a strict
 	// dependency budget — stdlib + pgx + uuid + modernc/sqlite).
 	UserdataValidator func(executorName string, merged map[string]any) error
@@ -542,7 +542,7 @@ func upsertAttributesPreDispatch(
 func emitTemplateResolutionFailedEvent(
 	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
 ) {
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &nodeID, InstanceID: &instanceID,
 			Kind: "template_resolution_failed",
@@ -553,7 +553,13 @@ func emitTemplateResolutionFailedEvent(
 				"reason":    reason,
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("emitTemplateResolutionFailedEvent: append event failed",
+			"node_id", nodeID.String(),
+			"instance_id", instanceID.String(),
+			"directive", directive,
+			"error", err.Error())
+	}
 }
 
 // applyTemplateResolutionFailure routes a substitution miss through the

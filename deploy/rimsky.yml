@@ -72,3 +72,22 @@ executors:
     endpoint: "http-node:9091"
     tls: off
     protocols: [executor]
+
+# Publishers are peer services that POST message envelopes into rimsky
+# via the generic /instances/{id}/messages endpoint with
+# sender_kind="publisher". Sensors are one kind of publisher; the four
+# bundled sensors below all implement the Publisher protocol per spec
+# .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md.
+publishers:
+  sensor-cron:
+    endpoint: "sensor-cron:9081"
+    protocols: [publisher]
+  sensor-http:
+    endpoint: "sensor-http:9082"
+    protocols: [publisher]
+  sensor-object-store:
+    endpoint: "sensor-object-store:9083"
+    protocols: [publisher]
+  sensor-webhook:
+    endpoint: "sensor-webhook:9084"
+    protocols: [publisher]

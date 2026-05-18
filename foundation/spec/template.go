@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Template DSL row-types — the persistable shape of a template. The
 // graph-author's view of a node: stores it interacts with, named locks
@@ -21,7 +21,8 @@ import "encoding/json"
 // Pre-spec-2026-05-15 templates declared a single flat list under
 // `nodes:`; the data-platform-extensions spec introduces `graphs:`
 // (one `main` graph plus zero or more named sub-graphs with
-// entry/exit aliases) and `sensors:` (per-instance sensor watches).
+// entry/exit aliases) and `publishers:` (per-instance publisher
+// subscriptions; renamed from the pre-2026-05-17 `sensors:` block).
 // Both shapes are accepted at parse time; the canonicalizer rejects
 // templates that declare both (the legacy flat `Nodes` and a
 // non-empty `Graphs`). Per spec
@@ -37,11 +38,12 @@ type TemplateSpec struct {
 	// Graphs is the post-spec-2026-05-15 nested form. When non-empty,
 	// the canonicalizer rejects any non-empty `Nodes` field.
 	Graphs []GraphSpec `yaml:"graphs,omitempty" json:"graphs,omitempty"`
-	// Sensors declares per-instance sensor watches. Each entry seeds
-	// one row in table:rimsky_sensor_watches at instance creation.
-	Sensors      []SensorSpec   `yaml:"sensors,omitempty" json:"sensors,omitempty"`
-	ParamsSchema map[string]any `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
-	ParamsRedact []string       `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+	// Publishers declares per-instance publisher-subscriptions. Each
+	// entry seeds one row in table:rimsky_publisher_subscriptions at
+	// instance creation.
+	Publishers   []PublisherSpec `yaml:"publishers,omitempty" json:"publishers,omitempty"`
+	ParamsSchema map[string]any  `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
+	ParamsRedact []string        `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 }
 
 // Frame-resolution constants (per docs/history/2026-04-26-frame-resolution-design.md).
@@ -76,7 +78,7 @@ type TemplateNodeDef struct {
 	// .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
 	// Piece 1.
 	//
-	//	@concept: subscription
+	//	@concept: node-subscription
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
 	// Lifecycle handlers — declarative slots for the three supervisor

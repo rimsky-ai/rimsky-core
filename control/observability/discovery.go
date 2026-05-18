@@ -11,7 +11,7 @@
 //
 // Import rules: this package may import foundation/persistence/, foundation/locks/
 // for shared types. It MUST NOT import control/config/, foundation/persistence/
-// postgres/, foundation/persistence/sqlite/, graph/scheduler/, foundation/integration/,
+// postgres/, foundation/persistence/sqlite/, graph/scheduler/, runtime/,
 // or control/controlapi/. (Avoids a cycle through config.StartControlAPI,
 // which composes RunHandshake + Routes itself.)
 package observability

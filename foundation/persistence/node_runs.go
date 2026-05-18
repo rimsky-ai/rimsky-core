@@ -97,7 +97,7 @@ type DispatchListFilter struct {
 // is the running-window primitive).
 //
 // SelectCandidates and ClaimDispatchRow are building-block helpers used by
-// foundation/integration/runner.go to orchestrate the §7.3 atomic-acquisition
+// runtime/runner.go to orchestrate the §7.3 atomic-acquisition
 // transaction. The runner owns the persistence.Tx; the queue helpers
 // participate in it.
 type Queue interface {

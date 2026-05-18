@@ -29,7 +29,7 @@ type Logger interface {
 // MetricsHook is the minimum metrics surface frame.RunTick needs.
 // Foundation/integration's MetricsHook structurally satisfies this so
 // the scheduler can pass through its registry adapter without forcing
-// graph/frame to import foundation/integration.
+// graph/frame to import runtime.
 type MetricsHook interface {
 	ObserveFrameDuration(seconds float64)
 }

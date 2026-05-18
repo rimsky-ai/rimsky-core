@@ -4,7 +4,7 @@
 
 // Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
 // Lives in foundation/locks/ so both the supervisor's acquisition flow
-// (foundation/integration/runner_acquire.go) and the queue's eligibility
+// (runtime/runner_acquire.go) and the queue's eligibility
 // predicate (foundation/persistence/postgres/queue.go) can call it without
 // circular imports.
 //

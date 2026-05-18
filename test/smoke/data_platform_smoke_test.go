@@ -197,40 +197,39 @@ func startStubStore(t *testing.T) (endpoint string, store *stubstore.Store, tear
 }
 
 // TestDataPlatformSmoke_SensorHTTP exercises the sensor-http poll →
-// match → push wire path. The sensor binary itself is
-// `code:sensors/sensor-http/main.go`; the in-process surface is the
-// SensorService struct from `code:sensors/sensor-http/sensor.go`. Since
-// `package main` symbols can't be imported, this test mirrors the wire
-// contract:
+// match → push wire path post-publisher-unification. The sensor binary
+// itself is `code:sensors/sensor-http/main.go`; the in-process surface
+// is the SensorService struct from `code:sensors/sensor-http/sensor.go`.
+// Since `package main` symbols can't be imported, this test mirrors
+// the wire contract:
 //
 //  1. Boot a fake HTTP service (`httptest.NewServer`) that returns a
 //     known body whose content-hash will trigger an observation.
 //  2. Boot a fake rimsky control-api receiver that records
-//     `POST /sensors/{watch_id}/observations` arrivals.
+//     `POST /instances/{instance_id}/messages` arrivals with
+//     `sender_kind: "publisher"`.
 //  3. Use a generic HTTP client to drive the poll → push contract: GET
-//     the fake service, hash the body, POST the observation envelope to
-//     the rimsky receiver. This is the shape sensor-http realizes
-//     end-to-end (see sensor.go::pollOne + postObservation).
+//     the fake service, hash the body, POST a message envelope to the
+//     rimsky receiver with `Idempotency-Key`. This is the shape
+//     sensor-http realizes end-to-end (see sensor.go::pollOne +
+//     postMessage).
 //
-// The wire contract that matters: the observation arrives at
-// `/sensors/{watch_id}/observations` as a JSON envelope containing
-// `observed_at`, `url`, `status`, `body_hash`, `body`. Inert payload
-// per `@blessed-invariant: messages are inert in rimsky` — the smoke
-// confirms the wire shape but doesn't transform the bytes.
+// Inert payload per `@blessed-invariant: messages are inert in rimsky`
+// — the smoke confirms the wire shape but doesn't transform the bytes.
 func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	t.Parallel()
 	// Fake upstream HTTP service.
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items_available": 42}`))
 	}))
 	defer upstream.Close()
 
-	// Fake rimsky receiver: records observation arrivals keyed by
-	// watch_id.
+	// Fake rimsky receiver: records message arrivals keyed by path.
 	type arrival struct {
-		WatchID string
-		Body    []byte
+		Path           string
+		IdempotencyKey string
+		Body           []byte
 	}
 	var (
 		mu        sync.Mutex
@@ -238,32 +237,31 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		fakeReady = make(chan struct{}, 1)
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Path shape: /sensors/{watch_id}/observations.
-		// We don't bother with full chi-style routing — the test
-		// asserts on the recorded path.
 		body, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		mu.Lock()
 		arrivals = append(arrivals, arrival{
-			WatchID: r.URL.Path,
-			Body:    body,
+			Path:           r.URL.Path,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+			Body:           body,
 		})
 		mu.Unlock()
 		select {
 		case fakeReady <- struct{}{}:
 		default:
 		}
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
 	// Drive the sensor-http wire contract directly. The contract:
 	//   - GET upstream URL.
 	//   - On 2xx, hash body.
-	//   - POST {observed_at, url, status, body_hash, body} to
-	//     /sensors/{watch_id}/observations.
-	// See sensor.go::pollOne for the canonical implementation.
-	watchID := "watch-smoke-1"
+	//   - POST a message envelope {kind, target, payload, sender,
+	//     sender_kind:"publisher", publisher_subscription_id} to
+	//     /instances/{instance_id}/messages with Idempotency-Key.
+	subscriptionID := "subscription-smoke-1"
+	instanceID := "instance-smoke-1"
 	upstreamReq, _ := http.NewRequest(http.MethodGet, upstream.URL, nil)
 	resp, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
@@ -275,35 +273,48 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		t.Fatalf("upstream status = %d, want 200", resp.StatusCode)
 	}
 
-	// Construct the observation envelope.
-	obs := map[string]any{
+	// Construct the observation payload + envelope.
+	payload := map[string]any{
 		"observed_at": time.Now().UTC().Format(time.RFC3339),
 		"url":         upstream.URL,
 		"status":      resp.StatusCode,
 		"body_hash":   "sha256-stub", // sensor-http computes this; smoke uses stub
 		"body":        json.RawMessage(body),
 	}
-	rawObs, err := json.Marshal(obs)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatalf("marshal observation: %v", err)
+		t.Fatalf("marshal payload: %v", err)
 	}
-	pushURL := fmt.Sprintf("%s/sensors/%s/observations", rimsky.URL, watchID)
-	pushReq, _ := http.NewRequest(http.MethodPost, pushURL, bytes.NewReader(rawObs))
+	envelope := map[string]any{
+		"kind":                      "invalidate",
+		"target":                    "smoke-target",
+		"payload":                   json.RawMessage(payloadBytes),
+		"sender":                    "sensor-http",
+		"sender_kind":               "publisher",
+		"publisher_subscription_id": subscriptionID,
+	}
+	rawEnvelope, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	pushURL := fmt.Sprintf("%s/instances/%s/messages", rimsky.URL, instanceID)
+	pushReq, _ := http.NewRequest(http.MethodPost, pushURL, bytes.NewReader(rawEnvelope))
 	pushReq.Header.Set("Content-Type", "application/json")
+	pushReq.Header.Set("Idempotency-Key", subscriptionID+"+sha256-stub")
 	pushResp, err := http.DefaultClient.Do(pushReq)
 	if err != nil {
-		t.Fatalf("push observation: %v", err)
+		t.Fatalf("push message: %v", err)
 	}
 	_ = pushResp.Body.Close()
-	if pushResp.StatusCode != http.StatusOK {
-		t.Fatalf("push observation status = %d, want 200", pushResp.StatusCode)
+	if pushResp.StatusCode >= 300 {
+		t.Fatalf("push message status = %d, want < 300", pushResp.StatusCode)
 	}
 
 	// Wait for the fake-rimsky to record.
 	select {
 	case <-fakeReady:
 	case <-time.After(2 * time.Second):
-		t.Fatal("observation never arrived at fake rimsky")
+		t.Fatal("message never arrived at fake rimsky")
 	}
 
 	mu.Lock()
@@ -312,19 +323,25 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		t.Fatalf("expected 1 arrival, got %d", len(arrivals))
 	}
 	got := arrivals[0]
-	wantPath := "/sensors/" + watchID + "/observations"
-	if got.WatchID != wantPath {
-		t.Fatalf("arrival path = %q, want %q", got.WatchID, wantPath)
+	wantPath := "/instances/" + instanceID + "/messages"
+	if got.Path != wantPath {
+		t.Fatalf("arrival path = %q, want %q", got.Path, wantPath)
+	}
+	if got.IdempotencyKey == "" {
+		t.Fatalf("Idempotency-Key header missing")
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(got.Body, &decoded); err != nil {
 		t.Fatalf("decode arrival body: %v", err)
 	}
-	if _, ok := decoded["body_hash"]; !ok {
-		t.Fatalf("arrival missing body_hash: %+v", decoded)
+	if decoded["sender_kind"] != "publisher" {
+		t.Fatalf("sender_kind: %v", decoded["sender_kind"])
 	}
-	if _, ok := decoded["body"]; !ok {
-		t.Fatalf("arrival missing body: %+v", decoded)
+	if decoded["publisher_subscription_id"] != subscriptionID {
+		t.Fatalf("publisher_subscription_id: %v", decoded["publisher_subscription_id"])
+	}
+	if _, ok := decoded["payload"]; !ok {
+		t.Fatalf("arrival missing payload: %+v", decoded)
 	}
 }
 

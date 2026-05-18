@@ -375,7 +375,7 @@ func lookupClaimHandleForAlias(
 //
 // Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 func loadSubscribedNodeAttributes(ctx context.Context, args RunArgs, tx persistence.Tx, subscribedNodeIDs []shared.UUID) map[string]json.RawMessage {
 	if len(subscribedNodeIDs) == 0 {
 		return nil

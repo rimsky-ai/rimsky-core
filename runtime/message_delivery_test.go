@@ -209,7 +209,7 @@ func TestMessageEdgeMatches_FilterPermutations(t *testing.T) {
 		{"sender match", node.SubscriptionFilter{Sender: "op-A"}, true},
 		{"sender mismatch", node.SubscriptionFilter{Sender: "op-B"}, false},
 		{"sender_kind match", node.SubscriptionFilter{SenderKind: "operator"}, true},
-		{"sender_kind mismatch", node.SubscriptionFilter{SenderKind: "sensor"}, false},
+		{"sender_kind mismatch", node.SubscriptionFilter{SenderKind: "publisher"}, false},
 		{"target literal match", node.SubscriptionFilter{Target: "leaf-N"}, true},
 		{"target literal mismatch", node.SubscriptionFilter{Target: "leaf-M"}, false},
 		{"target self defers to receiver resolution", node.SubscriptionFilter{Target: "self"}, true},

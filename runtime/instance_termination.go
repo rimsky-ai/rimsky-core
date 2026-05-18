@@ -7,7 +7,8 @@
 // Spec
 // .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Held-durable claim lifecycle. When an instance terminates, the
-// runtime walks held_durable claim_handles and calls
+// runtime walks the instance's committed-durable claim_handles
+// (state = 'committed' AND lifetime = 'durable') and calls
 // `ClaimProducer.Release` on each (sequentially); failure to release
 // does not block instance-termination completion — the operator can
 // re-run the cleanup explicitly.
@@ -24,6 +25,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // HeldDurableReleaseReport summarizes the outcome of the
@@ -42,11 +44,14 @@ type HeldDurableReleaseFailure struct {
 	Err           error
 }
 
-// ReleaseHeldDurableClaims walks `held_durable=TRUE` claim_handles for
-// the instance and calls `ClaimProducer.Release` on each. Returns a
-// per-claim report so the operator can see which produced succeeded
-// vs failed. The claim_handles row is deleted only on Release success;
-// failures leave the row in place for retry.
+// ReleaseHeldDurableClaims walks the instance's committed-durable
+// claim_handles (state = 'committed' AND lifetime = 'durable') and
+// calls `ClaimProducer.Release` on each. Returns a per-claim report so
+// the operator can see which producers succeeded vs failed. The
+// claim_handles row is deleted only on Release success; failures leave
+// the row in place for retry. The function name preserves the public
+// surface from the pre-Stage-4 wire shape; internally the row-discovery
+// query is `ListByInstanceAndState(committed, durable)`.
 //
 // Caller responsibility: invoke inside an Instance.Terminate flow
 // after all running runs have completed.
@@ -54,7 +59,11 @@ func ReleaseHeldDurableClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, log shared.Logger,
 ) (HeldDurableReleaseReport, error) {
-	rows, err := args.ClaimHandles.ListHeldDurableByInstance(ctx, instanceID, tx)
+	// Row-discovery via `ListByInstanceAndState(committed, durable)` —
+	// the asset surface (state='committed' AND lifetime='durable').
+	rows, err := args.ClaimHandles.ListByInstanceAndState(
+		ctx, instanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
+	)
 	if err != nil {
 		return HeldDurableReleaseReport{}, fmt.Errorf("ReleaseHeldDurableClaims: list: %w", err)
 	}
@@ -83,7 +92,14 @@ func ReleaseHeldDurableClaims(
 			}
 			continue
 		}
-		if err := args.ClaimHandles.Delete(ctx, r.ID, r.HolderSupervisorID, tx); err != nil {
+		// DeleteResolved is absence-guarded — the row has
+		// `holder_supervisor_id IS NULL` by construction post-Promote
+		// (the post-Stage-4 CHECK constraint nulls the column whenever
+		// `state` exits `'active'`). See @blessed-invariant 4 (post-
+		// refactor): non-active-row deletions are guarded by absence +
+		// the row-discovery query filter
+		// (`ListByInstanceAndState(instance, committed, durable)`).
+		if err := args.ClaimHandles.DeleteResolved(ctx, r.ID, tx); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName,
 				Err: fmt.Errorf("delete row: %w", err),

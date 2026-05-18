@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,21 +36,27 @@ func TestCapabilities_AdvertisesWebhook(t *testing.T) {
 	if len(caps.SupportedKinds) != 1 || caps.SupportedKinds[0].Kind != "webhook" {
 		t.Errorf("kinds: %+v", caps.SupportedKinds)
 	}
+	if len(caps.Protocols) != 1 || caps.Protocols[0] != "publisher" {
+		t.Errorf("protocols: %+v", caps.Protocols)
+	}
 }
 
-func TestStartWatch_MountsRouteAndForwards(t *testing.T) {
+func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 	var (
 		obsMu   sync.Mutex
 		obsBody []map[string]any
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
+			t.Errorf("path: %s", r.URL.Path)
+		}
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		obsMu.Lock()
 		obsBody = append(obsBody, body)
 		obsMu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -57,8 +64,9 @@ func TestStartWatch_MountsRouteAndForwards(t *testing.T) {
 	s := NewSensorService(rimsky.URL, router, noopLogger{})
 	cfg := map[string]any{"path_prefix": "/wh/abc"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
+		TargetNode: "ingest", MessageKind: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -76,25 +84,31 @@ func TestStartWatch_MountsRouteAndForwards(t *testing.T) {
 	obsMu.Lock()
 	defer obsMu.Unlock()
 	if len(obsBody) != 1 {
-		t.Fatalf("observations: %d", len(obsBody))
+		t.Fatalf("messages: %d", len(obsBody))
 	}
 	body := obsBody[0]
-	if body["path"] != "/wh/abc" {
-		t.Errorf("path: %v", body["path"])
+	if body["sender_kind"] != "publisher" {
+		t.Errorf("sender_kind: %v", body["sender_kind"])
 	}
-	bm, ok := body["body"].(map[string]any)
-	if !ok || bm["event"] != "created" {
-		t.Errorf("body decoded: %+v", body["body"])
+	if body["target"] != "ingest" {
+		t.Errorf("target: %v", body["target"])
+	}
+	payload, ok := body["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload: %+v", body["payload"])
+	}
+	if payload["path"] != "/wh/abc" {
+		t.Errorf("payload.path: %v", payload["path"])
 	}
 }
 
-func TestStartWatch_NormalizesLeadingSlash(t *testing.T) {
+func TestSubscribe_NormalizesLeadingSlash(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})
 	cfg := map[string]any{"path_prefix": "abc/123"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", Kind: "webhook", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "webhook", ResolvedConfig: raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +119,10 @@ func TestStartWatch_NormalizesLeadingSlash(t *testing.T) {
 	}
 }
 
-func TestStartWatch_RejectsBadKind(t *testing.T) {
+func TestSubscribe_RejectsBadKind(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{Kind: "cron"})
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{Kind: "cron"})
 	if err == nil {
 		t.Fatal("expected error for non-webhook kind")
 	}
@@ -116,9 +130,9 @@ func TestStartWatch_RejectsBadKind(t *testing.T) {
 
 func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 	var pushed int
-	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		pushed++
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -128,8 +142,8 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 	s.clock = func() time.Time { return pin }
 	cfg := map[string]any{"path_prefix": "/wh/idem", "idempotency_header": "X-Idem"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", Kind: "webhook", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "webhook", ResolvedConfig: raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -160,15 +174,15 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 	}
 }
 
-func TestStopWatchIdempotent(t *testing.T) {
+func TestUnsubscribeIdempotent(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1"}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1"}
 	s.mu.Unlock()
 	for i := 0; i < 2; i++ {
-		if _, err := s.StopWatch(context.Background(), &genv1.StopWatchRequest{WatchId: "w1"}); err != nil {
-			t.Fatalf("stop[%d]: %v", i, err)
+		if _, err := s.Unsubscribe(context.Background(), &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
+			t.Fatalf("unsubscribe[%d]: %v", i, err)
 		}
 	}
 	s.mu.Lock()
@@ -178,19 +192,19 @@ func TestStopWatchIdempotent(t *testing.T) {
 	}
 }
 
-func TestListWatches(t *testing.T) {
+func TestListSubscriptions(t *testing.T) {
 	router := chi.NewRouter()
 	s := NewSensorService("", router, noopLogger{})
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1", InstanceID: "i1", StartedAt: s.clock()}
-	s.watches["w2"] = &Watch{WatchID: "w2", InstanceID: "i2", StartedAt: s.clock()}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1", InstanceID: "i1", StartedAt: s.clock()}
+	s.watches["w2"] = &Watch{SubscriptionID: "w2", InstanceID: "i2", StartedAt: s.clock()}
 	s.mu.Unlock()
-	resp, err := s.ListWatches(context.Background(), &emptypb.Empty{})
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Watches) != 2 {
-		t.Errorf("watches: %+v", resp.Watches)
+	if len(resp.Subscriptions) != 2 {
+		t.Errorf("subscriptions: %+v", resp.Subscriptions)
 	}
 }

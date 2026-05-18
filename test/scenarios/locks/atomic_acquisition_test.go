@@ -218,20 +218,35 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// Invariant 4 / 10: post-terminal lock-holder row count is zero
-	// (the supervisor's claimant-guarded release deleted it).
+	// Invariant 4 / 10 post-Stage-3 of the claim-handle state-column
+	// refactor: terminal flips the row's state column rather than
+	// deleting it. The row persists until the retention sweep reaps it.
+	// Assert: zero ACTIVE rows remain (the supervisor's claimant-
+	// guarded release promoted the row to a terminal state).
 	deadline := time.Now().Add(2 * time.Second)
-	var lhCount int
+	var activeCount int
 	for time.Now().Before(deadline) {
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT count(*) FROM rimsky_claim_handles WHERE holder_node_id = $1`, n.ID,
-		).Scan(&lhCount)
+			`SELECT count(*) FROM rimsky_claim_handles
+			  WHERE holder_node_id = $1 AND state = 'active'`, n.ID,
+		).Scan(&activeCount)
 		require.NoError(t, err)
-		if lhCount == 0 {
+		if activeCount == 0 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	require.Equal(t, 0, lhCount,
-		"after worker reaches fresh, zero lock-holder rows must remain (invariant 4)")
+	require.Equal(t, 0, activeCount,
+		"after worker reaches fresh, zero ACTIVE lock-holder rows must remain (invariant 4 post-Stage-3)")
+
+	// And the row that was promoted has holder_supervisor_id nulled
+	// (invariant 4 post-refactor: non-active rows have no holder).
+	var nullHolderCount int
+	err := h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles
+		  WHERE holder_node_id = $1 AND holder_supervisor_id IS NOT NULL`, n.ID,
+	).Scan(&nullHolderCount)
+	require.NoError(t, err)
+	require.Equal(t, 0, nullHolderCount,
+		"after worker reaches fresh, every claim-handle row for the node must have holder_supervisor_id NULL")
 }

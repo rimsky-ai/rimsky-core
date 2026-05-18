@@ -54,4 +54,5 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Database, rawExec 
 	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15
 	// plan B10 / D7 / E16 schedule-retirement cascade.)
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
+	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
 }

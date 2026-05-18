@@ -32,7 +32,7 @@
 //	heartbeat from a different supervisor can never extend a row it
 //	doesn't own. Concrete enforcement of the release path lives
 //	across persistence.Queue / persistence.ClaimHandleTable impls,
-//	`foundation/integration/runner.go`, and `graph/scheduler/scheduler.go`;
+//	`runtime/runner.go`, and `graph/scheduler/scheduler.go`;
 //	this file's contribution is the heartbeat-write claimant guard.
 //	Do not relax the `holder_supervisor_id = $1` predicate on the
 //	heartbeat UPDATE.

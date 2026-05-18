@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package main — sensor-object-store bundled sensor. Implements the
-// Sensor gRPC protocol; per watch, polls an object-store bucket+prefix
-// on a fixed interval and emits one observation per new object (or new
-// object version, per `watermark_field`).
+// Publisher gRPC protocol; per publisher-subscription, polls an
+// object-store bucket+prefix on a fixed interval and emits one message
+// envelope per new object (or new object version, per
+// `watermark_field`).
 //
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sensors as a service kind / sensor-object-store.
+// Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification.
 //
 //	@concept: sensor
 //
@@ -19,15 +20,14 @@
 // via SetBackend for fakes so callers can drive scenario tests without
 // LocalStack.
 //
-// Watermarking: per-watch high-watermark is the maximum value seen for
-// the configured `watermark_field` (one of `name`, `last_modified`).
-// New observations are objects whose watermark value strictly exceeds
-// the prior watermark. Idempotency: re-listing the same set without
-// any new object produces zero observations.
+// Watermarking: per-subscription high-watermark is the maximum value
+// seen for the configured `watermark_field` (one of `name`,
+// `last_modified`). New observations are objects whose watermark value
+// strictly exceeds the prior watermark. Idempotency: re-listing the
+// same set without any new object produces zero observations.
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,6 +41,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguy/rimsky/sensors/internal/post"
 )
 
 // ObjectMeta is the per-object snapshot the lister returns. Inert in
@@ -59,28 +60,32 @@ type ObjectLister interface {
 	List(ctx context.Context, bucket, prefix string) ([]ObjectMeta, error)
 }
 
-// Watch is the in-memory state for one active object-store watch.
+// Watch is the in-memory state for one active object-store publisher-
+// subscription. Sensor-internal vocabulary stays as "Watch."
 type Watch struct {
-	WatchID        string
+	SubscriptionID string
 	InstanceID     string
 	Backend        string // s3 | gcs | azure | memory
 	Bucket         string
 	Prefix         string
 	PollInterval   time.Duration
 	WatermarkField string // "name" | "last_modified"
+	TargetNode     string
+	MessageKind    string
 
 	LastPollAt    time.Time
 	WatermarkName string    // when WatermarkField == "name"
 	WatermarkTime time.Time // when WatermarkField == "last_modified"
 }
 
-// SensorService implements genv1.SensorServer for object-store polling.
+// SensorService implements genv1.PublisherServer for object-store
+// polling.
 //
 // `lister` is keyed by backend name ("s3", "gcs", "azure", "memory").
 // Production code registers backends at startup; tests inject the
 // "memory" lister via SetBackend.
 type SensorService struct {
-	genv1.UnimplementedSensorServer
+	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
 	watches        map[string]*Watch
 	listers        map[string]ObjectLister
@@ -89,6 +94,15 @@ type SensorService struct {
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
+	// state is the optional persistence layer. nil → in-memory mode.
+	state *stateDB
+}
+
+// AttachStateDB binds an optional persistence layer.
+func (s *SensorService) AttachStateDB(state *stateDB) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = state
 }
 
 type logger interface {
@@ -121,9 +135,9 @@ func (s *SensorService) SetBackend(name string, l ObjectLister) {
 }
 
 // Capabilities advertises the object-store kind.
-func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.SensorCapabilities, error) {
-	return &genv1.SensorCapabilities{
-		SupportedKinds: []*genv1.SensorKindCapability{
+func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
+	return &genv1.PublisherCapabilities{
+		SupportedKinds: []*genv1.PublisherKindCapability{
 			{
 				Kind: "object-store",
 				ConfigSchema: []byte(`{
@@ -139,12 +153,15 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 				}`),
 			},
 		},
-		Protocols: []string{"sensor"},
+		Protocols: []string{"publisher"},
 	}, nil
 }
 
-// StartWatch parses resolved_config and registers the watch.
-func (s *SensorService) StartWatch(_ context.Context, req *genv1.StartWatchRequest) (*genv1.StartWatchResponse, error) {
+// Subscribe parses resolved_config and registers the publisher-
+// subscription. When a state DB is attached, looks up persisted state
+// and pre-populates the watermark cursor so restart-replay does not
+// re-emit objects emitted before the restart.
+func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	if req.GetKind() != "object-store" {
 		return nil, fmt.Errorf("sensor-object-store does not support kind %q", req.GetKind())
 	}
@@ -183,60 +200,100 @@ func (s *SensorService) StartWatch(_ context.Context, req *genv1.StartWatchReque
 		}
 		interval = d
 	}
+	messageKind := req.GetMessageKind()
+	if messageKind == "" {
+		messageKind = "invalidate"
+	}
 	w := &Watch{
-		WatchID:        req.GetWatchId(),
+		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
 		Backend:        cfg.Backend,
 		Bucket:         cfg.Bucket,
 		Prefix:         cfg.Prefix,
 		PollInterval:   interval,
 		WatermarkField: cfg.WatermarkField,
+		TargetNode:     req.GetTargetNode(),
+		MessageKind:    messageKind,
+	}
+	// Restart-replay: load the persisted watermark cursor before
+	// registering the Watch so the first poll skips already-emitted
+	// objects.
+	s.mu.Lock()
+	state := s.state
+	s.mu.Unlock()
+	if state != nil {
+		if persisted, err := state.GetSubscription(ctx, w.SubscriptionID); err != nil {
+			s.logger.Warn("sensor-object-store.subscribe.state_get_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		} else if persisted != nil {
+			w.WatermarkName = persisted.WatermarkName
+			if persisted.WatermarkTime != nil {
+				w.WatermarkTime = *persisted.WatermarkTime
+			}
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.watches[w.WatchID]; exists {
-		return &genv1.StartWatchResponse{}, nil
+	if _, exists := s.watches[w.SubscriptionID]; exists {
+		// Idempotent Subscribe: the state-DB row is already present from
+		// the prior call, so we skip the UpsertSubscription below.
+		return &genv1.SubscribeResponse{}, nil
 	}
-	s.watches[w.WatchID] = w
-	s.logger.Info("sensor-object-store.start_watch",
-		"watch_id", w.WatchID,
+	s.watches[w.SubscriptionID] = w
+	if state != nil {
+		if err := state.UpsertSubscription(context.Background(), w); err != nil {
+			s.logger.Warn("sensor-object-store.subscribe.state_upsert_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		}
+	}
+	s.logger.Info("sensor-object-store.subscribe",
+		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"backend", cfg.Backend,
 		"bucket", cfg.Bucket,
 		"prefix", cfg.Prefix,
 		"poll_interval", interval.String(),
-		"watermark_field", cfg.WatermarkField)
-	return &genv1.StartWatchResponse{}, nil
+		"watermark_field", cfg.WatermarkField,
+		"restored_watermark", w.WatermarkName != "" || !w.WatermarkTime.IsZero())
+	return &genv1.SubscribeResponse{}, nil
 }
 
-// StopWatch removes the watch. Idempotent.
-func (s *SensorService) StopWatch(_ context.Context, req *genv1.StopWatchRequest) (*genv1.StopWatchResponse, error) {
+// Unsubscribe removes the publisher-subscription. Idempotent.
+func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.watches[req.GetWatchId()]; ok {
-		delete(s.watches, req.GetWatchId())
-		s.logger.Info("sensor-object-store.stop_watch", "watch_id", req.GetWatchId())
+	if _, ok := s.watches[req.GetPublisherSubscriptionId()]; ok {
+		delete(s.watches, req.GetPublisherSubscriptionId())
+		s.logger.Info("sensor-object-store.unsubscribe", "publisher_subscription_id", req.GetPublisherSubscriptionId())
+		if s.state != nil {
+			if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
+				s.logger.Warn("sensor-object-store.unsubscribe.state_delete_failed",
+					"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
+			}
+		}
 	}
-	return &genv1.StopWatchResponse{}, nil
+	return &genv1.UnsubscribeResponse{}, nil
 }
 
-// ListWatches enumerates active watches.
-func (s *SensorService) ListWatches(_ context.Context, _ *emptypb.Empty) (*genv1.ListWatchesResponse, error) {
+// ListSubscriptions enumerates active publisher-subscriptions.
+func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]*genv1.WatchDescriptor, 0, len(s.watches))
+	out := make([]*genv1.PublisherSubscriptionDescriptor, 0, len(s.watches))
 	for _, w := range s.watches {
-		out = append(out, &genv1.WatchDescriptor{
-			WatchId:    w.WatchID,
-			InstanceId: w.InstanceID,
-			Kind:       "object-store",
-			StartedAt:  timestamppb.New(s.clock()),
+		out = append(out, &genv1.PublisherSubscriptionDescriptor{
+			PublisherSubscriptionId: w.SubscriptionID,
+			InstanceId:              w.InstanceID,
+			Kind:                    "object-store",
+			TargetNode:              w.TargetNode,
+			MessageKind:             w.MessageKind,
+			StartedAt:               timestamppb.New(s.clock()),
 		})
 	}
-	return &genv1.ListWatchesResponse{Watches: out}, nil
+	return &genv1.ListSubscriptionsResponse{Subscriptions: out}, nil
 }
 
-// Tick polls due watches. One observation per new object.
+// Tick polls due subscriptions. One message envelope per new object.
 func (s *SensorService) Tick(ctx context.Context) {
 	now := s.clock()
 	s.mu.Lock()
@@ -252,8 +309,8 @@ func (s *SensorService) Tick(ctx context.Context) {
 	}
 }
 
-// pollOne lists the bucket+prefix, filters by the watermark, and pushes
-// one observation per new object.
+// pollOne lists the bucket+prefix, filters by the watermark, and
+// pushes one message envelope per new object.
 func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Lock()
 	w.LastPollAt = now
@@ -261,13 +318,13 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	s.mu.Unlock()
 	if !ok {
 		s.logger.Warn("sensor-object-store.no_backend",
-			"watch_id", w.WatchID, "backend", w.Backend)
+			"publisher_subscription_id", w.SubscriptionID, "backend", w.Backend)
 		return
 	}
 	objs, err := lister.List(ctx, w.Bucket, w.Prefix)
 	if err != nil {
 		s.logger.Warn("sensor-object-store.list_failed",
-			"watch_id", w.WatchID, "bucket", w.Bucket, "prefix", w.Prefix, "error", err.Error())
+			"publisher_subscription_id", w.SubscriptionID, "bucket", w.Bucket, "prefix", w.Prefix, "error", err.Error())
 		return
 	}
 
@@ -284,7 +341,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 
 	for _, o := range objs {
 		s.mu.Lock()
-		cur, exists := s.watches[w.WatchID]
+		cur, exists := s.watches[w.SubscriptionID]
 		if !exists {
 			s.mu.Unlock()
 			return
@@ -308,7 +365,22 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		default:
 			cur.WatermarkName = o.Name
 		}
+		state := s.state
+		watermarkField := cur.WatermarkField
 		s.mu.Unlock()
+		if state != nil {
+			var err error
+			switch watermarkField {
+			case "last_modified":
+				err = state.UpdateWatermarkTime(ctx, w.SubscriptionID, o.LastModified)
+			default:
+				err = state.UpdateWatermarkName(ctx, w.SubscriptionID, o.Name)
+			}
+			if err != nil {
+				s.logger.Warn("sensor-object-store.poll.state_update_failed",
+					"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+			}
+		}
 
 		obs := map[string]any{
 			"observed_at":   now.UTC().Format(time.RFC3339),
@@ -320,31 +392,46 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			"etag":          o.ETag,
 			"last_modified": o.LastModified.UTC().Format(time.RFC3339),
 		}
-		if err := s.postObservation(ctx, w.WatchID, obs); err != nil {
-			s.logger.Warn("sensor-object-store.observation_post_failed",
-				"watch_id", w.WatchID, "object_name", o.Name, "error", err.Error())
+		idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, o.ETag)
+		if o.ETag == "" {
+			idemKey = fmt.Sprintf("%s+%s", w.SubscriptionID, o.Name)
+		}
+		if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
+			s.logger.Warn("sensor-object-store.message_post_failed",
+				"publisher_subscription_id", w.SubscriptionID, "object_name", o.Name, "error", err.Error())
 		}
 	}
 }
 
-// postObservation sends one observation to rimsky.
-func (s *SensorService) postObservation(ctx context.Context, watchID string, body map[string]any) error {
-	raw, _ := json.Marshal(body)
-	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/sensors/" + watchID + "/observations"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+// postMessage sends one message envelope to rimsky's generic messages
+// endpoint with sender_kind="publisher". Retry-with-backoff is
+// handled by `pkg:github.com/fallguy/rimsky/sensors/internal/post`.
+func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	envelope := map[string]any{
+		"kind":                      w.MessageKind,
+		"target":                    w.TargetNode,
+		"payload":                   json.RawMessage(payloadBytes),
+		"sender":                    "sensor-object-store",
+		"sender_kind":               "publisher",
+		"publisher_subscription_id": w.SubscriptionID,
+	}
+	raw, err := post.MarshalEnvelope(envelope)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("rimsky %s → %d", url, resp.StatusCode)
-	}
-	return nil
+	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/instances/" + w.InstanceID + "/messages"
+	res := post.Send(ctx, s.httpClient, s.logger, nil, post.Request{
+		URL:            url,
+		Envelope:       raw,
+		IdempotencyKey: idempotencyKey,
+		SensorName:     "sensor-object-store",
+		SubscriptionID: w.SubscriptionID,
+	})
+	return res.Err
 }
 
 // Run starts the tick loop. Blocks until ctx is cancelled.

@@ -58,7 +58,9 @@ type AcquireSubClaimsInput struct {
 	PartitionRequest []byte
 	// Lifetime carries the parent claim's lifetime hint; sub-claims
 	// inherit "subgraph" unless the parent declared "durable".
-	Lifetime string
+	//
+	// @concept: claim-lifetime
+	Lifetime spec.ClaimLifetime
 	// ParentIsHeld carries the parent claim_handle's `is_held` value.
 	// Sub-claims inherit it so the row persists past the fan-out leaf's
 	// own active-terminal until the parent's recursive resolution

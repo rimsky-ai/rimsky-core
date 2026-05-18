@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,23 +35,25 @@ func TestCapabilities_AdvertiseHTTP(t *testing.T) {
 	if len(caps.SupportedKinds) != 1 || caps.SupportedKinds[0].Kind != "http" {
 		t.Errorf("kinds: %+v", caps.SupportedKinds)
 	}
-	if len(caps.Protocols) != 1 || caps.Protocols[0] != "sensor" {
+	if len(caps.Protocols) != 1 || caps.Protocols[0] != "publisher" {
 		t.Errorf("protocols: %+v", caps.Protocols)
 	}
 }
 
-func TestStartWatch_ParsesAndRegisters(t *testing.T) {
+func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{
 		"url":           "http://example.test/feed.json",
 		"poll_interval": "15s",
 	}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId:        "w1",
-		InstanceId:     "i1",
-		Kind:           "http",
-		ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1",
+		InstanceId:              "i1",
+		Kind:                    "http",
+		ResolvedConfig:          raw,
+		TargetNode:              "feed",
+		MessageKind:             "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +62,7 @@ func TestStartWatch_ParsesAndRegisters(t *testing.T) {
 	w, ok := s.watches["w1"]
 	s.mu.Unlock()
 	if !ok {
-		t.Fatal("watch not registered")
+		t.Fatal("subscription not registered")
 	}
 	if w.URL != "http://example.test/feed.json" {
 		t.Errorf("url: %s", w.URL)
@@ -67,36 +70,39 @@ func TestStartWatch_ParsesAndRegisters(t *testing.T) {
 	if w.PollInterval != 15*time.Second {
 		t.Errorf("interval: %s", w.PollInterval)
 	}
+	if w.TargetNode != "feed" || w.MessageKind != "invalidate" {
+		t.Errorf("routing fields: %+v", w)
+	}
 }
 
-func TestStartWatch_RejectsMissingURL(t *testing.T) {
+func TestSubscribe_RejectsMissingURL(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{"poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", Kind: "http", ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "http", ResolvedConfig: raw,
 	})
 	if err == nil {
 		t.Fatal("expected error for missing url")
 	}
 }
 
-func TestStartWatch_RejectsWrongKind(t *testing.T) {
+func TestSubscribe_RejectsWrongKind(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{Kind: "cron"})
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{Kind: "cron"})
 	if err == nil {
 		t.Fatal("expected error for non-http kind")
 	}
 }
 
-func TestStopWatchIdempotent(t *testing.T) {
+func TestUnsubscribeIdempotent(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1"}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1"}
 	s.mu.Unlock()
 	for i := 0; i < 2; i++ {
-		if _, err := s.StopWatch(context.Background(), &genv1.StopWatchRequest{WatchId: "w1"}); err != nil {
-			t.Fatalf("stop[%d]: %v", i, err)
+		if _, err := s.Unsubscribe(context.Background(), &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
+			t.Fatalf("unsubscribe[%d]: %v", i, err)
 		}
 	}
 	s.mu.Lock()
@@ -121,8 +127,11 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	defer upstream.Close()
 
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sensors/w1/observations" {
+		if !strings.HasPrefix(r.URL.Path, "/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
 			t.Errorf("path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got == "" {
+			t.Errorf("expected Idempotency-Key header")
 		}
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
@@ -130,7 +139,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 		obsMu.Lock()
 		obsBody = append(obsBody, body)
 		obsMu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -139,15 +148,19 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	s.clock = func() time.Time { return pin }
 	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+		TargetNode: "feed", MessageKind: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 1 {
-		t.Fatalf("observations after first tick: %d", len(obsBody))
+		t.Fatalf("messages after first tick: %d", len(obsBody))
+	}
+	if obsBody[0]["sender_kind"] != "publisher" {
+		t.Errorf("sender_kind: %v", obsBody[0]["sender_kind"])
 	}
 	obsMu.Unlock()
 
@@ -156,7 +169,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 1 {
-		t.Errorf("observations after unchanged tick: %d (want 1)", len(obsBody))
+		t.Errorf("messages after unchanged tick: %d (want 1)", len(obsBody))
 	}
 	obsMu.Unlock()
 
@@ -166,22 +179,22 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 2 {
-		t.Errorf("observations after change: %d (want 2)", len(obsBody))
+		t.Errorf("messages after change: %d (want 2)", len(obsBody))
 	}
 	obsMu.Unlock()
 }
 
 func TestTick_StatusFilter_RejectsNonMatch(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"err":1}`))
 	}))
 	defer upstream.Close()
 
 	pushed := 0
-	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		pushed++
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -189,8 +202,8 @@ func TestTick_StatusFilter_RejectsNonMatch(t *testing.T) {
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	cfg := map[string]any{"url": upstream.URL, "poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -201,16 +214,16 @@ func TestTick_StatusFilter_RejectsNonMatch(t *testing.T) {
 }
 
 func TestTick_JSONPathFilter(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"deployment":{"status":"healthy"}}`))
 	}))
 	defer upstream.Close()
 
 	pushed := 0
-	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		pushed++
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -227,8 +240,8 @@ func TestTick_JSONPathFilter(t *testing.T) {
 		},
 	}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
 	}); err != nil {
 		t.Fatal(err)
 	}

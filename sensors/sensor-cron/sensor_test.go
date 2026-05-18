@@ -33,22 +33,24 @@ func TestCapabilities_AdvertiseCron(t *testing.T) {
 	if len(caps.SupportedKinds) != 1 || caps.SupportedKinds[0].Kind != "cron" {
 		t.Errorf("kinds: %+v", caps.SupportedKinds)
 	}
-	if len(caps.Protocols) != 1 || caps.Protocols[0] != "sensor" {
+	if len(caps.Protocols) != 1 || caps.Protocols[0] != "publisher" {
 		t.Errorf("protocols: %+v", caps.Protocols)
 	}
 }
 
-func TestStartWatch_ParsesAndComputesNextFire(t *testing.T) {
+func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	// Pin clock so the next fire is deterministic.
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	cfg := map[string]any{"cron": "*/5 * * * *"}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId:        "w1",
-		InstanceId:     "i1",
-		Kind:           "cron",
-		ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1",
+		InstanceId:              "i1",
+		Kind:                    "cron",
+		ResolvedConfig:          raw,
+		TargetNode:              "tick",
+		MessageKind:             "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,41 +59,44 @@ func TestStartWatch_ParsesAndComputesNextFire(t *testing.T) {
 	w, ok := s.watches["w1"]
 	s.mu.Unlock()
 	if !ok {
-		t.Fatal("watch not registered")
+		t.Fatal("subscription not registered")
 	}
 	if !w.NextFireAt.Equal(time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)) {
 		t.Errorf("next_fire_at: %s", w.NextFireAt)
 	}
+	if w.TargetNode != "tick" || w.MessageKind != "invalidate" {
+		t.Errorf("routing fields: %+v", w)
+	}
 }
 
-func TestStartWatch_RejectsInvalidCron(t *testing.T) {
+func TestSubscribe_RejectsInvalidCron(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{"cron": "not a cron"}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
 	})
 	if err == nil {
 		t.Fatal("expected error for bad cron")
 	}
 }
 
-func TestStartWatch_RejectsWrongKind(t *testing.T) {
+func TestSubscribe_RejectsWrongKind(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{Kind: "http"})
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{Kind: "http"})
 	if err == nil {
 		t.Fatal("expected error for non-cron kind")
 	}
 }
 
-func TestStopWatch_IsIdempotent(t *testing.T) {
+func TestUnsubscribe_IsIdempotent(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1"}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1"}
 	s.mu.Unlock()
 	for i := 0; i < 2; i++ {
-		if _, err := s.StopWatch(context.Background(), &genv1.StopWatchRequest{WatchId: "w1"}); err != nil {
-			t.Fatalf("stop[%d]: %v", i, err)
+		if _, err := s.Unsubscribe(context.Background(), &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
+			t.Fatalf("unsubscribe[%d]: %v", i, err)
 		}
 	}
 	s.mu.Lock()
@@ -101,43 +106,55 @@ func TestStopWatch_IsIdempotent(t *testing.T) {
 	}
 }
 
-func TestListWatches(t *testing.T) {
+func TestListSubscriptions(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1", InstanceID: "i1", StartedAt: time.Now()}
-	s.watches["w2"] = &Watch{WatchID: "w2", InstanceID: "i2", StartedAt: time.Now()}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1", InstanceID: "i1", StartedAt: time.Now()}
+	s.watches["w2"] = &Watch{SubscriptionID: "w2", InstanceID: "i2", StartedAt: time.Now()}
 	s.mu.Unlock()
-	resp, err := s.ListWatches(context.Background(), &emptypb.Empty{})
+	resp, err := s.ListSubscriptions(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Watches) != 2 {
-		t.Errorf("watches: %+v", resp.Watches)
+	if len(resp.Subscriptions) != 2 {
+		t.Errorf("subscriptions: %+v", resp.Subscriptions)
 	}
 }
 
-func TestTick_FiresDueWatchAndAdvances(t *testing.T) {
+func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		observed int
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sensors/w1/observations" {
+		if r.URL.Path != "/instances/i1/messages" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("method: %s", r.Method)
 		}
+		if got := r.Header.Get("Idempotency-Key"); got == "" {
+			t.Errorf("expected Idempotency-Key header")
+		}
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
-		if body["cron"] != "*/5 * * * *" {
-			t.Errorf("body.cron: %v", body["cron"])
+		if body["sender_kind"] != "publisher" {
+			t.Errorf("body.sender_kind: %v", body["sender_kind"])
+		}
+		if body["publisher_subscription_id"] != "w1" {
+			t.Errorf("body.publisher_subscription_id: %v", body["publisher_subscription_id"])
+		}
+		if body["kind"] != "invalidate" {
+			t.Errorf("body.kind: %v", body["kind"])
+		}
+		if body["target"] != "tick" {
+			t.Errorf("body.target: %v", body["target"])
 		}
 		mu.Lock()
 		observed++
 		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -146,8 +163,9 @@ func TestTick_FiresDueWatchAndAdvances(t *testing.T) {
 	s.clock = func() time.Time { return pin }
 	cfg := map[string]any{"cron": "*/5 * * * *"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
+		TargetNode: "tick", MessageKind: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +174,7 @@ func TestTick_FiresDueWatchAndAdvances(t *testing.T) {
 	s.Tick(context.Background())
 	mu.Lock()
 	if observed != 1 {
-		t.Errorf("observations: %d", observed)
+		t.Errorf("messages observed: %d", observed)
 	}
 	mu.Unlock()
 

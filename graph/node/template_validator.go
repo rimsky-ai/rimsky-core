@@ -174,6 +174,14 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateFanOut(n, base, hooks, &res)
 	}
 
+	// Publishers block validation. The persisted column is
+	// `target_node TEXT NOT NULL` with no empty-string sentinel, so
+	// reject empty entries here rather than surfacing a pgx NOT NULL
+	// violation at instance-create time. Per spec
+	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+	// §Open items #1.
+	validatePublishers(spec, declared, &res)
+
 	// Post-pass: substitution-ref cross-check (T17). Iterate all
 	// `{{nodes.<X>.<kind>.<name>}}` directives in the attribute
 	// schemas and confirm the sender + attribute/event name are
@@ -401,7 +409,7 @@ func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler,
 
 // validateSubscribes is T16: enforces SubscriptionEntry shape rules.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
@@ -462,12 +470,12 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 		// `on: message` subscriptions.
 		if s.On == "message" {
 			switch s.SenderKind {
-			case "", "operator", "sensor", "instance":
+			case "", "operator", "publisher", "instance":
 			default:
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".sender_kind",
 					Msg: fmt.Sprintf(
-						"`sender_kind: %q` is not valid (one of: operator, sensor, instance)",
+						"`sender_kind: %q` is not valid (one of: operator, publisher, instance)",
 						s.SenderKind),
 				})
 			}
@@ -1080,4 +1088,47 @@ func validateUserdataAgainstSchema(n TemplateNodeDef, base string, hooks Registr
 // validator's call-sites uniform with other "parse and report" helpers.
 func parseDurationStrict(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
+}
+
+// validatePublishers checks the top-level `publishers:` block. Every
+// entry must declare `name`, `kind`, and `target_node`; `target_node`
+// must reference a declared node type. This catches missing fields at
+// template registration so operators see a clear validation error
+// instead of a pgx NOT NULL violation when the row is inserted into
+// table:rimsky_publisher_subscriptions at instance-create.
+func validatePublishers(spec *TemplateSpec, declared map[string]int, res *ValidationResult) {
+	seenNames := make(map[string]struct{}, len(spec.Publishers))
+	for i, p := range spec.Publishers {
+		base := fmt.Sprintf("publishers[%d]", i)
+		if strings.TrimSpace(p.Name) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".name", Msg: "name is required",
+			})
+		} else if _, dup := seenNames[p.Name]; dup {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".name",
+				Msg:  fmt.Sprintf("duplicate publisher name %q", p.Name),
+			})
+		} else {
+			seenNames[p.Name] = struct{}{}
+		}
+		if strings.TrimSpace(p.Kind) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".kind", Msg: "kind is required",
+			})
+		}
+		if strings.TrimSpace(p.TargetNode) == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".target_node",
+				Msg:  "target_node is required (cannot be empty)",
+			})
+			continue
+		}
+		if _, ok := declared[p.TargetNode]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".target_node",
+				Msg:  fmt.Sprintf("target_node %q does not reference a declared node type", p.TargetNode),
+			})
+		}
+	}
 }

@@ -5,14 +5,16 @@
 // N6 scenario — durable_lifetime_persistence.
 //
 // `lifetime: durable` claims survive auto-terminal Commit as
-// held_durable=TRUE rows on rimsky_claim_handles. The N6 contract
+// state='committed' rows on rimsky_claim_handles. The N6 contract
 // pinned here is the lifetime taxonomy: subgraph (default) vs.
-// durable, and the SetHeldDurable flag flips the row at auto-
-// terminal Commit time. The full end-to-end (auto-terminal →
-// SetHeldDurable → ListHeldDurableByInstance →
-// ReleaseHeldDurableClaims) needs the postgres harness; this
-// scenario pins the foundation/spec lifetime constants + the
-// runtime ClaimHandleInsertInput shape.
+// durable. Post-Stage-3 of the 2026-05-17 claim-handle state-column
+// refactor, the auto-terminal Promote flips state from active to
+// committed and the row remains alive until
+// ReleaseHeldDurableClaims (instance termination) or the operator
+// DELETE /assets/{alias} handler. The full end-to-end (auto-terminal
+// → Promote → ListByInstanceAndState → ReleaseHeldDurableClaims)
+// needs the postgres harness; this scenario pins the foundation/spec
+// lifetime constants + the runtime ClaimHandleInsertInput shape.
 package asset
 
 import (

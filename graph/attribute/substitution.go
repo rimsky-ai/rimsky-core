@@ -36,7 +36,7 @@
 //	code paths must treat ClaimResult fields as opaque bytes (no
 //	logging, no pretty-printing, no traces). One additional sanctioned
 //	exception lives outside this package:
-//	`foundation/integration/runner_dispatch.go::makeClaimHandle`, the wire-
+//	`runtime/runner_dispatch.go::makeClaimHandle`, the wire-
 //	encoding site that projects address/payload into a
 //	google.protobuf.Struct for the executor protocol.
 //

@@ -34,6 +34,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // openMigratedSQLite returns a 1-conn SQLite-backed driver with
@@ -280,15 +281,28 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.ListChildClaimHandles", func() {
 			_, _ = store.ClaimHandles().ListChildClaimHandles(ctx, someID, nil)
 		}},
-		{"ClaimHandles.SetHeldDurable", func() {
-			_ = store.ClaimHandles().SetHeldDurable(ctx, someID, "sup", true, nil)
+		{"ClaimHandles.Promote", func() {
+			_ = store.ClaimHandles().Promote(ctx, someID, "sup", spec.ClaimHandleStateCommitted, nil)
 		}},
 		{"ClaimHandles.SetVersionID", func() {
 			_ = store.ClaimHandles().SetVersionID(ctx, someID, "sup", "v1", nil)
 		}},
-		{"ClaimHandles.ListHeldDurableByInstance", func() {
-			_, _ = store.ClaimHandles().ListHeldDurableByInstance(ctx, someID, nil)
+		{"ClaimHandles.ListByInstanceAndState", func() {
+			_, _ = store.ClaimHandles().ListByInstanceAndState(
+				ctx, someID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, nil)
 		}},
+		{"ClaimHandles.ListByState", func() {
+			_, _ = store.ClaimHandles().ListByState(ctx, spec.ClaimHandleStateCommitted, nil)
+		}},
+		{"ClaimHandles.DeleteResolved", func() {
+			_ = store.ClaimHandles().DeleteResolved(ctx, someID, nil)
+		}},
+		// DeleteResolvedOlderThan is intentionally a no-tx method (it
+		// runs as a single DELETE outside any caller-provided tx so the
+		// retention sweep's scheduler-tick advisory lock serializes
+		// across replicas at the tick boundary, not via tx per row).
+		// Not in the nil-tx-guard set; the option-C invariant covers
+		// only tx-accepting methods.
 		{"ClaimHandles.SetAggregationPolicy", func() {
 			_ = store.ClaimHandles().SetAggregationPolicy(ctx, someID, "sup", nil, nil)
 		}},

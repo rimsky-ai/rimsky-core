@@ -2,6 +2,719 @@
 
 ## Unreleased
 
+- **2026-05-18 sensor-messaging-unification review cleanup cycle 2.**
+  Reviewer re-pass after cycle-1 fixes surfaced four residuals.
+  - `rimsky-publisher-conformance` binary removed from the working
+    tree and added to `.gitignore` (parallel to the other
+    `/rimsky-*-conformance` entries); cycle-1 missed it when
+    cleaning up the openlineage binary.
+  - `PublisherSubscriptionsTable.Get` parameter order normalized to
+    `Get(ctx, tx, id)` to match the sibling `Insert` / `Update` /
+    `Delete` methods on the same interface. Postgres + sqlite impls
+    and the one call site in `code:control/controlapi/messages.go`
+    updated.
+  - Duplicate constants `ProtocolLifecycleSubscriber`,
+    `ProtocolValidation`, and `ProtocolDataProcessing` deleted from
+    `code:control/config/stores.go`; the canonical declarations now
+    live solely in `code:protocols/claimproducer/types.go` (the
+    wire-vocabulary owner). `control/config` and the lifecycle
+    scenario test import the constants from `claimproducer` directly;
+    the role-anchor protocols `ProtocolClaimProducer`,
+    `ProtocolExecutor`, and `ProtocolPublisher` — specific to
+    rimsky.yml's three top-level blocks — remain in
+    `control/config/stores.go`.
+  - Idempotent-Subscribe early-return sites in the three stateful
+    bundled sensors (`sensors/sensor-http/sensor.go`,
+    `sensors/sensor-object-store/sensor.go`,
+    `sensors/sensor-webhook/sensor.go`) gained a one-line comment
+    documenting that the state-DB row is already present from the
+    prior Subscribe so the skipped `UpsertSubscription` is a no-op.
+
+- **2026-05-18 sensor-messaging-unification review fixes.** Post-merge
+  review surfaced 17 issues across the sensor-messaging-unification
+  landing.
+  - `col:rimsky_messages.sender_kind` CHECK constraint corrected to
+    `('operator','publisher','instance')` in both baseline migrations
+    (postgres + sqlite); previous baseline still listed `'sensor'` and
+    would reject every publisher-side INSERT at runtime.
+  - Bundled sensor `Subscribe` paths now load persisted state via new
+    `GetSubscription(ctx, id)` helpers and pre-populate the in-memory
+    `Watch` (body-hash for sensor-http, watermark cursor for
+    sensor-object-store, last-idempotency-key for sensor-webhook).
+    Restart-replay tests added in each `state_db_test.go`.
+  - `PublisherSubscriptionsTable.Get` gained a `Tx` parameter so the
+    publisher capability check in `code:control/controlapi/messages.go`
+    reads inside the surrounding message-create transaction, matching
+    the spec.
+  - New publisher-side retry-with-backoff helper at
+    `pkg:github.com/fallguy/rimsky/sensors/internal/post`; all four
+    bundled sensors route their `POST /instances/{id}/messages` calls
+    through it (3-attempt exp backoff 200ms→~1.6s; 4xx terminates with
+    a `publisher.message.rejected` WARN; 5xx + transport errors retry).
+  - Template registration validates the top-level `publishers:` block:
+    every entry must declare a non-empty `name` + `kind` +
+    `target_node`, and `target_node` must reference a declared node
+    type. Operators previously saw a confusing pgx NOT NULL violation
+    at instance-create time instead of a precise validation error.
+  - Eight new tests in `code:control/controlapi/messages_test.go`
+    cover the publisher capability check (403 paths, 400 paths,
+    success path with sender derived from publisher_name) and the
+    universal `Idempotency-Key` dedup (200 OK on replay, distinct
+    senders do not collide).
+  - Dead constant `ProtocolSensor` removed from
+    `code:protocols/claimproducer/types.go`; the post-rename constant
+    is `ProtocolPublisher` in `code:control/config/stores.go`.
+  - `cmd:rimsky-cli messages tail --sender-kind` help text corrected
+    from `(operator|node|sensor|system)` to the actual enum
+    `(operator|publisher|instance)`.
+  - `protocols/proto/v1/validation.proto::SensorContext.resolved_config`
+    comment updated to reference `Subscribe` instead of the deleted
+    `StartWatch` RPC; protos regenerated.
+  - Sensor-webhook `serveWebhook` now reads `s.state` under the
+    service mutex (the `Watch.mu`-only read raced with
+    `AttachStateDB`).
+  - `feature-index.md` updated: `runtime/sensors.go` → `publishers.go`
+    + Subscribe/Unsubscribe lifecycle; `sensors,` → `publisher-
+    subscriptions,` in the controlapi + MCP rows; `Sensor` →
+    `Publisher` in the conformance row.
+  - `CLAUDE.md` gained gotcha bullets for the dropped
+    `POST /sensors/{watch_id}/observations` route and the universal
+    `Idempotency-Key` header semantics.
+  - `cmd:rimsky-publisher-conformance` `WaitForMessage` no longer
+    spawns per-iteration watchdog goroutines (uses `time.AfterFunc`
+    with `Stop`-on-return).
+  - `subscribers/openlineage/openlineage` Mach-O binary removed from
+    working tree; `.gitignore` extended to cover the per-subscriber
+    path.
+  - State-DB headers explicitly document Postgres-only DSN constraint
+    (schema uses `now()` + `TIMESTAMPTZ`); SQLite mode is not
+    available — leave the env var empty for in-memory dev.
+  - `sensors/sensor-cron/sensor.go` package doc explicitly documents
+    the deliberate in-memory state choice (cron `next_fire_at` is
+    fully reconstructible from `sched.Next(now)` so no state DB is
+    plumbed).
+
+- **Publisher protocol unification.** Replaced the `Sensor` protocol with `Publisher`; sensors are now one class of publisher implementation. The special observation-deposit endpoint (`POST /sensors/{watch_id}/observations`) is deleted; bundled sensors now POST message envelopes to the existing generic `POST /instances/{id}/messages` endpoint with `sender_kind: "publisher"` + a `publisher_subscription_id` capability token. Routing fields (`target_node`, `message_kind`) move inline onto `SubscribeRequest`, eliminating the `OnObservationSpec` Go type. The `payload_template` substitution machinery is removed entirely (downstream consumers read raw observation bytes via `{{trigger.message.payload.<path>}}`). The `rimsky_sensor_watches` table renames to `rimsky_publisher_subscriptions` with column changes (drop `on_observation` + `last_observed_at`; add `target_node` + `message_kind`). A universal `Idempotency-Key` header lands on the messages endpoint with a new `rimsky_message_idempotencies` table + retention sweep. Three bundled sensors (sensor-http, sensor-object-store, sensor-webhook) gain per-binary state DBs to survive restart; sensor-cron stays in-memory by default. All four bundled sensors gain Dockerfiles + docker-compose entries + helm chart templates. The conformance binary renames `rimsky-sensor-conformance` → `rimsky-publisher-conformance` with a new `--instance-id` CLI flag. Templates rename the per-instance block from `sensors:` to `publishers:`; the canonicalizer rejects the old `sensors:` key via `DisallowUnknownFields`. Concept docs surgery: new `concept:publisher`, `concept:publisher-subscription`, `concept:replica`; `concept:sensor.md` rewritten end-to-end; `concept:subscription` renamed to `concept:node-subscription` (the publisher-side concept is `concept:publisher-subscription`); related concept docs (`message`, `invalidate`, `named-event`, `backfill`, `frame`) refreshed for the new wire vocabulary. The `rimsky_messages.sender_kind` enum changes from `(operator | sensor | instance)` to `(operator | publisher | instance)`. Dev databases must be wiped and recreated.
+
+- **CLAUDE.md trimmed to a pointer index.** The repo-root CLAUDE.md grew to 49k chars by accreting duplicates of content that lives canonically elsewhere: architecture prose duplicating `.ok-planner/design/concepts/module-layout.md`, an enumerated invariant list duplicating `@blessed-invariant` source annotations, an import-rules section duplicating `.golangci.yml` depguard, a schema section duplicating per-table concept docs and migrations, and ~45 "non-obvious gotchas" almost all covered by concept docs (e.g. `concepts/parked-state.md` covers heartbeat-skip; `concepts/cancel-siblings.md` covers supervisor-scoping; `concepts/rimsky-yml.md` even contradicts a stale CLAUDE.md note about the retired `stores:` alias). The duplication was the drift mechanism — each fact had two homes and one always lost. The new CLAUDE.md is a pointer index: orientation sentence, "where to look first" (concept catalog as authoritative architecture surface, depguard for enforced layer rules, `grep @blessed-invariant` for safety properties, Makefile for build, `docs/` for public material, `.ok-planner/{specs,plans,sketches,history}/` flagged as workflow scratch), three genuinely-orphan deployment gotchas with no concept-doc home (`callback.advertise_host`, Helm chart drift, TS claude-agent body-key), and the cold-read style pointer. Dropped the citations of the `2026-05-04-*-{foundation,modeling-layer,service-protocol}-contract.md` specs as "authoritative architecture docs": per `.ok-planner/CLAUDE.md` those are workflow scratch, and the substance has long since been distilled into the concept catalog + source annotations + depguard.
+
+- **Migration baseline flatten.** Migrations 002-010 collapsed into a rewritten `foundation/persistence/{postgres,sqlite}/migrations/001-baseline.sql`. Pre-v1 housekeeping; no production data to preserve. Dev databases must be wiped and recreated (`docker compose down -v && docker compose up -d`). The baseline now expresses the final post-cleanup schema directly — run-tree on `rimsky_node_runs`; state lifted off `rimsky_nodes`; `rimsky_claim_holders` + `rimsky_wait_set` keyed on runs; `rimsky_schedules` retired; `rimsky_messages` / `rimsky_lineage` / `rimsky_publisher_subscriptions` present; `rimsky_lineage` carrying the `outcome` column with `record_kind ∈ {leaf_run, claim_terminal}`; and the 3-state `rimsky_claim_handles.state` column (replacing the binary `held_durable`) plus the `rimsky_claim_handles_active_idx` + `rimsky_claim_handles_committed_durable_idx` partial indexes. `rimsky_migrations` is created by the driver Bootstrap step and is intentionally absent from the baseline file.
+
+- **Cycle-7 review cleanup (2026-05-17).** Final fix cycle before the
+  pause on Item 2; the cycle-6 re-reviewer surfaced six residuals.
+  - **Two silent-swallow sites in `code:runtime/runner_dispatch.go`
+    wrapped with logged warns.** Line 196 (clear resume metadata after
+    stream is live) and line 700 (read prior NodeAttributes for
+    `run_attempt`) both used `_ = Persist.Transaction(...)`; a tx
+    failure on either site left the row in a state the next dispatch
+    would silently misread (`code:dispatch_id` re-delivers the same
+    `ResumeContext`; executor sees `run_attempt: 1` after a transient
+    DB hiccup). Both now log the failure with action-specific text.
+    `rg '_ = .*Persist\.Transaction' --type=go` is clean.
+  - **`feature-index.md` rounded out for the five missing top-level
+    directories.** Added rows for `mcp-servers/control-api/`
+    (separate Go module + `cmd/rimsky-mcp-control-api/` bridge),
+    `conformance/` (shared scenario package imported by the
+    conformance binaries), `examples/atomic-staging-fs-producer/`
+    (reference impl wiring the atomic-staging pattern over a
+    filesystem backing store), `internal/pgtest/` (root-module
+    pgtest fixture used across graph/runtime/control), and a
+    rollup row under `test/` covering `test/scenarios/` and
+    `test/smoke/`.
+  - **`ClaimTerminalRecord` + `LeafRunRecord` json-tag discipline +
+    field order pinned across writer and subscriber.** Writer-side
+    discipline (run/node/frame ids + state + outcome required) is
+    canonical; subscriber-side mirrored field-for-field. New
+    reflection-driven tests
+    `code:runtime/lineage_writer_test.go::TestLeafRunRecord_TagDisciplineAndOrder`,
+    `code:runtime/lineage_writer_test.go::TestClaimTerminalRecord_TagDisciplineAndOrder`,
+    and the parallel pair under `code:subscribers/openlineage/subscriber_test.go`
+    assert both required-vs-omitempty and field-declaration order so
+    a unilateral edit on either side fails the build.
+  - **Test file renamed: `test/scenarios/asset/held_durable_across_run_completion_test.go`
+    → `durable_lifetime_across_run_completion_test.go`.** Function
+    renamed `TestHeldDurableAcrossRunCompletion` →
+    `TestDurableLifetimeAcrossRunCompletion`. Stage-4 dropped the
+    `held_durable` column; the test body already used
+    `lifetime: durable` correctly — only the filename + scenario
+    comment + test function name carried the pre-rename label.
+  - **Stale "TODO comments at each call site" doc claim removed
+    from `code:runtime/lineage_writer.go::LeafRunRecord`.** Replaced
+    with accurate text naming `ExecutorVersion`, `FrameTriggerKind`,
+    `TriggerMessageID` (the unplumbed set) and pointing at
+    `code:runtime/lineage_writer.go::logMissingFieldsOnce` as the
+    once-per-process startup INFO that surfaces them.
+    `rg 'TODO comments at each call site' --type=go` is clean.
+  - **`code:runtime/runner_acquire.go` payday continuation — 608 →
+    489 lines.** Extracted the fan-out sub-claim acquisition block
+    (~62 lines) and the resume-metadata reload block (~52 lines) to
+    `code:runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared`
+    and `loadResumeMetadataIfParked`. tryAcquire now reads as a
+    flat orchestration shell: instance/template/spec lookup →
+    advisory locks → claim-dispatch-row → per-spec acquire loop →
+    feature blocks (fan-out, co-holder, held-claim load, resume).
+    Under the ~500-line guideline.
+- **Cycle-6 review cleanup (2026-05-17).** Nine issues + the
+  feature-index decision from the cycle-5 re-review.
+  - **`code:subscribers/openlineage/subscriber.go::ClaimTerminalRecord`
+    aligned with the writer.** Added `RunID`, `NodeID`,
+    `ParentClaimHandleID`, `ProducerMetadata` (the four fields the
+    writer emits but the subscriber dropped); JSON tags + types
+    mirror `code:runtime/lineage_writer.go::ClaimTerminalRecord`
+    field-for-field.
+    `code:subscribers/openlineage/emitter.go::MakeClaimTerminalEvent`
+    surfaces the new fields in the OL event's `rimsky` facet block.
+    Wire-contract test extended to pin each new field's
+    decode-and-surface path.
+  - **`protocols/proto/v1/gen/claim_producer_grpc.pb.go` regenerated.**
+    The two stale `foundation/integration/remote/` references in
+    comments are gone after `make proto-gen`; the `.proto` source
+    already cited the post-2026-05-13 `runtime/remote/` path.
+  - **`leaf_run.substitution_refs` upgraded from dead-API to the
+    object shape `[{source_kind, source_node_alias,
+    source_version_or_id}]`** (cycle 6 decision: take the richer
+    shape because the ancestor walker depends on it).
+    `code:runtime/lineage_writer.go` declares a new `SubstitutionRef`
+    type; `LeafRunRecord.SubstitutionRefs` (was `[]string`) plus
+    `LeafRunEmitInput.SubstitutionRefs` thread the value through
+    every emit site (`runner_terminal.go`,
+    `runner_terminal_handlers.go`, `runner_terminal_park.go`,
+    `runner_error_policy.go`, `subgraph_dispatch.go`). New
+    `code:runtime/lineage_writer.go::CollectSubstitutionRefsForEmit`
+    populates the slice from `acq.NodeDef.Attributes` (one
+    `attribute`/`event` directive-shape entry per parsed
+    `{{nodes.X.attribute.Y}}` directive + one `run` entry per
+    distinct upstream sender keyed by the upstream's most recent
+    leaf-run row's `run_id`). New exported
+    `code:graph/node/subscription_edges.go::SubstitutionRefsFromAttributes`
+    surfaces the per-directive shape for runtime consumers. The
+    `code:control/controlapi/lineage.go::extractSubstitutionRefRunIDs`
+    consumer's dead `[]string` fallback decode branch is removed —
+    the object form is the only shape now.
+    `code:subscribers/openlineage/subscriber.go::SubstitutionRef`
+    mirrors the writer-side struct; the wire-contract test +
+    `code:test/scenarios/lineage/recursive_ancestor_walk_test.go::TestRecursiveAncestorWalk_ChainsSubstitutionRefs`
+    pin the end-to-end walk.
+  - **Silent-swallow `_ = args.Persist.Transaction(...)` pattern
+    replaced with WARN-and-continue across 22 sites** in
+    `runtime/runner_dispatch.go` (4),
+    `runtime/runner_terminal.go` (2),
+    `runtime/runner_terminal_handlers.go` (1),
+    `runtime/runner_error_policy.go` (4),
+    `runtime/runner.go` (1),
+    `runtime/runner_acquire_postcommit.go` (2),
+    `runtime/runner_lifecycle.go` (1),
+    `runtime/subgraph_dispatch.go` (1),
+    `runtime/sensors.go` (2),
+    `control/controlapi/instances.go` (2),
+    `control/controlapi/nodes.go` (2),
+    `graph/scenario/harness.go` (1). Each site picks a context-
+    specific warning key (`node_id`, `instance_id`, `dispatch_id`,
+    the kind of audit emit, etc.) so a transient tx failure is
+    observable post-hoc without breaking the surrounding flow
+    (most sites are best-effort audit / event-append paths).
+    `grep '_ = args\.Persist\.Transaction' --type=go` now returns
+    zero hits.
+  - **`foundation/persistence/sqlite/migrations/009-claim-handles-state-column.sql`
+    doc-comment fix.** The "every column added through migration 008"
+    claim was incorrect — migration 008 (`claim-lineage-outcome.sql`)
+    does not touch `rimsky_claim_handles`. The comment now spells
+    out the contributing migrations (001 baseline + 002 + 007) and
+    the columns this migration adds.
+  - **SQLite `resolved_at` column type aligned with timestamp
+    convention.** Changed `TIMESTAMP NULL` → `TEXT NULL` in
+    migration 009 to match the rest of the recreated table's
+    timestamp columns (which all use `TEXT NOT NULL DEFAULT
+    (datetime('now'))`); the existing `sql.NullString` scanner
+    already handles the form.
+  - **`foundation/persistence/ClaimHandleRow.HolderSupervisorID`
+    changed `string` → `*string`.** Migration 009 made the column
+    nullable (non-active rows always carry NULL per the
+    `rimsky_claim_handles_inactive_has_no_holder` CHECK). Scanning
+    NULL into `""` and then comparing `row.HolderSupervisorID ==
+    args.SupervisorID` would silently bypass the
+    `@blessed-invariant 4` claimant guard when both sides happen
+    to be empty. The pointer-form forces every consumer to nil-
+    check first, and the json tag picks up `omitempty` so
+    observability surfaces don't render empty `holder_supervisor_id`
+    strings on terminal rows. Updated readers:
+    `code:runtime/auto_terminal.go::CheckAndFireResolution`,
+    `code:runtime/auto_terminal_chain.go::resolveParentClaimChain`,
+    `code:runtime/terminal_decision_cancel.go::cancelInFlightSiblings`
+    + `cancelDescendantClaims`,
+    `code:runtime/orphan_reaper.go::reapOneClaimHandle`,
+    `code:runtime/sweep_parked.go`,
+    `code:runtime/runner_acquire_claims.go`. Postgres + SQLite
+    scanners updated; tests covering `require.Empty(...)` continue
+    to pass (testify `Empty` accepts nil pointer).
+  - **`code:runtime/runner_acquire_holders.go::insertCoHolderClaimHoldersAtAcquire`
+    error-wrap split.** The combined
+    `if err != nil || nd == nil { return fmt.Errorf("nodes.Get: %w", err) }`
+    produced `fmt.Errorf("nodes.Get: %w", nil)` when the node was
+    missing. The branch is now split: `err != nil` returns the
+    wrapped error; `nd == nil` returns a structural error with the
+    missing node id, since the candidate's node row must exist by
+    construction (selector tick read it minutes earlier).
+  - **`feature-index.md` created.** The cold-read cheatsheet's
+    "Update feature-index.md when features/dependencies change"
+    rule was previously waived; the v1-push directive flipped that
+    decision. One entry per top-level directory across foundation
+    / graph / runtime / control / cmd / stores / executors /
+    sensors / subscribers / dashboards, with layer-ordering shown.
+  - **Concept doc `lineage-record.md` updated** to document the new
+    SubstitutionRef object shape and the deprecation of the
+    `[]string` fallback.
+
+- **Cycle-5 review cleanup (2026-05-17).** Eight issues from the
+  fifth-round review, including a v1 blocker on `make license-lint`.
+  - **License-lint v1 blocker fixed.** `file:licensing.yml` rewritten
+    to the post-2026-05-13 layer restructure (`foundation/integration/`
+    → `runtime/`, `graph/executor/` → `runtime/executor/`) and
+    extended with the directories that landed since the original
+    boundary map: `foundation/spec/` (Apache — pure data row-types
+    imported by Apache `graph/node/`), `runtime/clientiface/` (Apache;
+    see below), `sensors/`, `subscribers/`, `examples/`,
+    `mcp-servers/control-api/` (AGPL — control-plane MCP server), and
+    `cmd/rimsky-{blob-backend,data-processing,sensor,validation}-conformance/`.
+    `cmd/rimsky-blob-backend-conformance/` reclassified AGPL (it
+    imports AGPL `foundation/persistence`).
+    `code:cmd/rimsky-license-check/headers.go` extended to recognize
+    the SPDX one-liner header form (`SPDX-License-Identifier:
+    Apache-2.0`) the bundled services use.
+    `code:cmd/rimsky-license-check/imports.go` exempts `*_test.go`
+    files from the Apache→AGPL import-direction check — tests
+    routinely need internal testcontainers / pgtest scaffolding.
+    Header-mismatch fixes applied to `foundation/persistence/wait_set.go`,
+    `foundation/persistence/{postgres,sqlite}/wait_set.go`,
+    `foundation/persistence/conformance/{lineage,wait_set}.go`,
+    `conformance/await_terminal_test.go`,
+    `graph/node/subscription_edges.go`,
+    `runtime/{fanout_dispatch,subgraph_caller_lineage,subgraph_dispatch}_test.go`,
+    and `cmd/rimsky-blob-backend-conformance/*.go`. `make license-lint`
+    now exits 0 (388 Apache + 429 AGPL files; 0 violations).
+  - **New Apache package `runtime/clientiface/`.** The wire-shape
+    interface + DTO types for the DataProcessing, Sensor, and
+    Validation runtime protocols (`DataProcessingClient`,
+    `SensorClient`, `ValidationClient`, plus the `<Verb>Input` /
+    `<Verb>Output` structs and `<Protocol>Registry` interfaces,
+    plus `UnreachableValidatorPolicy` + constants) extracted from
+    `code:runtime/data_processing.go`, `code:runtime/sensors.go`,
+    `code:runtime/validation_pipeline.go`. The three writer files
+    keep Go-level type aliases (`type X = clientiface.X`) so every
+    other AGPL runtime file continues to refer to the types by their
+    unqualified name; the gRPC remote clients in
+    `code:runtime/remote/{data_processing,sensor,validation}_client.go`
+    satisfy the canonical `clientiface.*` interface. This keeps the
+    conformance binaries (Apache `cmd/rimsky-{data-processing,
+    sensor,validation}-conformance/`) able to link against the wire
+    surface without crossing the licensing boundary.
+  - `code:runtime/runner_acquire.go::tryAcquire` post-acquisition
+    audit-log tx (heartbeat refresh + `work_started` event +
+    per-lock `lock_acquired` events) no longer swallows its error.
+    The bare `_ = args.Persist.Transaction(...)` is replaced with a
+    captured-err WARN-and-continue: the dispatch proceeds (the work
+    is in-flight) but the audit loss surfaces in the log.
+  - `code:runtime/lineage_writer.go::ClaimTerminalRecord.ParentRunID`
+    renamed `OpenLineageRunRef` (json tag
+    `open_lineage_run_ref,omitempty`) — the field never carried a
+    parent-run semantic; it is the run key the OpenLineage emitter
+    uses for `Run.RunID`. The setter at
+    `code:runtime/terminal_decision_forensics.go::ResolveClaimHandleTerminal`
+    and the consumer at
+    `code:subscribers/openlineage/emitter.go::MakeClaimTerminalEvent`
+    updated in lockstep; subscriber-side
+    `code:subscribers/openlineage/subscriber.go::ClaimTerminalRecord`
+    mirrored. New wire-contract test
+    `code:subscribers/openlineage/subscriber_test.go::TestClaimTerminalRecord_WireContract`
+    pins the JSON shape.
+  - `code:control/controlapi/assets.go::handleAssetMaterialize` dead
+    `errSilentEOF` sentinel removed; the empty-body branch now uses
+    `errors.Is(err, io.EOF)` directly (the actual error
+    `json.Decoder.Decode` returns on empty input).
+  - `foundation/integration/...` docstring references bulk-rewritten
+    to `runtime/...` across 21+ source files. The 2026-05-13 layer
+    rename left stale `code:foundation/integration/...` citations in
+    comments and package docs throughout `foundation/locks/`,
+    `foundation/persistence/`, `foundation/shared/`, `graph/`,
+    `runtime/`, `control/`, `conformance/`. License-check test
+    fixtures and scenario-test docstrings updated alongside.
+  - `code:runtime/runner_acquire.go::acquisition` struct doc rewritten
+    to reflect the dispatch-time mutation reality: most fields are
+    populated in the acquisition tx and immutable for the lifetime
+    of the acquisition; `MergedUserdata` is enriched at dispatch
+    time on the same goroutine. The previous "no helper mutates ...
+    post-acquisition" claim contradicted
+    `code:runtime/runner_dispatch.go:620`'s write.
+  - `code:subscribers/openlineage/subscriber.go::LeafRunRecord`
+    synchronized with the writer-side
+    `code:runtime/lineage_writer.go::LeafRunRecord`: added `NodeID`,
+    `FrameID`, `ScopeDataHash`, `State`, `ErrorClass`, `Extra`;
+    `SubstitutionRefs` type corrected from `[]any` to `[]string`;
+    JSON tags aligned field-for-field. The OL emitter
+    (`code:subscribers/openlineage/emitter.go::MakeLeafRunEvent`)
+    projects the newly-available fields into the `rimsky` facet
+    block so the emitted OL graph carries the run-row anchors. New
+    wire-contract test `subscriber_test.go::TestLeafRunRecord_WireContract`
+    pins the writer→subscriber round-trip.
+  - `code:internal/pgtest/pgtest.go::StartFreshPostgresDSN` and the
+    `foundation/internal/pgtest/` mirror raised wait-strategy
+    timeouts from 180s to 300s (both `wait.ForLog` and
+    `wait.ForListeningPort`). Cycle-4 evidence that 180s was tight
+    under heavy parallel load (`wait.ForListeningPort` itself timing
+    out at 9 retries with `invalid port`) drove the bump.
+    `code:test/scenarios/parked_lifecycle_test.go::TestParkedLifecycleParkTimeoutAbandonsHeldClaim`
+    park_timeout / failed / worker-request-deleted wait budgets
+    extended from 15s to 30s to absorb the scheduler-tick + sweep-tick
+    interleave under parallel load.
+
+- **Cycle-4 review cleanup (2026-05-17).** Four issues from the
+  fourth-round review.
+  - `code:control/controlapi/lineage.go::walkLineageRuns` ancestor
+    branch realigned to mirror the descendant fix from cycle 3: the
+    seed run no longer appears in its own ancestors set. The walk
+    now, per frontier id, extracts upstream refs from the row's
+    `substitution_refs` and emits each ancestor's lineage row exactly
+    once (via a second `GetByRunID` per discovered ref). New
+    `code:control/controlapi/lineage_test.go::TestLineageRunAncestors_HandlerWalksChain`
+    pins the contract against a real Postgres harness.
+  - `code:runtime/subgraph_caller_lineage_test.go` minimized: the
+    blank-assigned `validateNd` / `transformNd` / `promoteNd`
+    scaffolding variables are dropped (the staging nodes are still
+    created via `mk()` because `applyTerminalCompleteSubgraphCaller`
+    walks `Nodes().ListByInstance` to dispatch internal-cascade
+    targets, but the return values are discarded with `_` since no
+    assertion touches them). Docstring clarified to explain why the
+    staging rows exist.
+  - `code:runtime/lineage_writer_test.go::cascadeFreshForTest` retired
+    in favour of the real `cascade.NodeStateFresh` constant via a
+    direct import of `pkg:github.com/fallguy/rimsky/foundation/cascade`
+    — there was never an actual import cycle, only a
+    cyclic-looking concern.
+  - `code:internal/pgtest/pgtest.go::StartFreshPostgresDSN` (and the
+    `foundation/internal/pgtest/` mirror) hardened against the
+    testcontainers port-mapping flake. The wait strategy now pairs
+    `wait.ForLog(...)` with `wait.ForListeningPort("5432/tcp")` (both
+    capped at 180s so the Docker daemon state-query can converge
+    under saturated parallel load); the eventual `ConnectionString`
+    call is wrapped by `resolveConnectionString`, which retries the
+    port-endpoint lookup up to 8 times with exponential backoff
+    (200ms → 2s cap). One WARN line per retry surfaces the residual
+    race in CI logs; production-fast tests succeed on attempt 1 and
+    pay nothing. Empirically: across multiple full `make test-all`
+    runs post-fix, zero `port "5432/tcp" not found` failures (vs.
+    ~1/50 sub-tests pre-fix).
+
+- **Cycle-3 review cleanup (2026-05-17).** Eight issues from the
+  third-round review surfaced on top of the cycle-2 lineage-forensics
+  cleanup.
+  - `code:runtime/lineage_writer_test.go::TestEmitLeafRunLineage_OmitsEmptyParentRunID`
+    rewritten to drive `code:runtime/lineage_writer.go::EmitLeafRunLineage`
+    end-to-end via a minimal `RunArgs` fixture (the
+    `emitFakePersist` wrapper exposes only `Lineage()` +
+    `Transaction()`). Both branches of the nil-pointer guard
+    (`ParentRunID == nil` → empty string + omitempty drop; non-nil →
+    UUID string) are now covered. Pre-cycle-3, the test called
+    `WriteLeafRunLineage` directly, leaving the nil-pointer conversion
+    path uncovered.
+  - `code:foundation/persistence/conformance/lineage.go::testLineageQueryByParentRunID`
+    added to the cross-driver conformance suite. Round-trips a
+    `record_kind: "leaf_run"` row with a non-empty `parent_run_id`
+    through both postgres and sqlite drivers and asserts the per-driver
+    JSON-path predicate (`record->>'parent_run_id' = $1` postgres /
+    `json_extract(record, '$.parent_run_id') = ?` sqlite) returns the
+    row. Catches a SQL typo that the in-memory fake's re-parse-JSON
+    shortcut could not.
+  - `code:control/controlapi/lineage_test.go::TestLineageRunDescendants_HandlerWalksChain`
+    new integration test for `route:GET /lineage/runs/{run_id}/descendants`.
+    Seeds a chain (root → child → grandchild) via direct
+    `code:foundation/persistence/lineage.go::LineageTable.Insert` writes,
+    queries with depth=2, asserts both downstream rows surface. Bonus
+    coverage at depth=1 verifies the BFS stop. The handler test
+    surfaced a latent bug in
+    `code:control/controlapi/lineage.go::walkLineageRuns` that
+    duplicated frontier-id rows into the descendants output (the seed
+    appeared in its own descendants set + every BFS layer re-fetched
+    the frontier's `leaf_run` row). The walker now branches on
+    `dir == lineageWalkDirectionDescendants` and only collects children
+    from `QueryByParentRunID`; ancestor direction is unchanged.
+  - `code:subscribers/openlineage/subscriber.go::ensureCursorTable`
+    now runs `UPDATE rimsky_openlineage_cursor SET last_id =
+    'ffffffff-...' WHERE last_id = '00000000-...'` after the
+    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` step. Pre-cycle-3, the
+    cycle-2 migration left pre-existing cursor rows with the zero UUID
+    (column default), and the predicate
+    `(observed_at, id) > ($1, $2)` would treat any non-zero UUID as
+    strictly greater than the zero UUID — re-emitting every row at the
+    cursor's `observed_at` on the next poll. The max-UUID sentinel
+    preserves the "I've emitted everything ≤ this observed_at"
+    semantics. Idempotent (rows with a non-zero `last_id` are left
+    alone). Regression test
+    `code:subscribers/openlineage/subscriber_test.go::TestSubscriber_CursorMigrationZeroUUIDRepair`
+    pins the migration UPDATE behavior against real postgres.
+  - `code:runtime/subgraph_caller_lineage_test.go::TestSubgraphCallerLineage_EmitsSubgraphCallRow`
+    new scenario test exercising the sub-graph caller's lineage
+    emission against real postgres. Drives
+    `code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller`
+    with a minimal `acquisition` fixture; asserts the resulting
+    `table:rimsky_lineage` row carries
+    `terminal_kind: "subgraph_call"`, `state: "running"`, populated
+    `params_snapshot_hash` / `userdata_hash` / `template_hash`, and
+    parent_run_id omitted (root caller). Also pins the "exactly one
+    row" property — the second `complete` row fires later from
+    `applyTerminalComplete`.
+  - `concept:lineage-record` doc enumerates `terminal_kind` values
+    (`complete` / `park` / `errored` / `subgraph_call`) with one-line
+    each describing the emit site, and documents the sub-graph caller's
+    two-row emission shape (one `subgraph_call` at internal-cascade-fire;
+    one `complete` at the post-aggregation terminal). Also notes the
+    downstream consequence: the OpenLineage subscriber emits TWO
+    `COMPLETE` events for the same `runId`, discriminated by
+    `rimsky.terminal_kind` in the rimsky facet. Backends that treat
+    `COMPLETE` as a terminal-state signal must branch on the facet.
+  - `code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller`
+    docstring extended to call out the two-row shape and the
+    OpenLineage downstream consequence in lockstep with the concept
+    doc.
+  - `code:test/scenarios/lineage/recursive_ancestor_walk_test.go::TestRecursiveAncestorWalk_ChainsParentRunID`
+    rewrite. Pre-cycle-3 the test docstring claimed "lineage rows form
+    a parent_run_id chain across the run-tree" but the body only
+    seeded N distinct rows at the same frame — never set ParentRunID,
+    never walked the chain. The rewrite seeds a real 3-level chain and
+    walks it upward from grandchild, asserting it terminates at root
+    and that `QueryByParentRunID` returns the expected children at each
+    level.
+  - **`code:runtime/lineage_writer.go::missingLeafRunFields` demoted
+    from per-row WARN to single-shot startup INFO** via
+    `logMissingFieldsOnce` (`sync.Once`-backed). The pre-cycle-3 warn
+    fired four times per terminal (one for each unplumbed field
+    `ExecutorVersion` / `FrameTriggerKind` / `TriggerMessageID` /
+    `TemplateHash`); production log noise. Plumbing landed for
+    `TemplateHash` via `acquisition.TemplateHash` →
+    `LeafRunEmitInput.TemplateHash` → `LeafRunRecord.TemplateHash`, so
+    the remaining list (three fields) reflects the genuine v1-defer
+    gap and is logged once at first emit.
+
+- **Cycle-2 review cleanup (2026-05-17).** Seven issues from the
+  second-round review on the lineage-forensics follow-up. Trail-followed
+  through every wire-format / interface / schema consumer.
+  - `code:runtime/lineage_writer.go::EmitLeafRunLineage` now sources
+    `ParentRunID` from `col:rimsky_node_runs.parent_run_id` via the
+    run-tree accessor at acquisition time
+    (`code:runtime/runner_acquire.go::tryAcquire` reads
+    `code:foundation/persistence/run_tree.go::RunTreeTable.GetByID`).
+    Previously the field was never populated, so the descendant walker
+    (`code:foundation/persistence/postgres/lineage.go::queryByParentRunIDSQL`)
+    matched nothing and `route:GET /lineage/runs/{run_id}/descendants?depth=N`
+    returned empty for every seed. The acquisition threads through
+    `acquisition.ParentRunID` → `LeafRunEmitInput.ParentRunID` →
+    `LeafRunRecord.ParentRunID`; root runs persist with the JSON key
+    dropped via `omitempty` (NOT as an empty string — a literal empty
+    string would corrupt the predicate). New unit tests in
+    `code:runtime/lineage_writer_test.go::TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable`
+    and `code:runtime/lineage_writer_test.go::TestEmitLeafRunLineage_OmitsEmptyParentRunID`.
+  - `code:subscribers/openlineage/subscriber.go` cursor now persists
+    `(observed_at, id)` instead of `observed_at` alone. Predicate is
+    `(observed_at, id) > ($1, $2)`. Without the tie-breaker, two
+    `table:rimsky_lineage` rows sharing the same `observed_at` (no
+    UNIQUE on the column) caused the second row to be permanently
+    skipped after the first emitted. Cursor table schema gains a
+    `last_id UUID NOT NULL DEFAULT '00000000-...'` column with an
+    in-line `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` forward-compat
+    seam. Regression test in
+    `code:subscribers/openlineage/subscriber_test.go::TestSubscriber_TieBreakerSameObservedAt`.
+  - `file:.ok-planner/design/concepts.md` index updated:
+    `claim_commit` → `claim_terminal` (the rename landed in
+    `code:foundation/persistence/lineage.go` and the migrations; the
+    concept index missed the update).
+  - `code:foundation/persistence/lineage.go::LineageRow.Outcome`
+    docstring corrected: was misleading ("Empty / 'committed' on
+    leaf_run"); reality is leaf-run rows persist with `outcome=""`
+    verbatim. New copy enumerates the three valid values
+    (`committed | abandoned | force_cancelled`) for `claim_terminal`
+    rows and notes `leaf_run` rows are empty.
+  - `code:runtime/lineage_writer.go::LeafRunRecord.ParamsHash` removed;
+    the duplicate field carried the same hash as `ParamsSnapshotHash`
+    and nothing consumed it (subscriber + emitter only read
+    `ParamsSnapshotHash`). Test + concept doc updated.
+  - `code:runtime/subgraph_dispatch.go::applyTerminalCompleteSubgraphCaller`
+    now emits a `terminal_kind: "subgraph_call"` leaf-run lineage row.
+    Previously sub-graph caller terminals returned via the early-exit
+    branch in `code:runtime/runner_terminal.go::applyTerminalComplete`
+    and produced no lineage row — breaking rebuildability of the
+    projection for sub-graph instances. The new `subgraph_call`
+    discriminator lets consumers filter caller rows out of pure leaf-
+    executor accounting.
+  - `code:sensors/sensor-cron/multi_replica_test.go` docstring rewritten
+    — no longer quotes a stale excerpt from the prior `sensor.go:17`
+    header that was rewritten in cycle 1.
+
+- **Lineage forensics extension follow-up (2026-05-17).** Reconciles the
+  writer-side + subscriber-side lineage record shapes after the
+  2026-05-16 `claim_commit` → `claim_terminal` rename so the emitter
+  downstream renders well-formed OpenLineage events. Changes:
+  - `code:runtime/lineage_writer.go::ClaimTerminalRecord` adds
+    `parent_run_id`, `sub_claim_handle_ids`, `committed_at` (read by
+    `code:subscribers/openlineage/subscriber.go::ClaimTerminalRecord`
+    and `code:subscribers/openlineage/emitter.go::MakeClaimTerminalEvent`
+    for `RunRef.RunID` / fan-out manifest / `eventTime`). Without
+    these fields the emitter fell back to `claim_handle_id` as
+    `Run.RunID`, producing broken lineage graphs.
+  - `code:runtime/lineage_writer.go::LeafRunRecord` adds `node_alias`,
+    `parent_run_id`, `frame_trigger_kind`, `trigger_message_id`,
+    `held_claims[]`, `executor_name`, `executor_version`,
+    `template_hash`, `template_node_alias`, `params_snapshot_hash`,
+    `changed`, `terminal_kind`. Per-call-site sourcing: `NodeAlias`
+    and `ExecutorName` from `acquisition.NodeType` / `.Executor`;
+    `Changed` + `TerminalKind` from the terminal event; `HeldClaims`
+    via the new `HeldClaimsForLineage(acq)` helper that walks
+    `acquisition.Locks` and the co-held / inherited `HeldClaims` map.
+    `ExecutorVersion`, `FrameTriggerKind`, `TriggerMessageID`,
+    `TemplateHash`, `ParentRunID` are left empty by callers (TODO
+    in `EmitLeafRunLineage` doc); the writer emits a per-row WARN
+    listing the missing fields so the gap is observable.
+  - `code:runtime/runner_acquire.go::acquisition.MergedUserdata`
+    new field — `code:runtime/runner_dispatch.go::buildExecuteRequest`
+    snapshots the post-`applyUserdataOverrides` shape onto the
+    acquisition so `EmitLeafRunLineage` can hash the exact userdata
+    the executor saw (not the pre-merge per-instance override blob,
+    which was the prior bug per the reviewer's finding 4).
+  - `code:runtime/lineage_writer.go::WriteClaimTerminalLineage` now
+    REQUIRES an explicit `Outcome` — empty Outcome returns an error.
+    The pre-2026-05-17 path silently defaulted to `committed`, which
+    masked Abandon callers that forgot to set the field. Pre-v1
+    break-freely: `code:foundation/persistence/postgres/migrations/008-claim-lineage-outcome.sql`
+    + the SQLite mirror drop the column DEFAULT after seeding
+    pre-existing rows; `code:foundation/persistence/postgres/migrations/002-data-platform-extensions.sql`
+    adds an explicit `rimsky_lineage_record_kind_check` constraint
+    name so the 008 DROP doesn't rely on postgres's auto-naming.
+  - `code:runtime/lineage_writer.go::EmitLeafRunLineage` now logs
+    WARN on `HashCanonicalJSON` errors (per-field, with run_id +
+    error) instead of silently dropping the hash. Failures still
+    don't abort the run — lineage is observability metadata.
+  - `code:runtime/terminal_decision_forensics.go::emitTerminalForensics`
+    now walks the immediate sub-claim children via
+    `args.ClaimHandles.ListChildClaimHandles` so the `claim_terminal`
+    row carries the fan-out manifest. The auto-terminal lineage
+    hints (`code:runtime/auto_terminal.go`,
+    `code:runtime/auto_terminal_chain.go`) thread `RunID` from the
+    parent `claim_handle.node_run_id`.
+  - `code:foundation/persistence/lineage.go::LineageTable.QueryByParentRunID`
+    new method — postgres uses `record->>'parent_run_id'` lookup,
+    SQLite uses `json_extract(record, '$.parent_run_id')`.
+    `code:control/controlapi/lineage.go::walkLineageRuns` (descendant
+    direction) now issues per-frontier-id queries with a 1000-row
+    limit, replacing the prior page-scan-and-filter pattern that
+    silently truncated deep descendant trees at `LIMIT 200`.
+  - `code:foundation/persistence/sqlite/lineage.go::scanLineage` now
+    propagates `uuid.Parse` errors instead of silently dropping them
+    (mirrors the postgres impl).
+  - `code:subscribers/openlineage/subscriber.go::tick` now advances
+    the cursor past undecodable rows (`toEvent` errors are permanent)
+    so a single malformed payload can't stall the polling loop
+    forever. Transient emit failures still halt the batch and retry
+    on the next tick.
+  - `code:sensors/sensor-cron/sensor.go` docstring rewritten to
+    describe actual behavior: in-memory state only, multi-replica
+    not supported. The pre-2026-05-17 docstring claimed
+    `state_db: postgres://...` config + `pg_try_advisory_lock`
+    coordination, neither of which was implemented. The
+    `code:protocols/proto/v1/claim_producer.proto::CommitResponse`
+    comment + concept docs `.ok-planner/design/concepts/lineage.md`
+    + `lineage-record.md` swept clean of the pre-rename
+    `claim_commit` / `WriteClaimCommitLineage` / `MakeClaimCommitEvent`
+    naming. Dead `errors` import + `var (_=context.Background;
+    _=errors.New)` block removed from
+    `code:control/controlapi/lineage.go`.
+
+- **Post-data-platform cleanup paydown (2026-05-17).** Wire shape +
+  docstrings reconciled with the post-Stage-4 claim-handle state-column
+  refactor. `code:control/cli/client.go::AssetItem` swaps the pre-Stage-4
+  `held_durable bool` for `state string` + `lifetime string`, mirroring
+  `code:control/controlapi/assets.go::assetItem`. The dashboard
+  `dashboards/rimsky-dashboard/src/client/types.ts::AssetRow` is
+  reconciled to the server-side envelope (drops `scope_data_hash`,
+  `current_version_id`, `created_at`, `held_durable`; adds `claim_id`,
+  `scope`, `version_id`, `state`, `lifetime`, `claimed_at`,
+  `holder_node_id`, `node_type`); `AssetsPage`/`AssetDetailPage` and
+  the CLI / unit fixtures updated to match. Stale
+  `held_durable=TRUE`/`SetHeldDurable`/`ListHeldDurableByInstance`
+  references swept from runtime + persistence + scenario docstrings
+  (the public surface `ReleaseHeldDurableClaims` retains its name).
+  `code:runtime/terminal_decision.go` (834 → 415 lines) split into
+  `terminal_decision_cancel.go` (sibling + descendant strict-cancel
+  walkers) and `terminal_decision_forensics.go` (per-terminal lineage
+  + event emission); mirrors the `runner_acquire_*.go` split pattern.
+  `code:runtime/runner_acquire_claims.go::evaluateScopeConflict` carries
+  a clarifying comment that committed-durable rows correctly surface in
+  conflict detection across the Promote boundary.
+
+- **Asset/lineage coverage audit (2026-05-17).** Classified the 12 test
+  files under `test/scenarios/asset/` and `test/scenarios/lineage/`
+  by harness use (shape-pinning vs end-to-end vs helpers). 0 tests
+  upgraded; 0 new companions added; all kept as-is — the existing
+  set is already well-stratified (end-to-end paths covered via
+  `pgtest.OpenDriver`/`scenario.Start`; shape-pinning tests cover
+  focused units like writer payload shapes and fixture wire
+  contracts where harness-boot cost isn't justified). Classification
+  matrix in the plan-notes file.
+
+- **`sensor-cron` test coverage (2026-05-17).** New
+  `code:sensors/sensor-cron/multi_replica_test.go` pins single-replica
+  fire-once behavior and documents (via the
+  `TestMultiReplica_TwoInProcessInstancesEachFireIndependently_NoCoordinationYet`
+  test) the current absence of cross-replica coordination. The
+  multi-replica advisory-lock feature called out in the source header
+  is not yet implemented; the test should be updated when that lands
+  to require exactly one fire per window across replicas. See plan
+  notes for the full disposition.
+
+- **Cold-read paydown (2026-05-17).** `code:runtime/runner_acquire.go`
+  split into four sibling files: `runner_acquire_named_locks.go`
+  (named-lock acquisition), `runner_acquire_claims.go` (scope-claim
+  acquisition + scope-conflict evaluator), `runner_acquire_holders.go`
+  (held-claim co-holdership inserts at acquire-time), and
+  `runner_acquire_postcommit.go` (verify-before-run guard, orphaned-
+  claim bail path, transition-to-running, lock_acquired event emit,
+  claim-scope/address accessors). The orchestration shell
+  (`tryAcquire` + `tryAcquireWithTx` + `selectCandidatesShortTx` +
+  `acquireCandidate`) stays in the original file. `runtime/auto_terminal.go`
+  split: `auto_terminal_chain.go` carries the recursive parent-claim
+  walk (`resolveParentClaimChain` + `aggregateParentOutcome`). All
+  annotations preserved (`@blessed-invariant`, `@concept`, `@source`).
+  `runtime/terminal_decision.go::ResolveClaimHandleTerminal` refactored
+  in-file: the 217-line body shrinks to a 30-line orchestration shell
+  dispatching into 4 named helpers (`dispatchDataProcessingTerminal`,
+  `fireProducerVerb`, `promoteHandleState`, `bumpParentAndRecurse`).
+  No behavior change; tests + lint + race all green.
+
+- **Claim-handle state-column refactor (2026-05-17).** Replaced
+  `col:rimsky_claim_handles.held_durable bool` with a 3-state column
+  (`col:rimsky_claim_handles.state` enum: `active`, `committed`,
+  `abandoned`) plus `col:rimsky_claim_handles.resolved_at TIMESTAMPTZ`.
+  Terminal `Promote` preserves the row past holding-subgraph
+  completion; new `code:runtime/sweep_claim_handle_retention.go::SweepClaimHandleRetention`
+  reaps terminal rows past `cfg:retention.claim_handles_trailing`
+  (default 30d). Durable-committed rows are never swept (asset
+  surface); deleted only by `code:runtime/instance_termination.go::ReleaseHeldDurableClaims`
+  or the operator `route:DELETE /instances/{id}/assets/{alias}` handler.
+  `@blessed-invariant 4` text updated to enumerate the two guard shapes
+  (active-row claimant-guarded mutations; non-active-row absence-
+  guarded deletions). `@blessed-invariant 22` text refreshed to
+  `state = 'committed' AND lifetime = 'durable'`. New persistence
+  methods on `code:foundation/persistence/claim_handles.go::ClaimHandleTable`:
+  `Promote`, `ListByState`, `ListByInstanceAndState`, `DeleteResolved`,
+  `DeleteResolvedOlderThan`. Removed: `SetHeldDurable`,
+  `ListHeldDurableByInstance`, `HeldDurable` field. Migrations:
+  `file:foundation/persistence/postgres/migrations/009-claim-handles-state-column.sql`
+  + sqlite mirror (Stage 1 additive); `file:foundation/persistence/postgres/migrations/010-claim-handles-drop-held-durable.sql`
+  + sqlite mirror (Stage 4 destructive — drops `held_durable` column
+  and the held-durable partial index; adds two new state-based partial
+  indexes). The asset DELETE handler and `ReleaseHeldDurableClaims`
+  flipped to the absence-guarded `DeleteResolved` path. Concept catalog
+  refreshed across `concept:claim-handle`, `concept:claim-lifetime`,
+  `concept:asset`, `concept:claim-tree`, `concept:cancel-siblings`,
+  `concept:auto-terminal`, `concept:orphan-reaper`.
+
 - Land lineage + events forensics extensions (2026-05-16, dispatch
   attached to the data-platform-extensions plan): every claim-handle
   terminal — `Commit`, natural `Abandon`, and force-cancelled `Abandon`

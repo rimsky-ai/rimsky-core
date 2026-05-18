@@ -137,8 +137,17 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			},
 		})
 	}
+	// Project the writer's full LeafRunRecord shape into the rimsky
+	// facet block so downstream OL consumers can audit-trace the leaf
+	// run back to its node-run row (`node_id`, `frame_id`, `state`,
+	// `scope_data_hash`, `error_class`).
 	facets := map[string]any{
 		"rimsky": map[string]any{
+			"node_id":              rec.NodeID,
+			"frame_id":             rec.FrameID,
+			"state":                rec.State,
+			"scope_data_hash":      rec.ScopeDataHash,
+			"error_class":          rec.ErrorClass,
 			"template_hash":        rec.TemplateHash,
 			"params_snapshot_hash": rec.ParamsSnapshotHash,
 			"userdata_hash":        rec.UserdataHash,
@@ -150,6 +159,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			"last_outcome":         rec.LastOutcome,
 			"terminal_kind":        rec.TerminalKind,
 			"parent_run_id":        rec.ParentRunID,
+			"substitution_refs":    rec.SubstitutionRefs,
 		},
 	}
 	return Event{
@@ -190,8 +200,8 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 		},
 	}
 	runID := rec.ClaimHandleID
-	if rec.ParentRunID != "" {
-		runID = rec.ParentRunID
+	if rec.OpenLineageRunRef != "" {
+		runID = rec.OpenLineageRunRef
 	}
 	return Event{
 		EventType:   eventType,
@@ -203,10 +213,14 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 		Outputs:     []DatasetRef{output},
 		Facets: map[string]any{
 			"rimsky": map[string]any{
-				"sub_claim_handle_ids": rec.SubClaimHandleIDs,
-				"frame_id":             rec.FrameID,
-				"outcome":              rec.Outcome,
-				"cause":                rec.Cause,
+				"sub_claim_handle_ids":   rec.SubClaimHandleIDs,
+				"frame_id":               rec.FrameID,
+				"outcome":                rec.Outcome,
+				"cause":                  rec.Cause,
+				"run_id":                 rec.RunID,
+				"node_id":                rec.NodeID,
+				"parent_claim_handle_id": rec.ParentClaimHandleID,
+				"producer_metadata":      rec.ProducerMetadata,
 			},
 		},
 	}

@@ -39,4 +39,4 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its handl
 
 ## Notes
 
-- 2026-05-14: `dependencies:` retires; `subscribes:` introduced (`see concept:subscription`); substitution refs auto-subscribe. The `on_event:` map retires; `concept:on-event-handler` is retired to `_retired/`. Lifecycle handlers lose their `invalidate.targets:` clauses. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- 2026-05-14: `dependencies:` retires; `subscribes:` introduced (`see concept:node-subscription`); substitution refs auto-subscribe. The `on_event:` map retires; `concept:on-event-handler` is retired to `_retired/`. Lifecycle handlers lose their `invalidate.targets:` clauses. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

@@ -21,6 +21,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 const lockHolderCols = `
@@ -29,10 +30,11 @@ const lockHolderCols = `
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id,
   node_run_id, is_held,
-  parent_claim_handle_id, lifetime, held_durable, version_id,
+  parent_claim_handle_id, lifetime, version_id,
   producer_candidate_handle,
   aggregation_policy, expected_children_count,
-  committed_children_count, abandoned_children_count
+  committed_children_count, abandoned_children_count,
+  state, resolved_at
 `
 
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
@@ -48,7 +50,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 	}
 	lifetime := in.Lifetime
 	if lifetime == "" {
-		lifetime = "subgraph"
+		lifetime = spec.ClaimLifetimeSubgraph
 	}
 	var candidateHandle any
 	if len(in.ProducerCandidateHandle) > 0 {
@@ -76,7 +78,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		in.HolderSupervisorID, in.HolderNodeID.String(),
 		now, now, formatTime(in.ExpiresAt), nullableUUID(in.FrameID),
 		nullableUUID(in.NodeRunID), isHeldInt,
-		nullableUUID(in.ParentClaimHandleID), lifetime, candidateHandle,
+		nullableUUID(in.ParentClaimHandleID), string(lifetime), candidateHandle,
 		aggPolicy,
 	)
 	if err != nil {
@@ -212,22 +214,131 @@ func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID s
 	return collectClaimHandles(rows)
 }
 
-// SetHeldDurable flips the held_durable column claimant-guarded.
-func (s *claimHandlesImpl) SetHeldDurable(
-	ctx context.Context, id shared.UUID, supervisorID string, heldDurable bool, tx persistence.Tx,
-) error {
-	val := 0
-	if heldDurable {
-		val = 1
-	}
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_claim_handles SET held_durable = ?
-		 WHERE id = ? AND holder_supervisor_id = ?`,
-		val, id.String(), supervisorID)
+// DeleteResolvedOlderThan deletes terminal claim_handle rows past
+// retention cutoff. Mirrors the postgres impl.
+//
+// @blessed-invariant 4 (post-refactor): non-active-row deletions are
+// guarded by absence + the row-discovery query filter.
+// @concept: claim-handle
+// @concept: retention
+func (s *claimHandlesImpl) DeleteResolvedOlderThan(
+	ctx context.Context, cutoff time.Time,
+) (int, error) {
+	res, err := (*tablesImpl)(s).db.ExecContext(ctx,
+		`DELETE FROM rimsky_claim_handles
+		  WHERE state IN ('committed', 'abandoned')
+		    AND (state = 'abandoned' OR lifetime = 'subgraph')
+		    AND resolved_at < ?
+		    AND holder_supervisor_id IS NULL`,
+		formatTime(cutoff))
 	if err != nil {
-		return fmt.Errorf("lockholders.SetHeldDurable: %w", err)
+		return 0, fmt.Errorf("sqlite.ClaimHandles.DeleteResolvedOlderThan: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.ClaimHandles.DeleteResolvedOlderThan: rows-affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// DeleteResolved deletes a non-active claim_handle row. Mirrors the
+// postgres impl. Returns spec.ErrIllegalClaimHandleTransition on
+// affected-rows = 0.
+//
+// @blessed-invariant 4 (post-refactor): non-active-row deletions are
+// guarded by absence + the row-discovery query filter.
+// @concept: claim-handle
+func (s *claimHandlesImpl) DeleteResolved(
+	ctx context.Context, id shared.UUID, tx persistence.Tx,
+) error {
+	res, err := s.q(tx).ExecContext(ctx,
+		`DELETE FROM rimsky_claim_handles
+		  WHERE id = ?
+		    AND state IN ('committed', 'abandoned')
+		    AND holder_supervisor_id IS NULL`, id.String())
+	if err != nil {
+		return fmt.Errorf("lockholders.DeleteResolved: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lockholders.DeleteResolved: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
+}
+
+// Promote transitions a claim handle from active to committed or
+// abandoned. Claimant-guarded against the supervisor that holds the
+// row. Sets state, nulls holder_supervisor_id, and sets resolved_at in
+// a single statement. Returns spec.ErrIllegalClaimHandleTransition on
+// affected-rows = 0.
+//
+// @blessed-invariant 4 (post-refactor): active-row mutations are
+// claimant-guarded.
+// @concept: claim-handle
+func (s *claimHandlesImpl) Promote(
+	ctx context.Context, id shared.UUID, supervisorID string,
+	newState spec.ClaimHandleState, tx persistence.Tx,
+) error {
+	res, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET state = ?,
+		        holder_supervisor_id = NULL,
+		        resolved_at = CURRENT_TIMESTAMP
+		  WHERE id = ?
+		    AND state = 'active'
+		    AND holder_supervisor_id = ?`,
+		string(newState), id.String(), supervisorID)
+	if err != nil {
+		return fmt.Errorf("lockholders.Promote: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lockholders.Promote: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
+	}
+	return nil
+}
+
+// ListByState returns claim-handle rows currently in the given state.
+func (s *claimHandlesImpl) ListByState(
+	ctx context.Context, state spec.ClaimHandleState, tx persistence.Tx,
+) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
+		 WHERE state = ?
+		 ORDER BY claimed_at ASC`, string(state))
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListByState: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
+}
+
+// ListByInstanceAndState returns claim-handle rows joined through
+// holder_node_id → rimsky_nodes filtered by instance + state +
+// lifetime. Column qualification mirrors the postgres impl.
+func (s *claimHandlesImpl) ListByInstanceAndState(
+	ctx context.Context, instanceID shared.UUID,
+	state spec.ClaimHandleState, lifetime spec.ClaimLifetime, tx persistence.Tx,
+) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+qualifiedLockHolderCols("ch")+`
+		   FROM rimsky_claim_handles ch
+		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
+		  WHERE n.instance_id = ?
+		    AND ch.state = ?
+		    AND ch.lifetime = ?`,
+		instanceID.String(), string(state), string(lifetime))
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListByInstanceAndState: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
 }
 
 // SetVersionID persists the producer-returned canonical version_id
@@ -314,27 +425,6 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	return nil
 }
 
-// ListHeldDurableByInstance returns claim_handles rows held-durable for
-// the given instance. Column qualification mirrors the postgres impl —
-// the JOIN against `rimsky_nodes n` introduces a second `id` column,
-// so every selected column is `ch.`-prefixed to avoid ambiguous
-// references at execution time.
-func (s *claimHandlesImpl) ListHeldDurableByInstance(
-	ctx context.Context, instanceID shared.UUID, tx persistence.Tx,
-) ([]persistence.ClaimHandleRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+qualifiedLockHolderCols("ch")+`
-		   FROM rimsky_claim_handles ch
-		   JOIN rimsky_nodes n ON n.id = ch.holder_node_id
-		  WHERE ch.held_durable = 1 AND n.instance_id = ?`,
-		instanceID.String())
-	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListHeldDurableByInstance: %w", err)
-	}
-	defer rows.Close()
-	return collectClaimHandles(rows)
-}
-
 // qualifiedLockHolderCols returns the lock-holder column list prefixed
 // with the given alias. Mirrors the postgres helper.
 func qualifiedLockHolderCols(alias string) string {
@@ -345,10 +435,11 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.claimed_at, ` + alias + `.last_heartbeat_at, ` + alias + `.expires_at, ` +
 		alias + `.frame_id, ` + alias + `.node_run_id, ` + alias + `.is_held, ` +
 		alias + `.parent_claim_handle_id, ` + alias + `.lifetime, ` +
-		alias + `.held_durable, ` + alias + `.version_id, ` +
+		alias + `.version_id, ` +
 		alias + `.producer_candidate_handle, ` +
 		alias + `.aggregation_policy, ` + alias + `.expected_children_count, ` +
-		alias + `.committed_children_count, ` + alias + `.abandoned_children_count`
+		alias + `.committed_children_count, ` + alias + `.abandoned_children_count, ` +
+		alias + `.state, ` + alias + `.resolved_at`
 }
 
 func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
@@ -370,14 +461,14 @@ func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID st
 // see the postgres mirror for the full rationale.
 func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	now := nowUTC()
-	// Mirror the postgres exclusion: held_durable rows are outside the
-	// orphan-reaper feedback loop, so do not heartbeat them.
+	// Mirror the postgres exclusion: non-active rows are outside the
+	// heartbeat loop (predicate `state = 'active'`).
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		   SET last_heartbeat_at = ?,
 		       expires_at = ?
 		 WHERE holder_supervisor_id = ?
-		   AND held_durable = 0
+		   AND state = 'active'
 		   AND (
 		        EXISTS (
 		            SELECT 1 FROM rimsky_node_runs r
@@ -401,12 +492,13 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 	return nil
 }
 
-// ListExpired excludes held_durable rows; see postgres mirror for the
-// blessed-invariant rationale.
+// ListExpired returns active rows whose `expires_at < now`. Predicate
+// `state = 'active' AND expires_at < now`; see the postgres mirror for
+// the rationale.
 func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
-		 WHERE expires_at < ? AND held_durable = 0
+		 WHERE state = 'active' AND expires_at < ?
 		 ORDER BY expires_at ASC`, nowUTC(),
 	)
 	if err != nil {
@@ -428,13 +520,16 @@ func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedS
 	return nil
 }
 
+// CountByNamedLock returns the number of currently-held named-lock
+// rows for lockName (state='active' only post-Stage-2). Mirrors the
+// postgres impl.
 func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT count(*) FROM rimsky_claim_handles
 		 WHERE lock_kind = 'named' AND lock_name = ?
-		   AND expires_at > ?`,
-		lockName, nowUTC(),
+		   AND state = 'active'`,
+		lockName,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("lockholders.CountByNamedLock: %w", err)
@@ -442,18 +537,20 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 	return n, nil
 }
 
-// ListByProducerScope returns every scope-kind row for producerName
-// that is either unexpired OR held-durable. Mirrors the postgres
-// `OR held_durable = TRUE` predicate so held-durable rows participate
-// in scope-conflict detection (@blessed-invariant 4b single-writer-
-// per-scope). See the postgres mirror for the rationale.
+// ListByProducerScope returns scope-kind rows that occupy the producer's
+// scope: state = 'active' OR (state = 'committed' AND lifetime =
+// 'durable'). Mirrors the postgres impl post-Stage-2 of the claim-
+// handle state-column refactor. See the postgres mirror for the
+// rationale.
+//
+// @blessed-invariant 4b (single-writer-per-scope)
 func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).QueryContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
 		 WHERE lock_kind = 'scope' AND producer_name = ?
-		   AND (expires_at > ? OR held_durable = 1)
+		   AND (state = 'active' OR (state = 'committed' AND lifetime = 'durable'))
 		 ORDER BY claimed_at ASC`,
-		producerName, nowUTC(),
+		producerName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("lockholders.ListByProducerScope: %w", err)
@@ -463,17 +560,15 @@ func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName
 }
 
 // DeleteIfExpired mirrors the postgres impl: claimant-guarded delete
-// of expired rows, additionally gated on `held_durable = 0` so a
-// concurrent `SetHeldDurable` (fired by the auto-terminal Commit path)
-// cannot race the orphan reaper. See the postgres mirror for the
-// blessed-invariant rationale.
+// of expired active rows. Predicate `state = 'active' AND expires_at <
+// now`. See the postgres mirror for the blessed-invariant rationale.
 func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx persistence.Tx) (bool, error) {
 	res, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = ?
 		   AND holder_supervisor_id = ?
 		   AND expires_at < ?
-		   AND held_durable = 0`,
+		   AND state = 'active'`,
 		id.String(), supervisorID, nowUTC(),
 	)
 	if err != nil {
@@ -593,7 +688,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		address            sql.NullString
 		intent             sql.NullString
 		rws                sql.NullString
-		holderSupervisorID string
+		holderSupervisorID sql.NullString
 		holderNodeIDStr    string
 		claimedAtStr       string
 		lastHeartbeatAtStr string
@@ -603,13 +698,14 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		isHeldInt          int
 		parentClaimIDStr   sql.NullString
 		lifetime           sql.NullString
-		heldDurableInt     int
 		versionID          sql.NullString
 		candidateHandle    []byte
 		aggregation        sql.NullString
 		expectedChildren   int
 		committed          int
 		abandoned          int
+		stateStr           string
+		resolvedAtStr      sql.NullString
 	)
 	if err := sc.Scan(
 		&idStr, &kind,
@@ -618,10 +714,11 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		&holderSupervisorID, &holderNodeIDStr,
 		&claimedAtStr, &lastHeartbeatAtStr, &expiresAtStr, &frameIDStr,
 		&workerRequestIDStr, &isHeldInt,
-		&parentClaimIDStr, &lifetime, &heldDurableInt, &versionID,
+		&parentClaimIDStr, &lifetime, &versionID,
 		&candidateHandle,
 		&aggregation, &expectedChildren,
 		&committed, &abandoned,
+		&stateStr, &resolvedAtStr,
 	); err != nil {
 		return persistence.ClaimHandleRow{}, err
 	}
@@ -635,7 +732,15 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	}
 	r.ID = id
 	r.LockKind = persistence.LockKind(kind)
-	r.HolderSupervisorID = holderSupervisorID
+	// HolderSupervisorID is nullable: non-active rows always carry NULL
+	// per the migration-009 CHECKs. Carrying the column as `*string`
+	// preserves the NULL ↔ "no holder" distinction so claimant-guarded
+	// checks (`@blessed-invariant 4`) cannot mis-match a NULL row to an
+	// empty supervisor id.
+	if holderSupervisorID.Valid {
+		v := holderSupervisorID.String
+		r.HolderSupervisorID = &v
+	}
 	r.HolderNodeID = holderNodeID
 	if lockName.Valid {
 		v := lockName.String
@@ -675,9 +780,8 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	}
 	r.ParentClaimHandleID = parentClaimID
 	if lifetime.Valid {
-		r.Lifetime = lifetime.String
+		r.Lifetime = spec.ClaimLifetime(lifetime.String)
 	}
-	r.HeldDurable = heldDurableInt != 0
 	if versionID.Valid {
 		r.VersionID = versionID.String
 	}
@@ -688,6 +792,14 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	r.ExpectedChildrenCount = expectedChildren
 	r.CommittedChildrenCount = committed
 	r.AbandonedChildrenCount = abandoned
+	r.State = spec.ClaimHandleState(stateStr)
+	if resolvedAtStr.Valid {
+		t, perr := parseTime(resolvedAtStr.String)
+		if perr != nil {
+			return persistence.ClaimHandleRow{}, perr
+		}
+		r.ResolvedAt = &t
+	}
 	if r.ClaimedAt, err = parseTime(claimedAtStr); err != nil {
 		return persistence.ClaimHandleRow{}, err
 	}

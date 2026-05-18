@@ -67,14 +67,17 @@ describe('AssetsPage', () => {
   });
 
   it('renders the asset row when one is returned by the API', async () => {
+    const instanceID = '11111111-1111-1111-1111-111111111111';
     const fakeAsset = {
-      instance_id: '11111111-1111-1111-1111-111111111111',
       alias: 'parcels',
+      claim_id: 'claim-abc',
       producer_name: 'parquet-store',
-      scope_data_hash: 'abc123def',
-      current_version_id: 'v3',
-      held_durable: true,
-      created_at: new Date(0).toISOString(),
+      version_id: 'v3',
+      state: 'committed',
+      lifetime: 'durable',
+      claimed_at: new Date(0).toISOString(),
+      holder_node_id: 'node-1',
+      node_type: 'loader',
     };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
@@ -83,7 +86,7 @@ describe('AssetsPage', () => {
           JSON.stringify({
             instances: [
               {
-                id: fakeAsset.instance_id,
+                id: instanceID,
                 instance_key: 'demo',
                 template_hash: 'sha256-stub',
                 created_at: new Date(0).toISOString(),
@@ -107,6 +110,8 @@ describe('AssetsPage', () => {
       expect(screen.getByText('parcels')).toBeInTheDocument();
       expect(screen.getByText('parquet-store')).toBeInTheDocument();
       expect(screen.getByText('v3')).toBeInTheDocument();
+      expect(screen.getByText('committed')).toBeInTheDocument();
+      expect(screen.getByText('durable')).toBeInTheDocument();
     });
   });
 });

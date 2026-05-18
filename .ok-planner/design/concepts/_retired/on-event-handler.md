@@ -8,7 +8,7 @@ references:
   - ../../../specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
 ---
 
-> **Retired** by `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`. The `on_event:` map disappears; subscription-to-event (`subscribes: [{node: X, on: event, name: Y}]`) replaces both the substitution path (already supported via `{{nodes.X.event.Y}}`) and the invalidate-downstream path (the receiver's subscription wakes it automatically via cascade). See the spec's Piece 1 migration table for the rewrite shape. See `concept:subscription` and `concept:wait-set` for the replacement model.
+> **Retired** by `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`. The `on_event:` map disappears; subscription-to-event (`subscribes: [{node: X, on: event, name: Y}]`) replaces both the substitution path (already supported via `{{nodes.X.event.Y}}`) and the invalidate-downstream path (the receiver's subscription wakes it automatically via cascade). See the spec's Piece 1 migration table for the rewrite shape. See `concept:node-subscription` and `concept:wait-set` for the replacement model.
 
 # On-event handler
 

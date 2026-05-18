@@ -5,7 +5,7 @@
 // Postgres impl of persistence.MessagesTable — the unified message
 // queue per spec §Unified message layer.
 //
-// V1 implementation: the schema is in place (migration 002) but the
+// V1 implementation: the schema is in place (baseline migration) but the
 // rimsky-side runtime that delivers messages at frame boundaries (E5)
 // is deferred to a follow-up dispatch. The accessor methods below
 // implement the interface so the build is clean; tests exercise the

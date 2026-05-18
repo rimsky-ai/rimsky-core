@@ -39,6 +39,10 @@ func (f *fakeLineage) Query(_ context.Context, _ persistence.LineageQuery, _ per
 	return persistence.PaginatedListResult[persistence.LineageRow]{}, nil
 }
 
+func (f *fakeLineage) QueryByParentRunID(_ context.Context, _ shared.UUID, _ int) ([]persistence.LineageRow, error) {
+	return nil, nil
+}
+
 func (f *fakeLineage) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
 }

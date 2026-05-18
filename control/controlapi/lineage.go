@@ -27,7 +27,6 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -47,6 +46,12 @@ const (
 	// lineageWalkMaxDepth caps the depth a single request can request.
 	// Per spec §Content lineage / Query surface, walks bounded at 50.
 	lineageWalkMaxDepth = 50
+	// lineageWalkPerFrontierLimit caps the per-frontier-id descendant
+	// query so a single hot frontier id can't blow the projection
+	// scan. 1000 covers realistic fan-out widths; truly oversized
+	// fan-outs should use the OpenLineage emitter (canonical bulk
+	// walker) instead of this operator-facing endpoint.
+	lineageWalkPerFrontierLimit = 1000
 )
 
 func registerLineageRoutes(r chi.Router, deps AppDeps) {
@@ -227,14 +232,27 @@ const (
 )
 
 // walkLineageRuns performs a BFS over leaf_run records up to `depth`,
-// resolving links via the leaf_run record's `substitution_refs` field.
-// For an ancestor walk: each ref's `source_version_or_id` maps to a
-// run id we look up. For a descendant walk: we scan all leaf_run rows
-// whose substitution_refs include the seed run id.
+// resolving links via the leaf_run record's `substitution_refs` field
+// for ancestor walks and via the `parent_run_id` JSONB path for
+// descendant walks.
 //
-// The implementation is pragmatic — pre-v1, the operator-facing
-// surface is more important than asymptotic optimality. The
-// OpenLineage emitter (Section K) is the canonical bulk walker.
+// Both directions emit ONLY relatives of the seed — never the seed's
+// own row. `GET /lineage/runs/{run_id}` is the surface for "the run
+// itself"; `/ancestors` and `/descendants` return strictly the
+// neighborhood.
+//
+// Ancestor direction: for each frontier id, look up the row, extract
+// its `substitution_refs` (upstream run ids), and emit the ancestor's
+// own lineage row plus enqueue the ancestor id for the next BFS level.
+//
+// Descendant direction: for each frontier id, query lineage rows whose
+// `record->>'parent_run_id'` matches that id directly. The query is
+// implemented as a JSONB key lookup (postgres) / `json_extract` filter
+// (sqlite) on `persistence.LineageTable.QueryByParentRunID`, which
+// scales with the fan-out under each frontier id rather than the size
+// of the entire per-instance projection. The pre-2026-05-17 code
+// paged the per-instance projection at LIMIT 200 and filtered in Go,
+// silently truncating deeper trees.
 func walkLineageRuns(
 	ctx context.Context, deps AppDeps,
 	seed shared.UUID, depth int, dir lineageWalkDirection,
@@ -245,55 +263,54 @@ func walkLineageRuns(
 	for level := 0; level < depth && len(frontier) > 0; level++ {
 		next := []shared.UUID{}
 		for _, id := range frontier {
-			records, err := deps.Persist.Lineage().GetByRunID(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range records {
-				if dir == lineageWalkDirectionAncestors {
-					refs := extractSubstitutionRefRunIDs(r.Record)
-					for _, refID := range refs {
+			switch dir {
+			case lineageWalkDirectionAncestors:
+				// Ancestor direction emits ONLY upstream runs, never the
+				// frontier id's own row. The seed must not appear in its
+				// own ancestors set; each ancestor shows up exactly once
+				// (the descendant that pulled it in via substitution_refs).
+				frontierRecords, err := deps.Persist.Lineage().GetByRunID(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				for _, fr := range frontierRecords {
+					for _, refID := range extractSubstitutionRefRunIDs(fr.Record) {
 						if _, seen := visited[refID]; seen {
 							continue
 						}
 						visited[refID] = struct{}{}
+						ancestorRows, err := deps.Persist.Lineage().GetByRunID(ctx, refID)
+						if err != nil {
+							return nil, err
+						}
+						// Append the most recent terminal record for the
+						// ancestor run; GetByRunID is observed_at ASC.
+						if len(ancestorRows) > 0 {
+							out = append(out, ancestorRows[len(ancestorRows)-1])
+						}
 						next = append(next, refID)
 					}
 				}
-				out = append(out, r)
-			}
-			if dir == lineageWalkDirectionDescendants {
-				// Pre-v1: descendant walks scan the per-instance
-				// projection. We need an InstanceID for the Query;
-				// fetch one from the seed row.
-				if len(out) == 0 {
-					continue
-				}
-				inst := out[len(out)-1].InstanceID
-				page, err := deps.Persist.Lineage().Query(ctx, persistence.LineageQuery{
-					InstanceID: &inst,
-					Kind:       persistence.LineageRecordKindLeafRun,
-				}, persistence.ListPagination{Limit: 200})
+			case lineageWalkDirectionDescendants:
+				// Descendant direction emits ONLY children, never the
+				// frontier id's own row. The seed must not appear in its
+				// own descendants set; each child shows up exactly once
+				// (the parent that pulled it in).
+				children, err := deps.Persist.Lineage().QueryByParentRunID(ctx, id, lineageWalkPerFrontierLimit)
 				if err != nil {
 					return nil, err
 				}
-				for _, r := range page.Rows {
-					refIDs := extractSubstitutionRefRunIDs(r.Record)
-					for _, refID := range refIDs {
-						if refID != id {
-							continue
-						}
-						childRunID := extractRunIDFromRecord(r.Record)
-						if childRunID == (shared.UUID{}) {
-							continue
-						}
-						if _, seen := visited[childRunID]; seen {
-							continue
-						}
-						visited[childRunID] = struct{}{}
-						next = append(next, childRunID)
-						out = append(out, r)
+				for _, r := range children {
+					childRunID := extractRunIDFromRecord(r.Record)
+					if childRunID == (shared.UUID{}) {
+						continue
 					}
+					if _, seen := visited[childRunID]; seen {
+						continue
+					}
+					visited[childRunID] = struct{}{}
+					next = append(next, childRunID)
+					out = append(out, r)
 				}
 			}
 		}
@@ -303,33 +320,24 @@ func walkLineageRuns(
 }
 
 // extractSubstitutionRefRunIDs reads the `substitution_refs` slice of
-// a leaf_run record and returns the run ids referenced. The walker
-// matches by `source_version_or_id` (per spec §F6 ancestors step 2)
-// when the source is a run; UUIDs that don't parse are skipped.
+// a leaf_run record and returns the upstream run ids referenced. The
+// walker matches by `source_version_or_id` (per spec §F6 ancestors
+// step 2). Only entries whose `source_version_or_id` is a parseable
+// UUID participate in the run-ancestor walk; directive-shape entries
+// (kind=`attribute` / `event`, whose version_or_id is the attribute /
+// event name) are silently skipped — they're informational rather
+// than lineage-link material.
 func extractSubstitutionRefRunIDs(record json.RawMessage) []shared.UUID {
 	if len(record) == 0 {
 		return nil
 	}
 	var rec struct {
 		SubstitutionRefs []struct {
+			SourceKind        string `json:"source_kind"`
 			SourceVersionOrID string `json:"source_version_or_id"`
 		} `json:"substitution_refs"`
 	}
 	if err := json.Unmarshal(record, &rec); err != nil {
-		// Newer record shapes may carry refs as plain strings; fall
-		// through to the alternate shape rather than 5xx-ing the walk.
-		var alt struct {
-			SubstitutionRefs []string `json:"substitution_refs"`
-		}
-		if json.Unmarshal(record, &alt) == nil {
-			out := make([]shared.UUID, 0, len(alt.SubstitutionRefs))
-			for _, s := range alt.SubstitutionRefs {
-				if u, err := uuid.Parse(s); err == nil {
-					out = append(out, shared.UUID(u))
-				}
-			}
-			return out
-		}
 		return nil
 	}
 	out := make([]shared.UUID, 0, len(rec.SubstitutionRefs))
@@ -536,9 +544,3 @@ func recordMentionsProducer(record json.RawMessage, name, version string) bool {
 	}
 	return true
 }
-
-// keep imports alive when build tags exclude paths above.
-var (
-	_ = context.Background
-	_ = errors.New
-)

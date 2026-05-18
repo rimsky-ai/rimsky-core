@@ -453,20 +453,32 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// scheduler tick cadence, and the resume path may briefly hold a
 	// transient second claim_handle until its own terminal release
 	// fires.
+	// Post-Stage-3 of the claim-handle state-column refactor: terminal
+	// flips state (Promote-not-delete). Assert the row reaches state=
+	// committed (auto-terminal Commit) instead of being deleted.
+	var activeCount int
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
-			  WHERE n.instance_id = $1`, uuid.UUID(iid),
-		).Scan(&lhCount))
-		if lhCount == 0 {
+			  WHERE n.instance_id = $1 AND lh.state = 'active'`, uuid.UUID(iid),
+		).Scan(&activeCount))
+		if activeCount == 0 {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	require.Equal(t, 0, lhCount,
-		"claim_handle row must be deleted after auto-terminal Commit")
+	require.Equal(t, 0, activeCount,
+		"no active claim_handle rows must remain after auto-terminal Commit")
+	var committedCount int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles lh
+		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
+		  WHERE n.instance_id = $1 AND lh.state = 'committed'`, uuid.UUID(iid),
+	).Scan(&committedCount))
+	require.Greater(t, committedCount, 0,
+		"at least one claim_handle row must be state=committed after auto-terminal Commit")
 }
 
 // TestParkedLifecycleParkTimeoutAbandonsHeldClaim covers E6 case (c)'s
@@ -532,23 +544,37 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	// CheckAndFireResolution. With any failed holder, auto-terminal
 	// resolves the claim by firing Abandon on the producer (blessed
 	// invariant 13).
-	require.True(t, h.WaitForEventKind(acq.ID, "park_timeout", 15*time.Second),
+	//
+	// The 30s wait budget (extended from cycle-4's 15s) absorbs the
+	// scheduler-tick + sweep-tick interleave plus testcontainers/Docker
+	// latency under heavy parallel load.
+	require.True(t, h.WaitForEventKind(acq.ID, "park_timeout", 30*time.Second),
 		"watchdog should fire park_timeout")
-	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 15*time.Second),
+	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 30*time.Second),
 		"acquirer should land in failed after park_timeout")
-	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 15*time.Second),
+	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
 		"node-run should be deleted after timeout abandon")
 
-	// Auto-terminal Abandon: the rimsky_claim_handles row is removed
-	// AND the producer's Abandon verb fired (visible on store.Calls()).
-	var lhCount int
+	// Auto-terminal Abandon: post-Stage-3 of the claim-handle state-
+	// column refactor, the rimsky_claim_handles row is PROMOTED (not
+	// deleted); the producer's Abandon verb fired (visible on
+	// store.Calls()). Assert the row is in state=abandoned.
+	var abandonedCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
-		  WHERE n.instance_id = $1`, uuid.UUID(iid),
-	).Scan(&lhCount))
-	require.Equal(t, 0, lhCount,
-		"claim_handle row must be deleted after auto-terminal Abandon")
+		  WHERE n.instance_id = $1 AND lh.state = 'abandoned'`, uuid.UUID(iid),
+	).Scan(&abandonedCount))
+	require.Greater(t, abandonedCount, 0,
+		"at least one claim_handle row must be state=abandoned after auto-terminal Abandon")
+	var activeCount int
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT count(*) FROM rimsky_claim_handles lh
+		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
+		  WHERE n.instance_id = $1 AND lh.state = 'active'`, uuid.UUID(iid),
+	).Scan(&activeCount))
+	require.Equal(t, 0, activeCount,
+		"no active claim_handle rows must remain after auto-terminal Abandon")
 
 	abandonSeen := false
 	deadline := time.Now().Add(15 * time.Second)

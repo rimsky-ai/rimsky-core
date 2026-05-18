@@ -12,11 +12,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguy/rimsky/runtime/clientiface"
 )
 
 // ValidationClient is a remote-gRPC implementation of the rimsky-side
-// runtime.ValidationClient interface. One client per peer that
+// clientiface.ValidationClient interface. One client per peer that
 // advertises the `validation` protocol in rimsky.yml.
 type ValidationClient struct {
 	name           string
@@ -26,7 +26,7 @@ type ValidationClient struct {
 }
 
 // Compile-time interface check.
-var _ runtime.ValidationClient = (*ValidationClient)(nil)
+var _ clientiface.ValidationClient = (*ValidationClient)(nil)
 
 // Name returns the operator-configured peer name.
 func (c *ValidationClient) Name() string { return c.name }
@@ -39,7 +39,7 @@ func (c *ValidationClient) Name() string { return c.name }
 func (c *ValidationClient) SupportedRoles() []string { return c.supportedRoles }
 
 // ValidateExecutor runs the executor-role check.
-func (c *ValidationClient) ValidateExecutor(ctx context.Context, in runtime.ValidateExecutorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.ValidateExecutorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{
@@ -60,7 +60,7 @@ func (c *ValidationClient) ValidateExecutor(ctx context.Context, in runtime.Vali
 }
 
 // ValidateClaimProducer runs the claim_producer-role check.
-func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in runtime.ValidateClaimProducerInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in clientiface.ValidateClaimProducerInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	claims := make([]*genv1.ClaimBinding, 0, len(in.Claims))
 	for _, b := range in.Claims {
 		claims = append(claims, &genv1.ClaimBinding{
@@ -91,7 +91,7 @@ func (c *ValidationClient) ValidateClaimProducer(ctx context.Context, in runtime
 }
 
 // ValidateSensor runs the sensor-role check.
-func (c *ValidationClient) ValidateSensor(ctx context.Context, in runtime.ValidateSensorInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (c *ValidationClient) ValidateSensor(ctx context.Context, in clientiface.ValidateSensorInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "sensor",
 		Context: &genv1.ValidateRequest_Sensor{
@@ -111,7 +111,7 @@ func (c *ValidationClient) ValidateSensor(ctx context.Context, in runtime.Valida
 }
 
 // ValidateLifecycleSubscriber runs the lifecycle_subscriber-role check.
-func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in runtime.ValidateLifecycleSubscriberInput) ([]runtime.ValidationFinding, []runtime.ValidationFinding, error) {
+func (c *ValidationClient) ValidateLifecycleSubscriber(ctx context.Context, in clientiface.ValidateLifecycleSubscriberInput) ([]clientiface.ValidationFinding, []clientiface.ValidationFinding, error) {
 	resp, err := c.rpc.Validate(ctx, &genv1.ValidateRequest{
 		Role: "lifecycle_subscriber",
 		Context: &genv1.ValidateRequest_LifecycleSubscriber{
@@ -159,13 +159,13 @@ func DialValidation(_ context.Context, name, endpoint string, supportedRoles []s
 
 // projectFindings maps proto ValidationFinding entries to the
 // runtime-side ValidationFinding shape.
-func projectFindings(serviceName, role, nodeAlias string, src []*genv1.ValidationFinding) []runtime.ValidationFinding {
+func projectFindings(serviceName, role, nodeAlias string, src []*genv1.ValidationFinding) []clientiface.ValidationFinding {
 	if len(src) == 0 {
 		return nil
 	}
-	out := make([]runtime.ValidationFinding, 0, len(src))
+	out := make([]clientiface.ValidationFinding, 0, len(src))
 	for _, f := range src {
-		out = append(out, runtime.ValidationFinding{
+		out = append(out, clientiface.ValidationFinding{
 			ServiceName: serviceName,
 			Role:        role,
 			NodeAlias:   nodeAlias,

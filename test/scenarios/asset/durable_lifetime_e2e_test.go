@@ -9,9 +9,10 @@
 //  1. A `lifetime: durable` claim handle is acquired and its holding
 //     subgraph completes.
 //  2. `CheckAndFireResolution` fires the producer Commit and promotes
-//     the row via `SetHeldDurable(true)` — the row survives the
-//     auto-terminal Delete.
-//  3. `ListHeldDurableByInstance` surfaces the row for the instance.
+//     the row to state='committed' — the row survives the auto-terminal
+//     Delete (held-durable Promote contract per @blessed-invariant 22).
+//  3. `ListByInstanceAndState(committed, durable)` surfaces the row for
+//     the instance.
 //  4. `ReleaseHeldDurableClaims` fires `producer.Release` and drops
 //     the row at instance termination.
 //
@@ -40,6 +41,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks/storetest"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/internal/pgtest"
 	"github.com/fallguy/rimsky/runtime"
@@ -126,7 +128,9 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
 
-	// Row MUST survive — durable promotion flipped held_durable=TRUE.
+	// Row MUST survive — durable promotion flipped state to 'committed'
+	// and skipped the Delete (held-durable Promote contract per
+	// @blessed-invariant 22).
 	var row *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
@@ -134,12 +138,20 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row, "durable claim must survive auto-terminal")
-	require.True(t, row.HeldDurable, "durable claim must carry held_durable=TRUE")
+	// Post-refactor: durable-Commit promotes the row to state='committed'
+	// (Promote-not-delete). The durable property comes from
+	// `lifetime='durable'` on the row.
+	require.Equal(t, spec.ClaimHandleStateCommitted, row.State,
+		"durable claim must be promoted to state=committed at auto-terminal")
+	require.Equal(t, spec.ClaimLifetimeDurable, row.Lifetime,
+		"durable claim must carry lifetime=durable")
 
-	// ListHeldDurableByInstance surfaces the row.
+	// ListByInstanceAndState(committed, durable) surfaces the row.
 	var durables []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := backend.ClaimHandles().ListHeldDurableByInstance(ctx, inst.ID, tx)
+		rows, err := backend.ClaimHandles().ListByInstanceAndState(
+			ctx, inst.ID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
+		)
 		durables = rows
 		return err
 	}))

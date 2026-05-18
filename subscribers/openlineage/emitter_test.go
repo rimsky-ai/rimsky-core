@@ -64,13 +64,13 @@ func TestMakeLeafRunEvent_NoChildKey_RunIDIsInstance(t *testing.T) {
 func TestMakeClaimTerminalEvent_OutputDatasetFromProducerAndScopeHash(t *testing.T) {
 	t.Parallel()
 	rec := ClaimTerminalRecord{
-		ClaimHandleID: "claim-1",
-		VersionID:     "v-77",
-		ProducerName:  "atomic-fs",
-		ScopeDataHash: "scope-7",
-		ParentRunID:   "run-99",
-		FrameID:       "frame-1",
-		Outcome:       "committed",
+		ClaimHandleID:     "claim-1",
+		VersionID:         "v-77",
+		ProducerName:      "atomic-fs",
+		ScopeDataHash:     "scope-7",
+		OpenLineageRunRef: "run-99",
+		FrameID:           "frame-1",
+		Outcome:           "committed",
 	}
 	observedAt := time.Date(2026, 5, 15, 13, 0, 0, 0, time.UTC)
 	ev := MakeClaimTerminalEvent(rec, observedAt, "ns")
@@ -91,12 +91,12 @@ func TestMakeClaimTerminalEvent_OutputDatasetFromProducerAndScopeHash(t *testing
 func TestMakeClaimTerminalEvent_AbandonedFiresAbortEvent(t *testing.T) {
 	t.Parallel()
 	rec := ClaimTerminalRecord{
-		ClaimHandleID: "claim-2",
-		ProducerName:  "atomic-fs",
-		ScopeDataHash: "scope-abc",
-		ParentRunID:   "run-2",
-		FrameID:       "frame-2",
-		Outcome:       "abandoned",
+		ClaimHandleID:     "claim-2",
+		ProducerName:      "atomic-fs",
+		ScopeDataHash:     "scope-abc",
+		OpenLineageRunRef: "run-2",
+		FrameID:           "frame-2",
+		Outcome:           "abandoned",
 	}
 	ev := MakeClaimTerminalEvent(rec, time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC), "ns")
 	if ev.EventType != "ABORT" {

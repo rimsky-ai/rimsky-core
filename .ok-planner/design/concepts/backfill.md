@@ -56,4 +56,4 @@ rimsky-cli backfill cancel <op-id>
 
 ## Notes
 
-Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The "backfill is just an invalidate-message with a payload" design keeps the dispatch machinery uniform — backfills go through the same `rimsky_messages` queue and the same frame-delivery path as operator-API invalidates and sensor observations.
+Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The "backfill is just an invalidate-message with a payload" design keeps the dispatch machinery uniform — backfills go through the same `rimsky_messages` queue and the same frame-delivery path as operator-API invalidates and publisher-origin messages.

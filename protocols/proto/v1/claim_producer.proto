@@ -28,7 +28,7 @@ option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
 
 // ClaimProducer is the wire-form rimsky↔producer contract. Every
 // standard claim-producer binary implements this interface; rimsky's
-// foundation/integration/remote/ package implements the gRPC client.
+// runtime/remote/ package implements the gRPC client.
 //
 // Lifecycle events live in the separate LifecycleSubscriber service
 // (lifecycle.proto). A binary that wishes to react to control-plane
@@ -177,7 +177,7 @@ message CommitRequest {
 message CommitResponse {
   // Set by DataProcessing-capable producers; opaque to rimsky;
   // persisted in col:rimsky_claim_handles.version_id and
-  // table:rimsky_lineage for record_kind: claim_commit.
+  // table:rimsky_lineage for record_kind: claim_terminal.
   string version_id = 1;
   // Optional producer-supplied metadata bytes. Inert in rimsky per
   // @blessed-invariant 20; surfaced verbatim in the parent run's

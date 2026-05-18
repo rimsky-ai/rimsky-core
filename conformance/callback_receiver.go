@@ -38,7 +38,7 @@ import (
 // `{type: "complete"|"blocked"|"errored", ...}` discriminator shape and the
 // per-terminal keys `complete | blocked | errored | park_requested` are no
 // longer accepted — same as the supervisor's parser at
-// foundation/integration/callback.go.
+// runtime/callback.go.
 type CallbackReceiver struct {
 	srv          *http.Server
 	bindAddr     string // listening "ip:port"
@@ -165,7 +165,7 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 // `complete | blocked | errored | park_requested` per-terminal keys
 // are no longer accepted.
 //
-// @source: foundation/integration/callback.go::parseAsyncCallback
+// @source: runtime/callback.go::parseAsyncCallback
 // @diverged: true
 // @reason: The supervisor parses a typed body via json.Unmarshal into
 // asyncCallbackBody. The conformance receiver operates on a

@@ -119,7 +119,7 @@ func applyTerminalComplete(
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
 	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
-			_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if appendErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 					NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 					Kind: "attributes_schema_failed",
@@ -127,7 +127,11 @@ func applyTerminalComplete(
 						"errors": []map[string]any{{"message": err.Error()}},
 					},
 				}, tx)
-			})
+			}); appendErr != nil && args.Logger != nil {
+				args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
+					"node_id", acq.NodeID.String(),
+					"error", appendErr.Error())
+			}
 			return applyErrorPolicy(ctx, args, acq, "attributes_schema_failed",
 				map[string]any{"error": err.Error()})
 		}
@@ -254,7 +258,7 @@ func applyTerminalComplete(
 	if !t.Changed {
 		commitKind = "no_op_commit"
 	}
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: commitKind,
@@ -277,17 +281,39 @@ func applyTerminalComplete(
 				"last_outcome":   string(lastOutcome),
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("runner_terminal: append commit/work_completed events failed",
+			"node_id", acq.NodeID.String(),
+			"commit_kind", commitKind,
+			"error", err.Error())
+	}
 	if lastOutcome == cascade.LastOutcomeFreshChanged {
 		fanoutRecalculate(ctx, args, acq)
 	}
 	// E8: emit leaf-run lineage record. Spec §Content lineage. Bytes
 	// are inert in rimsky (@blessed-invariant 20/21); the lineage row
 	// carries hashes + run identifiers + last_outcome, not raw bytes.
-	EmitLeafRunLineage(ctx, args,
-		acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
-		string(cascade.NodeStateFresh), string(lastOutcome), "",
-		acq.InstanceParams, acq.InstanceUserdataOverrides)
+	// MergedUserdata is the post-applyUserdataOverrides shape — the
+	// hash reflects what shipped to the executor (not the pre-merge
+	// override blob).
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:       acq.InstanceID,
+		FrameID:          acq.FrameID,
+		RunID:            acq.DispatchID,
+		NodeID:           acq.NodeID,
+		State:            string(cascade.NodeStateFresh),
+		LastOutcome:      string(lastOutcome),
+		Changed:          t.Changed,
+		TerminalKind:     "complete",
+		NodeAlias:        acq.NodeType,
+		ExecutorName:     acq.Executor,
+		TemplateHash:     acq.TemplateHash,
+		Params:           acq.InstanceParams,
+		UserdataMerged:   acq.MergedUserdata,
+		HeldClaims:       HeldClaimsForLineage(acq),
+		ParentRunID:      acq.ParentRunID,
+		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+	})
 	// Run-tree state propagation (E2): if this run is a child (fan-out
 	// or sub-graph internal), aggregate up to the parent. No-op on root
 	// runs.

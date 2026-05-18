@@ -25,7 +25,7 @@ import (
 	"github.com/fallguy/rimsky/runtime"
 )
 
-// controlapiInvalidateAdapter wraps the foundation/integration
+// controlapiInvalidateAdapter wraps the runtime
 // InvalidateAdapter so it returns the controlapi.ErrInvalidateConflict
 // sentinel when the foundation runtime reports the target is running.
 // Without this translation the admin handler would 500 instead of 409
@@ -82,6 +82,12 @@ type ControlAPIConfig struct {
 	// registration to validate that every node-referenced executor
 	// name is declared.
 	Executors ExecutorsConfig
+	// Publishers is the operator-side publishers block from rimsky.yml
+	// (per spec
+	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md).
+	// The control-api uses this at publisher-subscription dispatch
+	// time to look up the per-publisher gRPC endpoint.
+	Publishers RemotePublishersConfig
 	// Metrics is the prometheus instrumentation hook (plan I2).
 	// Threaded into controlapi.AppDeps.Metrics so admin-fired
 	// invalidates increment `rimsky_invalidates_total{source="admin"}`.
@@ -205,10 +211,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
 	// Dial the per-protocol registries any peer advertised in its
-	// `protocols:` block (sensor / validation / data_processing). Each
-	// registry is non-nil even when no peer advertises the protocol —
-	// controlapi treats nil and empty registries identically downstream.
-	sensorReg, validationReg, dataProcessorReg, peerClosers, err := DialSensorAndValidationRegistries(context.Background(), cfg.Stores, cfg.Executors)
+	// `protocols:` block (publisher / validation / data_processing).
+	// Each registry is non-nil even when no peer advertises the
+	// protocol — controlapi treats nil and empty registries identically
+	// downstream.
+	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.Stores, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		cancelDiscovery()
 		registry.Close()
@@ -265,7 +272,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			})
 		},
 		Metrics:        cfg.Metrics,
-		Sensors:        sensorReg,
+		Publishers:     publisherReg,
 		Validators:     validationReg,
 		DataProcessors: dataProcessorReg,
 	}

@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-The mechanism that fires `ClaimProducer.Commit` or `Abandon` exactly once at the end of a held claim's holding-subgraph. Implementation lives in `runtime/auto_terminal.go::CheckAndFireResolution` and delegates to the unified `ResolveClaimHandleTerminal` engine in `terminal_decision.go`. Runs after every node terminal in a held subgraph: locks the `rimsky_claim_handles` row, checks whether all `rimsky_claim_holders` rows are non-active, computes aggregate outcome, fires the verb, deletes the handle claimant-guarded.
+The mechanism that fires `ClaimProducer.Commit` or `Abandon` exactly once at the end of a held claim's holding-subgraph. Implementation lives in `runtime/auto_terminal.go::CheckAndFireResolution` and delegates to the unified `ResolveClaimHandleTerminal` engine in `terminal_decision.go`. Runs after every node terminal in a held subgraph: locks the `rimsky_claim_handles` row, checks whether all `rimsky_claim_holders` rows are non-active, computes aggregate outcome, fires the verb, **promotes** the handle to `state = 'committed'` or `'abandoned'` claimant-guarded against the supervisor that held it. Carve-out paths (`abandonOpenedClaim` in pre-dispatch / verify-before-run bail) continue to `Delete` directly because those rows never went through `Promote`.
 
 ## Purpose
 
@@ -24,17 +24,23 @@ Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fi
 
 ## Invariants
 
-- Exactly one resolution per held claim — enforced by `SELECT … FOR UPDATE` plus the row-existence check (`@blessed-invariant 13`).
+- Exactly one resolution per held claim — enforced by `SELECT … FOR UPDATE` plus the row-state check (`@blessed-invariant 13`).
 - Aggregate-outcome rule: any-failed → `Abandon`; all-completed → `Commit`.
 - The producer verb fires before the surrounding rimsky tx commits — verb-then-tx-fail leak path is mitigated by requiring terminal verbs to be idempotent in `claim_id`.
-- Delete of the `rimsky_claim_handles` row is claimant-guarded (`AND holder_supervisor_id = supervisor_id`).
-- Unified `ResolveClaimHandleTerminal` is the audited post-dispatch entry point for error-policy `pass`/`error` resolutions on already-Open'd claims. Two carve-outs route through the shared `abandonOpenedClaim` helper (`runtime/abandon_claim.go`) instead of the unified engine: (a) the pre-dispatch `OnAcquireUnavailable` `pass`/`error` path (`runner_lifecycle.go::abandonPartialLocks`), where the `rimsky_claim_handles` rows are already gone (rolled back by the acquisition tx) so the unified engine's delete step has nothing to do; and (b) the post-commit verify-before-run race-detection bail path (`runner_acquire.go::handleOrphanedClaim`), where the cleanup is per-acquired-claim Abandon + its own claimant-guarded `ClaimHandles.Delete` outside the unified engine's verb-then-delete tx sequence. All three sites share the helper, so any future audit / telemetry hook there fires uniformly.
+- State transition of the `rimsky_claim_handles` row uses **two guard shapes** (`@blessed-invariant 4` post-2026-05-17 refactor):
+  - Active-row mutations (Promote, ExtendHeartbeat, carve-out Delete in `abandonOpenedClaim`) are claimant-guarded with `AND holder_supervisor_id = supervisor_id`.
+  - Non-active-row deletions (retention sweep, asset Release path) are absence-guarded: the row has `holder_supervisor_id IS NULL` by construction (post-Promote nulled it); the row-discovery query filter substitutes for the per-row claimant check.
+- Unified `ResolveClaimHandleTerminal` is the audited post-dispatch entry point for error-policy `pass`/`error` resolutions on already-Open'd claims. Two carve-outs route through the shared `abandonOpenedClaim` helper (`runtime/abandon_claim.go`) instead of the unified engine: (a) the pre-dispatch `OnAcquireUnavailable` `pass`/`error` path (`runner_lifecycle.go::abandonPartialLocks`), where the `rimsky_claim_handles` rows are already gone (rolled back by the acquisition tx); and (b) the post-commit verify-before-run race-detection bail path (`runner_acquire.go::handleOrphanedClaim`), where the cleanup is per-acquired-claim Abandon + its own claimant-guarded `ClaimHandles.Delete`. Those rows never went through Promote, so they take the Delete-direct path; the unified engine's Promote path is the standard.
 
 ## Aliases and historical names
 
-The `lock_holder_id` FK column on the holders table is renamed to `claim_handle_id`. Pre-Phase-5 the same algorithm ran against `rimsky_lock_holders`; post-baseline-rebase the table is `rimsky_claim_handles` (plural). The `Delete` is on `table:rimsky_claim_handles`.
+The `lock_holder_id` FK column on the holders table is renamed to `claim_handle_id`. Pre-Phase-5 the same algorithm ran against `rimsky_lock_holders`; post-baseline-rebase the table is `rimsky_claim_handles` (plural). Pre-2026-05-17 the main path was `Delete` (active-row claimant-guarded); post-refactor it's `Promote` (active → committed/abandoned) followed by retention-sweep or Release-path absence-guarded deletion later.
 
 ## Open within this concept
 
 (no live tensions distinct from `claim-handle`)
+
+## Notes
+
+State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: the main auto-terminal path moved from `Delete` to `Promote`; the row is preserved past terminal for forensics. Carve-out paths (`abandonOpenedClaim`) still `Delete` directly because those rows never went through `Promote`.
 

@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 package spec
 
@@ -63,33 +63,33 @@ type FanOutSpec struct {
 	ErrorPolicy AggregationPolicy `yaml:"error_policy" json:"error_policy"`
 }
 
-// ClaimLifetime constants for the per-claim `lifetime:` field
-// (default: "subgraph"; "durable" requires DataProcessing on the
-// producer).
+// ClaimLifetime is the per-claim lifetime enum: `subgraph` (default;
+// claim auto-terminals at holding-subgraph completion) or `durable`
+// (requires DataProcessing on the producer; row persists past terminal
+// for asset semantics).
+//
+// @concept: claim-lifetime
+type ClaimLifetime string
+
 const (
-	ClaimLifetimeSubgraph = "subgraph"
-	ClaimLifetimeDurable  = "durable"
+	ClaimLifetimeSubgraph ClaimLifetime = "subgraph"
+	ClaimLifetimeDurable  ClaimLifetime = "durable"
 )
 
-// SensorSpec is one sensor watch declared on a template. Per spec
-// §Sensors / Per-instance parameterization. At instance creation,
-// rimsky generates a watch_id per sensor and calls Sensor.StartWatch
-// on the addressed sensor service; the watch lives in
-// table:rimsky_sensor_watches.
-type SensorSpec struct {
-	Name          string            `yaml:"name" json:"name"`
-	Kind          string            `yaml:"kind" json:"kind"`
-	Config        json.RawMessage   `yaml:"config" json:"config"`
-	OnObservation OnObservationSpec `yaml:"on_observation" json:"on_observation"`
-}
-
-// OnObservationSpec declares how a sensor observation becomes a
-// message envelope on the unified message queue. At observation time
-// rimsky applies PayloadTemplate substitution against the observation
-// body and constructs a {kind: MessageKind, target: TargetNode}
-// envelope.
-type OnObservationSpec struct {
-	TargetNode      string         `yaml:"target_node" json:"target_node"`
-	MessageKind     string         `yaml:"message_kind" json:"message_kind"`
-	PayloadTemplate map[string]any `yaml:"payload_template,omitempty" json:"payload_template,omitempty"`
+// PublisherSpec is one publisher-subscription declared on a template.
+// Per spec
+// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification. At instance creation, rimsky
+// generates a publisher_subscription_id per entry and calls
+// Publisher.Subscribe on the addressed publisher service; the
+// subscription lives in table:rimsky_publisher_subscriptions.
+//
+// Routing fields (`target_node`, `message_kind`) are inline; there is
+// no `on_observation:` substruct (deleted in the 2026-05-17 rename).
+type PublisherSpec struct {
+	Name        string          `yaml:"name" json:"name"`
+	Kind        string          `yaml:"kind" json:"kind"`
+	Config      json.RawMessage `yaml:"config" json:"config"`
+	TargetNode  string          `yaml:"target_node" json:"target_node"`
+	MessageKind string          `yaml:"message_kind,omitempty" json:"message_kind,omitempty"`
 }

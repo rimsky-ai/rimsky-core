@@ -1,0 +1,101 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+// Publisher is the service-protocol that publisher peer services
+// implement. Sensors are one kind of publisher; the four bundled
+// sensors (sensors/sensor-cron, sensors/sensor-http,
+// sensors/sensor-object-store, sensors/sensor-webhook) all implement
+// this protocol.
+//
+// Rimsky's control-api drives publisher lifecycle at instance create /
+// terminate via Subscribe / Unsubscribe, and reconciles publisher state
+// after a rimsky restart via ListSubscriptions.
+//
+// Publishers POST message envelopes to the generic
+// POST /instances/{instance_id}/messages endpoint with
+// sender_kind="publisher" + publisher_subscription_id capability token.
+// There is no special observation deposit endpoint.
+//
+// Per spec
+// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification.
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+
+service Publisher {
+  rpc Capabilities      (google.protobuf.Empty)     returns (PublisherCapabilities);
+  rpc Subscribe         (SubscribeRequest)          returns (SubscribeResponse);
+  rpc Unsubscribe       (UnsubscribeRequest)        returns (UnsubscribeResponse);
+  rpc ListSubscriptions (google.protobuf.Empty)     returns (ListSubscriptionsResponse);
+}
+
+// PublisherCapabilities advertises the kinds this binary supports and
+// any mix-in protocols (e.g. "validation"). Rimsky reads it at
+// startup and caches in the discovery cache.
+message PublisherCapabilities {
+  repeated PublisherKindCapability supported_kinds = 1;
+  // protocols advertises mix-in service protocols (e.g. "publisher",
+  // "validation").
+  repeated string protocols = 2;
+  // validation_supported_roles: set when "validation" is in protocols
+  // (e.g. ["publisher"]).
+  repeated string validation_supported_roles = 3;
+}
+
+message PublisherKindCapability {
+  string kind          = 1;
+  // config_schema is the JSON Schema for the resolved_config the
+  // publisher accepts at Subscribe for this kind. Opaque to rimsky;
+  // surfaces to operator tooling.
+  bytes  config_schema = 2;
+}
+
+// SubscribeRequest carries the publisher-subscription routing fields
+// inline (no on-observation substruct). The publisher uses target_node
+// and message_kind to build the message envelope at publish time.
+message SubscribeRequest {
+  string publisher_subscription_id = 1;
+  string instance_id               = 2;
+  string kind                      = 3;
+  // resolved_config is the per-instance config the publisher watches
+  // against (e.g. cron expression, HTTP URL, S3 bucket+prefix).
+  // Substituted by rimsky from the template `publishers:` block before
+  // dispatch.
+  bytes  resolved_config           = 4;
+  // target_node is the receiver node alias on the instance side; the
+  // publisher copies this onto each message envelope as `target`.
+  string target_node               = 5;
+  // message_kind is the wire-level message kind (default "invalidate"
+  // when empty); the publisher copies this onto each message envelope
+  // as `kind`.
+  string message_kind              = 6;
+}
+
+message SubscribeResponse {}
+
+message UnsubscribeRequest {
+  string publisher_subscription_id = 1;
+}
+
+message UnsubscribeResponse {}
+
+message ListSubscriptionsResponse {
+  repeated PublisherSubscriptionDescriptor subscriptions = 1;
+}
+
+message PublisherSubscriptionDescriptor {
+  string publisher_subscription_id = 1;
+  string instance_id               = 2;
+  string kind                      = 3;
+  bytes  resolved_config           = 4;
+  string target_node               = 5;
+  string message_kind              = 6;
+  google.protobuf.Timestamp started_at = 7;
+}

@@ -120,8 +120,8 @@ export const api = {
   // `lifetime: durable` claim); the surface is a query alias over
   // `rimsky_claim_handles`, `rimsky_lineage`, and the DataProcessing
   // protocol's `ListVersions` / `ListPartitions` / `GetVersionSchema`.
-  listAssets: (instanceId: string, cursor?: string) =>
-    get<AssetListResponse>(`/api/control/instances/${instanceId}/assets${qs({ cursor })}`),
+  listAssets: (instanceId: string) =>
+    get<AssetListResponse>(`/api/control/instances/${instanceId}/assets`),
   getAsset: (instanceId: string, alias: string) =>
     get<AssetDetail>(`/api/control/instances/${instanceId}/assets/${alias}`),
   listAssetVersions: (instanceId: string, alias: string) =>

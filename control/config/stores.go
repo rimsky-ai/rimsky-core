@@ -39,6 +39,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/protocols/claimproducer"
 	"github.com/fallguy/rimsky/runtime/remote"
 )
 
@@ -49,13 +50,16 @@ const capabilitiesHandshakeTimeout = 30 * time.Second
 
 // Protocol enumerates the wire protocols a peer may speak. Validated at
 // parse time; any unknown value fails startup.
+//
+// The mix-in protocols (lifecycle_subscriber, validation, data_processing)
+// live in protocols/claimproducer — the wire-vocabulary owner — and are
+// referenced from there. Only the three role-anchor protocols specific to
+// rimsky.yml's three top-level blocks (claim_producers, executors,
+// publishers) are declared here.
 const (
-	ProtocolClaimProducer       = "claim_producer"
-	ProtocolExecutor            = "executor"
-	ProtocolLifecycleSubscriber = "lifecycle_subscriber"
-	ProtocolSensor              = "sensor"
-	ProtocolValidation          = "validation"
-	ProtocolDataProcessing      = "data_processing"
+	ProtocolClaimProducer = "claim_producer"
+	ProtocolExecutor      = "executor"
+	ProtocolPublisher     = "publisher"
 )
 
 // StoreEntry is the per-claim-producer config from rimsky.yml. The
@@ -125,6 +129,39 @@ type ExecutorsConfig struct {
 	Executors map[string]ExecutorEntry
 }
 
+// PublisherEntry is the per-publisher config from rimsky.yml's new
+// top-level `publishers:` block. Publishers are out-of-process peer
+// services that POST messages into rimsky; sensors are one kind of
+// publisher.
+type PublisherEntry struct {
+	Endpoint string
+	// Protocols is the set of wire protocols this peer speaks. Always
+	// includes "publisher" for entries under the publishers: block.
+	Protocols []string
+	// ObservabilityEndpoint is the optional observability endpoint
+	// override; when empty, Endpoint is reused for the observability
+	// handshake.
+	ObservabilityEndpoint string
+}
+
+// HasProtocol reports whether the publisher entry declares the given
+// protocol.
+func (e PublisherEntry) HasProtocol(p string) bool {
+	for _, declared := range e.Protocols {
+		if declared == p {
+			return true
+		}
+	}
+	return false
+}
+
+// RemotePublishersConfig is the parsed `publishers:` block from
+// rimsky.yml. Keys are operator-chosen publisher names referenced
+// from template `publishers:` blocks.
+type RemotePublishersConfig struct {
+	Publishers map[string]PublisherEntry
+}
+
 // Validate rejects empty transport or endpoint (syntactic only; no DNS
 // / dial).
 func (c ExecutorsConfig) Validate() error {
@@ -158,6 +195,12 @@ type RimskyConfig struct {
 	Stores     RemoteStoresConfig
 	NamedLocks locks.NamedLocksConfig
 	Executors  ExecutorsConfig
+	// Publishers is the parsed top-level `publishers:` block. Per spec
+	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+	// §Publisher protocol unification, publishers are peer services that
+	// implement the `publisher` protocol (Subscribe / Unsubscribe /
+	// ListSubscriptions / Capabilities).
+	Publishers RemotePublishersConfig
 	// MaxParkDuration is the per-reason max_park_duration cap map. The
 	// keys are ParkReason storage-form strings ("time_wait",
 	// "callback_wait", "retry_backoff", "other"); the values are
@@ -203,6 +246,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
+	type yamlPublisherEntry struct {
+		Endpoint              string   `yaml:"endpoint"`
+		Protocols             []string `yaml:"protocols"`
+		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
+	}
 	type yamlBlob struct {
 		Backend             string `yaml:"backend"`
 		SpillThresholdBytes int    `yaml:"spill_threshold_bytes"`
@@ -240,6 +288,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Stores     map[string]yamlClaimProducerEntry `yaml:"stores"`
 		NamedLocks map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors  map[string]yamlExecutorEntry      `yaml:"executors"`
+		Publishers map[string]yamlPublisherEntry     `yaml:"publishers"`
 		// MaxParkDuration is the per-reason max_park_duration map. Keys
 		// are ParkReason storage-form strings ("time_wait" / "callback_wait"
 		// / "retry_backoff" / "other"); values are time.Duration. Spec
@@ -317,6 +366,30 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
 	}
+	publishersCfg := RemotePublishersConfig{Publishers: make(map[string]PublisherEntry, len(wrapper.Publishers))}
+	for name, e := range wrapper.Publishers {
+		protocols := e.Protocols
+		if len(protocols) == 0 {
+			protocols = []string{ProtocolPublisher}
+		}
+		if err := validateProtocols(name, protocols); err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
+		hasPublisher := false
+		for _, p := range protocols {
+			if p == ProtocolPublisher {
+				hasPublisher = true
+			}
+		}
+		if !hasPublisher {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: publishers[%q]: protocols must include %q", path, name, ProtocolPublisher)
+		}
+		publishersCfg.Publishers[name] = PublisherEntry{
+			Endpoint:              e.Endpoint,
+			Protocols:             protocols,
+			ObservabilityEndpoint: e.ObservabilityEndpoint,
+		}
+	}
 	pcfg := persistence.Config{Driver: wrapper.Persistence.Driver}
 	if wrapper.Persistence.Postgres != nil {
 		pcfg.Postgres = &persistence.PostgresConfig{
@@ -373,6 +446,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Stores:          stores,
 		NamedLocks:      locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
 		Executors:       executors,
+		Publishers:      publishersCfg,
 		MaxParkDuration: wrapper.MaxParkDuration,
 	}, nil
 }
@@ -433,8 +507,8 @@ func parseAllowed(name string, allowed []string) ([]locks.WriteSemantics, error)
 func validateProtocols(name string, protocols []string) error {
 	for _, p := range protocols {
 		switch p {
-		case ProtocolClaimProducer, ProtocolExecutor, ProtocolLifecycleSubscriber,
-			ProtocolSensor, ProtocolValidation, ProtocolDataProcessing:
+		case ProtocolClaimProducer, ProtocolExecutor, claimproducer.ProtocolLifecycleSubscriber,
+			ProtocolPublisher, claimproducer.ProtocolValidation, claimproducer.ProtocolDataProcessing:
 		default:
 			return fmt.Errorf("peer %q: unknown protocol %q", name, p)
 		}
@@ -484,7 +558,7 @@ func dialRemoteStores(ctx context.Context, cfg RemoteStoresConfig) (*locks.Regis
 func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
 	reg := locks.NewLifecycleRegistry()
 	for name, entry := range stores.Stores {
-		if !entry.HasProtocol(ProtocolLifecycleSubscriber) {
+		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
@@ -497,7 +571,7 @@ func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 		reg.Add(name, client)
 	}
 	for name, entry := range execs.Executors {
-		if !entry.HasProtocol(ProtocolLifecycleSubscriber) {
+		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)

@@ -195,6 +195,64 @@ services:
       timeout: 3s
       retries: 5
 
+  # ----- Bundled sensors (Publisher protocol) -----
+  # Each sensor implements the Publisher protocol and POSTs message
+  # envelopes to control-api's generic /instances/{id}/messages
+  # endpoint with sender_kind="publisher". Per concept:replica, the
+  # v1 contract is single-replica per sensor binary.
+
+  sensor-cron:
+    image: rimsky/sensor-cron:latest
+    depends_on:
+      - control-api
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_CRON_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_CRON_PORT: "9081"
+    ports:
+      - "9081:9081"
+
+  sensor-http:
+    image: rimsky/sensor-http:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_HTTP_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_HTTP_PORT: "9082"
+      RIMSKY_SENSOR_HTTP_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "9082:9082"
+
+  sensor-object-store:
+    image: rimsky/sensor-object-store:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_OBJECT_STORE_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_OBJECT_STORE_PORT: "9083"
+      RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "9083:9083"
+
+  sensor-webhook:
+    image: rimsky/sensor-webhook:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_WEBHOOK_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_WEBHOOK_PORT: "9084"
+      RIMSKY_SENSOR_WEBHOOK_HTTP_PORT: "9184"
+      RIMSKY_SENSOR_WEBHOOK_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "9084:9084"
+      - "9184:9184"
+
 volumes:
   rimsky-pg: {}
   # Shared filesystem-store root mounted on the filesystem store-service

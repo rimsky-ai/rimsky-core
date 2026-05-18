@@ -27,6 +27,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // releaseLocksInTx is the release-tx body. Walks the acquired-locks
@@ -91,9 +92,9 @@ func releaseAcquiredLock(
 // binary.
 func releaseClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	acq *acquisition, lk AcquiredLock, spec locks.ClaimSpec, success bool,
+	acq *acquisition, lk AcquiredLock, claimSpec locks.ClaimSpec, success bool,
 ) error {
-	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, spec.Alias)
+	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, claimSpec.Alias)
 	if held {
 		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.DispatchID, success); err != nil {
 			return err
@@ -151,7 +152,7 @@ func releaseClaim(
 	if row != nil {
 		hint.VersionID = row.VersionID
 	}
-	lifetime := ""
+	var lifetime spec.ClaimLifetime
 	var candidateHandle []byte
 	producerName := ""
 	var parentClaimHandleID *shared.UUID

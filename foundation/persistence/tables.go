@@ -31,8 +31,9 @@ type Tables interface {
 	// extensions. Each driver must return a concrete implementation;
 	// a nil return is a wiring bug.
 	Messages() MessagesTable
+	MessageIdempotencies() MessageIdempotencyTable
 	Lineage() LineageTable
-	SensorWatches() SensorWatchesTable
+	PublisherSubscriptions() PublisherSubscriptionsTable
 	// RunTree is the parent/child/state accessor on `rimsky_node_runs`.
 	// Spec §Run-tree and aggregation.
 	RunTree() RunTreeTable

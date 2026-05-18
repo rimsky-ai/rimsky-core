@@ -20,7 +20,7 @@
 //
 // The dispatch row's frame_id is preserved across async handoff; the
 // callback resolution path commits cascade message-passes that inherit
-// the parent's frame_id (see foundation/integration/runner_terminal.go and
+// the parent's frame_id (see runtime/runner_terminal.go and
 // docs/history/2026-04-26-frame-resolution-design.md §9).
 package runtime
 

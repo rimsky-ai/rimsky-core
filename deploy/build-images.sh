@@ -24,4 +24,12 @@ docker build -f stores/filesystem/Dockerfile.filesystem -t rimsky/store-filesyst
 docker build -f stores/postgres/Dockerfile.postgres -t rimsky/store-postgres:$VERSION -t rimsky/store-postgres:latest .
 docker build -f stores/stub/Dockerfile.stub -t rimsky/store-stub:$VERSION -t rimsky/store-stub:latest .
 
-echo "Built 11 images at version $VERSION"
+# Bundled sensors (publisher protocol). Each binary has main.go at the
+# package root — the Dockerfile target is the package itself, not a
+# cmd/-rooted binary.
+docker build -f sensors/sensor-cron/Dockerfile.sensor-cron -t rimsky/sensor-cron:$VERSION -t rimsky/sensor-cron:latest .
+docker build -f sensors/sensor-http/Dockerfile.sensor-http -t rimsky/sensor-http:$VERSION -t rimsky/sensor-http:latest .
+docker build -f sensors/sensor-object-store/Dockerfile.sensor-object-store -t rimsky/sensor-object-store:$VERSION -t rimsky/sensor-object-store:latest .
+docker build -f sensors/sensor-webhook/Dockerfile.sensor-webhook -t rimsky/sensor-webhook:$VERSION -t rimsky/sensor-webhook:latest .
+
+echo "Built 15 images at version $VERSION"

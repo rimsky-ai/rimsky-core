@@ -12,7 +12,7 @@ references:
 
 An asset is a documented compound, not a new primitive: a claim against a `DataProcessing`-capable producer with `lifetime: durable`. Anything satisfying both is an asset; anything else isn't. Rimsky does not apply asset semantics to other claims.
 
-The asset presentation surface is a query alias over `rimsky_claim_handles` filtered by `held_durable = TRUE` joined against `DataProcessing`-advertising producers, augmented with `rimsky_lineage` walks and `DataProcessing.ListVersions` / `ListPartitions` / `GetVersionSchema` calls.
+The asset presentation surface is a query alias over `rimsky_claim_handles` filtered by `state = 'committed' AND lifetime = 'durable'` joined against `DataProcessing`-advertising producers, augmented with `rimsky_lineage` walks and `DataProcessing.ListVersions` / `ListPartitions` / `GetVersionSchema` calls. The accessor is `ClaimHandleTable.ListByInstanceAndState(instance, committed, durable)`.
 
 ## Boundaries
 
@@ -36,4 +36,6 @@ Owns: the compound definition, the control-api `/instances/{id}/assets/...` endp
 
 ## Notes
 
-Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The asset thinking surface is intentionally a presentation alias over existing primitives — there's no `rimsky_assets` table, no special row type, no separate lifecycle. Producers handle the durable-storage substrate; rimsky just records "this claim is held-durable" and surfaces the join across `claim_handles + lineage + DataProcessing` as a coherent operator view.
+Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The asset thinking surface is intentionally a presentation alias over existing primitives — there's no `rimsky_assets` table, no special row type, no separate lifecycle. Producers handle the durable-storage substrate; rimsky just records "this claim is `state=committed AND lifetime=durable`" and surfaces the join across `claim_handles + lineage + DataProcessing` as a coherent operator view.
+
+State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: the asset query was `held_durable = TRUE` pre-refactor; it's now `state = 'committed' AND lifetime = 'durable'`. Functionally identical; the post-refactor predicate exposes the underlying lifecycle clearly (the row is committed via auto-terminal Promote and survives because lifetime is durable, not because of a flag).

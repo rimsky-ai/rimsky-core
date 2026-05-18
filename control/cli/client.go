@@ -883,14 +883,23 @@ func (c *Client) CancelBackfill(ctx context.Context, opID string) (map[string]an
 // Assets (F5 — G1)
 // ---------------------------------------------------------------------
 
-// AssetItem is one element of GET /instances/{id}/assets.
+// AssetItem is one element of GET /instances/{id}/assets. Mirrors the
+// server-side envelope at `code:control/controlapi/assets.go::assetItem`:
+// post-Stage-4 of the claim-handle state-column refactor the wire shape
+// surfaces `state` + `lifetime` instead of the pre-Stage-4 `held_durable`
+// bool. Both fields are always `"committed"` / `"durable"` for asset
+// queries by construction (the listing predicate is
+// `ListByInstanceAndState(committed, durable)`), but the explicit
+// fields are surfaced for forward compatibility with operator tooling
+// that wants to filter by state.
 type AssetItem struct {
 	Alias        string          `json:"alias"`
 	ClaimID      string          `json:"claim_id"`
 	ProducerName string          `json:"producer_name"`
 	Scope        json.RawMessage `json:"scope,omitempty"`
 	VersionID    string          `json:"version_id,omitempty"`
-	HeldDurable  bool            `json:"held_durable"`
+	State        string          `json:"state"`
+	Lifetime     string          `json:"lifetime"`
 	ClaimedAt    time.Time       `json:"claimed_at"`
 	HolderNodeID string          `json:"holder_node_id"`
 	NodeType     string          `json:"node_type,omitempty"`

@@ -18,15 +18,34 @@ references:
 
 `claim` is the protocol-layer noun returned by `ClaimProducer.Open`; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
 
-`rimsky_claim_handles` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, scope}`, `lock_name`, `scope_data`, `holder_supervisor_id`, `expires_at`, `is_held`, `realized_write_semantics`, optional `node_run_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
+`rimsky_claim_handles` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, scope}`, `lock_name`, `scope_data`, `holder_supervisor_id` (nullable post-2026-05-17 — see `state` below), `expires_at`, `is_held`, `realized_write_semantics`, optional `node_run_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
 
 Post-2026-05-15 the row also carries:
 
 - `parent_claim_handle_id UUID NULL` — FK self, pointing at the parent claim in a sub-claim chain. NULL for top-level claims; non-NULL for sub-claims spawned via `ClaimProducer.SplitScope`. Auto-terminal walks bottom-up over this FK.
-- `lifetime TEXT NOT NULL` — `subgraph` (default) | `durable`. Selects auto-terminal behavior: `subgraph` deletes the row on holding-subgraph completion; `durable` flips `held_durable: true` and persists past completion.
-- `held_durable BOOLEAN NOT NULL DEFAULT FALSE` — marks a row that survived auto-terminal Commit on a `lifetime: durable` claim. Released only by explicit operator action (`DELETE /instances/{id}/assets/{alias}`) or instance termination. The orphan-claim reaper skips `held_durable = true` rows.
-- `version_id TEXT NULL` — the canonical version_id returned by `ClaimProducer.Commit` for DataProcessing-capable claims; surfaces in lineage records (`record_kind: claim_commit`) and asset version-history queries.
+- `lifetime TEXT NOT NULL` — `subgraph` (default) | `durable`. Selects auto-terminal behavior: `subgraph` rows are reaped by the retention sweep at cutoff after Promote; `durable` rows are reaped only by explicit Release (asset surface).
+- `version_id TEXT NULL` — the canonical version_id returned by `ClaimProducer.Commit` for DataProcessing-capable claims; surfaces in lineage records (`record_kind: claim_terminal`) and asset version-history queries.
 - `producer_candidate_handle BYTEA NULL` — opaque candidate_handle from `DataProcessing.BeginCandidate`; lives on sub-claim rows for fan-out-with-DataProcessing flows. Threaded through to the leaf executor's `ExecuteRequest.candidate_handle`.
+
+Post-2026-05-17 the row carries the **state column** (replacing the previous `held_durable BOOLEAN`):
+
+- `state TEXT NOT NULL CHECK (state IN ('active','committed','abandoned'))` — the 3-state lifecycle.
+  - `active`: currently held by a supervisor, heartbeating. `holder_supervisor_id IS NOT NULL`.
+  - `committed`: producer `Commit` fired; row preserved past terminal. `holder_supervisor_id IS NULL`.
+  - `abandoned`: producer `Abandon` fired (natural or force-cancel); row preserved. `holder_supervisor_id IS NULL`.
+- `resolved_at TIMESTAMPTZ NULL` — timestamp the row exited `active`. NULL while `active`; set by `Promote` to `now()`. The retention sweep filters on this column.
+
+Two CHECK constraints enforce holder-consistency:
+
+- `state != 'active' OR holder_supervisor_id IS NOT NULL` — active rows must have a holder.
+- `state = 'active' OR holder_supervisor_id IS NULL` — non-active rows must not have a holder.
+
+State transitions are claimant-guarded via `Promote(id, supervisorID, newState, tx)`: the UPDATE sets `state`, nulls `holder_supervisor_id`, and sets `resolved_at` in one atomic statement; affected-rows = 0 returns `spec.ErrIllegalClaimHandleTransition`. Revival from a terminal state back to active is not permitted at the Go layer.
+
+Row deletion has two shapes:
+
+- **Active-row deletion** (the `abandonOpenedClaim` carve-outs): claimant-guarded `DELETE … WHERE id = $1 AND holder_supervisor_id = $2`. Same as pre-refactor.
+- **Non-active-row deletion** (retention sweep, asset Release path): absence-guarded — the row has `holder_supervisor_id IS NULL` by construction, so no per-row claimant guard is meaningful. Serialized across replicas via the scheduler-tick advisory lock (for the retention sweep) or via the operator-driven `DELETE /instances/{id}/assets/{alias}` endpoint (for the asset Release path).
 
 ## Purpose
 
@@ -38,11 +57,12 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the `is_held`
 
 ## Invariants
 
-- Every `DELETE FROM rimsky_claim_handles` and every heartbeat-refresh `UPDATE` carries `AND holder_supervisor_id = supervisor_id` (`@blessed-invariant 4`).
-- `holder_supervisor_id` is NOT NULL on the live row.
-- `node_run_id` FK uses `ON DELETE SET NULL` (not CASCADE) so held handles survive their parent's deletion until auto-terminal explicitly resolves them.
+- Every active-row mutation (`Promote`, `ExtendHeartbeat`, the carve-out `Delete` paths in `abandonOpenedClaim`) carries `AND holder_supervisor_id = supervisor_id` (`@blessed-invariant 4` — claimant-guarded release).
+- Non-active-row deletion (retention sweep, asset Release path) is absence-guarded: the row has `holder_supervisor_id IS NULL` by construction; the row-discovery query filter (`ListByInstanceAndState(committed, durable)` for Release; `state IN ('committed','abandoned')` for retention sweep) substitutes for the per-row claimant check.
+- `holder_supervisor_id` is NOT NULL on active rows (per the first CHECK constraint), NULL on terminal rows (per the second CHECK constraint).
+- `node_run_id` FK uses `ON DELETE SET NULL` (not CASCADE) so terminal handles survive their parent's deletion until either the retention sweep reaps them or (for durable-committed) the asset Release path fires.
 - Lock state lives only in this table; producers do not persist or shadow it (`@blessed-invariant 9a`).
-- The orphan reaper sweeps `expires_at < now()` rows but does NOT call `ClaimProducer.Abandon`; the bail path in `handleOrphanedClaim` is the deliberate exception that DOES fire `Abandon`.
+- The orphan reaper sweeps `state = 'active' AND expires_at < now()` rows but does NOT call `ClaimProducer.Abandon`; the bail path in `handleOrphanedClaim` is the deliberate exception that DOES fire `Abandon`. The reaper skips terminal rows because those are owned by the retention sweep (`SweepClaimHandleRetention`) or by explicit Release.
 
 ### Held variant
 
@@ -56,7 +76,7 @@ Held-variant invariants:
 - Auto-terminal fires exactly once per held claim, race-safe via `SELECT … FOR UPDATE` on the row.
 - Held handles persist across the `rimsky_node_runs` parent's deletion (`ON DELETE SET NULL`, not `CASCADE`).
 - `col:rimsky_claim_holders.state` CHECK forbids non-{active,completed,failed} values; once a holder is `failed`, the aggregate is `failed` (no `discard_then_retry` recovery in scope).
-- **Held-durable claim handles persist across instance dispatches** (post-2026-05-15 `@blessed-invariant 22`). A claim handle with `held_durable = true` is not deleted by holding-subgraph auto-terminal; only by explicit operator action or instance termination. The orphan-claim reaper skips `held_durable = true` rows.
+- **Held-durable claim handles persist across instance dispatches** (post-2026-05-15 `@blessed-invariant 22`, refreshed post-2026-05-17). A claim handle with `state = 'committed' AND lifetime = 'durable'` is not reaped by the retention sweep; released only by explicit operator action (`DELETE /instances/{id}/assets/{alias}`) or instance termination (`ReleaseHeldDurableClaims`). The orphan-claim reaper skips non-`active` rows.
 
 ### Authoring: held vs unheld
 
@@ -74,3 +94,4 @@ The legacy table name was `rimsky_lock_holders`; Phase-5 consolidation renamed i
 ## Notes
 
 - Held-variant content folded in from former `concept:held-claim` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #16).
+- State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: replaced `held_durable boolean` with `state TEXT` enum + `resolved_at TIMESTAMPTZ`; terminal Promote preserves rows past auto-terminal; new `SweepClaimHandleRetention` reaps non-durable terminal rows past `retention.claim_handles_trailing`.

@@ -17,7 +17,7 @@
 //
 // Test 2 (`TestAutoTerminalAggregateFailedFiresGiveUp`) is delegated to
 // the unit-level coverage in
-// `foundation/integration/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp`,
+// `runtime/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp`,
 // which seeds `rimsky_claim_holders` rows directly and exercises the
 // aggregate-failed → Abandon routing without the wire round-trip.
 // Reproducing the same property end-to-end through the loopback fixture
@@ -115,21 +115,25 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.Equal(t, 0, abandonCount,
 		"aggregate-completed must NOT route to Abandon")
 
-	// Lock-holder + claim-holder rows are gone.
-	var lhCount, chCount int
+	// Post-Stage-3 of the claim-handle state-column refactor: auto-
+	// terminal Promote-not-delete. Assert lock-holder rows are in a
+	// terminal state (state='committed') rather than deleted; the
+	// retention sweep will reap them at cutoff.
+	var activeLhCount, committedLhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh
 		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
-		  WHERE n.instance_id = $1`, iid,
-	).Scan(&lhCount))
+		  WHERE n.instance_id = $1 AND lh.state = 'active'`, iid,
+	).Scan(&activeLhCount))
+	require.Equal(t, 0, activeLhCount,
+		"no active lock-holder rows must remain after auto-terminal commit")
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_holders ch
-		   JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
-		   JOIN rimsky_nodes n ON n.id = r.node_id
-		  WHERE n.instance_id = $1`, iid,
-	).Scan(&chCount))
-	require.Equal(t, 0, lhCount, "lock-holder rows must be cleaned up after auto-terminal commit")
-	require.Equal(t, 0, chCount, "claim-holder rows must be cascade-deleted with the lock-holder")
+		`SELECT count(*) FROM rimsky_claim_handles lh
+		   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
+		  WHERE n.instance_id = $1 AND lh.state = 'committed'`, iid,
+	).Scan(&committedLhCount))
+	require.Greater(t, committedLhCount, 0,
+		"at least one lock-holder row must be state=committed after auto-terminal commit")
 }
 
 // TestAutoTerminalAggregateFailedFiresGiveUp delegates to the unit-level
@@ -139,7 +143,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 // pins the routing decision.
 func TestAutoTerminalAggregateFailedFiresGiveUp(t *testing.T) {
 	t.Skip("scenario-level coverage delegated to " +
-		"foundation/integration/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp; " +
+		"runtime/auto_terminal_test.go::TestCheckAndFireResolution_AnyFailedFiresGiveUp; " +
 		"that unit test seeds claim-holder rows directly and exercises the " +
 		"aggregate-failed → Abandon routing without needing executor-side error wiring")
 }

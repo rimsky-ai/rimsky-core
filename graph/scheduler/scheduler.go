@@ -10,7 +10,10 @@
 // with the graph-layer sweeps (pure-cascade transitions, frame-engine
 // tick). The cron-fire sweep retired with the 2026-05-15 plan B10 / D7
 // / E16; cron firing is owned by the bundled `sensors/sensor-cron/`
-// service via the Sensor protocol + POST /sensors/{watch_id}/observations.
+// service via the Publisher protocol — Subscribe / Unsubscribe /
+// ListSubscriptions plus message envelopes POSTed to the generic
+// POST /instances/{instance_id}/messages endpoint with
+// sender_kind="publisher".
 //
 // Per tick:
 //  1. AdvisoryLocker-guarded TrySchedulerTick skips ticks when another
@@ -109,6 +112,16 @@ type Config struct {
 	// col:rimsky_node_runs.max_park_duration_seconds is NULL. Empty /
 	// nil → only per-row caps fire.
 	MaxParkDuration map[string]time.Duration
+	// Retention carries the trailing-window retention parameters. The
+	// claim-handle retention sweep (`runtime.SweepClaimHandleRetention`)
+	// runs at every tick when `Retention.ClaimHandlesTrailing > 0`,
+	// reaping terminal `rimsky_claim_handles` rows past the cutoff
+	// (excluding committed-durable rows — the asset surface). Zero /
+	// unset trailing → sweep disabled.
+	//
+	// @concept: retention
+	// @concept: claim-handle
+	Retention runtime.RetentionConfig
 }
 
 // Handle is returned from Start. Shutdown signals the loop to exit after the
@@ -280,6 +293,41 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 			Logger:       log,
 		}); err != nil {
 			return err
+		}
+	}
+
+	// 6b. Claim-handle retention sweep. Reaps terminal claim_handle rows
+	// past the configured trailing window (default disabled —
+	// `Retention.ClaimHandlesTrailing == 0` skips the sweep). Wired only
+	// when ClaimHandles is present; the sweep is idempotent across
+	// invocations and runs under the scheduler-tick advisory lock for
+	// cross-replica serialization. Spec
+	// .ok-planner/specs/2026-05-17-post-data-platform-cleanup-design.md
+	// §Claim-handle state-column refactor / retention.
+	if cfg.ClaimHandles != nil && cfg.Retention.ClaimHandlesTrailing > 0 {
+		now := time.Now()
+		if cfg.Clock != nil {
+			now = cfg.Clock.Now()
+		}
+		if _, err := runtime.SweepClaimHandleRetention(ctx, cfg.ClaimHandles, cfg.Retention, now, log); err != nil {
+			log.Warn("tick: SweepClaimHandleRetention failed", "error", err.Error())
+		}
+	}
+
+	// 6c. rimsky_message_idempotencies retention sweep. Reaps dedup
+	// rows past the configured trailing window (default 24h). Dedup
+	// tokens are short-lived by design — operators with longer retry
+	// windows can raise the cap. Runs under the scheduler-tick
+	// advisory lock for cross-replica serialization. Spec
+	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+	// §Message idempotency.
+	if cfg.Persist != nil && cfg.Retention.MessageIdempotenciesTrailing > 0 {
+		now := time.Now()
+		if cfg.Clock != nil {
+			now = cfg.Clock.Now()
+		}
+		if _, err := runtime.SweepMessageIdempotencies(ctx, cfg.Persist.MessageIdempotencies(), cfg.Retention, now, log); err != nil {
+			log.Warn("tick: SweepMessageIdempotencies failed", "error", err.Error())
 		}
 	}
 

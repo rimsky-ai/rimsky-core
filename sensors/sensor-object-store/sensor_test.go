@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,12 +34,12 @@ func TestCapabilities_AdvertisesObjectStore(t *testing.T) {
 	if len(caps.SupportedKinds) != 1 || caps.SupportedKinds[0].Kind != "object-store" {
 		t.Errorf("kinds: %+v", caps.SupportedKinds)
 	}
-	if len(caps.Protocols) != 1 || caps.Protocols[0] != "sensor" {
+	if len(caps.Protocols) != 1 || caps.Protocols[0] != "publisher" {
 		t.Errorf("protocols: %+v", caps.Protocols)
 	}
 }
 
-func TestStartWatch_RegistersInMemory(t *testing.T) {
+func TestSubscribe_RegistersInMemory(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{
 		"backend":       "memory",
@@ -47,8 +48,9 @@ func TestStartWatch_RegistersInMemory(t *testing.T) {
 		"poll_interval": "10s",
 	}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		TargetNode: "ingest", MessageKind: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -57,47 +59,53 @@ func TestStartWatch_RegistersInMemory(t *testing.T) {
 	w, ok := s.watches["w1"]
 	s.mu.Unlock()
 	if !ok || w.Bucket != "test-bucket" || w.WatermarkField != "name" {
-		t.Errorf("watch: %+v", w)
+		t.Errorf("subscription: %+v", w)
+	}
+	if w.TargetNode != "ingest" || w.MessageKind != "invalidate" {
+		t.Errorf("routing: %+v", w)
 	}
 }
 
-func TestStartWatch_RejectsBadBackend(t *testing.T) {
+func TestSubscribe_RejectsBadBackend(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{"backend": "ftp", "bucket": "b"}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", Kind: "object-store", ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "object-store", ResolvedConfig: raw,
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown backend")
 	}
 }
 
-func TestStartWatch_RejectsBadWatermark(t *testing.T) {
+func TestSubscribe_RejectsBadWatermark(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	cfg := map[string]any{"backend": "memory", "bucket": "b", "watermark_field": "lol"}
 	raw, _ := json.Marshal(cfg)
-	_, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", Kind: "object-store", ResolvedConfig: raw,
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", Kind: "object-store", ResolvedConfig: raw,
 	})
 	if err == nil {
 		t.Fatal("expected error for unknown watermark_field")
 	}
 }
 
-func TestTick_EmitsOneObservationPerNewObject(t *testing.T) {
+func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	var (
 		obsMu   sync.Mutex
 		obsBody []map[string]any
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
+			t.Errorf("path: %s", r.URL.Path)
+		}
 		raw, _ := io.ReadAll(r.Body)
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		obsMu.Lock()
 		obsBody = append(obsBody, body)
 		obsMu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -111,8 +119,9 @@ func TestTick_EmitsOneObservationPerNewObject(t *testing.T) {
 
 	cfg := map[string]any{"backend": "memory", "bucket": "test-bucket", "prefix": "events/", "poll_interval": "10s"}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+		TargetNode: "ingest", MessageKind: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,38 +129,38 @@ func TestTick_EmitsOneObservationPerNewObject(t *testing.T) {
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 2 {
-		t.Errorf("first tick observations: %d (want 2)", len(obsBody))
+		t.Errorf("first tick messages: %d (want 2)", len(obsBody))
+	}
+	if obsBody[0]["sender_kind"] != "publisher" {
+		t.Errorf("sender_kind: %v", obsBody[0]["sender_kind"])
 	}
 	obsMu.Unlock()
 
-	// No new objects → no observations on next tick.
+	// No new objects → no messages on next tick.
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 2 {
-		t.Errorf("steady state observations: %d (want 2)", len(obsBody))
+		t.Errorf("steady state messages: %d (want 2)", len(obsBody))
 	}
 	obsMu.Unlock()
 
-	// Add a new object → one new observation.
+	// Add a new object → one new message.
 	lister.Put("test-bucket", ObjectMeta{Name: "events/c.json", LastModified: pin, Size: 30, ETag: "etag-c"})
 	s.clock = func() time.Time { return pin.Add(30 * time.Second) }
 	s.Tick(context.Background())
 	obsMu.Lock()
 	if len(obsBody) != 3 {
-		t.Errorf("post-add observations: %d (want 3)", len(obsBody))
-	}
-	if obsBody[2]["object_name"] != "events/c.json" {
-		t.Errorf("third observation: %+v", obsBody[2])
+		t.Errorf("post-add messages: %d (want 3)", len(obsBody))
 	}
 	obsMu.Unlock()
 }
 
 func TestTick_LastModifiedWatermark(t *testing.T) {
 	var pushed int
-	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		pushed++
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 	}))
 	defer rimsky.Close()
 
@@ -172,8 +181,8 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 		"watermark_field": "last_modified",
 	}
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.StartWatch(context.Background(), &genv1.StartWatchRequest{
-		WatchId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,14 +199,14 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	}
 }
 
-func TestStopWatchIdempotent(t *testing.T) {
+func TestUnsubscribeIdempotent(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.mu.Lock()
-	s.watches["w1"] = &Watch{WatchID: "w1"}
+	s.watches["w1"] = &Watch{SubscriptionID: "w1"}
 	s.mu.Unlock()
 	for i := 0; i < 2; i++ {
-		if _, err := s.StopWatch(context.Background(), &genv1.StopWatchRequest{WatchId: "w1"}); err != nil {
-			t.Fatalf("stop[%d]: %v", i, err)
+		if _, err := s.Unsubscribe(context.Background(), &genv1.UnsubscribeRequest{PublisherSubscriptionId: "w1"}); err != nil {
+			t.Fatalf("unsubscribe[%d]: %v", i, err)
 		}
 	}
 	s.mu.Lock()

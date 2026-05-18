@@ -60,6 +60,19 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Optional state-DB persistence. Empty env → in-memory mode.
+	state, err := openStateDB(ctx)
+	if err != nil {
+		slog.Error("open state db", "error", err.Error())
+		os.Exit(1)
+	}
+	if state != nil {
+		svc.AttachStateDB(state)
+		defer func() { _ = state.Close() }()
+		slog.Info("sensor-object-store state db attached")
+	}
+
 	go svc.Run(ctx)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
@@ -68,7 +81,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv := grpc.NewServer()
-	genv1.RegisterSensorServer(srv, svc)
+	genv1.RegisterPublisherServer(srv, svc)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("grpc serve", "error", err.Error())

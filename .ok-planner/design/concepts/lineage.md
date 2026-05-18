@@ -10,7 +10,9 @@ references:
 
 ## Definition
 
-A projection of computational + data-promotion records, persisted in `rimsky_lineage`. Two record kinds (`leaf_run`, `claim_commit`); both append-only. The source of truth is `rimsky_events` (the audit log) + `rimsky_claim_handles` lifecycle. `rimsky_lineage` is a materialized projection rebuildable from those.
+A projection of computational + data-promotion records, persisted in `rimsky_lineage`. Two record kinds (`leaf_run`, `claim_terminal`); both append-only. The source of truth is `rimsky_events` (the audit log) + `rimsky_claim_handles` lifecycle. `rimsky_lineage` is a materialized projection rebuildable from those.
+
+The `claim_terminal` row carries a per-row `outcome` column (post-2026-05-16 forensics extension) discriminating the per-terminal disposition: `committed` (successful Commit), `abandoned` (natural Abandon), `force_cancelled` (sibling-cancel / descendant-cancel walker). The pre-rename `claim_commit` record kind covered only the Commit branch; the rename captures every claim-handle terminal in the same projection.
 
 ## Boundaries
 
@@ -35,7 +37,7 @@ Owns: the `rimsky_lineage` table, the two record kinds, the control-api `/lineag
 ## Annotation sites
 
 - `code:foundation/persistence/lineage.go` — table-shape interface.
-- `code:runtime/lineage.go` — `WriteLeafRunLineage` + `WriteClaimCommitLineage`.
+- `code:runtime/lineage_writer.go` — `WriteLeafRunLineage` + `WriteClaimTerminalLineage`.
 - `code:control/controlapi/lineage.go` — query handlers.
 - `code:control/cli/lineage.go` — `rimsky-cli lineage` subcommand group.
 - `code:subscribers/openlineage/` — emitter consuming the projection.

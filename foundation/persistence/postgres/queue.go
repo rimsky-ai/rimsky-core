@@ -6,7 +6,7 @@
 //
 // Under the stores redesign (spec §7), this surface owns rimsky_node_runs
 // only. The §7.3 atomic-acquisition transaction is orchestrated by
-// foundation/integration/runner.go; the helpers below (SelectCandidates,
+// runtime/runner.go; the helpers below (SelectCandidates,
 // ClaimDispatchRow) are the building blocks the runner calls inside the
 // single persistence.Tx that brackets candidate selection, per-named-lock
 // advisory locking, the claimant-guarded dispatch UPDATE, scope

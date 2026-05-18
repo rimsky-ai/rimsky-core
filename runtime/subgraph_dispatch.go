@@ -328,6 +328,43 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 // `ReasonSubGraphInternalCascadeFired`) and the sub-graph's non-entry
 // internal nodes dispatch as children of the calling-node parent run.
 //
+// Lineage emission shape: a sub-graph caller produces TWO `leaf_run`
+// rows in `table:rimsky_lineage` per dispatch.
+//
+//  1. The first row fires here, at internal-cascade-fire time, carrying
+//     `terminal_kind: "subgraph_call"` + `state: "running"`. The
+//     calling node has just absorbed its entry's terminal; the parent
+//     run stays running while the internal cascade runs, so the row
+//     captures the inputs (params_snapshot_hash, userdata_hash,
+//     held_claims, parent_run_id) at internal-cascade-fire — the
+//     "what the caller saw" moment.
+//  2. The second row fires later from the standard `applyTerminalComplete`
+//     path on the parent's aggregation terminal (driven by the
+//     last internal child's terminal via PropagateFromChildState),
+//     carrying `terminal_kind: "complete"` + `state: "fresh"`. The row
+//     captures the post-aggregation outcome (last_outcome resolved
+//     from the children's aggregate, `changed` reflecting the final
+//     verdict).
+//
+// Downstream consumers can pair the two rows by `run_id` (both rows
+// reference the same calling-run UUID) and discriminate on
+// `terminal_kind`.
+//
+// OpenLineage subscriber consequence: `MakeLeafRunEvent` (in
+// `subscribers/openlineage/emitter.go`) maps every leaf_run row to a
+// single OpenLineage `COMPLETE` event keyed on `runId =
+// instance_id[+child_key]`. The two-row shape therefore produces TWO
+// `COMPLETE` events for the same `runId` — once at the
+// `subgraph_call` row (carrying `rimsky.terminal_kind = "subgraph_call"`
+// in the rimsky facet) and once at the `complete` row (carrying
+// `rimsky.terminal_kind = "complete"`). Downstream OpenLineage
+// consumers that treat `COMPLETE` as terminal should discriminate by
+// `rimsky.terminal_kind`: the first event reports inputs at
+// internal-cascade-fire time; the second reports the post-aggregation
+// outcome. The pair is intentional (the calling node's inputs are
+// distinct from the post-aggregation outcome); it is not a duplicate
+// emission.
+//
 // Locks acquired by the caller (including the absorbed entry's
 // claims/holds) STAY HELD across the internal cascade; they release
 // when the parent's aggregated terminal fires (driven by
@@ -526,6 +563,33 @@ func applyTerminalCompleteSubgraphCaller(
 			"delegate", acq.NodeDef.Delegate,
 			"last_outcome", string(lastOutcome))
 	}
+	// E8: emit leaf-run lineage record for the sub-graph caller terminal.
+	// Without this emit, sub-graph instances are missing a `leaf_run`
+	// row for every caller terminal — breaking the rebuildability of
+	// the lineage projection. The `terminal_kind: "subgraph_call"`
+	// discriminator lets consumers filter caller rows out of pure
+	// leaf-executor accounting. The parent run stays `running` here
+	// (the absorbed entry just terminated; the internal cascade is the
+	// real "completion"), so State is "running" — distinct from the
+	// "fresh" rows emitted by leaf-executor terminals.
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:       acq.InstanceID,
+		FrameID:          acq.FrameID,
+		RunID:            acq.DispatchID,
+		NodeID:           acq.NodeID,
+		State:            string(cascade.NodeStateRunning),
+		LastOutcome:      string(lastOutcome),
+		Changed:          t.Changed,
+		TerminalKind:     "subgraph_call",
+		NodeAlias:        acq.NodeType,
+		ExecutorName:     acq.Executor,
+		TemplateHash:     acq.TemplateHash,
+		Params:           acq.InstanceParams,
+		UserdataMerged:   acq.MergedUserdata,
+		HeldClaims:       HeldClaimsForLineage(acq),
+		ParentRunID:      acq.ParentRunID,
+		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+	})
 	return nil
 }
 
@@ -602,7 +666,7 @@ func isSubgraphExitNode(ctx context.Context, args RunArgs, acq *acquisition) boo
 		return false
 	}
 	var hit bool
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)
 		if err != nil || inst == nil {
 			return nil
@@ -613,6 +677,11 @@ func isSubgraphExitNode(ctx context.Context, args RunArgs, acq *acquisition) boo
 		}
 		hit = IsSubgraphExit(&tmpl.Spec, acq.NodeType)
 		return nil
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("isSubgraphExitNode: lookup tx failed; treating as non-exit",
+			"node_id", acq.NodeID.String(),
+			"instance_id", acq.InstanceID.String(),
+			"error", err.Error())
+	}
 	return hit
 }

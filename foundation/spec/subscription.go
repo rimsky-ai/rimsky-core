@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
-// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 package spec
 
@@ -8,7 +8,7 @@ package spec
 // See .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
 // Piece 1 (subscription-cascade model resolution).
 //
-//	@concept: subscription
+//	@concept: node-subscription
 type SubscriptionEntry struct {
 	// Node names the upstream node-type (template-relative). Mutually
 	// exclusive with Instance.
@@ -67,7 +67,7 @@ type SubscriptionEntry struct {
 	Sender string `yaml:"sender,omitempty" json:"sender,omitempty"`
 
 	// SenderKind narrows an `on: message` subscription to messages
-	// whose envelope `sender_kind` matches ("operator" | "sensor" |
+	// whose envelope `sender_kind` matches ("operator" | "publisher" |
 	// "instance"). Empty means "any sender_kind." Only meaningful
 	// when On == "message".
 	SenderKind string `yaml:"sender_kind,omitempty" json:"sender_kind,omitempty"`
@@ -100,11 +100,13 @@ const (
 )
 
 // MessageSenderKind values for SubscriptionEntry.SenderKind and
-// rimsky_messages.sender_kind. Per spec §Unified message layer.
+// rimsky_messages.sender_kind. Per spec
+// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification.
 const (
-	MessageSenderKindOperator = "operator"
-	MessageSenderKindSensor   = "sensor"
-	MessageSenderKindInstance = "instance"
+	MessageSenderKindOperator  = "operator"
+	MessageSenderKindPublisher = "publisher"
+	MessageSenderKindInstance  = "instance"
 )
 
 // Subscription-scope constants used by the wait-set persistence layer.

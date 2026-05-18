@@ -123,6 +123,42 @@ func (h *harness) httpJSON(t *testing.T, method, path string, body any) (int, ma
 	return resp.StatusCode, out
 }
 
+// httpResponse pairs the parsed body + status for tests that need
+// header-driven dispatch (e.g. Idempotency-Key).
+type httpResponse struct {
+	status int
+	body   map[string]any
+}
+
+// httpJSONWithHeaders is httpJSON plus extra request headers. Used by
+// the idempotency-key tests so the universal dedup path actually
+// fires.
+func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body any, headers map[string]string) httpResponse {
+	t.Helper()
+	var reqBody io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		require.NoError(t, err)
+		reqBody = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, h.srv.URL+path, reqBody)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	out := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	return httpResponse{status: resp.StatusCode, body: out}
+}
+
 // validTemplateBody builds a minimal valid template request matching
 // the wrapped POST /templates body shape (`{spec: {...}}`). Two
 // executor-backed nodes; no stores or locks.

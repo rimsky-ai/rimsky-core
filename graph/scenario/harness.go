@@ -407,11 +407,15 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, 
 	requireRun := state == cascade.NodeStateFresh
 	for time.Now().Before(deadline) {
 		var n *persistence.NodeRow
-		_ = h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 			r, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
 			n = r
 			return err
-		})
+		}); err != nil && h.T != nil {
+			// Test poller: log via the test logger so a transient row-load
+			// failure surfaces in test output but does not abort the poll.
+			h.T.Logf("WaitForNodeState: load node %s failed; retrying next poll: %v", nodeID.String(), err)
+		}
 		if n != nil && n.State == state {
 			if !requireRun || h.hasRunEvent(nodeID) {
 				return true

@@ -143,7 +143,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Record the operator action in the audit log.
-		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &id,
 				Kind:   "operator_override",
@@ -152,7 +152,12 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 					"reason": body.Reason,
 				},
 			}, tx)
-		})
+		}); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleInvalidateNode: append operator_override audit event failed",
+				"node_id", id.String(),
+				"reason", body.Reason,
+				"error", err.Error())
+		}
 		if err := runtime.InvalidateNode(req.Context(), runtime.InvalidateArgs{
 			Persist:      deps.Persist,
 			Queue:        deps.Queue,
@@ -240,7 +245,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		_ = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &id,
 				Kind:   "operator_override",
@@ -248,7 +253,11 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 					"action": "reset",
 				},
 			}, tx)
-		})
+		}); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleResetNode: append operator_override audit event failed",
+				"node_id", id.String(),
+				"error", err.Error())
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }

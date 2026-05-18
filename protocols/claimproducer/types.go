@@ -198,5 +198,4 @@ const (
 	ProtocolDataProcessing      = "data_processing"
 	ProtocolValidation          = "validation"
 	ProtocolLifecycleSubscriber = "lifecycle_subscriber"
-	ProtocolSensor              = "sensor"
 )

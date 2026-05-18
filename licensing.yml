@@ -9,26 +9,43 @@
 #
 # Path classification rule: longest-prefix-match wins. Subdirectories of
 # AGPL paths can be reclassified Apache by being listed under the apache:
-# block (e.g. foundation/integration/remote/ is Apache despite living
-# under foundation/integration/ AGPL).
+# block (e.g. runtime/remote/ is Apache despite living under runtime/
+# AGPL — the gRPC client to ClaimProducer impls is interface-shaped so
+# that out-of-tree adopters can dial producer impls without crossing
+# the boundary).
+#
+# Post-2026-05-13 four-layer restructure note: the old `foundation/integration/`
+# directory was renamed to `runtime/` (root module bridge layer) and
+# `graph/executor/` was renamed to `runtime/executor/`. The boundary
+# rules carry over: `runtime/` is AGPL (orchestrator-internal bridge)
+# with `runtime/remote/` and `runtime/executor/` carved out as Apache
+# (interface-shaped client surfaces).
 
 apache:
   - protocols/
   - foundation/locks/
-  - foundation/integration/remote/
   - foundation/shared/
+  - foundation/spec/
+  - runtime/remote/
+  - runtime/executor/
+  - runtime/clientiface/
   - control/cli/
-  - graph/executor/
   - graph/node/
   - graph/shared/
   - graph/template/canonical/
   - conformance/
   - stores/
   - executors/
+  - sensors/
+  - subscribers/
+  - examples/
   - cmd/rimsky-cli/
   - cmd/rimsky-executor-conformance/
   - cmd/rimsky-claim-producer-conformance/
   - cmd/rimsky-conformance-probe/
+  - cmd/rimsky-data-processing-conformance/
+  - cmd/rimsky-publisher-conformance/
+  - cmd/rimsky-validation-conformance/
   - cmd/rimsky-license-check/
   - cmd/rimsky-docs-glossary/
   - cmd/rimsky-docs-llms-full/
@@ -44,7 +61,6 @@ apache:
 
 agpl:
   - foundation/cascade/
-  - foundation/integration/  # excludes foundation/integration/remote/ (override above)
   - foundation/persistence/
   - foundation/internal/
   - graph/attribute/
@@ -55,11 +71,14 @@ agpl:
   - control/observability/
   - graph/scenario/
   - graph/scheduler/
+  - runtime/  # excludes runtime/remote/ and runtime/executor/ (overrides above)
+  - mcp-servers/
   - cmd/rimsky-scheduler/
   - cmd/rimsky-supervisor/
   - cmd/rimsky-control-api/
   - cmd/rimsky-migrate/
   - cmd/rimsky-entrypoint/
+  - cmd/rimsky-blob-backend-conformance/
   - test/
 
 exempt:

@@ -29,11 +29,12 @@ import (
 	"github.com/fallguy/rimsky/foundation/spec"
 )
 
-// nodeCols is the canonical projection of a NodeRow. After the
-// rimsky_nodes column-drop (migration 004), state / last_outcome /
-// last_heartbeat_at / assigned_supervisor_id no longer live on the
-// rimsky_nodes row — they're sourced from the in-flight rimsky_node_runs
-// row via the LEFT JOIN shape below. Callers that need the projection
+// nodeCols is the canonical projection of a NodeRow. State / last_outcome
+// / last_heartbeat_at / assigned_supervisor_id no longer live on the
+// rimsky_nodes row (the column-drop is folded into the flattened
+// baseline migration; historically migration 004 dropped them) —
+// they're sourced from the in-flight rimsky_node_runs row via the LEFT
+// JOIN shape below. Callers that need the projection
 // use `nodeSelect` (which embeds the join) rather than the bare table.
 //
 // Nodes with no in-flight run row default to state='fresh' / NULL

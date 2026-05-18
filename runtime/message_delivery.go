@@ -5,11 +5,11 @@
 // message_delivery.go — E5. Message queue + delivery at frame boundary.
 //
 // Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Unified message layer. Messages are envelopes that drive instance
-// frame creation: operators emit invalidate-class messages via
-// `POST /instances/{id}/messages`; sensors emit observation messages
-// via `POST /sensors/{watch_id}/observations`. At frame creation the
+// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
+// §Publisher protocol unification. Messages are envelopes that drive
+// instance frame creation; operators and publishers (bundled sensors)
+// both emit messages via the generic
+// `POST /instances/{id}/messages` endpoint. At frame creation the
 // scheduler delivers pending messages, walks subscriptions, and
 // stale-marks matching receivers.
 //
@@ -65,9 +65,9 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.Messag
 		return errors.New("EnqueueMessage: sender required")
 	}
 	switch req.SenderKind {
-	case "operator", "sensor", "instance":
+	case "operator", "publisher", "instance":
 	default:
-		return fmt.Errorf("EnqueueMessage: unknown sender_kind %q (want operator|sensor|instance)", req.SenderKind)
+		return fmt.Errorf("EnqueueMessage: unknown sender_kind %q (want operator|publisher|instance)", req.SenderKind)
 	}
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()

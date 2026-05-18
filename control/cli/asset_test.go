@@ -29,7 +29,8 @@ func TestClient_ListAssets(t *testing.T) {
 					"version_id":     "v1",
 					"claimed_at":     time.Now().UTC().Format(time.RFC3339),
 					"holder_node_id": "node-1",
-					"held_durable":   true,
+					"state":          "committed",
+					"lifetime":       "durable",
 				},
 			},
 		})
@@ -42,6 +43,12 @@ func TestClient_ListAssets(t *testing.T) {
 	}
 	if len(resp.Assets) != 1 || resp.Assets[0].Alias != "loader.fs" {
 		t.Errorf("assets: %+v", resp.Assets)
+	}
+	if resp.Assets[0].State != "committed" {
+		t.Errorf("state: %q (want committed)", resp.Assets[0].State)
+	}
+	if resp.Assets[0].Lifetime != "durable" {
+		t.Errorf("lifetime: %q (want durable)", resp.Assets[0].Lifetime)
 	}
 }
 

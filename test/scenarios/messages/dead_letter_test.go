@@ -48,9 +48,9 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
 		ID:         shared.UUID(uuid.New()),
 		InstanceID: instanceID,
-		Kind:       "observation",
+		Kind:       "invalidate",
 		Sender:     "sensor-cron",
-		SenderKind: "sensor",
+		SenderKind: "publisher",
 		ReceivedAt: now,
 	}); err != nil {
 		t.Fatalf("EnqueueMessage live: %v", err)
@@ -64,9 +64,9 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}
 	if len(delivered.Messages) != 1 {
-		t.Fatalf("expected 1 delivered (the live sensor message), got %d", len(delivered.Messages))
+		t.Fatalf("expected 1 delivered (the live publisher message), got %d", len(delivered.Messages))
 	}
-	if delivered.Messages[0].SenderKind != "sensor" {
-		t.Errorf("delivered.sender_kind: got %s want sensor", delivered.Messages[0].SenderKind)
+	if delivered.Messages[0].SenderKind != "publisher" {
+		t.Errorf("delivered.sender_kind: got %s want publisher", delivered.Messages[0].SenderKind)
 	}
 }

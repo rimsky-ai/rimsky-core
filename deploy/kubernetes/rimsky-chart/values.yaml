@@ -53,4 +53,29 @@ claudeAgent:
     port: 9090
     httpPort: 9190
 
+# rimskyEndpoint is the control-api URL bundled sensors dial when
+# POSTing message envelopes. Defaults to the in-cluster control-api
+# Service DNS name; override when the chart deploys sensors against a
+# rimsky cluster elsewhere.
+rimskyEndpoint: ""
+
+# Bundled sensors (Publisher protocol). Per concept:replica the v1
+# contract is single-replica per sensor binary.
+sensorCron:
+  replicas: 1
+  imageTag: ""   # defaults to image.tag
+  stateDSN: ""   # empty → in-memory mode (subscriptions rebuild via rimsky ResyncPublisherSubscriptions at supervisor startup)
+sensorHttp:
+  replicas: 1
+  imageTag: ""
+  stateDSN: ""   # empty → in-memory mode; body-hash watermarks reset on restart
+sensorObjectStore:
+  replicas: 1
+  imageTag: ""
+  stateDSN: ""   # empty → in-memory mode; watermark cursors reset on restart
+sensorWebhook:
+  replicas: 1
+  imageTag: ""
+  stateDSN: ""   # empty → in-memory mode; idempotency-key state resets on restart
+
 resources: {}

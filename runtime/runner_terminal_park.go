@@ -20,7 +20,7 @@
 //
 // Held claim handles are NOT released here — held-claim semantics already
 // retain claims across the park boundary (see the auto-terminal mechanism
-// in foundation/integration/auto_terminal.go::CheckAndFireResolution).
+// in runtime/auto_terminal.go::CheckAndFireResolution).
 
 package runtime
 
@@ -187,10 +187,22 @@ func applyTerminalPark(
 	// the park-has-no-outcome convention). Bytes are inert per
 	// @blessed-invariant 20/21; the lineage row carries hashes + run
 	// identifiers + state, not raw payload bytes.
-	EmitLeafRunLineage(ctx, args,
-		acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
-		string(cascade.NodeStateParked), "", "",
-		acq.InstanceParams, acq.InstanceUserdataOverrides)
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:       acq.InstanceID,
+		FrameID:          acq.FrameID,
+		RunID:            acq.DispatchID,
+		NodeID:           acq.NodeID,
+		State:            string(cascade.NodeStateParked),
+		TerminalKind:     "park",
+		NodeAlias:        acq.NodeType,
+		ExecutorName:     acq.Executor,
+		TemplateHash:     acq.TemplateHash,
+		Params:           acq.InstanceParams,
+		UserdataMerged:   acq.MergedUserdata,
+		HeldClaims:       HeldClaimsForLineage(acq),
+		ParentRunID:      acq.ParentRunID,
+		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+	})
 	// Run-tree state propagation (E2): a parked child still produces a
 	// settled per-child state for the aggregator. Empty LastOutcome
 	// because park has no fresh-vs-changed distinction.

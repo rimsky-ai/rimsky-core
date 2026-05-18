@@ -54,9 +54,11 @@ type LineageRow struct {
 	ObservedAt time.Time
 	Record     json.RawMessage // per-kind payload; opaque to rimsky downstream
 	// Outcome carries the per-terminal disposition for `claim_terminal`
-	// rows. Empty / "committed" on `leaf_run`. Persisted as a column
-	// (rather than nested in the JSON payload) so analytical queries can
-	// filter without JSON extraction.
+	// rows: one of `committed | abandoned | force_cancelled`. Empty on
+	// `leaf_run` rows (the column is not meaningful for computational
+	// terminals — every leaf-run row persists with outcome="" verbatim).
+	// Persisted as a column (rather than nested in the JSON payload) so
+	// analytical queries can filter without JSON extraction.
 	Outcome string
 }
 
@@ -87,6 +89,17 @@ type LineageTable interface {
 
 	// Query returns rows matching the filter, paginated.
 	Query(ctx context.Context, q LineageQuery, pag ListPagination) (PaginatedListResult[LineageRow], error)
+
+	// QueryByParentRunID returns leaf_run rows whose
+	// `record->>'parent_run_id'` matches parentRunID, ordered by
+	// observed_at ascending. Used by the descendant-walk endpoint
+	// (`GET /lineage/runs/{run_id}/descendants?depth=N`) to find
+	// children of the seed run without page-scanning the entire
+	// projection. Postgres uses a JSONB key lookup; SQLite uses
+	// `json_extract`. `limit` caps the per-call result set; pre-v1
+	// callers pass `lineageWalkPerFrontierLimit` (1000) which covers
+	// realistic fan-out widths.
+	QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]LineageRow, error)
 
 	// DeleteOlderThan deletes lineage rows whose observed_at is
 	// before cutoff AND whose corresponding run or claim_handle is no

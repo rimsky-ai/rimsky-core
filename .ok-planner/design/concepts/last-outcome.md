@@ -46,4 +46,4 @@ Pre-migration-004 code referenced `t.Changed` directly; the cascade gate was the
 
 ## Notes
 
-- 2026-05-14: values become filter predicates on `state` subscriptions (`outcome:` filter on `SubscriptionEntry`). Subscription validation cross-checks `outcome:` against the enum. See `concept:subscription`. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- 2026-05-14: values become filter predicates on `state` subscriptions (`outcome:` filter on `SubscriptionEntry`). Subscription validation cross-checks `outcome:` against the enum. See `concept:node-subscription`. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.

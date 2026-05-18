@@ -297,10 +297,19 @@ func abandonHeldClaimsForOverdueNode(
 			// the cleanup since the owning node-run is going away.
 			continue
 		}
+		if h.HolderSupervisorID == nil {
+			// Non-active claim_handle (state ∈ {committed, abandoned})
+			// — auto-terminal already resolved this row. Skip silently;
+			// CheckAndFireResolution is idempotent but FailAllActive +
+			// the claimant-guarded predicate would fail with an empty
+			// supervisor id.
+			continue
+		}
+		holderSupervisorID := *h.HolderSupervisorID
 		// Mark every still-active row as failed. ClaimHolders is reachable
 		// via Persist; we don't take a separate field on args because the
 		// dependency surface is already wide enough.
-		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ID, h.HolderSupervisorID, tx); err != nil {
+		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ID, holderSupervisorID, tx); err != nil {
 			return err
 		}
 		// Fire CheckAndFireResolution. The claim-handle row's
@@ -313,7 +322,7 @@ func abandonHeldClaimsForOverdueNode(
 		// the original holder. The scheduler is an authorized observer
 		// fulfilling the cleanup that the original holder will never
 		// perform (it was parked indefinitely).
-		runArgs.SupervisorID = h.HolderSupervisorID
+		runArgs.SupervisorID = holderSupervisorID
 		if err := CheckAndFireResolution(ctx, runArgs, tx, h.ID); err != nil {
 			return err
 		}

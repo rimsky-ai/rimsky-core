@@ -31,7 +31,7 @@ Templates couldn't express "I want to read this attribute but not gate dispatch 
 Resolved by `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`. The bundle decomposes into three primitives:
 
 - **Read access** lives in the substitution grammar (`{{nodes.X.attribute.Y}}`).
-- **Cascade subscription** lives in `subscribes:` (explicit) plus auto-inferred from substitution refs (implicit). See `concept:subscription`.
+- **Cascade subscription** lives in `subscribes:` (explicit) plus auto-inferred from substitution refs (implicit). See `concept:node-subscription`.
 - **Eligibility gating** lives in `rimsky_wait_set` rows populated by cascade walks and drained on settled state. See `concept:wait-set`.
 
 The pessimistic-invalidate + drain rule keeps the eligibility surface uniform across topic kinds (state / attribute / event) without re-coupling them at declaration time.

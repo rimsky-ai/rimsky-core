@@ -23,7 +23,7 @@ import (
 // `unsupported Scan, storing driver.Value type string into type
 // *time.Time`. Before the fix, LoadResumeMetadataInTx silently failed
 // (the runner's `rerr == nil && rm != nil` short-circuit at
-// foundation/integration/runner_acquire.go:382 swallowed it), so resume
+// runtime/runner_acquire.go:382 swallowed it), so resume
 // metadata was lost and the dispatch proceeded as a fresh dispatch —
 // effectively breaking park-resume on SQLite.
 func TestSQLiteParkResumeRoundTrip(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // LockKind enumerates the two flavours of rimsky_claim_handles row.
@@ -33,17 +34,29 @@ type ClaimHandleRow struct {
 	// is exposed because operators legitimately need to see what
 	// scope a claim covers; address is opaque to rimsky and meant
 	// for the store/executor only.
-	Address            json.RawMessage `json:"-"`
-	Intent             *string         `json:"intent,omitempty"`
-	HolderSupervisorID string          `json:"holder_supervisor_id"`
-	HolderNodeID       shared.UUID     `json:"holder_node_id"`
+	Address json.RawMessage `json:"-"`
+	Intent  *string         `json:"intent,omitempty"`
+	// HolderSupervisorID is the supervisor id currently bracketing this
+	// claim. Nil iff `State != active` per the
+	// `rimsky_claim_handles_active_has_holder` /
+	// `rimsky_claim_handles_inactive_has_no_holder` CHECK pair (migration
+	// 009). The pointer-vs-empty-string distinction is load-bearing for
+	// `@blessed-invariant 4` (claimant-guarded release): callers compare
+	// `*row.HolderSupervisorID == args.SupervisorID`, so a NULL row
+	// scanned as "" would silently bypass the guard if compared against an
+	// also-empty supervisor id. Active rows always carry a non-nil pointer
+	// (the active-has-holder CHECK rejects active+NULL); the orphan
+	// reaper, terminal-decision cancel walker, and auto-terminal chain
+	// guard against nil before dereferencing.
+	HolderSupervisorID *string     `json:"holder_supervisor_id,omitempty"`
+	HolderNodeID       shared.UUID `json:"holder_node_id"`
 	ClaimedAt          time.Time       `json:"claimed_at"`
 	LastHeartbeatAt    time.Time       `json:"last_heartbeat_at"`
 	ExpiresAt          time.Time       `json:"expires_at"`
 	FrameID            *shared.UUID    `json:"frame_id,omitempty"`
 	// RealizedWriteSemantics is the per-claim semantics returned by
 	// ClaimProducer.Open. Persisted on the lock-holder row so the
-	// scope-conflict check (foundation/integration/runner_acquire.go::
+	// scope-conflict check (runtime/runner_acquire.go::
 	// evaluateScopeConflict) can apply ModeCoexists without re-dialing
 	// the producer. Empty for named-lock rows.
 	RealizedWriteSemantics string `json:"realized_write_semantics,omitempty"`
@@ -64,13 +77,23 @@ type ClaimHandleRow struct {
 	// §Recursive claim-tree resolution.
 	ParentClaimHandleID *shared.UUID `json:"parent_claim_handle_id,omitempty"`
 	// Lifetime is "subgraph" (default) or "durable". Durable claims
-	// persist past auto-terminal as held_durable=TRUE rows until
+	// persist past auto-terminal as state='committed' rows until
 	// instance termination explicitly Releases them.
-	Lifetime string `json:"lifetime,omitempty"`
-	// HeldDurable marks a row that survived auto-terminal Commit on
-	// a `lifetime: durable` claim. Cleared by instance-termination
-	// Release path; skipped by the orphan-claim reaper while TRUE.
-	HeldDurable bool `json:"held_durable"`
+	//
+	// @concept: claim-lifetime
+	Lifetime spec.ClaimLifetime `json:"lifetime,omitempty"`
+	// State: rimsky_claim_handles.state enum. Active during the
+	// holding-subgraph run; transitions to committed / abandoned at
+	// Promote. Post-Stage-4 of the claim-handle state-column refactor,
+	// State is the sole source of truth for terminal disposition (the
+	// pre-Stage-4 `held_durable` dual-write column has been retired).
+	//
+	// @concept: claim-handle
+	State spec.ClaimHandleState `json:"state,omitempty"`
+	// ResolvedAt: timestamp the row exited 'active'. NULL while
+	// State == active. Used by the retention sweep cutoff predicate
+	// (Stage 3+).
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 	// VersionID is the DataProcessing-producer-returned canonical
 	// version identifier persisted on Commit for durable claims. Empty
 	// for non-DataProcessing producers or pre-Commit rows. Inert in
@@ -130,9 +153,11 @@ type ClaimHandleInsertInput struct {
 	// §Recursive claim-tree resolution.
 	ParentClaimHandleID *shared.UUID
 	// Lifetime is "subgraph" (default; the row drops at auto-terminal)
-	// or "durable" (the row persists with held_durable=TRUE past
+	// or "durable" (the row persists as state='committed' past
 	// auto-terminal). Empty defaults to "subgraph".
-	Lifetime string
+	//
+	// @concept: claim-lifetime
+	Lifetime spec.ClaimLifetime
 	// ProducerCandidateHandle is the bytes returned by
 	// `DataProcessing.BeginCandidate` per sub-claim. Empty for
 	// non-DataProcessing producers and non-fan-out claims.
@@ -178,7 +203,7 @@ type ClaimHandleTable interface {
 	DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx Tx) (bool, error)
 
 	// LockForUpdate runs SELECT ... FOR UPDATE on the lock-holder row.
-	// Used by foundation/integration/auto_terminal.go::CheckAndFireResolution to
+	// Used by runtime/auto_terminal.go::CheckAndFireResolution to
 	// serialize auto-terminal resolution per blessed-invariant 13.
 	// Returns (nil, nil) when the row does not exist (already deleted by
 	// a prior resolution).
@@ -194,7 +219,7 @@ type ClaimHandleTable interface {
 	// declared realized_write_semantics on a scope-kind row,
 	// claimant-guarded on supervisorID. Called after ClaimProducer.Open
 	// returns; the value is then consumed by the in-Go scope-conflict
-	// check (foundation/integration/runner_acquire.go::evaluateScopeConflict)
+	// check (runtime/runner_acquire.go::evaluateScopeConflict)
 	// without re-dialing the producer.
 	UpdateRealizedWriteSemantics(ctx context.Context, id shared.UUID, supervisorID string, ws string, tx Tx) error
 
@@ -218,21 +243,79 @@ type ClaimHandleTable interface {
 	// Spec §Recursive claim-tree resolution.
 	ListChildClaimHandles(ctx context.Context, parentID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 
-	// SetHeldDurable flips the held_durable column to TRUE so the row
-	// survives auto-terminal. Claimant-guarded on supervisorID.
-	// Used at parent-claim Commit time on `lifetime: durable` claims.
-	SetHeldDurable(ctx context.Context, id shared.UUID, supervisorID string, heldDurable bool, tx Tx) error
-
 	// SetVersionID persists the DataProcessing-producer-returned
 	// canonical version_id from `ClaimProducer.Commit`. Claimant-guarded.
 	// Inert in rimsky (@blessed-invariant 20-class).
 	SetVersionID(ctx context.Context, id shared.UUID, supervisorID string, versionID string, tx Tx) error
 
-	// ListHeldDurableByInstance returns claim_handles rows held-durable
-	// for the given instance. Used by the instance-termination cleanup
-	// path to walk the durable claims for `ClaimProducer.Release`.
-	// The join goes through rimsky_node_runs → rimsky_nodes.
-	ListHeldDurableByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
+	// DeleteResolvedOlderThan deletes terminal (non-active)
+	// claim_handle rows whose `resolved_at` is older than the cutoff,
+	// skipping the committed-durable asset surface (which is released
+	// only by `ReleaseHeldDurableClaims` or the operator `DELETE
+	// /assets/{alias}` handler). Returns the deleted-rows count.
+	//
+	// Predicate:
+	//
+	//   state IN ('committed', 'abandoned')
+	//   AND (state = 'abandoned' OR lifetime = 'subgraph')
+	//   AND resolved_at < cutoff
+	//   AND holder_supervisor_id IS NULL
+	//
+	// Absence-guarded: the post-Stage-4 CHECK constraint nulls
+	// `holder_supervisor_id` whenever `state` exits `'active'`, so the
+	// IS-NULL clause is structurally satisfied for every non-active row.
+	// Serialized across replicas via the scheduler-tick advisory lock
+	// at the caller site.
+	//
+	// @blessed-invariant 4 (post-refactor): non-active-row deletions
+	// are guarded by absence + the row-discovery query filter.
+	// @concept: claim-handle
+	// @concept: retention
+	DeleteResolvedOlderThan(ctx context.Context, cutoff time.Time) (int, error)
+
+	// DeleteResolved deletes a non-active claim_handle row (state ∈
+	// {committed, abandoned}). Absence-guarded: the post-Stage-4 CHECK
+	// constraint nulls `holder_supervisor_id` whenever `state` exits
+	// `'active'`, so no per-row claimant-guard is meaningful. Used by
+	// the asset Release path
+	// (`runtime/instance_termination.go::ReleaseHeldDurableClaims`,
+	// `control/controlapi/assets.go::DELETE /instances/{id}/assets/{alias}`)
+	// after `ClaimProducer.Release` succeeds. Returns
+	// spec.ErrIllegalClaimHandleTransition when the row was active
+	// (a stricter caller can use this to fail loudly rather than
+	// silently no-op a Delete that would otherwise NULL live
+	// ownership).
+	//
+	// @blessed-invariant 4 (post-refactor): non-active-row deletions
+	// are guarded by absence + the row-discovery query filter.
+	DeleteResolved(ctx context.Context, id shared.UUID, tx Tx) error
+
+	// Promote transitions a claim handle from active to committed or
+	// abandoned. Claimant-guarded:
+	//
+	//   WHERE id = $1 AND state = 'active' AND holder_supervisor_id = $2
+	//
+	// The UPDATE sets state = newState, holder_supervisor_id = NULL,
+	// resolved_at = now() in the same statement. Returns
+	// spec.ErrIllegalClaimHandleTransition on affected-rows = 0 (row not
+	// in active state, or supervisor mismatch).
+	//
+	// @blessed-invariant 4 (post-refactor): active-row mutations are
+	// claimant-guarded.
+	Promote(ctx context.Context, id shared.UUID, supervisorID string,
+		newState spec.ClaimHandleState, tx Tx) error
+
+	// ListByState returns claim-handle rows currently in the given state.
+	// Used by the retention sweep (state ∈ {committed, abandoned}) and
+	// by readers that need state-filtered listings.
+	ListByState(ctx context.Context, state spec.ClaimHandleState, tx Tx) ([]ClaimHandleRow, error)
+
+	// ListByInstanceAndState returns rows joined through
+	// holder_node_id → rimsky_nodes filtered by instance + state +
+	// lifetime. The asset query calls
+	// `ListByInstanceAndState(instance, committed, durable)`.
+	ListByInstanceAndState(ctx context.Context, instanceID shared.UUID,
+		state spec.ClaimHandleState, lifetime spec.ClaimLifetime, tx Tx) ([]ClaimHandleRow, error)
 
 	// SetAggregationPolicy writes the parent-claim aggregation policy
 	// snapshot on a claim_handle row. Called once per fan-out parent at

@@ -73,11 +73,15 @@ func applyErrorPolicy(
 	}
 	state := node.EvaluatorState{}
 	var prior *persistence.NodeRow
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
 		prior = p
 		return err
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyErrorPolicy: load prior node row failed; using zero EvaluatorState",
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
 	if prior != nil {
 		state = node.EvaluatorState{
 			ActionIndex:       prior.ActionIndex,
@@ -129,7 +133,7 @@ func applyErrorPolicy(
 		return fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "error",
@@ -141,17 +145,37 @@ func applyErrorPolicy(
 				"delay_ms":     resolved.DelayMs,
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyErrorPolicy: append error event failed",
+			"node_id", acq.NodeID.String(),
+			"error_class", errorClass,
+			"action_taken", resolved.Kind,
+			"error", err.Error())
+	}
 	// Run-tree state propagation (E2): give_up is a terminal failure;
 	// the child's state has transitioned to NodeStateFailed and any
 	// parent must aggregate. Retry / discard_then_retry leave the node
 	// in a non-terminal state so propagation skips them.
 	if resolved.Kind == "give_up" {
 		// E8: emit leaf-run lineage record for the failed terminal.
-		EmitLeafRunLineage(ctx, args,
-			acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
-			string(cascade.NodeStateFailed), string(cascade.LastOutcomeFailed), errorClass,
-			acq.InstanceParams, acq.InstanceUserdataOverrides)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:       acq.InstanceID,
+			FrameID:          acq.FrameID,
+			RunID:            acq.DispatchID,
+			NodeID:           acq.NodeID,
+			State:            string(cascade.NodeStateFailed),
+			LastOutcome:      string(cascade.LastOutcomeFailed),
+			ErrorClass:       errorClass,
+			TerminalKind:     "errored",
+			NodeAlias:        acq.NodeType,
+			ExecutorName:     acq.Executor,
+			TemplateHash:     acq.TemplateHash,
+			Params:           acq.InstanceParams,
+			UserdataMerged:   acq.MergedUserdata,
+			HeldClaims:       HeldClaimsForLineage(acq),
+			ParentRunID:      acq.ParentRunID,
+			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
 			cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
 			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
@@ -234,11 +258,15 @@ func applyTerminalInfraError(
 	errorClass string, payload map[string]any,
 ) error {
 	var prior *persistence.NodeRow
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
 		prior = p
 		return err
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyTerminalInfraError: load prior node row failed",
+			"node_id", acq.NodeID.String(),
+			"error", err.Error())
+	}
 	// Read the current counter so we can carry it forward onto the
 	// freshly-inserted dispatch row.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
@@ -271,7 +299,7 @@ func applyTerminalInfraError(
 		return fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
 
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "error",
@@ -281,7 +309,12 @@ func applyTerminalInfraError(
 				"action_taken": "infra_reenqueue",
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyTerminalInfraError: append error event failed",
+			"node_id", acq.NodeID.String(),
+			"error_class", errorClass,
+			"error", err.Error())
+	}
 	return nil
 }
 

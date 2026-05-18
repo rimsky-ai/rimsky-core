@@ -113,35 +113,26 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 
 	// Auto-terminal must fire promptly because the acquirer-failure
 	// path now fails all inheritor claim_holders rows (the fix for the
-	// held-claim leak). Validate that rimsky_claim_handles for this
-	// instance reaches 0 without waiting for inheritor terminals.
+	// held-claim leak). Post-Stage-3 of the claim-handle state-column
+	// refactor: auto-terminal flips the row's state (Promote-not-
+	// delete) rather than deleting it. Validate that every claim-handle
+	// for this instance is in a terminal state (committed or abandoned)
+	// without waiting for inheritor terminals.
 	deadline := time.Now().Add(30 * time.Second)
-	var lhCount int
+	var activeCount int
 	for time.Now().Before(deadline) {
 		require.NoError(t, h.Pool.QueryRow(h.Ctx,
 			`SELECT count(*) FROM rimsky_claim_handles lh
 			   JOIN rimsky_nodes n ON n.id = lh.holder_node_id
-			  WHERE n.instance_id = $1`, uuid.UUID(iid),
-		).Scan(&lhCount))
-		if lhCount == 0 {
+			  WHERE n.instance_id = $1 AND lh.state = 'active'`, uuid.UUID(iid),
+		).Scan(&activeCount))
+		if activeCount == 0 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.Equal(t, 0, lhCount,
-		"rimsky_claim_handles rows must reach 0 — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
-
-	// rimsky_claim_holders rows should also be drained (auto-terminal
-	// deletes the parent claim_handle which CASCADEs claim_holders).
-	var chCount int
-	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT count(*) FROM rimsky_claim_holders ch
-		   JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
-		   JOIN rimsky_nodes n ON n.id = r.node_id
-		  WHERE n.instance_id = $1`, uuid.UUID(iid),
-	).Scan(&chCount))
-	require.Equal(t, 0, chCount,
-		"rimsky_claim_holders rows must be drained alongside the parent claim_handle")
+	require.Equal(t, 0, activeCount,
+		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 
 	// Inheritor must remain fresh — passed does not cascade.
 	var inhRow *persistence.NodeRow

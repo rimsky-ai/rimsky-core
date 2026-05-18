@@ -56,7 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv := grpc.NewServer()
-	genv1.RegisterSensorServer(srv, svc)
+	genv1.RegisterPublisherServer(srv, svc)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("grpc serve", "error", err.Error())

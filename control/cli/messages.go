@@ -36,7 +36,7 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	fs, common, endpoint, code := runWithCommon("messages tail", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 		fs.StringVar(&kind, "kind", "", "filter by message kind (e.g. invalidate)")
-		fs.StringVar(&senderKind, "sender-kind", "", "filter by sender_kind (operator|node|sensor|system)")
+		fs.StringVar(&senderKind, "sender-kind", "", "filter by sender_kind (operator|publisher|instance)")
 		fs.StringVar(&target, "target", "", "filter by target node type")
 		fs.BoolVar(&follow, "follow", false, "long-poll for new messages")
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "poll interval when --follow")

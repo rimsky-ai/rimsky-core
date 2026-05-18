@@ -36,18 +36,16 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}
-	outcome := row.Outcome
-	if outcome == "" {
-		// leaf_run rows leave outcome empty; the column default
-		// 'committed' applies to claim_terminal rows whose writers
-		// didn't set Outcome (back-compat with the pre-rename
-		// claim_commit path). Use the explicit default here so the
-		// column is always populated.
-		outcome = persistence.LineageOutcomeCommitted
-	}
+	// `leaf_run` rows carry outcome="" by design (no per-terminal
+	// disposition). The post-2026-05-17 `claim_terminal` writers
+	// (`runtime.WriteClaimTerminalLineage`) reject empty outcome at the
+	// call site, so any row reaching this Insert is either a leaf_run
+	// (empty outcome OK) or a claim_terminal with an explicit value.
+	// We pass row.Outcome through verbatim — the column tolerates the
+	// empty string for leaf_run rows.
 	_, err := b.q(tx).Exec(ctx, insertLineageSQL,
 		row.ID, row.RecordKind, row.InstanceID, row.FrameID,
-		row.ObservedAt, row.Record, outcome)
+		row.ObservedAt, row.Record, row.Outcome)
 	if err != nil {
 		return fmt.Errorf("postgres.Lineage.Insert: %w", err)
 	}
@@ -122,6 +120,25 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 		return persistence.PaginatedListResult[persistence.LineageRow]{}, err
 	}
 	return persistence.PaginatedListResult[persistence.LineageRow]{Rows: out}, nil
+}
+
+const queryByParentRunIDSQL = `
+SELECT id, record_kind, instance_id, frame_id, observed_at, record, outcome
+  FROM rimsky_lineage
+ WHERE record_kind = 'leaf_run' AND record->>'parent_run_id' = $1
+ ORDER BY observed_at ASC, id ASC
+ LIMIT $2`
+
+func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]persistence.LineageRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := (*tablesImpl)(b).pool.Query(ctx, queryByParentRunIDSQL, parentRunID.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.Lineage.QueryByParentRunID: %w", err)
+	}
+	defer rows.Close()
+	return collectLineage(rows)
 }
 
 const deleteOlderThanSQL = `

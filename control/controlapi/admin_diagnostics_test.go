@@ -32,20 +32,21 @@ func (noopStore) Instances() persistence.InstanceTable       { return nil }
 func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
-func (noopStore) Nodes() persistence.NodeTable                   { return nil }
-func (noopStore) ClaimHandles() persistence.ClaimHandleTable     { return nil }
-func (noopStore) NodeAttributes() persistence.NodeAttributeTable { return nil }
-func (noopStore) ClaimHolders() persistence.ClaimHolderTable     { return nil }
-func (noopStore) Events() persistence.EventTable                 { return nil }
-func (noopStore) Supervisors() persistence.SupervisorTable       { return nil }
-func (noopStore) Frames() persistence.FrameTable                 { return nil }
-func (noopStore) BlobOrphans() persistence.BlobOrphanTable       { return nil }
-func (noopStore) NodeEvents() persistence.NodeEventTable         { return nil }
-func (noopStore) WaitSet() persistence.WaitSetTable              { return nil }
-func (noopStore) Messages() persistence.MessagesTable            { return nil }
-func (noopStore) Lineage() persistence.LineageTable              { return nil }
-func (noopStore) SensorWatches() persistence.SensorWatchesTable  { return nil }
-func (noopStore) RunTree() persistence.RunTreeTable              { return nil }
+func (noopStore) Nodes() persistence.NodeTable                                    { return nil }
+func (noopStore) ClaimHandles() persistence.ClaimHandleTable                      { return nil }
+func (noopStore) NodeAttributes() persistence.NodeAttributeTable                  { return nil }
+func (noopStore) ClaimHolders() persistence.ClaimHolderTable                      { return nil }
+func (noopStore) Events() persistence.EventTable                                  { return nil }
+func (noopStore) Supervisors() persistence.SupervisorTable                        { return nil }
+func (noopStore) Frames() persistence.FrameTable                                  { return nil }
+func (noopStore) BlobOrphans() persistence.BlobOrphanTable                        { return nil }
+func (noopStore) NodeEvents() persistence.NodeEventTable                          { return nil }
+func (noopStore) WaitSet() persistence.WaitSetTable                               { return nil }
+func (noopStore) Messages() persistence.MessagesTable                             { return nil }
+func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable       { return nil }
+func (noopStore) Lineage() persistence.LineageTable                               { return nil }
+func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTable { return nil }
+func (noopStore) RunTree() persistence.RunTreeTable                               { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})

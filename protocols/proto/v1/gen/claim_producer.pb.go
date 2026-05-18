@@ -599,7 +599,7 @@ type CommitResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Set by DataProcessing-capable producers; opaque to rimsky;
 	// persisted in col:rimsky_claim_handles.version_id and
-	// table:rimsky_lineage for record_kind: claim_commit.
+	// table:rimsky_lineage for record_kind: claim_terminal.
 	VersionId string `protobuf:"bytes,1,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	// Optional producer-supplied metadata bytes. Inert in rimsky per
 	// @blessed-invariant 20; surfaced verbatim in the parent run's

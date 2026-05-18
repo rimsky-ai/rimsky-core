@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rimsky.fullname" . }}-sensor-http
+  labels:
+    {{- include "rimsky.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sensor-http
+spec:
+  replicas: {{ .Values.sensorHttp.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "rimsky.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sensor-http
+  template:
+    metadata:
+      labels:
+        {{- include "rimsky.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sensor-http
+    spec:
+      serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
+      containers:
+        - name: sensor-http
+          image: "{{ .Values.image.repository }}/sensor-http:{{ .Values.sensorHttp.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RIMSKY_ENDPOINT
+              value: "{{ .Values.rimskyEndpoint | default (printf "http://%s-control-api:8080" (include "rimsky.fullname" .)) }}"
+            - name: RIMSKY_SENSOR_HTTP_HOST
+              value: "0.0.0.0"
+            - name: RIMSKY_SENSOR_HTTP_PORT
+              value: "9082"
+            {{- with .Values.sensorHttp.stateDSN }}
+            - name: RIMSKY_SENSOR_HTTP_STATE_DSN
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: grpc
+              containerPort: 9082

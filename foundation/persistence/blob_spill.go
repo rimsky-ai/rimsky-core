@@ -18,7 +18,7 @@ import (
 //   - the size is ≤ threshold.
 //
 // The check is intentionally identical to
-// foundation/integration/runner_terminal_park.go::shouldSpillBlob; both
+// runtime/runner_terminal_park.go::shouldSpillBlob; both
 // sites must agree so a value spilled at write time can be read back
 // without ambiguity. Per plan §D6.
 func ShouldSpillBlob(bb BlobBackend, threshold int, size int) bool {

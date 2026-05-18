@@ -338,19 +338,29 @@ export type ParkedNodesResponse = {
 // panel reads these via the control-api `/instances/{id}/assets/...`
 // endpoint family.
 
+// AssetRow mirrors the server-side envelope at
+// `code:control/controlapi/assets.go::assetItem`. Post-Stage-4 of the
+// claim-handle state-column refactor the wire shape carries `state` +
+// `lifetime` instead of the pre-Stage-4 `held_durable` bool, and
+// `scope` (raw JSON) + `version_id` instead of the pre-2026-05-17
+// `scope_data_hash` + `current_version_id`. `instance_id` is not on
+// the row — the listing endpoint is per-instance, so callers know the
+// instance from the URL path.
 export type AssetRow = {
-  instance_id: string;
   alias: string;
+  claim_id: string;
   producer_name: string;
-  scope_data_hash: string;
-  current_version_id?: string | null;
-  held_durable: boolean;
-  created_at: string;
+  scope?: unknown;
+  version_id?: string;
+  state: string;
+  lifetime: string;
+  claimed_at: string;
+  holder_node_id: string;
+  node_type?: string;
 };
 
 export type AssetListResponse = {
   assets: AssetRow[];
-  next_cursor?: string;
 };
 
 export type AssetVersionRow = {

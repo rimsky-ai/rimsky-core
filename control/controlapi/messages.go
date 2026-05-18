@@ -8,9 +8,15 @@
 // .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Messages / Control-api endpoints.
 //
-//   - POST /instances/{id}/messages       — operator-side enqueue.
-//   - GET  /instances/{id}/messages       — paginated list.
-//   - GET  /messages/{id}                  — single message detail.
+// Plus the 2026-05-17 publisher-protocol unification
+// (.ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md):
+//
+//   - POST /instances/{id}/messages accepts `sender_kind: "publisher"`
+//     with a `publisher_subscription_id` capability token, capability-
+//     checked against `rimsky_publisher_subscriptions`.
+//   - The `Idempotency-Key` HTTP header drives universal dedup via the
+//     `rimsky_message_idempotencies` table. Replays return the original
+//     message_id with 200 OK rather than inserting a duplicate envelope.
 //
 // @concept: message
 //
@@ -44,12 +50,18 @@ func registerMessagesRoutes(r chi.Router, deps AppDeps) {
 // postMessageRequest is the body shape of POST /instances/{id}/messages.
 //
 // Per spec §Messages / Envelope, `sender` is derived from caller
-// identity — V1 supplies "operator" because cross-instance senders are
-// V2. `sender_kind` is always "operator" for this endpoint.
+// identity. Operator-side callers default to sender="operator",
+// sender_kind="operator". Publisher-side callers (bundled sensors)
+// pass sender_kind="publisher" + publisher_subscription_id; rimsky
+// derives `sender` from the publisher-subscription row's
+// publisher_name (operator-supplied `sender` is ignored for trust).
 type postMessageRequest struct {
-	Kind    string          `json:"kind"`
-	Target  string          `json:"target,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	Kind                    string          `json:"kind"`
+	Target                  string          `json:"target,omitempty"`
+	Payload                 json.RawMessage `json:"payload,omitempty"`
+	Sender                  string          `json:"sender,omitempty"`
+	SenderKind              string          `json:"sender_kind,omitempty"`
+	PublisherSubscriptionID string          `json:"publisher_subscription_id,omitempty"`
 }
 
 type postMessageResponse struct {
@@ -96,11 +108,17 @@ func toMessageItem(r persistence.MessageRow) messageItem {
 	return out
 }
 
+// errPublisherSubscriptionNotActive is the sentinel returned when a
+// publisher-side request fails the capability check. Mapped to 403
+// Forbidden.
+var errPublisherSubscriptionNotActive = errors.New("publisher-subscription not active for this instance")
+
 // handleCreateMessage is POST /instances/{id}/messages.
 //
 // Validates the body, ensures the instance exists and is not
-// terminated, then enqueues via runtime.EnqueueMessage. Returns the
-// message id.
+// terminated, enforces the sender-kind capability check for publisher
+// requests, applies idempotency dedup if Idempotency-Key is set, then
+// enqueues via runtime.EnqueueMessage. Returns the message id.
 func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")
@@ -125,20 +143,34 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "kind must be 'invalidate' in V1")
 			return
 		}
-		// Resolve instance existence + active-state inside the same tx
-		// as the enqueue so concurrent terminations are observed.
-		msgID := shared.UUID(uuid.New())
-		enqueueReq := persistence.EnqueueMessageRequest{
-			ID:         msgID,
-			InstanceID: shared.UUID(instanceID),
-			Kind:       body.Kind,
-			Sender:     "operator",
-			SenderKind: "operator",
-			Target:     body.Target,
-			Payload:    body.Payload,
+		// Sender kind defaults to "operator" for back-compat. Publisher
+		// senders explicitly set "publisher" + publisher_subscription_id.
+		senderKind := body.SenderKind
+		if senderKind == "" {
+			senderKind = "operator"
 		}
+		if senderKind != "operator" && senderKind != "publisher" {
+			badRequest(w, "sender_kind must be 'operator' or 'publisher'")
+			return
+		}
+		if senderKind == "publisher" && body.PublisherSubscriptionID == "" {
+			badRequest(w, "publisher_subscription_id required for sender_kind=publisher")
+			return
+		}
+		// `sender` defaults to "operator" for operator-side requests;
+		// publisher-side requests overwrite it with the publisher-
+		// subscription's publisher_name (derived inside the tx below).
+		// V1 supplies "operator" because cross-instance senders are V2;
+		// the body's `sender` is ignored for trust until then.
+		sender := "operator"
+		idempotencyKey := req.Header.Get("Idempotency-Key")
+
+		msgID := shared.UUID(uuid.New())
+		instUUID := shared.UUID(instanceID)
+		var finalMessageID = msgID
+		var replayed bool
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
+			inst, err := deps.Persist.Instances().Get(ctx, instUUID, tx)
 			if err != nil {
 				return err
 			}
@@ -147,6 +179,55 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			}
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
+			}
+			// Publisher capability check: the publisher-subscription must
+			// be active and bound to THIS instance. We look up the row by
+			// id, verify state='active' and instance_id matches, then
+			// derive `sender` from the row's publisher_name.
+			if senderKind == "publisher" {
+				subID, parseErr := uuid.Parse(body.PublisherSubscriptionID)
+				if parseErr != nil {
+					return errPublisherSubscriptionNotActive
+				}
+				row, err := deps.Persist.PublisherSubscriptions().Get(ctx, tx, shared.UUID(subID))
+				if err != nil {
+					return err
+				}
+				if row == nil || row.State != persistence.PublisherSubscriptionStateActive || row.InstanceID != instUUID {
+					return errPublisherSubscriptionNotActive
+				}
+				sender = row.PublisherName
+			}
+			// Idempotency dedup: when Idempotency-Key is present, INSERT
+			// or lookup the dedup tuple BEFORE inserting the message
+			// envelope. On conflict, return the previously-recorded
+			// message_id and skip the envelope insert. Wrap in the same
+			// tx so a crash mid-flow doesn't leave a dedup row pointing
+			// at a never-inserted message.
+			if idempotencyKey != "" {
+				dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
+					InstanceID:     instUUID,
+					Sender:         sender,
+					IdempotencyKey: idempotencyKey,
+					MessageID:      msgID,
+				})
+				if err != nil {
+					return err
+				}
+				if !inserted {
+					finalMessageID = dedupRow.MessageID
+					replayed = true
+					return nil
+				}
+			}
+			enqueueReq := persistence.EnqueueMessageRequest{
+				ID:         msgID,
+				InstanceID: instUUID,
+				Kind:       body.Kind,
+				Sender:     sender,
+				SenderKind: senderKind,
+				Target:     body.Target,
+				Payload:    body.Payload,
 			}
 			return runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq)
 		})
@@ -159,10 +240,21 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 				return
 			}
+			if errors.Is(err, errPublisherSubscriptionNotActive) {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
+				return
+			}
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, postMessageResponse{MessageID: msgID.String()})
+		status := http.StatusCreated
+		if replayed {
+			// Replay path: returning the original message_id with
+			// 200 OK signals idempotent dedup. The body shape is
+			// identical so caller code can stay generic.
+			status = http.StatusOK
+		}
+		writeJSON(w, status, postMessageResponse{MessageID: finalMessageID.String()})
 	}
 }
 

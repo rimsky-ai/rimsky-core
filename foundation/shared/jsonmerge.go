@@ -7,7 +7,7 @@
 //
 // Why it lives here: the merge is a shape-blind composition of two
 // `map[string]any` JSON-decoded payloads. Both rimsky-internal layers
-// (graph, foundation/integration) need it, so it sits in shared/
+// (graph, runtime) need it, so it sits in shared/
 // where both can import without crossing a feature boundary.
 //
 // @blessed-invariant 11 alignment: the merge does not inspect, validate,

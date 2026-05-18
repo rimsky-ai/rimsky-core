@@ -21,9 +21,9 @@ The implementing agent works from a clean context. Before executing tasks, read 
 - `cmd/rimsky-control-api/main.go` — control-api binary entry.
 - `cmd/rimsky-cli/main.go` — current CLI binary entry (to be renamed).
 - `mcp-servers/control-api/{config,server,tools}.go` and `mcp-servers/control-api/cmd/rimsky-mcp-control-api/` — the standalone module being folded in.
-- `foundation/persistence/postgres/migrations/` and `foundation/persistence/sqlite/migrations/` — migration numbering (next is `008-*`).
+- `foundation/persistence/postgres/migrations/` and `foundation/persistence/sqlite/migrations/` — the per-driver migration directories. Post-flatten (2026-05-17), both driver dirs contain only `001-baseline.sql` + `embed.go`. New schema in pre-v1 lands by editing the baseline directly rather than adding numbered migrations.
 - `foundation/persistence/tables.go` — the `Tables` umbrella interface where the new `APIKeyTable` accessor is added.
-- `foundation/persistence/postgres/migrations/002-data-platform-extensions.sql` — recent migration to copy stylistic conventions from.
+- `foundation/persistence/postgres/migrations/001-baseline.sql` — the post-flatten baseline; section headers (`===== <table> =====`) show the per-table-section style to mirror when adding the new `rimsky_api_keys` section.
 - The full list of control-api routes is in the spec's "Action grammar" table; spec is authoritative.
 
 Do not assume the implementer has read the brainstorm conversation. They have not. Everything they need is on the page, in the spec, or in the files above.
@@ -34,7 +34,7 @@ These were settled during brainstorm. Do not re-litigate.
 
 - **Auth model:** API keys via `Authorization: Bearer rk_<44-char-base64url>`; SHA-256 hashed at rest; required immutable unique `name`; per-key JSONB permission grant. No external IdP integration.
 - **Permission grammar:** verb-noun action strings; wildcards `*`, `<noun>:*`, `*:<verb>` with the colon retained as part of the match boundary; first-match-wins evaluation; `mode: execute | dry_run` per entry.
-- **Bundled roles:** CLI-side JSON templates only; server has no role concept. V1 ships five: `admin`, `operator`, `read-only`, `agent-supervisor`, `sensor-service`.
+- **Bundled roles:** CLI-side JSON templates only; server has no role concept. V1 ships five: `admin`, `operator`, `read-only`, `agent-supervisor`, `publisher-service`.
 - **Implicit anonymous mode:** derived from "zero active rows in `rimsky_api_keys`"; no config knob.
 - **Bootstrap:** `rimsky auth init` is a thin HTTP call to `POST /auth/keys` while in anonymous mode. No direct-DB CLI subcommands in this plan; break-glass via `psql` is documented.
 - **MCP hosting:** in-control-api at `POST /mcp`; standalone module folds in and is deleted; tools-only V1 (no resources, prompts, subscriptions); HTTP transport only (no stdio).
@@ -75,19 +75,29 @@ The plan executes start-to-finish in one run. Sections roughly sequence as follo
 
 # Section A — Schema and persistence
 
-### A1. Postgres migration: create `rimsky_api_keys`
+### A1. Postgres schema: append `rimsky_api_keys` to `001-baseline.sql`
 
 **Files:**
-- `foundation/persistence/postgres/migrations/008-api-keys.sql` (new)
+- `foundation/persistence/postgres/migrations/001-baseline.sql` (modified)
+
+**Background.** Per the 2026-05-17 migration-flatten housekeeping pass, schema changes in pre-v1 land by direct edits to the baseline migration rather than enumerated `00N-…` migrations. Add the new table at an appropriate position in the baseline (near `rimsky_events`, since it shares the audit/event surface).
 
 **Steps:**
 
-1. Create the file with header copied from an existing migration (e.g. `007-claim-handles-parent-aggregation.sql`).
-2. Add the `BEGIN; ... COMMIT;` wrapping (match the style of migration 002).
-3. Add table DDL:
+1. Open `foundation/persistence/postgres/migrations/001-baseline.sql`. Locate a logical insertion point — the file is structured as `===== <table_name> =====` sections; insert a new `===== rimsky_api_keys =====` section after `rimsky_events`.
+2. Add the new section with a comment block explaining: what the table is for, why each index exists (especially the partial unique-name index — call out the rotation-grace mechanic), reference to `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` "Persistence schema" section.
+3. DDL:
 
 ```sql
-CREATE TABLE IF NOT EXISTS rimsky_api_keys (
+-- =====  rimsky_api_keys  =====
+-- API keys for Bearer-token auth. Hashed at rest (SHA-256). The
+-- partial unique-name index excludes revoked + rotation-grace rows
+-- so a rotation can mint a new row with the same name while the old
+-- one is still active during its grace window. See spec
+-- .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
+-- "Persistence schema".
+
+CREATE TABLE rimsky_api_keys (
     id                 UUID         NOT NULL PRIMARY KEY,
     key_hash           BYTEA        NOT NULL,
     name               TEXT         NOT NULL,
@@ -103,39 +113,37 @@ CREATE TABLE IF NOT EXISTS rimsky_api_keys (
         FOREIGN KEY (created_by_key_id) REFERENCES rimsky_api_keys(id) ON DELETE SET NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS rimsky_api_keys_active_name_idx
+CREATE UNIQUE INDEX rimsky_api_keys_active_name_idx
     ON rimsky_api_keys (name)
     WHERE revoked_at IS NULL AND revoke_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS rimsky_api_keys_revoke_at_pending_idx
+CREATE INDEX rimsky_api_keys_revoke_at_pending_idx
     ON rimsky_api_keys (revoke_at)
     WHERE revoke_at IS NOT NULL AND revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS rimsky_api_keys_active_status_idx
+CREATE INDEX rimsky_api_keys_active_status_idx
     ON rimsky_api_keys (revoked_at, expires_at, revoke_at);
 ```
-
-4. Open the migration with a top-of-file comment block explaining: what the table is for, why each index exists (especially the partial unique-name index — call out the rotation-grace mechanic), reference to `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` "Persistence schema" section.
 
 **Verify:** `go test ./foundation/persistence/postgres/... -run TestMigrations -count=1` (or whatever the migration-runner integration test is named — grep `func TestMigration` under `foundation/persistence/postgres/`).
 
 ---
 
-### A2. SQLite migration: create `rimsky_api_keys`
+### A2. SQLite schema: append `rimsky_api_keys` to `001-baseline.sql`
 
 **Files:**
-- `foundation/persistence/sqlite/migrations/008-api-keys.sql` (new)
+- `foundation/persistence/sqlite/migrations/001-baseline.sql` (modified)
 
 **Steps:**
 
-1. Mirror A1 in sqlite dialect:
-   - `UUID` → `TEXT NOT NULL` (sqlite stores UUIDs as TEXT).
+1. Open the sqlite baseline. Find the analogous insertion point (the file mirrors the postgres baseline section-for-section; insert after the `rimsky_events` section).
+2. Add the `===== rimsky_api_keys =====` section in sqlite dialect:
+   - `UUID` → `TEXT NOT NULL` (sqlite stores UUIDs as TEXT in this codebase).
    - `BYTEA` → `BLOB NOT NULL`.
-   - `TIMESTAMPTZ` → `TIMESTAMP` (sqlite uses TEXT-encoded RFC3339 in this codebase; grep migration 002 for the convention).
-   - `JSONB` → `JSONB` is fine in modernc sqlite (or `TEXT` if the codebase uses TEXT — copy what migration 002's `aggregation_policy JSONB` does, since aggregation_policy is on `rimsky_node_runs` and lands the same JSON-on-sqlite shape).
+   - `TIMESTAMPTZ` → `TIMESTAMP` (sqlite uses TEXT-encoded RFC3339 in this codebase; grep the postgres baseline's `rimsky_events.received_at` mapping for the convention).
+   - `JSONB` → match what other JSONB columns in the sqlite baseline use (grep `rimsky_node_runs.aggregation_policy` for the convention).
    - Partial unique index: `CREATE UNIQUE INDEX ... WHERE ...` — sqlite supports partial indexes.
    - FK: sqlite requires `PRAGMA foreign_keys=ON` at session level; the migration runner already handles that.
-2. Same `BEGIN ... COMMIT` wrapping.
 
 **Verify:** `go test ./foundation/persistence/sqlite/... -run TestMigrations -count=1`.
 
@@ -310,7 +318,7 @@ var (
    - UUIDs encoded as TEXT.
    - Timestamps as RFC3339 TEXT (use `time.RFC3339Nano`).
    - Glob translation same as Postgres (`*` → `%`).
-   - `now()` in SQL becomes `CURRENT_TIMESTAMP` or the caller passes `now` explicitly — match what migration 002's sqlite version does.
+   - `now()` in SQL becomes `CURRENT_TIMESTAMP` or the caller passes `now` explicitly — match what the sqlite baseline + sibling accessors do (grep `foundation/persistence/sqlite/claim_handles.go` and adjacent `*.go` files for the convention; the post-flatten codebase has the answer in baseline plus existing accessors).
    - Sentinel-error mapping: SQLite returns `constraint failed` strings; grep `errors.Is(err, ...)` patterns in `foundation/persistence/sqlite/claim_handles.go` for how to distinguish unique-violation by constraint name (sqlite doesn't expose the constraint name directly; the existing code parses the error message — use the same mechanism).
 2. In `backend.go`, mirror the A5 backend wiring.
 
@@ -1168,9 +1176,6 @@ var v1Actions = []ActionEntry{
     {Action: "asset:materialize", IsWrite: true,  Routes: []Route{{"POST", "/instances/{id}/assets/{alias}/materialize"}}, MCPTools: []string{"asset_materialize"}},
     {Action: "asset:delete",      IsWrite: true,  Routes: []Route{{"DELETE", "/instances/{id}/assets/{alias}"}}, MCPTools: []string{"asset_delete"}},
 
-    // Sensors (service-to-service)
-    {Action: "sensor:observe", IsWrite: true, Routes: []Route{{"POST", "/sensors/{watch_id}/observations"}}, MCPTools: []string{ /* none in V1 */ }},
-
     // Diagnostics
     {Action: "diagnostics:read", IsWrite: false, Routes: []Route{{"GET", "/admin/diagnostics/held-frames"}}, MCPTools: []string{"held_frames_list"}},
 
@@ -1195,7 +1200,7 @@ var v1Actions = []ActionEntry{
    - The registry builds without panic.
    - Every action listed in the spec's action grammar table is present in `BuildV1Registry().AllActions()` (subset check).
    - The registry MAY contain extra actions beyond the spec's table — explicitly, `observability:read` is supplemental (see note above and the explanatory note in `v1Actions`). The test should assert: `(set of spec-table actions) ⊆ (set of registry actions)`, AND `(set of registry actions) \ (set of spec-table actions) ⊆ {"observability:read"}` (the only allowed supplement in V1).
-   - Hard-coded `specTableActions := []string{ /* the 35 from the spec */ }` lives in the test source so the assertion is unambiguous; when the spec table grows, this slice grows in lockstep.
+   - Hard-coded `specTableActions := []string{ /* the 34 actions from the spec */ }` lives in the test source so the assertion is unambiguous; when the spec table grows, this slice grows in lockstep. (The spec table has 34 rows post the 2026-05-17 sensor-messaging-unification landing that removed `sensor:observe`.)
 
 **Verify:** `go test ./control/controlapi/... -count=1 -run TestV1Registry`.
 
@@ -1506,7 +1511,6 @@ func NewApp(deps AppDeps) http.Handler {
             registerEventsRoutes(rrr, deps)
             registerClaimsRoutes(rrr, deps)
             registerMessagesRoutes(rrr, deps)
-            registerSensorObservationsRoutes(rrr, deps)
             registerBackfillsRoutes(rrr, deps)
             registerAssetsRoutes(rrr, deps)
             registerLineageRoutes(rrr, deps)
@@ -1743,7 +1747,6 @@ func (c *capturingWriter) status() int { return c.statusCode }
 - `control/controlapi/backfills.go` (modified)
 - `control/controlapi/assets.go` (modified)
 - `control/controlapi/admin_diagnostics.go` (modified)
-- `control/controlapi/sensors.go` (modified)
 - `control/controlapi/claims.go` (modified)
 - `control/controlapi/actions_test.go` (extended — registry-vs-router cross-check test)
 
@@ -1761,7 +1764,6 @@ func (c *capturingWriter) status() int { return c.statusCode }
    - `backfills.go`: `POST /instances/{id}/backfills`→`backfill:create`; `GET /instances/{id}/backfills`,`GET /backfills/{op_id}`,`GET /backfills/{op_id}/partitions`→`backfill:read`; `POST /backfills/{op_id}/cancel`→`backfill:cancel`.
    - `assets.go`: `GET /instances/{id}/assets`,`GET /instances/{id}/assets/{alias}`,`GET /instances/{id}/assets/{alias}/versions`,`GET /instances/{id}/assets/{alias}/materialization-history`→`asset:read`; `POST /instances/{id}/assets/{alias}/materialize`→`asset:materialize`; `DELETE /instances/{id}/assets/{alias}`→`asset:delete`.
    - `admin_diagnostics.go`: `GET /admin/diagnostics/held-frames`→`diagnostics:read`; `GET /admin/diagnostics/parked-nodes`,`GET /diagnostics/parked`→`parked-node:read`; `GET /admin/diagnostics/wait-sets`→`waitset:read`; `POST /admin/instances/{instance}/nodes/{node_id}/invalidate`→`node:invalidate`.
-   - `sensors.go`: `POST /sensors/{watch_id}/observations`→`sensor:observe`.
    - `claims.go`: `GET /lock-holders/{claim_handle_id}/claim-holders`→`claim-holders:read`.
 3. Add a registry-vs-router cross-check test in `actions_test.go`:
 
@@ -2960,7 +2962,7 @@ inner = inner.WithContext(controlapi.WithProtocolSkin(inner.Context(), "mcp"))
 - `cmd/rimsky/roles/operator.json` (new — spec / operator)
 - `cmd/rimsky/roles/read-only.json` (new — spec / read-only)
 - `cmd/rimsky/roles/agent-supervisor.json` (new — spec / agent-supervisor)
-- `cmd/rimsky/roles/sensor-service.json` (new — spec / sensor-service)
+- `cmd/rimsky/roles/publisher-service.json` (new — spec / publisher-service)
 - `cmd/rimsky/roles/embed.go` (new — `//go:embed`)
 
 **Steps:**
@@ -3252,7 +3254,7 @@ func authInit(args []string) int {
 
 > **Verification rhythm for each K task.** Each task performs three concrete edits: (1) refactor the existing handler into `validate` and `execute` (no behavior change for the execute path); (2) add the dry-run branch returning the synthetic response; (3) add a new test that exercises the dry-run path. The Verify command at the end of each task runs the test pattern that matches the handler's package — it picks up BOTH the existing positive tests (which now exercise the refactored execute path) AND the new dry-run test. If a task lists a single test name, that test name is a `-run` regex that covers both paths. The existing-test-still-passes check is implicit in this; an explicit test of the existing positive path is the responsibility of the codebase's pre-spec test coverage and stays unchanged during the K-section work.
 
-The following handlers need dry-run paths (all write actions except auth mutations and sensor:observe):
+The following handlers need dry-run paths (all write actions except auth mutations):
 
 ### K1. `POST /instances` (instance:create)
 
@@ -3393,19 +3395,7 @@ The following handlers need dry-run paths (all write actions except auth mutatio
 
 ---
 
-### K12. `POST /sensors/{watch_id}/observations` (sensor:observe)
-
-**Files:** `control/controlapi/sensors.go` (modified)
-
-**Steps:**
-
-1. Factor `handleSensorObservation`. Dry-run response: `{"dry_run": true, "would_have_emitted_message": {"watch_id": "..."}}`. Documented as edge-case useful for testing.
-
-**Verify:** `go test ./control/controlapi/... -count=1 -run TestSensorObservation`.
-
----
-
-### K13. Auth mutations explicitly NOT dry-runnable
+### K12. Auth mutations explicitly NOT dry-runnable
 
 **Files:** `control/controlapi/auth_handlers.go` (modified)
 

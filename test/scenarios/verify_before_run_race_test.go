@@ -14,7 +14,7 @@
 // pre-claimed by a different supervisor, RunNode finds no eligible
 // candidates and returns Ran=false; the node remains stale. The
 // verify-before-run separate-read complement is unit-tested in
-// `foundation/integration` (verifyBeforeRun is unexported); preserving that
+// `runtime` (verifyBeforeRun is unexported); preserving that
 // invariant here as a higher-level integration check that ownership
 // gates execution end to end.
 //

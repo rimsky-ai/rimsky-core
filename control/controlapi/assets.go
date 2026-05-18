@@ -20,7 +20,8 @@
 // "Asset" is a documented compound, not a primitive: it's a claim
 // against a `DataProcessing`-capable producer with `lifetime: durable`.
 // The address-space is `rimsky_claim_handles` filtered to
-// held_durable=TRUE + producer advertising data_processing.
+// state = 'committed' AND lifetime = 'durable' + producer advertising
+// data_processing.
 //
 // The `{alias}` path parameter is the dotted
 // `{template_node_alias}.{claim_alias}` form. We resolve to a
@@ -33,6 +34,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -65,14 +67,23 @@ type assetItem struct {
 	ProducerName string          `json:"producer_name"`
 	Scope        json.RawMessage `json:"scope,omitempty"`
 	VersionID    string          `json:"version_id,omitempty"`
-	HeldDurable  bool            `json:"held_durable"`
-	ClaimedAt    time.Time       `json:"claimed_at"`
-	HolderNodeID string          `json:"holder_node_id"`
-	NodeType     string          `json:"node_type,omitempty"`
+	// State + Lifetime replace the pre-Stage-4 `held_durable` bool.
+	// For asset queries (post-Stage-2 row discovery is
+	// `ListByInstanceAndState(committed, durable)`), every surfaced row
+	// has State == "committed" and Lifetime == "durable" by
+	// construction. The fields are still surfaced for forward
+	// compatibility with operator tooling that wants to filter by
+	// state explicitly.
+	State        string    `json:"state"`
+	Lifetime     string    `json:"lifetime"`
+	ClaimedAt    time.Time `json:"claimed_at"`
+	HolderNodeID string    `json:"holder_node_id"`
+	NodeType     string    `json:"node_type,omitempty"`
 }
 
 // handleListAssets returns claim_handles rows for the instance filtered
-// to held_durable=TRUE AND producer advertises data_processing.
+// to state=committed AND lifetime=durable AND producer advertises
+// data_processing.
 func handleListAssets(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -94,7 +105,9 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 			if inst == nil {
 				return shared.ErrInstanceNotFound
 			}
-			r, err := deps.Persist.ClaimHandles().ListHeldDurableByInstance(ctx, instUUID, tx)
+			r, err := deps.Persist.ClaimHandles().ListByInstanceAndState(
+				ctx, instUUID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
+			)
 			if err != nil {
 				return err
 			}
@@ -182,7 +195,8 @@ func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAl
 		ClaimID:      r.ID.String(),
 		Scope:        r.ScopeData,
 		VersionID:    r.VersionID,
-		HeldDurable:  r.HeldDurable,
+		State:        string(r.State),
+		Lifetime:     string(r.Lifetime),
 		ClaimedAt:    r.ClaimedAt,
 		HolderNodeID: r.HolderNodeID.String(),
 		NodeType:     node.NodeType,
@@ -231,13 +245,15 @@ func parseAssetAlias(s string) (nodeType, claimAlias string, err error) {
 
 // resolveAsset finds the claim_handle row for (instance_id, node_type,
 // claim_alias). Returns (nil, nil) when no row matches. The lookup
-// joins ListHeldDurableByInstance + a template walk to map alias →
-// producer_name.
+// joins ListByInstanceAndState (state='committed', lifetime='durable')
+// + a template walk to map alias → producer_name.
 func resolveAsset(
 	ctx context.Context, deps AppDeps, tx persistence.Tx,
 	instance persistence.InstanceRow, nodeType, claimAlias string,
 ) (*persistence.ClaimHandleRow, *persistence.NodeRow, error) {
-	rows, err := deps.Persist.ClaimHandles().ListHeldDurableByInstance(ctx, instance.ID, tx)
+	rows, err := deps.Persist.ClaimHandles().ListByInstanceAndState(
+		ctx, instance.ID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -520,7 +536,8 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 		var body materializeRequest
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			// Empty body is acceptable; surface only true JSON errors.
-			if !errors.Is(err, errSilentEOF) && err.Error() != "EOF" {
+			// `json.Decoder.Decode` returns `io.EOF` on empty input.
+			if !errors.Is(err, io.EOF) {
 				badRequest(w, "invalid JSON body: "+err.Error())
 				return
 			}
@@ -575,10 +592,6 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, postMessageResponse{MessageID: msgID.String()})
 	}
 }
-
-// errSilentEOF is the sentinel for a json.Decoder.Decode against an
-// empty body — accepted on the materialize endpoint.
-var errSilentEOF = errors.New("EOF")
 
 // handleDeleteAsset implements the operator-driven asset delete per
 // F5 step 6: refuse if any in-flight run holds the claim; otherwise
@@ -657,11 +670,16 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 				}
 			}
 		}
-		// Delete the row. Claimant-guarded on the row's recorded
-		// supervisor id (preserves the held-durable invariant — the
-		// reaper only acts via claimant-guarded paths).
+		// Delete the row via the absence-guarded DeleteResolved path —
+		// the row is state='committed' / lifetime='durable' with
+		// holder_supervisor_id IS NULL by construction post-Promote
+		// (Stage 4 of the claim-handle state-column refactor: the CHECK
+		// constraint nulls holder_supervisor_id whenever state exits
+		// 'active').
+		// @blessed-invariant 4 (post-refactor): non-active-row deletions
+		// are guarded by absence + the row-discovery query filter.
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.ClaimHandles().Delete(ctx, row.ID, row.HolderSupervisorID, tx)
+			return deps.Persist.ClaimHandles().DeleteResolved(ctx, row.ID, tx)
 		})
 		if err != nil {
 			writeError(w, err)

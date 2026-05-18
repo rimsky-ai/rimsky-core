@@ -56,7 +56,7 @@ const (
 //
 // ClaimProducer is the wire-form rimsky↔producer contract. Every
 // standard claim-producer binary implements this interface; rimsky's
-// foundation/integration/remote/ package implements the gRPC client.
+// runtime/remote/ package implements the gRPC client.
 //
 // Lifecycle events live in the separate LifecycleSubscriber service
 // (lifecycle.proto). A binary that wishes to react to control-plane
@@ -183,7 +183,7 @@ func (c *claimProducerClient) ScopesConflict(ctx context.Context, in *ScopesConf
 //
 // ClaimProducer is the wire-form rimsky↔producer contract. Every
 // standard claim-producer binary implements this interface; rimsky's
-// foundation/integration/remote/ package implements the gRPC client.
+// runtime/remote/ package implements the gRPC client.
 //
 // Lifecycle events live in the separate LifecycleSubscriber service
 // (lifecycle.proto). A binary that wishes to react to control-plane

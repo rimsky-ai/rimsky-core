@@ -80,17 +80,18 @@ type AppDeps struct {
 	// hook. Threaded through to the operator-invalidate handler in
 	// nodes.go so admin-fired invalidates increment
 	// `rimsky_invalidates_total{source="admin"}`. Type is
-	// `runtime.MetricsHook` from foundation/integration; importing
+	// `runtime.MetricsHook` from runtime; importing
 	// from here is fine because controlapi already imports integration.
 	// Nil → no-op.
 	Metrics runtime.MetricsHook
 
-	// Sensors is the per-process sensor-client registry. Used by the
-	// instance-create / instance-terminate flow to issue Sensor.StartWatch
-	// / StopWatch per the template's `sensors:` block. Nil → sensor
-	// lifecycle calls are skipped; the watch row stays at `state =
-	// failed` and operators recover via the resync sweeper. Plan F8.
-	Sensors runtime.SensorRegistry
+	// Publishers is the per-process publisher-client registry. Used by
+	// the instance-create / instance-terminate flow to issue
+	// Publisher.Subscribe / Unsubscribe per the template's
+	// `publishers:` block. Nil → publisher lifecycle calls are
+	// skipped; the publisher-subscription row stays at `state =
+	// failed` and operators recover via the resync sweeper.
+	Publishers runtime.PublisherRegistry
 
 	// Validators is the per-process Validation-mix-in registry. Used by
 	// `POST /templates` to fire the Validation pipeline against each
@@ -192,7 +193,6 @@ func NewApp(deps AppDeps) http.Handler {
 		registerEventsRoutes(rr, deps)
 		registerClaimsRoutes(rr, deps)
 		registerMessagesRoutes(rr, deps)
-		registerSensorObservationsRoutes(rr, deps)
 		registerBackfillsRoutes(rr, deps)
 		registerAssetsRoutes(rr, deps)
 		registerLineageRoutes(rr, deps)

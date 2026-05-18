@@ -272,13 +272,18 @@ func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) 
 		return false
 	}
 
-	var lockHolders int
+	// Post-Stage-3 of the claim-handle state-column refactor: count
+	// ACTIVE rows only. Committed / abandoned rows persist past
+	// terminal until the retention sweep reaps them; the steady-state
+	// gate is whether all work has reached terminal, not whether the
+	// rimsky-side ledger has been compacted.
+	var activeLockHolders int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_claim_handles`,
-	).Scan(&lockHolders); err != nil {
-		t.Fatalf("cascadeAtSteadyState: lock holders: %v", err)
+		`SELECT count(*) FROM rimsky_claim_handles WHERE state = 'active'`,
+	).Scan(&activeLockHolders); err != nil {
+		t.Fatalf("cascadeAtSteadyState: active lock holders: %v", err)
 	}
-	if lockHolders != 0 {
+	if activeLockHolders != 0 {
 		return false
 	}
 

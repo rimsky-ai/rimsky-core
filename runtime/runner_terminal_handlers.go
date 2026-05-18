@@ -110,7 +110,7 @@ func applyTerminalPass(
 	}); err != nil {
 		return fmt.Errorf("applyTerminalPass: %w", err)
 	}
-	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 			Kind: "state_transition",
@@ -122,12 +122,32 @@ func applyTerminalPass(
 				"details":       payload,
 			},
 		}, tx)
-	})
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("applyTerminalPass: append state_transition event failed",
+			"node_id", acq.NodeID.String(),
+			"terminal_kind", terminalKind,
+			"error_class", errorClass,
+			"error", err.Error())
+	}
 	// E8: emit leaf-run lineage record for the passed terminal.
-	EmitLeafRunLineage(ctx, args,
-		acq.InstanceID, acq.FrameID, acq.DispatchID, acq.NodeID, "",
-		string(cascade.NodeStateFresh), string(cascade.LastOutcomePassed), errorClass,
-		acq.InstanceParams, acq.InstanceUserdataOverrides)
+	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+		InstanceID:       acq.InstanceID,
+		FrameID:          acq.FrameID,
+		RunID:            acq.DispatchID,
+		NodeID:           acq.NodeID,
+		State:            string(cascade.NodeStateFresh),
+		LastOutcome:      string(cascade.LastOutcomePassed),
+		ErrorClass:       errorClass,
+		TerminalKind:     terminalKind,
+		NodeAlias:        acq.NodeType,
+		ExecutorName:     acq.Executor,
+		TemplateHash:     acq.TemplateHash,
+		Params:           acq.InstanceParams,
+		UserdataMerged:   acq.MergedUserdata,
+		HeldClaims:       HeldClaimsForLineage(acq),
+		ParentRunID:      acq.ParentRunID,
+		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+	})
 	// Run-tree state propagation (E2): pass settles the run as
 	// fresh+passed, so child→parent aggregation must fire if this run is
 	// itself a child.

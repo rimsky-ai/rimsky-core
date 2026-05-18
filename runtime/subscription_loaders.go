@@ -11,7 +11,7 @@
 // substitution context's Deps map without reading the retired
 // nodes.dependencies column.
 //
-//	@concept: subscription
+//	@concept: node-subscription
 //	@concept: wait-set
 package runtime
 

@@ -75,8 +75,10 @@ export default function AssetDetailPage() {
       <h2 className="text-xl font-semibold mb-2">Asset: {alias}</h2>
       <div className="text-sm text-muted-foreground mb-4">
         Instance <code>{instanceId.slice(0, 8)}…</code> · producer{' '}
-        <code>{detail.asset.producer_name}</code> · scope_data_hash{' '}
-        <code className="text-xs">{detail.asset.scope_data_hash}</code>
+        <code>{detail.asset.producer_name}</code> · claim_id{' '}
+        <code className="text-xs">{detail.asset.claim_id}</code> · state{' '}
+        <code>{detail.asset.state}</code> · lifetime{' '}
+        <code>{detail.asset.lifetime}</code>
       </div>
 
       <div className="mb-4 flex items-center gap-2">
@@ -105,7 +107,7 @@ export default function AssetDetailPage() {
       <section className="mb-6">
         <h3 className="text-lg font-semibold mb-2">Current version</h3>
         <div className="text-sm">
-          <code>{detail.asset.current_version_id ?? '—'}</code>
+          <code>{detail.asset.version_id ?? '—'}</code>
         </div>
       </section>
 

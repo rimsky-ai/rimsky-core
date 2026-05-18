@@ -86,7 +86,7 @@ message SensorContext {
   // kind is the sensor-kind discriminator (e.g. "cron", "http").
   string kind = 2;
   // resolved_config is the per-instance config the sensor will receive
-  // at StartWatch.
+  // at Subscribe.
   bytes resolved_config = 3;
 }
 
