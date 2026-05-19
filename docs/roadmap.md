@@ -20,6 +20,10 @@ load-bearing primitives:
 - **Cascade.** Node-state propagation: when a node's value changes,
   dependents become stale and recompute. Five node states; a sibling
   `last_outcome` column carries the resolution flavor.
+- **Subscriptions.** Per-template `subscribes:` declarations route
+  upstream transitions to downstream nodes across four topic kinds
+  (state, attribute, event, message); the cascade resolution model is
+  built around them.
 - **Frames.** The unit of cascade resolution. At most one frame runs
   per instance at a time.
 - **Claims and locks.** Producer-mediated concurrency gating. A node
@@ -28,255 +32,171 @@ load-bearing primitives:
   matrix.
 - **Held subgraphs.** Multiple nodes share a held claim that resolves
   at subgraph completion: aggregate-success commits, any-failure
-  abandons. This is the "stage-then-promote-or-discard" pattern as a
-  first-class machinery.
-- **Three out-of-process service protocols.** Claim producers,
-  executors, lifecycle subscribers. Each speaks gRPC; reference
-  implementations ship in-tree.
+  abandons. The "stage-then-promote-or-discard" pattern as first-class
+  machinery.
+- **Fan-out and run-tree.** Nodes that partition a claim into
+  sub-claims at runtime; each work unit gets its own run with
+  `parent_run_id` / `child_key` tracking on `rimsky_node_runs`.
+- **Assets and content lineage.** Durable-lifetime claims surface as
+  assets via `/instances/{id}/assets/*`; lineage records
+  (`leaf_run`, `claim_terminal`) track computational and
+  data-promotion provenance, queryable via `/lineage/*`.
+- **Service protocols.** Out-of-process gRPC services — claim
+  producers, executors, lifecycle subscribers, publishers (the
+  sensor / external-trigger surface), and an opt-in `Validation`
+  mix-in any service may advertise for template-registration-time
+  checks. Reference implementations ship in-tree.
+- **Control-plane API with MCP skin.** HTTP+JSON operator interface
+  at the control-api; the same surface available as MCP tools at
+  `POST /mcp` for LLM-accessible operation.
+- **API-key auth.** Bearer tokens with per-key JSONB permission
+  grants, verb-noun action grammar, implicit anonymous bootstrap,
+  rotation with grace, structured audit on the existing events log,
+  per-handler dry-run mode.
 - **Three runtime processes plus migration and conformance tools.**
-  Scheduler, supervisor, control-api communicate only through Postgres.
+  Scheduler, supervisor, control-api communicate only through
+  Postgres.
 
 Reference implementations of bundled claim producers (filesystem,
-postgres, stub) and executors (`http-node`, `claude-agent`, stub)
-ship in the same repository.
+postgres, stub), executors (`http-node`, `claude-agent`,
+`verifier-http`, `verifier-shape-checks`, stubs), and sensors
+(`sensor-{cron,http,object-store,webhook}`) ship in the same
+repository.
+
+## Recently shipped
+
+Major work landed since the previous roadmap pass:
+
+- **Layer crystallization, public docs, tri-licensing.**
+  Three-Go-module workspace (`protocols/`, `foundation/`, root) with
+  depguard-enforced import boundaries; the `docs/{concepts,protocols,agents,humans}/`
+  surface and lint suite; Apache/AGPL per-file headers with the
+  `rimsky-license-check` tool.
+- **Data-platform cycle.** Blessed `blob` and `table` typed-attributes,
+  fan-out with run-tree partitioning, `verifier-{http,shape-checks}`
+  executors (collapsing the old quality-rule primitive), assets,
+  content lineage, backfills, the `Validation` mix-in service.
+- **Sensor and publisher protocol.** Four bundled sensors (cron, http,
+  object-store, webhook); unified publisher messaging endpoint with
+  idempotency.
+- **Subscription cascade refactor.** Cascade resolution model rewritten
+  around `node-subscription` topics; Park typed with a 4-reason
+  taxonomy plus freeform label; atomic-staging pattern documented with
+  scenario coverage.
+- **Nomenclature resolution.** Project-wide vocabulary alignment
+  (`store`→`claim-producer`, `subscription`→`node-subscription`, etc.)
+  to prevent drift between code, docs, and design.
+- **Control-plane MCP + API-key auth + dry-run.** Per-key JSONB grants
+  with wildcard action grammar, MCP folded into control-api as a
+  protocol skin at `POST /mcp`, per-handler dry-run with
+  synthetic-envelope responses, structured audit, CLI rename
+  `rimsky-cli` → `rimsky` with new `auth` subcommand group.
+
+Each cycle has its archived spec and plan under `.ok-planner/history/`;
+the published `CHANGELOG.md` tracks what shipped.
 
 ## Active design
 
-Three brainstorm-spec-implement cycles are in scope for the near term.
-None have begun implementation; the order below reflects intended
-sequencing.
+The cycles below are in scope for the near term. Each will get (or
+already has) its own design spec and implementation plan before code
+lands. The order reflects intended sequencing, not strict
+dependencies — items can be reshaped if discussion exposes a better
+path.
 
-### Quality-of-life cycle
+### Dashboard and observability
 
-Three independent improvements that sharpen observability and the
-pattern surface without changing the core conceptual model.
+A first-class web operator interface plus the observability
+service-protocol surfaces (`ExecutorObservability`,
+`ClaimProducerObservability`) that feed it. The dashboard SPA exists
+at `dashboards/rimsky-dashboard/` and the observability protos have
+shipped; the remaining work covers the wire-up between them and the
+control-api's `/v1/observability/*` surface. Spec at
+`.ok-planner/specs/2026-05-02-dashboard-and-observability-design.md`.
 
-- **`ParkReason` enum.** Today's `Park` event carries opaque
-  parked-node context. Adding a typed reason (time-wait, signal-wait,
-  awaiting-human, barrier-wait, retry-backoff) lets dashboards and
-  diagnostics distinguish "rate-limit retry — expected" from "operator
-  approval missing — page someone."
-- **`barrier` bundled executor.** A first-class fan-in pattern for
-  conditional subgraphs. Today the readiness-node pattern (a node
-  parks waiting for `on_event` signals from optional upstream
-  subgraphs) is correct but verbose. A bundled executor with a clean
-  userdata schema centralizes the state-machine design once.
-- **Atomic-staging pattern doc and reference producer.** A worked
-  example for custom claim producers with stage-then-swap-on-Commit
-  semantics. Generic across stores (Postgres schema swap, S3 prefix
-  rename, Iceberg branch fast-forward, filesystem directory move).
-  The reference implementation is filesystem-based.
+### `barrier` bundled executor
 
-### Data-platform cycle
+A first-class fan-in pattern for conditional subgraphs. Today the
+readiness-node pattern (a node parks waiting for `on_event` signals
+from optional upstream subgraphs) is correct but verbose. A bundled
+executor with a clean userdata schema centralizes the state-machine
+design once.
 
-Expands rimsky from "an orchestration platform that happens to handle
-data workloads with effort" into "an orchestration platform whose
-data-engineering surface is first-class."
+### Per-language executor SDKs
 
-- **Blessed typed-attribute standard library.** A small, bounded,
-  opinionated set of attribute types where rimsky picks the backing
-  store, owns the implementation, and provides predetermined
-  concurrency and lifetime semantics. First two types: `blob`
-  (evolution of today's blob backend) and `table` (row-oriented
-  dataset with copy-on-write versioning over operator-configured
-  object storage).
-- **Per-language executor SDKs.** Python and TypeScript SDKs over the
-  existing executor protocol. Hide the gRPC ceremony; expose a
-  decorator/builder API; resolve blessed typed-attribute handles into
-  language-native types (pandas, polars, Arrow) via per-type adapters.
-- **Verifier-executor convention.** Collapse today's `quality-rule`
-  primitive into the executor model. Quality checks become verifier
-  nodes; in-process Go evaluators get deprecated; bundled verifier
-  executors (`verifier-shape-checks`, `verifier-http`) cover the
-  common cases. Held-subgraph membership preserves the "bad data
-  never reaches canonical state" guarantee.
+Python and TypeScript SDKs over the existing executor protocol. Hide
+the gRPC ceremony; expose a decorator/builder API; resolve blessed
+typed-attribute handles into language-native types (pandas, polars,
+Arrow). Sketched at
+`.ok-planner/sketches/2026-05-14-rimsky-development-kit.md`.
 
 ### Geo cycle
 
-Adds `geo` as a blessed typed-attribute, after `blob` and `table`
-prove the pattern. Native geospatial features with CRS handling,
+`geo` as the third blessed typed-attribute, after `blob` and `table`
+proved the pattern. Native geospatial features with CRS handling,
 predicate pushdown to PostGIS when the operator selects that backing,
 and SDK adapters that resolve to language-native spatial types
-(GeoPandas, GeoArrow).
+(GeoPandas, GeoArrow). Sketched at
+`.ok-planner/sketches/2026-05-13-geo-cycle.md`.
 
-## On the horizon — data-engineering extensions
+## On the horizon
 
-Beyond the three active cycles, the following directions have been
-sketched but not yet committed. Each will need its own
+Sketched but not yet brainstormed into specs. Each will need its own
 brainstorm cycle before becoming a spec.
 
-### Partitions
+### Package manager
 
-The biggest single extension. Every mature data framework treats
-"sliceable datasets and parallel sub-units of work" as first-class. A
-node is rimsky's unit of work; partitions would be the unit of data
-within a unit of work.
+A surface for distributing rimsky templates, bundled service
+binaries, and SDK packages across organizations. Pairs naturally
+with the SDK work but stands independently. Sketched at
+`.ok-planner/sketches/2026-04-26-package-manager.md`.
 
-What changes if rimsky adopts partitions:
+### Agentic telemetry
 
-- Blessed `table` (and `geo`) attributes carry partition specs
-  (daily, hourly, by-dimension, hash-based).
-- Cascade walks at partition granularity — only affected partitions
-  invalidate; only affected partitions recompute. Today's
-  "invalidate-the-whole-node" is too coarse for analytics workloads.
-- Nodes declare per-partition or aggregate execution.
-- Dashboards present state per partition; verifiers run per partition;
-  barriers aggregate across partitions.
-- Backfills become tractable as parametrized operations over partition
-  ranges.
+Structured telemetry surface for agentic executors specifically —
+model inputs, tool-call decisions, costs, retry behavior — exposed
+as queryable events alongside the regular event log. Sketched at
+`.ok-planner/sketches/2026-05-07-agentic-telemetry.md`.
 
-Pairs tightly with the blessed typed-attribute work. Touches cascade,
-node-state, claim-handle, scheduling, and the persistence schema.
-Worth its own multi-spec design effort.
+### Full traceability
 
-### Sensors and external triggers
+Cross-cutting trace correlation across rimsky's processes and the
+out-of-process services it orchestrates, so a single user-facing
+request can be followed through control-api, supervisor, executors,
+producers, sensors, and external systems. Sketched at
+`.ok-planner/sketches/2026-05-16-full-traceability-sketch.md`.
 
-Today's trigger surface: cron, admin `force_fire`, in-graph
-`invalidate`, held-claim resolution. The watch-external-state shape
-(new file in S3, topic offset advanced, row in an audit table, webhook
-arrived) is achievable via a polling executor that parks and resumes,
-but it's not a first-class concept and the pattern is verbose.
+## Declined directions
 
-A sensor primitive would declare a watch condition and emit
-`invalidate(target)` against named template nodes when the condition
-fires. Lower-commitment first move: a bundled executor with
-conventional userdata, lifted to primitive status if the pattern earns
-its place.
+Considered and explicitly declined, with the reasoning preserved so
+future readers know these were thought through.
 
-### Materialization strategies and incremental computation
+### Bundled agentic patterns beyond the MCP skin
 
-Today every blessed-type write produces a new version of the whole
-attribute. dbt's `incremental` / `append_only` / `merge` /
-`partition_overwrite` materializations let a node produce only the
-delta. For petabyte-scale tables, full re-materialization is
-operationally infeasible.
+The control-plane MCP server landed. Three further agentic patterns
+were sketched (`.ok-planner/history/sketches/2026-05-14-agentic-platform.md`)
+and declined:
 
-Sequenced after partitions — a `partition_overwrite` materialization
-is "produce this partition's contents; merge it into the table."
-Without partitions, incremental modes are much harder to model
-honestly.
+- **Bundled knowledge store** (cross-instance LLM memory as a
+  claim-producer pattern). Pre-v1 bundling would lock in opinions
+  about entry shape, scope conventions, supersession semantics, and
+  substrate choices before any real consumer has stressed them. The
+  architecture supports custom claim producers; consumers should
+  develop their own approach.
+- **Lifecycle-subscriber-as-agent worked example** (autonomous agent
+  supervising rimsky workloads from inside a rimsky template). Better
+  discovered through real consumer use than designed up-front; the
+  lifecycle-subscriber, MCP, and claim-producer primitives are
+  already in place for any consumer who wants to build it.
+- **Meta-agent primitive** (declarative trigger-to-agent mapping for
+  failure repair). Speculative; on hold pending evidence the
+  consumer-side wiring is actually verbose enough to earn primitive
+  status.
 
-### Content lineage
-
-Rimsky's cascade graph is the structural lineage graph: "node X
-depends on node Y." What it doesn't track is value lineage: "this
-writeback value v3 was derived from these specific source values,
-input A version v2, input B version v1, by executor E version 1.0."
-
-Small primitive. Most of what it records is already captured in the
-events log. The value is making it queryable: "what produced this
-bad value" debugging, "what would be affected if I change this input"
-impact analysis, compliance audit trails.
-
-### Asset-thinking as a presentation layer
-
-Dagster's conceptual move: reframe the unit from task or op to asset.
-The graph IS the asset graph IS the lineage graph. Rimsky's node is
-task-shaped. The blessed typed-attribute work nudges toward
-asset-thinking — a `table` attribute is asset-shaped.
-
-Possibly a documentation reframe rather than a primitive change: an
-"asset" concept defined as "the named output of a node, viewed in the
-context of the lineage graph," without touching the protocol or
-adding new primitives. Cheap to add; significant onboarding-narrative
-value.
-
-### Backfills as a parametrized operation
-
-Once partitions exist, "rerun this template over this partition range"
-becomes a natural operation. Today the closest thing is "create N
-instances with N parameter values," which doesn't track as a unified
-backfill.
-
-A control-api operation that, given a template plus a partition range,
-schedules per-partition runs and surfaces the rolled-up status. Falls
-out of partitions; may fold into the partitions design rather than
-standalone work.
-
-## On the horizon — agentic integration
-
-Today rimsky's executor protocol supports agent-shaped executors
-naturally — `claude-agent` is a TypeScript reference executor that
-wraps the Claude CLI. This works well for "agent as worker" patterns.
-
-The next direction is **agent as control-plane participant**: agents
-that watch runs, understand what's happening, and act on the graph
-itself. Four sketched approaches:
-
-### A bundled MCP server for the control-api
-
-The control-api already exposes HTTP endpoints for reading instance
-state, invalidating nodes, force-firing schedules, and creating
-instances. A bundled MCP server translates those endpoints into MCP
-tools that an LLM can invoke natively.
-
-Concrete consumer wins:
-
-- LLMs can investigate runs interactively. "Why did instance X fail
-  yesterday?" becomes a sequence of MCP tool calls against events,
-  attributes, and claim state.
-- Operator dialogue becomes natural. "Show parked nodes older than an
-  hour" → table → "wake the third one" → another tool call.
-- Agents become operators in the literal sense, with appropriate
-  access controls.
-
-Packaging, not protocol. The control-api already exists; the MCP
-server is a translation layer.
-
-### Lifecycle-subscriber-as-agent worked example
-
-The lifecycle-subscriber protocol is already opt-in for peers that
-react to template and instance state transitions. A lifecycle
-subscriber that hosts an LLM and reacts to events with autonomous
-action is the unlock:
-
-- `OnInstanceTerminated` with failure → agent investigates and decides
-  retry, escalate, or file ticket.
-- `OnInstanceCreated` for a new run → agent observes early progress;
-  intervenes if discovery is unusually slow.
-- Periodic walks across all running instances → agent surfaces
-  patterns, drift, and anomalies that wouldn't trip any individual
-  quality rule.
-
-No new rimsky primitive — just a worked example pairing existing
-machinery (lifecycle subscriber, control-api, MCP server) into the
-"agent as platform supervisor" pattern.
-
-### Cross-instance knowledge as a claim-producer pattern
-
-Today's agents start fresh per instance. A cross-instance-knowledge
-claim producer carries scope `knowledge/{template-name}`:
-
-- Read claims from agent executors in new instances let them consult
-  prior lessons.
-- Read-write claims from agent executors in terminating instances let
-  them distill new lessons.
-- Updates are mutable; the store is the producer's choice (filesystem,
-  S3, vector DB for embeddings-shaped knowledge).
-
-Not a new primitive — a claim-producer shape. High leverage when
-paired with the lifecycle-subscriber-as-agent pattern (the supervising
-agent reads the knowledge claim; distills lessons after each instance
-terminates).
-
-### Meta-agent primitive (speculative)
-
-The more ambitious move. Today node-level repair happens via
-`on_executor_errored` and consumer-built repair subgraphs. The pattern
-is per-node; the wiring is explicit.
-
-A meta-agent primitive could centralize this: a declarative
-configuration of triggers (node failed, node parked over threshold,
-verifier failed) that dispatches an agent with tool access to the
-control-api whenever any trigger fires. The agent receives the full
-instance state, diagnoses, takes an action (invalidate with overrides,
-dispatch a repair subgraph, escalate, terminate with summary), and
-the supervisor applies the action.
-
-If the three patterns above are sufficient, this might be unnecessary
-— consumers wire it themselves. Worth investigating whether the
-pattern is verbose enough across real consumers to earn primitive
-status.
+The producer-userdata-validation work originally proposed inside that
+sketch landed separately as the `Validation` mix-in service — at a
+narrower surface than the sketch proposed (per-claim `data:` bytes
+only, not the full opaque node userdata) but with the same
+registration-time-validation intent.
 
 ## Explicit non-goals
 
@@ -305,6 +225,9 @@ though they're orchestration-adjacent.
   their template hash; new instances pick up the moved tag. The
   remaining 20% (mid-flight migration to a new template version) is
   not a planned primitive.
+- **Bundled agent-pattern libraries.** Knowledge stores, supervisor
+  templates, meta-agent primitives — see "Declined directions."
+  Consumer-domain patterns rimsky deliberately doesn't bundle.
 
 If a future direction crosses one of these lines, it gets pushed back
 into the consumer's domain or to a more appropriate adjacent system.
@@ -314,8 +237,8 @@ into the consumer's domain or to a more appropriate adjacent system.
 The active design cycles get their own design specs and implementation
 plans before code lands. Specifications, plans, and per-cycle
 implementation notes are workflow material — they don't appear on the
-public surface but are visible in the repository's design-log
-directories for those who want to follow the working detail.
+public surface but are visible under `.ok-planner/` for those who want
+to follow the working detail.
 
 The on-the-horizon items will each be brainstormed individually as
 the active cycles complete. Each will need to pressure-test:
