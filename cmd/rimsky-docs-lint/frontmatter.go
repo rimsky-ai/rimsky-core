@@ -53,7 +53,7 @@ func runFrontmatter(args []string) error {
 	}
 	var problems []string
 	conceptEntries, err := os.ReadDir(*dir)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	for _, e := range conceptEntries {

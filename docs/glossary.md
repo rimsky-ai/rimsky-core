@@ -8,7 +8,4 @@ Authoritative public-surface vocabulary, generated from `docs/concepts/`. For de
 
 | Concept | Definition |
 |---|---|
-| [design-philosophy](concepts/design-philosophy.md) | Rimsky's project-agnostic principles: domain-agnostic core, out-of-process services, content-addressed templates, opacity of producer/executor payloads, and consumer-shaped public docs. |
-| [deterministic-transformations](concepts/deterministic-transformations.md) | Nodes whose work is a deterministic function of their inputs — pure data transforms, schema migrations, materialized-view rebuilds. Not all nodes are agents; deterministic transformations are the common case for the data-engineering shape of rimsky. |
-| [x-as-executor](concepts/x-as-executor.md) | The pattern of wrapping an existing system (a CI pipeline, an ETL job, a custom worker) inside an Executor protocol implementation so rimsky can dispatch to it. Often the lowest-friction path to adopting rimsky in an existing project. |
 

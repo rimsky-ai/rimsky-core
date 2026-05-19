@@ -1,83 +1,336 @@
-# Rimsky (Go)
+# Rimsky
 
-Project-agnostic reactive node-graph orchestration platform.
+Rimsky is a reactive node-graph orchestration platform for agentic
+workloads. Work is declared as a graph of nodes; when a node's value
+changes, the cascade marks dependents stale and the scheduler dispatches
+them. The platform is domain-agnostic — it owns control flow,
+concurrency, and persistence, and leaves the work itself to
+out-of-process services that the consumer brings.
 
-## Overview
+## 1. What rimsky is
 
-Rimsky orchestrates work as a graph of **nodes**. When a node loses or replaces its value, an `invalidate` cascades to dependents, marking them `stale`; the scheduler picks up stale nodes on subsequent ticks and recalculates them by dispatching their **executors**. Coordination across shared state goes through **claim handles** acquired against named scopes via the **claim-producer** protocol.
+Rimsky models a workload as a graph of typed nodes connected by
+subscriptions. A node's executor — anything reachable over the executor
+gRPC protocol — runs the work; node output ripples downstream through
+the **cascade**, which decides which dependents become stale and
+recompute. Concurrency across shared state goes through **claims**
+acquired against named scopes via the claim-producer protocol. Templates
+are content-addressed specifications; instances bind a template to
+runtime parameters. A frame is one cascade resolution. Held subgraphs
+let multiple nodes share an acquired claim and resolve it atomically at
+subgraph completion.
 
-Internally, the codebase is organized into three Go modules plus a root modeling layer (see `docs/internal/architecture.md` for the layout):
+The platform is pre-v1. Wire protocols, YAML config shapes, and
+persistence schemas may change between versions; the safety properties
+(deterministic-sorted-order multi-lock acquisition, verify-before-run,
+claimant-guarded release, unified terminal-decision, auto-terminal
+aggregate-outcome) are stable. Three runtime processes — scheduler,
+supervisor, and control-api — communicate only through Postgres. The
+control-api hosts both the operator HTTP+JSON surface and a coextensive
+MCP skin so an LLM-driven operator can drive the platform on the same
+verbs a human would.
 
-- **Foundation** (`foundation/` Go module) — cascade engine + lock manager + integration. Owns the per-run records, claim handles, and holding-subgraph state.
-- **Modeling** (root module) — templates, instances, frames, schedules, attributes, control-plane API.
-- **Service protocols** (`protocols/` Go module) — `ClaimProducer`, `Executor`, `LifecycleSubscriber`.
-- **Bundled services** — reference impls under `stores/` (filesystem, postgres, stub) and `executors/` (http-node, claude-agent, stub).
+This README is for evaluators deciding whether to engage with rimsky for
+an agentic workflow problem. It frames what rimsky is, what it was
+built for, what makes it different from the things you might be
+pattern-matching against, and where to go next if the answer is yes.
+Builders point their coding agent at `docs/agents/llms.txt` and let it
+walk them through depth.
 
-This module organization is implementation detail — external users and agents read `docs/concepts/`, `docs/protocols/`, `docs/humans/`, and `docs/agents/llms.txt`, none of which require the layering to make sense.
+## 2. What rimsky was built for
 
-## Quick start
+Rimsky is an agent orchestrator that can also implement data
+processing patterns — not a data orchestrator that happens to handle
+agents. The primitives look superficially like a data-engineering
+toolkit (assets, partitions, lineage, backfills, typed attributes), but
+that surface exists to give agentic work durable handles, not because
+data transformation is the headline. The patterns below are the ones
+rimsky was designed against. If your problem looks like one of them,
+keep reading; if it doesn't, an adjacent system is probably a better
+fit.
 
-    docker compose -f deploy/docker-compose.yml up -d
-    curl http://localhost:8080/health
-    # Deploy a template, create an instance: see docs/agents/examples/minimal-template-and-instance.md
-    # Operator-side install + tuning: see docs/internal/operator-guide.md
+**Watching external state and reacting.** Sensors observe external
+systems — S3 prefixes, HTTP endpoints, cron schedules, inbound webhooks
+— and emit messages into the graph. The cascade fires downstream nodes
+whose subscriptions match. The reactive logic lives in the graph
+itself, not in code the consumer writes around a workflow engine. Where
+a workflow engine asks you to write the reactive layer as orchestration
+code, rimsky asks you to declare the subscription and trusts the
+cascade to do the routing.
 
-## Docs
+**Stateful agentic workloads at platform scale.** An LLM agent is an
+executor — a service that takes inputs and produces outputs and named
+events along the way. Output triggers downstream nodes through
+subscriptions; failures park for human review; held claims gate access
+to shared state; cascade routes the next agent invocation when a result
+changes. Rimsky operates above the single-agent layer: it is not an
+agent framework that orchestrates one agent's tool calls, it is the
+platform that coordinates many agents and templates against shared
+infrastructure.
 
-Authoritative contracts:
+**Subgraphs that succeed or fail atomically.** Held claims combined
+with held subgraphs let an agent (or a chain of agents and
+deterministic nodes) do N steps and either all commit or all roll back.
+The producer's commit/abandon verbs run exactly once at subgraph
+completion, determined by the aggregate outcome of every node that
+co-held the claim. This is the pattern an agent needs when it has to
+touch multiple systems coherently — a DAG scheduler where every step's
+effects are independently persistent will leave half-applied state
+behind on failure; rimsky's atomic-staging primitive makes the
+all-or-nothing the default mode.
 
-- `docs/specs/2026-05-04-foundation-contract.md` — foundation layer.
-- `docs/specs/2026-05-04-modeling-layer-contract.md` — modeling layer.
-- `docs/specs/2026-05-04-service-protocol-contract.md` — service protocols.
+**Coordinating across shared state.** Claim producers expose a uniform
+acquisition interface against arbitrary backing systems — a filesystem,
+a Postgres table, a vector store, a custom service. Named locks gate
+deployment-wide capacity. The platform compares scope bytes through the
+producer's conflict matrix; it doesn't know what "row 42" means or care
+whether two scopes overlap semantically — the producer answers that.
+Where a workflow engine forces you into its state model, rimsky lets
+you keep your state where it is and gate access to it through a
+producer that understands the domain.
 
-Public-surface guides (cite from these):
+**Data operations as a service to agentic work.** When agents produce,
+transform, or materialize data, rimsky's typed-attribute system (blob
+and table blessed today, geo on the way), partitions, fan-out, and
+lineage are there to support that work. They are plumbing for the
+agent's actual job — letting an agent return a `table` and have its
+shape, location, and provenance tracked without the agent writing
+data-platform code. They are not the headline. A data-engineering
+platform with an opinion about transformation languages, a semantic
+layer, or a metric definition surface is solving a different problem.
 
-- `docs/concepts/` — per-noun canonical reference.
-- `docs/protocols/` — write your own claim-producer / executor / lifecycle-subscriber.
-- `docs/humans/` — narrative onboarding for human readers.
-- `docs/agents/llms.txt` and `docs/agents/llms-full.txt` — LLM-shaped indices.
-- `docs/glossary.md` — public vocabulary (auto-generated from `docs/concepts/`).
-- `docs/vocabulary.md` — vocabulary discipline + deprecated-term policy.
+The thread across all five: rimsky was built when an agentic workflow
+needed platform-grade orchestration and the available platforms were
+either too task-shaped (single-DAG schedulers, no shared-state
+coordination), too data-shaped (transformation-first platforms with
+opinions about how data moves), or too agent-shaped (single-agent
+frameworks with no coordination layer) to fit.
 
-Internal engineering material (do not cite from public surfaces):
+## 3. Design philosophy
 
-- `docs/internal/architecture.md` — implementation shape + blessed invariants.
-- `docs/internal/node-graph-design.md` — conceptual reference (predecessor of `docs/concepts/`).
-- `docs/internal/operator-guide.md` — deployment + operation.
-- `docs/internal/glossary.md` — internal predecessor of `docs/glossary.md`.
-- `docs/internal/executor-author-guide.md`, `docs/internal/claim-producer-author-guide.md` — predecessors of `docs/protocols/`.
-- `docs/internal/protocol.md` — pointer to the service-protocol contract.
+Rimsky's primitives only make sense alongside the principles that
+constrain them. The core split is that graphs are control flow and
+executors are domain logic. The platform decides which nodes are
+eligible, which dependents go stale, which claims conflict, when a
+frame resolves. The platform does not know what the work is for, what
+the bytes mean, what the agent is reasoning about, or what the table
+contains. Every domain-shaped piece of a deployment — the templates,
+the userdata, the MCP catalogs the agents access, the audit-trail
+content — lives in the consumer's repository, not in rimsky's.
 
-## Build
+The platform treats six byte streams as inert: userdata, claim scope,
+claim payload, blob content, named-event payload, and message payload.
+Rimsky does not log them, normalize them, index them, validate them
+beyond the schema gates, attach them to traces, or include them in
+error messages. Inertness is not minimalism; it is what keeps rimsky
+out of the consumer's domain. Once the platform reads bytes for
+meaning, it becomes a partial participant in the domain and inherits
+bug surface and security surface that belongs to the consumer. Three
+blessed invariants lock this in source — userdata opaque, claim content
+inert, blob content inert — and removing them would unwind the design.
 
-    make proto-gen        # regenerate proto bindings (one-time)
-    make build-all        # go build across all three modules
-    make test-all         # go test across all three modules
-    make lint             # golangci-lint
+No domain helpers ship. The reference services in-tree
+(`http-node`, `claude-agent`, `filesystem`, `postgres`, the four
+sensors) are illustrative — they cover the protocol's shape and the
+deployment story. They are not a curated catalog of production-ready
+domain pieces. A platform that ships domain helpers becomes a platform
+whose users file requests for more domain helpers; rimsky does not grow
+features to solve the consumer's problem, it provides primitives that
+the consumer composes against their own services.
 
-Reference binaries (under `cmd/`):
+Deterministic transformations belong inside executors, not inside
+rimsky. A node with no executor declared is a native node — the cascade
+synthesizes a completion once its claims are acquired, and the value
+carried downstream is whatever the upstream nodes wrote. Non-trivial
+transformations run through executors like any other work. Patterns
+that look like they would benefit from a special node type — agent
+self-blocks where an agent emits a structured failure and a downstream
+node routes on the failure class, confidence-driven branching where
+named events fire only the matching subscriber — are all expressed
+through the existing executor and subscription surfaces. Rimsky has no
+special-cased "deterministic node" type because the cascade,
+substitution, retry policy, and claim semantics are already correct for
+pure code.
 
-    rimsky-scheduler
-    rimsky-supervisor
-    rimsky-control-api
-    rimsky-migrate
-    rimsky
-    rimsky-executor-conformance
-    rimsky-conformance-probe
-    rimsky-claim-producer-conformance
-    rimsky-entrypoint
+Pre-v1 has invariants because the safety properties are load-bearing
+for any consumer. The release stance gives rimsky permission to break
+wire shapes and schema between versions; it does not give the platform
+permission to weaken acquisition determinism, the verify-before-run
+guard, the claimant-guarded release, or the unified terminal-decision
+engine. Pre-v1 is about iteration speed on surfaces; the safety
+properties are stable.
 
-## Status
+## 4. Load-bearing primitives
 
-Pre-v1; in active development.
+The primitives below are what an evaluator needs to know exists. Each
+gets one paragraph here; the formal definitions, boundaries, and
+invariants live in the design catalog.
 
-## License
+**Templates and instances.** A template is a content-addressed
+specification of a graph — keyed by a hash over its canonicalized
+bytes, so two equal templates compare equal and no template can be
+silently mutated. An instance binds a template to runtime parameters
+and carries the live execution state. Movable string tags point at
+template hashes for the cases where a stable name needs to track the
+current version. Together they give the platform an immutable foundation
+for graph definitions and a mutable surface for execution.
 
-Rimsky is multi-licensed. The orchestrator (scheduler, supervisor,
-control-API and their internal packages) is licensed under
-AGPL-3.0-or-later or a Fall Guy Consulting commercial license. The
-embedder layer (wire IDL, executor SDK, reference store and executor
-binaries, CLI, conformance suites, deployment artifacts, documentation)
-is licensed under the Apache License 2.0. See `COPYRIGHT` for the
-per-layer breakdown, `LICENSE.apache` and `LICENSE.agpl` for the license
-texts, and `docs/licensing.md` for an operator FAQ.
+**Cascade.** When a node's outputs change, cascade decides which
+dependents become stale and recompute. The walk is driven by per-node
+subscriptions across four topic kinds — state, attribute, named event,
+message — and gated by a `last_outcome` column that distinguishes
+fresh-changed, fresh-unchanged, passed, pure-cascade, and failed
+resolutions. This is the killer primitive: it makes a graph reactive
+without making the executor responsible for routing. Reactivity to
+external change (sensors emitting messages) is the same machinery as
+reactivity to internal change. In service to the watching-external-state
+pattern.
+
+**Claims and locks.** A claim is a node's request to access a
+producer-managed resource, declared as a scope and resolved at runtime
+by the producer. The platform serializes conflicting acquisitions
+through the producer's conflict matrix; named locks are a deployment-
+level capacity primitive declared in config. Together they are the
+concurrency surface, and they are the primitive that makes coordinating
+agents against shared infrastructure tractable. In service to the
+shared-state coordination pattern.
+
+**Held subgraphs.** Multiple nodes can share a single acquired claim
+via a `holds:` directive. The claim resolves once at the end of the
+holding subgraph: aggregate success commits, any failure abandons. This
+is the atomic-staging machinery — the stage-then-promote-or-discard
+pattern as first-class. The producer's commit verb runs exactly once;
+the abandon verb is the rollback. In service to the atomic-subgraph
+pattern.
+
+**Fan-out and run-tree.** A node can partition a held claim into
+sub-claims at runtime via the producer's split-scope verb. Each
+sub-claim gets its own run, tracked through a self-referential
+parent/child-key tree on the per-run record. Fan-out is the hook that
+makes data-shaped work tractable — partition-per-key, materialize-per-
+partition, aggregate-back-up — without baking partition semantics into
+the platform. The platform sees a tree of runs and claims; the producer
+decides what a partition means.
+
+**Service protocols.** Out-of-process gRPC services implement one or
+more rimsky protocols: claim producer (resource acquisition), executor
+(work dispatch), lifecycle subscriber (template/instance state-
+transition hooks), publisher (the external-trigger surface, of which
+sensors are one class), and the optional `Validation` mix-in for
+template-registration-time checks. The executor primitive's scope is
+broader than the name suggests — anything that takes inputs and
+produces outputs can be an executor. An agent, a CI pipeline, a webhook
+dispatcher, a Lambda behind API Gateway, a transformation written in
+Python — wrapped behind the executor protocol they all participate in
+rimsky's claims, attributes, error policy, cascade, frames, and parked-
+state machinery on equal footing. This is the primitive where the
+agentic framing is most visible.
+
+**Assets and content lineage.** Durable-lifetime claims surface as
+assets — addressable resources with stable identity and provenance
+records. Two lineage record kinds (`leaf_run` for computational
+provenance, `claim_terminal` for data-promotion provenance) feed the
+control-api's lineage endpoints. This is not a data-engineering
+primitive: it is the way agentic work gets durable handles and audit
+trails. When an agent produces a result that needs to outlive its
+frame, it lands as an asset; the lineage chain shows what produced it
+and what consumed it.
+
+**Control-plane MCP skin and API-key auth.** Every operator action on
+the control-api is also an MCP tool at `POST /mcp`, so an LLM-driven
+supervisor can drive the platform on the same verbs a human would.
+Authentication is per-key bearer tokens with JSONB permission grants,
+verb-noun action grammar with wildcard support, per-handler dry-run
+mode, and structured audit on the existing events log. The bootstrap
+path is implicit-anonymous-admin until the first real key is minted.
+This is the agent-operator surface — the answer to "an LLM is going to
+operate this platform on behalf of a human or as part of a higher-level
+agentic system."
+
+For the formal definitions of each primitive — purpose, boundaries,
+invariants, and the code sites that enforce them — read
+`.ok-planner/design/concepts.md`. It is an auto-generated TOC over a
+file-per-concept catalog and is the durable design surface. Inline
+`@concept:` annotations in the source link enforcement sites back to
+the catalog.
+
+## 5. What rimsky deliberately isn't
+
+The platform stays useful by being explicit about what it is not. If a
+future direction crosses one of these lines, it gets pushed into the
+consumer's domain or to a more appropriate adjacent system. This is a
+feature, not an apology.
+
+**Stream processing.** Event-time windowing, watermarks, late-data
+handling, exactly-once stream semantics. These are streaming data-plane
+concerns. Pulling them into rimsky would force the orchestrator to
+take on data-plane responsibilities and erode the store-agnostic
+position.
+
+**Per-key state stores.** Keyed state of the kind that streaming
+frameworks model as first-class. Same reason — application state
+belongs to the application, not the orchestrator.
+
+**Streaming-batch unification.** Rimsky's invocation model is discrete
+dispatch. A node either runs or doesn't; it does not represent a
+continuously-running stream operator. There is no plan to make discrete
+dispatch and continuous streaming look uniform.
+
+**CPU/memory-aware cluster scheduling, fair-share queueing, cluster
+resource management.** These are cluster scheduler concerns. Rimsky's
+named-lock primitive gives basic capacity gating; deeper scheduling
+lives downstream in whatever orchestrates the rimsky processes
+themselves.
+
+**Semantic layer, metric definitions, SQL transformation language.**
+Application-level concerns. Rimsky does not model what a "customer" is,
+what a metric definition looks like, or how transformations should be
+expressed. A consumer can put any of those on top of rimsky; rimsky
+will not grow one.
+
+**In-flight workflow migration.** Templates are content-addressed and
+tags are movable; old instances continue on their template hash and new
+instances pick up the moved tag. The remaining mid-flight-migration-to-
+a-new-template-version concern is not a planned primitive.
+
+**Bundled agent-pattern libraries.** Knowledge stores, supervisor
+templates, meta-agent primitives. These were considered and declined —
+pre-v1 bundling would lock in opinions about entry shape, scope
+conventions, and supersession semantics before any real consumer has
+stressed them. The existing primitives (claim producer, lifecycle
+subscriber, MCP, executor) support any consumer who wants to build
+them in their own repository.
+
+**A SQL data platform.** The typed-attribute system, partitions, and
+lineage exist to make agentic work durable, auditable, and partitioned
+where partitioning matters. They do not make rimsky a data platform.
+There is no transformation language, no semantic layer, no metric
+service, no query optimizer, no scheduled-table-build abstraction. If
+data-engineering-as-product is what you need, an adjacent system is
+the right tool.
+
+When a primitive starts to look like it would solve a problem on one of
+these lines, the resolution is to push the problem into a consumer-side
+service or an adjacent system, not to grow the primitive.
+
+## 6. Where to learn more
+
+For agents: `docs/agents/llms.txt` is the manifest pointing at every
+public surface. Point your coding agent at it and the agent walks you
+through depth.
+
+For the concept catalog: `.ok-planner/design/concepts.md` is an
+auto-generated TOC over the per-concept files under
+`.ok-planner/design/concepts/`. Each file carries a definition,
+purpose, boundaries, and invariants, plus a notes section recording how
+the concept evolved. Inline `@concept:` annotations in the source code
+point at enforcement sites.
+
+For protocols (claim producer, executor, lifecycle subscriber,
+publisher): `docs/protocols/`.
+
+For copy-pasteable starter templates: `docs/agents/examples/`.
+
+For where rimsky is going: `docs/roadmap.md`.
+
+Point your coding agent at this repo and ask.

@@ -71,6 +71,9 @@ func loadConceptDefinitions(dir string) (map[string]string, error) {
 	defs := map[string]string{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return defs, nil
+		}
 		return nil, err
 	}
 	for _, e := range entries {

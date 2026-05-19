@@ -4,12 +4,11 @@ This directory hosts both the **public-documentation surface** (intended for ext
 
 ## Public surface
 
-- `concepts/` — canonical per-concept reference (one file per domain noun). See `concepts/design-philosophy.md` for the framing the rest of the surface is written under.
-- `protocols/` — protocol-implementation guides (`ClaimProducer`, `Executor`, `LifecycleSubscriber`).
+- `../README.md` — the project's framing and entry point. Start here.
+- The canonical per-noun reference lives in `.ok-planner/design/concepts.md` at the repo root (auto-generated TOC over the per-concept files under `.ok-planner/design/concepts/`). Inline `@concept:` annotations in the source point at enforcement sites.
+- `protocols/` — protocol-implementation guides (`ClaimProducer`, `Executor`, `LifecycleSubscriber`, `Publisher`).
 - `agents/` — agent-shaped indices (`llms.txt`, `llms-full.txt`), error catalog, copy-pasteable examples.
-- `humans/` — thin human-shaped surface (landing, narrative concept walk, dashboard guide).
-- `glossary.md` — generated from `concepts/`. Do not hand-edit.
-- `vocabulary.md` — deprecated terms, layered-sense disambiguation.
+- `glossary.md` — generated public-surface vocabulary. Do not hand-edit.
 - `licensing.md` — repo licensing notice.
 
 ## Working / internal surface

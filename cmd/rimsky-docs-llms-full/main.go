@@ -67,6 +67,9 @@ func generate(conceptsDir, protocolsDir string) ([]byte, error) {
 func concatBodies(b *bytes.Buffer, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	var names []string

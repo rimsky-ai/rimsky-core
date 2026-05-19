@@ -46,7 +46,7 @@ func runPublicAnchorValidity(args []string) error {
 		return err
 	}
 	entries, err := os.ReadDir(*conceptsDir)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	var hits []string

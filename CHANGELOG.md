@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **README rewrite as evaluator-facing five-pager.** Replaced the
+  stale module-layout-and-doc-pointer README with a six-section pitch
+  +framing doc oriented at evaluators deciding whether to engage with
+  rimsky for an agentic workflow problem. Front-loads the agentic
+  framing so the data-engineering-looking primitives (assets,
+  partitions, lineage, fan-out, typed attributes) don't get
+  pattern-matched as a data-orchestrator surface. Pulls the framing
+  essays into the README and retires the per-concept files they came
+  from (`docs/concepts/design-philosophy.md`,
+  `docs/concepts/x-as-executor.md`,
+  `docs/concepts/deterministic-transformations.md`). With no other
+  files in `docs/concepts/`, the directory was retired entirely;
+  the canonical per-noun reference is the `.ok-planner/design/`
+  catalog, already referenced from `docs/agents/llms.txt`. Also
+  retired `docs/humans/landing.md` (superseded by the README) and
+  the now-empty `docs/humans/` directory. `docs/README.md` updated
+  to point at the new entry points.
+- **Docs-generator and docs-lint resilience to missing `docs/concepts/`.**
+  `cmd/rimsky-docs-glossary`, `cmd/rimsky-docs-llms-full`, and the
+  `frontmatter`, `citation-drift`, and `public-anchor-validity`
+  sub-lints in `cmd/rimsky-docs-lint` now treat a missing concepts
+  directory as empty rather than a hard error. This is the same
+  shape `citation-drift` already used for missing public-surface
+  scope roots. Necessary now that `docs/concepts/` no longer exists;
+  the canonical concept catalog lives at `.ok-planner/design/`.
 - **Auth CLI consolidation.** The `rimsky auth` subcommands (`init`,
   `create-key`, `list`, `show`, `revoke`, `rotate`, `status`) moved
   from `cmd/rimsky/auth_*.go` (package `main`) to `control/cli/auth_*.go`
