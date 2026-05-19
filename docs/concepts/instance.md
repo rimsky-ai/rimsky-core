@@ -26,7 +26,7 @@ The `params` block is instance-level config: substitutable into selectors and at
 ## How you encounter it
 
 - **Control API**: `POST /instances` to create (`{template, instance_key?, params}`); `GET /instances` to list; `GET /instances/{idOrKey}` to read; `DELETE /instances/{idOrKey}` to terminate; `GET /instances/{idOrKey}/nodes` for the instance's node states.
-- **CLI**: `rimsky-cli instance create`, `rimsky-cli instance get`, `rimsky-cli instance delete`.
+- **CLI**: `rimsky instance create`, `rimsky instance get`, `rimsky instance delete`.
 - **Lifecycle events**: `LifecycleSubscriber.OnInstanceCreated` fires at creation; `OnInstanceTerminated` fires at deletion. Both are RPCed synchronously by the control-api process.
 
 ## Consumer-visible guarantees

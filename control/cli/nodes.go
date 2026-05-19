@@ -19,10 +19,11 @@ func RunNodeGet(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli node get <id>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky node get <id>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	n, err := c.GetNode(ctx, rest[0])
 	if err != nil {
 		return reportError(err)

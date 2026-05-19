@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// messages.go — `rimsky-cli messages tail|show` (plan G3).
+// messages.go — `rimsky messages tail|show` (plan G3).
 //
 // `tail` polls GET /instances/{id}/messages with a watermark on
 // `received_at`; `show <id>` fetches one message via GET /messages/{id}.
@@ -24,7 +24,7 @@ import (
 //
 // Usage:
 //
-//	rimsky-cli messages tail --instance <id> [--kind invalidate] \
+//	rimsky messages tail --instance <id> [--kind invalidate] \
 //	    [--sender-kind operator] [--target node] \
 //	    [--follow] [--poll-interval 1s]
 func RunMessagesTail(ctx context.Context, args []string) int {
@@ -46,11 +46,12 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	if instance == "" {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli messages tail --instance <id-or-key> [filters...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky messages tail --instance <id-or-key> [filters...]")
 		return 2
 	}
 
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id := instance
 	if !LooksLikeUUID(id) {
 		inst, err := c.GetInstance(ctx, id)
@@ -116,10 +117,11 @@ func RunMessagesShow(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli messages show <message-id>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky messages show <message-id>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	m, err := c.GetMessage(ctx, rest[0])
 	if err != nil {
 		return reportError(err)

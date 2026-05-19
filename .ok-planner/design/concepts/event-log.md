@@ -34,6 +34,20 @@ Pre-`2026-05-11-design-log-convergence`, this concept also covered `rimsky_node_
 
 Post-2026-05-15: `rimsky_events` remains the audit log for **events** (executor emissions, state transitions, error classifications). The new **messages** primitive (`concept:message`) has its own audit table `rimsky_messages` with operational columns (`kind`, `sender`, `sender_kind`, `target`, `payload`, `delivered_at`, `frame_id`, `cancelled`, `backfill_operation_id`). The two tables are siblings — events are internal-to-rimsky and frame-synchronous; messages are boundary-crossing and frame-bounded. See `concept:message`, `concept:named-event`.
 
+## Auth event kinds (added 2026-05-15)
+
+The control-plane MCP and auth spec (`.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`) adds five `auth.*` event kinds. They share the same `(kind, payload)` shape as every other row in `rimsky_events` — no schema change.
+
+- `auth.access_attempted` — emitted by `code:control/controlapi/auth_middleware.go::AuthState.gateByAction` after every authenticated request runs. Payload includes `key_id`, `key_name`, `identity_kind`, `protocol_skin` (`http` | `mcp`), `action`, `request_path`, `request_method`, `request_params` (verbatim), `response_status`, `mode` (`execute` | `dry_run`), `executed` (bool), `duration_ms`, `client_ip`, `user_agent`.
+- `auth.access_denied` — emitted on 401 / 403. Same shape plus a `denial_reason` enum: `no_token | invalid_token | expired_token | revoked_token | permission_denied`. For pre-action-resolution denials (the first four) `action`, `request_params`, `mode` are null; for `permission_denied` they are populated.
+- `auth.key_created` — emitted by `code:control/controlapi/auth_handlers.go::handleCreateKey`. Payload: `key_id`, `key_name`, `permissions`, `created_by_key_id`, `expires_at`.
+- `auth.key_revoked` — emitted by `code:control/controlapi/auth_handlers.go::handleRevokeKey` and the rotation-grace sweep `code:runtime/auth_sweep.go::SweepRotationGrace`. Payload: `key_id`, `key_name`, `revoked_by_key_id`, `reason` (`manual | rotation_grace | expired`).
+- `auth.key_rotated` — emitted by `code:control/controlapi/auth_handlers.go::handleRotateKey`. Payload: `old_key_id`, `new_key_id`, `name`, `revoke_at`.
+
+## Notes
+
+- [2026-05-15] `auth.*` event kinds added by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
+
 ## Open within this concept
 
 - `rimsky_events.kind` is free-form — see `tensions/events-kind-no-enum.md`.

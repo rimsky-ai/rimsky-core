@@ -1,6 +1,6 @@
 # `rimsky-compose` multi-template project
 
-A `rimsky-compose.yml` declaring two templates and one persistent instance. `rimsky-cli compose up` reconciles the manifest against a running rimsky deployment.
+A `rimsky-compose.yml` declaring two templates and one persistent instance. `rimsky compose up` reconciles the manifest against a running rimsky deployment.
 
 **Precondition:** the bundled docker-compose stack is up:
 
@@ -38,7 +38,7 @@ instances:
 ## 2. Apply
 
 ```sh
-rimsky-cli compose up -f rimsky-compose.yml
+rimsky compose up -f rimsky-compose.yml
 ```
 
 `compose up` registers both templates, deploys them per `state:`, creates / moves the project-prefixed tags, and creates the `items-driver` persistent instance under the `compose:project-alpha:items-driver` instance key.
@@ -46,9 +46,9 @@ rimsky-cli compose up -f rimsky-compose.yml
 ## 3. Observe
 
 ```sh
-rimsky-cli template list
-rimsky-cli tag list
-rimsky-cli instance list
+rimsky template list
+rimsky tag list
+rimsky instance list
 ```
 
 Expected: the two templates, the two project-prefixed tags pointing at the registered hashes, and the `items-driver` instance.
@@ -58,14 +58,14 @@ Expected: the two templates, the two project-prefixed tags pointing at the regis
 Re-running `compose up` is idempotent:
 
 ```sh
-rimsky-cli compose up -f rimsky-compose.yml
+rimsky compose up -f rimsky-compose.yml
 ```
 
 Expected output: no-op messages for templates that are already deployed, tags that already point at the right hash, and the instance that already exists.
 
 ## Notes
 
-- The `compose:<project>:` prefix on instance keys and tags is reserved for `rimsky-cli compose up`. Manual creation under this prefix is rejected client-side.
+- The `compose:<project>:` prefix on instance keys and tags is reserved for `rimsky compose up`. Manual creation under this prefix is rejected client-side.
 - Removing a template from the manifest does not deregister it from the running deployment — `compose up` does not delete resources it owns; it reconciles forwards only.
 
 ## See also

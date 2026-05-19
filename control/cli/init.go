@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// init.go — `rimsky-cli init [<dir>] [--force]`. Scaffolds a starter
+// init.go — `rimsky init [<dir>] [--force]`. Scaffolds a starter
 // project from the embedded reference assets.
 package cli
 
@@ -73,7 +73,7 @@ func RunInit(_ context.Context, args []string) int {
 	if fs.NArg() == 1 {
 		target = fs.Arg(0)
 	} else if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli init [<directory>] [--force]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky init [<directory>] [--force]")
 		return 2
 	}
 

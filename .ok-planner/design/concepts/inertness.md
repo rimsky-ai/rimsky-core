@@ -53,6 +53,11 @@ Renamed from `concept:opacity` per `spec:2026-05-12-nomenclature-resolution` (au
 
 - "Single sanctioned introspection site" claim (substitution.go comment) vs three actual sites — see `tensions/substitution-introspection-site-count.md`.
 
+## Auth audit log: verbatim request_params
+
+The `auth.access_attempted` and `auth.access_denied` event rows store the request body verbatim as `request_params` (see `concept:event-log`). Verbatim storage is sanctioned by inertness: rimsky's userdata-inert invariant guarantees no sensitive data flows in request bodies (the only sensitive value in an auth-relevant exchange is the API key itself, which is in the `Authorization` header — never stored). Verbatim params make the audit log materially more useful for forensic queries ("show me everything `agent:supervisor:prod` did with template_hash X") without violating inertness.
+
 ## Notes
 
 - Renamed from `concept:opacity` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #17). Adopts two-sub-discipline framing.
+- [2026-05-15] Clarifying addition: auth audit records store `request_params` verbatim (justified by userdata-inert + claim/payload-inert invariants — no secrets in any control-plane request body). Added by `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.

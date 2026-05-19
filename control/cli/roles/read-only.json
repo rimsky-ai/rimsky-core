@@ -1,0 +1,5 @@
+{
+  "name": "read-only",
+  "description": "Read access to all resources; cannot mutate state.",
+  "permissions": [{ "action": "*:read" }]
+}

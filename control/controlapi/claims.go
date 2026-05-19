@@ -48,7 +48,7 @@ func toClaimHolderResponse(r persistence.ClaimHolderRow) claimHolderResponse {
 // (Renamed from /claims/{claim_id}/holders per spec §12.11 — the
 // row's identity is by lock-holder FK, not by a free-form claim_id.)
 func registerClaimsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/lock-holders/{claim_handle_id}/claim-holders", handleListClaimHolders(deps))
+	r.Get("/lock-holders/{claim_handle_id}/claim-holders", gate(deps, "claim-holders:read", handleListClaimHolders(deps)))
 }
 
 func handleListClaimHolders(deps AppDeps) http.HandlerFunc {

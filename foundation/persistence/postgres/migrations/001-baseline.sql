@@ -255,6 +255,41 @@ CREATE INDEX rimsky_events_node_id_occurred_at_idx ON rimsky_events (node_id, oc
 CREATE INDEX rimsky_events_instance_id_occurred_at_idx ON rimsky_events (instance_id, occurred_at DESC);
 CREATE INDEX rimsky_events_kind_occurred_at_idx ON rimsky_events (kind, occurred_at DESC);
 
+-- =====  rimsky_api_keys  =====
+-- API keys for Bearer-token auth. Hashed at rest (SHA-256); plaintext
+-- is surfaced once at mint (and once per rotation). The partial
+-- unique-name index excludes revoked + rotation-grace rows so a
+-- rotation can mint a new row with the same name while the old one is
+-- still active during its grace window. See spec
+-- .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
+-- "Persistence schema".
+CREATE TABLE rimsky_api_keys (
+    id                 UUID         NOT NULL PRIMARY KEY,
+    key_hash           BYTEA        NOT NULL,
+    name               TEXT         NOT NULL,
+    permissions        JSONB        NOT NULL,
+    created_at         TIMESTAMPTZ  NOT NULL,
+    created_by_key_id  UUID         NULL,
+    last_used_at       TIMESTAMPTZ  NULL,
+    expires_at         TIMESTAMPTZ  NULL,
+    revoke_at          TIMESTAMPTZ  NULL,
+    revoked_at         TIMESTAMPTZ  NULL,
+    CONSTRAINT rimsky_api_keys_key_hash_unique UNIQUE (key_hash),
+    CONSTRAINT rimsky_api_keys_created_by_fk
+        FOREIGN KEY (created_by_key_id) REFERENCES rimsky_api_keys(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX rimsky_api_keys_active_name_idx
+    ON rimsky_api_keys (name)
+    WHERE revoked_at IS NULL AND revoke_at IS NULL;
+
+CREATE INDEX rimsky_api_keys_revoke_at_pending_idx
+    ON rimsky_api_keys (revoke_at)
+    WHERE revoke_at IS NOT NULL AND revoked_at IS NULL;
+
+CREATE INDEX rimsky_api_keys_active_status_idx
+    ON rimsky_api_keys (revoked_at, expires_at, revoke_at);
+
 -- =====  rimsky_node_attributes  =====
 -- Per-node attribute snapshot (with optional blob spill).
 CREATE TABLE rimsky_node_attributes (

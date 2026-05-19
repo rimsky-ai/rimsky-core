@@ -30,16 +30,16 @@ nodes:
 ## 2. Register and deploy
 
 ```sh
-rimsky-cli template register minimal.yml
+rimsky template register minimal.yml
 # returns: template_hash=sha256-abc...def, tags=
 
-rimsky-cli template deploy sha256-abc...def
+rimsky template deploy sha256-abc...def
 ```
 
 ## 3. Create an instance
 
 ```sh
-rimsky-cli instance create sha256-abc...def
+rimsky instance create sha256-abc...def
 # returns: instance_id=01HZ..., template_hash=sha256-abc...def, node_count=1
 ```
 

@@ -478,7 +478,7 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 }
 
 // aggregateOutcome inspects an instance's nodes and classifies the
-// terminal as "success" or "failure". Per docs/history/2026-05-02-rimsky-cli-and-compose-design.md §3.5,
+// terminal as "success" or "failure". Per docs/history/2026-05-02-rimsky-and-compose-design.md §3.5,
 // success means every node ended in `fresh`; any other state — failed,
 // running, stale — counts as failure.
 //

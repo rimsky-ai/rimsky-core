@@ -2,6 +2,189 @@
 
 ## Unreleased
 
+- **Auth CLI consolidation.** The `rimsky auth` subcommands (`init`,
+  `create-key`, `list`, `show`, `revoke`, `rotate`, `status`) moved
+  from `cmd/rimsky/auth_*.go` (package `main`) to `control/cli/auth_*.go`
+  (package `cli`), matching the rest of the CLI verb layout. The
+  bespoke `authHTTPRequest` / `doAuthRequest` shim retires; auth
+  handlers now route through `cli.Client.RawCall`, sharing the same
+  transport, user-agent, and Bearer-injection as every other verb.
+  Bundled role JSONs moved with the handlers, from
+  `cmd/rimsky/roles/` to `control/cli/roles/`. The `@source` /
+  `@diverged` markers in `auth_common.go` retire — there is no
+  duplication left to track. Subcommand entry points are now exported
+  as `cli.RunAuthInit`, `cli.RunAuthCreateKey`, etc.; the dispatcher
+  is `cli.RunAuth`. Tests moved with the code; httptest-driven unit
+  tests are now `package cli_test` and exercise the exported
+  `Run*` surface.
+- **L6 anonymous-mode predicate-cache invalidation tests.** Adds
+  `TestAnonymousModePredicateCache_InvalidatesOnMint` and
+  `TestAnonymousModePredicateCache_InvalidatesOnRevoke` to
+  `test/scenarios/auth/lifecycle_test.go`. Both tests freeze the
+  fixture clock so the 1s `anonCacheTTL` cannot expire, isolating the
+  `InvalidateAnonCache` path called from `handleCreateKey` /
+  `handleRevokeKey` as the only way the cached predicate flips. The
+  cleanup-cycle test `TestSweepRotationGrace_InvalidatesAnonCache`
+  covered the sweep → hook path; the new tests cover the
+  create-key / revoke-key → `InvalidateAnonCache` paths the plan's
+  L6 task originally called out.
+- **K12 dry-run-ignored coverage for revoke and rotate.** Adds
+  `TestDryRun_AuthRevokeIsNotDryRunnable` and
+  `TestDryRun_AuthRotateIsNotDryRunnable` to
+  `test/scenarios/auth/dry_run_test.go`. Each test mints a key whose
+  grant carries `mode: dry_run` on the auth-mutation action, issues
+  the mutation against a target row, and asserts the handler ignored
+  the dry-run mode (the row is actually revoked / rotated, no
+  synthetic envelope returned). The existing
+  `TestDryRun_AuthCreateIsNotDryRunnable` already covers `auth:create`;
+  the new tests round out K12 for `auth:revoke` and `auth:rotate`.
+- **2026-05-15 control-plane MCP and auth.** Adds API-key auth,
+  permissions, and structured audit to control-api, hosted in-process;
+  MCP becomes a first-class control-api protocol skin at `POST /mcp`
+  (tools-only V1; the standalone `mcp-servers/control-api/` module
+  retires). Renames `rimsky-cli` → `rimsky`; adds `rimsky auth
+  {init,create-key,list,show,revoke,rotate,status}` subcommands.
+  Implicit-anonymous bootstrap (first key minted via `auth init`
+  without a Bearer token); rotation with grace-period sweep in
+  `cmd/rimsky-scheduler`; per-handler dry-run mode with synthetic
+  `{dry_run:true, would_have_X:...}` envelopes; verbatim
+  `request_params` in audit log per the inertness invariants. See
+  spec
+  `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
+  - **Operator-visible CLI flag rename.** `rimsky instance create
+    --key` and `rimsky run --key` are now `--instance-key`. The
+    rename disambiguates from the auth-subcommand `--key` (Bearer
+    token). Operator scripts pinning the old name break with an
+    "unknown flag" error from the flag parser (pre-v1 there is no
+    deprecation alias).
+  - **Audit-row dispatch.** Audit writes happen via a bounded
+    worker pool (`code:control/controlapi/audit.go::auditDispatcher`)
+    so a slow / hung Postgres can't hold the request goroutine open
+    past response write; the queue is sized at 1024 with 4 workers
+    and a per-row 2s timeout. Dropped rows (queue full) emit a WARN.
+  - **MCP umbrella action.** `POST /mcp` (initialize / tools/list)
+    is now gated by the supplemental `mcp:read` action so every
+    JSON-RPC dispatch produces an audit row. `tools/call` continues
+    to gate via the per-tool action when the catalog re-enters the
+    chi router; the umbrella uses the `read` verb so the `*:read`
+    wildcard in the bundled `viewer` role covers `tools/list`
+    automatically.
+  - **Per-tool input schemas.** Per-tool input JSON schemas have
+    been authored in `code:control/controlapi/mcp_route.go::builtinSchemas`
+    to replace the deleted standalone `mcp-servers/control-api/tools.go`'s
+    schema map. The MCP catalog now ships rich `inputSchema` per tool
+    rather than the generic `{"type":"object"}` fallback so MCP
+    clients (and LLMs) can validate arguments before round-tripping.
+
+- **2026-05-18 control-plane MCP and auth review cleanup cycle 2.**
+  Reviewer re-pass after cycle-1 fixes surfaced fourteen residuals.
+  - Audit-dispatcher goroutine leak on shutdown fixed:
+    `code:control/controlapi/auth_middleware.go::StopAuditDispatcher`
+    closes the queue and waits for the worker pool to drain; the
+    control-api shutdown path invokes it AFTER `srv.Shutdown` returns
+    so in-flight handler responses still enqueue their final audit
+    rows before the channel closes.
+  - Dry-run gate moved to AFTER existence + state validation in six
+    handlers: `handleAssetMaterialize`, `handleDeleteAsset`,
+    `handleDeleteTag`, `handleCreateBackfill`, `handleCancelBackfill`,
+    and `handleAdminInvalidateNode`. A dry-run against a non-existent
+    instance / asset / tag / backfill / node now returns the same
+    404 a real call would, per spec section "Dry-run mode".
+  - The bundled `operator` and `publisher-service` roles
+    (`cmd/rimsky/roles/`) gained `mcp:read` so operators using these
+    roles retain MCP access after the umbrella-action gate landed.
+  - Quickstart wrapper script renamed `quickstart/rimsky-cli` →
+    `quickstart/rimsky` to match the in-container binary name; the
+    README and the bundled docstring updated in lockstep.
+  - Stale `rimsky-cli` references scrubbed from
+    `docs/concepts/{template,tag,instance,invalidate}.md`,
+    `docs/humans/dashboard.md`, `docs/licensing.md`, and three error
+    docs under `docs/agents/errors/`. Per spec "CLI / Rename cutover"
+    there is no alias shim — every operator-visible doc string must
+    name the new binary.
+  - `captureBody` no longer silently corrupts the handler's view of
+    oversize bodies: the function now re-attaches the FULL captured
+    bytes (bounded at `code:control/controlapi/auth_middleware.go::auditBodyHandlerMaxBytes`
+    = 64MB; above which the handler is rejected with 413) and only
+    truncates the AUDIT copy. The previous behavior re-attached the
+    truncated prefix, which a hostile client could exploit to bypass
+    body-content validation by sending oversize JSON.
+  - `TestRegistryCoversRouter` complemented by
+    `TestRegistryRoutesAreActuallyGated`: spins up a real router
+    fronted by `NewApp`, seeds a single active API key (so the
+    deployment is in authenticated mode), and asserts every registry
+    route returns 401 with no Authorization header — catching a
+    future route registered without `gate()`.
+  - `TestPermissionGrants_FirstMatchWinsDryRun` strengthened to
+    actually exercise the minted key (not just verify mint succeeded):
+    uses an `instance:create` dry-run override + `*` wildcard, then
+    asserts a POST `/instances` with the minted key does NOT 201.
+  - Two new MCP-gate tests in `test/scenarios/auth/lifecycle_test.go`:
+    a key without `mcp:read` returns 403 on POST `/mcp`; an
+    operator-shape key (per-noun grants + `mcp:read`) returns 200.
+  - `code:control/cli/client.go::RawCall` returns the actual response
+    status code rather than always `200 OK` on success; the contract
+    block now matches the implementation. Introduced a private
+    `doStatus` helper that captures and threads the status; the
+    existing `do` wrapper preserves the prior no-status signature
+    for per-endpoint methods.
+  - `code:runtime/auth_sweep.go::RegisterAuthMutationHook` now
+    returns an unregister closure; in-process test fixtures call
+    `t.Cleanup(runtime.RegisterAuthMutationHook(...))` so hooks no
+    longer accumulate across runs in long-lived test processes.
+    Production wiring (`code:control/config/controlapi.go::StartControlAPI`)
+    drops the closure intentionally — that's a one-shot registration.
+  - Audit row no longer dropped when the request body is non-empty
+    but not valid JSON: `code:control/controlapi/auth_middleware.go::gateByAction`
+    validates via `json.Valid` before wrapping as `json.RawMessage`;
+    invalid bodies set `code:foundation/auth/audit.go::AccessAttemptedPayload.RequestParamsInvalid`
+    (and the parallel `AccessDeniedPayload.RequestParamsInvalid`) so
+    the audit row still lands.
+  - CHANGELOG bullet about per-tool input schemas reworded to
+    accurately describe the schemas as freshly authored rather than
+    mirrored from the deleted standalone source.
+
+- **2026-05-18 control-plane MCP and auth review cleanup cycle 3.**
+  Reviewer re-pass after cycle-2 fixes surfaced six residuals.
+  - `TestPermissionGrants_FirstMatchWinsDryRun` now seeds a real
+    deployed template so `handleCreateInstance` reaches the
+    in-transaction dry-run gate (resolveTagOrHash + LockForUpdate
+    both succeed). The prior version passed a nonexistent tag and
+    short-circuited at the pre-tx 404 — the dry-run gate was never
+    exercised. The test also adds the inverse direction: a key with
+    `[{*}, {instance:create, mode:dry_run}]` MUST 201 (wildcard
+    matches first, later dry-run does NOT fire), proving first-match
+    halts the scan.
+  - `mcp:read` removed from the bundled `publisher-service` role
+    (`cmd/rimsky/roles/publisher-service.json`). Per spec the role
+    exists only to push messages via `POST /instances/{id}/messages`
+    and has "no need to read platform state or invoke other
+    endpoints"; cycle-2 incorrectly expanded the surface. The
+    `operator` role keeps `mcp:read` — operators legitimately use MCP.
+  - `.gitignore` line `/rimsky-cli` → `/rimsky` to match the binary
+    rename. `go build ./cmd/rimsky/` at module root produces a
+    `rimsky` binary which would otherwise be un-ignored.
+  - Stale `rimsky-cli` reference in
+    `protocols/proto/v1/executor.proto`'s `ParkReason` doc comment
+    updated to `rimsky`; the generated `protocols/proto/v1/gen/executor.pb.go`
+    inherits the same fix so the next `make proto-gen` is a no-op.
+  - `APIKeyTable.MarkRevoked` signature widened from `(bool, error)`
+    to `(changed, found bool, err error)` so the
+    rotation-grace-then-manual-revoke race no longer double-counts
+    in the audit log. `code:control/controlapi/auth_handlers.go::handleRevokeKey`
+    now returns 200 with `{already_revoked: true}` (and skips both
+    `EmitKeyRevoked` and `InvalidateAnonCache`) when `changed=false &&
+    found=true`. Conformance test
+    `code:foundation/persistence/conformance/api_keys.go::MarkRevoked_Idempotent`
+    asserts all three branches: newly-revoked, already-revoked,
+    missing.
+  - Authorization header with a non-Bearer scheme (`Basic`, `Digest`,
+    custom) now returns `auth.DenialInvalidToken` rather than the
+    no-header branch. Header absent → `DenialNoToken` (or anonymous
+    mode); header present-but-malformed → `DenialInvalidToken`. New
+    audit-content test `TestAuditContent_AccessDeniedNonBearer`
+    confirms the classification appears in the persisted audit row.
+
 - **2026-05-18 sensor-messaging-unification review cleanup cycle 2.**
   Reviewer re-pass after cycle-1 fixes surfaced four residuals.
   - `rimsky-publisher-conformance` binary removed from the working

@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// main.go — rimsky-cli entry point. Dispatches subcommands to handlers
+// main.go — rimsky entry point. Dispatches subcommands to handlers
 // in control/cli/. Hand-rolled subcommand routing on os.Args[1].
 package main
 
@@ -23,7 +23,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "version", "--version", "-v":
-		fmt.Printf("rimsky-cli %s\n", version)
+		fmt.Printf("rimsky %s\n", version)
 		return
 	case "help", "--help", "-h":
 		printRootUsage(os.Stdout)
@@ -74,8 +74,10 @@ func main() {
 		os.Exit(compose.Dispatch(context.Background(), os.Args[2:]))
 	case "dev":
 		os.Exit(compose.DispatchDev(context.Background(), os.Args[2:]))
+	case "auth":
+		os.Exit(cli.RunAuth(os.Args[2:]))
 	default:
-		fmt.Fprintf(os.Stderr, "rimsky-cli: unknown command %q\n\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "rimsky: unknown command %q\n\n", os.Args[1])
 		printRootUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -83,7 +85,7 @@ func main() {
 
 func dispatchTemplate(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template <register|list|get|deploy|undeploy|rm> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template <register|list|get|deploy|undeploy|rm> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -102,16 +104,16 @@ func dispatchTemplate(args []string) int {
 	case "rm":
 		return cli.RunTemplateRm(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli template <register|list|get|deploy|undeploy|rm> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky template <register|list|get|deploy|undeploy|rm> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli template: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky template: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchTag(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli tag <create|list|get|mv|rm> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky tag <create|list|get|mv|rm> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -128,16 +130,16 @@ func dispatchTag(args []string) int {
 	case "rm":
 		return cli.RunTagRm(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli tag <create|list|get|mv|rm> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky tag <create|list|get|mv|rm> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli tag: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky tag: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchInstance(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance <create|list|get|delete|nodes|events> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance <create|list|get|delete|nodes|events> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -156,16 +158,16 @@ func dispatchInstance(args []string) int {
 	case "events":
 		return cli.RunInstanceEvents(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli instance <create|list|get|delete|nodes|events> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky instance <create|list|get|delete|nodes|events> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli instance: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky instance: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchNode(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli node <get> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky node <get> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -174,16 +176,16 @@ func dispatchNode(args []string) int {
 	case "get":
 		return cli.RunNodeGet(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli node <get> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky node <get> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli node: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky node: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchParked(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli parked <list> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky parked <list> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -192,16 +194,16 @@ func dispatchParked(args []string) int {
 	case "list":
 		return cli.RunParkedList(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli parked <list> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky parked <list> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli parked: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky parked: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchAdmin(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli admin <invalidate|reset> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky admin <invalidate|reset> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -212,16 +214,16 @@ func dispatchAdmin(args []string) int {
 	case "reset":
 		return cli.RunAdminReset(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli admin <invalidate|reset> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky admin <invalidate|reset> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli admin: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky admin: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchMessages(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli messages <tail|show> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky messages <tail|show> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -232,16 +234,16 @@ func dispatchMessages(args []string) int {
 	case "show":
 		return cli.RunMessagesShow(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli messages <tail|show> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky messages <tail|show> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli messages: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky messages: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchBackfill(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill <create|list|show|cancel> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky backfill <create|list|show|cancel> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -256,16 +258,16 @@ func dispatchBackfill(args []string) int {
 	case "cancel":
 		return cli.RunBackfillCancel(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli backfill <create|list|show|cancel> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky backfill <create|list|show|cancel> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli backfill: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky backfill: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchAsset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset <list|show|materialize|versions|delete|lineage> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset <list|show|materialize|versions|delete|lineage> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -284,16 +286,16 @@ func dispatchAsset(args []string) int {
 	case "lineage":
 		return cli.RunAssetLineage(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli asset <list|show|materialize|versions|delete|lineage> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky asset <list|show|materialize|versions|delete|lineage> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli asset: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky asset: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchLineage(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli lineage <prune> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky lineage <prune> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -302,16 +304,16 @@ func dispatchLineage(args []string) int {
 	case "prune":
 		return cli.RunLineagePrune(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli lineage <prune> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky lineage <prune> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli lineage: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky lineage: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func dispatchCtx(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli ctx <list|use|add|rm|current> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky ctx <list|use|add|rm|current> ...")
 		return 2
 	}
 	rest := args[1:]
@@ -332,15 +334,15 @@ func dispatchCtx(args []string) int {
 	case "current":
 		return cli.RunCtxCurrent(rest, cfgPath)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky-cli ctx <list|use|add|rm|current> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky ctx <list|use|add|rm|current> ...")
 		return 0
 	}
-	fmt.Fprintf(os.Stderr, "rimsky-cli ctx: unknown subcommand %q\n", args[0])
+	fmt.Fprintf(os.Stderr, "rimsky ctx: unknown subcommand %q\n", args[0])
 	return 2
 }
 
 func printRootUsage(w io.Writer) {
-	fmt.Fprintln(w, "rimsky-cli — orchestration CLI for the rimsky platform.")
+	fmt.Fprintln(w, "rimsky — orchestration CLI for the rimsky platform.")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Dev-loop:")
 	fmt.Fprintln(w, "  run <file>            Register, deploy, instantiate in one shot")
@@ -369,6 +371,11 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  asset list | show | materialize | versions | delete | lineage")
 	fmt.Fprintln(w, "  lineage prune")
 	fmt.Fprintln(w, "  parked list")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Auth:")
+	fmt.Fprintln(w, "  auth init                    Mint admin key in anonymous mode")
+	fmt.Fprintln(w, "  auth create-key --name=... --role=...")
+	fmt.Fprintln(w, "  auth list | show | revoke | rotate | status")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Context:")
 	fmt.Fprintln(w, "  ctx list | use | add | rm | current")

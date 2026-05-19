@@ -31,6 +31,7 @@ Owns: the file shape, validations at startup (write-semantics-allowed subset, bl
 - Operator-declared `write_semantics_allowed` MUST be ⊆ producer-advertised set (validated at startup).
 - `RIMSKY_DB_URL` legacy env var is gone; all DSN config goes through the YAML.
 - Each service entry declares its protocol membership via `protocols: [...]`.
+- **No auth-related keys.** Auth state is data-derived (the active-status predicate on `table:rimsky_api_keys`; see `concept:anonymous-mode`). Operators do not configure an auth mode, a bootstrap key, or any other auth knob in the yml file. The data state of `rimsky_api_keys` is the sole source of truth.
 
 ## Aliases and historical names
 
@@ -43,4 +44,5 @@ Pre-`spec:2026-05-12-nomenclature-resolution`, the YAML accepted `stores:` as an
 ## Notes
 
 - `stores:` alias retired (Group B.6 / C.1); `write_semantics:` single-value shortcut retired (Group C.1); `write_semantics_envelope` → `write_semantics_allowed` (Group C.2); peer → service vocabulary swept (Group G). Per `spec:2026-05-12-nomenclature-resolution`. Resolves `tension:_resolved/yaml-stores-alias` and `tension:_resolved/yaml-write-semantics-alias`.
+- [2026-05-15] Clarifying addition: rimsky.yml carries no auth-related keys; auth state is data-derived (see `concept:anonymous-mode`). Added by `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
 

@@ -11,7 +11,7 @@ vendor/
 /rimsky-scheduler
 /rimsky-control-api
 /rimsky-conformance-probe
-/rimsky-cli
+/rimsky
 /rimsky-migrate
 /rimsky-executor-conformance
 /rimsky-claim-producer-conformance

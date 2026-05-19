@@ -131,21 +131,55 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
 		Metrics:                 cfg.Metrics,
 	}
+	// Auth-key rotation-grace sweep. Runs every minute; revokes
+	// keys whose `revoke_at` is in the past. Cheap, idempotent.
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger)
 	return schedulerHandleWithRegistry{
-		inner:    scheduler.Start(inner),
-		registry: registry,
+		inner:       scheduler.Start(inner),
+		registry:    registry,
+		sweepCancel: sweepCancel,
 	}, nil
 }
 
+// authSweepInterval is the cadence at which the rotation-grace sweep
+// runs. Matches the spec's "1m cadence" callout.
+const authSweepInterval = 1 * time.Minute
+
+func runAuthSweepLoop(ctx context.Context, tables persistence.Tables, clock shared.Clock, log shared.Logger) {
+	ticker := time.NewTicker(authSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := runtime.SweepRotationGrace(ctx, tables, clock, log)
+			if err != nil && log != nil {
+				log.Error("auth.sweep.failed", "err", err.Error())
+				continue
+			}
+			if n > 0 && log != nil {
+				log.Info("auth.sweep.done", "swept", n)
+			}
+		}
+	}
+}
+
 // schedulerHandleWithRegistry wraps the scheduler handle plus the
-// dialed store registry; Shutdown closes both.
+// dialed store registry; Shutdown closes both and stops the auth
+// rotation-grace sweep loop.
 type schedulerHandleWithRegistry struct {
-	inner    SchedulerHandle
-	registry *locks.Registry
+	inner       SchedulerHandle
+	registry    *locks.Registry
+	sweepCancel context.CancelFunc
 }
 
 func (h schedulerHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
+	if h.sweepCancel != nil {
+		h.sweepCancel()
+	}
 	if h.registry != nil {
 		h.registry.Close()
 	}

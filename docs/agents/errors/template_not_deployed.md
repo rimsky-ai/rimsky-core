@@ -15,7 +15,7 @@ When the caller created the instance immediately after registering the template 
 
 ## What to do
 
-Deploy the template first: `POST /templates/{id}/deploy` (or `rimsky-cli template deploy`). Then retry the instance creation. If the template is intentionally un-deployed, route the instance to a different template.
+Deploy the template first: `POST /templates/{id}/deploy` (or `rimsky template deploy`). Then retry the instance creation. If the template is intentionally un-deployed, route the instance to a different template.
 
 ## See also
 

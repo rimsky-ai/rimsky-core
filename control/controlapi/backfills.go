@@ -40,11 +40,11 @@ import (
 )
 
 func registerBackfillsRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/instances/{id}/backfills", handleCreateBackfill(deps))
-	r.Get("/instances/{id}/backfills", handleListBackfills(deps))
-	r.Get("/backfills/{op_id}", handleGetBackfill(deps))
-	r.Get("/backfills/{op_id}/partitions", handleBackfillPartitions(deps))
-	r.Post("/backfills/{op_id}/cancel", handleCancelBackfill(deps))
+	r.Post("/instances/{id}/backfills", gate(deps, "backfill:create", handleCreateBackfill(deps)))
+	r.Get("/instances/{id}/backfills", gate(deps, "backfill:read", handleListBackfills(deps)))
+	r.Get("/backfills/{op_id}", gate(deps, "backfill:read", handleGetBackfill(deps)))
+	r.Get("/backfills/{op_id}/partitions", gate(deps, "backfill:read", handleBackfillPartitions(deps)))
+	r.Post("/backfills/{op_id}/cancel", gate(deps, "backfill:cancel", handleCancelBackfill(deps)))
 }
 
 // createBackfillRequest is the POST /instances/{id}/backfills body.
@@ -75,6 +75,7 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "target_node is required")
 			return
 		}
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		now := deps.Clock.Now().UTC()
 		var created runtime.BackfillCreated
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -87,6 +88,12 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			}
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
+			}
+			// Dry-run gate: instance exists and is not terminated.
+			// Signal the outer code to write the synthetic envelope; the
+			// tx rolls back without enqueuing the backfill message.
+			if isDryRun {
+				return errDryRunOK
 			}
 			c, err := runtime.CreateBackfill(ctx, tx, deps.Persist.Messages(), now, runtime.BackfillCreateRequest{
 				InstanceID:               shared.UUID(instanceID),
@@ -101,6 +108,14 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			created = c
 			return nil
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_created_backfill", map[string]any{
+				"instance_id": instanceID.String(),
+				"target_node": body.TargetNode,
+				"reason":      body.Reason,
+			})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, shared.ErrInstanceNotFound) {
 				notFoundResp(w, shared.ErrInstanceNotFound.Error())
@@ -415,6 +430,24 @@ func handleCancelBackfill(deps AppDeps) http.HandlerFunc {
 		opID, err := uuid.Parse(chi.URLParam(req, "op_id"))
 		if err != nil {
 			badRequest(w, "invalid op_id")
+			return
+		}
+		// Backfill-existence check must precede the dry-run gate so a
+		// dry-run against a missing op_id returns the same 404 a real
+		// call would. Per spec section "Dry-run mode": "Errors from
+		// validation surface as in normal flow."
+		status, err := runtime.GetBackfillStatus(req.Context(), nil, deps.Persist.Messages(), shared.UUID(opID))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if status == nil {
+			notFoundResp(w, "backfill not found")
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_cancelled_backfill", map[string]any{
+			"op_id": opID.String(),
+		}) {
 			return
 		}
 		now := deps.Clock.Now().UTC()

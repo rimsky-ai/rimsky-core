@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// asset.go — `rimsky-cli asset {list,show,materialize,versions,
+// asset.go — `rimsky asset {list,show,materialize,versions,
 // delete,lineage}` (plan G1). Thin wrapper over F5 + F6 control-api
 // routes.
 //
@@ -30,10 +30,11 @@ func RunAssetList(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	if instance == "" {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset list --instance <id-or-key>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset list --instance <id-or-key>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)
@@ -81,10 +82,11 @@ func RunAssetShow(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset show --instance <id-or-key> <node_type>.<claim_alias>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset show --instance <id-or-key> <node_type>.<claim_alias>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)
@@ -124,7 +126,7 @@ func RunAssetMaterialize(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset materialize --instance <id-or-key> <alias> [--reason ...] [--payload ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset materialize --instance <id-or-key> <alias> [--reason ...] [--payload ...]")
 		return 2
 	}
 	body := MaterializeAssetRequest{Reason: reason}
@@ -138,6 +140,7 @@ func RunAssetMaterialize(ctx context.Context, args []string) int {
 		body.Payload = raw
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)
@@ -172,10 +175,11 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset versions --instance <id-or-key> <alias>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset versions --instance <id-or-key> <alias>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)
@@ -205,7 +209,7 @@ func RunAssetVersions(ctx context.Context, args []string) int {
 // RunAssetDelete implements `asset delete --instance <id> <alias>`.
 func RunAssetDelete(ctx context.Context, args []string) int {
 	var instance string
-	fs, _, endpoint, code := runWithCommon("asset delete", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("asset delete", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
 	})
 	if code != 0 {
@@ -213,10 +217,11 @@ func RunAssetDelete(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset delete --instance <id-or-key> <alias>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset delete --instance <id-or-key> <alias>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)
@@ -245,10 +250,11 @@ func RunAssetLineage(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli asset lineage --instance <id-or-key> <alias> [--version v] [--depth N]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset lineage --instance <id-or-key> <alias> [--version v] [--depth N]")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id, err := resolveInstanceUUID(ctx, c, instance)
 	if err != nil {
 		return reportError(err)

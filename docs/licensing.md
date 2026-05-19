@@ -67,7 +67,7 @@ is the recommended embedding pattern.
 Those are Apache-licensed. The wire IDL, the executor SDK packages
 (`@fallguy/claude-agent`, `executors/http-node/`, `executors/stub/`),
 the reference store binaries (`stores/filesystem/`, `stores/postgres/`,
-`stores/stub/`), and `rimsky-cli` are all Apache 2.0. Build whatever you
+`stores/stub/`), and `rimsky` are all Apache 2.0. Build whatever you
 want; you owe nothing back. (Contributions back are welcomed under the
 CLA in `CLA.md`, but are not required.)
 

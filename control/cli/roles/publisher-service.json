@@ -1,0 +1,7 @@
+{
+  "name": "publisher-service",
+  "description": "Minimal grant for a bundled publisher service: send messages only.",
+  "permissions": [
+    { "action": "message:send" }
+  ]
+}

@@ -4,8 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/rimsky-cli ./cmd/rimsky-cli/
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /out/rimsky ./cmd/rimsky/
 
 FROM gcr.io/distroless/static:nonroot
-COPY --from=builder /out/rimsky-cli /usr/local/bin/rimsky-cli
-ENTRYPOINT ["/usr/local/bin/rimsky-cli"]
+COPY --from=builder /out/rimsky /usr/local/bin/rimsky
+ENTRYPOINT ["/usr/local/bin/rimsky"]

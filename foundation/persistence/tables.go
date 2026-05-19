@@ -38,5 +38,10 @@ type Tables interface {
 	// Spec §Run-tree and aggregation.
 	RunTree() RunTreeTable
 
+	// APIKeys is the rimsky_api_keys accessor — Bearer-token auth keys
+	// for control-api. Introduced by the 2026-05-15 control-plane MCP
+	// and auth spec.
+	APIKeys() APIKeyTable
+
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx Tx) error) error
 }

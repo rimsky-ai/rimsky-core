@@ -23,7 +23,7 @@ The single-message design keeps the cascade engine small and auditable. The stat
 
 `invalidate` originates from these places:
 
-1. **Operator-driven**: a `POST /nodes/{id}/invalidate` request from the control API or `rimsky-cli`.
+1. **Operator-driven**: a `POST /nodes/{id}/invalidate` request from the control API or `rimsky`.
 2. **Schedule-driven**: a scheduled fire-time arriving at a node configured with a cron schedule.
 3. **Cascade-walk-driven**: the scheduler's cascade walk, evaluating the per-template subscription-edge inverse map at a sender's transition, stale-marks every receiver whose `subscribes:` entry could match (and inserts a wait-set row gating its eligibility until the sender settles).
 

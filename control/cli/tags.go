@@ -19,7 +19,7 @@ import (
 // RunTagCreate implements `tag create`.
 func RunTagCreate(ctx context.Context, args []string) int {
 	var template string
-	fs, _, endpoint, code := runWithCommon("tag create", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("tag create", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&template, "template", "", "tag or hash to point at")
 	})
 	if code != 0 {
@@ -27,7 +27,7 @@ func RunTagCreate(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli tag create <tag> --template <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky tag create <tag> --template <ref>")
 		return 2
 	}
 	tag := rest[0]
@@ -40,6 +40,7 @@ func RunTagCreate(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if _, err := c.CreateTag(ctx, CreateTagRequest{Tag: tag, Template: template}); err != nil {
 		return reportError(err)
 	}
@@ -58,6 +59,7 @@ func RunTagList(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	all, err := pagedListTags(ctx, c, ListTagsQuery{})
 	if err != nil {
 		return reportError(err)
@@ -107,11 +109,12 @@ func RunTagGet(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli tag get <tag>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky tag get <tag>")
 		return 2
 	}
 	want := rest[0]
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	all, err := pagedListTags(ctx, c, ListTagsQuery{})
 	if err != nil {
 		return reportError(err)
@@ -139,7 +142,7 @@ func RunTagGet(ctx context.Context, args []string) int {
 // and a manual move would silently violate that invariant. See spec §8.3.
 func RunTagMv(ctx context.Context, args []string) int {
 	var template string
-	fs, _, endpoint, code := runWithCommon("tag mv", args, func(fs *flag.FlagSet) {
+	fs, common, endpoint, code := runWithCommon("tag mv", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&template, "template", "", "tag or hash to point at")
 	})
 	if code != 0 {
@@ -147,7 +150,7 @@ func RunTagMv(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli tag mv <tag> --template <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky tag mv <tag> --template <ref>")
 		return 2
 	}
 	if strings.HasPrefix(rest[0], ReservedTagPrefix) {
@@ -159,6 +162,7 @@ func RunTagMv(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if _, err := c.MoveTag(ctx, rest[0], MoveTagRequest{Template: template}); err != nil {
 		return reportError(err)
 	}
@@ -170,13 +174,13 @@ func RunTagMv(ctx context.Context, args []string) int {
 // tags (those with the reserved prefix); compose owns its tags'
 // lifecycle. See spec §8.3.
 func RunTagRm(ctx context.Context, args []string) int {
-	fs, _, endpoint, code := runWithCommon("tag rm", args, nil)
+	fs, common, endpoint, code := runWithCommon("tag rm", args, nil)
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli tag rm <tag>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky tag rm <tag>")
 		return 2
 	}
 	if strings.HasPrefix(rest[0], ReservedTagPrefix) {
@@ -184,6 +188,7 @@ func RunTagRm(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if err := c.DeleteTag(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}

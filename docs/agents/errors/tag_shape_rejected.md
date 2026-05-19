@@ -11,7 +11,7 @@ A tag-create or tag-move request supplied a tag identifier that matches the `sha
 
 ## When it happens
 
-`POST /tags` or `PUT /tags/{tag}` (or the equivalent `rimsky-cli tag` subcommand) with an identifier that looks like a content hash.
+`POST /tags` or `PUT /tags/{tag}` (or the equivalent `rimsky tag` subcommand) with an identifier that looks like a content hash.
 
 ## What to do
 

@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,12 +28,17 @@ import (
 	"github.com/fallguy/rimsky/graph/node"
 )
 
+// stdErrorsAs is a file-scope alias for errors.As; kept as a thin
+// indirection so the call sites read cleanly.
+var stdErrorsAs = errors.As
+
 // Client issues requests against a single control-api endpoint. Safe for
 // concurrent use; the underlying http.Client is shared.
 type Client struct {
 	endpoint   string
 	httpClient *http.Client
 	userAgent  string
+	apiKey     string
 }
 
 // NewClient constructs a Client targeting the given endpoint URL (e.g.
@@ -42,23 +48,89 @@ func NewClient(endpoint string) *Client {
 	return &Client{
 		endpoint:   strings.TrimRight(endpoint, "/"),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		userAgent:  "rimsky-cli",
+		userAgent:  "rimsky",
 	}
+}
+
+// SetAPIKey installs the Bearer token forwarded on every request as
+// `Authorization: Bearer <key>`. Empty string clears the header.
+func (c *Client) SetAPIKey(key string) { c.apiKey = key }
+
+// NewClientWithKey is a convenience constructor that installs the
+// Bearer token in one call. Equivalent to NewClient(endpoint) +
+// SetAPIKey(key).
+func NewClientWithKey(endpoint, key string) *Client {
+	c := NewClient(endpoint)
+	c.SetAPIKey(key)
+	return c
 }
 
 // Endpoint returns the configured endpoint URL.
 func (c *Client) Endpoint() string { return c.endpoint }
 
+// RawCall is a generic "issue a request, JSON-decode the response
+// into out" verb that the per-endpoint Client methods don't cover.
+// Used by `cmd/rimsky/auth_*` so the auth subcommands can drop their
+// bespoke httpRequest / doRequest helpers and share the Client's
+// transport, user-agent, and Bearer-injection.
+//
+//	@agent-contract
+//	what: typed HTTP verb returning JSON.
+//	how: pass the (method, path, body, out) — body may be nil; out
+//	     may be nil for fire-and-forget; the returned status code
+//	     mirrors the underlying HTTP response (or 0 on transport
+//	     failure).
+//	handles: 2xx → unmarshal into out; non-2xx → *APIError with the
+//	         decoded body fields preserved.
+//	does not handle: streaming responses, multipart bodies, non-JSON
+//	     content types (the response body is JSON-decoded
+//	     unconditionally when out is non-nil and the body is
+//	     non-empty).
+//	thread-safety: safe for concurrent use; the underlying
+//	     http.Client is shared.
+func (c *Client) RawCall(ctx context.Context, method, path string, body any, out any) (int, error) {
+	req, err := c.request(ctx, method, path, body)
+	if err != nil {
+		return 0, err
+	}
+	status, err := c.doStatus(req, out)
+	if err != nil {
+		var apiErr *APIError
+		if stdErrorsAs(err, &apiErr) {
+			return apiErr.Status, err
+		}
+		return status, err
+	}
+	return status, nil
+}
+
 // do executes req and decodes the JSON body into out (which may be nil
 // for 204 responses or when the caller does not care). Non-2xx responses
 // are returned as *APIError carrying the status code and the decoded body.
+//
+// Kept as a thin wrapper around doStatus so existing per-endpoint
+// methods (which don't surface the status code) continue to compile
+// without per-call edits.
 func (c *Client) do(req *http.Request, out any) error {
+	_, err := c.doStatus(req, out)
+	return err
+}
+
+// doStatus is the workhorse: executes req, decodes the JSON body into
+// out, and returns the underlying HTTP response status alongside any
+// error. Returns status=0 on transport failure (the response never
+// came back). On non-2xx the error is *APIError; the status is
+// returned alongside for consumers that want both.
+func (c *Client) doStatus(req *http.Request, out any) (int, error) {
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -71,15 +143,15 @@ func (c *Client) do(req *http.Request, out any) error {
 		if len(body) > 0 {
 			_ = json.Unmarshal(body, &apiErr.Body)
 		}
-		return apiErr
+		return resp.StatusCode, apiErr
 	}
 	if out == nil || resp.StatusCode == http.StatusNoContent || len(body) == 0 {
-		return nil
+		return resp.StatusCode, nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return resp.StatusCode, fmt.Errorf("decode response: %w", err)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any) (*http.Request, error) {

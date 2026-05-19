@@ -41,7 +41,7 @@ type ApplyOpts struct {
 // capital keys leaked into one side's JSON marshal but not the other.
 // The 2026-05-02 json-tags cleanup unified them — both sides now hash
 // the same lowercase-snake-case bytes — so ApplyPlan no longer needs
-// the hash-rewrite defense it carried during the rimsky-cli rollout.
+// the hash-rewrite defense it carried during the rimsky rollout.
 func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) error {
 	w := opts.Logger
 	if w == nil {

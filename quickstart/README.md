@@ -18,7 +18,7 @@ First build takes a few minutes (Rimsky's Go binaries + the dashboard's Node bun
 In another terminal, verify:
 
 ```sh
-./rimsky-cli health
+./rimsky health
 # → ok
 ```
 
@@ -29,20 +29,20 @@ The dashboard is at <http://localhost:8090>. The control API is at <http://local
 The included `example-template.yml` is a two-node cascade: `items.fetch → items.classify`. Both nodes use the bundled stub executor.
 
 ```sh
-./rimsky-cli template register example-template.yml
+./rimsky template register example-template.yml
 # → template_hash=sha256-... tags=
 
-./rimsky-cli template deploy sha256-...
+./rimsky template deploy sha256-...
 # → deployed
 
-./rimsky-cli instance create sha256-...
+./rimsky instance create sha256-...
 # → instance_id=01H...
 ```
 
 Watch in the dashboard or via the CLI:
 
 ```sh
-./rimsky-cli instance get 01H...
+./rimsky instance get 01H...
 ```
 
 Both nodes settle into `fresh`; the frame transitions to `resolved`. The dashboard's instance graph view shows the dependency edge and the node-by-node states.
@@ -80,11 +80,11 @@ The `rimsky.yml` here wires them together. To bring your own claim producer or e
 docker compose -f docker-compose.minimal.yml up
 ```
 
-The `./rimsky-cli` wrapper auto-detects which compose file is up via the `RIMSKY_COMPOSE_FILE` env var:
+The `./rimsky` wrapper auto-detects which compose file is up via the `RIMSKY_COMPOSE_FILE` env var:
 
 ```sh
 export RIMSKY_COMPOSE_FILE=$PWD/docker-compose.minimal.yml
-./rimsky-cli health
+./rimsky health
 ```
 
 ### Override host ports if 8080 / 8090 are in use
@@ -98,10 +98,10 @@ RIMSKY_HOST_PORT=18080 RIMSKY_DASHBOARD_HOST_PORT=18090 docker compose up
 When you override `RIMSKY_HOST_PORT`, also tell the wrapper how to reach the published port:
 
 ```sh
-RIMSKY_HOST_PORT=18080 ./rimsky-cli health
+RIMSKY_HOST_PORT=18080 ./rimsky health
 ```
 
-(The wrapper's `docker compose exec` path doesn't care about the host port, but native `rimsky-cli` invocations and any `curl http://localhost:8080/...` examples in this README do — substitute your override.)
+(The wrapper's `docker compose exec` path doesn't care about the host port, but native `rimsky` invocations and any `curl http://localhost:8080/...` examples in this README do — substitute your override.)
 
 ### Inspect the SQLite state
 
@@ -115,12 +115,12 @@ By default the state lives in a Docker named volume. Override with `RIMSKY_STATE
 
 ### Skip the wrapper, install the CLI natively
 
-The `./rimsky-cli` wrapper invokes the CLI inside the rimsky container — convenient (zero install) but pays a `docker compose exec` overhead per command (~500ms-1s). For native-speed CLI:
+The `./rimsky` wrapper invokes the CLI inside the rimsky container — convenient (zero install) but pays a `docker compose exec` overhead per command (~500ms-1s). For native-speed CLI:
 
 ```sh
-go install github.com/fallguy/rimsky/cmd/rimsky-cli@latest
+go install github.com/fallguy/rimsky/cmd/rimsky@latest
 export RIMSKY_CONTROL_API=http://localhost:8080
-rimsky-cli health
+rimsky health
 ```
 
 (Requires Go 1.25+. Pre-built binaries are not yet published.)

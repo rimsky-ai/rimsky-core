@@ -87,8 +87,8 @@ No write actions. The dashboard does not call any control-api endpoint that muta
 For write operations, use:
 
 - **The control-api directly** — `POST /nodes/{id}/invalidate`, `POST /admin/scheduled-nodes/{node_id}/force-fire`, `POST /templates`, `POST /instances`, etc.
-- **`rimsky-cli`** — the thin client that wraps the control-api for human use.
-- **`rimsky-cli compose up`** — for declarative reconciliation of templates, tags, and instances against a manifest.
+- **`rimsky`** — the thin client that wraps the control-api for human use.
+- **`rimsky compose up`** — for declarative reconciliation of templates, tags, and instances against a manifest.
 
 ## See also
 

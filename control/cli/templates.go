@@ -108,7 +108,7 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template register <file> [--warnings-as-errors]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template register <file> [--warnings-as-errors]")
 		return 2
 	}
 	if strings.HasPrefix(tag, ReservedTagPrefix) {
@@ -121,6 +121,7 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	tpl, err := c.RegisterTemplateWithOptions(ctx,
 		RegisterTemplateRequest{Spec: spec, Tag: tag, Source: source},
 		RegisterTemplateOptions{WarningsAsErrors: warningsAsErrors},
@@ -162,6 +163,7 @@ func RunTemplateList(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	q := ListTemplatesQuery{State: stateFlag}
 	all, err := pagedListTemplates(ctx, c, q)
 	if err != nil {
@@ -231,10 +233,11 @@ func RunTemplateGet(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template get <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template get <ref>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	tpl, err := c.GetTemplate(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -260,10 +263,11 @@ func RunTemplateDeploy(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template deploy <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template deploy <ref>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	tpl, err := c.DeployTemplate(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -288,10 +292,11 @@ func RunTemplateUndeploy(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template undeploy <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template undeploy <ref>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	tpl, err := c.UndeployTemplate(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -310,16 +315,17 @@ func RunTemplateUndeploy(ctx context.Context, args []string) int {
 
 // RunTemplateRm implements `template rm`.
 func RunTemplateRm(ctx context.Context, args []string) int {
-	fs, _, endpoint, code := runWithCommon("template rm", args, nil)
+	fs, common, endpoint, code := runWithCommon("template rm", args, nil)
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli template rm <ref>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template rm <ref>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if err := c.DeleteTemplate(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}

@@ -63,7 +63,7 @@ func RunCtxUse(args []string, configPath string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli ctx use <name>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky ctx use <name>")
 		return 2
 	}
 	name := fs.Arg(0)
@@ -98,7 +98,7 @@ func RunCtxAdd(args []string, configPath string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli ctx add <name> --endpoint <url>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky ctx add <name> --endpoint <url>")
 		return 2
 	}
 	name := fs.Arg(0)
@@ -141,7 +141,7 @@ func RunCtxRm(args []string, configPath string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli ctx rm <name>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky ctx rm <name>")
 		return 2
 	}
 	name := fs.Arg(0)

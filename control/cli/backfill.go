@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// backfill.go — `rimsky-cli backfill {create,list,show,cancel,partitions}`
+// backfill.go — `rimsky backfill {create,list,show,cancel,partitions}`
 // (plan G2). Thin wrappers over F4 control-api routes.
 //
 //	@concept: backfill
@@ -22,7 +22,7 @@ import (
 //
 // Usage:
 //
-//	rimsky-cli backfill create --instance <id> --node <node_type> \
+//	rimsky backfill create --instance <id> --node <node_type> \
 //	    [--range 2024-01-01..2024-09-30] [--reason "...""]
 //
 // `--range start..end` is shorthand that becomes the JSON
@@ -45,7 +45,7 @@ func RunBackfillCreate(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	if instance == "" || node == "" {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill create --instance <id> --node <type> [--range start..end] [--reason ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky backfill create --instance <id> --node <type> [--range start..end] [--reason ...]")
 		return 2
 	}
 
@@ -75,6 +75,7 @@ func RunBackfillCreate(ctx context.Context, args []string) int {
 	}
 
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id := instance
 	if !LooksLikeUUID(id) {
 		inst, err := c.GetInstance(ctx, id)
@@ -109,10 +110,11 @@ func RunBackfillList(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	if instance == "" {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill list --instance <id-or-key>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky backfill list --instance <id-or-key>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	id := instance
 	if !LooksLikeUUID(id) {
 		inst, err := c.GetInstance(ctx, id)
@@ -158,10 +160,11 @@ func RunBackfillShow(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill show <operation-id> [--partitions]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky backfill show <operation-id> [--partitions]")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	b, err := c.GetBackfill(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -221,10 +224,11 @@ func RunBackfillCancel(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli backfill cancel <operation-id>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky backfill cancel <operation-id>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	out, err := c.CancelBackfill(ctx, rest[0])
 	if err != nil {
 		return reportError(err)

@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// parked.go — `rimsky-cli parked list`. Surfaces the spec-named
+// parked.go — `rimsky parked list`. Surfaces the spec-named
 // `/diagnostics/parked` endpoint (F7) as a table. The admin alias
 // path `/admin/diagnostics/parked-nodes` still resolves the same
 // handler server-side for backwards compatibility.
@@ -23,7 +23,7 @@ import (
 //
 // Usage:
 //
-//	rimsky-cli parked list [--reason=<kind>] [--older-than=<dur>] [--instance=<uuid>]
+//	rimsky parked list [--reason=<kind>] [--older-than=<dur>] [--instance=<uuid>]
 func RunParkedList(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("parked list", flag.ContinueOnError)
 	var common CommonFlags
@@ -59,6 +59,7 @@ func RunParkedList(ctx context.Context, args []string) int {
 	}
 
 	client := NewClient(endpoint)
+	client.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	resp, err := client.GetParkedNodes(ctx, path)
 	if err != nil {
 		return reportError(err)

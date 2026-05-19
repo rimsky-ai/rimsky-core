@@ -70,7 +70,11 @@ type ControlAPIConfig struct {
 	Logger shared.Logger
 	Host   string
 	Port   int
-	Auth   controlapi.Authenticator // nil = anonymous (default)
+	// Auth is no longer carried in ControlAPIConfig — the auth model
+	// is data-derived (the active-status predicate on
+	// `rimsky_api_keys`) and not yml-config-derived. The control-api
+	// constructs its `*controlapi.AuthState` internally from the
+	// persistence handle.
 	Stores RemoteStoresConfig
 	// NamedLocks is the operator-side named-lock config. The control-
 	// api consults this at template-deploy time to validate that
@@ -112,12 +116,25 @@ type controlAPIHandle struct {
 	// peerClosers releases any non-locks gRPC clients (sensors,
 	// validators, data-processing producers) dialed at startup.
 	peerClosers []func()
+	// authState is retained so Shutdown can stop the audit dispatcher
+	// after the HTTP server has drained — handler responses that fire
+	// audit submissions on their way out must still find an open queue.
+	authState *controlapi.AuthState
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	var err error
 	if h.srv != nil {
 		err = h.srv.Shutdown(ctx)
+	}
+	// Stop the audit dispatcher AFTER srv.Shutdown returns so any
+	// in-flight handler responses still enqueue their final audit rows
+	// before the channel closes. Stop closes the queue and waits for
+	// the workers to drain, so any queued rows are persisted before
+	// process exit. Without this the four dispatcher goroutines would
+	// leak and queued rows would be silently discarded.
+	if h.authState != nil {
+		h.authState.StopAuditDispatcher()
 	}
 	if h.cancelLoops != nil {
 		h.cancelLoops()
@@ -222,12 +239,34 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		lifecycleReg.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
+	authState := &controlapi.AuthState{
+		Tables:   persistStore,
+		Registry: controlapi.BuildV1Registry(),
+		Clock:    cfg.Clock,
+		Logger:   cfg.Logger,
+	}
+	// Wire the audit-dispatcher worker pool so audit-row inserts run
+	// off the request hot path. Without this, insertEvent falls
+	// back to a synchronous insert per row — fine for tests, but in
+	// production a slow Postgres would hold request goroutines open
+	// past response write.
+	authState.EnsureAuditDispatcher()
+	// In-process bridge for the rotation-grace sweep: when sweep
+	// runs in the same process as this AuthState (lifecycle tests
+	// and any future single-binary deploy), drop the anonymous-
+	// mode cache after each successful sweep. The cross-process
+	// case (sweep in scheduler, controlapi in its own process)
+	// accepts the TTL-bounded staleness per spec.
+	// Production wiring keeps the registration for the life of the
+	// process. The unregister closure is dropped intentionally — the
+	// hook should fire for every sweep until process exit.
+	_ = runtime.RegisterAuthMutationHook(authState.OnAuthMutation)
 	deps := controlapi.AppDeps{
 		Persist:       persistStore,
 		Queue:         persistQueue,
 		Clock:         cfg.Clock,
 		Logger:        cfg.Logger,
-		Auth:          cfg.Auth,
+		AuthState:     authState,
 		Stores:        registry,
 		LifecycleSubs: lifecycleReg,
 		NamedLocks:    cfg.NamedLocks,
@@ -299,6 +338,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelLoops:     cancelLoops,
 		cancelDiscovery: cancelDiscovery,
 		peerClosers:     peerClosers,
+		authState:       authState,
 	}
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed && cfg.Logger != nil {
@@ -306,6 +346,9 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		}
 	}()
 	go terminator.Run(loopCtx)
+	// Anonymous-mode banner: logs once at startup and every 5
+	// minutes thereafter while no API keys exist.
+	go controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval)
 	return h, nil
 }
 

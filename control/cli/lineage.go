@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// lineage.go — `rimsky-cli lineage prune` (plan G4). Thin wrapper over
+// lineage.go — `rimsky lineage prune` (plan G4). Thin wrapper over
 // POST /admin/lineage/prune, which itself delegates to
 // `code:foundation/persistence/lineage.go::LineageTable.DeleteOlderThan`.
 //
@@ -30,7 +30,7 @@ func RunLineagePrune(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	if before == "" && beforeDur == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli lineage prune --before <RFC3339> | --older-than <duration>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky lineage prune --before <RFC3339> | --older-than <duration>")
 		return 2
 	}
 	if before == "" {
@@ -38,6 +38,7 @@ func RunLineagePrune(ctx context.Context, args []string) int {
 	}
 
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	out, err := c.PruneLineage(ctx, before)
 	if err != nil {
 		return reportError(err)

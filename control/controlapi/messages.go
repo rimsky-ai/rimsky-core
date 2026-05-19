@@ -42,9 +42,9 @@ import (
 
 // registerMessagesRoutes wires the message endpoints.
 func registerMessagesRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/instances/{id}/messages", handleCreateMessage(deps))
-	r.Get("/instances/{id}/messages", handleListInstanceMessages(deps))
-	r.Get("/messages/{id}", handleGetMessage(deps))
+	r.Post("/instances/{id}/messages", gate(deps, "message:send", handleCreateMessage(deps)))
+	r.Get("/instances/{id}/messages", gate(deps, "message:read", handleListInstanceMessages(deps)))
+	r.Get("/messages/{id}", gate(deps, "message:read", handleGetMessage(deps)))
 }
 
 // postMessageRequest is the body shape of POST /instances/{id}/messages.
@@ -165,6 +165,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		sender := "operator"
 		idempotencyKey := req.Header.Get("Idempotency-Key")
 
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
 		instUUID := shared.UUID(instanceID)
 		var finalMessageID = msgID
@@ -197,6 +198,14 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 					return errPublisherSubscriptionNotActive
 				}
 				sender = row.PublisherName
+			}
+			// Dry-run: every validation step a real call would run
+			// has now completed (instance exists, not terminated,
+			// publisher capability gate passed). Skip the
+			// idempotency-key insert and the message envelope insert
+			// so the dry-run is side-effect-free.
+			if isDryRun {
+				return errDryRunOK
 			}
 			// Idempotency dedup: when Idempotency-Key is present, INSERT
 			// or lookup the dedup tuple BEFORE inserting the message
@@ -231,6 +240,15 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			}
 			return runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq)
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_sent", map[string]any{
+				"instance_id":  instanceID.String(),
+				"message_kind": body.Kind,
+				"sender_kind":  senderKind,
+				"target":       body.Target,
+			})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, shared.ErrInstanceNotFound) {
 				notFoundResp(w, shared.ErrInstanceNotFound.Error())

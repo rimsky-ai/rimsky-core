@@ -5,6 +5,8 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 ## Concepts
 
 - `advisory-lock` — Four advisory-lock primitives for cross-process coordination through Postgres pg_advisory_* or in-process Mutex in dev.
+- `anonymous-mode` — Data-derived deployment state where `rimsky_api_keys` has zero active rows; every request gets a synthetic admin identity and a WARN banner fires. The bootstrap path.
+- `api-key` (aliases: bearer token) — High-entropy Bearer-token credential (`rk_<44-char-base64url>`); SHA-256-hashed at rest; per-key JSONB permission grant; lifecycle of mint / rotate / revoke / sweep.
 - `asset` — Documented compound: a claim against a `DataProcessing`-capable producer with `lifetime: durable`. Not a new primitive; surfaced via `/instances/{id}/assets/...`.
 - `atomic-staging` — Producer-side stage-then-swap pattern composing subgraph-lifetime claims, co-holding verifier nodes, and aggregation.
 - `attribute` — Typed JSON-Schema inputs and outputs of a node, with `{{...}}` substitution at dispatch and validation at dispatch and commit.
@@ -25,6 +27,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `data-processing` — Optional mix-in protocol on ClaimProducer for typed-data version lifecycle (candidates, partitions, schema). Control-plane only; data motion stays substrate-direct via `ClaimResult.address`.
 - `delegation` — Calling node ↔ sub-graph relationship; calling node absorbs the entry node (same row, same executor) and receives the exit node's writeback via the carry-rule.
 - `discovery-cache` (aliases: capabilities cache) — In-memory per-service Capabilities cache populated by the observability handshake at startup and consulted at template-registration gates.
+- `dry-run` — Per-grant-entry write-action modifier; validation runs faithfully, mutation skipped, synthetic `{ dry_run: true, would_have_X: ... }` envelope returned; audit row records `executed: false`.
 - `error-policy` (aliases: error-types policy chain) — Template-level `error_types:` block mapping per-error_class strings to retry/invalidate/give_up/pass actions, with a retry-loop cap.
 - `event-log` (aliases: audit log, rimsky_events table) — Rimsky's internal append-only audit log (`rimsky_events`) with free-form `kind` TEXT and rimsky-readable JSONB payload, feeding the cascade-graph `/events` route.
 - `executor` — Out-of-process service that implements `Executor.Execute`, streaming heartbeats and events and exactly one terminal.
@@ -49,12 +52,14 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `observability` — Service-facing optional observability protocols (ExecutorObservability / ClaimProducerObservability) plus the startup handshake that probes them and populates the discovery cache.
 - `orphan-reaper` — Periodic sweep that hard-deletes stale `active` rows from `rimsky_node_runs` and `rimsky_claim_handles` past `5 × heartbeat_interval`, claimant-guarded; sibling sweep `SweepClaimHandleRetention` handles terminal-row cleanup.
 - `parked-state` (aliases: park, parked node) — Fifth legal node-state entered from `running` when the executor emits `Snooze`. Post-2026-05-15 4-reason taxonomy (`TIME_WAIT | CALLBACK_WAIT | RETRY_BACKOFF | OTHER`) + freeform label.
+- `permission` (aliases: grant, action) — Verb-noun action grammar; per-key JSONB grant; wildcards `*`, `<noun>:*`, `*:<verb>` with colon-boundary; first-match-wins; `mode: execute | dry_run` modifier.
 - `persistence-database` — Umbrella `persistence.Database` interface (runtime object analogous to stdlib `sql.DB`) with per-row-type `<RowKind>Table` accessors hung off `Tables()`, abstracting Postgres vs SQLite via a shared migrator.
 - `publisher` — Peer service that pushes messages into rimsky via the Publisher protocol (`Subscribe`/`Unsubscribe`/`ListSubscriptions`); emits message envelopes to `POST /instances/{id}/messages` with `sender_kind: "publisher"`. Sensors are one class of publisher implementation.
 - `publisher-subscription` — Rimsky↔publisher binding state per (instance, publisher, kind) triple; lives in `rimsky_publisher_subscriptions`. Created at instance creation, dropped at termination. Authority token validated at the messages endpoint.
 - `replica` — Deployment-tier concept; rimsky does not model replica coordination as a first-class concept. Bundled sensors are single-replica per v1 contract.
-- `rimsky-cli` — Thin HTTP+JSON client over the control-api; every CLI verb is one or more HTTP calls, with a `compose` subcommand for manifest deployments.
-- `rimsky-yml` (aliases: unified config) — Single YAML file read by all three runtime processes plus migrate, declaring persistence, named_locks, claim_producers, executors, and publishers.
+- `rimsky` (aliases: rimsky-cli) — Thin HTTP+JSON client over the control-api; every CLI verb is one or more HTTP calls, with `compose` for manifest deployments and (post-2026-05-15) an `auth` subcommand group.
+- `rimsky-yml` (aliases: unified config) — Single YAML file read by all three runtime processes plus migrate, declaring persistence, named_locks, claim_producers, executors, and publishers. Carries no auth-related keys.
+- `role-template` (aliases: bundled role) — CLI-bundled JSON resource that expands into a permission grant at key-creation time; server has no role concept. V1 ships admin, operator, read-only, agent-supervisor, publisher-service.
 - `scope` — Opaque byte stream that `ClaimProducer.Open` returns to identify what was acquired, compared byte-equally by the conflict predicate.
 - `sensor` — One class of `publisher` implementation that observes external state. Bundled reference impls under `sensors/sensor-{cron,http,object-store,webhook}/`.
 - `service` (aliases: peer (legacy), peer service (legacy)) — Out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky; umbrella for executor, claim-producer, lifecycle-subscriber, blob-backend, publisher.

@@ -56,12 +56,12 @@ The `stub` claim producer must be configured under `claim_producers:` in `rimsky
 ## 2. Register, deploy, instantiate
 
 ```sh
-rimsky-cli template register two-node.yml
+rimsky template register two-node.yml
 # returns: template_hash=sha256-..., tags=
 
-rimsky-cli template deploy sha256-...
+rimsky template deploy sha256-...
 
-rimsky-cli instance create sha256-... \
+rimsky instance create sha256-... \
     --params '{"item_id":"42"}'
 # returns: instance_id=..., template_hash=sha256-..., node_count=2
 ```

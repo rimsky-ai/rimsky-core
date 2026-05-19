@@ -55,14 +55,14 @@ const (
 )
 
 func registerLineageRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/lineage/runs/{run_id}", handleLineageRun(deps))
-	r.Get("/lineage/runs/{run_id}/ancestors", handleLineageRunAncestors(deps))
-	r.Get("/lineage/runs/{run_id}/descendants", handleLineageRunDescendants(deps))
-	r.Get("/lineage/claims/{claim_handle_id}", handleLineageClaim(deps))
-	r.Get("/lineage/claims/{claim_handle_id}/ancestors", handleLineageClaimAncestors(deps))
-	r.Get("/lineage/by-source/{source_type}/{source_id}", handleLineageBySource(deps))
-	r.Get("/lineage/by-producer/{executor_name}", handleLineageByProducer(deps))
-	r.Post("/admin/lineage/prune", handleLineagePrune(deps))
+	r.Get("/lineage/runs/{run_id}", gate(deps, "lineage:read", handleLineageRun(deps)))
+	r.Get("/lineage/runs/{run_id}/ancestors", gate(deps, "lineage:read", handleLineageRunAncestors(deps)))
+	r.Get("/lineage/runs/{run_id}/descendants", gate(deps, "lineage:read", handleLineageRunDescendants(deps)))
+	r.Get("/lineage/claims/{claim_handle_id}", gate(deps, "lineage:read", handleLineageClaim(deps)))
+	r.Get("/lineage/claims/{claim_handle_id}/ancestors", gate(deps, "lineage:read", handleLineageClaimAncestors(deps)))
+	r.Get("/lineage/by-source/{source_type}/{source_id}", gate(deps, "lineage:read", handleLineageBySource(deps)))
+	r.Get("/lineage/by-producer/{executor_name}", gate(deps, "lineage:read", handleLineageByProducer(deps)))
+	r.Post("/admin/lineage/prune", gate(deps, "lineage:prune", handleLineagePrune(deps)))
 }
 
 // pruneLineageRequest is the body of POST /admin/lineage/prune.
@@ -91,6 +91,11 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 		cutoff, err := time.Parse(time.RFC3339, body.Before)
 		if err != nil {
 			badRequest(w, "before must be RFC3339 timestamp: "+err.Error())
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_pruned", map[string]any{
+			"before": body.Before,
+		}) {
 			return
 		}
 		n, err := deps.Persist.Lineage().DeleteOlderThan(req.Context(), cutoff)

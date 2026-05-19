@@ -37,7 +37,7 @@ import (
 
 // parkReasonStorageForm converts the proto ParkReason enum to the
 // snake_case text stored in col:rimsky_node_runs.parked_reason. The
-// same form drives the diagnostics endpoint, the rimsky-cli flag, and
+// same form drives the diagnostics endpoint, the rimsky flag, and
 // the Prometheus gauge label.
 //
 //	@concept: parked-state

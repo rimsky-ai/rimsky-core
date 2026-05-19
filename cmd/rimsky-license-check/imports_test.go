@@ -111,7 +111,7 @@ func TestImportToRepoPath(t *testing.T) {
 		{"github.com/fallguy/rimsky/foundation", "foundation", true},
 		{"github.com/fallguy/rimsky/foundation/cascade", "foundation/cascade", true},
 		{"github.com/fallguy/rimsky/protocols/proto/v1/gen", "protocols/proto/v1/gen", true},
-		{"github.com/fallguy/rimsky/cmd/rimsky-cli", "cmd/rimsky-cli", true},
+		{"github.com/fallguy/rimsky/cmd/rimsky", "cmd/rimsky", true},
 		{"github.com/fallguy/rimsky", "", true},
 		{"github.com/other/proj", "", false},
 	}

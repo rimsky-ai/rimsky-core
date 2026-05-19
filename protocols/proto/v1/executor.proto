@@ -181,7 +181,7 @@ message Error {
 // (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
 // from the enum symbol (e.g. PARK_REASON_CALLBACK_WAIT ->
 // callback_wait). The same form is used on the diagnostics
-// endpoint, the rimsky-cli `parked list --reason=` flag, and the
+// endpoint, the rimsky `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
 //
 // The spec's 4-reason taxonomy (TIME_WAIT / CALLBACK_WAIT /

@@ -71,7 +71,7 @@ func RunRun(ctx context.Context, args []string) int {
 	)
 	fs, common, endpoint, code := runWithCommon("run", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
-		fs.StringVar(&key, "key", "", "instance_key")
+		fs.StringVar(&key, "instance-key", "", "instance_key")
 		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
 		fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default)")
 		fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
@@ -83,7 +83,7 @@ func RunRun(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli run <file> [--params ...] [--key ...] [--tag ...] [--no-keep]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky run <file> [--params ...] [--key ...] [--tag ...] [--no-keep]")
 		return 2
 	}
 	if noKeep {
@@ -104,6 +104,7 @@ func RunRun(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
 	tpl, err := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: tag})
 	if err != nil {

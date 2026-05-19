@@ -11,6 +11,7 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 
 | Feature | Path | Depends on | Purpose |
 | --- | --- | --- | --- |
+| auth | `foundation/auth/` | shared | API-key plaintext format (mint / hash / validate); grant entry parser + wildcard matcher + permission check; identity + audit payload types. Pure functions; no I/O. |
 | cascade | `foundation/cascade/` | shared | Node-state machine (`NodeState`, `LastOutcome`, `ErrIllegalTransition`); illegal-transition rejection. |
 | locks | `foundation/locks/` | shared | `ClaimProducer` protocol Go interface + claim/lock primitive types (`ClaimID`, `ClaimSpec`, `NamedLockSpec`, `ClaimResult`, `Registry`); in-Go `storetest` fake. |
 | persistence | `foundation/persistence/` | shared, spec, cascade, locks | Database / Tables / Tx interfaces plus the postgres + sqlite drivers; migration runner; advisory-lock primitives; blob backends. |
@@ -56,8 +57,9 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 
 | Feature | Path | Depends on | Purpose |
 | --- | --- | --- | --- |
-| controlapi | `control/controlapi/` | runtime, persistence, foundation | HTTP control plane: templates, instances, nodes, lineage, assets, backfills, publisher-subscriptions, messages, observability, admin diagnostics. Fires lifecycle events synchronously at state transitions. |
-| cli | `control/cli/` | controlapi | `rimsky-cli` thin client + `compose` workflow (template-tag-prefixed multi-instance dispatch). |
+| controlapi | `control/controlapi/` | runtime, persistence, foundation | HTTP control plane: templates, instances, nodes, lineage, assets, backfills, publisher-subscriptions, messages, observability, admin diagnostics, auth (API keys + permissions + audit), MCP-as-skin at `POST /mcp`. Fires lifecycle events synchronously at state transitions. |
+| controlapi/mcp | `control/controlapi/mcp/` | controlapi, foundation/auth | JSON-RPC 2.0 envelope + tool catalog for the MCP protocol skin; dispatches tools back into the chi router in-process so the same auth gate runs. |
+| cli | `control/cli/` | controlapi | `rimsky` thin client + `compose` workflow (template-tag-prefixed multi-instance dispatch); carries Bearer token via `--key` or `RIMSKY_API_KEY`. |
 | observability | `control/observability/` | persistence, runtime | Diagnostics-cache, cascade-graph endpoint, metrics, lock-holder browse, node-run browse. |
 | config | `control/config/` | foundation, runtime, graph, persistence | Unified `rimsky.yml` parsing + validation + per-process handle assembly. |
 
@@ -70,7 +72,7 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | rimsky-control-api | `cmd/rimsky-control-api/` | Control-plane HTTP server. |
 | rimsky-migrate | `cmd/rimsky-migrate/` | Migration runner. |
 | rimsky-entrypoint | `cmd/rimsky-entrypoint/` | Unified PID-1 (`rimsky/all` image). |
-| rimsky-cli | `cmd/rimsky-cli/` | Thin client CLI. |
+| rimsky | `cmd/rimsky/` | Thin client CLI (renamed from `rimsky-cli` per the 2026-05-15 control-plane MCP and auth spec). The verb dispatcher lives in `cmd/rimsky/main.go`; all verb handlers (including `auth init|create-key|list|show|revoke|rotate|status` and the bundled role JSONs at `control/cli/roles/`) live in `control/cli/`. |
 | rimsky-executor-conformance | `cmd/rimsky-executor-conformance/` | Probe-based conformance harness for `Executor` impls. |
 | rimsky-claim-producer-conformance | `cmd/rimsky-claim-producer-conformance/` | Conformance harness for `ClaimProducer` impls. |
 | rimsky-data-processing-conformance | `cmd/rimsky-data-processing-conformance/` | Conformance harness for `DataProcessing` impls. |
@@ -124,12 +126,6 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | Dashboard | Path | Purpose |
 | --- | --- | --- |
 | rimsky-dashboard | `dashboards/rimsky-dashboard/` | Operator dashboard (TypeScript / Vite). |
-
-### MCP servers (`mcp-servers/`)
-
-| Server | Path | Depends on | Purpose |
-| --- | --- | --- | --- |
-| control-api | `mcp-servers/control-api/` (separate Go module + `cmd/rimsky-mcp-control-api/`) | control/controlapi (HTTP) | MCP bridge over the control-api HTTP surface; deployable binary that translates MCP tool calls into REST calls so MCP-aware clients can drive templates / instances / publisher-subscriptions / observability. |
 
 ## Shared infrastructure
 

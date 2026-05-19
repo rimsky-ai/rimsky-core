@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// health.go — `rimsky-cli health`. Prints the control-api's /health response.
+// health.go — `rimsky health`. Prints the control-api's /health response.
 package cli
 
 import (
@@ -34,6 +34,7 @@ func RunHealth(ctx context.Context, args []string) int {
 	}
 
 	client := NewClient(endpoint)
+	client.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	resp, err := client.Health(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

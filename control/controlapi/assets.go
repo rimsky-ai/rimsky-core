@@ -50,12 +50,12 @@ import (
 )
 
 func registerAssetsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/instances/{id}/assets", handleListAssets(deps))
-	r.Get("/instances/{id}/assets/{alias}", handleGetAsset(deps))
-	r.Get("/instances/{id}/assets/{alias}/versions", handleAssetVersions(deps))
-	r.Get("/instances/{id}/assets/{alias}/materialization-history", handleAssetMaterializationHistory(deps))
-	r.Post("/instances/{id}/assets/{alias}/materialize", handleAssetMaterialize(deps))
-	r.Delete("/instances/{id}/assets/{alias}", handleDeleteAsset(deps))
+	r.Get("/instances/{id}/assets", gate(deps, "asset:read", handleListAssets(deps)))
+	r.Get("/instances/{id}/assets/{alias}", gate(deps, "asset:read", handleGetAsset(deps)))
+	r.Get("/instances/{id}/assets/{alias}/versions", gate(deps, "asset:read", handleAssetVersions(deps)))
+	r.Get("/instances/{id}/assets/{alias}/materialization-history", gate(deps, "asset:read", handleAssetMaterializationHistory(deps)))
+	r.Post("/instances/{id}/assets/{alias}/materialize", gate(deps, "asset:materialize", handleAssetMaterialize(deps)))
+	r.Delete("/instances/{id}/assets/{alias}", gate(deps, "asset:delete", handleDeleteAsset(deps)))
 }
 
 // assetItem is the per-asset projection. Address bytes are
@@ -542,6 +542,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
 		// Fold `reason` into the payload as a named field so the
 		// receiver's `{{trigger.message.payload.reason}}` substitution
@@ -575,8 +576,22 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
+			// Dry-run gate: validation (instance exists + not terminated)
+			// has succeeded. Signal the outer code to write the synthetic
+			// envelope; the tx rolls back without enqueuing the message.
+			if isDryRun {
+				return errDryRunOK
+			}
 			return runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq)
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_materialized", map[string]any{
+				"instance_id": instanceID.String(),
+				"alias":       chi.URLParam(req, "alias"),
+				"reason":      body.Reason,
+			})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, shared.ErrInstanceNotFound) {
 				notFoundResp(w, shared.ErrInstanceNotFound.Error())
@@ -608,6 +623,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			row    *persistence.ClaimHandleRow
 			active []persistence.ClaimHolderRow
@@ -637,8 +653,33 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 					active = append(active, h)
 				}
 			}
+			// Dry-run gate: instance + asset resolved successfully.
+			// Defer the in-flight-holder check to outside the tx (a real
+			// call surfaces it as 409 after the tx commits) — both real
+			// and dry-run paths share the same downstream check.
+			if isDryRun {
+				return errDryRunOK
+			}
 			return nil
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			// In-flight-holder check matches the real-call's post-tx
+			// behaviour: a dry-run against an asset with active holders
+			// surfaces the same 409 a real call would.
+			if len(active) > 0 {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":        "asset has in-flight holder runs; refuse delete",
+					"active_count": len(active),
+				})
+				return
+			}
+			WriteDryRunResponseForced(w, "would_have_deleted_asset", map[string]any{
+				"instance_id": instanceID.String(),
+				"alias":       chi.URLParam(req, "alias"),
+				"node_type":   nodeType,
+			})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, shared.ErrInstanceNotFound) {
 				notFoundResp(w, shared.ErrInstanceNotFound.Error())

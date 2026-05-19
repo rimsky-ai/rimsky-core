@@ -296,6 +296,7 @@ func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscrip
 	return nil
 }
 func (f *emitFakePersist) RunTree() persistence.RunTreeTable { return nil }
+func (f *emitFakePersist) APIKeys() persistence.APIKeyTable  { return nil }
 
 func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	// The writer is tx-agnostic — the in-memory fake doesn't care about

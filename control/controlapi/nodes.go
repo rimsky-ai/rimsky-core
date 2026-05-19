@@ -81,10 +81,10 @@ type invalidateNodeRequest struct {
 
 // registerNodesRoutes wires the /nodes and /instances/:id_or_key/nodes groups.
 func registerNodesRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/nodes/{id}", handleGetNode(deps))
-	r.Post("/nodes/{id}/invalidate", handleInvalidateNode(deps))
-	r.Post("/nodes/{id}/reset", handleResetNode(deps))
-	r.Get("/instances/{idOrKey}/nodes", handleListInstanceNodes(deps))
+	r.Get("/nodes/{id}", gate(deps, "node:read", handleGetNode(deps)))
+	r.Post("/nodes/{id}/invalidate", gate(deps, "node:invalidate", handleInvalidateNode(deps)))
+	r.Post("/nodes/{id}/reset", gate(deps, "node:reset", handleResetNode(deps)))
+	r.Get("/instances/{idOrKey}/nodes", gate(deps, "node:read", handleListInstanceNodes(deps)))
 }
 
 func handleGetNode(deps AppDeps) http.HandlerFunc {
@@ -140,6 +140,13 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		}
 		if row == nil {
 			notFoundResp(w, shared.ErrNodeNotFound.Error())
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_invalidated", map[string]any{
+			"node_id": id.String(),
+			"reason":  body.Reason,
+			"frame":   body.Frame,
+		}) {
 			return
 		}
 		// Record the operator action in the audit log.
@@ -211,6 +218,11 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 				"error": "reset only valid from state=failed",
 				"state": string(row.State),
 			})
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_reset", map[string]any{
+			"node_id": id.String(),
+		}) {
 			return
 		}
 		// Clear error bookkeeping + defensively clear stale frame_id +

@@ -4,7 +4,7 @@
 
 //go:build smoke
 
-// Package cli_smoke runs the real `rimsky-cli` binary against the
+// Package cli_smoke runs the real `rimsky` binary against the
 // reference deploy/docker-compose.yml stack. Skipped unless Docker is
 // available. Built with `go test -tags smoke`.
 package cli_smoke
@@ -38,9 +38,9 @@ func locateRepoRoot(t *testing.T) string {
 
 func locateCLI(t *testing.T, repoRoot string) string {
 	t.Helper()
-	bin := filepath.Join(repoRoot, "bin", "rimsky-cli")
+	bin := filepath.Join(repoRoot, "bin", "rimsky")
 	if _, err := os.Stat(bin); err != nil {
-		t.Skipf("rimsky-cli binary missing (run `make cli` first): %v", err)
+		t.Skipf("rimsky binary missing (run `make cli` first): %v", err)
 	}
 	return bin
 }

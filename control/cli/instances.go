@@ -48,17 +48,17 @@ func parseParams(s string) (map[string]any, error) {
 
 // RunInstanceCreate implements `instance create`.
 func RunInstanceCreate(ctx context.Context, args []string) int {
-	var params, key string
+	var params, instanceKey string
 	fs, common, endpoint, code := runWithCommon("instance create", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
-		fs.StringVar(&key, "key", "", "instance_key for the new row")
+		fs.StringVar(&instanceKey, "instance-key", "", "instance_key for the new row")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance create <template-ref> [--params ...] [--key ...]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance create <template-ref> [--params ...] [--instance-key ...]")
 		return 2
 	}
 	pp, err := parseParams(params)
@@ -67,11 +67,12 @@ func RunInstanceCreate(ctx context.Context, args []string) int {
 		return 2
 	}
 	body := CreateInstanceRequest{Template: rest[0], Params: pp}
-	if key != "" {
-		k := key
+	if instanceKey != "" {
+		k := instanceKey
 		body.InstanceKey = &k
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	inst, err := c.CreateInstance(ctx, body)
 	if err != nil {
 		return reportError(err)
@@ -104,6 +105,7 @@ func RunInstanceList(ctx context.Context, args []string) int {
 	}
 	_ = fs
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	all, err := pagedListInstances(ctx, c, ListInstancesQuery{TemplateHash: template})
 	if err != nil {
 		return reportError(err)
@@ -161,10 +163,11 @@ func RunInstanceGet(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance get <id-or-key>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance get <id-or-key>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	inst, err := c.GetInstance(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -190,16 +193,17 @@ func RunInstanceGet(ctx context.Context, args []string) int {
 
 // RunInstanceDelete implements `instance delete`.
 func RunInstanceDelete(ctx context.Context, args []string) int {
-	fs, _, endpoint, code := runWithCommon("instance delete", args, nil)
+	fs, common, endpoint, code := runWithCommon("instance delete", args, nil)
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance delete <id-or-key>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance delete <id-or-key>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	if err := c.DeleteInstance(ctx, rest[0]); err != nil {
 		return reportError(err)
 	}
@@ -215,10 +219,11 @@ func RunInstanceNodes(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance nodes <id-or-key>")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance nodes <id-or-key>")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 	resp, err := c.ListInstanceNodes(ctx, rest[0])
 	if err != nil {
 		return reportError(err)
@@ -249,10 +254,11 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky-cli instance events <id-or-key> [--follow]")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance events <id-or-key> [--follow]")
 		return 2
 	}
 	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
 	id := rest[0]
 	if !LooksLikeUUID(id) {

@@ -23,6 +23,7 @@
 
 apache:
   - protocols/
+  - foundation/auth/
   - foundation/locks/
   - foundation/shared/
   - foundation/spec/
@@ -39,7 +40,7 @@ apache:
   - sensors/
   - subscribers/
   - examples/
-  - cmd/rimsky-cli/
+  - cmd/rimsky/
   - cmd/rimsky-executor-conformance/
   - cmd/rimsky-claim-producer-conformance/
   - cmd/rimsky-conformance-probe/
@@ -72,7 +73,6 @@ agpl:
   - graph/scenario/
   - graph/scheduler/
   - runtime/  # excludes runtime/remote/ and runtime/executor/ (overrides above)
-  - mcp-servers/
   - cmd/rimsky-scheduler/
   - cmd/rimsky-supervisor/
   - cmd/rimsky-control-api/

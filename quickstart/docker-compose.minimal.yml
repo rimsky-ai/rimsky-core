@@ -26,7 +26,7 @@ services:
       executor-stub:
         condition: service_started
     healthcheck:
-      test: ["CMD", "/usr/local/bin/rimsky-cli", "health", "--endpoint=http://localhost:8080"]
+      test: ["CMD", "/usr/local/bin/rimsky", "health", "--endpoint=http://localhost:8080"]
       interval: 2s
       timeout: 2s
       retries: 30

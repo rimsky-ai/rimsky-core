@@ -67,11 +67,11 @@ func knownParkReasonFilters() []string {
 // the handler with the older `/admin/diagnostics/parked-nodes` path
 // so both shapes are valid and exhibit identical behaviour.
 func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/admin/diagnostics/held-frames", handleAdminHeldFrames(deps))
-	r.Get("/admin/diagnostics/parked-nodes", handleAdminParkedNodes(deps))
-	r.Get("/diagnostics/parked", handleAdminParkedNodes(deps))
-	r.Get("/admin/diagnostics/wait-sets", handleAdminWaitSets(deps))
-	r.Post("/admin/instances/{instance}/nodes/{node_id}/invalidate", handleAdminInvalidateNode(deps))
+	r.Get("/admin/diagnostics/held-frames", gate(deps, "diagnostics:read", handleAdminHeldFrames(deps)))
+	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
+	r.Get("/diagnostics/parked", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
+	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
+	r.Post("/admin/instances/{instance}/nodes/{node_id}/invalidate", gate(deps, "node:invalidate", handleAdminInvalidateNode(deps)))
 }
 
 // HeldFramesResponse is the body of GET /admin/diagnostics/held-frames.
@@ -273,6 +273,44 @@ func handleAdminInvalidateNode(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 				"error": "no invalidate handler wired on this control-api process",
 			})
+			return
+		}
+		// Validate node existence + state BEFORE the dry-run gate so a
+		// dry-run against a non-existent node or a running node surfaces
+		// the same 404 / 409 a real call would. Per spec section
+		// "Dry-run mode": "Errors from validation surface as in normal
+		// flow."
+		var (
+			nodeFound bool
+			nodeState string
+		)
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			n, err := deps.Persist.Nodes().Get(ctx, nodeID, tx)
+			if err != nil {
+				return err
+			}
+			if n == nil {
+				return nil
+			}
+			nodeFound = true
+			nodeState = string(n.State)
+			return nil
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		if !nodeFound {
+			notFoundResp(w, "node not found")
+			return
+		}
+		if nodeState == "running" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": ErrInvalidateConflict.Error()})
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_invalidated", map[string]any{
+			"instance_id": instanceID.String(),
+			"node_id":     nodeID.String(),
+		}) {
 			return
 		}
 		result, err := deps.InvalidateHandler.InvalidateNode(req.Context(), instanceID.String(), nodeID.String())

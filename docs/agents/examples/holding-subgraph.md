@@ -66,9 +66,9 @@ nodes:
 ## 2. Register, deploy, instantiate
 
 ```sh
-rimsky-cli template register holding.yml
-rimsky-cli template deploy sha256-...
-rimsky-cli instance create sha256-... --params '{"snapshot_id":"snap-1"}'
+rimsky template register holding.yml
+rimsky template deploy sha256-...
+rimsky instance create sha256-... --params '{"snapshot_id":"snap-1"}'
 ```
 
 ## 3. Observe held-claim resolution

@@ -112,10 +112,10 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 
 // registerInstancesRoutes wires the /instances group.
 func registerInstancesRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/instances", handleCreateInstance(deps))
-	r.Get("/instances", handleListInstances(deps))
-	r.Get("/instances/{idOrKey}", handleGetInstance(deps))
-	r.Delete("/instances/{idOrKey}", handleDeleteInstance(deps))
+	r.Post("/instances", gate(deps, "instance:create", handleCreateInstance(deps)))
+	r.Get("/instances", gate(deps, "instance:read", handleListInstances(deps)))
+	r.Get("/instances/{idOrKey}", gate(deps, "instance:read", handleGetInstance(deps)))
+	r.Delete("/instances/{idOrKey}", gate(deps, "instance:terminate", handleDeleteInstance(deps)))
 }
 
 func handleCreateInstance(deps AppDeps) http.HandlerFunc {
@@ -166,6 +166,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// (template_hash, instance_key) collision to return the existing
 		// row. Capture the locked spec for the post-commit fan-out so we
 		// don't have to re-read.
+		//
+		// Dry-run is honored AFTER the FOR UPDATE state check + the
+		// userdata_overrides validation; a dry-run create against an
+		// undeployed template returns the same 409
+		// `template_validation` error a real call would (per spec
+		// section "Dry-run mode": "Errors from validation surface as
+		// in normal flow").
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			tplSpec           nodepkg.TemplateSpec
 			respOut           createInstanceResponse
@@ -193,6 +201,15 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			// against.
 			if vErr := validateUserdataOverrides(body.UserdataOverrides, row.Spec.Nodes, deps.Executors); vErr != nil {
 				return vErr
+			}
+			// Dry-run gate: every validation step above has succeeded
+			// (template found, state==deployed, overrides accepted).
+			// Skip the mutation and signal the caller via the
+			// errDryRunOK sentinel so the outer code writes the
+			// synthetic envelope. The tx rolls back any FOR UPDATE
+			// state and the LockForUpdate-acquired row lock.
+			if isDryRun {
+				return errDryRunOK
 			}
 			// Idempotent resolution on (template_hash, instance_key).
 			if body.InstanceKey != nil {
@@ -228,6 +245,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			respOut = provisioned
 			return nil
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_created", map[string]any{
+				"instance_id":   "dry-run-not-persisted",
+				"template_hash": hash,
+				"params":        params,
+			})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, foundationshared.ErrTemplateNotFound) {
 				notFoundResp(w, foundationshared.ErrTemplateNotFound.Error())
@@ -426,6 +451,12 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error": "instance is not in terminal state; wait for terminated_at to be set",
 			})
+			return
+		}
+		// Dry-run: validation passed; skip the fan-out + row delete.
+		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
+			"instance_id": inst.ID.String(),
+		}) {
 			return
 		}
 		// Spec §1.6 / §5.5: fire OnInstanceTerminated to every store

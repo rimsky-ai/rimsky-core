@@ -29,7 +29,7 @@ type eventResponseItem struct {
 
 // registerEventsRoutes wires the /events group.
 func registerEventsRoutes(r chi.Router, deps AppDeps) {
-	r.Get("/events", handleListEvents(deps))
+	r.Get("/events", gate(deps, "event:read", handleListEvents(deps)))
 }
 
 func handleListEvents(deps AppDeps) http.HandlerFunc {

@@ -63,21 +63,21 @@ build-all:
 	cd foundation && go build ./...
 	cd protocols && go build ./...
 
-# ── rimsky-cli targets ──
+# ── rimsky CLI targets ──
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 cli:
-	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky-cli ./cmd/rimsky-cli/
+	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky ./cmd/rimsky/
 
 cli-release:
 	@mkdir -p bin/release
 	@for os in linux darwin; do \
 	  for arch in amd64 arm64; do \
-	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_$${os}_$${arch} ./cmd/rimsky-cli/; \
+	    GOOS=$$os GOARCH=$$arch go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_$${os}_$${arch} ./cmd/rimsky/; \
 	  done; \
 	done; \
-	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky-cli_windows_amd64.exe ./cmd/rimsky-cli/
+	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_windows_amd64.exe ./cmd/rimsky/
 
 # cli-sync-embedded copies the canonical deploy assets into the embedded
 # CLI tree, applying the v1 init-scaffold transforms required by the

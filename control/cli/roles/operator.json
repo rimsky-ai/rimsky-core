@@ -1,0 +1,21 @@
+{
+  "name": "operator",
+  "description": "Full operational access; can read auth state but cannot mutate keys.",
+  "permissions": [
+    { "action": "instance:*" },
+    { "action": "template:*" },
+    { "action": "tag:*" },
+    { "action": "node:*" },
+    { "action": "message:*" },
+    { "action": "event:read" },
+    { "action": "lineage:*" },
+    { "action": "parked-node:*" },
+    { "action": "waitset:read" },
+    { "action": "claim-holders:read" },
+    { "action": "backfill:*" },
+    { "action": "asset:*" },
+    { "action": "diagnostics:read" },
+    { "action": "auth:read" },
+    { "action": "mcp:read" }
+  ]
+}

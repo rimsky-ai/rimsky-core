@@ -53,10 +53,10 @@ type tagItem struct {
 }
 
 func registerTagsRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/tags", handleCreateTag(deps))
-	r.Get("/tags", handleListTags(deps))
-	r.Put("/tags/{tag}", handleMoveTag(deps))
-	r.Delete("/tags/{tag}", handleDeleteTag(deps))
+	r.Post("/tags", gate(deps, "tag:create", handleCreateTag(deps)))
+	r.Get("/tags", gate(deps, "tag:read", handleListTags(deps)))
+	r.Put("/tags/{tag}", gate(deps, "tag:set", handleMoveTag(deps)))
+	r.Delete("/tags/{tag}", gate(deps, "tag:delete", handleDeleteTag(deps)))
 }
 
 func handleCreateTag(deps AppDeps) http.HandlerFunc {
@@ -93,6 +93,12 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		}
 		if existing != nil {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "tag already exists"})
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_created_tag", map[string]any{
+			"tag":         body.Tag,
+			"template_id": hash,
+		}) {
 			return
 		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -171,6 +177,13 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
+		if WriteDryRunResponse(w, req, "would_have_moved_tag", map[string]any{
+			"tag":          tag,
+			"old_template": existing.TemplateID,
+			"new_template": hash,
+		}) {
+			return
+		}
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.TemplateTags().Upsert(ctx, tag, hash, tx)
 		}); err != nil {
@@ -187,6 +200,28 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 func handleDeleteTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
+		// Tag-existence check must precede the dry-run gate: a real
+		// call returns 404 for a missing tag, so a dry-run against the
+		// same missing tag must too. Per spec section "Dry-run mode":
+		// "Errors from validation surface as in normal flow."
+		var existing *persistence.TemplateTagRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			r, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)
+			existing = r
+			return err
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		if existing == nil {
+			notFoundResp(w, "tag not found")
+			return
+		}
+		if WriteDryRunResponse(w, req, "would_have_deleted_tag", map[string]any{
+			"tag": tag,
+		}) {
+			return
+		}
 		var deleted bool
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			ok, err := deps.Persist.TemplateTags().Delete(ctx, tag, tx)

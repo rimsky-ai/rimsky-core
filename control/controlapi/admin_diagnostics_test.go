@@ -14,14 +14,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 // noopStore is a minimal persistence.Tables impl used by admin-diagnostics
 // tests that exercise only the route layer (no real DB read). Every
 // per-feature accessor returns nil; only Transaction is exercised, and
 // it just runs fn with a sentinel Tx.
+//
+// Exception: Nodes() returns a stub NodeTable that always reports the
+// requested node as existing in state='stale'. This is sufficient for
+// the admin-invalidate handler's pre-validate step (which checks the
+// node exists and is not in state='running' before the dry-run gate).
+// Tests that need other Node behavior can construct their own stub.
 type noopStore struct{}
 
 type noopTx struct{ persistence.TxMarker }
@@ -32,7 +40,7 @@ func (noopStore) Instances() persistence.InstanceTable       { return nil }
 func (noopStore) LifecycleIdempotency() persistence.LifecycleIdempotencyTable {
 	return nil
 }
-func (noopStore) Nodes() persistence.NodeTable                                    { return nil }
+func (noopStore) Nodes() persistence.NodeTable                                    { return noopNodes{} }
 func (noopStore) ClaimHandles() persistence.ClaimHandleTable                      { return nil }
 func (noopStore) NodeAttributes() persistence.NodeAttributeTable                  { return nil }
 func (noopStore) ClaimHolders() persistence.ClaimHolderTable                      { return nil }
@@ -47,9 +55,70 @@ func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable     
 func (noopStore) Lineage() persistence.LineageTable                               { return nil }
 func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTable { return nil }
 func (noopStore) RunTree() persistence.RunTreeTable                               { return nil }
+func (noopStore) APIKeys() persistence.APIKeyTable                                { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})
+}
+
+// noopNodes stubs persistence.NodeTable so the admin-invalidate
+// handler's pre-validate (Nodes().Get) succeeds for the synthetic
+// test UUIDs. Reports every requested node as existing in
+// state='stale' — sufficient for the routing tests, which want the
+// handler to proceed past the pre-validate and into the
+// InvalidateHandler stub. Per-test fixtures that need richer node
+// behavior can wrap noopStore and override Nodes().
+type noopNodes struct{}
+
+func (noopNodes) Create(context.Context, persistence.NodeCreateInput, persistence.Tx) (persistence.NodeRow, error) {
+	return persistence.NodeRow{}, nil
+}
+func (noopNodes) Get(_ context.Context, id shared.UUID, _ persistence.Tx) (*persistence.NodeRow, error) {
+	return &persistence.NodeRow{ID: id, State: "stale"}, nil
+}
+func (noopNodes) ListByInstance(context.Context, shared.UUID, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) ListByInstancePaged(context.Context, shared.UUID, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
+}
+func (noopNodes) ListReadyForDispatch(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) ListRunning(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) ListRunningBySupervisor(context.Context, string, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) ListWithStaleHeartbeat(context.Context, time.Time, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
+	return nil, nil
+}
+func (noopNodes) CountByState(context.Context, persistence.Tx) (map[cascade.NodeState]int, error) {
+	return nil, nil
+}
+func (noopNodes) UpdateState(context.Context, shared.UUID, cascade.NodeState, cascade.TransitionReason, cascade.LastOutcome, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, time.Time, string, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) SetFrameID(context.Context, shared.UUID, *shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) ClearLastOutcome(context.Context, shared.UUID, persistence.Tx) error { return nil }
+func (noopNodes) ClearSupervisorAssignment(context.Context, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
+func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
 }
 
 // fakeDiagnosticQueue implements persistence.Queue but only services

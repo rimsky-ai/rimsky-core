@@ -80,12 +80,12 @@ type templateGetResponse struct {
 
 // registerTemplatesRoutes wires the /templates group.
 func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
-	r.Post("/templates", handleDeployTemplate(deps))
-	r.Get("/templates", handleListTemplates(deps))
-	r.Get("/templates/{id}", handleGetTemplate(deps))
-	r.Delete("/templates/{id}", handleDeleteTemplate(deps))
-	r.Post("/templates/{id}/deploy", handleDeployTemplateState(deps))
-	r.Post("/templates/{id}/undeploy", handleUndeployTemplateState(deps))
+	r.Post("/templates", gate(deps, "template:register", handleDeployTemplate(deps)))
+	r.Get("/templates", gate(deps, "template:read", handleListTemplates(deps)))
+	r.Get("/templates/{id}", gate(deps, "template:read", handleGetTemplate(deps)))
+	r.Delete("/templates/{id}", gate(deps, "template:deregister", handleDeleteTemplate(deps)))
+	r.Post("/templates/{id}/deploy", gate(deps, "template:deploy", handleDeployTemplateState(deps)))
+	r.Post("/templates/{id}/undeploy", gate(deps, "template:undeploy", handleUndeployTemplateState(deps)))
 }
 
 // validatorHooksFor builds the registry-dependent lookups consumed by
@@ -209,6 +209,19 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 				"validation_warnings": outcome.Warnings,
 				"warnings_as_errors":  warningsAsErrors,
 			})
+			return
+		}
+
+		// Dry-run: validation (static + Validation mix-in pipeline)
+		// has run faithfully against the registry; skip only the DB
+		// inserts. Per spec section "Synthetic response shape /
+		// template:register".
+		if WriteDryRunResponse(w, req, "would_have_registered", map[string]any{
+			"template_hash":       hash,
+			"tag":                 tag,
+			"source":              source,
+			"validation_warnings": outcome.Warnings,
+		}) {
 			return
 		}
 
@@ -397,6 +410,15 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			if n > 1 {
+				// Tag-only deletion validation has passed. Honor
+				// dry-run by skipping the DELETE.
+				if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
+					"template_hash": hash,
+					"is_tag_form":   true,
+					"tag_only":      true,
+				}) {
+					return
+				}
 				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 					_, err := deps.Persist.TemplateTags().Delete(ctx, idOrTag, tx)
 					return err
@@ -443,6 +465,15 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				"error":        "template has active instances",
 				"active_count": active,
 			})
+			return
+		}
+		// All validation has passed (template found, state not
+		// 'deployed', no active instances). Dry-run skips fan-out +
+		// delete; the synthetic envelope is now an honest precursor.
+		if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
+			"template_hash": hash,
+			"is_tag_form":   isTag,
+		}) {
 			return
 		}
 		if _, perStore, err := FanOutTemplateEvent(req.Context(), deps, EventTemplateDeregistered, hash, row.Spec, TemplatePayload{}, nil); err != nil {
@@ -505,6 +536,7 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			outState      string
 			noOp          bool
@@ -532,6 +564,13 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 				return shared.Wrap(shared.ErrTemplateValidation,
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
+			}
+			// Dry-run: every state validation has passed (template
+			// found, state in {registered, undeployed}). Skip fan-out
+			// and the UPDATE; the synthetic envelope below is now an
+			// honest precursor to a real deploy.
+			if isDryRun {
+				return errDryRunOK
 			}
 			tListTags := time.Now()
 			tagRows, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
@@ -561,6 +600,12 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return nil
 		})
 		log.Debug("deploy.tx.done", "elapsed_ms", time.Since(txStart).Milliseconds(), "err", err)
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_deployed", map[string]any{
+				"template_hash": hash,
+			})
+			return
+		}
 		if err != nil {
 			if fanOutErr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
@@ -605,6 +650,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			outState      string
 			noOp          bool
@@ -640,6 +686,12 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template has active instances",
 					map[string]any{"template_hash": hash, "active_count": active})
 			}
+			// Dry-run: every validation has passed. Skip fan-out and
+			// the UPDATE; the synthetic envelope is now an honest
+			// precursor.
+			if isDryRun {
+				return errDryRunOK
+			}
 			if _, perStore, ferr := FanOutTemplateEvent(ctx, deps, EventTemplateUndeployed, hash, row.Spec, TemplatePayload{}, tx); ferr != nil {
 				fanOutErr = ferr
 				fanOutDetails = perStore
@@ -651,6 +703,12 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 			outState = "undeployed"
 			return nil
 		})
+		if isDryRun && errors.Is(err, errDryRunOK) {
+			WriteDryRunResponseForced(w, "would_have_undeployed", map[string]any{
+				"template_hash": hash,
+			})
+			return
+		}
 		if err != nil {
 			if fanOutErr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{
