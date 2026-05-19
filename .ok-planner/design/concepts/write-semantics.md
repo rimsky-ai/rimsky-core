@@ -14,6 +14,15 @@ references:
 
 A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the `ModeCoexists` matrix treats concurrent claims on byte-equal scope. Three-level structure: producer advertises an allowed-values set via `Capabilities()`; operator declares a narrowing allowed-values set per producer in `cfg:rimsky.yml` (key `write_semantics_allowed:`); each `Open` returns one realized value in `Acquired.realized_write_semantics`.
 
+### Per-value semantics
+
+The four realized values, with their concurrency consequences:
+
+- **`sync`** — synchronous in-place writes; no staging area. Two writers on byte-equal scope conflict (`ModeCoexists` returns false for sync↔sync, sync↔staged_async, sync↔blocking_async). A read claim conflicts with a sync writer.
+- **`staged_async`** — writes go to a producer-internal staging area; reads can dispatch concurrently with writes on the same scope (the reader sees the pre-stage snapshot). Two writers still conflict; reads and writers coexist. Honest support requires snapshot delegation or native MVCC pass-through — the reader-lease internal-serialization pattern is forbidden (`@blessed-invariant 9b`).
+- **`blocking_async`** — staging area present, but reads block until commit. Two writers conflict; reads and writers serialize. The right answer when the producer can stage but cannot offer point-in-time snapshots to readers.
+- **`read_only`** — read-only access; the producer will reject any write attempt. Two readers coexist trivially.
+
 ## Purpose
 
 A single per-binary capability is too coarse (a postgres producer might support `sync` for some resources and `staged_async` for others); per-claim with no upper bound is unbounded. The three-level allowed-values structure pins what the producer claims to support, what the operator allows, and what each specific claim got.
@@ -40,4 +49,5 @@ Pre-`spec:2026-05-12-nomenclature-resolution` Group C, the operator-facing YAML 
 ## Notes
 
 - `write_semantics_envelope` → `write_semantics_allowed` rename per `spec:2026-05-12-nomenclature-resolution` Group C.2. Single-value `write_semantics:` YAML shortcut retired per Group C.1. Resolves `tension:_resolved/yaml-write-semantics-alias`.
+- [2026-05-18] Folded content from former `docs/concepts/write-semantics.md` (now retired) — four-value plain-English breakdown (per-value semantics with concurrency consequences) added as a subsection under "What it is".
 

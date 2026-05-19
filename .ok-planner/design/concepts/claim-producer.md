@@ -45,6 +45,10 @@ Owns: the producer-side resource state (filesystem stagings, items-table flips, 
 
 `store` is the colloquial bundled-services term and the directory name (`stores/`). `ClaimProducer` is the protocol-level canonical name. The two coexist; CLAUDE.md "Vocabulary" notes the split. YAML config key `claim_producers:` aliases the legacy `stores:` key.
 
+**Naming discipline.** In protocol-level prose — wire protocols, conformance suites, the Go interface name — the canonical term is **claim producer** and the Go interface is `ClaimProducer`. In casual operator parlance and in the reference-implementation tree (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`), the colloquial **store** survives ("the filesystem store," "the postgres store"). Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is acceptable in casual contexts about the bundled reference impls. Backticked-`Store` references in protocol-level prose are stale — the legacy Go interface was renamed to `ClaimProducer`.
+
+**Rimsky's "store" is not a JS-framework store.** A Rimsky bundled-services-layer "store" is a data-backed `ClaimProducer` reference impl. Nothing to do with Redux / Vue / Svelte / Pinia state-management stores.
+
 The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a sixth method, `Name()`, alongside the 4 verbs + `Capabilities()`. `Name()` is a rimsky-side identifier (used for logging, metrics labels, and registry lookup); it is not transported on the wire and not part of the cross-language gRPC protocol. Test doubles must implement it to satisfy the interface.
 
 ## Open within this concept
@@ -56,3 +60,4 @@ The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a six
 ## Notes
 
 - 2026-05-14: atomic-staging pattern documented at `docs/agents/examples/atomic-staging.md` with a reference filesystem implementation under `examples/atomic-staging-fs-producer/`. Pattern is producer-side discipline; no rimsky-level surface change. Per spec Piece 3 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- [2026-05-18] Folded content from former `docs/concepts/claim-producer.md` (now retired) — store-vs-claim-producer naming discipline + JS-framework-store disambiguation appended to Aliases section.

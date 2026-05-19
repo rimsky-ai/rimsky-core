@@ -4,28 +4,9 @@
 
 ## Concepts
 
-- [Attributes](concepts/attributes.md): The typed inputs and outputs of a node, declared by a JSON Schema; the substitution boundary.
-- [Cascade](concepts/cascade.md): The propagation of `invalidate` through the node graph.
-- [Claim](concepts/claim.md): A node-declared assertion that the node will read or read-write a producer-defined slice of state for the duration of its run.
-- [Claim handle](concepts/claim-handle.md): The persistent row asserting "holder H has acquired scope S for purpose P."
-- [Claim producer](concepts/claim-producer.md): The protocol-level term for a service that produces claim handles; implements five methods over gRPC.
-- [Executor](concepts/executor.md): The protocol-level term for the service that runs a node's work; implements the `Executor` dispatch protocol (and optionally the paired read-only `ExecutorObservability` protocol) over gRPC.
-- [Frame](concepts/frame.md): The unit of cascade resolution; `frame_resolution:` picks `serial_queue` or `coalesce` for handling concurrent invalidates.
-- [Holding subgraph](concepts/holding-subgraph.md): The set of nodes a held claim's lifetime spans; the claim resolves automatically at completion (commit on all-success, abandon on any-failure).
-- [Inheritance](concepts/inheritance.md): The DSL mechanism by which a downstream node declares it will use a live claim from an upstream acquirer.
-- [Instance](concepts/instance.md): A running execution of a template, identified by a Rimsky-generated UUID.
-- [Invalidate](concepts/invalidate.md): Rimsky's only graph-level message; marks a node `stale` and cascades the same message to receivers that subscribed to the sender's transition.
-- [Lifecycle subscriber](concepts/lifecycle-subscriber.md): An opt-in protocol for peers that want to react to template and instance state transitions.
-- [Named lock](concepts/named-lock.md): A scalar capacity counter at the deployment level.
-- [Node](concepts/node.md): The unit of work in a Rimsky template.
-- [Node state](concepts/node-state.md): The four named runtime states a node can occupy: `fresh`, `stale`, `running`, `failed`.
-- [Scope](concepts/scope.md): The slice of a producer's namespace under claim; canonicalized by the producer; compared byte-for-byte by Rimsky.
-- [Subscription](concepts/subscription.md): A receiver-side declaration ("fire me when this upstream topic transitions") across three topic kinds: `state`, `attribute`, `event`. Substitution refs auto-subscribe.
-- [Tag](concepts/tag.md): A movable alias from a string identifier to a template content hash.
-- [Template](concepts/template.md): A content-addressed bundle of node definitions, attribute schemas, claim and lock declarations, and frame-resolution config.
-- [Userdata](concepts/userdata.md): Free-form opaque bytes a template author attaches to a node's executor invocation; never inspected by Rimsky.
-- [Wait-set](concepts/wait-set.md): The per-frame ledger driving dispatch eligibility. Cascade walks insert rows pessimistically; the settled-state drain bulk-deletes rows when senders resolve.
-- [Write semantics](concepts/write-semantics.md): The per-claim verdict from `ClaimProducer.Open` describing how writes against the claimed scope are visible to other claims.
+The canonical concept catalog lives at [`.ok-planner/design/concepts.md`](../../.ok-planner/design/concepts.md) — an auto-generated TOC over the per-concept files in [`.ok-planner/design/concepts/`](../../.ok-planner/design/concepts/). Each file carries a definition, purpose, boundaries, and invariants, plus a Notes section recording how the concept evolved. Inline `@concept: <slug>` annotations in the source code point at enforcement sites for each concept; `rg '@concept: <slug>'` finds them.
+
+Read the TOC first to know what nouns the project traffics in, then read the per-concept files for the specific ones load-bearing for your task.
 
 ## Protocols
 
@@ -49,4 +30,3 @@
 ## Optional
 
 - [Glossary](glossary.md)
-- [Dashboard UI guide](humans/dashboard.md)

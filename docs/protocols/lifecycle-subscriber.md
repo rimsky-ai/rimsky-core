@@ -2,7 +2,7 @@
 
 This guide is for developers implementing a lifecycle subscriber — a service that wants to react to template and instance state transitions in Rimsky. The wire contract lives at `protocols/proto/v1/lifecycle.proto`; this guide is the practical companion.
 
-<!-- @source: concepts/lifecycle-subscriber.md -->
+<!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
 > An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Service-to-service auth is operator-configured at the deployment layer.
@@ -72,7 +72,7 @@ Fired when an instance moves to its terminal state — completed all frames or w
 
 ## 4. Idempotency
 
-<!-- @source: concepts/lifecycle-subscriber.md -->
+<!-- @source: ../../.ok-planner/design/concepts/lifecycle-subscriber.md -->
 > An opt-in protocol for services that want to react to template and instance state transitions. Six methods: `OnTemplateRegistered`, `OnTemplateDeployed`, `OnTemplateUndeployed`, `OnTemplateDeregistered`, `OnInstanceCreated`, `OnInstanceTerminated`. Fires synchronously from the control-api process at each transition.
 
 Rimsky tracks idempotency at its own boundary: each event is keyed by `(service-name, event-type, object-id)`. Replays — caused by retries, restarts, or operator-driven backfill — are no-ops at the rimsky side.
@@ -108,7 +108,7 @@ The service's gRPC server registers both `ClaimProducer` and `LifecycleSubscribe
 
 ## See also
 
-- [`../concepts/lifecycle-subscriber.md`](../concepts/lifecycle-subscriber.md)
-- [`../concepts/template.md`](../concepts/template.md)
-- [`../concepts/instance.md`](../concepts/instance.md)
-- [`../concepts/claim-producer.md`](../concepts/claim-producer.md)
+- [`../../.ok-planner/design/concepts/lifecycle-subscriber.md`](../../.ok-planner/design/concepts/lifecycle-subscriber.md)
+- [`../../.ok-planner/design/concepts/template.md`](../../.ok-planner/design/concepts/template.md)
+- [`../../.ok-planner/design/concepts/instance.md`](../../.ok-planner/design/concepts/instance.md)
+- [`../../.ok-planner/design/concepts/claim-producer.md`](../../.ok-planner/design/concepts/claim-producer.md)

@@ -16,6 +16,27 @@ references:
 
 `parked` is the fifth legal `node-state` value, entered from `running` when the executor emits `ParkRequested`. While parked, the node is not running and not failed; it carries a `parked_payload`, optional `session_token`, optional `resume_at`, and `parked_reason`. The corresponding `rimsky_node_runs.phase` is `'parked'`.
 
+### Resume context
+
+When the runner re-dispatches a parked node, `ExecuteRequest.resume_context` is populated:
+
+```protobuf
+message ResumeContext {
+  bytes  payload        = 1;  // verbatim from Park.payload
+  string session_token  = 2;  // verbatim from Park.session_token
+  string resume_reason  = 3;  // "deadline_elapsed" | "external_invalidate"
+}
+```
+
+Executors use these fields to resume external work. For example, the `claude-agent` reference impl uses `session_token` as the Claude CLI's `--resume <session_id>` argument; a long-running-job executor uses `payload` to carry a job ID so the resumed dispatch can poll the same job.
+
+Two exit paths populate `resume_reason`:
+
+- **Time-based wake** — `SweepParkedNodes` transitions the run when `resume_at` has passed; `resume_reason: "deadline_elapsed"`.
+- **External invalidate** — in-graph or admin invalidate against the parked node transitions it back to `stale` and re-dispatches on the next tick; `resume_reason: "external_invalidate"`.
+
+(The third exit path, watchdog timeout, does not re-dispatch — it forces `failed{error_class: "park_timeout"}` and emits no `ResumeContext`.)
+
 ## Purpose
 
 Some workloads (human review, scheduled wake, external event wait) cannot finish in a bounded window. `parked` gives them a first-class hold state with explicit resume semantics, instead of forcing them through `failed`+retry (which loses session context) or keeping a gRPC stream open indefinitely.
@@ -39,8 +60,14 @@ The state was added under the platform-extensions design (2026-05-08); migration
 
 - "No destructive action" (frame-stuck) vs "destructive watchdog timeout" (parked) are sibling timeout disciplines with opposite policies — see `tensions/timeout-policy-asymmetry.md`.
 
+## Common pitfalls
+
+- **Indefinite human-review park inside an in-flight frame.** A common pattern is "produce a tentative output, then park indefinitely (no `resume_at`) waiting for an operator to invalidate." Authoring this with `parked_reason: OTHER` and `parked_reason_label: "human_review"` is supported and correct — but parking a frame on review serializes parallel work in the same frame and creates long-lived held frames. The recommended idiom is **post-frame review**: the producing frame runs to completion; review happens externally; a follow-on graph or instance kicks off the post-review work. Frame-blocking review should be reserved for cases where downstream genuinely cannot proceed safely without approval (e.g. cross-system commit where the alternative is to reverse-cascade after the fact).
+- Citing `parked_reason: "human_review"` as a string-form reason. The current taxonomy is the 4-reason proto enum (`TIME_WAIT` / `CALLBACK_WAIT` / `RETRY_BACKOFF` / `OTHER`) plus a freeform `parked_reason_label`. The string `human_review` belongs in `parked_reason_label` when `parked_reason: OTHER`; it is not a first-class enum value.
+
 
 ## Notes
 
 - 2026-05-14: `parked_reason` is now typed (proto enum `ParkReason`); the column stores the snake_case form (`time_wait` / `signal_wait` / `awaiting_human` / `retry_backoff`). New `parked_reason_note` column carries the free-form human annotation. The diagnostics endpoint `?reason=` filter validates against the enum. See spec Piece 2 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
 - 2026-05-15: **4-reason taxonomy + freeform label**. The proto enum is `PARK_REASON_UNSPECIFIED | PARK_REASON_TIME_WAIT | PARK_REASON_CALLBACK_WAIT | PARK_REASON_RETRY_BACKOFF | PARK_REASON_OTHER`. The column stores the storage form (`time_wait` / `callback_wait` / `retry_backoff` / `other`); `parked_reason_label` carries the freeform label (required when `parked_reason = other`). The watchdog consults a per-reason `max_park_duration` config (`time_wait: 1h`, `callback_wait: 7d`, `retry_backoff: 1h`, `other: 1h` defaults); timeout produces `failed{error_class: "park_timeout"}`. Bundled emitter updates: long-running-job executors emit `CALLBACK_WAIT`, time-based polling executors emit `TIME_WAIT`, rate-limit-aware executors emit `RETRY_BACKOFF`. See `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md` §Parked-state taxonomy.
+- [2026-05-18] Folded content from former `docs/concepts/parked.md` (now retired) — ResumeContext proto snippet added as a subsection under "What it is"; human-review-as-indefinite-park antipattern added as a Common-pitfalls section. The retired doc's `reason: "human_review"` example was a stale string-form reason; rewritten to the modern 4-reason enum (`parked_reason: OTHER` + `parked_reason_label: "human_review"`) per the 2026-05-15 taxonomy.

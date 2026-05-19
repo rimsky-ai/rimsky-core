@@ -13,6 +13,20 @@ references:
 
 `last_outcome` is a TEXT column on `rimsky_nodes` carrying one of `{fresh_changed, fresh_unchanged, passed, pure_cascade, failed}`. Written by the supervisor's terminal-handler resolution alongside the state transition. Separate from `state`.
 
+### Truth table
+
+The five values capture the resolution flavor of the most recent terminal-for-this-frame transition:
+
+| Value | Meaning | Cascade effect |
+|---|---|---|
+| `fresh_changed` | Node committed and propagated; landed in `fresh`. | Fires downstream cascade propagation. |
+| `fresh_unchanged` | Node committed without change; landed in `fresh`. | Halts propagation at this node; downstream cascade does NOT fire. |
+| `passed` | Lifecycle handler resolved `pass` (Unavailable / Blocked / Errored skipped without error routing). | No cascade fire. |
+| `pure_cascade` | Node transitioned `stale → fresh` via dependency fallthrough only (no executor invocation; all upstream values resolved `fresh_unchanged`). | No cascade fire. |
+| `failed` | Node landed in `failed` via `give_up` policy or `dispatch_impossible`. | No cascade fire from `failed`. |
+
+The five named node states (`fresh`, `stale`, `running`, `failed`, `parked`) are orthogonal: `last_outcome` is an additional column written by the same transition that lands the node in `fresh` or `failed`. The cascade-firing predicate is `last_outcome == fresh_changed`; under the default `on_executor_complete: by_changed` resolution this is functionally identical to the prior `t.Changed` bool gate.
+
 ## Purpose
 
 Splits "did this node change in a way that propagates" out of `state`. The cascade-firing gate reads `last_outcome == fresh_changed`; the dispatch-eligibility gate reads `state`. Keeping them in different columns keeps each predicate one-column-simple.
@@ -47,3 +61,4 @@ Pre-migration-004 code referenced `t.Changed` directly; the cascade gate was the
 ## Notes
 
 - 2026-05-14: values become filter predicates on `state` subscriptions (`outcome:` filter on `SubscriptionEntry`). Subscription validation cross-checks `outcome:` against the enum. See `concept:node-subscription`. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- [2026-05-18] Folded content from former `docs/concepts/node-state.md` (now retired) — the cascade-gate-relevant residue from that doc (the `last_outcome` exposition and 5-state truth table) moved here rather than to `concept:node-state`, since the cascade-gate semantics naturally co-locate with `last-outcome`. The five-node-state vocabulary itself remains the canonical responsibility of `concept:node-state`.

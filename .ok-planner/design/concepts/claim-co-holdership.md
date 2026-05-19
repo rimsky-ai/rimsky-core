@@ -1,7 +1,8 @@
 ---
 concept: claim-co-holdership
 status: as-is
-aliases: []
+aliases:
+  - inherits (legacy singular directive; superseded by `holds:`)
 references:
   - ../../specs/2026-05-15-data-platform-extensions-design.md
 ---
@@ -16,13 +17,20 @@ Template shape:
 
 ```yaml
 nodes:
-  - type: verify-zoning
+  - type: verify-staging
     executor: verifier-shape-checks
-    dependencies: [load-zoning]
+    dependencies: [load-data]
     holds:
-      zoning-data: { from: load-zoning }
+      staging-data: { from: load-data }
     userdata: { ... }
 ```
+
+Co-holdership enables two distinct propagation patterns to coexist in a template:
+
+- **Value-pass.** A source node extracts captured fields into its own attributes; downstream nodes consume via `{{nodes.<source>.attribute.<field>}}`. Lifetime-independent — works after the source's claim has closed. No `holds:` declaration needed.
+- **Claim-pass.** A downstream node co-holds the live claim via `holds:` and uses `{{claim.<alias>.address | payload.<f> | scope}}`. Requires the claim to remain open; every co-holder's existence widens the holding subgraph and extends the claim's lifetime.
+
+Without claim-pass, every downstream consumer would need to re-acquire the same scope, risking a different snapshot or a different queue item. The "from an upstream dependency" rule (see Invariants) is the deliberate constraint that keeps claim lifetimes legible: reading a template, you can immediately see which runs hold a given claim. There is no transitive auto-holdership through subscription chains; if you need a chain, declare `holds:` at every link.
 
 ## Boundaries
 
@@ -46,3 +54,5 @@ Owns: the `holds:` template directive, the per-co-holder `rimsky_claim_holders` 
 ## Notes
 
 Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The verifier pattern (`executors/verifier-shape-checks/`, `executors/verifier-http/`) is the canonical use case: a verifier executor co-holds an upstream staging claim, runs checks, and its terminal contributes to the parent's aggregation; the aggregation outcome drives `Commit` (atomic swap) vs `Abandon` (drop staging).
+
+- [2026-05-18] Folded content from former `docs/concepts/inheritance.md` (now retired). The retired doc framed co-holdership under the legacy `inherits:` directive name; examples rewritten to use the modern `holds:` directive. Added value-pass-vs-claim-pass distinction + lifetime-extension authoring story to Definition. `inherits:` recorded in Aliases as a legacy singular synonym.

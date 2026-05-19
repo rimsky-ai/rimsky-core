@@ -2,7 +2,7 @@
 
 This guide is for developers implementing an executor — in any language — and wiring it into a Rimsky deployment. The wire contracts live at `protocols/proto/v1/executor.proto` (the required dispatch protocol) and `protocols/proto/v1/executor_observability.proto` (the optional read-only observability protocol); this guide is the practical companion.
 
-<!-- @source: concepts/executor.md -->
+<!-- @source: ../../.ok-planner/design/concepts/executor.md -->
 > The protocol-level term for the service that runs a node's work. Implements the dispatch protocol `Executor` (one method, `Execute`) and optionally the paired read-only `ExecutorObservability` protocol (`Capabilities`, `GetTrace`, `StreamTrace`). Out-of-process; supervisors dispatch to executors over gRPC, with an HTTP+JSON bridge available for non-Go services.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
@@ -59,7 +59,7 @@ Stream back any number of these events:
 - **`Error{error_class: "executor_blocked"}`** — terminal: I produced output but explicitly chose not to claim success. Use `Error{error_class: "executor_blocked"}` (rather than `Error{error_class}`) for low-confidence outputs that should route to human review or other downstream-decision flows. Retry semantics come from the node's error policy.
 - **`Error{error_class}`** — terminal: an application-level error. Two fields: `string error_class` (an executor-defined classifier) plus an opaque `Struct payload`. The executor does NOT pick the resolution. The supervisor's policy chain in the template maps `(error_class, retry_counter)` to one of `retry`, `give_up`, or `pass`. Cascade coupling on failure is declared receiver-side via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]` on the impactee node.
 - **`AwaitAsyncCallback`** — non-streaming terminal: I'll send the final event later via callback (see §4).
-- **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `docs/concepts/parked.md`.
+- **`Park`** — terminal: pause this run until externally resumed. Four fields: `string reason` (non-empty discouraged but accepted), `bytes payload` (opaque; passed back as `ResumeContext.payload`), `google.protobuf.Timestamp resume_at` (optional; absent means signal-based-only), `string session_token` (optional; opaque executor-side identifier passed back as `ResumeContext.session_token`). Resume happens via time elapsed, an admin invalidate, or an in-graph `on_event` invalidate. See `.ok-planner/design/concepts/parked-state.md`.
 
 ### `ExecutorObservability.StreamTrace(StreamTraceRequest) → stream<TraceEvent>`
 
@@ -77,7 +77,7 @@ Startup handshake for the observability protocol. Declares whether the executor 
 
 ## 3. The userdata guarantee
 
-<!-- @source: concepts/userdata.md -->
+<!-- @source: ../../.ok-planner/design/concepts/userdata.md -->
 > Free-form opaque bytes a template author attaches to a node's executor invocation. Rimsky never inspects, parses, substitutes, or validates `userdata`. The executor receives the bytes verbatim. This is distinct from `attributes`, which are typed, substituted, and schema-validated.
 
 This means:
@@ -161,7 +161,7 @@ Each is runnable as a standalone process plus a Dockerfile.
 
 ## See also
 
-- [`../concepts/executor.md`](../concepts/executor.md)
-- [`../concepts/node.md`](../concepts/node.md)
-- [`../concepts/attributes.md`](../concepts/attributes.md)
-- [`../concepts/userdata.md`](../concepts/userdata.md)
+- [`../../.ok-planner/design/concepts/executor.md`](../../.ok-planner/design/concepts/executor.md)
+- [`../../.ok-planner/design/concepts/node.md`](../../.ok-planner/design/concepts/node.md)
+- [`../../.ok-planner/design/concepts/attributes.md`](../../.ok-planner/design/concepts/attributes.md)
+- [`../../.ok-planner/design/concepts/userdata.md`](../../.ok-planner/design/concepts/userdata.md)

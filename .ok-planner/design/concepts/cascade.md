@@ -42,8 +42,17 @@ Owns: the firing-gate predicate, the downstream walk, the two node-level behavio
 
 The phrase "reactive cascade" appears in sketches and human-facing onboarding docs. Internally, "cascade" is the unambiguous name. Pre-2026-05-12 prose sometimes referred to "two walks"; the current vocabulary is one walk + two node-level behaviors.
 
+## Common pitfalls
+
+- **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map. The two share a name and nothing else.
+- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
+- Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` (or the lifecycle-handler resolves `never_propagate`) if it wants to halt propagation at itself.
+- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; the scheduler decides which stale nodes are eligible for dispatch (wait-set empty for the current frame, claims and locks acquirable).
+- Treating `last_outcome` as a dispatch gate. It is observability metadata; the cascade-firing predicate consumes it, but dispatch eligibility is `state`-driven (see `concept:last-outcome`, `concept:node-state`).
+
 ## Notes
 
 - Three-word vocabulary (walk / propagation / fallthrough) introduced per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #10). Resolves `tension:cascade-walks-overloaded`.
 - 2026-05-14: the cascade walk's downstream traversal is driven by the per-template subscription-edge inverse map (see `concept:node-subscription`), not by a static dependency graph. Wait-set rows are inserted on every cascade-walk match (pessimistic invalidate); the bulk-delete-on-settled-state rule (see `concept:wait-set`) drains them as senders resolve. Eligibility = state=stale AND wait-set is empty for the current frame (predicate evaluated in the persistence-layer SweepReady query at `code:foundation/persistence/postgres/nodes.go::ListReadyForDispatch`). Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
 - 2026-05-15: **sub-graph encapsulation**. Cascade walks descend through delegation (the calling node fires per its own subscriptions), but cascade does NOT cross the sub-graph boundary from outside. Outer subscriptions match against the calling node's state/events/attributes (populated from the parent run's lifecycle including the carried-up exit writeback per `concept:delegation`). Internal nodes within the sub-graph cascade normally among each other, with entry-alias references resolved to the calling node per-invocation. Cascade-boundary opacity is enforced at canonicalization: internal nodes referencing outer-graph nodes are rejected at template registration. See `concept:sub-graph`, `concept:delegation`.
+- [2026-05-18] Folded content from former `docs/concepts/cascade.md` (now retired) — common-pitfalls subsection (CSS-cascade disambiguation + recalculate/value-diff/dispatch-vs-cascade-reach pitfalls).

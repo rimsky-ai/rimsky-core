@@ -80,7 +80,15 @@ Held-variant invariants:
 
 ### Authoring: held vs unheld
 
-A template declares inheritors on each node's `inherits:` clause; the claim opened by a node becomes "held" implicitly when one or more downstream nodes declare it as an inherited claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every node in the holding subgraph (acquirer plus inheritors) has reached a non-active state.
+A template declares co-holders on each node's `holds:` clause (legacy synonym: `inherits:`); the claim opened by a node becomes "held" implicitly when one or more downstream runs declare it as a co-held claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every run in the holding subgraph (acquirer plus co-holders) has reached a non-active state.
+
+### Held-variant antipatterns
+
+The held variant is a **lifetime-extension mechanism for one claim**, not a multi-node transactional unit. Authors sometimes reach for it expecting more than it offers:
+
+- **No rollback on `Abandon`.** When the aggregate outcome is `failed` and rimsky fires `Abandon` on the held claim, rimsky tells the producer "the consumer of this claim failed"; the producer decides what to do with its own state per its own configuration. Rimsky does not orchestrate rollback, does not undo writes to the staging area, does not reverse-cascade attribute writes performed by other holding-subgraph members. If the workflow requires multi-resource rollback, encode that in a producer or a downstream compensating node — not in the holding-subgraph mechanism.
+- **Not a transactional unit.** The holding subgraph is the set of runs over which one claim's lifetime spans. It is not a "transaction" over the claim *and* every other side effect performed by its members. Treat it as scope-lifetime extension; treat cross-resource atomicity as something the template's authors compose explicitly.
+- **No partial commits or first-delete-wins.** There is exactly one resolution per held claim, and the rule is all-succeeded → `Commit`, any-failed → `Abandon`. Rimsky does not orchestrate partial commits, partial rollbacks, or reconciliation between simultaneously-resolving holding subgraphs.
 
 ## Aliases and historical names
 
@@ -95,3 +103,4 @@ The legacy table name was `rimsky_lock_holders`; Phase-5 consolidation renamed i
 
 - Held-variant content folded in from former `concept:held-claim` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #16).
 - State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: replaced `held_durable boolean` with `state TEXT` enum + `resolved_at TIMESTAMPTZ`; terminal Promote preserves rows past auto-terminal; new `SweepClaimHandleRetention` reaps non-durable terminal rows past `retention.claim_handles_trailing`.
+- [2026-05-18] Folded residue from former `docs/concepts/holding-subgraph.md` (now retired) — the no-rollback / not-a-transactional-unit / no-partial-commits antipatterns added as a "Held-variant antipatterns" subsection under the Held variant. The bulk of that doc's content was already absorbed into the Held variant subsection; only the antipattern framing was unique.

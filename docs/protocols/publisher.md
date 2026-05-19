@@ -65,4 +65,4 @@ rimsky-publisher-conformance --endpoint grpc://my-publisher:9100 \
 - `sensors/sensor-object-store` — object-store list with `name` or `last_modified` watermark.
 - `sensors/sensor-webhook` — inbound webhook receiver.
 
-See [publisher](../concepts/publisher.md), [publisher-subscription](../concepts/publisher-subscription.md), [sensor](../concepts/sensor.md).
+See [publisher](../../.ok-planner/design/concepts/publisher.md), [publisher-subscription](../../.ok-planner/design/concepts/publisher-subscription.md), [sensor](../../.ok-planner/design/concepts/sensor.md).

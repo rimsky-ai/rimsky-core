@@ -35,8 +35,8 @@ load-bearing primitives:
   abandons. The "stage-then-promote-or-discard" pattern as first-class
   machinery.
 - **Fan-out and run-tree.** Nodes that partition a claim into
-  sub-claims at runtime; each work unit gets its own run with
-  `parent_run_id` / `child_key` tracking on `rimsky_node_runs`.
+  sub-claims at runtime; each work unit gets its own run, tracked
+  with parent and child-key links through the per-run record.
 - **Assets and content lineage.** Durable-lifetime claims surface as
   assets via `/instances/{id}/assets/*`; lineage records
   (`leaf_run`, `claim_terminal`) track computational and
@@ -179,7 +179,7 @@ and declined:
 - **Bundled knowledge store** (cross-instance LLM memory as a
   claim-producer pattern). Pre-v1 bundling would lock in opinions
   about entry shape, scope conventions, supersession semantics, and
-  substrate choices before any real consumer has stressed them. The
+  store-backend choices before any real consumer has stressed them. The
   architecture supports custom claim producers; consumers should
   develop their own approach.
 - **Lifecycle-subscriber-as-agent worked example** (autonomous agent

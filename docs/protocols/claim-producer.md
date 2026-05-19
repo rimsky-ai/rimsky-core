@@ -2,7 +2,7 @@
 
 This guide is for developers implementing a claim producer — in any language — and wiring it into a Rimsky deployment. The wire contract lives at `protocols/proto/v1/claim_producer.proto`; this guide is the practical companion.
 
-<!-- @source: concepts/claim-producer.md -->
+<!-- @source: ../../.ok-planner/design/concepts/claim-producer.md -->
 > The protocol-level term for a service that produces claim handles for Rimsky's lock-and-claim primitives. Implements five methods (`Open`, `Commit`, `Abandon`, `Release`, `Capabilities`). Out-of-process; rimsky talks to claim producers over gRPC.
 
 A note on terminology: the protocol-level term is **claim producer** (the service implementing `ClaimProducer` over gRPC). The colloquial term **store** survives at the bundled-services layer for data-backed reference impls (filesystem store, postgres store, stub store).
@@ -49,7 +49,7 @@ In practice: if your producer supports both `staged_async` and `sync` modes, it 
 
 ### `Open(OpenRequest) → OpenResponse`
 
-<!-- @source: concepts/claim.md -->
+<!-- @source: ../../.ok-planner/design/concepts/claim.md -->
 > A node-declared assertion that the node will read or read-write a producer-defined slice of state for the duration of its run. Claims are acquired before the node's executor runs and resolved at terminal. Each claim binds an alias, an intent (`r` or `rw`), a producer name, and a selector.
 
 Inside `OpenRequest`:
@@ -113,7 +113,7 @@ For held claims, Rimsky fires exactly one automatic resolution at holding-subgra
 
 ## 6. Inertness — what Rimsky won't do with claim content
 
-<!-- @source: concepts/claim-handle.md -->
+<!-- @source: ../../.ok-planner/design/concepts/claim-handle.md -->
 > The persistent row asserting "holder H has acquired scope S for purpose P." Implementation of an acquired claim. Carries the rimsky-generated `claim_id`, holder identity, scope bytes, producer-returned address and payload, the realized write semantics, and a held flag.
 
 Address, payload, and scope from `OpenResponse.acquired` are opaque to Rimsky. Rimsky reads claim content by named-field path only at substitution-leaf extraction; it never logs, validates, transforms, normalizes, decrypts, hashes, indexes, pattern-matches, attaches to traces, or includes the bytes in errors.
@@ -147,8 +147,8 @@ Each is a standalone Go binary plus a Dockerfile and config example.
 
 ## See also
 
-- [`../concepts/claim-producer.md`](../concepts/claim-producer.md)
-- [`../concepts/claim.md`](../concepts/claim.md)
-- [`../concepts/claim-handle.md`](../concepts/claim-handle.md)
-- [`../concepts/scope.md`](../concepts/scope.md)
-- [`../concepts/write-semantics.md`](../concepts/write-semantics.md)
+- [`../../.ok-planner/design/concepts/claim-producer.md`](../../.ok-planner/design/concepts/claim-producer.md)
+- [`../../.ok-planner/design/concepts/claim.md`](../../.ok-planner/design/concepts/claim.md)
+- [`../../.ok-planner/design/concepts/claim-handle.md`](../../.ok-planner/design/concepts/claim-handle.md)
+- [`../../.ok-planner/design/concepts/scope.md`](../../.ok-planner/design/concepts/scope.md)
+- [`../../.ok-planner/design/concepts/write-semantics.md`](../../.ok-planner/design/concepts/write-semantics.md)
