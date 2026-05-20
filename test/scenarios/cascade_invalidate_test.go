@@ -58,12 +58,13 @@ func TestCascadeInvalidate(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Substitution always yields a stringified value,
-						// so source-driven fields are typed as string
-						// regardless of the upstream's storage type. The
-						// {{nodes.a.attribute.a}} ref auto-subscribes b to
-						// a's `attribute` topic.
-						"a": map[string]any{"type": "string", "source": "{{nodes.a.attribute.a}}"},
+						// Post-spec-2026-05-19 Item 3: whole-directive
+						// substitution lifts the JSON value at its native
+						// type. The upstream a's `a` field is an integer,
+						// so the receiver-side schema declares integer too.
+						// The {{nodes.a.attribute.a}} ref auto-subscribes b
+						// to a's `attribute` topic.
+						"a": map[string]any{"type": "integer", "source": "{{nodes.a.attribute.a}}"},
 						// Written by b's executor.
 						"b": map[string]any{"type": "integer"},
 					},
@@ -74,7 +75,9 @@ func TestCascadeInvalidate(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"b": map[string]any{"type": "string", "source": "{{nodes.b.attribute.b}}"},
+						// Post-spec-2026-05-19 Item 3: receiver schema
+						// declares the upstream's native type (integer).
+						"b": map[string]any{"type": "integer", "source": "{{nodes.b.attribute.b}}"},
 						"c": map[string]any{"type": "integer"},
 					},
 				}),

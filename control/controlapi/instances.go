@@ -46,10 +46,47 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/frame"
 	nodepkg "github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/runtime"
 )
+
+// resolveNodeTags resolves a node's tag strings against the instance's
+// params, returning the resolved tag list or a typed error citing which
+// tag / which directive failed. Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// §Item 4 — substitution scope is params-only at materialization time.
+//
+// Composes with Item 3's whole-directive value lift:
+//
+//   - Embedded mode (`"domain:{{params.domain}}"`) — stringify-and-concat.
+//   - Whole-directive mode (`"{{params.region}}"`) — lift via
+//     SubstituteValue; the lifted JSON value MUST be a string. Non-string
+//     lifts fail materialization with a typed error citing the tag and
+//     the resolved Go type.
+//
+// @concept: node
+func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, error) {
+	if len(rawTags) == 0 {
+		return nil, nil
+	}
+	ctx := attributes.ResolveContext{Params: paramsBytes}
+	out := make([]string, 0, len(rawTags))
+	for _, raw := range rawTags {
+		val, err := attributes.SubstituteValue(raw, ctx)
+		if err != nil {
+			return nil, fmt.Errorf("tag %q: %w", raw, err)
+		}
+		switch v := val.(type) {
+		case string:
+			out = append(out, v)
+		default:
+			return nil, fmt.Errorf("tag %q resolved to non-string value (Go type %T); tag values must be strings", raw, val)
+		}
+	}
+	return out, nil
+}
 
 type createInstanceRequest struct {
 	Template    string         `json:"template"` // tag or hash; per spec §2.2.
@@ -676,6 +713,19 @@ func provisionInstanceTx(
 		nodeIDs[def.Type] = uuid.New()
 	}
 
+	// Marshal params once for the materialization-time tag substitution
+	// pass (Item 4). Params-only ResolveContext: other substitution
+	// kinds aren't available at instance-creation time. Failures here
+	// surface as 400-class errors to the caller. See `resolveNodeTags`.
+	var paramsBytes json.RawMessage
+	if args.Params != nil {
+		b, merr := json.Marshal(args.Params)
+		if merr != nil {
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: marshal params for tag substitution: %w", merr)
+		}
+		paramsBytes = b
+	}
+
 	// Phase 1: create nodes (Create defaults to 'fresh' per the baseline
 	// schema + spec §3.1) + register schedules. Phase 2 enqueues an initial frame
 	// for each root.
@@ -699,6 +749,14 @@ func provisionInstanceTx(
 			}
 		}
 
+		// Resolve operator-facing tags against instance params (Item 4).
+		// Failures here are fatal at instance creation, matching the
+		// dispatch-time discipline for required-attribute substitution.
+		resolvedTags, terr := resolveNodeTags(def.Tags, paramsBytes)
+		if terr != nil {
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: resolve tags on node %q: %w", def.Type, terr)
+		}
+
 		// Create node row. Per the 2026-05-15 data-platform-extensions
 		// plan D7/E16/B10 the per-node `schedule:` field and the
 		// rimsky_schedules table are retired; the bundled `sensor-cron`
@@ -708,6 +766,7 @@ func provisionInstanceTx(
 			InstanceID: inst.ID,
 			NodeType:   def.Type,
 			Executor:   def.Executor,
+			Tags:       resolvedTags,
 		}, tx); err != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: create node %q: %w", def.Type, err)
 		}

@@ -92,9 +92,10 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | Producer | Path | Purpose |
 | --- | --- | --- |
 | filesystem | `stores/filesystem/` | Concrete-paths producer; opt-in `LifecycleSubscriber`. |
-| postgres | `stores/postgres/` | Regional-access + items-queue producer; opt-in `LifecycleSubscriber`. |
+| postgres | `stores/postgres/` | Regional-access + items-queue producer; opt-in `LifecycleSubscriber`; opt-in `Executor` (verifier role via `enable_executor: true`). |
 | stub | `stores/stub/` | In-memory test fixture. |
 | common | `stores/common/` | Shared helpers across the reference impls. |
+| shared/sql-checks | `stores/shared/sql-checks/` | Apache-licensed declarative SQL-check compiler (no_nulls, row_count_absolute, pk_unique) for verifier-role SQL stores. |
 
 ### Executors (`executors/`)
 
@@ -131,7 +132,7 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 
 | Feature | Path | Depends on | Purpose |
 | --- | --- | --- | --- |
-| conformance | `conformance/` | runtime, protocols, foundation | Shared scenario package (10+ scenarios under `conformance/scenarios/`) imported by the conformance binaries under `cmd/rimsky-*-conformance/`; runs probe-driven invariant checks against external `Executor` / `ClaimProducer` / `Publisher` / `DataProcessing` / `Validation` / `BlobBackend` impls. |
+| conformance | `conformance/` | runtime, protocols, foundation | Shared scenario package (10+ scenarios under `conformance/scenarios/`) imported by the conformance binaries under `cmd/rimsky-*-conformance/`; runs probe-driven invariant checks against external `Executor` / `ClaimProducer` / `Publisher` / `DataProcessing` / `Validation` / `BlobBackend` impls. Includes `conformance/claimproducer/` — the importable `ClaimProducer` conformance suite (`Run`), shared with the `cmd/rimsky-claim-producer-conformance` binary and reused by scenario tests that want to assert a producer endpoint passes the standard suite. |
 | internal/pgtest | `internal/pgtest/` | (test-only, testcontainers) | Root-module pgtest fixture (parallel to `foundation/internal/pgtest/`) used by graph / runtime / control / subscribers tests; spins up a per-test Postgres container with rimsky migrations applied. |
 
 ## Reference impls (examples)

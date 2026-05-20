@@ -433,6 +433,25 @@ func lookupTemplate(ctx context.Context, args RunArgs, tx persistence.Tx, inst *
 	return &tmpl.Spec
 }
 
+// templateUserdataDefaultsFor returns the already-routed by-executor
+// userdata fragment from the bound template's
+// `Defaults.Userdata.ByExecutor[executor]`. Returns nil when the
+// template, defaults, or per-executor entry is absent. The runtime
+// path threads this through `acquisition.TemplateUserdataDefaults`
+// onto `applyUserdataOverrides` as the bottom merge layer.
+//
+// @concept: userdata
+func templateUserdataDefaultsFor(tmpl *node.TemplateSpec, executor string) map[string]any {
+	if tmpl == nil || tmpl.Defaults == nil || tmpl.Defaults.Userdata == nil {
+		return nil
+	}
+	frag, ok := tmpl.Defaults.Userdata.ByExecutor[executor]
+	if !ok {
+		return nil
+	}
+	return frag
+}
+
 // lookupNodeDef returns the per-node-type def from a template, or nil.
 func lookupNodeDef(tmpl *node.TemplateSpec, nodeType string) *node.TemplateNodeDef {
 	if tmpl == nil {

@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -69,16 +70,135 @@ func reportError(err error) int {
 // The control-api accepts JSON-shaped bodies; YAML is the on-disk form.
 // yaml.v3 honors the json: tags' lowercase-snake-case keys via its own
 // yaml: tags (already declared on the spec types).
+//
+// Before typed-spec decode, the YAML tree is walked once and every
+// occurrence of `{source_file: <relative-path>}` is replaced with the
+// referenced file's text content. Resolution is single-pass: inlined
+// content is not re-scanned for further `source_file:` references.
+// Path resolution is relative to the spec file's directory; absolute
+// paths and paths that escape that directory are rejected with
+// exit-code-2 grade errors. Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 2.
+//
+// @concept: rimsky (CLI-side source_file: resolution)
 func readSpecFile(path string) (node.TemplateSpec, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return node.TemplateSpec{}, err
 	}
+	// Decode to generic structure first so we can resolve source_file:
+	// references before typed-spec decode.
+	var generic any
+	if err := yaml.Unmarshal(raw, &generic); err != nil {
+		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	baseDir := filepath.Dir(path)
+	resolved, err := resolveSourceFileRefs(generic, baseDir)
+	if err != nil {
+		return node.TemplateSpec{}, fmt.Errorf("resolve source_file in %s: %w", path, err)
+	}
+	resolvedBytes, err := yaml.Marshal(resolved)
+	if err != nil {
+		return node.TemplateSpec{}, fmt.Errorf("marshal resolved %s: %w", path, err)
+	}
 	var spec node.TemplateSpec
-	if err := yaml.Unmarshal(raw, &spec); err != nil {
+	if err := yaml.Unmarshal(resolvedBytes, &spec); err != nil {
 		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return spec, nil
+}
+
+// resolveSourceFileRefs walks a yaml.Unmarshal-shaped tree (typed as
+// `any`, possibly containing `map[string]any` or `[]any`) and replaces
+// every object of the exact shape `{source_file: "<path>"}` with the
+// referenced file's text content as a plain `string`. Path resolution
+// is relative to baseDir; resolved paths that escape baseDir (via `..`)
+// or that are absolute are rejected. Returns the transformed tree.
+//
+// Single-pass discipline: a file's contents are inlined as plain text
+// and are NOT re-walked for further `source_file:` references; this
+// avoids indirection chains and cycle-detection complexity.
+//
+// The "exact shape" rule: only an object with exactly one entry whose
+// key is `source_file` and whose value is a string qualifies. Objects
+// with additional siblings or non-string `source_file` values are
+// left intact (they may be legitimate userdata fragments).
+//
+// Implementation note: yaml.v3 unmarshals YAML mappings into
+// `map[string]any` and sequences into `[]any`, so those are the only
+// container shapes we walk.
+func resolveSourceFileRefs(node any, baseDir string) (any, error) {
+	switch v := node.(type) {
+	case map[string]any:
+		if len(v) == 1 {
+			if raw, ok := v["source_file"]; ok {
+				if pathStr, isString := raw.(string); isString {
+					return readSourceFile(pathStr, baseDir)
+				}
+			}
+		}
+		out := make(map[string]any, len(v))
+		for k, child := range v {
+			resolved, err := resolveSourceFileRefs(child, baseDir)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = resolved
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			resolved, err := resolveSourceFileRefs(child, baseDir)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = resolved
+		}
+		return out, nil
+	default:
+		// scalars (string, int, float, bool, nil) pass through unchanged.
+		return v, nil
+	}
+}
+
+// readSourceFile resolves `inputPath` relative to baseDir, rejects
+// absolute paths and paths that escape baseDir, and returns the file's
+// text content as a string. Failures here surface to the CLI as
+// exit-code-2 (usage / local-validation) errors via readSpecFile's
+// wrapper.
+func readSourceFile(inputPath, baseDir string) (string, error) {
+	if inputPath == "" {
+		return "", fmt.Errorf("source_file: path is empty")
+	}
+	if filepath.IsAbs(inputPath) {
+		return "", fmt.Errorf("source_file: %q is absolute; only template-relative paths are allowed", inputPath)
+	}
+	cleaned := filepath.Clean(filepath.Join(baseDir, inputPath))
+	// Use absolute baseDir for the containment check so that both sides
+	// of filepath.Rel are anchored the same way regardless of the
+	// caller's cwd.
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("source_file: resolve base dir: %w", err)
+	}
+	absCleaned, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("source_file: resolve %q: %w", inputPath, err)
+	}
+	rel, err := filepath.Rel(absBase, absCleaned)
+	if err != nil {
+		return "", fmt.Errorf("source_file: %q escapes the template directory: %w", inputPath, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("source_file: %q escapes the template directory", inputPath)
+	}
+	data, err := os.ReadFile(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("source_file: read %q: %w", inputPath, err)
+	}
+	return string(data), nil
 }
 
 // ReservedTagPrefix is the prefix that compose owns. CLI verbs that

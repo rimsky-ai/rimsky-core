@@ -82,6 +82,9 @@ func (noopNodes) ListByInstance(context.Context, shared.UUID, persistence.Tx) ([
 func (noopNodes) ListByInstancePaged(context.Context, shared.UUID, persistence.ListPagination, persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
 	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
 }
+func (noopNodes) ListByInstancePagedFiltered(context.Context, shared.UUID, persistence.ListPagination, persistence.NodeListFilter, persistence.Tx) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return persistence.PaginatedListResult[persistence.NodeRow]{}, nil
+}
 func (noopNodes) ListReadyForDispatch(context.Context, persistence.Tx) ([]persistence.NodeRow, error) {
 	return nil, nil
 }

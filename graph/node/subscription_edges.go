@@ -214,19 +214,26 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 
 // parseSubstitutionDirective parses one directive body (the text between
 // `{{...}}`) and returns a substitutionRef when the form is
-// `nodes.<X>.attribute.<Y>...` or `nodes.<X>.event.<Y>...`. Returns
+// `nodes.<X>.attribute(.<Y>?…)` or `nodes.<X>.event.<Y>(.…)?`. Returns
 // ok=false for any other shape (claim/params/legacy/etc.).
 //
-// The floor for both topic kinds is `len(parts) >= 4` — i.e. the body
-// must name the sender, the topic kind, AND the attribute/event name.
-// Matches the validator's checkAttributeSource floor in
-// `graph/node/template_validator.go::checkAttributeSource`; a partial
-// directive like `nodes.X.attribute` (no field) is rejected by both
-// surfaces so the inverse-edge map never carries a zero-Name auto-
-// subscription that won't match at the cascade walk.
+// Bare-form pulls (`nodes.<X>.attribute` and `nodes.<X>.event.<name>`
+// with no trailing field path) per spec §Item 3 "Empty trailing path"
+// produce a substitutionRef with the appropriate Name:
+//
+//   - `nodes.<X>.attribute` → Name="" (whole-attribute pull;
+//     auto-subscribes to ALL attribute changes on the sender — the
+//     cascade walk's Filter.Name is informational only, so a zero
+//     Name still fires on any sender invalidation).
+//   - `nodes.<X>.event.<name>` → Name=<name> (whole-event-payload pull;
+//     same Name discipline as the field-path form).
+//
+// Matches the validator's checkAttributeSource grammar in
+// `graph/node/template_validator.go::checkAttributeSource` so every
+// directive accepted at registration also produces an inverse-edge entry.
 func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	parts := strings.Split(body, ".")
-	if len(parts) < 4 || parts[0] != "nodes" {
+	if len(parts) < 3 || parts[0] != "nodes" {
 		return substitutionRef{}, false
 	}
 	sender := parts[1]
@@ -235,10 +242,20 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	}
 	switch parts[2] {
 	case "attribute":
+		// Bare form: nodes.<X>.attribute → Name="" (whole-attribute pull).
+		// Field-path form: nodes.<X>.attribute.<field>... → Name=<field>.
+		name := ""
+		if len(parts) >= 4 {
+			name = parts[3]
+		}
 		return substitutionRef{
-			SenderNodeType: sender, TopicKind: "attribute", Name: parts[3],
+			SenderNodeType: sender, TopicKind: "attribute", Name: name,
 		}, true
 	case "event":
+		// Event name is required (nodes.<X>.event.<name>[.<path>…]).
+		if len(parts) < 4 || parts[3] == "" {
+			return substitutionRef{}, false
+		}
 		return substitutionRef{
 			SenderNodeType: sender, TopicKind: "event", Name: parts[3],
 		}, true

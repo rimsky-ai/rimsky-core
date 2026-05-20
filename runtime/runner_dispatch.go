@@ -520,7 +520,14 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 		if source == "" {
 			continue
 		}
-		val, err := attributes.Substitute(source, rctx)
+		// Use SubstituteValue so the resolved JSON value lands in the
+		// attribute data map at its native type (object / array / number
+		// / bool / string). The receiver-side JSON Schema validation runs
+		// over the typed value; pre-spec stringified coercion is gone.
+		// Per spec
+		// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+		// Item 3.
+		val, err := attributes.SubstituteValue(source, rctx)
 		if err != nil {
 			if attributes.IsMissingSource(err) {
 				if _, isReq := required[name]; isReq {
@@ -630,16 +637,19 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	acq := dctx.Acquired
 	def := acq.NodeDef
 
-	// Build per-node userdata, then deep-merge per-instance overrides on
-	// top in order of increasing specificity:
-	//   template userdata → by_executor[node's executor] → by_node[node's name]
+	// Build per-node userdata, then deep-merge in four layers of
+	// increasing specificity:
+	//   template defaults.userdata.by_executor[<executor>]
+	//     → node.userdata
+	//     → instance.userdata_overrides.by_executor[<executor>]
+	//     → instance.userdata_overrides.by_node[<node>]
 	// Per @blessed-invariant 11 the merge is shape-blind and rimsky never
 	// inspects the resulting fragment values.
 	var baseUserdata map[string]any
 	if def != nil && len(def.Userdata) > 0 {
 		baseUserdata = def.Userdata
 	}
-	merged := applyUserdataOverrides(baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
+	merged := applyUserdataOverrides(acq.TemplateUserdataDefaults, baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
 	// Snapshot the merged userdata on the acquisition so the lineage
 	// writer can hash the exact shape that shipped to the executor (not
 	// the pre-merge override blob). See `acquisition.MergedUserdata`

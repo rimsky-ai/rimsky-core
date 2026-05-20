@@ -282,15 +282,15 @@ func scanAPIKeys(rows *sql.Rows) ([]persistence.APIKey, error) {
 
 func scanAPIKeyRow(rows *sql.Rows) (persistence.APIKey, error) {
 	var (
-		k                 persistence.APIKey
-		idStr             string
-		permsStr          string
-		createdAtStr      string
-		createdByStr      sql.NullString
-		lastUsedAtStr     sql.NullString
-		expiresAtStr      sql.NullString
-		revokeAtStr       sql.NullString
-		revokedAtStr      sql.NullString
+		k             persistence.APIKey
+		idStr         string
+		permsStr      string
+		createdAtStr  string
+		createdByStr  sql.NullString
+		lastUsedAtStr sql.NullString
+		expiresAtStr  sql.NullString
+		revokeAtStr   sql.NullString
+		revokedAtStr  sql.NullString
 	)
 	if err := rows.Scan(
 		&idStr, &k.KeyHash, &k.Name, &permsStr, &createdAtStr,

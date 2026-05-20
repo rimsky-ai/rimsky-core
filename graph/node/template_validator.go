@@ -137,6 +137,13 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		return res
 	}
 
+	// Template-author defaults validation runs after canonicalization so
+	// it sees the flattened Nodes list and can cross-check each
+	// `defaults.userdata.by_executor.<name>` routing key against the
+	// template's actual executor names. Per @blessed-invariant 11 only
+	// routing keys are inspected; fragment values are never read.
+	validateDefaults(spec, &res)
+
 	declared := make(map[string]int, len(spec.Nodes))
 	for i, n := range spec.Nodes {
 		if strings.TrimSpace(n.Type) == "" {
@@ -172,6 +179,9 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		// D3 + D4 — data-platform-extensions additions.
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
+		// 2026-05-19 Item 4: operator-facing tags admit only
+		// `{{params.<key>}}` substitution at materialization time.
+		validateTagsAtRegistration(n, base, spec, &res)
 	}
 
 	// Publishers block validation. The persisted column is
@@ -278,6 +288,37 @@ func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 			Msg: fmt.Sprintf("frame_timeout_ms = %d is below hard floor %d",
 				spec.FrameTimeoutMs, FrameTimeoutMinMs),
 		})
+	}
+}
+
+// validateDefaults inspects only the routing keys under
+// `spec.Defaults.Userdata.ByExecutor`, rejecting entries whose executor
+// name does not match any node's `Executor`. The fragment values are
+// never inspected (preserves `@blessed-invariant 11`). Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 1.
+//
+// @concept: userdata
+func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
+	if spec.Defaults == nil || spec.Defaults.Userdata == nil {
+		return
+	}
+	if len(spec.Defaults.Userdata.ByExecutor) == 0 {
+		return
+	}
+	known := make(map[string]struct{}, len(spec.Nodes))
+	for _, n := range spec.Nodes {
+		if n.Executor != "" {
+			known[n.Executor] = struct{}{}
+		}
+	}
+	for execName := range spec.Defaults.Userdata.ByExecutor {
+		if _, ok := known[execName]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("defaults.userdata.by_executor[%q]", execName),
+				Msg:  fmt.Sprintf("executor name %q does not match any node's executor", execName),
+			})
+		}
 	}
 }
 
@@ -846,11 +887,14 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	switch kind {
 	case "claim":
 		// Valid forms: claim.<alias>.address, claim.<alias>.scope,
-		// claim.<alias>.payload.<field-path>.
+		// claim.<alias>.payload(.<field-path>?). The bare-form
+		// `claim.<alias>.payload` (no trailing field path) resolves to
+		// the whole payload object per spec §Item 3 "Empty trailing
+		// path".
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|scope|payload.<field>}", body),
+				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|scope|payload[.<field>]}", body),
 			})
 			return
 		}
@@ -864,10 +908,13 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 				})
 			}
 		case "payload":
-			if len(parts) < 3 || parts[2] == "" {
+			// Bare form `claim.<alias>.payload` is admitted (whole-
+			// payload pull). A trailing path is also fine; an explicit
+			// empty trailing segment (`...payload.`) is rejected.
+			if len(parts) > 2 && parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
-					Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.payload.<field>", body),
+					Msg:  fmt.Sprintf("claim directive %q has an empty trailing segment", body),
 				})
 			}
 		default:
@@ -894,18 +941,31 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 		}
 	case "nodes":
 		// Post-2026-05-14 substitution forms:
-		//   nodes.<node>.attribute.<field>...      (replaces deps.X.Y)
-		//   nodes.<emitter>.event.<event_name>.<json-path>
-		if len(parts) < 3 || parts[0] == "" || parts[2] == "" {
+		//   nodes.<node>.attribute(.<field>?…)     (replaces deps.X.Y)
+		//   nodes.<emitter>.event.<event_name>(.<json-path>?)
+		//
+		// Bare forms `nodes.<node>.attribute` and `nodes.<node>.event.<name>`
+		// (no trailing field path) resolve to the whole attribute object /
+		// whole event payload per spec §Item 3 "Empty trailing path".
+		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.{attribute|event}.<...>", body),
+				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.{attribute|event}[.<...>]", body),
 			})
 			return
 		}
 		switch parts[1] {
 		case "attribute":
-			// nodes.<node>.attribute.<field>...
+			// nodes.<node>.attribute(.<field>?…)
+			// An explicit empty trailing segment (`...attribute.`) is
+			// rejected; a missing trailing path is the bare form.
+			if len(parts) > 2 && parts[2] == "" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("nodes directive %q has an empty trailing segment", body),
+				})
+				return
+			}
 			if _, ok := declared[parts[0]]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -913,10 +973,20 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 				})
 			}
 		case "event":
-			if len(parts) < 4 {
+			// nodes.<node>.event.<name>(.<path>?…)
+			// Event name is required; a missing field path is the bare
+			// form (resolves to the whole event payload).
+			if len(parts) < 3 || parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
-					Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.event.<name>.<path>", body),
+					Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.event.<name>[.<path>]", body),
+				})
+				return
+			}
+			if len(parts) > 3 && parts[3] == "" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("nodes directive %q has an empty trailing segment", body),
 				})
 				return
 			}
@@ -933,11 +1003,27 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 			})
 		}
 	case "trigger":
-		// trigger.message.payload.<field-path>
-		if len(parts) < 3 || parts[0] != "message" || parts[1] != "payload" || parts[2] == "" {
+		// trigger.message.payload(.<field-path>?). The bare form
+		// `trigger.message.payload` (no trailing field path) resolves to
+		// the whole trigger message payload per spec §Item 3.
+		if len(parts) < 2 || parts[0] != "message" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload.<field>", body),
+				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload[.<field>]", body),
+			})
+			return
+		}
+		if len(parts) < 2 || parts[1] != "payload" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("trigger directive %q must be trigger.message.payload[.<field>]", body),
+			})
+			return
+		}
+		if len(parts) > 2 && parts[2] == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("trigger directive %q has an empty trailing segment", body),
 			})
 		}
 	case "child":
@@ -993,7 +1079,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload.<f>}, params.<k>, nodes.<n>.attribute.<f>, nodes.<n>.event.<name>.<path>, trigger.message.payload.<f>, or child.partition_key)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], or child.partition_key)", body),
 			})
 		}
 	}
@@ -1088,6 +1174,71 @@ func validateUserdataAgainstSchema(n TemplateNodeDef, base string, hooks Registr
 // validator's call-sites uniform with other "parse and report" helpers.
 func parseDurationStrict(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
+}
+
+// validateTagsAtRegistration walks every tag string on a node and
+// enforces the materialization-time substitution rules:
+//
+//   - Only `{{params.<key>}}` directives are admitted (no other source
+//     kinds resolve at instance creation).
+//   - The `<key>` MUST be declared in TemplateSpec.ParamsSchema.properties.
+//
+// Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// §Item 4 — Validation at template registration.
+//
+// @concept: node
+func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSpec, res *ValidationResult) {
+	if len(n.Tags) == 0 {
+		return
+	}
+	props := paramsSchemaProperties(spec)
+	for i, tag := range n.Tags {
+		path := fmt.Sprintf("%s.tags[%d]", base, i)
+		matches := dispatchDirectiveRe.FindAllStringSubmatch(tag, -1)
+		for _, m := range matches {
+			inside := strings.TrimSpace(m[1])
+			body := directiveBodyRe.FindStringSubmatch(inside)
+			if body == nil {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("tag directive {{%s}} is malformed (expected `params.<key>`)", inside),
+				})
+				continue
+			}
+			kind, rest := body[1], body[2]
+			if kind != "params" {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("tag directive {{%s}} uses unsupported kind %q at materialization time (tags accept only params.<key>)", inside, kind),
+				})
+				continue
+			}
+			// Take the top-level params key only — params.<key>.<sub>...
+			// resolves the same root key.
+			topKey := rest
+			if dot := strings.Index(rest, "."); dot >= 0 {
+				topKey = rest[:dot]
+			}
+			if _, ok := props[topKey]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("tag references undeclared params key %q (declare it under params_schema.properties)", topKey),
+				})
+			}
+		}
+	}
+}
+
+// paramsSchemaProperties returns the `properties` map of the template's
+// `params_schema` as `map[string]any` (the JSON Schema canonical shape).
+// Returns nil when params_schema is absent or has no properties.
+func paramsSchemaProperties(spec *TemplateSpec) map[string]any {
+	if spec == nil || spec.ParamsSchema == nil {
+		return nil
+	}
+	props, _ := spec.ParamsSchema["properties"].(map[string]any)
+	return props
 }
 
 // validatePublishers checks the top-level `publishers:` block. Every

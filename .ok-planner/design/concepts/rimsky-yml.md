@@ -13,7 +13,7 @@ references:
 
 ## What it is
 
-A single YAML file (default `/etc/rimsky/rimsky.yml`, env-var override `RIMSKY_CONFIG`) read by all three runtime processes plus the migrate step. Declares: `persistence:` (driver + blob sub-block + retention), `named_locks:`, `claim_producers:`, `executors:`. Each service entry has an optional `protocols: [claim_producer, lifecycle_subscriber]` list (default `[claim_producer]`) declaring which rimsky protocols the binary speaks. Loader is `code:control/config/`.
+A single YAML file (default `/etc/rimsky/rimsky.yml`, env-var override `RIMSKY_CONFIG`) read by all three runtime processes plus the migrate step. Declares: `persistence:` (driver + blob sub-block + retention), `named_locks:`, `claim_producers:`, `executors:`, `publishers:`. Each service entry has an optional `protocols: [claim_producer, lifecycle_subscriber]` list (default `[claim_producer]`) declaring which rimsky protocols the binary speaks. Loader is `code:control/config/`.
 
 ## Purpose
 
@@ -45,4 +45,5 @@ Pre-`spec:2026-05-12-nomenclature-resolution`, the YAML accepted `stores:` as an
 
 - `stores:` alias retired (Group B.6 / C.1); `write_semantics:` single-value shortcut retired (Group C.1); `write_semantics_envelope` → `write_semantics_allowed` (Group C.2); peer → service vocabulary swept (Group G). Per `spec:2026-05-12-nomenclature-resolution`. Resolves `tension:_resolved/yaml-stores-alias` and `tension:_resolved/yaml-write-semantics-alias`.
 - [2026-05-15] Clarifying addition: rimsky.yml carries no auth-related keys; auth state is data-derived (see `concept:anonymous-mode`). Added by `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
+- 2026-05-19 — A single service binary that plays multiple protocol roles (e.g. `stores/postgres/` as both `concept:claim-producer` and `concept:executor`) is registered under each role's namespace in this file. Reusing the same logical name across `claim_producers:` and `executors:` blocks for one binary is the canonical pattern; the entries' YAML shapes differ per the existing per-namespace conventions (URL-scheme endpoint for claim-producers, `transport:` + bare host:port for executors). Per-namespace `protocols:` enumerations are unchanged by this addition: `claim_producers:` entries continue to advertise `[claim_producer]` (plus optional mix-ins); `executors:` entries advertise `[executor]`. The new pattern is "same binary registered in both namespaces," not "new protocol values in either namespace." Per spec 2026-05-19-multi-instance-template-ergonomics-design.
 

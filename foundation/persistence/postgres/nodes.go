@@ -45,7 +45,7 @@ const nodeCols = `
   COALESCE(r.state, 'fresh') AS state, r.last_outcome,
   n.current_error_class, n.retry_counter, n.action_index,
   r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
-  n.frame_id, n.created_at, n.updated_at
+  n.frame_id, n.tags, n.created_at, n.updated_at
 `
 
 // nodeSelect is the FROM + JOIN clause that pairs with nodeCols. The
@@ -88,12 +88,21 @@ LEFT JOIN LATERAL (
 // nodeCols produces COALESCE(r.state, 'fresh').
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	ex := s.q(tx)
+	// pgx v5 maps []string transparently to TEXT[]; an empty slice (or
+	// nil) lands as an empty array via the column default. Pass an empty
+	// slice explicitly so the value is owned by the caller (the column
+	// default would only fire if we omitted the column entirely).
+	tags := in.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	if _, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor
-		 ) VALUES ($1, $2, $3, $4)`,
+		   id, instance_id, node_type, executor, tags
+		 ) VALUES ($1, $2, $3, $4, $5)`,
 		in.ID, in.InstanceID, in.NodeType,
 		nullableString(in.Executor),
+		tags,
 	); err != nil {
 		return persistence.NodeRow{}, err
 	}
@@ -140,6 +149,21 @@ func (s *nodesImpl) ListByInstancePaged(
 	pag persistence.ListPagination,
 	tx persistence.Tx,
 ) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return s.ListByInstancePagedFiltered(ctx, instanceID, pag, persistence.NodeListFilter{}, tx)
+}
+
+// ListByInstancePagedFiltered narrows the page by an optional
+// NodeListFilter. Empty filter is identical to ListByInstancePaged.
+// Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// §Item 4 (single-value tag exact-match; index-supported on postgres).
+func (s *nodesImpl) ListByInstancePagedFiltered(
+	ctx context.Context,
+	instanceID foundationshared.UUID,
+	pag persistence.ListPagination,
+	filter persistence.NodeListFilter,
+	tx persistence.Tx,
+) (persistence.PaginatedListResult[persistence.NodeRow], error) {
 	ex := s.q(tx)
 	limit := pag.Limit
 	if limit <= 0 {
@@ -153,6 +177,8 @@ func (s *nodesImpl) ListByInstancePaged(
 		}
 		cursor = &u
 	}
+	// `tag = '' OR <tag> = ANY(n.tags)` — when no filter is set, the
+	// first disjunct admits every row.
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		 WHERE n.instance_id = $1
@@ -163,9 +189,10 @@ func (s *nodesImpl) ListByInstancePaged(
 		       $2::uuid
 		     )
 		   )
+		   AND ($4 = '' OR $4 = ANY(n.tags))
 		 ORDER BY n.created_at ASC, n.id ASC
 		 LIMIT $3`,
-		instanceID, cursor, limit,
+		instanceID, cursor, limit, filter.Tag,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.NodeRow]{}, err
@@ -702,12 +729,14 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		lastHB          *time.Time
 		assignedSup     *string
 		frameID         *foundationshared.UUID
+		tags            []string
 	)
 	if err := sc.Scan(
 		&r.ID, &r.InstanceID, &r.NodeType,
 		&executor, &r.State, &lastOutcome,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameID,
+		&tags,
 		&r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return persistence.NodeRow{}, err
@@ -720,6 +749,13 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB
 	r.FrameID = frameID
+	// Normalize NULL-via-default to empty slice (rather than nil) so the
+	// JSON encoding emits `[]` rather than `null` (per the NodeRow
+	// contract: empty array means "no tags", not "unknown").
+	if tags == nil {
+		tags = []string{}
+	}
+	r.Tags = tags
 	return r, nil
 }
 

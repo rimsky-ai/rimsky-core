@@ -15,7 +15,7 @@ affects:
 
 - `walkPath` (`graph/attribute/substitution.go`) — substitution leaf.
 - `stringifyRaw` (`graph/attribute/substitution.go`) — top-level address/scope flattening.
-- `makeStoreHandle` (`foundation/integration/runner_dispatch.go`) — wire-encoding into `google.protobuf.Struct`.
+- `code:runtime/runner_dispatch.go::makeClaimHandle` — wire-encoding into `google.protobuf.Struct`.
 
 The third site is in a different package and is the most easily missed. `graph/attribute/substitution.go` does call it out as "one additional sanctioned exception" but the headline "single introspection site" framing is misleading.
 
@@ -33,4 +33,8 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 - `_discover/2026-05-10-attribute-substitution-grammar.md` Observations bullet 3.
 - `_discover/2026-05-10-opacity-of-userdata-claim-blob.md` Observations bullet 2.
+
+## Notes
+
+- 2026-05-19 — Stale name `makeStoreHandle` updated to `makeClaimHandle` per spec 2026-05-19-multi-instance-template-ergonomics-design. The "single sanctioned introspection site" framing remains drifted from three actual sites; this is a name fix only. Tension stays open.
 

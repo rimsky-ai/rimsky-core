@@ -48,12 +48,12 @@ type ClaimHandleRow struct {
 	// (the active-has-holder CHECK rejects active+NULL); the orphan
 	// reaper, terminal-decision cancel walker, and auto-terminal chain
 	// guard against nil before dereferencing.
-	HolderSupervisorID *string     `json:"holder_supervisor_id,omitempty"`
-	HolderNodeID       shared.UUID `json:"holder_node_id"`
-	ClaimedAt          time.Time       `json:"claimed_at"`
-	LastHeartbeatAt    time.Time       `json:"last_heartbeat_at"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-	FrameID            *shared.UUID    `json:"frame_id,omitempty"`
+	HolderSupervisorID *string      `json:"holder_supervisor_id,omitempty"`
+	HolderNodeID       shared.UUID  `json:"holder_node_id"`
+	ClaimedAt          time.Time    `json:"claimed_at"`
+	LastHeartbeatAt    time.Time    `json:"last_heartbeat_at"`
+	ExpiresAt          time.Time    `json:"expires_at"`
+	FrameID            *shared.UUID `json:"frame_id,omitempty"`
 	// RealizedWriteSemantics is the per-claim semantics returned by
 	// ClaimProducer.Open. Persisted on the lock-holder row so the
 	// scope-conflict check (runtime/runner_acquire.go::

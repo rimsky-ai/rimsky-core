@@ -16,7 +16,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 
 	t.Run("nil overrides returns clone of base", func(t *testing.T) {
 		base := map[string]any{"cli": map[string]any{"k": "v"}}
-		got := applyUserdataOverrides(base, nil, "claude-agent", "area-pass", logger)
+		got := applyUserdataOverrides(nil, base, nil, "claude-agent", "area-pass", logger)
 		if !reflect.DeepEqual(got, base) {
 			t.Fatalf("got %#v want %#v", got, base)
 		}
@@ -43,7 +43,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(base, ov, "claude-agent", "any-node", logger)
+		got := applyUserdataOverrides(nil, base, ov, "claude-agent", "any-node", logger)
 		want := map[string]any{
 			"cli": map[string]any{
 				"silence_timeout_ms": float64(120000),
@@ -74,7 +74,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(base, ov, "claude-agent", "area-pass", logger)
+		got := applyUserdataOverrides(nil, base, ov, "claude-agent", "area-pass", logger)
 		want := map[string]any{
 			"cli": map[string]any{
 				"trace_to":           "/by-node",   // by_node wins
@@ -95,7 +95,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(base, ov, "claude-agent", "any", logger)
+		got := applyUserdataOverrides(nil, base, ov, "claude-agent", "any", logger)
 		if !reflect.DeepEqual(got, base) {
 			t.Fatalf("got %#v want %#v", got, base)
 		}
@@ -110,7 +110,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(base, ov, "claude-agent", "area-pass", logger)
+		got := applyUserdataOverrides(nil, base, ov, "claude-agent", "area-pass", logger)
 		if !reflect.DeepEqual(got, base) {
 			t.Fatalf("got %#v want %#v", got, base)
 		}
@@ -124,7 +124,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(nil, ov, "claude-agent", "area-pass", logger)
+		got := applyUserdataOverrides(nil, nil, ov, "claude-agent", "area-pass", logger)
 		want := map[string]any{
 			"cli": map[string]any{"synthetic_scenario": "exit-clean"},
 		}
@@ -147,7 +147,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				"claude-agent": "non-object",
 			},
 		}
-		got := applyUserdataOverrides(base, ov, "claude-agent", "area-pass", logger)
+		got := applyUserdataOverrides(nil, base, ov, "claude-agent", "area-pass", logger)
 		if !reflect.DeepEqual(got, base) {
 			t.Fatalf("got %#v want %#v (expected base when override fragment is malformed)", got, base)
 		}
@@ -171,7 +171,7 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		got := applyUserdataOverrides(nil, ov, "claude-agent", "area-pass", capLog)
+		got := applyUserdataOverrides(nil, nil, ov, "claude-agent", "area-pass", capLog)
 		// DeepMergeJSON(nil, nil) yields nil, which type-asserts to a
 		// nil map[string]any. Either nil or empty map is acceptable;
 		// the load-bearing assertion is "no Warn".
@@ -194,11 +194,180 @@ func TestApplyUserdataOverrides(t *testing.T) {
 				},
 			},
 		}
-		_ = applyUserdataOverrides(base, ov, "claude-agent", "area-pass", logger)
+		_ = applyUserdataOverrides(nil, base, ov, "claude-agent", "area-pass", logger)
 		// base should still read "base", not the override.
 		cli, ok := base["cli"].(map[string]any)
 		if !ok || cli["k"] != "base" {
 			t.Fatalf("base mutated by applyUserdataOverrides: %#v", base)
+		}
+	})
+}
+
+// TestApplyUserdataOverrides_TemplateDefaultsLayered covers the new
+// fourth merge layer added per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 1. Order of increasing specificity:
+//
+//	templateDefaults
+//	  → node.userdata
+//	  → instance.userdata_overrides.by_executor
+//	  → instance.userdata_overrides.by_node
+func TestApplyUserdataOverrides_TemplateDefaultsLayered(t *testing.T) {
+	logger := shared.SilentLogger{}
+
+	t.Run("templateDefaults applied when base + overrides are nil", func(t *testing.T) {
+		td := map[string]any{"cli": map[string]any{"model": "claude-opus-4-7"}}
+		got := applyUserdataOverrides(td, nil, nil, "claude-agent", "area-pass", logger)
+		want := map[string]any{"cli": map[string]any{"model": "claude-opus-4-7"}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
+		}
+	})
+
+	t.Run("node.userdata beats templateDefaults on key collision", func(t *testing.T) {
+		td := map[string]any{
+			"cli": map[string]any{
+				"model":              "claude-opus-4-7",
+				"handle_rate_limits": true,
+			},
+		}
+		base := map[string]any{
+			"cli": map[string]any{
+				"model": "claude-opus-4-5", // node overrides
+			},
+		}
+		got := applyUserdataOverrides(td, base, nil, "claude-agent", "area-pass", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"model":              "claude-opus-4-5", // node wins
+				"handle_rate_limits": true,              // contributed by templateDefaults
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
+		}
+	})
+
+	t.Run("by_executor override beats templateDefaults", func(t *testing.T) {
+		td := map[string]any{
+			"cli": map[string]any{
+				"model":              "claude-opus-4-7",
+				"handle_rate_limits": true,
+			},
+		}
+		ov := map[string]any{
+			"by_executor": map[string]any{
+				"claude-agent": map[string]any{
+					"cli": map[string]any{"model": "claude-opus-4-8"},
+				},
+			},
+		}
+		got := applyUserdataOverrides(td, nil, ov, "claude-agent", "area-pass", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"model":              "claude-opus-4-8", // operator override wins
+				"handle_rate_limits": true,              // contributed by templateDefaults
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
+		}
+	})
+
+	t.Run("by_node beats by_executor (regression check)", func(t *testing.T) {
+		td := map[string]any{"cli": map[string]any{"model": "claude-opus-4-7"}}
+		ov := map[string]any{
+			"by_executor": map[string]any{
+				"claude-agent": map[string]any{
+					"cli": map[string]any{"model": "claude-opus-4-by-exec"},
+				},
+			},
+			"by_node": map[string]any{
+				"area-pass": map[string]any{
+					"cli": map[string]any{"model": "claude-opus-4-by-node"},
+				},
+			},
+		}
+		got := applyUserdataOverrides(td, nil, ov, "claude-agent", "area-pass", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"model": "claude-opus-4-by-node", // by_node wins
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
+		}
+	})
+
+	t.Run("nested objects deep-merge across all four layers", func(t *testing.T) {
+		td := map[string]any{
+			"cli": map[string]any{
+				"limits": map[string]any{
+					"max_corrections": float64(3),
+					"max_tokens":      float64(1000),
+				},
+			},
+		}
+		base := map[string]any{
+			"cli": map[string]any{
+				"limits": map[string]any{
+					"max_tokens": float64(2000), // node overrides max_tokens
+				},
+			},
+		}
+		ov := map[string]any{
+			"by_executor": map[string]any{
+				"claude-agent": map[string]any{
+					"cli": map[string]any{
+						"limits": map[string]any{
+							"max_corrections": float64(5), // by_executor overrides max_corrections
+						},
+					},
+				},
+			},
+			"by_node": map[string]any{
+				"area-pass": map[string]any{
+					"cli": map[string]any{
+						"limits": map[string]any{
+							"max_tokens": float64(3000), // by_node overrides max_tokens
+						},
+					},
+				},
+			},
+		}
+		got := applyUserdataOverrides(td, base, ov, "claude-agent", "area-pass", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"limits": map[string]any{
+					"max_corrections": float64(5),    // by_executor wins
+					"max_tokens":      float64(3000), // by_node wins
+				},
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
+		}
+	})
+
+	t.Run("arrays at any layer replace", func(t *testing.T) {
+		td := map[string]any{
+			"cli": map[string]any{
+				"allowed_tools": []any{"shell", "search"},
+			},
+		}
+		base := map[string]any{
+			"cli": map[string]any{
+				"allowed_tools": []any{"write"}, // node-level array replaces
+			},
+		}
+		got := applyUserdataOverrides(td, base, nil, "claude-agent", "area-pass", logger)
+		want := map[string]any{
+			"cli": map[string]any{
+				"allowed_tools": []any{"write"}, // replaced, not concatenated
+			},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %#v want %#v", got, want)
 		}
 	})
 }

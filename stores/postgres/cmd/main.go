@@ -65,6 +65,12 @@ type yamlConfig struct {
 	AdminPort            int                       `yaml:"admin_port"`
 	SweepIntervalSeconds int                       `yaml:"sweep_interval_seconds"`
 	EnableLifecycle      bool                      `yaml:"enable_lifecycle"`
+	// EnableExecutor registers the Executor protocol alongside the
+	// store's ClaimProducer so the same binary plays both roles for
+	// the atomic-staging-with-verifier pattern. Per spec
+	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+	// §Item 6.
+	EnableExecutor bool `yaml:"enable_executor"`
 }
 
 type yamlPickPolicy struct {
@@ -156,6 +162,7 @@ func main() {
 		SweepInterval:   sweep,
 		HTTPBridgeURL:   cfg.HTTPBridgeURL,
 		EnableLifecycle: cfg.EnableLifecycle,
+		EnableExecutor:  cfg.EnableExecutor,
 	}, grpcLis, httpLis, adminLis); err != nil {
 		fmt.Fprintf(os.Stderr, "store-postgres: server.Run: %v\n", err)
 		os.Exit(1)

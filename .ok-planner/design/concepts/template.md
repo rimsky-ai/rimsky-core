@@ -38,3 +38,7 @@ The legacy `template_id` term still appears in some prose; `template_hash` is th
 - Pre-v1, hash bytes are not pinned across breaking canonicalization changes (`tensions/pre-v1-hash-instability.md`).
 - The `compose:`-tag prefix reservation is client-side only — see `tensions/compose-prefix-client-side.md`.
 
+## Notes
+
+- 2026-05-19 — `TemplateSpec` gains optional `Defaults *TemplateDefaults` carrying template-author userdata baselines (`defaults.userdata.by_executor.<name>`). `TemplateNodeDef` gains optional `Tags []string` for operator-facing metadata (with materialization-time `{{params.<key>}}` substitution support). Both extensions are additive; hash semantics unchanged. Per spec 2026-05-19-multi-instance-template-ergonomics-design.
+

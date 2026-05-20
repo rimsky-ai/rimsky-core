@@ -9,17 +9,17 @@ import (
 )
 
 // applyUserdataOverrides composes the per-dispatch userdata Struct
-// payload by deep-merging per-instance overrides on top of per-template
-// userdata in order of increasing specificity:
+// payload by deep-merging four layers in order of increasing
+// specificity:
 //
-//	base ← template's per-node userdata (acq.NodeDef.Userdata)
-//	     ← overrides.by_executor[<node's executor>]    (less specific)
-//	     ← overrides.by_node[<node's name>]            (most specific)
+//	templateDefaults ← template.defaults.userdata.by_executor[<executor>]
+//	base             ← node.userdata
+//	by_executor      ← instance.userdata_overrides.by_executor[<executor>]
+//	by_node          ← instance.userdata_overrides.by_node[<node>]
 //
-// Inputs are not mutated. Returns the merged map. The returned map is
-// always a freshly-allocated clone (even on the no-overrides fast path),
-// so callers may mutate it freely without affecting the captured
-// per-template userdata.
+// More specific wins; operator-level overrides win over template-author
+// defaults. Inputs are not mutated. Returns the merged map, always a
+// freshly-allocated clone, so callers may mutate it freely.
 //
 // Wire shape of overrides (validated at instance-create by the
 // control-api):
@@ -29,26 +29,47 @@ import (
 //	  "by_node":     {"<node-name>":     { ...userdata-fragment... }}
 //	}
 //
+// `templateDefaults` is the already-routed by-executor fragment from
+// `TemplateSpec.Defaults.Userdata.ByExecutor[executor]`; the caller does
+// the routing key lookup so this function deals with fragments only.
+//
 // Per @blessed-invariant 11 the merge is shape-blind: rimsky inspects
 // only the routing-keys (`by_executor`, `by_node`, executor-name,
 // node-name) — never the userdata fragments themselves. The fragment
 // values are forwarded to the executor verbatim.
+//
+// @concept: userdata
 func applyUserdataOverrides(
-	base map[string]any,
-	overrides map[string]any,
+	templateDefaults map[string]any, // template.defaults.userdata.by_executor[executor]; may be nil
+	base map[string]any, // node.userdata
+	overrides map[string]any, // instance.userdata_overrides
 	executor string,
 	nodeName string,
 	logger shared.Logger,
 ) map[string]any {
-	if len(overrides) == 0 {
-		// Fast path: no overrides. Clone via DeepMergeJSON(base, nil) so
-		// the returned map is owned and mutable, matching the contract on
-		// the override-applied path (DeepMergeJSON always clones). Cost
-		// is negligible — userdata fragments are small.
-		cloned, _ := shared.DeepMergeJSON(base, nil).(map[string]any)
-		return cloned
+	// Layer 1+2: fold template-author defaults underneath node.userdata.
+	// DeepMergeJSON(nil, x) returns a clone of x, so this works for any
+	// combination of nil/non-nil inputs.
+	var merged any
+	if templateDefaults != nil {
+		merged = shared.DeepMergeJSON(templateDefaults, base)
+	} else {
+		// No template defaults — clone base for the same reason as the
+		// pre-extension fast path.
+		merged = shared.DeepMergeJSON(base, nil)
 	}
-	merged := any(base)
+
+	if len(overrides) == 0 {
+		// No per-instance overrides; the merged-defaults+base layer is
+		// the final result.
+		if m, ok := merged.(map[string]any); ok {
+			return m
+		}
+		// Defensive: both templateDefaults and base were nil — return an
+		// empty owned map (matches the prior contract).
+		return map[string]any{}
+	}
+
 	applied := false
 	if frag, ok := lookupFragment(overrides, "by_executor", executor); ok {
 		merged = shared.DeepMergeJSON(merged, frag)
@@ -61,14 +82,12 @@ func applyUserdataOverrides(
 	if !applied {
 		// Overrides was non-empty, but neither by_executor[<executor>]
 		// nor by_node[<nodeName>] resolved a fragment for this dispatch
-		// (e.g. all entries target a different executor or node). No
-		// merge happened — return a clone of base, matching the no-
-		// overrides fast-path semantics. Without this short-circuit,
-		// `merged` would be `any(base)`; if base is nil, the type
-		// assertion below would fail and erroneously fire the "merge
-		// produced non-map root" Warn.
-		cloned, _ := shared.DeepMergeJSON(base, nil).(map[string]any)
-		return cloned
+		// (e.g. all entries target a different executor or node). The
+		// merged-defaults+base layer is still the final result.
+		if m, ok := merged.(map[string]any); ok {
+			return m
+		}
+		return map[string]any{}
 	}
 	if m, ok := merged.(map[string]any); ok {
 		return m

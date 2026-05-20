@@ -40,6 +40,16 @@ type Config struct {
 	// EnableLifecycle, when true, registers the LifecycleSubscriber
 	// service alongside ClaimProducer.
 	EnableLifecycle bool
+	// EnableExecutor, when true, registers the Executor service
+	// alongside ClaimProducer for the verifier role. The executor
+	// consumes a userdata `checks: [...]` DSL and runs read-only
+	// aggregate SQL against the schema named by
+	// {{claim.<alias>.address}}. Per spec
+	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+	// §Item 6.
+	//
+	// @concept: executor
+	EnableExecutor bool
 }
 
 // Run starts the gRPC + HTTP + admin listeners and the store's
@@ -59,6 +69,9 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	genv1.RegisterClaimProducerServer(grpcSrv, srv)
 	if cfg.EnableLifecycle {
 		genv1.RegisterLifecycleSubscriberServer(grpcSrv, lifecycle.NewServer())
+	}
+	if cfg.EnableExecutor {
+		genv1.RegisterExecutorServer(grpcSrv, NewExecutorServer(st))
 	}
 	obsSrv := srv.RegisterObservability(grpcSrv)
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)

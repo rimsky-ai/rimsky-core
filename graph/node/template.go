@@ -56,6 +56,11 @@ type (
 	FanOutSpec        = spec.FanOutSpec
 	PublisherSpec     = spec.PublisherSpec
 	AggregationPolicy = spec.AggregationPolicy
+
+	// 2026-05-19 multi-instance-template-ergonomics additions:
+	// template-author userdata defaults.
+	TemplateDefaults         = spec.TemplateDefaults
+	TemplateUserdataDefaults = spec.TemplateUserdataDefaults
 )
 
 // Frame-resolution constants re-exported from foundation/spec.

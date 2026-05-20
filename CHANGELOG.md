@@ -2,6 +2,116 @@
 
 ## Unreleased
 
+- **Multi-instance template ergonomics — post-review fixes.**
+  - **Validator accepts bare-form substitution.** `code:graph/node/template_validator.go::checkAttributeSource`
+    now admits the four bare-form pulls Item 3's "Empty trailing path"
+    section names: `{{nodes.<X>.attribute}}`, `{{claim.<alias>.payload}}`,
+    `{{nodes.<X>.event.<name>}}`, `{{trigger.message.payload}}`. The
+    runtime had already shipped these via `code:graph/attribute/substitution.go::SubstituteValue`;
+    registration was rejecting templates the runtime would have happily
+    resolved. `code:graph/node/subscription_edges.go::parseSubstitutionDirective`
+    lowered its 4-segment floor to 3 segments so the bare-attribute
+    pull emits an inverse-edge entry (Name=""), keeping the cascade
+    walk's auto-subscribe in lock-step with the new validator grammar.
+  - **Migration 002 default-value tests.** `table:rimsky_nodes.tags`'s
+    `'{}'::text[]` (postgres) and `'[]'` (sqlite) defaults are now pinned
+    by dedicated migration tests at
+    `code:foundation/persistence/postgres/migrate_test.go::TestMigration002Tags`
+    and `code:foundation/persistence/sqlite/migrate_test.go::TestSQLiteMigration002Tags`,
+    including the postgres GIN index existence.
+  - **Atomic-staging end-to-end scenario.** New
+    `file:test/scenarios/atomic_staging/pg_verifier_commit_abandon_test.go`
+    boots the fused `code:stores/postgres/` (`EnableExecutor: true` plumbed
+    through `code:stores/postgres/testfixture/testfixture.go`), externally
+    seeds staging schemas, drives the verifier role across the wire via
+    `proto:executor.proto::Executor.Execute`, and exercises Commit /
+    Abandon via `proto:claim_producer.proto::ClaimProducer`. Both
+    success and failure paths land.
+  - **Dual-role conformance probe.** `code:test/scenarios/atomic_staging/pg_verifier_conformance_test.go`
+    now invokes the standard `concept:claim-producer` + `concept:executor`
+    conformance suites against the fused store endpoint instead of the
+    prior documentation-only stub. The claim-producer suite was lifted
+    out of `cmd/rimsky-claim-producer-conformance/` into a new importable
+    package `code:conformance/claimproducer/` so tests can call the same
+    code path as the binary; the cmd retains its `RunClaimProducerConformance`
+    entry point as a thin delegating shim.
+  - **`concept:atomic-staging` Notes append tightened.** The 2026-05-19
+    Notes entry now accurately reflects what shipped: the SQL-substrate
+    **verifier role** is demonstrated end-to-end; the **producer-side
+    staging-schema lifecycle** is not yet shipped (the postgres store's
+    `Open` echoes the selector as the address with no schema creation).
+    Operators wanting full SQL-substrate staging-schema discipline must
+    wrap the store or run a sidecar producer.
+  - **`concept:attribute` Notes append: embedded-mode stringify-any.**
+    Documents that `code:graph/attribute/substitution.go::resolveClaim`'s
+    embedded-mode path now JSON-encodes composite bare-form pulls via
+    `json.Marshal`, matching `SubstituteValue`'s lift behaviour at the
+    embedded surface (call sites in `runtime/runner_locks.go` and
+    `runtime/runner_dispatch.go`).
+
+- **Multi-instance template ergonomics — five quality-of-life items + design-doc updates.**
+  Per spec
+  `.ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md`.
+  - **Template-level userdata defaults** (Item 1): `TemplateSpec` gains
+    `defaults.userdata.by_executor.<name>` as a fourth layer beneath
+    per-node `userdata:` and per-instance `userdata_overrides`. The
+    dispatch-time merge order is
+    `template-defaults → node.userdata → overrides.by_executor →
+    overrides.by_node`; more specific wins. Validation rejects
+    unknown executor names; fragment values stay opaque
+    (@blessed-invariant 11 unchanged).
+  - **`source_file:` references in templates** (Item 2): the CLI's
+    `rimsky template register` resolves `{source_file: "<path>"}`
+    objects anywhere in the spec YAML before the typed-spec decode.
+    Single-pass, path-containment-checked. Wire-side spec carries
+    resolved bytes; hash semantics unchanged.
+  - **Whole-directive value lift in substitution** (Item 3): new
+    `attributes.SubstituteValue` returns the resolved JSON value
+    verbatim when the input is exactly one `{{...}}` directive
+    (objects, arrays, numbers, bools no longer stringify when the
+    receiver wants typed values). Empty-trailing-path bare forms
+    (`{{nodes.X.attribute}}`, `{{claim.X.payload}}`,
+    `{{nodes.X.event.<name>}}`, `{{trigger.message.payload}}`)
+    resolve to the kind's JSON root. Embedded mode (literal text +
+    directive) preserves the existing stringify-and-concat behavior.
+    The attribute-schema evaluator now uses `SubstituteValue`;
+    receiver-side schemas that previously relied on JSON-Schema type
+    coercion may need their declared types brought into line with
+    the upstream's native type.
+  - **Node-level tags** (Item 4): `TemplateNodeDef` gains `tags:` for
+    operator-facing metadata; the new column lands on `rimsky_nodes`
+    via migration `002-tags.sql` (postgres `TEXT[]` with a GIN index;
+    sqlite `TEXT` JSON-encoded). Tags admit `{{params.<key>}}`
+    substitution at materialization time; non-string lifted values
+    and missing params fail instance creation. The `GET
+    /instances/{idOrKey}/nodes` route gains a single-value
+    `?tag=<value>` exact-match filter; every row's JSON now carries
+    `tags: [...]`.
+  - **Verifier role in `stores/postgres/`** (Item 6): the bundled
+    postgres store registers `proto:executor.proto::Executor`
+    alongside its `ClaimProducer` service when `enable_executor:
+    true`. The executor consumes a userdata `{schema, table, checks}`
+    DSL and runs aggregate-only SQL via the new shared package
+    `stores/shared/sql-checks/`. v1 vocabulary: `no_nulls`,
+    `row_count_absolute`, `pk_unique` — naming and config keys align
+    with the existing in-process `verifier-shape-checks`. All checks
+    pass → `Success`; any fails → `Error{error_class:
+    "verifier_failed"}`, matching the existing supervisor terminal-
+    routing contract.
+  - **Design-doc updates.** Concept docs at `.ok-planner/design/`
+    refreshed to codify the additions: `userdata.md` four-layer merge
+    + citation drift fixes, `attribute.md` substitution grammar
+    correction (retired `deps.*`, added live `trigger.*`/`child.*`,
+    whole-directive lift), `node.md` tags + Boundaries/Adjacent
+    cleanup, `claim-producer.md` + `executor.md` + `atomic-staging.md`
+    dual-role fusion notes, `rimsky.md` `source_file:` ownership,
+    `template.md` + `rimsky-yml.md` notes, `claim-co-holdership.md`
+    legacy `dependencies:` → `subscribes:` example fix,
+    `service.md` `sensor` → `publisher` rename. Tensions
+    `substitution-grammar-count-drift` and
+    `substitution-introspection-site-count` annotated with current-
+    name fixes and partial-resolution notes.
+
 - **README rewrite as evaluator-facing five-pager.** Replaced the
   stale module-layout-and-doc-pointer README with a six-section pitch
   +framing doc oriented at evaluators deciding whether to engage with

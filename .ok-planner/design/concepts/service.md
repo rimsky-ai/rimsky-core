@@ -42,7 +42,7 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 - `concept:claim-producer`
 - `concept:lifecycle-subscriber`
 - `concept:blob-backend`
-- `concept:sensor` (added 2026-05-15 — a new service kind alongside the original four)
+- `concept:publisher` (the umbrella concept added by the 2026-05-17 publisher / publisher-subscription unification; `concept:sensor` is one class of publisher)
 - `concept:rimsky-yml`
 - `concept:conformance`
 - `concept:observability`
@@ -51,4 +51,4 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 ## Notes
 
 - Promoted as new umbrella concept per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #18). Replaces the colloquial "peer" framing, which implied peer-to-peer equivalence that doesn't match rimsky's orchestrator-to-orchestrated relationship.
-- 2026-05-15: **`sensor` joins as a fifth service kind**. Sensors are first-class in-instance services declared in `rimsky.yml`'s `sensors:` block; they monitor external state and push messages to rimsky's control-api. Same deployment model as executor / claim-producer / lifecycle-subscriber — out-of-process gRPC binaries with `Capabilities()` startup handshake. Conformance: `cmd/rimsky-sensor-conformance`. See `concept:sensor`.
+- 2026-05-15: **`publisher` joins as a fifth service kind**. Publishers are first-class in-instance services declared in `rimsky.yml`'s `publishers:` block; sensors are one class within that umbrella (post-2026-05-17 publisher / publisher-subscription unification). They monitor external state and push messages to rimsky's control-api. Same deployment model as executor / claim-producer / lifecycle-subscriber — out-of-process gRPC binaries with `Capabilities()` startup handshake. Conformance: `cmd/rimsky-publisher-conformance`. See `concept:publisher`.

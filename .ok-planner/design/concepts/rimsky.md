@@ -23,7 +23,7 @@ Operator tool of first resort. Thin pass-through means there's no client-side bu
 
 ## Boundaries
 
-Owns: command-line UX, request building, the `compose:` prefix reservation discipline (client-side only), bundled role JSONs at `code:cmd/rimsky/roles/` (see `concept:role-template`). Does NOT own: control-api routes (server-side), authentication enforcement (server-side; the CLI carries a Bearer token via `--key` or `RIMSKY_API_KEY`). Adjacent: `concept:control-api`, `concept:tag`, `concept:instance`, `concept:api-key`, `concept:role-template`.
+Owns: command-line UX, request building, the `compose:` prefix reservation discipline (client-side only), bundled role JSONs at `code:cmd/rimsky/roles/` (see `concept:role-template`), resolution of `source_file:` references in spec YAML at `rimsky template register`, before the wire call to `POST /templates`. The wire-side spec is always resolved bytes. Does NOT own: control-api routes (server-side), authentication enforcement (server-side; the CLI carries a Bearer token via `--key` or `RIMSKY_API_KEY`). Adjacent: `concept:control-api`, `concept:tag`, `concept:instance`, `concept:api-key`, `concept:role-template`.
 
 ## Invariants
 
@@ -52,3 +52,4 @@ Owns: command-line UX, request building, the `compose:` prefix reservation disci
 ## Notes
 
 - [2026-05-15] Binary + concept slug rename and `auth` subcommand group added by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
+- 2026-05-19 — `source_file:` client-side resolution added per spec 2026-05-19-multi-instance-template-ergonomics-design.

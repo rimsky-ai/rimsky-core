@@ -41,14 +41,22 @@ type nodeResponse struct {
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
 	AssignedSupervisorID string     `json:"assigned_supervisor_id,omitempty"`
 	FrameID              string     `json:"frame_id,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	// Tags is operator-facing metadata projected at instance creation
+	// (per spec 2026-05-19 Item 4). Always emitted as an array; empty
+	// means "no tags".
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	frameID := ""
 	if n.FrameID != nil {
 		frameID = n.FrameID.String()
+	}
+	tags := n.Tags
+	if tags == nil {
+		tags = []string{}
 	}
 	return nodeResponse{
 		ID:                   n.ID.String(),
@@ -62,6 +70,7 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		LastHeartbeatAt:      n.LastHeartbeatAt,
 		AssignedSupervisorID: n.AssignedSupervisorID,
 		FrameID:              frameID,
+		Tags:                 tags,
 		CreatedAt:            n.CreatedAt,
 		UpdatedAt:            n.UpdatedAt,
 	}
@@ -287,10 +296,14 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		}
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
+		// Per spec 2026-05-19 Item 4: single-value `?tag=` exact-match
+		// filter. Multi-tag combinations are not in v1.
+		tagFilter := req.URL.Query().Get("tag")
 		var page persistence.PaginatedListResult[persistence.NodeRow]
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			p, err := deps.Persist.Nodes().ListByInstancePaged(ctx, inst.ID,
-				persistence.ListPagination{Limit: limit, Cursor: cursor}, tx)
+			p, err := deps.Persist.Nodes().ListByInstancePagedFiltered(ctx, inst.ID,
+				persistence.ListPagination{Limit: limit, Cursor: cursor},
+				persistence.NodeListFilter{Tag: tagFilter}, tx)
 			page = p
 			return err
 		}); err != nil {

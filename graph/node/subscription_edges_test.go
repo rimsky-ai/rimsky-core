@@ -177,3 +177,77 @@ func keys(m map[string][]SubscriptionEdge) []string {
 	sort.Strings(out)
 	return out
 }
+
+// TestBuildSubscriptionEdges_BareAttributePull — spec 2026-05-19 §Item 3
+// "Empty trailing path". A receiver with `source: "{{nodes.stage.attribute}}"`
+// (no field path) pulls the whole upstream attribute object. The
+// inverse-edge map must still emit an auto-subscribe entry for the
+// receiver so the cascade walk fires when `stage` invalidates. The Name
+// filter is empty for the bare form (the cascade walk does not filter on
+// attribute name; the filter is informational).
+func TestBuildSubscriptionEdges_BareAttributePull(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "stage", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"out": map[string]any{"type": "string"},
+				},
+			}}},
+		{Type: "verify", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"whole": map[string]any{
+						"type":   "object",
+						"source": "{{nodes.stage.attribute}}",
+					},
+				},
+			}}},
+	}}
+	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
+	out := BuildSubscriptionEdges(tmpl, refs)
+	edges, ok := out["stage"]
+	if !ok {
+		t.Fatalf("expected implicit subscription on 'stage'; got keys %v", keys(out))
+	}
+	if len(edges) != 1 {
+		t.Fatalf("want 1 implicit edge, got %d", len(edges))
+	}
+	if edges[0].ReceiverNodeType != "verify" {
+		t.Errorf("ReceiverNodeType: got %q want verify", edges[0].ReceiverNodeType)
+	}
+	if edges[0].TopicKind != "attribute" {
+		t.Errorf("TopicKind: got %q want attribute", edges[0].TopicKind)
+	}
+	if edges[0].Filter.Name != "" {
+		t.Errorf("Filter.Name on bare-attribute pull: got %q want empty", edges[0].Filter.Name)
+	}
+}
+
+// TestBuildSubscriptionEdges_BareEventPullRejected — bare-form event
+// pulls still require the event name. A `{{nodes.X.event}}` directive
+// (no event name) is malformed; parseSubstitutionDirective returns
+// ok=false and no inverse-edge is emitted. (The validator separately
+// rejects the directive at registration; this test pins the lower-level
+// parser's behaviour for safety.)
+func TestBuildSubscriptionEdges_BareEventPullRejected(t *testing.T) {
+	got, ok := parseSubstitutionDirective("nodes.emit.event")
+	if ok {
+		t.Fatalf("parseSubstitutionDirective(`nodes.emit.event`) expected ok=false; got %+v", got)
+	}
+}
+
+// TestBuildSubscriptionEdges_BareEventWithNamePull — `{{nodes.X.event.<name>}}`
+// (no trailing path) is the bare-event form. The inverse-edge map
+// records (sender=X, kind=event, Name=<name>) so the cascade walk fires
+// on any emission of that event.
+func TestBuildSubscriptionEdges_BareEventWithNamePull(t *testing.T) {
+	ref, ok := parseSubstitutionDirective("nodes.emit.event.progress")
+	if !ok {
+		t.Fatalf("parseSubstitutionDirective: expected ok=true for bare-event form")
+	}
+	if ref.TopicKind != "event" || ref.Name != "progress" {
+		t.Errorf("ref mismatch: %+v", ref)
+	}
+}

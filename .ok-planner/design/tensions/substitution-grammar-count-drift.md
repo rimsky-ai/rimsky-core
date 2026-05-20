@@ -29,3 +29,7 @@ Template authors writing `{{nodes.emitter.event.name.path}}` need to know whethe
 - `_discover/2026-05-10-attribute-substitution-grammar.md` Observations bullet 1.
 - `graph/attribute/substitution.go` (five kinds inline) vs the `ResolveContext.EventLookup` callback comment (sixth) in the same file.
 
+## Notes
+
+- 2026-05-19 — Partly addressed by spec 2026-05-19-multi-instance-template-ergonomics-design: `concepts/attribute.md`'s Invariants section now reflects the current grammar (retired `deps.*`, added live `trigger.*`/`child.*`). The cross-doc sweep (CLAUDE.md, `docs/concepts/attributes.md`) remains open.
+

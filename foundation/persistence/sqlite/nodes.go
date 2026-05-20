@@ -12,6 +12,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,7 +35,7 @@ const nodeCols = `
   COALESCE(r.state, 'fresh') AS state, r.last_outcome,
   n.current_error_class, n.retry_counter, n.action_index,
   r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
-  n.frame_id, n.created_at, n.updated_at
+  n.frame_id, n.tags, n.created_at, n.updated_at
 `
 
 // nodeSelect — see postgres mirror. SQLite emulation uses ROW_NUMBER
@@ -56,12 +57,20 @@ LEFT JOIN (
 // defaults to 'fresh' (no in-flight run row).
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	now := nowUTC()
+	// SQLite stores the array as a JSON-encoded TEXT column (sibling
+	// convention with accepted_stores / required_stores; see migrations
+	// 001-baseline.sql#17). nil/empty Tags → "[]".
+	tagsJSON, terr := encodeTagsJSON(in.Tags)
+	if terr != nil {
+		return persistence.NodeRow{}, fmt.Errorf("nodes.Create: encode tags: %w", terr)
+	}
 	if _, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (
-		   id, instance_id, node_type, executor, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?)`,
+		   id, instance_id, node_type, executor, tags, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		in.ID.String(), in.InstanceID.String(), in.NodeType,
 		nullableString(in.Executor),
+		tagsJSON,
 		now, now,
 	); err != nil {
 		return persistence.NodeRow{}, err
@@ -107,6 +116,20 @@ func (s *nodesImpl) ListByInstancePaged(
 	pag persistence.ListPagination,
 	tx persistence.Tx,
 ) (persistence.PaginatedListResult[persistence.NodeRow], error) {
+	return s.ListByInstancePagedFiltered(ctx, instanceID, pag, persistence.NodeListFilter{}, tx)
+}
+
+// ListByInstancePagedFiltered narrows the page by an optional
+// NodeListFilter. Empty filter is identical to ListByInstancePaged.
+// Tags are JSON-encoded TEXT on sqlite; the SQL uses
+// json_each / EXISTS for the array-contains check.
+func (s *nodesImpl) ListByInstancePagedFiltered(
+	ctx context.Context,
+	instanceID foundationshared.UUID,
+	pag persistence.ListPagination,
+	filter persistence.NodeListFilter,
+	tx persistence.Tx,
+) (persistence.PaginatedListResult[persistence.NodeRow], error) {
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
@@ -129,9 +152,15 @@ func (s *nodesImpl) ListByInstancePaged(
 		       ?
 		     )
 		   )
+		   AND (
+		     ? = ''
+		     OR EXISTS (SELECT 1 FROM json_each(n.tags) WHERE value = ?)
+		   )
 		 ORDER BY n.created_at ASC, n.id ASC
 		 LIMIT ?`,
-		instanceID.String(), cursor, cursor, cursor, limit,
+		instanceID.String(), cursor, cursor, cursor,
+		filter.Tag, filter.Tag,
+		limit,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.NodeRow]{}, err
@@ -554,6 +583,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		lastHB          sql.NullString
 		assignedSup     sql.NullString
 		frameIDStr      sql.NullString
+		tagsJSON        sql.NullString
 		createdAtStr    string
 		updatedAtStr    string
 	)
@@ -562,6 +592,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		&executor, &stateStr, &lastOutcomeStr,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameIDStr,
+		&tagsJSON,
 		&createdAtStr, &updatedAtStr,
 	); err != nil {
 		return persistence.NodeRow{}, err
@@ -605,7 +636,42 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		return persistence.NodeRow{}, err
 	}
 	r.FrameID = frameID
+	tags, err := decodeTagsJSON(tagsJSON)
+	if err != nil {
+		return persistence.NodeRow{}, err
+	}
+	r.Tags = tags
 	return r, nil
+}
+
+// encodeTagsJSON marshals a tag slice into the JSON-encoded TEXT shape
+// used by the sqlite tags column. Empty slice / nil → "[]" (matches
+// the column DEFAULT and downstream JSON-array consumers).
+func encodeTagsJSON(tags []string) (string, error) {
+	if len(tags) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// decodeTagsJSON unmarshals a JSON-encoded tags column into a slice.
+// NULL or empty → empty slice (matches the NodeRow contract).
+func decodeTagsJSON(s sql.NullString) ([]string, error) {
+	if !s.Valid || s.String == "" || s.String == "[]" {
+		return []string{}, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s.String), &out); err != nil {
+		return nil, fmt.Errorf("scanNode: tags: %w", err)
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, nil
 }
 
 func collectNodes(rows *sql.Rows) ([]persistence.NodeRow, error) {

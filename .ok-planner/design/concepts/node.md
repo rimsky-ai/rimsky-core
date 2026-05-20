@@ -13,7 +13,7 @@ references:
 
 ## What it is
 
-A node is one declarative unit of work in a template's graph. Each node has a name, a type (template-author chosen string used as the dispatch routing key), zero-or-more dependencies on other nodes, zero-or-more required claims/locks, optional attributes JSON schema, optional userdata, optional lifecycle-handler block, optional `on_event` map, optional `quality_rules`, and (for non-claim-only nodes) a target executor. At runtime, a node materializes as a row in `rimsky_nodes` (keyed by `(instance_id, node_type)`) carrying `state`, `last_outcome`, `frame_id`, and per-node bookkeeping.
+A node is one declarative unit of work in a template's graph. Each node has a name, a type (template-author chosen string used as the dispatch routing key), zero-or-more `subscribes:` entries declaring its reactive surface, zero-or-more required claims/locks, zero-or-more `holds:` declarations for co-held upstream claims, optional attributes JSON schema, optional userdata, optional lifecycle-handler block, optional operator-facing `tags`, and (for non-claim-only nodes) a target executor. At runtime, a node materializes as a row in `rimsky_nodes` (keyed by `(instance_id, node_type)`) carrying `state`, `last_outcome`, `frame_id`, `tags`, and per-node bookkeeping.
 
 ## Purpose
 
@@ -21,13 +21,14 @@ The node is the smallest reactive cell rimsky orchestrates. Cascade resolution p
 
 ## Boundaries
 
-The node owns: its dispatch / terminal lifecycle, its claim spec list, its handler resolutions, its quality-rule evaluations, its attribute writeback. The node does **not** own: cascade scheduling (see `frame`), claim conflict resolution (see `claim-handle`), event-log shape (see `event-log`). Adjacent: `node-state`, `last-outcome`, `frame`, `cascade`, `attribute`, `lifecycle-handler`, `on-event-handler`, `claim`, `named-lock`.
+The node owns: its dispatch / terminal lifecycle, its claim spec list, its handler resolutions, its attribute writeback, its operator-facing tags. The node does **not** own: cascade scheduling (see `frame`), claim conflict resolution (see `claim-handle`), event-log shape (see `event-log`). Adjacent: `last-outcome`, `frame`, `cascade`, `attribute`, `lifecycle-handler`, `claim`, `named-lock`, `node-subscription`, `node-run`.
 
 ## Invariants
 
 - The set of legal `state` values is exactly `{fresh, stale, running, failed, parked}`; transitions follow `foundation/cascade/state.go::NextState`. Same-state transitions are rejected under `dispatch_claimed` (`@blessed-invariant 1`, also numbered §17).
 - Eligibility for dispatch reads only `state`. Cascade propagation downstream reads only `last_outcome` (`@blessed-invariant`-adjacent rule, `docs/concepts/cascade.md`).
 - A non-fresh `rimsky_nodes` row always carries a `frame_id`.
+- Tag values admit `{{params.<key>}}` substitution at materialization time (instance creation); no other substitution source kinds are available at that phase. Tag substitution failures are fatal at instance creation, matching the dispatch-time discipline for required-attribute substitution. Tags do not gate dispatch, cascade, or validation — they are operator-facing metadata.
 
 ## Aliases and historical names
 
@@ -40,3 +41,4 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its handl
 ## Notes
 
 - 2026-05-14: `dependencies:` retires; `subscribes:` introduced (`see concept:node-subscription`); substitution refs auto-subscribe. The `on_event:` map retires; `concept:on-event-handler` is retired to `_retired/`. Lifecycle handlers lose their `invalidate.targets:` clauses. Per spec `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- 2026-05-19 — Tags added per spec 2026-05-19-multi-instance-template-ergonomics-design. Pre-existing drift cleaned up in same pass: dropped retired `on_event`/`quality_rules` from "What it is", dropped `its quality-rule evaluations` from Boundaries, dropped retired `node-state`/`on-event-handler` from Adjacent list.

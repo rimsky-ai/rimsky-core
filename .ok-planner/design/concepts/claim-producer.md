@@ -34,6 +34,8 @@ Out-of-process producers let rimsky stay project-agnostic: the producer knows wh
 
 Owns: the producer-side resource state (filesystem stagings, items-table flips, MVCC transactions), the canonical scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
 
+The bundled SQL-based store `stores/postgres/` additionally registers `proto:executor.proto::Executor` to support verification of its own staged content; see `concept:executor`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. The pattern is open to future SQL-substrate stores adopting the same fusion.
+
 ## Invariants
 
 - The 4-verb protocol (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake is the only contract. Type assertions to a concrete producer from any rimsky package are forbidden (`foundation/locks/interface.go:9-13`).
@@ -61,3 +63,4 @@ The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a six
 
 - 2026-05-14: atomic-staging pattern documented at `docs/agents/examples/atomic-staging.md` with a reference filesystem implementation under `examples/atomic-staging-fs-producer/`. Pattern is producer-side discipline; no rimsky-level surface change. Per spec Piece 3 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
 - [2026-05-18] Folded content from former `docs/concepts/claim-producer.md` (now retired) — store-vs-claim-producer naming discipline + JS-framework-store disambiguation appended to Aliases section.
+- 2026-05-19 — `stores/postgres/` extends to the executor role per spec 2026-05-19-multi-instance-template-ergonomics-design.

@@ -30,3 +30,11 @@ admin_port: 9121
 
 # Store's internal sweep interval (visibility-timeout reclamation).
 sweep_interval_seconds: 30
+
+# Per spec 2026-05-19 §Item 6: when true, the binary registers the
+# Executor protocol alongside ClaimProducer on the same gRPC server.
+# Reuses the store's own connection pool to run aggregate-only SQL
+# verifier checks against staged content. Operators wanting role
+# isolation deploy two binaries with distinct env (e.g. read-only DB
+# role for the verifier).
+# enable_executor: true

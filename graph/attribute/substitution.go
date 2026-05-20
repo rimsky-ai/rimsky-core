@@ -184,6 +184,50 @@ func Substitute(rawValue string, ctx ResolveContext) (string, error) {
 	return out, nil
 }
 
+// SubstituteValue is the value-returning sibling of Substitute. The
+// resolution mode is chosen by the input string's shape:
+//
+//   - Whole-directive mode: if `trim(input)` is exactly one `{{...}}`
+//     directive (the directive pattern matches the entire trimmed input
+//     with no surrounding characters), the resolved JSON value is
+//     returned as-is — object (`map[string]any`), array (`[]any`),
+//     string, number (`float64`), or bool.
+//   - Embedded mode: if the input contains literal text alongside
+//     directives or contains multiple directives, each directive's
+//     resolution is stringified and concatenated. The result is a Go
+//     string. Current `Substitute` behaviour.
+//
+// The discriminator is the input string's shape, not the directive's
+// kind or the resolved value's type.
+//
+// JSON `null` along the resolution path is treated as ErrMissingSource
+// (existing `walkPath` behaviour); whole-directive lift of `null` is
+// not supported.
+//
+// Per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 3.
+//
+// @concept: attribute
+func SubstituteValue(rawValue string, ctx ResolveContext) (any, error) {
+	trimmed := strings.TrimSpace(rawValue)
+	if trimmed != "" && directivePattern.FindString(trimmed) == trimmed {
+		// Whole-directive mode: the trimmed input is exactly one directive.
+		inside := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		if inside == "" {
+			return nil, &ErrMissingSource{Directive: inside, Reason: "empty directive"}
+		}
+		return resolveDirectiveValue(inside, ctx)
+	}
+	// Embedded mode (or no directive at all): fall through to the
+	// string-returning path.
+	s, err := Substitute(rawValue, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 // resolveDirective parses one directive (without surrounding braces)
 // and looks it up in ctx. Returns ErrMissingSource for unresolved
 // references or unknown source kinds.
@@ -197,30 +241,72 @@ func Substitute(rawValue string, ctx ResolveContext) (string, error) {
 //
 // The legacy `deps.<X>.<key>` form is retired; callers receive a
 // migration-pointer error.
+//
+// String-returning wrapper around resolveDirectiveValue. Composite
+// values (objects/arrays) are JSON-encoded for embedded-mode
+// concatenation; primitives go through stringify.
 func resolveDirective(directive string, ctx ResolveContext) (string, error) {
+	// Claim address/scope take the legacy string-flattening path
+	// (stringifyRaw) rather than walkPath, so we route them through the
+	// string-returning resolveClaim directly.
+	parts := strings.Split(directive, ".")
+	if len(parts) >= 2 && parts[0] == "claim" {
+		return resolveClaim(directive, parts[1:], ctx.Claim)
+	}
+	val, err := resolveDirectiveValue(directive, ctx)
+	if err != nil {
+		return "", err
+	}
+	return stringifyAny(val), nil
+}
+
+// resolveDirectiveValue is the value-returning sibling of
+// resolveDirective. Returns the resolved JSON value (string, float64,
+// bool, []any, or map[string]any) for the directive. ErrMissingSource
+// for unresolved references, unknown kinds, or JSON `null` along the
+// path (consistent with walkPath's existing null-as-missing behaviour).
+func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
 	parts := strings.Split(directive, ".")
 	if len(parts) < 2 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "directive must have at least <kind>.<field>"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "directive must have at least <kind>.<field>"}
 	}
 	switch parts[0] {
 	case "deps":
-		return "", &ErrMissingSource{Directive: directive, Reason: "`deps.<X>.<Y>` retired; use `nodes.<X>.attribute.<Y>` (see spec 2026-05-14)"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "`deps.<X>.<Y>` retired; use `nodes.<X>.attribute.<Y>` (see spec 2026-05-14)"}
 	case "claim":
-		return resolveClaim(directive, parts[1:], ctx.Claim)
+		return resolveClaimValue(directive, parts[1:], ctx.Claim)
 	case "params":
-		return resolveParams(directive, parts[1:], ctx.Params)
+		return resolveParamsValue(directive, parts[1:], ctx.Params)
 	case "nodes":
-		return resolveNodes(directive, parts[1:], ctx)
+		return resolveNodesValue(directive, parts[1:], ctx)
 	case "trigger":
-		return resolveTrigger(directive, parts[1:], ctx)
+		return resolveTriggerValue(directive, parts[1:], ctx)
 	case "child":
-		return resolveChild(directive, parts[1:], ctx)
+		return resolveChildValue(directive, parts[1:], ctx)
 	default:
-		return "", &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
 }
 
-// resolveTrigger handles `{{trigger.message.payload.<field-path>}}`
+// stringifyAny renders a JSON-decoded value for the embedded-mode
+// substitution path: primitives via stringify, composites via JSON
+// encoding. Composite-in-embedded-mode is rare (the dominant use case
+// is whole-directive lift via SubstituteValue), but keeping the
+// embedded-mode behaviour predictable matches the spec's promise of
+// "current behaviour preserved" for the embedded path.
+func stringifyAny(v any) string {
+	switch v.(type) {
+	case map[string]any, []any:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
+	}
+	return stringify(v)
+}
+
+// resolveTriggerValue handles `{{trigger.message.payload(.field-path?)}}`
 // directives — the spec §Substitution-layer extensions form that binds
 // the trigger message of the current frame into the substitution
 // context. The trigger message is the rimsky_messages row whose
@@ -231,6 +317,10 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 // Walks payload bytes via walkPath, the sanctioned introspection site
 // for @blessed-invariant 11/20/21.
 //
+// An empty trailing field path (`trigger.message.payload`) resolves to
+// the whole payload as a JSON-decoded value (per spec §Item 3 — bare-
+// form pull).
+//
 // @blessed-invariant: messages are inert in rimsky. Message payload
 // bytes are read by rimsky only here (via `walkPath` substitution
 // against the trigger message) and at the persistence-layer fetch in
@@ -239,59 +329,58 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 // or includes payload bytes in error messages. Same opacity discipline
 // as `@blessed-invariant 11/20/21` (userdata, claim content, blob
 // content / named-event payloads).
-func resolveTrigger(directive string, rest []string, ctx ResolveContext) (string, error) {
-	// Expected form: trigger.message.payload.<field-path…>
-	if len(rest) < 3 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload.<field>"}
+func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
+	// Expected form: trigger.message.payload(.field-path…)?
+	if len(rest) < 2 {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
 	}
 	if rest[0] != "message" {
-		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive second segment must be 'message'"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive second segment must be 'message'"}
 	}
 	if rest[1] != "payload" {
-		return "", &ErrMissingSource{Directive: directive, Reason: "trigger directive third segment must be 'payload'"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive third segment must be 'payload'"}
 	}
 	if len(ctx.TriggerMessagePayload) == 0 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
 	}
 	val, ok := walkPath(ctx.TriggerMessagePayload, rest[2:])
 	if !ok {
-		return "", &ErrMissingSource{Directive: directive, Reason: "trigger payload field path not found"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger payload field path not found"}
 	}
-	return stringify(val), nil
+	return val, nil
 }
 
-// resolveChild handles `{{child.partition_key}}` directives — the spec
-// §Substitution-layer extensions form that binds the per-child-run
-// partition key for fan-out leaf dispatches. Bound by the runtime
-// fan-out dispatcher (E7) at child dispatch via
-// ResolveContext.ChildPartitionKey.
+// resolveChildValue handles `{{child.partition_key}}` directives — the
+// spec §Substitution-layer extensions form that binds the per-child-run
+// partition key for fan-out leaf dispatches.
 //
-// Only `child.partition_key` is recognized currently. Per
-// @blessed-invariant 11/20/21 the partition_key value is forwarded
+// Per @blessed-invariant 11/20/21 the partition_key value is forwarded
 // verbatim — no parsing, normalization, or logging.
-func resolveChild(directive string, rest []string, ctx ResolveContext) (string, error) {
+func resolveChildValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) != 1 || rest[0] != "partition_key" {
-		return "", &ErrMissingSource{Directive: directive, Reason: "child directive must be child.partition_key"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "child directive must be child.partition_key"}
 	}
 	if ctx.ChildPartitionKey == "" {
-		return "", &ErrMissingSource{Directive: directive, Reason: "no partition_key bound (fan-out leaf dispatch context only)"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no partition_key bound (fan-out leaf dispatch context only)"}
 	}
 	return ctx.ChildPartitionKey, nil
 }
 
-// resolveNodes handles two `nodes.<X>.<kind>.<...>` directive forms:
+// resolveNodesValue handles two `nodes.<X>.<kind>(.<...>?)` directive
+// forms:
 //
-//   - `nodes.<node>.attribute.<field>...` — walks the upstream node's
-//     persisted attributes data; same path traversal as the legacy
-//     `deps.<node>.<field>` shape.
-//   - `nodes.<emitter>.event.<event_name>.<field>...` — walks the most
-//     recent named-event payload via ResolveContext.EventLookup.
+//   - `nodes.<node>.attribute(.<field>?…)` — walks the upstream node's
+//     persisted attributes data. Empty trailing field path resolves to
+//     the whole attribute object (per spec §Item 3).
+//   - `nodes.<emitter>.event.<event_name>(.<field>?…)` — walks the most
+//     recent named-event payload via ResolveContext.EventLookup. Empty
+//     trailing field path resolves to the whole event payload.
 //
 // Walks bytes via walkPath — the sanctioned introspection site for
 // payload field-walks (@blessed-invariant 20).
-func resolveNodes(directive string, rest []string, ctx ResolveContext) (string, error) {
-	if len(rest) < 3 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.{attribute|event}.<field>"}
+func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
+	if len(rest) < 2 {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.{attribute|event}[.<field>]"}
 	}
 	nodeName := rest[0]
 	kind := rest[1]
@@ -300,48 +389,53 @@ func resolveNodes(directive string, rest []string, ctx ResolveContext) (string, 
 		fieldPath := rest[2:]
 		data, ok := ctx.Deps[nodeName]
 		if !ok {
-			return "", &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
 		}
 		val, ok := walkPath(data, fieldPath)
 		if !ok {
-			return "", &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
 		}
-		return stringify(val), nil
+		return val, nil
 	case "event":
-		// Expected: <node>.event.<event_name>.<field-path…>
-		if len(rest) < 4 {
-			return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.event.<name>.<field>"}
+		// Expected: <node>.event.<event_name>(.<field-path…>)?
+		if len(rest) < 3 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.event.<name>[.<field>]"}
 		}
 		eventName := rest[2]
 		fieldPath := rest[3:]
 		if ctx.EventLookup == nil {
-			return "", &ErrMissingSource{Directive: directive, Reason: "no event lookup configured"}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "no event lookup configured"}
 		}
 		payload, ok := ctx.EventLookup(nodeName, eventName)
 		if !ok || len(payload) == 0 {
-			return "", &ErrMissingSource{Directive: directive, Reason: "no emission for event"}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "no emission for event"}
 		}
 		val, ok := walkPath(payload, fieldPath)
 		if !ok {
-			return "", &ErrMissingSource{Directive: directive, Reason: "event payload field path not found"}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "event payload field path not found"}
 		}
-		return stringify(val), nil
+		return val, nil
 	default:
-		return "", &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute' or 'event'"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute' or 'event'"}
 	}
 }
 
 // resolveClaim handles three sub-shapes per spec §16.1:
 //
 //   - claim.<alias>.address  → leaf is ClaimResult.Address bytes
-//   - claim.<alias>.payload.<field-path>
+//   - claim.<alias>.payload(.<field-path>?)
 //   - claim.<alias>.scope    → leaf is ClaimResult.Scope bytes
 //
 // The alias is the per-claim name within the node (defaulting to the
-// store name when not explicitly set).
+// store name when not explicitly set). String-returning path retained
+// so `address` and `scope` continue to flow through stringifyRaw (the
+// sanctioned shape-flattening site for those top-level leaves).
+//
+// Empty trailing path on the `payload` branch resolves to the whole
+// payload object (per spec §Item 3).
 func resolveClaim(directive string, rest []string, claims map[string]locks.ClaimResult) (string, error) {
 	if len(rest) < 2 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|scope|payload.<field>}"}
+		return "", &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|scope|payload[.<field>]}"}
 	}
 	alias := rest[0]
 	cr, ok := claims[alias]
@@ -366,9 +460,6 @@ func resolveClaim(directive string, rest []string, claims map[string]locks.Claim
 		}
 		return stringifyRaw(cr.Scope), nil
 	case "payload":
-		if len(rest) < 3 {
-			return "", &ErrMissingSource{Directive: directive, Reason: "claim.<alias>.payload directive needs payload.<field>"}
-		}
 		if len(cr.Payload) == 0 {
 			return "", &ErrMissingSource{Directive: directive, Reason: "claim payload is empty"}
 		}
@@ -376,26 +467,77 @@ func resolveClaim(directive string, rest []string, claims map[string]locks.Claim
 		if !ok {
 			return "", &ErrMissingSource{Directive: directive, Reason: "payload field path not found"}
 		}
-		return stringify(val), nil
+		return stringifyAny(val), nil
 	default:
 		return "", &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|scope|payload"}
 	}
 }
 
-// resolveParams handles `params.<key>` (and dot-notation walks for
-// nested params).
-func resolveParams(directive string, rest []string, params json.RawMessage) (string, error) {
+// resolveClaimValue is the value-returning sibling of resolveClaim.
+// `address` and `scope` continue to surface as strings (the sanctioned
+// shape-flattening output); `payload(.<field>?)` returns the
+// JSON-decoded value at the named path or — with an empty trailing
+// path — the whole payload object.
+func resolveClaimValue(directive string, rest []string, claims map[string]locks.ClaimResult) (any, error) {
+	if len(rest) < 2 {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|scope|payload[.<field>]}"}
+	}
+	alias := rest[0]
+	cr, ok := claims[alias]
+	if !ok {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no claim for alias " + alias}
+	}
+	switch rest[1] {
+	case "address":
+		if len(rest) != 2 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim.<alias>.address takes no further field path"}
+		}
+		if len(cr.Address) == 0 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim address is empty"}
+		}
+		return stringifyRaw(cr.Address), nil
+	case "scope":
+		if len(rest) != 2 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim.<alias>.scope takes no further field path"}
+		}
+		if len(cr.Scope) == 0 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim scope is empty"}
+		}
+		return stringifyRaw(cr.Scope), nil
+	case "payload":
+		if len(cr.Payload) == 0 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim payload is empty"}
+		}
+		val, ok := walkPath(cr.Payload, rest[2:])
+		if !ok {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "payload field path not found"}
+		}
+		return val, nil
+	default:
+		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|scope|payload"}
+	}
+}
+
+// resolveParamsValue handles `params.<key>(.…)?` — walks the instance
+// params blob and returns the leaf as a JSON-decoded value.
+//
+// The universal `len(parts) >= 2` guard at resolveDirective rejects a
+// bare `params` directive (no field path); the spec deliberately keeps
+// "whole params pull" out of the grammar. Consumers wanting it wrap
+// their params in a top-level key (`params.config: {...}`) and pull
+// `{{params.config}}`.
+func resolveParamsValue(directive string, rest []string, params json.RawMessage) (any, error) {
 	if len(rest) == 0 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "params directive needs <key>"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "params directive needs <key>"}
 	}
 	if len(params) == 0 {
-		return "", &ErrMissingSource{Directive: directive, Reason: "params is empty"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "params is empty"}
 	}
 	val, ok := walkPath(params, rest)
 	if !ok {
-		return "", &ErrMissingSource{Directive: directive, Reason: "param key not found"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "param key not found"}
 	}
-	return stringify(val), nil
+	return val, nil
 }
 
 // walkPath is the sanctioned introspection site for payload field-walks

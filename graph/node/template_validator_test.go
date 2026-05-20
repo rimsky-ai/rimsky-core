@@ -615,3 +615,301 @@ func TestValidateUserdataSchema_Violation(t *testing.T) {
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].userdata")
 }
+
+// TestTemplateValidator_DefaultsByExecutor covers the per-spec routing-
+// key cross-check on `defaults.userdata.by_executor.<name>` (template-
+// level userdata defaults per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 1).
+func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
+	t.Run("unknown executor name is rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Defaults: &TemplateDefaults{
+				Userdata: &TemplateUserdataDefaults{
+					ByExecutor: map[string]map[string]any{
+						"unknown-executor": {"cli": map[string]any{"model": "claude-opus"}},
+					},
+				},
+			},
+			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, `defaults.userdata.by_executor["unknown-executor"]`)
+	})
+
+	t.Run("matching executor name is accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Defaults: &TemplateDefaults{
+				Userdata: &TemplateUserdataDefaults{
+					ByExecutor: map[string]map[string]any{
+						"claude-agent": {"cli": map[string]any{"model": "claude-opus"}},
+					},
+				},
+			},
+			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("fragment values are not inspected (only routing keys)", func(t *testing.T) {
+		// Arbitrary garbage in the fragment must still validate — the
+		// userdata-inertness invariant says we never read fragment values.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Defaults: &TemplateDefaults{
+				Userdata: &TemplateUserdataDefaults{
+					ByExecutor: map[string]map[string]any{
+						"claude-agent": {
+							// arbitrary nested shape, deeply non-conforming
+							// to anything — validator must not look at it.
+							"garbage_key": []any{"a", 1, true, nil, map[string]any{"k": "v"}},
+						},
+					},
+				},
+			},
+			Nodes: []TemplateNodeDef{{Type: "a", Executor: "claude-agent"}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+}
+
+// TestTemplateValidator_Tags covers the registration-time validation of
+// node-level tags (operator-facing metadata per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// Item 4).
+func TestTemplateValidator_Tags(t *testing.T) {
+	t.Run("valid params reference accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			ParamsSchema: map[string]any{
+				"properties": map[string]any{
+					"domain": map[string]any{"type": "string"},
+				},
+			},
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Tags:     []string{"setup", "domain:{{params.domain}}"},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("unknown params key rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			ParamsSchema: map[string]any{
+				"properties": map[string]any{
+					"domain": map[string]any{"type": "string"},
+				},
+			},
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Tags:     []string{"{{params.unknown}}"},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].tags[0]")
+	})
+
+	t.Run("unsupported kind in tag rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Tags:     []string{"{{claim.staging.address}}"},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].tags[0]")
+	})
+
+	t.Run("plain string tag accepted (no directives)", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Tags:     []string{"setup"},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+}
+
+// TestCheckAttributeSource_BareFormPulls — spec 2026-05-19 §Item 3 "Empty
+// trailing path". The four bare-form directives (whole-attribute,
+// whole-claim-payload, whole-event-payload, whole-trigger-payload) must
+// pass `ValidateTemplate` against an attribute-schema `source:` field
+// because the runtime substitution layer now resolves them per
+// `code:graph/attribute/substitution.go::SubstituteValue`. Without this
+// the runtime supports the form but registration rejects it.
+func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
+	t.Run("bare nodes attribute pull accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{
+				{
+					Type:     "stage",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"row": map[string]any{"type": "object"},
+						},
+					}},
+				},
+				{
+					Type:     "verify",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"upstream": map[string]any{
+								"type":   "object",
+								"source": "{{nodes.stage.attribute}}",
+							},
+						},
+					}},
+				},
+			},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("bare claim payload pull accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Stores: []NodeStoreRef{
+					{Name: "topics", Selector: "@q", Intent: "rw", Alias: "queue"},
+				},
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"whole_payload": map[string]any{
+							"type":   "object",
+							"source": "{{claim.queue.payload}}",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("bare trigger payload pull accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"trigger": map[string]any{
+							"type":   "object",
+							"source": "{{trigger.message.payload}}",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("bare nodes event pull accepted", func(t *testing.T) {
+		// Note: event-name field IS required for bare-event form; only
+		// the path-after-name is optional. The cross-check against the
+		// sender's executor's declared_events is silently skipped here
+		// (no ExecutorDeclaredEvents hook wired).
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{
+				{Type: "emit", Executor: "h"},
+				{
+					Type:     "receive",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"evt": map[string]any{
+								"type":   "object",
+								"source": "{{nodes.emit.event.progress}}",
+							},
+						},
+					}},
+				},
+			},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("empty trailing dot still rejected", func(t *testing.T) {
+		// `nodes.<X>.attribute.` (explicit empty trailing segment) is
+		// not the bare form; it's a malformed directive and must be
+		// rejected.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{
+				{Type: "stage", Executor: "h"},
+				{
+					Type:     "verify",
+					Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"bad": map[string]any{
+								"type":   "object",
+								"source": "{{nodes.stage.attribute.}}",
+							},
+						},
+					}},
+				},
+			},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		require.False(t, res.Ok())
+	})
+}

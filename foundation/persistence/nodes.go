@@ -34,8 +34,17 @@ type NodeRow struct {
 	LastHeartbeatAt      *time.Time          `json:"last_heartbeat_at,omitempty"`
 	AssignedSupervisorID string              `json:"assigned_supervisor_id,omitempty"`
 	FrameID              *shared.UUID        `json:"frame_id,omitempty"`
-	CreatedAt            time.Time           `json:"created_at"`
-	UpdatedAt            time.Time           `json:"updated_at"`
+	// Tags is operator-facing metadata projected from the bound
+	// template's `TemplateNodeDef.Tags` at instance creation, after
+	// materialization-time `{{params.<key>}}` substitution. Per spec
+	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+	// Item 4. Always emitted (no `omitempty`): empty array means "no
+	// tags", not "unknown".
+	//
+	// @concept: node
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // NodeCreateInput is the per-row input for Create.
@@ -44,6 +53,18 @@ type NodeCreateInput struct {
 	InstanceID shared.UUID
 	NodeType   string
 	Executor   string
+	// Tags is the resolved (post-substitution) tag list to persist.
+	// The instance-create handler runs params-only substitution at
+	// materialization time; an empty slice is fine.
+	Tags []string
+}
+
+// NodeListFilter narrows ListByInstancePaged returns. Empty fields mean
+// "no filter". Currently a single-value tag exact-match (per spec
+// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+// §Item 4 — multi-tag combinations are deferred).
+type NodeListFilter struct {
+	Tag string
 }
 
 // NodeTable is the rimsky_nodes accessor.
@@ -52,6 +73,11 @@ type NodeTable interface {
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*NodeRow, error)
 	ListByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]NodeRow, error)
 	ListByInstancePaged(ctx context.Context, instanceID shared.UUID, pag ListPagination, tx Tx) (PaginatedListResult[NodeRow], error)
+	// ListByInstancePagedFiltered is the filter-aware variant; pass a
+	// zero-valued NodeListFilter for the same behaviour as
+	// ListByInstancePaged. The two methods coexist so existing callers
+	// stay unaffected.
+	ListByInstancePagedFiltered(ctx context.Context, instanceID shared.UUID, pag ListPagination, filter NodeListFilter, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListReadyForDispatch(ctx context.Context, tx Tx) ([]NodeRow, error)
 	ListRunning(ctx context.Context, tx Tx) ([]NodeRow, error)
 	// ListRunningBySupervisor returns the rows in state='running' currently

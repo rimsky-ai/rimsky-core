@@ -26,6 +26,12 @@ type Config struct {
 	PickPolicies   map[string]*pgsstore.PickPolicy
 	SweepInterval  time.Duration
 	WithAdmin      bool
+
+	// EnableExecutor registers the Executor protocol alongside
+	// ClaimProducer on the same gRPC endpoint, enabling the
+	// SQL-substrate verifier role per spec
+	// 2026-05-19-multi-instance-template-ergonomics-design §Item 6.
+	EnableExecutor bool
 }
 
 // Start spawns server.Run on a goroutine bound to ephemeral ports.
@@ -59,6 +65,7 @@ func Start(t *testing.T, cfg Config) (grpcEndpoint, adminEndpoint string, teardo
 			WriteSemantics: cfg.WriteSemantics,
 			PickPolicies:   cfg.PickPolicies,
 			SweepInterval:  cfg.SweepInterval,
+			EnableExecutor: cfg.EnableExecutor,
 		}, grpcLis, httpLis, adminLis)
 		close(done)
 	}()

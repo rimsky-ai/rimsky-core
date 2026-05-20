@@ -34,15 +34,25 @@ Per-instance overrides via `col:rimsky_instances.userdata_overrides` extend this
 ## Invariants
 
 - Userdata is inert (`@blessed-invariant 11`). No substitution pass. No inspection. No validation beyond the executor-side schema check.
-- Rimsky never substitutes, validates, or otherwise interprets userdata. The per-instance overrides merge is the only structural traversal of userdata content (handled by `code:graph/shared/jsonmerge.go::DeepMergeJSON`).
+- Rimsky never substitutes, validates, or otherwise interprets userdata. The per-instance overrides merge is the only structural traversal of userdata content (handled by `code:foundation/shared/jsonmerge.go::DeepMergeJSON`).
 - `{{...}}` directives in userdata are literal text reaching the executor verbatim; the substitution grammar does not include a `{{userdata.*}}` source kind.
 - Per-instance `userdata_overrides` validate only routing keys (`by_executor`, `by_node`, plus the executor/node names). Fragment values are never inspected.
+- Template-level `defaults.userdata.by_executor.<name>` validate only the routing key (the `<name>` must match a node's executor). Fragment values are never inspected.
 
 ## Per-instance overrides
 
 Templates declare a per-node userdata blob; some operations (tracing, synthetic-blocker scenarios, ad-hoc tuning, per-run artifacts) need to alter that blob for one instance without forking the template. Per-instance overrides handle that.
 
-Shape: `{by_executor: {<executor-name>: {...}}, by_node: {<node-name>: {...}}}`. Stored on `rimsky_instances.userdata_overrides`. Deep-merged at dispatch time in the order `template → by_executor[<executor>] → by_node[<node>]` (more specific wins). Merge helper is `graph/shared.DeepMergeJSON`.
+Shape: `{by_executor: {<executor-name>: {...}}, by_node: {<node-name>: {...}}}`. Stored on `rimsky_instances.userdata_overrides`. Deep-merged at dispatch time in the order
+
+```
+template.defaults.userdata.by_executor[<executor>]
+  → node.userdata
+  → instance.userdata_overrides.by_executor[<executor>]
+  → instance.userdata_overrides.by_node[<node>]
+```
+
+More specific wins; operator-level overrides win over template-author defaults. Merge helper is `code:foundation/shared/jsonmerge.go::DeepMergeJSON`.
 
 Validation discipline (preserves `@blessed-invariant 11`):
 - Inspects only routing keys (`by_executor`, `by_node`, plus the executor/node names which must be declared in the template). Fragment values never inspected.
@@ -58,4 +68,8 @@ CLAUDE.md "Common mistakes" calls out the confusion with cloud-init userdata (cl
 ## Open within this concept
 
 - The executor's `userdata_schema` (read by rimsky to validate userdata bytes at template-registration and dispatch time) is a sanctioned but unnamed exception to `@blessed-invariant 11` inertness — see `tensions/userdata-schema-as-opacity-exception.md`.
+
+## Notes
+
+- 2026-05-19 — Template-level userdata defaults added per spec 2026-05-19-multi-instance-template-ergonomics-design. `@blessed-invariant 11` unchanged: only routing keys (`by_executor` plus executor names) are inspected; fragment values are never read.
 

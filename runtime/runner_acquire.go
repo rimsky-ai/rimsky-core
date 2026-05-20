@@ -93,6 +93,17 @@ type acquisition struct {
 	// opaque to rimsky.
 	InstanceUserdataOverrides map[string]any
 
+	// TemplateUserdataDefaults is the already-routed by-executor fragment
+	// from the bound template's
+	// `TemplateSpec.Defaults.Userdata.ByExecutor[Executor]`. Populated at
+	// acquisition time from the bound template so the dispatch path does
+	// not re-fetch the template. Layered underneath `NodeDef.Userdata` and
+	// `InstanceUserdataOverrides` in `applyUserdataOverrides`. Per
+	// @blessed-invariant 11 the fragment values are opaque to rimsky.
+	//
+	// @concept: userdata
+	TemplateUserdataDefaults map[string]any
+
 	// PartialLocks are locks that successfully Open'd before an
 	// Unavailable was encountered. Captured only when the acquisition
 	// path took the Unavailable branch (errAcquireUnavailable from
@@ -369,6 +380,7 @@ func tryAcquire(
 	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
+	templateUserdataDefaults := templateUserdataDefaultsFor(tmpl, nd.Executor)
 	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
@@ -406,16 +418,17 @@ func tryAcquire(
 			// the on_acquire_unavailable handler.
 			unavailableSpec, _ := sp.(locks.ClaimSpec)
 			out := acquisition{
-				DispatchID:      cand.DispatchID,
-				NodeID:          cand.NodeID,
-				InstanceID:      nd.InstanceID,
-				NodeType:        nd.NodeType,
-				Executor:        nd.Executor,
-				FrameID:         cand.FrameID,
-				NodeDef:         nodeDef,
-				HeldSubgraphs:   heldSubgraphs,
-				PartialLocks:    acquiredLocks,
-				UnavailableSpec: unavailableSpec,
+				DispatchID:               cand.DispatchID,
+				NodeID:                   cand.NodeID,
+				InstanceID:               nd.InstanceID,
+				NodeType:                 nd.NodeType,
+				Executor:                 nd.Executor,
+				FrameID:                  cand.FrameID,
+				NodeDef:                  nodeDef,
+				HeldSubgraphs:            heldSubgraphs,
+				PartialLocks:             acquiredLocks,
+				UnavailableSpec:          unavailableSpec,
+				TemplateUserdataDefaults: templateUserdataDefaults,
 			}
 			if inst != nil {
 				out.InstanceParams = inst.Params
@@ -429,15 +442,16 @@ func tryAcquire(
 	}
 
 	out := acquisition{
-		DispatchID:    cand.DispatchID,
-		NodeID:        cand.NodeID,
-		InstanceID:    nd.InstanceID,
-		NodeType:      nd.NodeType,
-		Executor:      nd.Executor,
-		FrameID:       cand.FrameID,
-		Locks:         acquiredLocks,
-		NodeDef:       nodeDef,
-		HeldSubgraphs: heldSubgraphs,
+		DispatchID:               cand.DispatchID,
+		NodeID:                   cand.NodeID,
+		InstanceID:               nd.InstanceID,
+		NodeType:                 nd.NodeType,
+		Executor:                 nd.Executor,
+		FrameID:                  cand.FrameID,
+		Locks:                    acquiredLocks,
+		NodeDef:                  nodeDef,
+		HeldSubgraphs:            heldSubgraphs,
+		TemplateUserdataDefaults: templateUserdataDefaults,
 	}
 	if inst != nil {
 		out.InstanceParams = inst.Params

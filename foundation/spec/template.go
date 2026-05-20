@@ -44,6 +44,42 @@ type TemplateSpec struct {
 	Publishers   []PublisherSpec `yaml:"publishers,omitempty" json:"publishers,omitempty"`
 	ParamsSchema map[string]any  `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
 	ParamsRedact []string        `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+
+	// Defaults holds template-author userdata baselines, merged
+	// underneath per-node userdata and per-instance overrides per
+	// concept:userdata's documented order. See `TemplateDefaults` for
+	// the shape; absent means "no template-author defaults".
+	//
+	// @concept: userdata
+	Defaults *TemplateDefaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+}
+
+// TemplateDefaults declares template-author baselines applied
+// underneath per-node userdata and per-instance overrides. See
+// concept:userdata's per-instance-overrides section for the
+// four-layer merge order:
+//
+//	template.defaults.userdata.by_executor[<executor>]
+//	  → node.userdata
+//	  → instance.userdata_overrides.by_executor[<executor>]
+//	  → instance.userdata_overrides.by_node[<node>]
+//
+// @blessed-invariant 11: validation inspects only routing keys
+// (`by_executor` plus executor names), never fragment values.
+//
+// @concept: userdata
+type TemplateDefaults struct {
+	Userdata *TemplateUserdataDefaults `yaml:"userdata,omitempty" json:"userdata,omitempty"`
+}
+
+// TemplateUserdataDefaults carries per-executor userdata baselines.
+// Only `by_executor` is supported; per-node defaults are expressed by
+// declaring `userdata:` on the node itself (declaring a `by_node`
+// defaults layer would be redundant with that).
+//
+// @concept: userdata
+type TemplateUserdataDefaults struct {
+	ByExecutor map[string]map[string]any `yaml:"by_executor,omitempty" json:"by_executor,omitempty"`
 }
 
 // Frame-resolution constants (per docs/history/2026-04-26-frame-resolution-design.md).
@@ -59,15 +95,28 @@ const (
 // handler and is only used to express subscription fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
-	Type        string                     `yaml:"type" json:"type"`
-	Description string                     `yaml:"description,omitempty" json:"description,omitempty"`
-	Executor    string                     `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
-	Userdata    map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
-	Stores      []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
-	Locks       []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
-	Attributes  *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
-	Inherits    []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
-	ErrorTypes  map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
+	Type        string `yaml:"type" json:"type"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Executor    string `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
+
+	// Tags is operator-facing metadata: free-form strings used for
+	// filtering at the dashboard / events surface. Tag values admit
+	// `{{params.<key>}}` substitution at materialization time
+	// (instance creation); no other substitution kinds are available
+	// at that phase. Tags do not gate dispatch, cascade, or
+	// validation. Per spec
+	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
+	// Item 4.
+	//
+	// @concept: node
+	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+
+	Userdata   map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
+	Stores     []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
+	Locks      []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
+	Attributes *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	Inherits   []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
+	ErrorTypes map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
 	// Subscribes declares the node's reactive surface. Each entry names an
 	// upstream node (or instance: true for cross-cutting) plus a topic kind

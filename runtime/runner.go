@@ -186,7 +186,7 @@ type RunArgs struct {
 	// F7. Userdata is inert in Rimsky per @blessed-invariant 11 — no
 	// substitution pass is run on userdata, so the bytes the validator
 	// sees are exactly the result of the deep-merge across template,
-	// by_executor, and by_node fragments (graph/shared.DeepMergeJSON).
+	// by_executor, and by_node fragments (foundation/shared.DeepMergeJSON).
 	// Do NOT add a substitution pre-pass here; the invariant forbids it.
 	//
 	// Returns nil to indicate validation passed (or no schema is known

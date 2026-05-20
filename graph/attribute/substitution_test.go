@@ -83,8 +83,11 @@ func TestSubstitute(t *testing.T) {
 			missingSubstr: "no claim for alias"},
 		{name: "claim missing field", raw: "{{claim.topics-ring.payload.no_field}}", wantMissing: true,
 			missingSubstr: "payload field path not found"},
-		{name: "claim non-payload short", raw: "{{claim.topics-ring.payload}}", wantMissing: true,
-			missingSubstr: "payload directive needs payload.<field>"},
+		// Post-spec 2026-05-19 Item 3: the bare `claim.<alias>.payload` form
+		// is admitted as a whole-payload pull. Substitute (string-returning)
+		// stringifies the JSON object via stringifyAny.
+		{name: "claim bare payload (whole-object pull, embedded mode)", raw: " before {{claim.topics-ring.payload}} after",
+			want: ` before {"area":"rocky-shore","nested":{"deep":"from-claim"},"subtopic":"tidepools"} after`},
 		{name: "claim invalid second segment", raw: "{{claim.topics-ring.metadata.x}}", wantMissing: true,
 			missingSubstr: "second segment must be address|scope|payload"},
 		{name: "claim empty payload", raw: "{{claim.empty-payload.payload.area}}", wantMissing: true,
@@ -350,6 +353,218 @@ func TestSubstitute_ChildPartitionKey(t *testing.T) {
 	t.Run("only-partition_key-segment-recognized", func(t *testing.T) {
 		ctx := ResolveContext{ChildPartitionKey: "x"}
 		_, err := Substitute("{{child.something_else}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}
+
+// TestSubstituteValue_WholeDirective covers the spec §Item 3 whole-
+// directive lift: when the trimmed input is exactly one `{{...}}`
+// directive, the resolved JSON value is returned verbatim — object,
+// array, string, number, or bool.
+func TestSubstituteValue_WholeDirective(t *testing.T) {
+	t.Parallel()
+	ctx := ResolveContext{
+		Deps: map[string]json.RawMessage{
+			"upstream": mustJSON(t, map[string]any{
+				"a":    float64(1),
+				"b":    []any{float64(2), float64(3)},
+				"list": []any{"x", "y", "z"},
+			}),
+		},
+		Claim: map[string]locks.ClaimResult{
+			"staging": {
+				Payload: mustJSON(t, map[string]any{"items": []any{"a", "b"}}),
+			},
+		},
+		Params: mustJSON(t, map[string]any{
+			"region":  "us-west",
+			"count":   float64(42),
+			"enabled": true,
+			"meta":    map[string]any{"k": "v"},
+		}),
+	}
+
+	t.Run("object lift via nodes.X.attribute", func(t *testing.T) {
+		got, err := SubstituteValue("{{nodes.upstream.attribute}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		m, ok := got.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map[string]any, got %T", got)
+		}
+		if m["a"] != float64(1) {
+			t.Fatalf("expected a=1, got %v", m["a"])
+		}
+	})
+
+	t.Run("array lift", func(t *testing.T) {
+		got, err := SubstituteValue("{{nodes.upstream.attribute.list}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		a, ok := got.([]any)
+		if !ok {
+			t.Fatalf("expected []any, got %T", got)
+		}
+		if len(a) != 3 || a[0] != "x" {
+			t.Fatalf("unexpected array: %v", a)
+		}
+	})
+
+	t.Run("string lift", func(t *testing.T) {
+		got, err := SubstituteValue("{{params.region}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-west" {
+			t.Fatalf("got %v want us-west", got)
+		}
+	})
+
+	t.Run("number lift (was a string in pre-spec behavior)", func(t *testing.T) {
+		got, err := SubstituteValue("{{params.count}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != float64(42) {
+			t.Fatalf("got %v (%T) want 42 (float64)", got, got)
+		}
+	})
+
+	t.Run("bool lift", func(t *testing.T) {
+		got, err := SubstituteValue("{{params.enabled}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != true {
+			t.Fatalf("got %v want true", got)
+		}
+	})
+
+	t.Run("whitespace around the directive is tolerated", func(t *testing.T) {
+		got, err := SubstituteValue("   {{params.region}}\n", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-west" {
+			t.Fatalf("got %v want us-west (whitespace not tolerated)", got)
+		}
+	})
+
+	t.Run("embedded mode falls through to stringify-and-concat", func(t *testing.T) {
+		got, err := SubstituteValue("prefix-{{params.region}}-suffix", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "prefix-us-west-suffix" {
+			t.Fatalf("got %v", got)
+		}
+	})
+
+	t.Run("multiple directives → embedded mode (string)", func(t *testing.T) {
+		got, err := SubstituteValue("{{params.region}}{{params.count}}", ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-west42" {
+			t.Fatalf("got %v want us-west42", got)
+		}
+	})
+
+	t.Run("bare {{params}} is NOT admitted (universal len(parts)<2 guard)", func(t *testing.T) {
+		// Spec §Item 3 deliberately keeps "whole params" out of the
+		// grammar. The universal len(parts) < 2 guard at
+		// resolveDirective#202 rejects it; consumers wrap in a top-
+		// level key (params.config: {...}) and pull {{params.config}}.
+		_, err := SubstituteValue("{{params}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("JSON null along the path is missing (existing walkPath behavior)", func(t *testing.T) {
+		nctx := ResolveContext{
+			Params: mustJSON(t, map[string]any{"k": nil}),
+		}
+		_, err := SubstituteValue("{{params.k}}", nctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}
+
+// TestSubstituteValue_BareForm covers the spec §Item 3 empty-trailing-
+// path bare-form pulls (whole attribute / claim payload / trigger
+// payload / named-event payload).
+func TestSubstituteValue_BareForm(t *testing.T) {
+	t.Parallel()
+	ctx := ResolveContext{
+		Deps: map[string]json.RawMessage{
+			"upstream": mustJSON(t, map[string]any{"a": "v"}),
+		},
+		Claim: map[string]locks.ClaimResult{
+			"staging": {
+				Payload: mustJSON(t, map[string]any{"items": float64(5)}),
+			},
+		},
+		EventLookup: func(emitter, name string) (json.RawMessage, bool) {
+			if emitter == "upstream" && name == "finished" {
+				return mustJSON(t, map[string]any{"ok": true}), true
+			}
+			return nil, false
+		},
+		TriggerMessagePayload: mustJSON(t, map[string]any{"kind": "trigger"}),
+	}
+
+	t.Run("nodes.X.attribute (whole attribute object)", func(t *testing.T) {
+		got, err := SubstituteValue("{{nodes.upstream.attribute}}", ctx)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		m, _ := got.(map[string]any)
+		if m["a"] != "v" {
+			t.Fatalf("got %v", got)
+		}
+	})
+
+	t.Run("claim.<alias>.payload (whole payload)", func(t *testing.T) {
+		got, err := SubstituteValue("{{claim.staging.payload}}", ctx)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		m, _ := got.(map[string]any)
+		if m["items"] != float64(5) {
+			t.Fatalf("got %v", got)
+		}
+	})
+
+	t.Run("nodes.X.event.<name> (whole event payload)", func(t *testing.T) {
+		got, err := SubstituteValue("{{nodes.upstream.event.finished}}", ctx)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		m, _ := got.(map[string]any)
+		if m["ok"] != true {
+			t.Fatalf("got %v", got)
+		}
+	})
+
+	t.Run("trigger.message.payload (whole trigger payload)", func(t *testing.T) {
+		got, err := SubstituteValue("{{trigger.message.payload}}", ctx)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		m, _ := got.(map[string]any)
+		if m["kind"] != "trigger" {
+			t.Fatalf("got %v", got)
+		}
+	})
+
+	t.Run("params bare form (NOT admitted)", func(t *testing.T) {
+		_, err := SubstituteValue("{{params}}", ctx)
 		if !IsMissingSource(err) {
 			t.Fatalf("want ErrMissingSource, got %v", err)
 		}

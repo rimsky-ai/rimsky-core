@@ -24,6 +24,8 @@ Executors are where actual work happens. Out-of-process gives language-portabili
 
 Owns: the per-dispatch work, the stream-close outcome vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`). Adjacent: `userdata`, `attribute`, `named-event`, `parked-state`, `lifecycle-handler`, `observability`, `terminal-resolution`, `service`.
 
+The bundled SQL-based store `stores/postgres/` registers this protocol alongside `concept:claim-producer`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Future SQL-substrate stores may adopt the same pattern.
+
 ## Invariants
 
 - Exactly one `StreamClose` closes the stream; the executor MUST close the stream immediately after.
@@ -45,3 +47,4 @@ Pre-`spec:2026-05-12-nomenclature-resolution` Group E.1, the proto service name 
 - Proto service renamed `NodeExecutor` → `Executor` per `spec:2026-05-12-nomenclature-resolution` Group E.1. Wire-event shape rewritten to channel-mechanics (`StreamClose` + outcome oneof) per Group E.2; `Blocked` collapsed into `Error{error_class}`; `ParkRequested` renamed `Snooze` (the state-machine value `'parked'` is unchanged). Capabilities RPC renamed `GetCapabilities` → `Capabilities` per Group E.11. Resolves `tension:_resolved/terminal-event-overloaded` and `tension:_resolved/async-callback-body-key`.
 
 - 2026-05-14: `Park.reason` typed as `ParkReason` enum on the wire; new `reason_note` field carries human annotation. The Notes section already references the prior Snooze→Park rename; this entry sits alongside it. Per spec Piece 2 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
+- 2026-05-19 — `stores/postgres/` extends to the executor role per spec 2026-05-19-multi-instance-template-ergonomics-design.

@@ -8,6 +8,11 @@
 // uniformity invariant (byte-equal Scope ⇒ identical
 // RealizedWriteSemantics), and the four runtime verbs.
 //
+// The conformance logic lives in `conformance/claimproducer/` so tests
+// (e.g. `test/scenarios/atomic_staging/pg_verifier_conformance_test.go`)
+// can invoke the same code path against an in-process fused server
+// without forking the binary.
+//
 // Lifecycle conformance lives in `rimsky-executor-conformance --check-lifecycle`
 // per the layer-crystallization plan (Phase 4 / Task 29).
 //
@@ -19,15 +24,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/fallguy/rimsky/conformance/claimproducer"
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/runtime/remote"
 )
@@ -79,113 +82,15 @@ func main() {
 	}
 }
 
-// CheckResult is one row of conformance output. Err is nil on success.
-type CheckResult struct {
-	Name string
-	Err  error
-}
+// CheckResult mirrors `conformance/claimproducer.CheckResult` so the
+// existing tests at cmd/rimsky-claim-producer-conformance/main_test.go
+// keep their existing shape. The binary delegates to the importable
+// package; this thin alias avoids churn in callers.
+type CheckResult = claimproducer.CheckResult
 
-// RunClaimProducerConformance drives the ClaimProducer conformance
-// checks against the supplied producer. Each check is independent;
-// failures do not short-circuit so the operator sees the full surface.
+// RunClaimProducerConformance delegates to the importable package.
+// Retained as a binary-local entry point so tests under
+// `cmd/rimsky-claim-producer-conformance/` keep their existing import.
 func RunClaimProducerConformance(ctx context.Context, c locks.ClaimProducer) []CheckResult {
-	results := make([]CheckResult, 0, 10)
-	caps, err := c.Capabilities(ctx)
-	if err != nil {
-		results = append(results, CheckResult{Name: "Capabilities", Err: err})
-		return results
-	}
-	results = append(results, CheckResult{Name: "Capabilities"})
-	if len(caps.WriteSemanticsAllowed) == 0 {
-		results = append(results, CheckResult{
-			Name: "EnvelopeNonEmpty",
-			Err:  fmt.Errorf("write_semantics_allowed is empty"),
-		})
-		// Optional checks still run; their advertise-gates handle the
-		// pre-condition (empty envelope is independent of partitioning).
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	results = append(results, CheckResult{Name: "EnvelopeNonEmpty"})
-
-	// Envelope conformance + uniformity-per-scope: drive Open twice with
-	// identical specs and assert returned RealizedWriteSemantics is in
-	// the envelope and identical across calls. Selectors are synthetic.
-	spec := locks.ClaimSpec{
-		ProducerName: "conformance-target",
-		Selector:     "rimsky/conformance/uniformity",
-		Intent:       locks.IntentRead,
-		Alias:        "conformance",
-	}
-	out1, err := c.Open(ctx, locks.ClaimID(uuid.New().String()), spec)
-	if err != nil {
-		results = append(results, CheckResult{Name: "OpenFirst", Err: err})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	if !out1.Available {
-		results = append(results, CheckResult{
-			Name: "OpenFirst",
-			Err:  fmt.Errorf("producer returned Unavailable for synthetic selector — cannot exercise uniformity"),
-		})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	if out1.Result.RealizedWriteSemantics == locks.WriteSemanticsUnknown {
-		results = append(results, CheckResult{
-			Name: "OpenFirst",
-			Err:  fmt.Errorf("RealizedWriteSemantics is empty/UNKNOWN; producer must declare a concrete value"),
-		})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	if !caps.Contains(out1.Result.RealizedWriteSemantics) {
-		results = append(results, CheckResult{
-			Name: "OpenFirst",
-			Err:  fmt.Errorf("RealizedWriteSemantics %q not in advertised envelope %v", out1.Result.RealizedWriteSemantics, caps.WriteSemanticsAllowed),
-		})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	results = append(results, CheckResult{Name: "OpenFirst"})
-
-	out2, err := c.Open(ctx, locks.ClaimID(uuid.New().String()), spec)
-	if err != nil {
-		results = append(results, CheckResult{Name: "OpenSecond", Err: err})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	if !out2.Available {
-		// Some producers (pick-policy queues) drain after Open. Skip
-		// the uniformity check rather than fail.
-		results = append(results, CheckResult{Name: "OpenSecond"})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	results = append(results, CheckResult{Name: "OpenSecond"})
-
-	// Spec §2.5 uniformity: "byte-equal Scope MUST yield identical
-	// RealizedWriteSemantics". The check only applies when the two
-	// Open calls returned byte-equal Scope bytes — for pick-policy
-	// producers, two Open calls return DIFFERENT scope bytes
-	// (different items), and asserting uniformity across non-byte-
-	// equal scopes is stricter than the invariant requires.
-	if !bytes.Equal(out1.Result.Scope, out2.Result.Scope) {
-		fmt.Fprintln(os.Stdout, "uniformity-untested-this-run: producer returned non-byte-equal scopes across two Open calls (e.g. pick-policy producer); spec §2.5 uniformity invariant only applies to byte-equal scopes.")
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	if out2.Result.RealizedWriteSemantics != out1.Result.RealizedWriteSemantics {
-		results = append(results, CheckResult{
-			Name: "Uniformity",
-			Err: fmt.Errorf("byte-equal Scope did not produce identical RealizedWriteSemantics: %q vs %q",
-				out1.Result.RealizedWriteSemantics, out2.Result.RealizedWriteSemantics),
-		})
-		results = append(results, runOptionalChecks(ctx, c, caps)...)
-		return results
-	}
-	results = append(results, CheckResult{Name: "Uniformity"})
-
-	results = append(results, runOptionalChecks(ctx, c, caps)...)
-	return results
+	return claimproducer.Run(ctx, c)
 }

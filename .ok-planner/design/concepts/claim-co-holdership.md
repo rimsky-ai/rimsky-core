@@ -19,7 +19,8 @@ Template shape:
 nodes:
   - type: verify-staging
     executor: verifier-shape-checks
-    dependencies: [load-data]
+    subscribes:
+      - { node: load-data, on: state, when: fresh }
     holds:
       staging-data: { from: load-data }
     userdata: { ... }
