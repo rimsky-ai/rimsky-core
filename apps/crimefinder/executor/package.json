@@ -1,0 +1,29 @@
+{
+  "name": "@crimefinder/executor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "exports": {
+    ".": "./dist/main.js",
+    "./dist/*": "./dist/*"
+  },
+  "bin": { "crimefinder-executor": "./dist/main.js" },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo skip-lint",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@crimefinder/shared": "*",
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.10",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "fastify": "^4.29.1",
+    "pino": "^8.17.0",
+    "yaml": "^2.5.1",
+    "zod": "^3.22.4"
+  }
+}

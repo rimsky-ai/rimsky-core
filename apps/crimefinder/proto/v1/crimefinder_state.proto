@@ -1,0 +1,216 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+// CrimefinderState: the typed-data gRPC service implemented by the
+// crimefinder-producer process alongside rimsky.v1.ClaimProducer.
+// Rimsky never sees this service; it is the data-plane API the
+// crimefinder executor's MCP gates dispatch to.
+//
+// Every request carries `session_token` (a one-time bearer issued via
+// ClaimProducer.Open's address bytes). The producer validates the token
+// on every call and rejects unknown tokens with UNAUTHENTICATED.
+//
+// `class` (finding category) is serialized as `string` on the wire so
+// the codec supports the heterogeneous {1|2|3|4|"5a"|"5b"} value set in
+// a single primitive. Encode via @crimefinder/shared::encodeClass /
+// decodeClass on both ends.
+
+syntax = "proto3";
+
+package crimefinder.v1;
+
+service CrimefinderState {
+  rpc AppendFinding(AppendFindingRequest) returns (AppendFindingResponse);
+  rpc QueryFindings(QueryFindingsRequest) returns (QueryFindingsResponse);
+  rpc UpdateFindingStatus(UpdateFindingStatusRequest) returns (UpdateFindingStatusResponse);
+  rpc AppendCoverage(AppendCoverageRequest) returns (AppendCoverageResponse);
+  rpc RunTests(RunTestsRequest) returns (RunTestsResponse);
+  rpc CommitFix(CommitFixRequest) returns (CommitFixResponse);
+  rpc DeferFinding(DeferFindingRequest) returns (DeferFindingResponse);
+  rpc SkipZone(SkipZoneRequest) returns (SkipZoneResponse);
+  rpc RequestHelp(RequestHelpRequest) returns (RequestHelpResponse);
+  rpc AggregateFindings(AggregateFindingsRequest) returns (AggregateFindingsResponse);
+  // Returns coverage stats for one zone in a pass, plus whether the
+  // session has recorded a skip_zone. Used by review_complete to enforce
+  // coverage_below_threshold.
+  rpc GetZoneCoverage(GetZoneCoverageRequest) returns (GetZoneCoverageResponse);
+  // Returns the role-polymorphic ContextPayload for review_context.
+  rpc GetReviewContext(GetReviewContextRequest) returns (GetReviewContextResponse);
+  // Marks one finding as a duplicate of another. Used by review_dedup_mark.
+  rpc MarkDuplicate(MarkDuplicateRequest) returns (MarkDuplicateResponse);
+}
+
+message AppendFindingRequest {
+  string session_token = 1;
+  string class = 2;           // "1" | "2" | "3" | "4" | "5a" | "5b"
+  string file = 3;
+  // line_start / line_end use sint32 with a presence-companion. -1
+  // means unset (TypeScript-side nullable).
+  sint32 line_start = 4;
+  bool   line_start_present = 5;
+  sint32 line_end = 6;
+  bool   line_end_present = 7;
+  string symbol = 8;
+  string description = 9;
+  string concept_slug = 10;
+  string tension_slug = 11;
+  string confidence = 12;     // "high" | "low"
+}
+
+message AppendFindingResponse {
+  string finding_id = 1;
+  string effective_class = 2;
+  bool   auto_rerouted = 3;
+  // Set when the row was recorded as a tension_confirmation instead of
+  // a finding; the executor surfaces this as the
+  // `tension_already_cataloged` error class alongside success.
+  bool   tension_confirmation = 4;
+}
+
+message QueryFindingsRequest {
+  string session_token = 1;
+  string pass_id = 2;
+  string zone_id = 3;          // empty for unfiltered
+  string status_filter = 4;    // empty for unfiltered
+}
+
+message QueryFindingsResponse {
+  // JSON-encoded array of FindingsRow shapes (see shared/jsonl-rows.ts).
+  bytes findings_json = 1;
+}
+
+message UpdateFindingStatusRequest {
+  string session_token = 1;
+  string finding_id = 2;
+  string status = 3;
+  string reason = 4;
+  string note = 5;
+  string duplicate_of = 6;
+}
+
+message UpdateFindingStatusResponse {
+  bool success = 1;
+}
+
+message AppendCoverageRequest {
+  string session_token = 1;
+  repeated string files_read = 2;
+}
+
+message AppendCoverageResponse {
+  uint32 recorded_count = 1;
+}
+
+message RunTestsRequest {
+  string session_token = 1;
+}
+
+message RunTestsResponse {
+  sint32 exit_code = 1;
+  string output_excerpt = 2;
+  string ran_at = 3;
+  bool   cached = 4;
+}
+
+message CommitFixRequest {
+  string session_token = 1;
+  string finding_id = 2;
+  string fix_description = 3;
+  string commit_message = 4;
+}
+
+message CommitFixResponse {
+  string commit_sha = 1;
+  string finding_status = 2;
+}
+
+message DeferFindingRequest {
+  string session_token = 1;
+  string finding_id = 2;
+  string reason = 3;
+}
+
+message DeferFindingResponse {
+  string finding_id = 1;
+  string finding_status = 2;
+}
+
+message SkipZoneRequest {
+  string session_token = 1;
+  string reason = 2;
+}
+
+message SkipZoneResponse {
+  string zone_id = 1;
+  bool   skipped = 2;
+}
+
+message RequestHelpRequest {
+  string session_token = 1;
+  string question = 2;
+  string blocker_finding_id = 3;
+}
+
+message RequestHelpResponse {
+  string help_id = 1;
+}
+
+message AggregateFindingsRequest {
+  string session_token = 1;
+  string pass_id = 2;
+}
+
+message AggregateFindingsResponse {
+  uint32 class_1_4_remaining = 1;
+  bytes  class_5_json = 2;
+  bytes  dedup_file_groups_json = 3;
+}
+
+message GetZoneCoverageRequest {
+  string session_token = 1;
+}
+
+message GetZoneCoverageResponse {
+  string  zone_id = 1;
+  uint32  zone_file_count = 2;
+  uint32  files_covered = 3;
+  double  coverage_pct = 4;
+  bool    skip_recorded = 5;
+  // True iff completing this zone leaves every zone in the pass either
+  // covered above the configured threshold or recorded as skipped.
+  // Producer-side de-dup (`pass_closed_emitted` JSONL row) guarantees
+  // at most one caller observes `pass_complete=true` for a given pass,
+  // even under concurrent completions; subsequent callers observe
+  // `pass_complete=false` and `pass_closed` does not re-fire. The
+  // canonical `pass_finished` JSONL row remains authoritative for
+  // count-style summaries.
+  bool    pass_complete = 6;
+  // JSON-encoded `PassSummary` (see producer/src/state/get-zone-coverage.ts).
+  // Populated only when `pass_complete=true`; subscribers stamp it onto
+  // the emitted `pass_closed` event. Empty bytes for sub-threshold and
+  // non-terminal completions.
+  bytes   pass_summary_json = 7;
+}
+
+message GetReviewContextRequest {
+  string session_token = 1;
+  // Comma-separated finding IDs (for fix-cycle role). Optional; ignored
+  // for other roles.
+  string assigned_finding_ids = 2;
+}
+
+message GetReviewContextResponse {
+  // JSON-encoded ContextPayload. Shape depends on role; see
+  // executor/src/gates/review-context.ts.
+  bytes context_json = 1;
+}
+
+message MarkDuplicateRequest {
+  string session_token = 1;
+  string finding_id = 2;
+  string duplicate_of = 3;
+}
+
+message MarkDuplicateResponse {
+  bool success = 1;
+}

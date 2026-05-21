@@ -1,0 +1,294 @@
+name: code-review-pass
+version: "1.0"
+frame_resolution_mode: serial_queue
+
+# The template uses the nested `graphs:` shape (rimsky's `main` + sub-graph
+# canonical form). Top-level `nodes:` is the legacy flat shape and is
+# mutually exclusive with `graphs:` — the rimsky validator rejects with
+# `graphs_and_nodes_both_set` when both are present.
+graphs:
+  - name: main
+    nodes:
+      # All `stores[].name` entries are `crimefinder` (the claim-producer
+       # name declared in rimsky.yml's `claim_producers:` block). The
+       # `alias:` field provides the friendly per-node handle that
+       # downstream `{{claim.<alias>.*}}` references key off. Without
+       # explicit aliases the rimsky validator rejects with `unknown
+       # store "<alias>"` because store names resolve to claim_producer
+       # entries, not template-local labels.
+      - type: open-pass
+        tags: [crimefinder, setup]
+        stores:
+          - name: crimefinder
+            alias: pass-state
+            selector: "@pass-state:new&mission={{params.mission}}&trigger={{params.trigger}}"
+            intent: rw
+            lifetime: subgraph
+        attributes:
+          schema:
+            type: object
+            properties:
+              pass_id:
+                type: string
+                source: "{{claim.pass-state.payload.pass_id}}"
+            required: [pass_id]
+
+      - type: discover-context
+        tags: [crimefinder, setup]
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: context-scan
+            selector: "@context-scan:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        attributes:
+          schema:
+            type: object
+            properties:
+              context_manifest:
+                type: object
+                source: "{{claim.context-scan.payload}}"
+
+      - type: review-fan-out
+        tags: [crimefinder, fan-out, review]
+        executor: crimefinder
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: source-tree
+            selector: "@source-tree:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        fan_out:
+          claim: source-tree
+          partition_request: '{"kind":"source-tree-partition","pass_id":"{{nodes.open-pass.attribute.pass_id}}","ignore_patterns_from_config":true}'
+          error_policy: { kind: best_effort }
+        userdata:
+          mission: "review-zone"
+          system_prompt: { source_file: prompts/review-zone.system.md }
+          user_prompt_template: { source_file: prompts/review-zone.user.md }
+        error_types:
+          silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
+          tool_error:      { policy: [{ action: retry, count: 2 }, { action: pass }] }
+
+      - type: aggregate-initial
+        tags: [crimefinder, aggregate]
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: agg
+            selector: "@aggregate-findings:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        subscribes:
+          - { node: review-fan-out, on: state }
+        attributes:
+          schema:
+            type: object
+            properties:
+              class_1_4_remaining: { type: integer, source: "{{claim.agg.payload.class_1_4_remaining}}" }
+              class_5: { type: array, source: "{{claim.agg.payload.class_5}}" }
+              dedup_file_groups: { type: array, source: "{{claim.agg.payload.dedup_file_groups}}" }
+
+      - type: dedup-fan-out
+        tags: [crimefinder, fan-out, dedup]
+        executor: crimefinder
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: dedup-grouping
+            selector: "@dedup-grouping:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: rw
+        fan_out:
+          claim: dedup-grouping
+          partition_request: '{"kind":"dedup-partition","pass_id":"{{nodes.open-pass.attribute.pass_id}}","file_groups":{{nodes.aggregate-initial.attribute.dedup_file_groups}}}'
+          error_policy: { kind: best_effort }
+        userdata:
+          mission: "dedup"
+          system_prompt: { source_file: prompts/dedup.system.md }
+          user_prompt_template: { source_file: prompts/dedup.user.md }
+        error_types:
+          silence_timeout: { policy: [{ action: pass }] }
+          tool_error:      { policy: [{ action: retry, count: 1 }, { action: pass }] }
+
+      - type: class-split
+        tags: [crimefinder, aggregate]
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: split
+            selector: "@class-split:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        subscribes:
+          - { node: dedup-fan-out, on: state }
+        attributes:
+          schema:
+            type: object
+            properties:
+              class_1_4_remaining: { type: boolean, source: "{{claim.split.payload.class_1_4_remaining}}" }
+              class_5_findings:    { type: array,   source: "{{claim.split.payload.class_5_findings}}" }
+
+      - type: fix-iter-1
+        tags: [crimefinder, fix-cycle]
+        delegate: fix-iteration
+        holds:
+          pass-state: { from: open-pass }
+        subscribes:
+          - { node: class-split, on: state }
+
+      - type: fix-iter-2
+        tags: [crimefinder, fix-cycle]
+        delegate: fix-iteration
+        holds:
+          pass-state: { from: open-pass }
+        subscribes:
+          - { node: fix-iter-1, on: state }
+
+      - type: fix-iter-3
+        tags: [crimefinder, fix-cycle]
+        delegate: fix-iteration
+        holds:
+          pass-state: { from: open-pass }
+        subscribes:
+          - { node: fix-iter-2, on: state }
+
+      - type: class-5-finalize
+        tags: [crimefinder, aggregate]
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: c5
+            selector: "@class-5-finalize:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        subscribes:
+          - { node: fix-iter-3, on: state }
+        attributes:
+          schema:
+            type: object
+            properties:
+              class_5_open:           { type: integer, source: "{{claim.c5.payload.class_5_open}}" }
+              class_5_resolved:       { type: integer, source: "{{claim.c5.payload.class_5_resolved}}" }
+              class_5_deferred:       { type: integer, source: "{{claim.c5.payload.class_5_deferred}}" }
+              class_5_queued_to_spec: { type: integer, source: "{{claim.c5.payload.class_5_queued_to_spec}}" }
+
+      - type: report
+        tags: [crimefinder, report]
+        holds:
+          pass-state: { from: open-pass }
+        stores:
+          - name: crimefinder
+            alias: rpt
+            selector: "@report:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: rw
+        subscribes:
+          - { node: class-5-finalize, on: state }
+        attributes:
+          schema:
+            type: object
+            properties:
+              summary: { type: object, source: "{{claim.rpt.payload}}" }
+
+  - name: fix-iteration
+    entry: iter-guard
+    exit: iter-aggregate
+    nodes:
+      - type: iter-guard
+        tags: [crimefinder, fix-cycle, iter-guard]
+        stores:
+          - name: crimefinder
+            alias: unresolved-check
+            selector: "@unresolved-class-1-4:pass_id={{nodes.open-pass.attribute.pass_id}}"
+            intent: r
+        attributes:
+          schema:
+            type: object
+            properties:
+              pass_id:
+                type: string
+                source: "{{nodes.open-pass.attribute.pass_id}}"
+              iter_num:
+                type: integer
+                source: "{{claim.unresolved-check.payload.iter_num}}"
+              affected_zones:
+                type: array
+                source: "{{claim.unresolved-check.payload.affected_zones}}"
+              skipped:
+                type: boolean
+                source: "{{claim.unresolved-check.payload.skipped}}"
+
+      - type: fix-fan-out
+        tags: [crimefinder, fix-cycle, fan-out, fix]
+        executor: crimefinder
+        subscribes:
+          - { node: iter-guard, on: state }
+        # pass_id flows through `{{nodes.iter-guard.attribute.pass_id}}`
+        # below (substituted into the partition_request + selectors);
+        # the subgraph does not co-hold the outer pass-state claim.
+        stores:
+          - name: crimefinder
+            alias: fix-partition
+            selector: "@fix-partition:pass_id={{nodes.iter-guard.attribute.pass_id}}&iter_num={{nodes.iter-guard.attribute.iter_num}}"
+            intent: rw
+        fan_out:
+          claim: fix-partition
+          partition_request: '{"kind":"fix-partition","pass_id":"{{nodes.iter-guard.attribute.pass_id}}","iter_num":{{nodes.iter-guard.attribute.iter_num}},"affected_zones":{{nodes.iter-guard.attribute.affected_zones}}}'
+          error_policy: { kind: best_effort }
+        userdata:
+          mission: "fix-cycle"
+          system_prompt: { source_file: prompts/fix.system.md }
+          user_prompt_template: { source_file: prompts/fix.user.md }
+          # iter_num and per-zone assigned_finding_ids are NOT carried in
+          # userdata. Rimsky doesn't substitute `{{...}}` inside userdata
+          # (see runtime/userdata_overrides.go deep-merge-only; spec
+          # invariant 11). They ride on the source-tree-zone address bytes
+          # the producer's SplitScope → openFanOutChild populates per child.
+        error_types:
+          silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
+          tests_failed:    { policy: [{ action: pass }] }
+          commit_failed:   { policy: [{ action: pass }] }
+          tool_error:      { policy: [{ action: retry, count: 1 }, { action: pass }] }
+
+      - type: re-review-affected
+        tags: [crimefinder, fix-cycle, fan-out, re-review]
+        executor: crimefinder
+        stores:
+          - name: crimefinder
+            alias: re-review-partition
+            selector: "@re-review-partition:pass_id={{nodes.iter-guard.attribute.pass_id}}&iter_num={{nodes.iter-guard.attribute.iter_num}}"
+            intent: r
+        fan_out:
+          claim: re-review-partition
+          partition_request: '{"kind":"re-review-partition","pass_id":"{{nodes.iter-guard.attribute.pass_id}}","iter_num":{{nodes.iter-guard.attribute.iter_num}},"affected_zones":{{nodes.iter-guard.attribute.affected_zones}}}'
+          error_policy: { kind: best_effort }
+        userdata:
+          mission: "re-review"
+          system_prompt: { source_file: prompts/re-review.system.md }
+          user_prompt_template: { source_file: prompts/re-review.user.md }
+          # iter_num rides on the source-tree-zone address bytes (see
+          # fix-fan-out comment above) — userdata can't carry per-child
+          # `{{...}}` substitutions in rimsky.
+        subscribes:
+          - { node: fix-fan-out, on: state }
+        error_types:
+          silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
+          tool_error:      { policy: [{ action: retry, count: 2 }, { action: pass }] }
+
+      - type: iter-aggregate
+        tags: [crimefinder, fix-cycle, iter-aggregate]
+        stores:
+          - name: crimefinder
+            alias: iter-result
+            selector: "@iter-aggregate:pass_id={{nodes.iter-guard.attribute.pass_id}}&iter_num={{nodes.iter-guard.attribute.iter_num}}"
+            intent: r
+        subscribes:
+          - { node: re-review-affected, on: state }
+        attributes:
+          schema:
+            type: object
+            properties:
+              more_work_needed:             { type: boolean, source: "{{claim.iter-result.payload.more_work_needed}}" }
+              findings_resolved_this_iter:  { type: integer, source: "{{claim.iter-result.payload.findings_resolved_this_iter}}" }

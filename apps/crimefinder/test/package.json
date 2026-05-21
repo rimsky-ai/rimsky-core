@@ -1,0 +1,20 @@
+{
+  "name": "@crimefinder/test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --no-file-parallelism",
+    "test:scenarios": "vitest run scenarios",
+    "test:e2e": "CRIMEFINDER_E2E=1 vitest run e2e",
+    "test:integration": "vitest run --no-file-parallelism --config vitest.integration.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crimefinder/shared": "*",
+    "testcontainers": "^10.7.0",
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.10",
+    "zod": "^3.22.4"
+  }
+}

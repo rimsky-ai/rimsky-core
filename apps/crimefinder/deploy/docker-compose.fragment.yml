@@ -1,0 +1,30 @@
+services:
+  crimefinder-producer:
+    image: crimefinder/producer:latest
+    environment:
+      CRIMEFINDER_PRODUCER_HOST: "0.0.0.0"
+      CRIMEFINDER_PRODUCER_PORT_GRPC: "9100"
+      CRIMEFINDER_PRODUCER_PORT_HTTP: "9101"
+      CRIMEFINDER_PRODUCER_REPO_ROOT: "${REPO_ROOT}"
+      # Consumer SHOULD override this to the host-reachable URL of the same
+      # producer port (typically host.docker.internal:7081 when host-side
+      # executors dial back; or crimefinder-producer:9100 when other
+      # containers dial). The address bytes returned by Open carry this URL
+      # verbatim to whichever holder needs it.
+      CRIMEFINDER_PRODUCER_STATE_ENDPOINT_URL: "crimefinder-producer:9100"
+    volumes:
+      # Bind-mount the host repo at the SAME absolute path on host and
+      # container so Claude CLI's host-side edits and the producer's
+      # container-side git ops agree on file paths.
+      - "${REPO_ROOT}:${REPO_ROOT}"
+    ports:
+      - "7081:9100"   # gRPC for host-executor → producer
+      - "7082:9101"   # HTTP /health for host-side checks
+    expose:
+      - "9100"
+      - "9101"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:9101/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

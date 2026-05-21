@@ -1,0 +1,23 @@
+FROM node:20-alpine AS builder
+WORKDIR /build
+COPY apps/crimefinder/package.json apps/crimefinder/package-lock.json* ./
+COPY apps/crimefinder/shared/package.json ./shared/
+COPY apps/crimefinder/proto/package.json ./proto/
+COPY apps/crimefinder/producer/package.json ./producer/
+RUN npm ci || npm install
+COPY apps/crimefinder/ ./
+COPY protocols/proto/v1/ /build/protocols/proto/v1/
+RUN npm run build --workspaces --if-present
+
+FROM node:20-alpine
+RUN apk add --no-cache tini git
+WORKDIR /app
+COPY --from=builder /build/shared ./shared
+COPY --from=builder /build/proto ./proto
+COPY --from=builder /build/producer ./producer
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/protocols ./protocols
+ENV NODE_ENV=production
+USER node
+EXPOSE 9100 9101
+ENTRYPOINT ["/sbin/tini", "--", "node", "producer/dist/main.js"]
