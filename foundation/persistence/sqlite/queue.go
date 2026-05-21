@@ -126,6 +126,11 @@ func (q *queueImpl) SelectCandidates(
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
 		    AND d.enqueued_at <= ?
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_wait_set w
+		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
+		        AND w.drained_at IS NULL
+		    )
 		  ORDER BY d.enqueued_at`,
 		nowUTC(),
 	)

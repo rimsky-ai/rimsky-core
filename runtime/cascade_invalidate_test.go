@@ -127,6 +127,9 @@ func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persi
 func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
 	return false, nil
 }
+func (f *invTestQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _ shared.UUID) error {
+	return nil
+}
 func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }

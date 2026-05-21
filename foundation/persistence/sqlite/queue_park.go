@@ -286,6 +286,38 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 	return rowsAffected == 1, nil
 }
 
+// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
+// dispatch row to `newFrameID`. Mirror of the postgres helper used by
+// the hard-dep cascade extension and the standard cascade-subscription
+// path to rebind a woken parked run into the active frame.
+//
+// Returns `persistence.ErrRunRowMissing` when no row matches
+// `dispatchID`: callers always reach this primitive after resolving
+// the run row, so a silent no-op would hide programmer errors.
+func (q *queueImpl) RebindRunFrameInTx(
+	ctx context.Context, tx persistence.Tx,
+	dispatchID, newFrameID shared.UUID,
+) error {
+	if tx == nil {
+		return errors.New("sqlite.RebindRunFrameInTx: tx required")
+	}
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs SET frame_id = ? WHERE id = ?`,
+		newFrameID.String(), dispatchID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("sqlite.RebindRunFrameInTx: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.RebindRunFrameInTx: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.RebindRunFrameInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+	}
+	return nil
+}
+
 // GetRetryNoProgress returns counter + per-row override.
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
 	var (

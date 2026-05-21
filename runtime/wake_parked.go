@@ -163,14 +163,33 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 
 // wakeParkedReceiverInTx is the cascade-walk variant of wakeParkedNode:
 // runs inside the caller's tx (no nested transaction), drives the same
-// parked → stale transition + audit event, and stamps the receiver
-// with the sender's frame_id so the receiver joins the active frame
+// parked → stale transition + audit event, stamps the receiver
+// with the sender's frame_id on BOTH `rimsky_nodes.frame_id` and
+// `rimsky_node_runs.frame_id` so the receiver joins the active frame
 // (rather than waiting for a separate next-frame open).
 //
 // Used by `cascadeSubscribersStaleInTx` when the cascade walk visits a
-// parked receiver. The parent caller (the cascade walk) then inserts
-// the wait-set row that gates this newly-stale receiver on the
+// parked receiver, and by `pullHardDepUpstreams` when a hard-dep
+// upstream is parked. The parent caller (the cascade walk) then inserts
+// the wait-set row that gates the newly-stale receiver on the
 // invalidating sender.
+//
+// Frame stamp: After `ResumeParkedInTx` transitions the run row from
+// `parked` to `pending`, an in-flight run row exists for this node,
+// so `MarkStaleForCascade`'s NOT EXISTS guard rejects and it does NOT
+// touch `rimsky_nodes.frame_id`. `SetFrameID` performs the
+// unconditional stamp directly. Without it, the eligibility-predicate
+// JOIN (`w.frame_id = n.frame_id` in `ListReadyForDispatch` /
+// `ListPureCascadeReady`) cannot find the new-frame wait-set row the
+// cascade walker just inserted, the gate is bypassed, and the
+// parked-woken receiver dispatches without waiting on its sender.
+// `RebindRunFrameInTx` pairs the run-row side: without it, the
+// receiver-side `GetInFlightRunForNode(node, newFrameID)` returns
+// `hasRun=false` (its WHERE clause excludes the still-prior-frame run),
+// so the wait-set blocker the caller would insert never installs.
+// Threading both into this primitive ensures every caller (standard
+// cascade-subscription path AND hard-dep pull path) gets the stamps
+// without each site re-implementing them.
 //
 //	@concept: parked-state
 //	@concept: cascade
@@ -186,29 +205,59 @@ func wakeParkedReceiverInTx(
 		// Race: the receiver is parked but the node-run row is in
 		// transition. Fall back to MarkStaleForCascade — the next
 		// orphan-reaper sweep will clean any stranded queue row.
-		return args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx)
+		_, err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx)
+		return err
 	}
 	resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
 	if err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
 	}
+	// Stamp node.frame_id unconditionally. After ResumeParkedInTx
+	// transitioned the parked run to pending, an in-flight run row
+	// exists for this node, so MarkStaleForCascade's NOT EXISTS guard
+	// rejects and it does NOT touch node.frame_id — using SetFrameID
+	// directly is the stamp the eligibility-predicate JOIN
+	// (`w.frame_id = n.frame_id`) requires. Without it, the wait-set
+	// blocker the cascade walker inserts at the new frame is invisible
+	// to ListReadyForDispatch and the woken receiver dispatches without
+	// waiting.
+	if err := args.Persist.Nodes().SetFrameID(ctx, receiver.ID, &frameID, tx); err != nil {
+		return fmt.Errorf("wakeParkedReceiverInTx: stamp node.frame_id: %w", err)
+	}
+	// Rebind the resumed run row's frame_id so receiver-side
+	// GetInFlightRunForNode(node, frameID) resolves it. Done before the
+	// !resumed early-return so the (rare) raced-into-pending case
+	// (deadline sweep concurrently transitioned parked → pending) also
+	// gets the rebind — that scenario leaves an in-flight pending row
+	// at the prior parked frame that still needs migration.
+	if err := args.Queue.RebindRunFrameInTx(ctx, tx, parked.DispatchID, frameID); err != nil {
+		// Tolerate ErrRunRowMissing on the !resumed branch: the row
+		// may have been hard-deleted by orphan-reaper between our
+		// GetParkedByNode read and now. The MarkStaleForCascade call
+		// below recovers by inserting a fresh pending stale row.
+		if !resumed && errors.Is(err, persistence.ErrRunRowMissing) {
+			// fall through
+		} else {
+			return fmt.Errorf("wakeParkedReceiverInTx: rebind run frame: %w", err)
+		}
+	}
 	if !resumed {
-		// Already moved out of parked (raced with the deadline
-		// sweep or another cascade); skip the state transition to
-		// avoid double-firing. Stamp frame_id so the receiver lands
-		// in this frame regardless.
-		return args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx)
+		// Already moved out of parked (raced with the deadline sweep
+		// or another cascade); skip UpdateState and the resume event
+		// to avoid double-firing. If the parked row was moved to a
+		// terminal phase by orphan-reaper (rather than to pending by
+		// the deadline sweep), the receiver still needs a dispatchable
+		// in-flight row for this cascade frame — MarkStaleForCascade
+		// inserts one when no in-flight row exists, and is a no-op
+		// when one already does (the deadline-sweep case).
+		if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx); err != nil {
+			return fmt.Errorf("wakeParkedReceiverInTx: race-recovery MarkStaleForCascade: %w", err)
+		}
+		return nil
 	}
 	if err := args.Persist.Nodes().UpdateState(ctx, receiver.ID,
 		cascade.NodeStateStale, cascade.ReasonHandlerResume, "", tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)
-	}
-	// Stamp the receiver with this frame's id so subsequent eligibility
-	// queries scope wait-set lookups correctly. ResumeParkedInTx leaves
-	// the row's frame_id intact; the receiver was parked in some
-	// earlier frame and needs to rejoin the current one.
-	if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiver.ID, frameID, tx); err != nil {
-		return fmt.Errorf("wakeParkedReceiverInTx: stamp frame_id: %w", err)
 	}
 	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &receiver.ID, InstanceID: &receiver.InstanceID,

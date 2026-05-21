@@ -1572,7 +1572,6 @@ type AttributesSubstitutedPayload struct {
 	// Names of optional attribute schema properties whose source directives
 	// failed to resolve and were therefore omitted from `data` (per §10.3).
 	OmittedFields []string `protobuf:"bytes,2,rep,name=omitted_fields,json=omittedFields,proto3" json:"omitted_fields,omitempty"`
-	RunAttempt    int32    `protobuf:"varint,3,opt,name=run_attempt,json=runAttempt,proto3" json:"run_attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1619,13 +1618,6 @@ func (x *AttributesSubstitutedPayload) GetOmittedFields() []string {
 		return x.OmittedFields
 	}
 	return nil
-}
-
-func (x *AttributesSubstitutedPayload) GetRunAttempt() int32 {
-	if x != nil {
-		return x.RunAttempt
-	}
-	return 0
 }
 
 // AttributesCommittedPayload is emitted when an executor's terminal
@@ -2151,12 +2143,10 @@ const file_events_proto_rawDesc = "" +
 	"\tholder_id\x18\x05 \x01(\tR\bholderId\x12.\n" +
 	"\x13prior_supervisor_id\x18\x06 \x01(\tR\x11priorSupervisorId\x129\n" +
 	"\n" +
-	"expired_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiredAt\"\x95\x01\n" +
+	"expired_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiredAt\"\x87\x01\n" +
 	"\x1cAttributesSubstitutedPayload\x12-\n" +
 	"\x12substituted_fields\x18\x01 \x03(\tR\x11substitutedFields\x12%\n" +
-	"\x0eomitted_fields\x18\x02 \x03(\tR\romittedFields\x12\x1f\n" +
-	"\vrun_attempt\x18\x03 \x01(\x05R\n" +
-	"runAttempt\"\x84\x01\n" +
+	"\x0eomitted_fields\x18\x02 \x03(\tR\romittedFieldsJ\x04\b\x03\x10\x04R\vrun_attempt\"\x84\x01\n" +
 	"\x1aAttributesCommittedPayload\x12\x18\n" +
 	"\achanged\x18\x01 \x01(\bR\achanged\x12%\n" +
 	"\x0eupdated_fields\x18\x02 \x03(\tR\rupdatedFields\x12%\n" +

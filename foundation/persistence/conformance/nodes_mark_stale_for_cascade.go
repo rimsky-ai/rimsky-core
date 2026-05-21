@@ -134,15 +134,38 @@ func testNodesMarkStaleForCascade(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed nodes: %v", err)
 	}
 
-	// Issue MarkStaleForCascade against each.
+	// Issue MarkStaleForCascade against each. The bool return must
+	// signal whether the row's pending run was inserted (true) or
+	// short-circuited because an in-flight run already exists (false);
+	// callers gate cascade event-emission and recursion on this signal.
+	//
+	// Expected per the seed above:
+	//   freshID:          no in-flight row → INSERT → inserted=true
+	//   staleNullFrameID: seeded pending row exists → no-op → inserted=false
+	//   runningID:        seeded running row exists → no-op → inserted=false
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := store.Nodes().MarkStaleForCascade(ctx, freshID, cascadeFrameID, tx); err != nil {
+		insertedFresh, err := store.Nodes().MarkStaleForCascade(ctx, freshID, cascadeFrameID, tx)
+		if err != nil {
 			return err
 		}
-		if err := store.Nodes().MarkStaleForCascade(ctx, staleNullFrameID, cascadeFrameID, tx); err != nil {
+		if !insertedFresh {
+			t.Fatalf("MarkStaleForCascade(freshID): inserted=false; want true (no in-flight run existed)")
+		}
+		insertedStaleNull, err := store.Nodes().MarkStaleForCascade(ctx, staleNullFrameID, cascadeFrameID, tx)
+		if err != nil {
 			return err
 		}
-		return store.Nodes().MarkStaleForCascade(ctx, runningID, cascadeFrameID, tx)
+		if insertedStaleNull {
+			t.Fatalf("MarkStaleForCascade(staleNullFrameID): inserted=true; want false (in-flight pending run exists)")
+		}
+		insertedRunning, err := store.Nodes().MarkStaleForCascade(ctx, runningID, cascadeFrameID, tx)
+		if err != nil {
+			return err
+		}
+		if insertedRunning {
+			t.Fatalf("MarkStaleForCascade(runningID): inserted=true; want false (in-flight running run exists)")
+		}
+		return nil
 	}); err != nil {
 		t.Fatalf("MarkStaleForCascade: %v", err)
 	}

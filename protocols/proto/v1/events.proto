@@ -211,7 +211,12 @@ message AttributesSubstitutedPayload {
   // Names of optional attribute schema properties whose source directives
   // failed to resolve and were therefore omitted from `data` (per §10.3).
   repeated string omitted_fields = 2;
-  int32 run_attempt = 3;
+  // Reserved (was: int32 run_attempt = 3). Removed per per-run attribute
+  // keying spec — each dispatch has a fresh node_run_id; consumers
+  // counting retries migrate to consecutive_retries_no_progress on
+  // rimsky_node_runs.
+  reserved 3;
+  reserved "run_attempt";
 }
 
 // AttributesCommittedPayload is emitted when an executor's terminal

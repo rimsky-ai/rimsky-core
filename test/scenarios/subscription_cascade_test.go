@@ -279,11 +279,15 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	}
 }
 
-// TestSubscriptionCascade_FrameEndCleansWaitSet covers the
-// ON DELETE CASCADE relationship between rimsky_frames and
-// rimsky_wait_set. When a frame ends, every wait-set row in that
-// frame must be deleted by the FK cascade. Stale rows from prior
-// frames must not affect new frames.
+// TestSubscriptionCascade_FrameEndCleansWaitSet verifies that after
+// the frame ends, every wait-set row is drained (drained_at IS NOT NULL).
+// Under per-run keying (2026-05-20), drain MARKS rows rather than
+// deleting them — the substitution-context builder reads drained rows
+// to populate the receiver's Deps map. The eligibility predicate
+// updates to "no rows with drained_at IS NULL," so post-frame the
+// invariant we care about is "no undrained rows" (not "no rows").
+// Frame-level cleanup happens via the ON DELETE CASCADE relationship
+// with rimsky_frames when frames are eventually pruned for retention.
 func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -310,19 +314,20 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 		"r should reach fresh after initial settle")
 
 	// After the frame closes, every wait-set row for that instance's
-	// frames must be absent. Allow up to 5 seconds for frame-end
-	// detection to land.
+	// frames must have drained_at IS NOT NULL. Allow up to 5 seconds
+	// for frame-end detection to land.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		var count int
+		var undrained int
 		err := h.Pool.QueryRow(h.Ctx, `
 			SELECT count(*) FROM rimsky_wait_set w
 			 JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
 			 JOIN rimsky_nodes n ON n.id = r.node_id
 			 WHERE n.instance_id = $1
-		`, iid).Scan(&count)
+			   AND w.drained_at IS NULL
+		`, iid).Scan(&undrained)
 		require.NoError(t, err)
-		if count == 0 {
+		if undrained == 0 {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -333,10 +338,11 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 		 JOIN rimsky_node_runs r ON r.id = w.receiver_run_id
 		 JOIN rimsky_nodes n ON n.id = r.node_id
 		 WHERE n.instance_id = $1
+		   AND w.drained_at IS NULL
 	`, iid).Scan(&leftover)
 	require.NoError(t, err)
 	require.Equal(t, 0, leftover,
-		"wait-set rows should be deleted by ON DELETE CASCADE when their frame ends")
+		"every wait-set row should be drained (drained_at IS NOT NULL) by frame end")
 }
 
 // TestSubscriptionCascade_FrameNextLoopConverges covers the frame:next

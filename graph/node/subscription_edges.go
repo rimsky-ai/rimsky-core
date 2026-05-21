@@ -180,20 +180,34 @@ func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 	return out
 }
 
-// parseSubstitutionRefsFromAttributes scans the per-node Attributes
-// schema for `source:` strings, extracts each `{{...}}` directive, and
-// returns the receiver-facing substitution refs that auto-subscribe.
+// parseSubstitutionRefsFromAttributes scans every site on the node
+// where a `{{nodes.X.attribute.Y}}` directive can appear — the
+// attribute-schema `source:` strings (auto-subscribe per spec §4.3),
+// store selectors, and lock names. Each `{{nodes.X.attribute.Y}}`
+// reference produces an attribute-topic auto-subscription so the
+// dispatch-time substitution context (drained wait-set rows) sees the
+// sender's attributes. Per the 2026-05-20 per-run attribute-keying spec,
+// the substitution context is exactly "what fired this frame for this
+// receiver" — so any read of an upstream attribute MUST be reflected
+// as an attribute-topic subscription. Per spec
+// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md.
 func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
-	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
-		return nil
-	}
 	var out []substitutionRef
 	seen := map[substitutionRef]struct{}{}
-	walkSchemaForSources(n.Attributes.Schema, func(src string) {
+	// scanSrc accepts any directive shape parseSubstitutionDirective
+	// admits (attribute or event). The attribute-schema `source:` scan
+	// has used this surface since auto-subscribe shipped, so event
+	// references in schemas continue to produce edges as before.
+	scanSrc := func(src string) {
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			body := strings.TrimSpace(m[1])
 			if body == "" {
 				continue
+			}
+			// Strip an optional fallback `| <literal>` suffix so the
+			// upstream-ref parser sees only the directive proper.
+			if idx := strings.Index(body, "|"); idx >= 0 {
+				body = strings.TrimSpace(body[:idx])
 			}
 			ref, ok := parseSubstitutionDirective(body)
 			if !ok {
@@ -208,7 +222,54 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 			seen[ref] = struct{}{}
 			out = append(out, ref)
 		}
-	})
+	}
+	// scanSrcAttributeOnly is the same as scanSrc, but it discards any
+	// directive whose TopicKind is not "attribute". The 2026-05-20
+	// attribute-pull-resolution spec confines the new store-selector
+	// and lock-name auto-subscribe scan to attribute reads; event reads
+	// at those sites keep whatever subscription shape pre-existed the
+	// 2026-05-20 plan (i.e. NONE introduced by this scan).
+	scanSrcAttributeOnly := func(src string) {
+		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
+			body := strings.TrimSpace(m[1])
+			if body == "" {
+				continue
+			}
+			if idx := strings.Index(body, "|"); idx >= 0 {
+				body = strings.TrimSpace(body[:idx])
+			}
+			ref, ok := parseSubstitutionDirective(body)
+			if !ok {
+				continue
+			}
+			if ref.TopicKind != "attribute" {
+				continue
+			}
+			if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
+				continue
+			}
+			if _, dup := seen[ref]; dup {
+				continue
+			}
+			seen[ref] = struct{}{}
+			out = append(out, ref)
+		}
+	}
+	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
+		walkSchemaForSources(n.Attributes.Schema, scanSrc)
+	}
+	// Stores selectors and lock names are also acquisition-time
+	// substitution sites; reads there must auto-subscribe so the
+	// dispatch-time substitution context contains the referenced
+	// upstream attribute rows. Event reads at these sites do NOT
+	// auto-subscribe — the 2026-05-20 minimalist substitution model
+	// does not extend to events.
+	for _, s := range n.Stores {
+		scanSrcAttributeOnly(s.Selector)
+	}
+	for _, l := range n.Locks {
+		scanSrcAttributeOnly(l.Name)
+	}
 	return out
 }
 

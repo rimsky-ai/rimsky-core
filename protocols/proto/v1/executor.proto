@@ -68,8 +68,12 @@ message ExecuteRequest {
   reserved 10;
   reserved "resumed";
 
-  // Increments on every retry. Exposed for executor visibility / idempotency.
-  int32 run_attempt = 11;
+  // Reserved (was: int32 run_attempt = 11). Removed per per-run attribute
+  // keying spec — each dispatch has a fresh node_run_id, and executors
+  // that previously read run_attempt for idempotency migrate to
+  // dispatch_id (field 12, the supervisor-side rimsky_node_runs.id).
+  reserved 11;
+  reserved "run_attempt";
 
   // The supervisor-side rimsky_node_runs.id for this dispatch. Exposed
   // so executors can key per-dispatch traces/state (the executor

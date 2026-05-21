@@ -6,10 +6,17 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/shared"
 )
+
+// ErrRunRowMissing is returned by Queue mutators that key on a
+// `rimsky_node_runs.id` and find no matching row. Callers reach those
+// mutators after they've already resolved the dispatch row, so a silent
+// no-op would mask programmer errors.
+var ErrRunRowMissing = errors.New("persistence: rimsky_node_runs row not found")
 
 // DispatchRequest is the payload for Enqueue.
 //
@@ -249,6 +256,24 @@ type Queue interface {
 	// record their supervisor id in the parked_resume_started audit
 	// event directly — this method does not touch claimed_by.
 	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, wakeReason string) (resumed bool, err error)
+
+	// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
+	// dispatch row to `newFrameID`. Used after a cross-frame parked-run
+	// wake so the woken run rejoins the active frame; without the
+	// rebind, `GetInFlightRunForNode(node, newFrameID)` won't resolve
+	// the woken row and the receiver's wait-set blocker can't bind to
+	// its run id. Idempotent: re-binding to the same frame is a no-op.
+	//
+	// A missing row (no `rimsky_node_runs` row exists for `dispatchID`)
+	// is an error: callers reach this primitive after they've already
+	// resolved the dispatch row, so a silent no-op would hide
+	// programmer errors. Returns `ErrRunRowMissing` so callers can
+	// distinguish "row missing" from generic DB errors.
+	//
+	// Per the 2026-05-20 hard-dep cascade extension; supports the
+	// parked-upstream branch of `runtime/runner_terminal.go::pullHardDepUpstreams`
+	// and the standard cascade-subscription path's parked-receiver wake.
+	RebindRunFrameInTx(ctx context.Context, tx Tx, dispatchID, newFrameID shared.UUID) error
 
 	// GetRetryNoProgress returns the current counter value plus the
 	// per-row max_retries_without_progress override (NULL → use deployment

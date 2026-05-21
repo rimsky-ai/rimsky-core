@@ -14,22 +14,22 @@ import {
 } from "./attributes-tools.js";
 
 describe("buildAttributesWritebackUrl", () => {
-  it("appends /v1/attributes/{node_id} with URL-encoded node id", () => {
+  it("appends /v1/runs/{run_id}/attributes with URL-encoded run id", () => {
     const url = buildAttributesWritebackUrl(
       "http://supervisor.invalid",
-      "n/1",
+      "r/1",
     );
     expect(url).toBe(
-      "http://supervisor.invalid/v1/attributes/n%2F1",
+      "http://supervisor.invalid/v1/runs/r%2F1/attributes",
     );
   });
 
   it("strips trailing slashes from base", () => {
     const url = buildAttributesWritebackUrl(
       "http://supervisor.invalid///",
-      "n-1",
+      "r-1",
     );
-    expect(url).toBe("http://supervisor.invalid/v1/attributes/n-1");
+    expect(url).toBe("http://supervisor.invalid/v1/runs/r-1/attributes");
   });
 });
 
@@ -81,7 +81,7 @@ describe("defaultPostAttributes", () => {
   });
 
   it("POSTs delta body with cancel-token in Authorization header", async () => {
-    const url = buildAttributesWritebackUrl(serverUrl, "node-7");
+    const url = buildAttributesWritebackUrl(serverUrl, "run-7");
     const result = await defaultPostAttributes(
       url,
       { delta: { progress: "halfway", count: 3 } },
@@ -89,7 +89,7 @@ describe("defaultPostAttributes", () => {
     );
     expect(result.status).toBe(204);
     expect(received).not.toBeNull();
-    expect(received!.path).toBe("/v1/attributes/node-7");
+    expect(received!.path).toBe("/v1/runs/run-7/attributes");
     expect(received!.headers.authorization).toBe(
       "Bearer supervisor-issued-cancel-token",
     );
@@ -100,7 +100,7 @@ describe("defaultPostAttributes", () => {
 
   it("propagates non-2xx status without throwing", async () => {
     nextStatus = 422;
-    const url = buildAttributesWritebackUrl(serverUrl, "node-x");
+    const url = buildAttributesWritebackUrl(serverUrl, "run-x");
     const result = await defaultPostAttributes(
       url,
       { delta: { x: 1 } },

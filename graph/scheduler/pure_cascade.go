@@ -274,7 +274,8 @@ func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 // failed propagation to one child does not block siblings.
 func cascadePropagateFrameID(ctx context.Context, sb persistence.Tables, childID shared.UUID, frameID shared.UUID, log shared.Logger) {
 	err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return sb.Nodes().MarkStaleForCascade(ctx, childID, frameID, tx)
+		_, err := sb.Nodes().MarkStaleForCascade(ctx, childID, frameID, tx)
+		return err
 	})
 	if err != nil && log != nil {
 		log.Warn("cascadePropagateFrameID: failed",

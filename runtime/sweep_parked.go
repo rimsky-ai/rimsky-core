@@ -235,7 +235,7 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		// DispatchID is the run id.
 		//
 		//	@concept: wait-set
-		if err := args.Persist.WaitSet().DeleteBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
+		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
 			return err
 		}
 		// Auto-terminal Abandon for any held claims anchored on this

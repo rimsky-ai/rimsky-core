@@ -150,14 +150,22 @@ func applyTerminalComplete(
 	// writeback bytes onto the parent run's writeback row in the same tx
 	// that records exit's terminal. Per spec §Sub-graphs / Writeback
 	// carry-rule for exit.
-	if isSubgraphExitNode(ctx, args, acq) {
+	//
+	// `isSubgraphExit` short-circuits the exit's own-attribute-row write
+	// below: per spec, the exit is internal to the subgraph and not
+	// externally addressable, so its row stays empty — only the parent's
+	// row carries the bytes via applyTerminalCompleteSubgraphExit.
+	isSubgraphExit := isSubgraphExitNode(acq)
+	if isSubgraphExit {
 		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged); err != nil {
 			return err
 		}
 		// Fall through to the standard release/cascade path below so
 		// exit's own state transitions to `fresh` and the parent
 		// aggregator picks up the child's terminal via
-		// PropagateFromChildState.
+		// PropagateFromChildState — but skip the exit's own attribute
+		// row write (handled by the isSubgraphExit guard around
+		// upsertFinalAttributesTx).
 	}
 
 	// Per-node quality-rule evaluation retired by the 2026-05-15
@@ -201,8 +209,15 @@ func applyTerminalComplete(
 		if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
 			return err
 		}
-		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-			return fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
+		// Per spec §Sub-graphs / Writeback carry-rule for exit: the
+		// exit's own attribute row stays empty because the exit is
+		// internal to the subgraph and not externally addressable. The
+		// parent run's row was already populated by
+		// applyTerminalCompleteSubgraphExit above.
+		if !isSubgraphExit {
+			if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+				return fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
+			}
 		}
 		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
 			return fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
@@ -361,11 +376,12 @@ func applyTerminalComplete(
 // would never drain. The new frame's own cascade walks cover deeper
 // gating on the receiver's own subscribers.
 //
-// The settled-state drain (drainWaitSetOnSettled) removes the rows
-// when the sender reaches any settled state (fresh/failed/parked).
-// The pessimistic-invalidate rule inserts a wait-set row for every
-// subscription edge regardless of filter compatibility; idempotent
-// re-fire handles filter mismatch.
+// The settled-state drain (drainWaitSetOnSettled) marks the rows
+// (sets drained_at) when the sender reaches any settled state
+// (fresh/failed/parked); drained rows stay queryable for the
+// substitution-context builder. The pessimistic-invalidate rule
+// inserts a wait-set row for every subscription edge regardless of
+// filter compatibility; idempotent re-fire handles filter mismatch.
 //
 //	@concept: cascade
 //	@concept: wait-set
@@ -479,7 +495,7 @@ func cascadeSubscribersStaleInTx(
 							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
 						}
 					} else {
-						if err := args.Persist.Nodes().MarkStaleForCascade(ctx, r.ID, senderFrameID, tx); err != nil {
+						if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, r.ID, senderFrameID, tx); err != nil {
 							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
 						}
 					}
@@ -508,6 +524,16 @@ func cascadeSubscribersStaleInTx(
 					}, tx); err != nil {
 						return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
 					}
+					// Hard-dep pull: for each hard_dep attribute read the
+					// receiver declares, ensure the upstream has an
+					// in-flight run in this frame and a wait-set blocker
+					// on the receiver. The outer BFS's `visited` set is
+					// threaded down so the hard-dep walk skips upstreams
+					// already covered by the subscription BFS — pathological
+					// mixed soft+hard topologies stay bounded.
+					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, senderFrameID, inst.TemplateHash, visited); err != nil {
+						return err
+					}
 					// Recurse via BFS: the receiver R is itself newly
 					// invalidated, so its subscribers must also be
 					// marked stale + gated. The visited set guards
@@ -523,17 +549,172 @@ func cascadeSubscribersStaleInTx(
 	return nil
 }
 
-// drainWaitSetOnSettled deletes every wait-set row in the current
-// frame where this sender's run appears, in bulk. Called wherever the
-// sender reaches any settled state (fresh/failed/parked). Idempotent.
-// Post-stage-5 of the run-row lifecycle cutover, the wait-set ledger
-// keys on the sender's run id rather than the sender node id.
+// pullHardDepUpstreams consults the per-template hard-dep edge map for
+// receiver `r` and, for each declared upstream X, ensures X has an
+// in-flight run in this frame and a wait-set blocker installed on the
+// receiver. When X has no current-frame run, the helper proactively
+// stale-marks + cascade-walks X within the same tx. All work happens
+// inline — NOT via InvalidateNode (which opens its own tx and would
+// self-deadlock with the caller's tx).
+//
+// The `visited` set is the outer BFS's cycle-guard (in
+// `cascadeSubscribersStaleInTx`). Upstreams already visited by that BFS
+// are skipped to bound work in pathological mixed soft+hard topologies.
+// Upstreams newly pulled by this helper are added to `visited` so the
+// outer BFS sees them as already-processed.
+//
+//	@concept: cascade
+//	@concept: attribute
+func pullHardDepUpstreams(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	receiver persistence.NodeRow,
+	byType map[string][]persistence.NodeRow,
+	receiverRunID foundationshared.UUID,
+	senderFrameID foundationshared.UUID,
+	templateHash string,
+	visited map[foundationshared.UUID]struct{},
+) error {
+	hardEdges, err := hardDepEdgesForTemplate(ctx, args, templateHash, tx)
+	if err != nil {
+		return fmt.Errorf("cascadeSubscribersStaleInTx: hard-dep edges: %w", err)
+	}
+	if len(hardEdges) == 0 {
+		return nil
+	}
+	if len(hardEdges[receiver.NodeType]) == 0 {
+		return nil
+	}
+	for _, upstreamType := range hardEdges[receiver.NodeType] {
+		upstreamNodes := byType[upstreamType]
+		if len(upstreamNodes) == 0 {
+			continue // defensive: template validator should have caught
+		}
+		upstreamNode := upstreamNodes[0] // one node per type per instance
+
+		// Outer-BFS visited-set check: if the subscription BFS already
+		// processed this upstream, skip the hard-dep pull. The wait-set
+		// row that the outer walk inserted (or skipped) is already the
+		// gate for this frame; redoing the wake / stale-mark would
+		// duplicate work and could surface as repeated audit events.
+		if _, seen := visited[upstreamNode.ID]; seen {
+			continue
+		}
+
+		upstreamRunID, hasRun, err := args.Queue.GetInFlightRunForNode(
+			ctx, tx, upstreamNode.ID, senderFrameID,
+		)
+		if err != nil {
+			return fmt.Errorf("cascadeSubscribersStaleInTx: get in-flight upstream %s: %w",
+				upstreamType, err)
+		}
+
+		// Parked-upstream handling.
+		//
+		// `GetInFlightRunForNode` filters to (frame=senderFrameID,
+		// phase IN (pending,active,held)); it does NOT return parked
+		// runs. So `hasRun=true` here means the upstream is already
+		// pending/active/held in this frame — the standard wait-set
+		// insert below gates the receiver correctly and no wake is
+		// needed. We only probe `GetParkedByNode` when `hasRun=false`:
+		//
+		//  1. The upstream is parked IN THIS FRAME (parked run pinned
+		//     to senderFrameID). Its phase stays 'parked' indefinitely
+		//     without a wake; the receiver's wait-set blocker would
+		//     point at a never-draining run.
+		//  2. The upstream is parked in an EARLIER frame (parked row
+		//     pinned to some prior frame). `MarkStaleForCascade`'s
+		//     NOT EXISTS guard would skip the new-frame insert because
+		//     the parked row counts as in-flight; the receiver-side
+		//     re-fetch would then return hasRun=false and we'd error
+		//     out. The wake primitive transitions the run pending and
+		//     `wakeParkedReceiverInTx` itself rebinds the run's
+		//     frame_id to senderFrameID so the resolver finds it.
+		//
+		// Probe is `GetParkedByNode` (frame-agnostic) which catches
+		// both cases without trusting the ListByInstance snapshot's
+		// State field (snapshots can lag a concurrent park terminal).
+		//
+		//	@concept: parked-state
+		//	@concept: cascade
+		//	@concept: attribute
+		if !hasRun {
+			parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID)
+			if err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: get parked upstream %s: %w",
+					upstreamType, err)
+			}
+			if parked != nil {
+				// `wakeParkedReceiverInTx` rebinds the run's frame_id
+				// internally — no separate RebindRunFrameInTx call here.
+				if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
+					return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
+						upstreamType, err)
+				}
+				upstreamRunID, hasRun, err = args.Queue.GetInFlightRunForNode(
+					ctx, tx, upstreamNode.ID, senderFrameID,
+				)
+				if err != nil {
+					return fmt.Errorf("cascadeSubscribersStaleInTx: re-fetch in-flight upstream %s after parked-wake: %w",
+						upstreamType, err)
+				}
+				if !hasRun {
+					return fmt.Errorf("cascadeSubscribersStaleInTx: parked upstream %s lost in-flight row after wake",
+						upstreamType)
+				}
+			}
+		}
+
+		if !hasRun {
+			if err := stalemarkAndEnqueueInFrame(
+				ctx, args, tx, &upstreamNode, senderFrameID,
+			); err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: stale-mark upstream %s: %w",
+					upstreamType, err)
+			}
+			upstreamRunID, hasRun, err = args.Queue.GetInFlightRunForNode(
+				ctx, tx, upstreamNode.ID, senderFrameID,
+			)
+			if err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: re-fetch in-flight upstream %s after stale-mark: %w",
+					upstreamType, err)
+			}
+			if !hasRun {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: upstream %s not in-flight after stale-mark",
+					upstreamType)
+			}
+		}
+
+		// Mark this upstream visited so the outer BFS (and a subsequent
+		// hard-dep pull during the same walk) doesn't re-process it.
+		visited[upstreamNode.ID] = struct{}{}
+
+		// Insert wait-set blocker for the receiver on this upstream's run.
+		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
+			FrameID:           senderFrameID,
+			ReceiverRunID:     receiverRunID,
+			SenderRunID:       upstreamRunID,
+			TopicKind:         "attribute",
+			SubscriptionScope: "direct",
+		}, tx); err != nil {
+			return fmt.Errorf("cascadeSubscribersStaleInTx: insert hard-dep wait-set: %w", err)
+		}
+	}
+	return nil
+}
+
+// drainWaitSetOnSettled marks every wait-set row in the current frame
+// where this sender's run appears as drained (sets drained_at = NOW()),
+// in bulk. Called wherever the sender reaches any settled state
+// (fresh/failed/parked). Idempotent: a re-drain leaves the prior
+// drained_at intact. Post-2026-05-20 keying, drain marks rather than
+// deletes — drained rows stay queryable for the substitution-context
+// builder (see runtime/substitution_context.go).
 //
 //	@concept: wait-set
 func drainWaitSetOnSettled(
 	ctx context.Context, args RunArgs, tx persistence.Tx, frameID, senderRunID foundationshared.UUID,
 ) error {
-	return args.Persist.WaitSet().DeleteBySender(ctx, frameID, senderRunID, tx)
+	return args.Persist.WaitSet().MarkDrainedBySender(ctx, frameID, senderRunID, tx)
 }
 
 // fanoutRecalculate routes RecalculateNode at each subscribed receiver
@@ -609,26 +790,22 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 func upsertFinalAttributesTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, merged map[string]any,
 ) error {
-	prior, _ := args.Persist.NodeAttributes().Get(ctx, acq.NodeID, tx)
-	attempt := 1
+	prior, _ := args.Persist.NodeAttributes().GetByRun(ctx, acq.DispatchID, tx)
 	final := merged
-	if prior != nil {
-		attempt = prior.RunAttempt
-		if len(prior.Data) > 0 {
-			combined := make(map[string]any, len(prior.Data)+len(merged))
-			for k, v := range prior.Data {
-				combined[k] = v
-			}
-			for k, v := range merged {
-				combined[k] = v
-			}
-			final = combined
+	if prior != nil && len(prior.Data) > 0 {
+		combined := make(map[string]any, len(prior.Data)+len(merged))
+		for k, v := range prior.Data {
+			combined[k] = v
 		}
+		for k, v := range merged {
+			combined[k] = v
+		}
+		final = combined
 	}
 	if final == nil {
 		final = map[string]any{}
 	}
-	return args.Persist.NodeAttributes().Upsert(ctx, acq.NodeID, attempt, final, tx)
+	return args.Persist.NodeAttributes().Upsert(ctx, acq.DispatchID, acq.NodeID, final, tx)
 }
 
 // mergeAttributesDelta shallow-merges the executor's attributes_delta

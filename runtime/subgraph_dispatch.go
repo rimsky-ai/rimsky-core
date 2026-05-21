@@ -55,13 +55,11 @@
 // exit-node terminal → CarryExitWriteback) lands when sub-graph
 // canonicalization at the template layer reaches the point of emitting
 // (a) the `IsSubgraphEntryAbsorbed` marker on calling nodes and
-// (b) the `IsSubgraphExit` / `SubgraphInternals` markers on internal
-// nodes. The D2 canonicalizer landed the graph-flatten path; the
-// per-node markers needed for runtime cascade resolution are a small
-// follow-up that the canonicalizer + node template surface together
-// produce. The helpers below carry the runtime side of the contract;
-// the canonicalizer-side hook lands as paired work (cross-referenced
-// from spec D2 step 4).
+// (b) the `IsSubgraphExit` marker on exit nodes. The D2 canonicalizer
+// landed the graph-flatten path; both markers are now emitted at
+// canonicalization (see graph/node/template_validator_graphs.go::flatten),
+// so the runtime can route on `acq.NodeDef` alone without per-terminal
+// template lookups.
 
 package runtime
 
@@ -225,10 +223,12 @@ func CarryExitWriteback(
 	if parent == nil {
 		return fmt.Errorf("CarryExitWriteback: parent run %s not found", parentRunID)
 	}
-	// We don't have direct access to NodeAttributesTable from the
-	// propagation args; callers wire NodeAttributesTable through their
-	// own dispatch context. Surface the parent NodeID so the caller
-	// invokes its own NodeAttributes().Upsert.
+	// CarryExitWriteback validates the exit's writeback bytes and emits
+	// an audit log. The caller (applyTerminalCompleteSubgraphExit)
+	// performs the actual NodeAttributes().Upsert against the parent
+	// run's row so the subgraph's output is observable through the
+	// calling node's attribute surface per concept:delegation's
+	// "exit-node-writeback flows to parent run writeback" rule.
 	if args.Logger != nil {
 		args.Logger.Info("subgraph: carry exit writeback to parent run",
 			"exit_run_id", exitRunID.String(),
@@ -301,11 +301,14 @@ func IsSubgraphCaller(def *node.TemplateNodeDef) bool {
 }
 
 // IsSubgraphExit reports whether a template node is the declared exit
-// of its containing sub-graph. Cheap predicate the supervisor's
-// terminal handler uses to decide whether to invoke
-// `CarryExitWriteback`. The function consults the in-memory template
-// rather than a stored marker so the carry-rule is robust to template
-// re-canonicalization.
+// of its containing sub-graph. Test-only convenience helper that walks
+// the in-memory template's GraphSpecs to find a non-main graph whose
+// `exit:` names `nodeType`. The runtime no longer calls this — the
+// canonicalizer emits `TemplateNodeDef.IsSubgraphExit` and the
+// supervisor's terminal handler reads that marker via
+// `isSubgraphExitNode(acq)`; keeping the predicate here so test
+// fixtures can assert the canonicalization invariant directly against
+// a template they constructed.
 func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 	if tmpl == nil {
 		return false
@@ -511,7 +514,7 @@ func applyTerminalCompleteSubgraphCaller(
 					spec.AggregationPolicy{}); err != nil {
 					return fmt.Errorf("applyTerminalCompleteSubgraphCaller: create child run %q: %w", def.Type, err)
 				}
-				if err := args.Persist.Nodes().MarkStaleForCascade(ctx, nrow.ID, acq.FrameID, tx); err != nil {
+				if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, nrow.ID, acq.FrameID, tx); err != nil {
 					return fmt.Errorf("applyTerminalCompleteSubgraphCaller: stale-mark %q: %w", def.Type, err)
 				}
 			}
@@ -628,14 +631,36 @@ func applyTerminalCompleteSubgraphExit(
 		}, tx, acq.DispatchID, wb); err != nil {
 			return err
 		}
-		// Forensics: emit `subgraph.exit_carry` for the carry-rule. The
-		// parent run id is derived from the exit's run row; resolving it
-		// requires a second lookup inside the same tx so the event sees
-		// the same view CarryExitWriteback wrote through.
+
+		// Carry the exit's writeback to the parent run's attribute row.
+		// The blessed-invariant ("exit-node-writeback flows to parent
+		// run writeback") requires the parent's row to contain the
+		// exit's bytes so downstream consumers reading
+		// {{nodes.<calling-node>.attribute.<field>}} see the subgraph's
+		// output. CarryExitWriteback only validates + logs; the Upsert
+		// lives here because the caller has NodeAttributeTable in scope.
 		exit, err := args.Persist.RunTree().GetByID(ctx, tx, acq.DispatchID)
-		if err != nil || exit == nil || exit.ParentRunID == nil {
-			return nil
+		if err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run: %w", err)
 		}
+		if exit == nil || exit.ParentRunID == nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s has no parent", acq.DispatchID)
+		}
+		parent, err := args.Persist.RunTree().GetByID(ctx, tx, *exit.ParentRunID)
+		if err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: load parent run %s: %w", *exit.ParentRunID, err)
+		}
+		if parent == nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: parent run %s not found", *exit.ParentRunID)
+		}
+		if err := args.Persist.NodeAttributes().Upsert(
+			ctx, parent.RunID, parent.NodeID, merged, tx,
+		); err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: upsert parent attributes: %w", err)
+		}
+
+		// Forensics: emit `subgraph.exit_carry` for the carry-rule. The
+		// parent run row is already loaded; reuse instead of re-fetching.
 		nodeID := acq.NodeID
 		instanceID := acq.InstanceID
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -652,36 +677,27 @@ func applyTerminalCompleteSubgraphExit(
 	})
 }
 
-// isSubgraphExitNode is the runtime-side predicate that consults the
-// in-memory template for the run's instance. Returns true when the
-// run's node-type names the exit of any non-main graph.
+// isSubgraphExitNode is the runtime-side predicate for the carry-rule
+// branch of `applyTerminalComplete`. It consults the canonicalizer-set
+// `IsSubgraphExit` marker on the run's node-def, mirroring the way
+// `IsSubgraphEntryAbsorbed` is consulted on the caller side.
 //
-// Loaded lazily from the persisted template; the helper short-circuits
-// on a nil instance or missing template (treats as "not a sub-graph
-// exit" rather than failing the terminal). A best-effort lookup
-// matches the cold-read posture: the carry-rule is an optimization,
-// not a load-bearing correctness gate.
-func isSubgraphExitNode(ctx context.Context, args RunArgs, acq *acquisition) bool {
-	if acq == nil {
+// Under the 2026-05-20 per-run attribute-keying spec the carry-rule is
+// LOAD-BEARING: without it persisting, downstream
+// `{{nodes.<calling-node>.attribute.<field>}}` reads return
+// `ErrMissingSource`. Routing on a static marker (set at
+// canonicalization, persisted alongside the template) eliminates the
+// transient-failure mode that the previous template-lookup predicate
+// carried — the marker is either there or it isn't; there is no
+// "lookup failed" branch that could silently downgrade a load-bearing
+// carry into a no-op.
+//
+// Returns false on a nil acquisition or nil NodeDef (defensive guards
+// against test-double shapes; the canonicalizer-driven path always
+// populates NodeDef for live runs).
+func isSubgraphExitNode(acq *acquisition) bool {
+	if acq == nil || acq.NodeDef == nil {
 		return false
 	}
-	var hit bool
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)
-		if err != nil || inst == nil {
-			return nil
-		}
-		tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-		if err != nil || tmpl == nil {
-			return nil
-		}
-		hit = IsSubgraphExit(&tmpl.Spec, acq.NodeType)
-		return nil
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("isSubgraphExitNode: lookup tx failed; treating as non-exit",
-			"node_id", acq.NodeID.String(),
-			"instance_id", acq.InstanceID.String(),
-			"error", err.Error())
-	}
-	return hit
+	return acq.NodeDef.IsSubgraphExit
 }

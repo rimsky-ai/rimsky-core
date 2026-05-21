@@ -113,5 +113,13 @@ type NodeTable interface {
 	// frame_id=$1 only for rows currently fresh OR (stale AND frame_id IS
 	// NULL). Used in lieu of UpdateState because the cascade target needs
 	// the frame_id atomically and the predicate is gated.
-	MarkStaleForCascade(ctx context.Context, id shared.UUID, frameID shared.UUID, tx Tx) error
+	//
+	// Returns `inserted=true` when this call actually inserted a new
+	// pending run row (the row was eligible — either no in-flight run
+	// existed, or the existing run already matched the requested frame
+	// and the INSERT was a no-op under WHERE NOT EXISTS). The caller can
+	// use this signal to skip duplicate state-transition audit events on
+	// diamond hard-dep topologies (see
+	// `runtime/cascade_invalidate.go::stalemarkAndEnqueueInFrame`).
+	MarkStaleForCascade(ctx context.Context, id shared.UUID, frameID shared.UUID, tx Tx) (inserted bool, err error)
 }

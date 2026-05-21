@@ -913,3 +913,67 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		require.False(t, res.Ok())
 	})
 }
+
+func TestValidator_FallbackOperator_Valid(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "stage", Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"out": map[string]any{"type": "string"},
+					},
+				}},
+			},
+			{
+				Type:     "verify",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"v": map[string]any{
+							"type":   "string",
+							"source": `{{nodes.stage.attribute.out | "default"}}`,
+						},
+					},
+				}},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	if !res.Ok() {
+		t.Fatalf("expected ok, got errors: %+v", res.Errors)
+	}
+}
+
+func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h"},
+			{
+				Type:     "c",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"v": map[string]any{
+							"type":   "string",
+							"source": `{{nodes.a.attribute.x | nodes.b.attribute.y | "default"}}`,
+						},
+					},
+				}},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	if res.Ok() {
+		t.Fatalf("expected error for multi-pipe chain")
+	}
+}

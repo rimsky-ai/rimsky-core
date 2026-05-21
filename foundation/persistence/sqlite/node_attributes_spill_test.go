@@ -18,7 +18,7 @@ import (
 )
 
 // TestNodeAttributesSpillRoundtrip exercises D6/D7 wiring against the
-// SQLite driver + the in-memory BlobBackend:
+// SQLite driver + the in-memory BlobBackend, post-per-run keying:
 //   - small payload (below threshold) stored inline; value_handle is NULL.
 //   - large payload (above threshold) spilled; value_handle non-NULL,
 //     `data` reset to '{}', read transparently dereferences.
@@ -27,6 +27,10 @@ import (
 //   - downgrading from spilled to inline clears value_handle and queues
 //     the prior handle as an orphan.
 //   - MergeDelta against a spilled row materializes, merges, re-spills.
+//
+// Per-run keying means each Upsert needs a distinct `runID` if it
+// represents a distinct run, or the same `runID` to overwrite. Here we
+// exercise overwrite semantics on a single run.
 func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	t.Setenv(persistence.ProcessRoleEnv, "unified")
 	d := openSQLite(t)
@@ -40,18 +44,18 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	attrs := store.NodeAttributes()
 	orphans := store.BlobOrphans()
 
-	nodeID := seedFixtureNode(t, rawDB)
+	nodeID, runID := seedFixtureNodeAndRun(t, rawDB)
 
 	// Small payload — should go inline (≤ 256 bytes after marshal).
 	small := map[string]any{"k": "v"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.Upsert(ctx, nodeID, 1, small, tx)
+		return attrs.Upsert(ctx, runID, nodeID, small, tx)
 	}); err != nil {
 		t.Fatalf("Upsert small: %v", err)
 	}
-	verifyNoSpill(t, rawDB, nodeID)
+	verifyNoSpill(t, rawDB, runID)
 
-	got := readData(t, store, nodeID)
+	got := readData(t, store, runID)
 	if got["k"] != "v" {
 		t.Fatalf("Get small: got %v, want k=v", got)
 	}
@@ -60,14 +64,14 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	bigVal := strings.Repeat("x", 500)
 	large := map[string]any{"big": bigVal, "tag": "first"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.Upsert(ctx, nodeID, 2, large, tx)
+		return attrs.Upsert(ctx, runID, nodeID, large, tx)
 	}); err != nil {
 		t.Fatalf("Upsert large: %v", err)
 	}
-	firstHandle := verifySpill(t, rawDB, nodeID, mem.Name())
+	firstHandle := verifySpill(t, rawDB, runID, mem.Name())
 
 	// Read returns the materialized data via the backend.
-	got = readData(t, store, nodeID)
+	got = readData(t, store, runID)
 	if got["big"] != bigVal {
 		t.Fatalf("Get large: big mismatch")
 	}
@@ -78,11 +82,11 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	// Overwrite the spilled row with another large payload.
 	large2 := map[string]any{"big": bigVal, "tag": "second"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.Upsert(ctx, nodeID, 3, large2, tx)
+		return attrs.Upsert(ctx, runID, nodeID, large2, tx)
 	}); err != nil {
 		t.Fatalf("Upsert large2: %v", err)
 	}
-	secondHandle := verifySpill(t, rawDB, nodeID, mem.Name())
+	secondHandle := verifySpill(t, rawDB, runID, mem.Name())
 	if firstHandle == secondHandle {
 		t.Fatalf("expected new handle on overwrite; both = %q", firstHandle)
 	}
@@ -109,11 +113,11 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	// secondHandle should queue as orphan.
 	tiny := map[string]any{"k": "v"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.Upsert(ctx, nodeID, 4, tiny, tx)
+		return attrs.Upsert(ctx, runID, nodeID, tiny, tx)
 	}); err != nil {
 		t.Fatalf("Upsert tiny: %v", err)
 	}
-	verifyNoSpill(t, rawDB, nodeID)
+	verifyNoSpill(t, rawDB, runID)
 
 	orphRows, err = orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
 	if err != nil {
@@ -144,49 +148,49 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 
 	store := d.Tables()
 	attrs := store.NodeAttributes()
-	nodeID := seedFixtureNode(t, rawDB)
+	nodeID, runID := seedFixtureNodeAndRun(t, rawDB)
 
 	bigVal := strings.Repeat("y", 500)
 	initial := map[string]any{"big": bigVal, "phase": "a"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.Upsert(ctx, nodeID, 1, initial, tx)
+		return attrs.Upsert(ctx, runID, nodeID, initial, tx)
 	}); err != nil {
 		t.Fatalf("Upsert initial: %v", err)
 	}
-	_ = verifySpill(t, rawDB, nodeID, mem.Name())
+	_ = verifySpill(t, rawDB, runID, mem.Name())
 
 	// Merge a delta in. The result is still big → still spilled.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return attrs.MergeDelta(ctx, nodeID, map[string]any{"phase": "b"}, tx)
+		return attrs.MergeDelta(ctx, runID, map[string]any{"phase": "b"}, tx)
 	}); err != nil {
 		t.Fatalf("MergeDelta: %v", err)
 	}
-	got := readData(t, store, nodeID)
+	got := readData(t, store, runID)
 	if got["big"] != bigVal {
 		t.Fatalf("MergeDelta: big lost")
 	}
 	if got["phase"] != "b" {
 		t.Fatalf("MergeDelta: phase=%v, want b", got["phase"])
 	}
-	_ = verifySpill(t, rawDB, nodeID, mem.Name())
+	_ = verifySpill(t, rawDB, runID, mem.Name())
 }
 
 // verifyNoSpill asserts the row's value_handle is NULL.
-func verifyNoSpill(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID) {
+func verifyNoSpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID) {
 	t.Helper()
-	h, _ := readSpillHandle(t, rawDB, nodeID)
+	h, _ := readSpillHandle(t, rawDB, runID)
 	if h != "" {
-		t.Fatalf("expected no spill handle for %s, got %q", nodeID, h)
+		t.Fatalf("expected no spill handle for %s, got %q", runID, h)
 	}
 }
 
 // verifySpill asserts the row's value_handle is non-empty and its
 // backend matches. Returns the handle.
-func verifySpill(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID, wantBackend string) string {
+func verifySpill(t *testing.T, rawDB *sql.DB, runID uuid.UUID, wantBackend string) string {
 	t.Helper()
-	h, b := readSpillHandle(t, rawDB, nodeID)
+	h, b := readSpillHandle(t, rawDB, runID)
 	if h == "" {
-		t.Fatalf("expected spill handle for %s, got empty", nodeID)
+		t.Fatalf("expected spill handle for %s, got empty", runID)
 	}
 	if b != wantBackend {
 		t.Fatalf("expected spill backend %q, got %q", wantBackend, b)
@@ -194,47 +198,73 @@ func verifySpill(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID, wantBackend stri
 	return h
 }
 
-// seedFixtureNode inserts the FK chain (template → instance → node) so a
-// rimsky_node_attributes row is FK-valid. Returns the inserted node id.
-func seedFixtureNode(t *testing.T, rawDB *sql.DB) uuid.UUID {
+// seedFixtureNodeAndRun inserts the FK chain (template → instance →
+// frame → node → node_run) so a rimsky_node_attributes row (post per-run
+// keying) is FK-valid. Returns (nodeID, runID).
+func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	nodeID := uuid.New()
-	_, err := rawDB.ExecContext(context.Background(),
+	frameID := uuid.New().String()
+	runID := uuid.New()
+	ctx := context.Background()
+	_, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
 		templateID,
 	)
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	_, err = rawDB.ExecContext(context.Background(),
+	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
 		instanceID, templateID,
 	)
 	if err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
-	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
-	_, err = rawDB.ExecContext(context.Background(),
+	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
 		nodeID.String(), instanceID,
 	)
 	if err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	return nodeID
+	// Seed a running frame so rimsky_node_runs.frame_id FK is satisfied.
+	_, err = rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_frames
+		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		    queued_at, started_at, frame_timeout_ms)
+		 VALUES (?, ?, 'serial_queue', 'running', json_array(?),
+		         datetime('now'), datetime('now'), 600000)`,
+		frameID, instanceID, nodeID.String(),
+	)
+	if err != nil {
+		t.Fatalf("seed frame: %v", err)
+	}
+	// Seed a pending run row so rimsky_node_attributes.node_run_id FK is
+	// satisfied.
+	_, err = rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_node_runs
+		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'pending', 'stale', ?)`,
+		runID.String(), nodeID.String(), frameID,
+	)
+	if err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	return nodeID, runID
 }
 
 // readSpillHandle is a SQL escape hatch — the public NodeAttributeTable
 // API does not surface the value_handle/value_handle_backend columns
 // directly (the read path dereferences them transparently). The test
 // peeks at the row via the test-only DBFromDatabase accessor.
-func readSpillHandle(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID) (string, string) {
+func readSpillHandle(t *testing.T, rawDB *sql.DB, runID uuid.UUID) (string, string) {
 	t.Helper()
 	row := rawDB.QueryRowContext(context.Background(),
-		`SELECT value_handle, value_handle_backend FROM rimsky_node_attributes WHERE node_id = ?`,
-		nodeID.String(),
+		`SELECT value_handle, value_handle_backend FROM rimsky_node_attributes WHERE node_run_id = ?`,
+		runID.String(),
 	)
 	var h, b sql.NullString
 	if err := row.Scan(&h, &b); err != nil {
@@ -254,12 +284,12 @@ func readSpillHandle(t *testing.T, rawDB *sql.DB, nodeID uuid.UUID) (string, str
 	return hs, bs
 }
 
-// readData returns the materialized data map for nodeID.
-func readData(t *testing.T, store persistence.Tables, nodeID uuid.UUID) map[string]any {
+// readData returns the materialized data map for runID.
+func readData(t *testing.T, store persistence.Tables, runID uuid.UUID) map[string]any {
 	t.Helper()
 	var out *persistence.NodeAttributesRow
 	if err := store.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-		r, err := store.NodeAttributes().Get(ctx, nodeID, tx)
+		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
 		out = r
 		return err
 	}); err != nil {

@@ -609,24 +609,25 @@ func fieldNames(m map[string]any) []string {
 // so it opens its own short-lived read tx — every Store method requires
 // an explicit tx (option C / no-nil-tx).
 //
-// Post-T23: the subscribed-sender set is resolved from the per-template
-// cached subscription-edge inverse map (see graph/node/subscription_edges.go
-// + runtime/subscription_loaders.go) — no longer reads the retired
-// nodes.dependencies column.
+// Under per-run keying (2026-05-20) this calls BuildAttributeDeps which
+// reads the drained wait-set rows for this receiver in this frame. The
+// builder is the only substitution-context source — no scope-walk, no
+// cross-frame caching.
 //
 //	@concept: node-subscription
+//	@concept: attribute
 func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *acquisition) map[string]json.RawMessage {
 	var out map[string]json.RawMessage
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		senders, err := resolveSubscribedSenders(ctx, args, acq.NodeID, tx)
+		deps, err := BuildAttributeDeps(ctx, tx, args, acq.DispatchID, acq.FrameID)
 		if err != nil {
-			return nil
+			return err
 		}
-		out = loadSubscribedNodeAttributes(ctx, args, tx, senders)
+		out = deps
 		return nil
 	}); err != nil && args.Logger != nil {
 		args.Logger.Warn("loadSubscribedNodeAttributesByID: tx failed",
-			"node_id", acq.NodeID.String(),
+			"run_id", acq.DispatchID.String(),
 			"error", err.Error())
 	}
 	return out
@@ -711,21 +712,6 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	}
 
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
-	var prior *persistence.NodeAttributesRow
-	if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := dctx.Args.Persist.NodeAttributes().Get(ctx, acq.NodeID, tx)
-		prior = p
-		return err
-	}); err != nil {
-		dctx.Args.Logger.Warn("runner_dispatch: read prior node attributes for run_attempt failed",
-			"dispatch_id", acq.DispatchID.String(),
-			"node_id", acq.NodeID.String(),
-			"error", err.Error())
-	}
-	runAttempt := 1
-	if prior != nil {
-		runAttempt = prior.RunAttempt
-	}
 	req := &genv1.ExecuteRequest{
 		NodeId:           acq.NodeID.String(),
 		InstanceId:       acq.InstanceID.String(),
@@ -736,7 +722,6 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		Stores:           stores,
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
-		RunAttempt:       int32(runAttempt),
 		DispatchId:       acq.DispatchID.String(),
 	}
 	// Resume dispatch: when this acquisition is resuming a parked node,

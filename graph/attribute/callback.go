@@ -4,16 +4,16 @@
 
 // Incremental attributes writeback callback handler — spec §12.5.
 //
-// Wire shape:
+// Wire shape (post 2026-05-20 per-run keying):
 //
-//	POST {callback_url}/v1/attributes/{node_id}
+//	POST {callback_url}/v1/runs/{run_id}/attributes
 //	Authorization: <cancel_token>          (matches §12.4 async-callback auth)
 //	Body: {"delta": { "<field>": <value>, ... }}
 //	→ 204 No Content
 //
-// The handler resolves the supervisor-issued cancel_token to a node_id
+// The handler resolves the supervisor-issued cancel_token to a run_id
 // via the AuthLookup callback, then merges the delta into
-// rimsky_node_attributes.data and returns 204.
+// rimsky_node_attributes.data keyed on the run row and returns 204.
 
 package attributes
 
@@ -31,14 +31,14 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// Row mirrors a row of `rimsky_node_attributes`. Carried by the local
-// NodeAttributeTable below so the HTTP handler can be used by tests
-// without depending on the full persistence layer.
+// Row mirrors a row of `rimsky_node_attributes`. Under per-run keying
+// (2026-05-20) the row is keyed by RunID; NodeID is denormalized for
+// forensic queries.
 type Row struct {
-	NodeID     shared.UUID
-	RunAttempt int
-	Data       map[string]any
-	UpdatedAt  time.Time
+	RunID     shared.UUID
+	NodeID    shared.UUID
+	Data      map[string]any
+	UpdatedAt time.Time
 }
 
 // NodeAttributeTable is the narrow interface the HTTP handler depends
@@ -47,25 +47,25 @@ type Row struct {
 // methods take an additional `tx persistence.Tx`; the callback handler
 // always runs outside any caller-owned tx).
 type NodeAttributeTable interface {
-	Get(ctx context.Context, nodeID shared.UUID) (*Row, error)
-	Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error
-	MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error
+	GetByRun(ctx context.Context, runID shared.UUID) (*Row, error)
+	Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any) error
+	MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any) error
 }
 
-// AuthLookup resolves a supervisor-issued cancel_token to the node_id it
+// AuthLookup resolves a supervisor-issued cancel_token to the run_id it
 // authorises. Returns ErrUnauthorizedCallback when the token is unknown
-// or doesn't match the URL-supplied node_id. The supervisor wires this
+// or doesn't match the URL-supplied run_id. The supervisor wires this
 // callback to its in-memory dispatch registry; tests pass a closure.
-type AuthLookup func(token string, nodeID shared.UUID) error
+type AuthLookup func(token string, runID shared.UUID) error
 
 // ErrUnauthorizedCallback is the sentinel an AuthLookup returns when the
-// cancel_token is missing, unknown, or scoped to a different node. The
+// cancel_token is missing, unknown, or scoped to a different run. The
 // handler maps it to HTTP 401.
 var ErrUnauthorizedCallback = errors.New("attributes: unauthorized callback")
 
 // HandlerDeps bundles the callback handler's dependencies. The
 // supervisor constructs one of these and registers Handler under
-// `/v1/attributes/{node_id}` on its callback router.
+// `/v1/runs/{run_id}/attributes` on its callback router.
 type HandlerDeps struct {
 	Store  NodeAttributeTable
 	Auth   AuthLookup
@@ -73,8 +73,8 @@ type HandlerDeps struct {
 }
 
 // Handler returns the chi-compatible http.Handler for §12.5. It is
-// intended to be mounted at `POST /v1/attributes/{node_id}` so chi can
-// supply the URL parameter via chi.URLParam.
+// intended to be mounted at `POST /v1/runs/{run_id}/attributes` so chi
+// can supply the URL parameter via chi.URLParam.
 //
 // Auth is required at construction. Passing a HandlerDeps with a nil
 // Auth panics: a nil-skip would silently disable callback auth and is
@@ -91,10 +91,10 @@ func Handler(deps HandlerDeps) http.Handler {
 		logger = shared.SilentLogger{}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nodeIDStr := chi.URLParam(r, "node_id")
-		nodeID, err := uuid.Parse(nodeIDStr)
+		runIDStr := chi.URLParam(r, "run_id")
+		runID, err := uuid.Parse(runIDStr)
 		if err != nil {
-			http.Error(w, `{"error":"invalid node_id"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid run_id"}`, http.StatusBadRequest)
 			return
 		}
 		token := strings.TrimSpace(r.Header.Get("Authorization"))
@@ -107,9 +107,9 @@ func Handler(deps HandlerDeps) http.Handler {
 			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 			return
 		}
-		if err := deps.Auth(token, nodeID); err != nil {
+		if err := deps.Auth(token, runID); err != nil {
 			logger.Warn("attributes callback: unauthorized",
-				"node_id", nodeID.String(), "error", err.Error())
+				"run_id", runID.String(), "error", err.Error())
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -126,9 +126,9 @@ func Handler(deps HandlerDeps) http.Handler {
 			// callback's heartbeat-of-progress side-effect still fires.
 			body.Delta = map[string]any{}
 		}
-		if err := deps.Store.MergeDelta(r.Context(), nodeID, body.Delta); err != nil {
+		if err := deps.Store.MergeDelta(r.Context(), runID, body.Delta); err != nil {
 			logger.Error("attributes callback: merge failed",
-				"node_id", nodeID.String(), "error", err.Error())
+				"run_id", runID.String(), "error", err.Error())
 			http.Error(w, `{"error":"merge_failed"}`, http.StatusInternalServerError)
 			return
 		}

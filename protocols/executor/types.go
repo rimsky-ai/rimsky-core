@@ -19,7 +19,6 @@ type ExecuteRequest struct {
 	Stores           map[string]StoreHandle
 	CallbackURL      string
 	CancelToken      string
-	RunAttempt       int32
 	DispatchID       string
 	ResumeContext    *ResumeContext
 }

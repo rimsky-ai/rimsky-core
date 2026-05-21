@@ -191,6 +191,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_wait_set w
 		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
+		       AND w.drained_at IS NULL
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -210,6 +211,7 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_wait_set w
 		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
+		       AND w.drained_at IS NULL
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -526,7 +528,7 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 // Populates required_stores from the template node-def via a JSON
 // lookup through rimsky_instances → rimsky_templates so the supervisor's
 // SelectCandidates pool-predicate routes the row correctly.
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	// SQLite has no array type; required_stores is a JSON text column.
 	// Compute it via a correlated subquery using json_group_array +
 	// json_extract.
@@ -554,21 +556,22 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared
 		uuid.New().String(), nowUTC(), frameID.String(), id.String(), id.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("nodesImpl.MarkStaleForCascade: insert run row: %w", err)
+		return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: insert run row: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if n == 1 {
+	inserted := n == 1
+	if inserted {
 		if _, err := s.q(tx).ExecContext(ctx,
 			`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
 			frameID.String(), nowUTC(), id.String(),
 		); err != nil {
-			return fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
+			return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
 		}
 	}
-	return nil
+	return inserted, nil
 }
 
 func scanNode(sc scannable) (persistence.NodeRow, error) {

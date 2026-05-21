@@ -29,10 +29,13 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
+	// Per-run keying: every attribute row keys on a real node_run_id.
+	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+
 	// ---- Missing row: MergeDelta returns wrapped ErrNotFound ----
-	missingNodeID := uuid.New()
+	missingRunID := uuid.New()
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().MergeDelta(ctx, missingNodeID,
+		return store.NodeAttributes().MergeDelta(ctx, missingRunID,
 			map[string]any{"k": "v"}, tx)
 	})
 	if err == nil {
@@ -42,7 +45,7 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("MergeDelta on missing row: error does not wrap persistence.ErrNotFound: %v", err)
 	}
 
-	// Seed an attributes row for fix.NodeID.
+	// Seed an attributes row for the run.
 	initial := map[string]any{
 		"top1": "v1",
 		"nested": map[string]any{
@@ -51,7 +54,7 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		},
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().Upsert(ctx, fix.NodeID, 0, initial, tx)
+		return store.NodeAttributes().Upsert(ctx, runID, fix.NodeID, initial, tx)
 	}); err != nil {
 		t.Fatalf("Upsert seed: %v", err)
 	}
@@ -66,13 +69,13 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		},
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().MergeDelta(ctx, fix.NodeID, delta, tx)
+		return store.NodeAttributes().MergeDelta(ctx, runID, delta, tx)
 	}); err != nil {
 		t.Fatalf("MergeDelta shallow: %v", err)
 	}
 	var got *persistence.NodeAttributesRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeAttributes().Get(ctx, fix.NodeID, tx)
+		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
 		got = r
 		return err
 	}); err != nil {
@@ -107,13 +110,13 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	// microsecond-resolution; SQLite's nowUTC() is RFC3339Nano).
 	time.Sleep(10 * time.Millisecond)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().MergeDelta(ctx, fix.NodeID, nil, tx)
+		return store.NodeAttributes().MergeDelta(ctx, runID, nil, tx)
 	}); err != nil {
 		t.Fatalf("MergeDelta nil-delta touch: %v", err)
 	}
 	var got2 *persistence.NodeAttributesRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeAttributes().Get(ctx, fix.NodeID, tx)
+		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
 		got2 = r
 		return err
 	}); err != nil {
@@ -138,9 +141,9 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	}
 
 	// ---- nil-delta on missing row: silent no-op (no error) ----
-	missingNodeID2 := uuid.New()
+	missingRunID2 := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.NodeAttributes().MergeDelta(ctx, missingNodeID2, nil, tx)
+		return store.NodeAttributes().MergeDelta(ctx, missingRunID2, nil, tx)
 	}); err != nil {
 		t.Fatalf("MergeDelta nil-delta on missing row: expected silent no-op, got %v", err)
 	}

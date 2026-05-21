@@ -16,8 +16,9 @@ import { z } from "zod";
  *     executor saw it on spawn (read-only snapshot — does not refresh from
  *     the supervisor).
  *   - `attributes_set` POSTs `{delta: {...}}` to
- *     `${callbackUrl}/v1/attributes/${nodeId}` with the supervisor-issued
- *     cancel-token in the `Authorization` header (per spec §12.5).
+ *     `${callbackUrl}/v1/runs/${runId}/attributes` with the supervisor-issued
+ *     cancel-token in the `Authorization` header (per spec §12.5; URL
+ *     shape changed in the 2026-05-20 per-run keying refactor).
  *
  * The internal-MCP server still validates `token` for both tools. Only the
  * registered run can read or set its own attributes.
@@ -96,13 +97,15 @@ export const defaultPostAttributes: PostAttributesFn = async (
 };
 
 /**
- * Build the writeback URL: `${base}/v1/attributes/${nodeId}` with `nodeId`
- * URL-encoded. Trims trailing slashes from the base.
+ * Build the writeback URL: `${base}/v1/runs/${runId}/attributes` with `runId`
+ * URL-encoded. Trims trailing slashes from the base. (URL shape changed in
+ * the 2026-05-20 per-run keying refactor; the path was `/v1/attributes/${nodeId}`
+ * pre-rekey.)
  */
 export function buildAttributesWritebackUrl(
   base: string,
-  nodeId: string,
+  runId: string,
 ): string {
   const trimmed = base.replace(/\/+$/, "");
-  return `${trimmed}/v1/attributes/${encodeURIComponent(nodeId)}`;
+  return `${trimmed}/v1/runs/${encodeURIComponent(runId)}/attributes`;
 }

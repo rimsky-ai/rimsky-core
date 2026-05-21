@@ -145,7 +145,7 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	// listener as the async terminal callback so executors can reach both
 	// at the supervisor's advertised callback URL.
 	if c.Persist != nil {
-		r.Method(http.MethodPost, "/v1/attributes/{node_id}", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
+		r.Method(http.MethodPost, "/v1/runs/{run_id}/attributes", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
 			Store:  attributesStoreAdapter{store: c.Persist},
 			Auth:   c.attributesAuth,
 			Logger: c.Logger,
@@ -263,7 +263,22 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	// After outcome applies, clean up the dispatch row. Mirror the
 	// synchronous-runner path in supervisor.go that calls
 	// Queue.Complete after a non-async run.
-	_ = c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID)
+	//
+	// The terminal has already been applied to the node-run row and
+	// downstream wait-set state; the executor receives 200 OK so its
+	// idempotent retry path is unaffected. Queue.Complete failure here
+	// means the dispatch row was already removed by another supervisor
+	// or the queue layer encountered a transient error — neither
+	// invalidates the applied terminal, but both warrant operator-
+	// visible logging so the discrepancy surfaces in dashboards rather
+	// than being silently dropped.
+	if err := c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID); err != nil {
+		c.Logger.Error("callback: queue.Complete failed after applied terminal",
+			"node_id", asyncCtx.NodeID.String(),
+			"dispatch_id", asyncCtx.DispatchID.String(),
+			"supervisor_id", asyncCtx.SupervisorID,
+			"error", err.Error())
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"accepted"}`))
 }
@@ -376,20 +391,27 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 
 // attributesAuth validates the §12.5 incremental-writeback callback's
 // `Authorization` header. The token is the supervisor-issued
-// `cancel_token` of the form `<supervisorID>:<dispatchID>`. Auth passes
-// when:
+// `cancel_token` of the form `<supervisorID>:<dispatchID>`.
+//
+// Under per-run attribute keying (2026-05-20), the URL's path param is
+// `run_id` (= dispatchID). Auth passes when:
 //
 //  1. the token's supervisor segment matches this CallbackServer's
 //     SupervisorID (the only supervisor entitled to mint tokens);
-//  2. the dispatch row is still claimed by this supervisor (i.e. the
-//     running window is open);
-//  3. the dispatch row's node_id matches the URL-supplied node_id.
+//  2. the token's dispatch segment parses as a UUID and equals the
+//     URL's run_id (closes the URL-spoof attack against a holder of
+//     someone else's token).
+//
+// The pre-rekeying flow looked up `dispatchID → nodeID` via
+// `Queue.GetDispatchNode` because the URL was keyed by `node_id`. Under
+// per-run keying the URL is keyed by the same thing the token encodes,
+// so the resolution step is unnecessary.
 //
 // Token shape mirrors `runner_dispatch.go`'s `cancelToken` builder. Any
-// shape, supervisor-mismatch, ownership-mismatch, or node-mismatch
-// returns ErrUnauthorizedCallback so the handler maps to HTTP 401 (per
+// shape, supervisor-mismatch, parse-failure, or run-id-mismatch returns
+// ErrUnauthorizedCallback so the handler maps to HTTP 401 (per
 // `graph/attribute/callback.go` semantics).
-func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error {
+func (c *CallbackServer) attributesAuth(token string, runID shared.UUID) error {
 	// `c.Logger` is defaulted to SilentLogger{} in Start() before this
 	// handler is mounted, so it is never nil here — same convention as
 	// `handleCallback` which calls `c.Logger.Warn` directly.
@@ -399,14 +421,14 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 		// or non-printable. Log the length only; the failure mode (no
 		// ':' separator) is self-explanatory.
 		c.Logger.Warn("attributesAuth: token has no ':' separator",
-			"node_id", nodeID.String(),
+			"run_id", runID.String(),
 			"token_len", len(token))
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	tokSupervisor, tokDispatch := parts[0], parts[1]
 	if tokSupervisor == "" || tokDispatch == "" {
 		c.Logger.Warn("attributesAuth: empty supervisor or dispatch segment",
-			"node_id", nodeID.String(),
+			"run_id", runID.String(),
 			"token_supervisor_len", len(tokSupervisor),
 			"token_dispatch_len", len(tokDispatch))
 		return rimskyattrs.ErrUnauthorizedCallback
@@ -417,7 +439,7 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 		// misconfigured caller is identifiable without flooding logs
 		// with arbitrary-length user-supplied bytes.
 		c.Logger.Warn("attributesAuth: supervisor id mismatch",
-			"node_id", nodeID.String(),
+			"run_id", runID.String(),
 			"token_supervisor", truncForLog(tokSupervisor, 64),
 			"token_supervisor_len", len(tokSupervisor),
 			"server_supervisor", c.SupervisorID)
@@ -428,35 +450,15 @@ func (c *CallbackServer) attributesAuth(token string, nodeID shared.UUID) error 
 		// Parse failure mode is self-explanatory; log only the length
 		// of the dispatch segment, not its raw bytes.
 		c.Logger.Warn("attributesAuth: dispatch id parse failed",
-			"node_id", nodeID.String(),
+			"run_id", runID.String(),
 			"token_dispatch_len", len(tokDispatch),
 			"error", err.Error())
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
-	// Single round-trip: dispatch must exist, be claimed by us, and
-	// target the URL's node_id.
-	gotNodeID, ownership, err := c.Queue.GetDispatchNode(context.Background(), dispatchID)
-	if err != nil {
-		c.Logger.Warn("attributesAuth: GetDispatchNode failed",
-			"node_id", nodeID.String(),
-			"dispatch_id", dispatchID.String(),
-			"error", err.Error())
-		return rimskyattrs.ErrUnauthorizedCallback
-	}
-	if ownership.Kind != "claimed_by" || ownership.SupervisorID != tokSupervisor {
-		c.Logger.Warn("attributesAuth: ownership mismatch",
-			"node_id", nodeID.String(),
-			"dispatch_id", dispatchID.String(),
-			"ownership_kind", ownership.Kind,
-			"ownership_supervisor", ownership.SupervisorID,
-			"token_supervisor", truncForLog(tokSupervisor, 64))
-		return rimskyattrs.ErrUnauthorizedCallback
-	}
-	if gotNodeID != nodeID {
-		c.Logger.Warn("attributesAuth: node id mismatch",
-			"url_node_id", nodeID.String(),
-			"dispatch_node_id", gotNodeID.String(),
-			"dispatch_id", dispatchID.String())
+	if dispatchID != runID {
+		c.Logger.Warn("attributesAuth: run id mismatch",
+			"url_run_id", runID.String(),
+			"token_dispatch_id", dispatchID.String())
 		return rimskyattrs.ErrUnauthorizedCallback
 	}
 	return nil
@@ -482,10 +484,10 @@ type attributesStoreAdapter struct {
 	store persistence.Tables
 }
 
-func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*rimskyattrs.Row, error) {
+func (a attributesStoreAdapter) GetByRun(ctx context.Context, runID shared.UUID) (*rimskyattrs.Row, error) {
 	var row *persistence.NodeAttributesRow
 	if err := a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := a.store.NodeAttributes().Get(ctx, nodeID, tx)
+		r, err := a.store.NodeAttributes().GetByRun(ctx, runID, tx)
 		row = r
 		return err
 	}); err != nil {
@@ -495,21 +497,21 @@ func (a attributesStoreAdapter) Get(ctx context.Context, nodeID shared.UUID) (*r
 		return nil, nil
 	}
 	return &rimskyattrs.Row{
-		NodeID:     row.NodeID,
-		RunAttempt: row.RunAttempt,
-		Data:       row.Data,
-		UpdatedAt:  row.UpdatedAt,
+		RunID:     row.NodeRunID,
+		NodeID:    row.NodeID,
+		Data:      row.Data,
+		UpdatedAt: row.UpdatedAt,
 	}, nil
 }
 
-func (a attributesStoreAdapter) Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any) error {
+func (a attributesStoreAdapter) Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any) error {
 	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return a.store.NodeAttributes().Upsert(ctx, nodeID, runAttempt, data, tx)
+		return a.store.NodeAttributes().Upsert(ctx, runID, nodeID, data, tx)
 	})
 }
 
-func (a attributesStoreAdapter) MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any) error {
+func (a attributesStoreAdapter) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any) error {
 	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return a.store.NodeAttributes().MergeDelta(ctx, nodeID, delta, tx)
+		return a.store.NodeAttributes().MergeDelta(ctx, runID, delta, tx)
 	})
 }

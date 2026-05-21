@@ -244,6 +244,17 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	}
 
 	ValidateInheritance(spec, &res)
+
+	// Hard-dep cycle detection. The cascade walker assumes the hard-dep
+	// edge graph is acyclic; surface cycles at registration so they
+	// cannot reach runtime.
+	if _, err := BuildHardDepEdges(*spec); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: "graphs",
+			Msg:  err.Error(),
+		})
+	}
+
 	return res
 }
 
@@ -841,7 +852,73 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 			continue
 		}
 		checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, res)
+
+		// Validate hard_dep, if present.
+		if hd, present := propMap["hard_dep"]; present {
+			hdBool, ok := hd.(bool)
+			if !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
+					Msg:  "hard_dep must be a boolean",
+				})
+			} else if hdBool {
+				// hard_dep only applies to nodes.<X>.attribute.<Y> reads.
+				// Reject the flag on other source kinds (claim, params,
+				// trigger, child, event) — those are intrinsically per-frame
+				// or instance-scoped and the flag is meaningless.
+				if !isAttributeSourceDirective(src) {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
+						Msg:  "hard_dep applies only to nodes.<X>.attribute.<Y> sources; other source kinds are intrinsically per-frame or instance-scoped and don't admit hard_dep",
+					})
+				}
+			}
+		}
 	}
+}
+
+// isValidFallbackLiteral reports whether s is a JSON literal admitted
+// on the right side of the substitution fallback operator: `null`,
+// `true`, `false`, a JSON number, or a quoted JSON string. Composite
+// literals (`{}`, `[]`) are rejected. Per spec
+// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
+// §"Fallback operator".
+//
+// Numeric admission goes through json.Unmarshal rather than
+// strconv.ParseFloat so the validator rejects the same shapes the
+// runtime rejects (`NaN`, `Inf`, `.5`, etc. — non-JSON-number forms).
+func isValidFallbackLiteral(s string) bool {
+	if s == "null" || s == "true" || s == "false" {
+		return true
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		var str string
+		if err := json.Unmarshal([]byte(s), &str); err == nil {
+			return true
+		}
+		return false
+	}
+	var n float64
+	return json.Unmarshal([]byte(s), &n) == nil
+}
+
+// isAttributeSourceDirective returns true if src is a {{...}} directive
+// whose body starts with "nodes.<X>.attribute". Used by the validator
+// to gate the hard_dep flag.
+func isAttributeSourceDirective(src string) bool {
+	trimmed := strings.TrimSpace(src)
+	m := dispatchDirectiveRe.FindStringSubmatch(trimmed)
+	if m == nil {
+		return false
+	}
+	body := strings.TrimSpace(m[1])
+	// Strip an optional fallback `| <literal>` suffix; the hard-dep
+	// gate looks at the directive's source-kind, not the fallback.
+	if idx := strings.Index(body, "|"); idx >= 0 {
+		body = strings.TrimSpace(body[:idx])
+	}
+	parts := strings.Split(body, ".")
+	return len(parts) >= 3 && parts[0] == "nodes" && parts[2] == "attribute"
 }
 
 // checkAttributeSource enforces directive syntax + reference validity
@@ -873,6 +950,31 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 		return
 	}
 	body := strings.TrimSpace(trimmed[m[2]:m[3]])
+	// Fallback operator: `<directive> | <literal>` admits exactly one
+	// directive on the left and exactly one JSON literal on the right
+	// (`null`, `true`, `false`, a number, or a quoted string). Multi-
+	// pipe chains are rejected. Per spec
+	// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
+	// §"Fallback operator".
+	if idx := strings.Index(body, "|"); idx >= 0 {
+		left := strings.TrimSpace(body[:idx])
+		right := strings.TrimSpace(body[idx+1:])
+		if strings.Contains(right, "|") {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("source directive %q has a multi-pipe fallback chain (only one literal admitted)", body),
+			})
+			return
+		}
+		if !isValidFallbackLiteral(right) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("source directive %q fallback literal %q must be null, true, false, a JSON number, or a quoted string", body, right),
+			})
+			return
+		}
+		body = left
+	}
 	bodyMatch := directiveBodyRe.FindStringSubmatch(body)
 	if bodyMatch == nil {
 		res.Errors = append(res.Errors, ValidationError{

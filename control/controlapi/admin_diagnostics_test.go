@@ -120,8 +120,8 @@ func (noopNodes) ClearSupervisorAssignment(context.Context, shared.UUID, persist
 	return nil
 }
 func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
-func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
-	return nil
+func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
 }
 
 // fakeDiagnosticQueue implements persistence.Queue but only services
@@ -210,6 +210,9 @@ func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID) (*pe
 }
 func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
 	return false, nil
+}
+func (f *fakeDiagnosticQueue) RebindRunFrameInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID) error {
+	return nil
 }
 func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
 	return 0, nil, nil

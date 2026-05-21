@@ -132,8 +132,6 @@ type ExecuteRequest struct {
 	// Token the supervisor watches for cancellation requests, also used as the
 	// bearer token on incremental attribute and async terminal callbacks.
 	CancelToken string `protobuf:"bytes,9,opt,name=cancel_token,json=cancelToken,proto3" json:"cancel_token,omitempty"`
-	// Increments on every retry. Exposed for executor visibility / idempotency.
-	RunAttempt int32 `protobuf:"varint,11,opt,name=run_attempt,json=runAttempt,proto3" json:"run_attempt,omitempty"`
 	// The supervisor-side rimsky_node_runs.id for this dispatch. Exposed
 	// so executors can key per-dispatch traces/state (the executor
 	// observability protocol, spec §2, identifies dispatches by this id).
@@ -243,13 +241,6 @@ func (x *ExecuteRequest) GetCancelToken() string {
 		return x.CancelToken
 	}
 	return ""
-}
-
-func (x *ExecuteRequest) GetRunAttempt() int32 {
-	if x != nil {
-		return x.RunAttempt
-	}
-	return 0
 }
 
 func (x *ExecuteRequest) GetDispatchId() string {
@@ -1163,7 +1154,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x85\x05\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf7\x04\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -1177,15 +1168,13 @@ const file_executor_proto_rawDesc = "" +
 	"\x06stores\x18\a \x03(\v2%.rimsky.v1.ExecuteRequest.StoresEntryR\x06stores\x12!\n" +
 	"\fcallback_url\x18\b \x01(\tR\vcallbackUrl\x12!\n" +
 	"\fcancel_token\x18\t \x01(\tR\vcancelToken\x12\x1f\n" +
-	"\vrun_attempt\x18\v \x01(\x05R\n" +
-	"runAttempt\x12\x1f\n" +
 	"\vdispatch_id\x18\f \x01(\tR\n" +
 	"dispatchId\x12?\n" +
 	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\n" +
-	"\x10\vR\aresumed\"s\n" +
+	"\x10\vJ\x04\b\v\x10\fR\aresumedR\vrun_attempt\"s\n" +
 	"\rResumeContext\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12#\n" +
 	"\rsession_token\x18\x02 \x01(\tR\fsessionToken\x12#\n" +

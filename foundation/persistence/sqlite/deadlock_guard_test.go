@@ -227,7 +227,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_ = store.Nodes().DeleteByInstance(ctx, someID, nil)
 		}},
 		{"Nodes.MarkStaleForCascade", func() {
-			_ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
+			_, _ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
 		}},
 		// ClaimHandles
 		{"ClaimHandles.Insert", func() {
@@ -313,11 +313,14 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_ = store.ClaimHandles().BumpChildOutcomeCount(ctx, someID, "sup", "commit", 1, nil)
 		}},
 		// NodeAttributes
-		{"NodeAttributes.Get", func() {
-			_, _ = store.NodeAttributes().Get(ctx, someID, nil)
+		{"NodeAttributes.GetByRun", func() {
+			_, _ = store.NodeAttributes().GetByRun(ctx, someID, nil)
+		}},
+		{"NodeAttributes.GetLatestByNode", func() {
+			_, _ = store.NodeAttributes().GetLatestByNode(ctx, someID, nil)
 		}},
 		{"NodeAttributes.Upsert", func() {
-			_ = store.NodeAttributes().Upsert(ctx, someID, 0, nil, nil)
+			_ = store.NodeAttributes().Upsert(ctx, someID, someID, nil, nil)
 		}},
 		{"NodeAttributes.MergeDelta", func() {
 			_ = store.NodeAttributes().MergeDelta(ctx, someID, nil, nil)

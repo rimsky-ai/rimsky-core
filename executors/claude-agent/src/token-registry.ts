@@ -28,17 +28,18 @@ export interface TokenEntry {
   attributesAtSpawn: Record<string, unknown>;
   /**
    * Supervisor-issued cancel-token; carried as bearer auth on incremental
-   * writeback POSTs to `{callback_url}/v1/attributes/{node_id}` (per spec
-   * §12.5).
+   * writeback POSTs to `{callback_url}/v1/runs/{run_id}/attributes` (per
+   * spec §12.5; URL shape changed in the 2026-05-20 per-run keying refactor).
    */
   cancelToken: string;
   /**
-   * Supervisor-side `node_id` — used as the path segment on the writeback URL.
+   * Supervisor-side `node_id` — denormalized for forensic queries; the path
+   * segment on the writeback URL is `run_id` (= dispatch_id).
    */
   nodeId: string;
   /**
    * Supervisor-issued callback base URL. The writeback URL is
-   * `${callbackUrl}/v1/attributes/${nodeId}`.
+   * `${callbackUrl}/v1/runs/${runId}/attributes`.
    */
   callbackUrl: string;
   onComplete: (

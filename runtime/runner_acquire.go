@@ -381,7 +381,7 @@ func tryAcquire(
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	templateUserdataDefaults := templateUserdataDefaultsFor(tmpl, nd.Executor)
-	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst)
+	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())

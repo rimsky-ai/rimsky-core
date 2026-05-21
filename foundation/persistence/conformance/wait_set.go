@@ -2,10 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// wait_set.go — WaitSetTable conformance fixture. Exercises the four
-// methods against both drivers (postgres + sqlite). See the
-// subscription-cascade spec at
-// .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md.
+// wait_set.go — WaitSetTable conformance fixture. Exercises the methods
+// against both drivers (postgres + sqlite). See the subscription-cascade
+// spec at .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
+// and the per-run attribute pull spec at
+// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md for
+// the mark-don't-delete-on-drain semantics.
 //
 //	@concept: wait-set
 package conformance
@@ -100,6 +102,12 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	if len(byReceiver) != 2 {
 		t.Fatalf("ListForReceiver: got %d rows want 2 (idempotent insert should not duplicate)", len(byReceiver))
 	}
+	// Before draining, both rows should have DrainedAt == nil.
+	for _, r := range byReceiver {
+		if r.DrainedAt != nil {
+			t.Fatalf("ListForReceiver: pre-drain row has DrainedAt != nil: %+v", r)
+		}
+	}
 
 	// ListForFrame returns the same two rows.
 	var byFrame []persistence.WaitSetRow
@@ -114,45 +122,110 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListForFrame: got %d rows want 2", len(byFrame))
 	}
 
-	// DeleteBySender(senderA) removes the state-direct row only.
+	// MarkDrainedBySender(senderA) marks the state-direct row drained
+	// but retains it (the row's DrainedAt becomes non-nil).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderARunID, tx)
+		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
-		t.Fatalf("DeleteBySender: %v", err)
+		t.Fatalf("MarkDrainedBySender: %v", err)
 	}
-	var remaining []persistence.WaitSetRow
+	var afterDrainA []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
-		remaining = rows
+		afterDrainA = rows
 		return err
 	}); err != nil {
-		t.Fatalf("ListForReceiver after delete: %v", err)
+		t.Fatalf("ListForReceiver after drain A: %v", err)
 	}
-	if len(remaining) != 1 {
-		t.Fatalf("after DeleteBySender(senderA): got %d rows want 1", len(remaining))
+	if len(afterDrainA) != 2 {
+		t.Fatalf("after MarkDrainedBySender(senderA): got %d rows want 2 (drained rows must be retained)", len(afterDrainA))
 	}
-	if remaining[0].SenderRunID != senderBRunID {
-		t.Fatalf("remaining row sender=%v want %v", remaining[0].SenderRunID, senderBRunID)
+	var senderADrained, senderBDrained *persistence.WaitSetRow
+	for i := range afterDrainA {
+		switch afterDrainA[i].SenderRunID {
+		case senderARunID:
+			senderADrained = &afterDrainA[i]
+		case senderBRunID:
+			senderBDrained = &afterDrainA[i]
+		}
 	}
-	if remaining[0].TopicKind != "attribute" {
-		t.Fatalf("remaining row topic_kind=%q want %q", remaining[0].TopicKind, "attribute")
+	if senderADrained == nil {
+		t.Fatalf("senderA row missing after drain")
+	}
+	if senderADrained.DrainedAt == nil {
+		t.Fatalf("senderA row: DrainedAt nil after drain")
+	}
+	if senderBDrained == nil {
+		t.Fatalf("senderB row missing after drain")
+	}
+	if senderBDrained.DrainedAt != nil {
+		t.Fatalf("senderB row: DrainedAt non-nil before drain")
 	}
 
-	// DeleteBySender(senderB) drains the remainder.
+	// Idempotency: re-marking does not advance senderA's drained_at.
+	priorDrainedAt := *senderADrained.DrainedAt
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.WaitSet().DeleteBySender(ctx, fix.FrameID, senderBRunID, tx)
+		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
-		t.Fatalf("DeleteBySender senderB: %v", err)
+		t.Fatalf("MarkDrainedBySender(senderA) re-run: %v", err)
 	}
-	var emptied []persistence.WaitSetRow
+	var afterReRun []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		afterReRun = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListForReceiver after re-run: %v", err)
+	}
+	for _, r := range afterReRun {
+		if r.SenderRunID != senderARunID {
+			continue
+		}
+		if r.DrainedAt == nil || !r.DrainedAt.Equal(priorDrainedAt) {
+			t.Fatalf("MarkDrainedBySender idempotency: senderA drained_at advanced from %v to %v", priorDrainedAt, r.DrainedAt)
+		}
+	}
+
+	// MarkDrainedBySender(senderB) drains the remainder.
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderBRunID, tx)
+	}); err != nil {
+		t.Fatalf("MarkDrainedBySender senderB: %v", err)
+	}
+	var allDrained []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListForFrame(ctx, fix.FrameID, tx)
-		emptied = rows
+		allDrained = rows
 		return err
 	}); err != nil {
 		t.Fatalf("ListForFrame after drain: %v", err)
 	}
-	if len(emptied) != 0 {
-		t.Fatalf("after final DeleteBySender: got %d rows want 0", len(emptied))
+	if len(allDrained) != 2 {
+		t.Fatalf("after final MarkDrainedBySender: got %d rows want 2 (rows are retained, not deleted)", len(allDrained))
+	}
+	for _, r := range allDrained {
+		if r.DrainedAt == nil {
+			t.Fatalf("row %v: DrainedAt nil after both drains", r)
+		}
+	}
+
+	// ListDrainedAttributeRowsForReceiver: should return only the
+	// attribute-topic row (senderB), since senderA's row is state-kind.
+	var drainedAttrs []persistence.WaitSetRow
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverRunID, tx)
+		drainedAttrs = rows
+		return err
+	}); err != nil {
+		t.Fatalf("ListDrainedAttributeRowsForReceiver: %v", err)
+	}
+	if len(drainedAttrs) != 1 {
+		t.Fatalf("ListDrainedAttributeRowsForReceiver: got %d rows want 1 (only the attribute-topic row should match)", len(drainedAttrs))
+	}
+	if drainedAttrs[0].SenderRunID != senderBRunID {
+		t.Fatalf("drained-attr row sender=%v want %v", drainedAttrs[0].SenderRunID, senderBRunID)
+	}
+	if drainedAttrs[0].TopicKind != "attribute" {
+		t.Fatalf("drained-attr row topic=%q want attribute", drainedAttrs[0].TopicKind)
 	}
 }

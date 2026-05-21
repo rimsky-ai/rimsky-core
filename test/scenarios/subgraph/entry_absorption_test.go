@@ -131,4 +131,20 @@ func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 	if runtime.IsSubgraphExit(tmpl, "outer-caller") {
 		t.Errorf("outer-caller is the calling node in main; not an exit")
 	}
+	// The canonicalizer must also stamp IsSubgraphExit on the exit
+	// node so the runtime terminal handler routes through the
+	// carry-rule via acq.NodeDef alone (no template DB lookup).
+	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
+	for i := range tmpl.Nodes {
+		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]
+	}
+	if exit := byType["promote"]; exit == nil || !exit.IsSubgraphExit {
+		t.Errorf("promote must carry IsSubgraphExit=true after canonicalization: %+v", exit)
+	}
+	if entry := byType["validate"]; entry == nil || entry.IsSubgraphExit {
+		t.Errorf("validate is entry; must not carry IsSubgraphExit: %+v", entry)
+	}
+	if caller := byType["outer-caller"]; caller == nil || caller.IsSubgraphExit {
+		t.Errorf("outer-caller is in main; must not carry IsSubgraphExit: %+v", caller)
+	}
 }

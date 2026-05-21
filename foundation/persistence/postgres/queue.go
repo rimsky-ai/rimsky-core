@@ -143,6 +143,11 @@ func (q *queueImpl) SelectCandidates(
 		      OR (d.executor_name IS NULL AND COALESCE(array_length(d.required_stores, 1), 0) > 0)
 		    )
 		    AND d.enqueued_at <= NOW()
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_wait_set w
+		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
+		        AND w.drained_at IS NULL
+		    )
 		  ORDER BY d.enqueued_at
 		  LIMIT $3
 		  FOR UPDATE SKIP LOCKED`,

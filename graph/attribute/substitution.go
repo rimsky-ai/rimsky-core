@@ -141,6 +141,22 @@ func IsMissingSource(err error) bool {
 	return errors.As(err, &m)
 }
 
+// ErrFallbackChain is the FATAL grammar error returned when the
+// substitution engine encounters a fallback chain (`{{X | Y | Z}}`).
+// The template validator rejects chains at registration; this error
+// path catches malformed directives that bypass the validator (e.g.
+// directives produced by runtime interpolation). It is intentionally
+// NOT an ErrMissingSource — required fields must NOT silently drop
+// and optional fields must NOT fall through to a fallback when the
+// directive itself is grammatically malformed.
+type ErrFallbackChain struct {
+	Directive string
+}
+
+func (e *ErrFallbackChain) Error() string {
+	return fmt.Sprintf("attributes: fallback chains are not admitted in {{%s}}", e.Directive)
+}
+
 // directivePattern captures the inside of a single `{{...}}` directive.
 var directivePattern = regexp.MustCompile(`\{\{([^}]*)\}\}`)
 
@@ -265,7 +281,45 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 // bool, []any, or map[string]any) for the directive. ErrMissingSource
 // for unresolved references, unknown kinds, or JSON `null` along the
 // path (consistent with walkPath's existing null-as-missing behaviour).
+//
+// Admits a fallback operator: `<directive> | <literal>` resolves to
+// the directive's value when present, else parses the literal (one of
+// `null`, `true`, `false`, a JSON number, or a quoted string). The
+// fallback only fires for ErrMissingSource — non-missing errors are
+// fatal. Multi-directive chains (`X | Y | Z`) are rejected.
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
+// §"Fallback operator".
 func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
+	if idx := strings.Index(directive, "|"); idx >= 0 {
+		leftRaw := strings.TrimSpace(directive[:idx])
+		rightRaw := strings.TrimSpace(directive[idx+1:])
+		// Reject multi-pipe chains as a FATAL grammar error. The
+		// validator catches `{{X | Y | Z}}` at registration; this path
+		// guards against malformed directives produced by runtime
+		// interpolation. Returning ErrFallbackChain (not
+		// ErrMissingSource) prevents silent fallthrough on optional
+		// fields and silent drops on required fields.
+		if strings.Contains(rightRaw, "|") {
+			return nil, &ErrFallbackChain{Directive: directive}
+		}
+		val, err := resolveDirectiveValueRaw(leftRaw, ctx)
+		if err == nil {
+			return val, nil
+		}
+		if !IsMissingSource(err) {
+			return nil, err
+		}
+		return parseFallbackLiteral(rightRaw)
+	}
+	return resolveDirectiveValueRaw(directive, ctx)
+}
+
+// resolveDirectiveValueRaw dispatches on the directive's source-kind
+// prefix without considering the fallback operator. The public
+// resolveDirectiveValue wraps this with `|`-fallback handling.
+func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error) {
 	parts := strings.Split(directive, ".")
 	if len(parts) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "directive must have at least <kind>.<field>"}
@@ -286,6 +340,43 @@ func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
 	default:
 		return nil, &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
+}
+
+// parseFallbackLiteral parses the right side of a fallback operator.
+// Admits `null`, `true`, `false`, a JSON number, or a quoted JSON
+// string. Composite literals (`{}`, `[]`) are rejected.
+//
+// Numeric admission goes through json.Unmarshal rather than
+// strconv.ParseFloat: strconv accepts shapes JSON does not (`NaN`,
+// `Inf`, `.5`, `1e5` is fine but bare `.` forms are not). Routing
+// through json.Unmarshal makes the runtime parse match the spec's
+// "JSON number" wording AND match what the validator accepts at
+// registration time.
+func parseFallbackLiteral(raw string) (any, error) {
+	if raw == "null" {
+		return nil, nil
+	}
+	if raw == "true" {
+		return true, nil
+	}
+	if raw == "false" {
+		return false, nil
+	}
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		var s string
+		if err := json.Unmarshal([]byte(raw), &s); err == nil {
+			return s, nil
+		}
+		return nil, fmt.Errorf("invalid literal in fallback: %q", raw)
+	}
+	// JSON-number admission. json.Unmarshal rejects `NaN`, `Inf`, `.5`,
+	// and other non-JSON-number shapes — exactly the rejection set the
+	// spec requires.
+	var n float64
+	if err := json.Unmarshal([]byte(raw), &n); err == nil {
+		return n, nil
+	}
+	return nil, fmt.Errorf("invalid literal in fallback: %q", raw)
 }
 
 // stringifyAny renders a JSON-decoded value for the embedded-mode

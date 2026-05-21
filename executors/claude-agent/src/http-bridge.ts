@@ -81,7 +81,9 @@ interface ExecuteBody {
   cancel_token?: string;
   // Field number 10 (`resumed`) is reserved on the wire under
   // stores-redesign-v2. Resume is universal — substrate-detected.
-  run_attempt?: number;
+  // Field number 11 (`run_attempt`) is reserved on the wire under
+  // the 2026-05-20 per-run attribute keying spec — each dispatch has
+  // a fresh dispatch_id; consumers keying on attempts use dispatch_id.
   // J10 plan: when this is a resume after the `Park` terminal, the
   // supervisor populates resume_context with the original
   // session_token + payload
@@ -120,7 +122,14 @@ export async function startHttpBridge(
   app.post("/execute", async (req, reply) => {
     const body = (req.body ?? {}) as ExecuteBody;
     const ackId = randomUUID();
-    const runId = body.node_id ?? randomUUID();
+    // Per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
+    // segment must equal the supervisor's dispatch_id so attributesAuth can
+    // verify the cancel_token. The node_id is a poor proxy because it is
+    // stable across runs of the same node. Fall back to a fresh UUID only
+    // when no dispatch_id was supplied (debug / integration callers).
+    const runId = body.dispatch_id && body.dispatch_id.length > 0
+      ? body.dispatch_id
+      : randomUUID();
     // The trace ledger is keyed by supervisor's dispatch_id when one
     // arrives in the body (production path); otherwise by the locally
     // minted ackId (debug / integration callers). This is what makes

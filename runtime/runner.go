@@ -444,9 +444,11 @@ func RunNode(
 
 	// Persist the substituted attributes ahead of dispatch so the
 	// callback path (§12.5 incremental writeback) has a row to merge
-	// into. RunAttempt is bumped from any prior row's attempt.
-	if err := upsertAttributesPreDispatch(ctx, args, acq.NodeID, resolvedAttrs); err != nil {
+	// into. Under per-run keying the row is keyed on the dispatch_id
+	// (acq.DispatchID); each fresh dispatch starts a new row.
+	if err := upsertAttributesPreDispatch(ctx, args, acq.DispatchID, acq.NodeID, resolvedAttrs); err != nil {
 		log.Warn("runner: upsert attributes pre-dispatch failed",
+			"run_id", acq.DispatchID.String(),
 			"node_id", acq.NodeID.String(), "error", err.Error())
 	}
 	dispatchAttrs := resolvedAttrs
@@ -512,7 +514,8 @@ func validateRunArgs(args RunArgs) error {
 
 // upsertAttributesPreDispatch writes the substituted attributes object
 // to rimsky_node_attributes so the callback handler has a row to merge
-// into. Bumps `run_attempt` from any prior row's value.
+// into. Under per-run keying the row is keyed on runID; each dispatch
+// is a fresh row by PK, no prior-row read needed.
 //
 // Resume detection lives in the store (the store detects
 // resumed-vs-fresh by lookup against its own state keyed by lock-
@@ -523,16 +526,11 @@ func validateRunArgs(args RunArgs) error {
 func upsertAttributesPreDispatch(
 	ctx context.Context,
 	args RunArgs,
-	nodeID shared.UUID,
+	runID, nodeID shared.UUID,
 	resolvedAttrs map[string]any,
 ) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		prior, _ := args.Persist.NodeAttributes().Get(ctx, nodeID, tx)
-		attempt := 1
-		if prior != nil {
-			attempt = prior.RunAttempt + 1
-		}
-		return args.Persist.NodeAttributes().Upsert(ctx, nodeID, attempt, resolvedAttrs, tx)
+		return args.Persist.NodeAttributes().Upsert(ctx, runID, nodeID, resolvedAttrs, tx)
 	})
 }
 

@@ -88,6 +88,7 @@ func producerNameForSpec(sp any) string {
 func buildLockSpecs(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
+	dispatchID, frameID shared.UUID,
 ) ([]any, error) {
 	if def == nil {
 		return nil, nil
@@ -100,21 +101,18 @@ func buildLockSpecs(
 		}
 		paramsRaw = b
 	}
-	var subs []shared.UUID
-	if nd != nil {
-		// Post-T23: subscribed-sender set resolved from the cached
-		// per-template subscription-edge inverse map (see
-		// runtime/subscription_loaders.go); the retired
-		// nodes.dependencies column is no longer consulted.
-		ss, sErr := resolveSubscribedSenders(ctx, args, nd.ID, tx)
-		if sErr != nil {
-			return nil, sErr
-		}
-		subs = ss
+	// Per-run keying (2026-05-20): substitution context comes from the
+	// drained wait-set rows for this receiver in this frame. The
+	// lock-substitution path runs at acquisition phase, but by then the
+	// wait-set is settled (rows drained) — that's what made the receiver
+	// eligible. The same builder works for both phases.
+	deps, err := BuildAttributeDeps(ctx, tx, args, dispatchID, frameID)
+	if err != nil {
+		return nil, err
 	}
 	resolveCtx := attributes.ResolveContext{
 		Params: paramsRaw,
-		Deps:   loadSubscribedNodeAttributes(ctx, args, tx, subs),
+		Deps:   deps,
 		Claim:  loadInheritedClaimsForNode(ctx, args, tx, nd),
 	}
 
@@ -361,43 +359,6 @@ func lookupClaimHandleForAlias(
 // starts from the template `holds:` / `inherits:` directive and walks
 // to the upstream claim handle directly, so there's no need to invert
 // from a holder row's producer_name back to an alias.)
-
-// loadSubscribedNodeAttributes pulls each subscribed-to upstream node's
-// rimsky_node_attributes.data into a map keyed by the upstream's
-// node_type, marshalled to json.RawMessage so the substitution engine
-// can lazy-walk into it.
-//
-// `subscribedNodeIDs` is the set of upstream node UUIDs the receiver is
-// subscribed to (either explicitly via Subscribes or implicitly via
-// `{{nodes.X.attribute.Y}}` substitution refs). Post-T23: callers
-// resolve this via runtime/subscription_loaders.go::resolveSubscribedSenders
-// against the cached per-template subscription-edge inverse map.
-//
-// Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
-//
-//	@concept: node-subscription
-func loadSubscribedNodeAttributes(ctx context.Context, args RunArgs, tx persistence.Tx, subscribedNodeIDs []shared.UUID) map[string]json.RawMessage {
-	if len(subscribedNodeIDs) == 0 {
-		return nil
-	}
-	out := make(map[string]json.RawMessage, len(subscribedNodeIDs))
-	for _, depID := range subscribedNodeIDs {
-		depNode, _ := args.Persist.Nodes().Get(ctx, depID, tx)
-		if depNode == nil {
-			continue
-		}
-		row, err := args.Persist.NodeAttributes().Get(ctx, depNode.ID, tx)
-		if err != nil || row == nil {
-			continue
-		}
-		raw, err := json.Marshal(row.Data)
-		if err != nil {
-			continue
-		}
-		out[depNode.NodeType] = raw
-	}
-	return out
-}
 
 // instTemplateScope returns the template-scope id sent to the store on
 // Open. Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-

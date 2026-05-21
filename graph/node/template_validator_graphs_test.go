@@ -391,6 +391,89 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 	}
 }
 
+// Markers — IsSubgraphExit emitted on the declared `exit:` of every
+// non-main graph; the runtime terminal handler reads the marker via
+// acq.NodeDef to drive the carry-rule without a per-terminal template
+// lookup.
+func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "tmpl",
+		Version:             "1",
+		FrameResolutionMode: FrameResolutionCoalesce,
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					{Type: "caller", Delegate: "sub"},
+					{Type: "plain", Executor: "stub"},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "validate",
+				Exit:  "promote",
+				Nodes: []TemplateNodeDef{
+					{Type: "validate", Executor: "stub"},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected validation errors: %v", res.Errors)
+	}
+	byType := make(map[string]*TemplateNodeDef, len(spec.Nodes))
+	for i := range spec.Nodes {
+		byType[spec.Nodes[i].Type] = &spec.Nodes[i]
+	}
+	if exit := byType["promote"]; exit == nil || !exit.IsSubgraphExit {
+		t.Fatalf("promote (sub-graph exit) must carry IsSubgraphExit: %+v", exit)
+	}
+	if entry := byType["validate"]; entry == nil || entry.IsSubgraphExit {
+		t.Fatalf("validate (entry) must not carry IsSubgraphExit: %+v", entry)
+	}
+	if caller := byType["caller"]; caller == nil || caller.IsSubgraphExit {
+		t.Fatalf("caller (in main) must not carry IsSubgraphExit: %+v", caller)
+	}
+	if plain := byType["plain"]; plain == nil || plain.IsSubgraphExit {
+		t.Fatalf("plain (in main) must not carry IsSubgraphExit: %+v", plain)
+	}
+}
+
+// Markers — flat-shape templates (no `graphs:` block, just top-level
+// `nodes:`) must never set IsSubgraphExit, regardless of the type
+// name. The marker is exclusive to non-main graphs' declared `exit:`
+// nodes; a flat-shape template has no graphs and therefore no exits.
+// A node accidentally named "exit" still falls under main and stays
+// unmarked. Pins this so a future refactor of the canonicalizer can't
+// silently enable IsSubgraphExit on flat-shape inputs.
+func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "tmpl-flat",
+		Version:             "1",
+		FrameResolutionMode: FrameResolutionCoalesce,
+		Nodes: []TemplateNodeDef{
+			{Type: "alpha", Executor: "stub"},
+			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", On: "state"}}},
+			// A node literally named "exit" — the marker is keyed on
+			// `graphs[i].Exit`, not on the type name, so even this node
+			// must stay unmarked under flat shape.
+			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", On: "state"}}},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected validation errors: %v", res.Errors)
+	}
+	for i := range spec.Nodes {
+		if spec.Nodes[i].IsSubgraphExit {
+			t.Fatalf("flat-shape node %q must not carry IsSubgraphExit: %+v",
+				spec.Nodes[i].Type, spec.Nodes[i])
+		}
+	}
+}
+
 // Markers — ResolvesViaCallingNode emitted on subscription edges from
 // non-entry internal nodes that reference the sub-graph's entry alias.
 func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {

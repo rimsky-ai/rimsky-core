@@ -69,8 +69,9 @@ export type AgentOutcome =
 export interface AgentRunOptions {
   runId: string;
   /**
-   * Supervisor-side `node_id` — used as the path segment on the incremental
-   * writeback URL (`{callback_url}/v1/attributes/{node_id}`).
+   * Supervisor-side `node_id` — denormalized for forensic queries. The path
+   * segment on the writeback URL is `run_id` (= dispatch_id), per the
+   * 2026-05-20 per-run keying refactor.
    */
   nodeId: string;
   nodeType: string;
@@ -442,9 +443,11 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   };
 
   // Wire the writeback function the `attributes_set` MCP tool calls.
+  // Path segment is `run_id` (= dispatch_id) per the 2026-05-20 per-run
+  // keying refactor; the URL builder accepts the run id directly.
   const post = postAttributes ?? defaultPostAttributes;
   const writebackUrl = callbackUrl
-    ? buildAttributesWritebackUrl(callbackUrl, nodeId)
+    ? buildAttributesWritebackUrl(callbackUrl, runId)
     : "";
   const onAttributesSet = async (
     delta: Record<string, unknown>,

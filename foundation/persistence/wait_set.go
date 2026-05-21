@@ -7,6 +7,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/fallguy/rimsky/foundation/shared"
 )
@@ -20,6 +21,10 @@ import (
 // node-type (in different frames, or under future sub-graph invocations)
 // don't conflate their wait-sets.
 //
+// Under per-run attribute keying (2026-05-20), drain marks the row's
+// DrainedAt timestamp instead of deleting the row. Drained rows remain
+// queryable by the substitution-context builder.
+//
 //	@concept: wait-set
 type WaitSetRow struct {
 	FrameID           shared.UUID
@@ -28,6 +33,7 @@ type WaitSetRow struct {
 	TopicKind         string          // "state" | "attribute" | "event"
 	SubscriptionScope string          // "direct" | "instance"
 	TopicFilter       json.RawMessage // nullable; carried for observability
+	DrainedAt         *time.Time      // nil means not yet drained
 }
 
 // WaitSetTable is the persistence-layer access surface for
@@ -42,11 +48,13 @@ type WaitSetTable interface {
 	// ON CONFLICT DO NOTHING.
 	Insert(ctx context.Context, row WaitSetRow, tx Tx) error
 
-	// DeleteBySender bulk-deletes every wait-set row where
-	// (frame_id, sender_run_id) match. Drains the sender from every
-	// receiver's wait-set in one statement. Called by the cascade walk
-	// when a sender reaches any settled state (fresh / failed / parked).
-	DeleteBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx Tx) error
+	// MarkDrainedBySender bulk-marks every wait-set row where
+	// (frame_id, sender_run_id) match as drained (sets drained_at to NOW()).
+	// Drained rows remain queryable for the substitution-context builder.
+	// Idempotent: rows already drained are not re-touched. Replaces the
+	// prior DeleteBySender semantic (rows used to be deleted on drain;
+	// post-2026-05-20 they're retained for trigger-context queries).
+	MarkDrainedBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx Tx) error
 
 	// ListForReceiver returns the wait-set rows currently gating the
 	// receiver run. Used by /admin/diagnostics/wait-sets for stuck-frame
@@ -56,4 +64,15 @@ type WaitSetTable interface {
 	// ListForFrame returns every wait-set row in a frame. Used by
 	// /admin/diagnostics/wait-sets without a receiver filter.
 	ListForFrame(ctx context.Context, frameID shared.UUID, tx Tx) ([]WaitSetRow, error)
+
+	// ListDrainedAttributeRowsForReceiver returns the drained wait-set
+	// rows for the receiver in the frame, filtered to topic_kind='attribute'.
+	// Used by the substitution-context builder to enumerate sender_run_ids
+	// that contributed to this dispatch via attribute-topic edges.
+	//
+	// Per .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
+	// §"Substitution context builder".
+	ListDrainedAttributeRowsForReceiver(
+		ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx,
+	) ([]WaitSetRow, error)
 }

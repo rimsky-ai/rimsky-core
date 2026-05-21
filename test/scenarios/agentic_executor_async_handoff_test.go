@@ -94,7 +94,7 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	// "resource has version N" assertions.
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().Get(h.Ctx, n.ID, tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, n.ID, tx)
 		row = r
 		return err
 	}))

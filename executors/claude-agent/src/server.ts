@@ -97,7 +97,9 @@ interface ExecuteRequest {
   // Field number 10 (`resumed`) is reserved on the wire under
   // stores-redesign-v2 (proto reserves both number and name). Resume is
   // universal; the substrate detects resumed-vs-fresh internally.
-  run_attempt?: number;
+  // Field number 11 (`run_attempt`) is reserved on the wire under the
+  // 2026-05-20 per-run attribute keying spec — each dispatch has a
+  // fresh dispatch_id; consumers keying on attempts use dispatch_id.
   // Supervisor-side rimsky_dispatch.id (proto field 12). Used by the
   // executor observability ledger as the per-dispatch trace key.
   dispatch_id?: string;
@@ -306,7 +308,16 @@ function handleExecute(
 ): void {
   const req = call.request;
   const ackId = randomUUID();
-  const runId = req.node_id ?? randomUUID();
+  // Per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
+  // segment must equal the supervisor's dispatch_id so attributesAuth can
+  // verify the cancel_token. The node_id is a poor proxy because it is
+  // stable across runs of the same node — multiple dispatches of the same
+  // node would collide in trace ledgers and reuse a stale run_id at
+  // writeback. Fall back to a fresh UUID only when no dispatch_id was
+  // supplied (stub-mode probes, ad-hoc unit tests).
+  const runId = req.dispatch_id && req.dispatch_id.length > 0
+    ? req.dispatch_id
+    : randomUUID();
   // Trace ledger key: prefer the supervisor-supplied dispatch_id so
   // dashboards can fetch traces by it (proto field 12). When absent
   // (stub-mode probes, ad-hoc unit tests), fall back to the ackId.

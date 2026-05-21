@@ -196,7 +196,12 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 //     marker on the success branch of `applyTerminalComplete` to
 //     route through the sub-graph internal-cascade fire.
 //
-//  2. `ResolvesViaCallingNode: true` on every subscription edge in
+//  2. `IsSubgraphExit: true` on every node that names the declared
+//     `exit:` of a non-main graph. The runtime supervisor consults
+//     this marker on the success branch of `applyTerminalComplete`
+//     to drive the exit-writeback carry-rule.
+//
+//  3. `ResolvesViaCallingNode: true` on every subscription edge in
 //     a non-main graph that references the graph's `entry:` alias.
 //     The runtime cascade walker resolves such edges to the calling
 //     node per-invocation (the entry is absorbed into the calling
@@ -208,6 +213,7 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 	for gi, g := range spec.Graphs {
 		isSubgraph := g.Name != MainGraphName && g.Entry != ""
 		entryAlias := g.Entry
+		exitAlias := g.Exit
 		for ni, n := range g.Nodes {
 			if strings.TrimSpace(n.Type) == "" {
 				// Reported by main per-node validation.
@@ -232,7 +238,17 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 			if strings.TrimSpace(emitted.Delegate) != "" {
 				emitted.IsSubgraphEntryAbsorbed = true
 			}
-			// Marker 2: subscription edges from non-entry internal nodes
+			// Marker 2: the exit node of a non-main graph carries
+			// IsSubgraphExit. The runtime consults this marker (via
+			// acq.NodeDef) on the success branch of applyTerminalComplete
+			// to fire the carry-rule. Setting it at canonicalization
+			// eliminates the runtime DB lookup (and its transient-failure
+			// mode) that the previous `IsSubgraphExit(tmpl, nodeType)`
+			// predicate required.
+			if g.Name != MainGraphName && exitAlias != "" && emitted.Type == exitAlias {
+				emitted.IsSubgraphExit = true
+			}
+			// Marker 3: subscription edges from non-entry internal nodes
 			// that target the graph's entry alias get ResolvesViaCallingNode.
 			// The runtime cascade walker resolves them to the calling
 			// node per-invocation. Only emitted on non-main graphs that

@@ -4,6 +4,9 @@
 
 // node_attributes.go — SQLite-backed persistence.NodeAttributeTable.
 //
+// Under per-run keying (2026-05-20), the table is keyed by node_run_id
+// with a denormalized node_id for forensic queries.
+//
 // `data` is a TEXT (JSON) column. Upsert replaces it outright; MergeDelta
 // performs a SHALLOW merge by reading the existing row, merging in Go,
 // and writing back — SQLite has no JSONB `||` operator.
@@ -32,41 +35,69 @@ import (
 	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
+// GetByRun returns the attribute row for runID or (nil, nil) when absent.
+func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT node_id, run_attempt, data, updated_at, value_handle, value_handle_backend
+		`SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
 		   FROM rimsky_node_attributes
-		  WHERE node_id = ?`, nodeID.String(),
+		  WHERE node_run_id = ?`, runID.String(),
 	)
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetByRun")
+}
+
+// GetLatestByNode returns the most-recent run's attribute row for the
+// given node. Used for forensic / observability paths (control-api,
+// lineage projections, agent dashboards). Returns (nil, nil) when the
+// node has no runs with an attribute row.
+func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
+	row := s.q(tx).QueryRowContext(ctx,
+		`SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
+		   FROM rimsky_node_attributes
+		  WHERE node_id = ?
+		  ORDER BY updated_at DESC
+		  LIMIT 1`, nodeID.String(),
+	)
+	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode")
+}
+
+// scanAttributeRow scans a single attribute row (six columns:
+// node_run_id, node_id, data, updated_at, value_handle, value_handle_backend)
+// and dereferences any blob-spilled value through the active backend.
+// Returns (nil, nil) when the underlying scan returns sql.ErrNoRows.
+// `op` is the calling method name, used in wrapped error messages.
+func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row rowScanner, op string) (*persistence.NodeAttributesRow, error) {
 	var (
-		idStr        string
-		runAttempt   int
+		runIDStr     string
+		nodeIDStr    string
 		dataStr      string
 		updatedAtStr string
 		handle       sql.NullString
 		handleBkend  sql.NullString
 	)
-	if err := row.Scan(&idStr, &runAttempt, &dataStr, &updatedAtStr, &handle, &handleBkend); err != nil {
+	if err := row.Scan(&runIDStr, &nodeIDStr, &dataStr, &updatedAtStr, &handle, &handleBkend); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("node_attributes.Get: %w", err)
+		return nil, fmt.Errorf("node_attributes.%s: %w", op, err)
 	}
-	id, err := uuid.Parse(idStr)
+	runID, err := uuid.Parse(runIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("node_attributes.Get: bad id: %w", err)
+		return nil, fmt.Errorf("node_attributes.%s: bad run id: %w", op, err)
+	}
+	nodeID, err := uuid.Parse(nodeIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("node_attributes.%s: bad node id: %w", op, err)
 	}
 	updatedAt, err := parseTime(updatedAtStr)
 	if err != nil {
 		return nil, err
 	}
 	out := persistence.NodeAttributesRow{
-		NodeID:     id,
-		RunAttempt: runAttempt,
-		UpdatedAt:  updatedAt,
+		NodeRunID: runID,
+		NodeID:    nodeID,
+		UpdatedAt: updatedAt,
 	}
 
-	bb := (*tablesImpl)(s).blob
 	if handle.Valid && handle.String != "" && bb != nil && handleBkend.Valid && handleBkend.String == bb.Name() {
 		bytes, err := bb.Read(ctx, persistence.Handle(handle.String))
 		if err != nil {
@@ -74,12 +105,12 @@ func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx per
 				out.Data = map[string]any{}
 				return &out, nil
 			}
-			return nil, fmt.Errorf("node_attributes.Get: blob.Read(%s): %w", handle.String, err)
+			return nil, fmt.Errorf("node_attributes.%s: blob.Read(%s): %w", op, handle.String, err)
 		}
 		m := map[string]any{}
 		if len(bytes) > 0 {
 			if err := json.Unmarshal(bytes, &m); err != nil {
-				return nil, fmt.Errorf("node_attributes.Get: unmarshal blob bytes: %w", err)
+				return nil, fmt.Errorf("node_attributes.%s: unmarshal blob bytes: %w", op, err)
 			}
 		}
 		out.Data = m
@@ -90,14 +121,14 @@ func (s *nodeAttributesImpl) Get(ctx context.Context, nodeID shared.UUID, tx per
 	} else {
 		m := map[string]any{}
 		if err := json.Unmarshal([]byte(dataStr), &m); err != nil {
-			return nil, fmt.Errorf("node_attributes.Get: unmarshal data: %w", err)
+			return nil, fmt.Errorf("node_attributes.%s: unmarshal data: %w", op, err)
 		}
 		out.Data = m
 	}
 	return &out, nil
 }
 
-func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, runAttempt int, data map[string]any, tx persistence.Tx) error {
+func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any, tx persistence.Tx) error {
 	if data == nil {
 		data = map[string]any{}
 	}
@@ -107,7 +138,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 	}
 
 	si := (*tablesImpl)(s)
-	priorHandle, priorBkend, err := readPriorBlobHandle(ctx, si.q(tx), nodeID)
+	priorHandle, priorBkend, err := readPriorBlobHandle(ctx, si.q(tx), runID)
 	if err != nil {
 		return fmt.Errorf("node_attributes.Upsert: read prior handle: %w", err)
 	}
@@ -119,7 +150,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
 		h, werr := si.blob.Write(ctx, persistence.BlobKey{
-			NodeID:        nodeID.String(),
+			NodeID:        runID.String(), // per-run keying
 			AttributeName: "data",
 		}, raw)
 		if werr != nil {
@@ -145,15 +176,14 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 		nullBackend = nil
 	}
 	_, err = si.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_attributes (node_id, run_attempt, data, updated_at, value_handle, value_handle_backend)
+		`INSERT INTO rimsky_node_attributes (node_run_id, node_id, data, updated_at, value_handle, value_handle_backend)
 		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(node_id) DO UPDATE
-		   SET run_attempt          = excluded.run_attempt,
-		       data                 = excluded.data,
+		 ON CONFLICT(node_run_id) DO UPDATE
+		   SET data                 = excluded.data,
 		       updated_at           = excluded.updated_at,
 		       value_handle         = excluded.value_handle,
 		       value_handle_backend = excluded.value_handle_backend`,
-		nodeID.String(), runAttempt, dataToSave, nowUTC(), nullHandle, nullBackend,
+		runID.String(), nodeID.String(), dataToSave, nowUTC(), nullHandle, nullBackend,
 	)
 	if err != nil {
 		return fmt.Errorf("node_attributes.Upsert: %w", err)
@@ -172,7 +202,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 // MergeDelta runs a SHALLOW merge. SQLite has no JSONB `||`; we read,
 // merge in Go, and write back. Per spec §5.7.2.
 //
-// Spill-aware: when the existing row is spilled, materialize via Get,
+// Spill-aware: when the existing row is spilled, materialize via GetByRun,
 // merge, and re-Upsert (which re-applies the spill decision and queues
 // orphans). When inline today, run the legacy read-then-write merge.
 //
@@ -183,13 +213,13 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, nodeID shared.UUID, run
 // BEGIN IMMEDIATE tx (writer-slot held for the duration). When tx == nil
 // the SQLite driver's MaxOpenConns=1 (see sqliteMaxOpenConns in
 // driver.go) serializes any concurrent caller at the connection level.
-func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID, delta map[string]any, tx persistence.Tx) error {
+func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any, tx persistence.Tx) error {
 	if delta == nil {
 		_, err := s.q(tx).ExecContext(ctx,
 			`UPDATE rimsky_node_attributes
 			    SET updated_at = ?
-			  WHERE node_id = ?`,
-			nowUTC(), nodeID.String(),
+			  WHERE node_run_id = ?`,
+			nowUTC(), runID.String(),
 		)
 		if err != nil {
 			return fmt.Errorf("node_attributes.MergeDelta: touch: %w", err)
@@ -199,12 +229,12 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 
 	si := (*tablesImpl)(s)
 
-	priorHandle, _, err := readPriorBlobHandle(ctx, si.q(tx), nodeID)
+	priorHandle, _, err := readPriorBlobHandle(ctx, si.q(tx), runID)
 	if err != nil {
 		return fmt.Errorf("node_attributes.MergeDelta: read prior handle: %w", err)
 	}
 	if priorHandle != "" {
-		prior, err := s.Get(ctx, nodeID, tx)
+		prior, err := s.GetByRun(ctx, runID, tx)
 		if err != nil {
 			return fmt.Errorf("node_attributes.MergeDelta: get prior: %w", err)
 		}
@@ -218,12 +248,12 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 		for k, v := range delta {
 			merged[k] = v
 		}
-		return s.Upsert(ctx, nodeID, prior.RunAttempt, merged, tx)
+		return s.Upsert(ctx, runID, prior.NodeID, merged, tx)
 	}
 
 	row := s.q(tx).QueryRowContext(ctx,
-		`SELECT data FROM rimsky_node_attributes WHERE node_id = ?`,
-		nodeID.String(),
+		`SELECT data FROM rimsky_node_attributes WHERE node_run_id = ?`,
+		runID.String(),
 	)
 	var dataStr string
 	if err := row.Scan(&dataStr); err != nil {
@@ -249,8 +279,8 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 		`UPDATE rimsky_node_attributes
 		    SET data = ?,
 		        updated_at = ?
-		  WHERE node_id = ?`,
-		string(merged), nowUTC(), nodeID.String(),
+		  WHERE node_run_id = ?`,
+		string(merged), nowUTC(), runID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("node_attributes.MergeDelta: %w", err)
@@ -266,14 +296,14 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, nodeID shared.UUID,
 }
 
 // readPriorBlobHandle returns the value_handle / value_handle_backend
-// for nodeID (or empty strings when the row does not exist or has no
+// for runID (or empty strings when the row does not exist or has no
 // handle). Errors only on actual query failure — absence is signaled
 // by both return strings being empty.
-func readPriorBlobHandle(ctx context.Context, q querier, nodeID shared.UUID) (string, string, error) {
+func readPriorBlobHandle(ctx context.Context, q querier, runID shared.UUID) (string, string, error) {
 	row := q.QueryRowContext(ctx,
 		`SELECT value_handle, value_handle_backend
 		   FROM rimsky_node_attributes
-		  WHERE node_id = ?`, nodeID.String(),
+		  WHERE node_run_id = ?`, runID.String(),
 	)
 	var h, b sql.NullString
 	if err := row.Scan(&h, &b); err != nil {

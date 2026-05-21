@@ -281,7 +281,7 @@ func cascadeMessageSubscribersInTx(
 				if e.Filter.Target == "self" && msg.Target != r.NodeType {
 					continue
 				}
-				if err := persist.Nodes().MarkStaleForCascade(ctx, r.ID, frameID, tx); err != nil {
+				if _, err := persist.Nodes().MarkStaleForCascade(ctx, r.ID, frameID, tx); err != nil {
 					return fmt.Errorf("cascadeMessageSubscribersInTx: mark stale %s: %w", r.ID, err)
 				}
 			}

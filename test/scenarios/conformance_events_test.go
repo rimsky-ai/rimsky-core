@@ -94,7 +94,7 @@ func TestConformanceEvents(t *testing.T) {
 
 	var attrs *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		row, err := h.Persist.NodeAttributes().Get(h.Ctx, b.ID, tx)
+		row, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, b.ID, tx)
 		attrs = row
 		return err
 	}))

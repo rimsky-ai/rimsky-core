@@ -178,7 +178,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 					return err
 				}
 				if ok {
-					return sb.WaitSet().DeleteBySender(ctx, *nd.FrameID, runID, tx)
+					return sb.WaitSet().MarkDrainedBySender(ctx, *nd.FrameID, runID, tx)
 				}
 			}
 			return nil

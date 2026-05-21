@@ -17,7 +17,7 @@ references:
 
 `rimsky_node_runs` is the parent row for one execution of one node within a frame. Columns include `phase ∈ {pending, active, held, parked, completed}`, `claimed_by` (supervisor id, non-null only while `phase='active'`), `frame_id NOT NULL`, `last_heartbeat_at`, `required_stores`, optional park columns (`parked_at`, `resume_at`, `parked_payload_*`, `session_token`, `parked_reason`, `parked_reason_label`, `wake_reason`).
 
-Post-2026-05-15 the row also carries the run-tree extension and all state-bearing columns lifted from `rimsky_nodes`:
+Post-2026-05-15 the row also carries the run-tree extension and all state-bearing columns lifted from `rimsky_nodes`. Post-2026-05-20, `rimsky_node_attributes` is also per-run (foreign-key to this row via `node_run_id` with `ON DELETE CASCADE`), completing the lift — modulo derived caches, every state-bearing column for a node-run lives on this row or cascades from it:
 
 - `parent_run_id UUID NULL` — FK self. NULL for top-level (root) runs.
 - `child_key TEXT NULL` — child identity within parent's namespace (partition key for fan-out children; internal node's alias for sub-graph internal nodes).
@@ -54,3 +54,4 @@ Renamed from `concept:worker-request` per `spec:2026-05-12-nomenclature-resoluti
 ## Notes
 
 - Renamed from `concept:worker-request` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #14).
+- 2026-05-20 — Per-run attribute lift complete. `rimsky_node_attributes` re-keyed from `node_id` to `node_run_id` with cascade delete via the run row. The 2026-05-15 "all state-bearing columns" claim is now literally true (modulo derived caches). See `.ok-planner/history/specs/2026-05-20-attribute-pull-resolution-design.md`.

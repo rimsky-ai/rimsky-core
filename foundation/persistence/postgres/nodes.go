@@ -229,6 +229,7 @@ func (s *nodesImpl) ListReadyForDispatch(ctx context.Context, tx persistence.Tx)
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_wait_set w
 		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
+		       AND w.drained_at IS NULL
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -255,6 +256,7 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 		   AND NOT EXISTS (
 		     SELECT 1 FROM rimsky_wait_set w
 		     WHERE w.frame_id = n.frame_id AND w.receiver_run_id = r.id
+		       AND w.drained_at IS NULL
 		   )
 		 ORDER BY n.created_at ASC`,
 	)
@@ -669,7 +671,7 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 //
 // Used by the supervisor's terminal-complete path so cascade children
 // inherit the parent's frame_id atomically with the commit.
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
+func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
 	ex := s.q(tx)
 	// INSERT a pending stale run row only when no in-flight row exists.
 	// The SELECT-WHERE-NOT-EXISTS pattern matches the pre-cutover
@@ -700,22 +702,23 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared
 		frameID, id,
 	)
 	if err != nil {
-		return fmt.Errorf("nodesImpl.MarkStaleForCascade: insert run row: %w", err)
+		return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: insert run row: %w", err)
 	}
+	inserted := tag.RowsAffected() == 1
 	// Bind node frame_id only on the eligible branches: INSERTed a new
 	// run row, or an in-flight stale-pending row already pinned to $1
 	// exists (idempotent re-entry). Otherwise the row is running /
 	// parked / held on a different frame and we leave its node-row
 	// frame_id alone.
-	if tag.RowsAffected() == 1 {
+	if inserted {
 		if _, err := ex.Exec(ctx,
 			`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 			frameID, id,
 		); err != nil {
-			return fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
+			return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
 		}
 	}
-	return nil
+	return inserted, nil
 }
 
 // ---- helpers ----

@@ -201,6 +201,23 @@ type TemplateNodeDef struct {
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Sub-graphs / Identity and absorption.
 	IsSubgraphEntryAbsorbed bool `yaml:"is_subgraph_entry_absorbed,omitempty" json:"is_subgraph_entry_absorbed,omitempty"`
+
+	// IsSubgraphExit is set by the canonicalizer when this node is the
+	// declared `exit:` of a non-main graph. Mirrors
+	// `IsSubgraphEntryAbsorbed`'s role on the calling-node side. At
+	// runtime the supervisor's terminal handler consults this marker
+	// on the success branch of `applyTerminalComplete` to drive the
+	// exit-writeback carry-rule (the exit's writeback bytes are
+	// persisted onto the parent run's attribute row, and the exit's
+	// own attribute row stays empty). Persisted as JSON so the
+	// canonicalizer's emission survives spec hashing; this lets the
+	// runtime route on a static marker rather than a per-terminal
+	// template lookup that could transiently fail.
+	//
+	// Per spec
+	// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
+	// §"Subgraph carry-rule".
+	IsSubgraphExit bool `yaml:"is_subgraph_exit,omitempty" json:"is_subgraph_exit,omitempty"`
 }
 
 // OnAcquireUnavailableHandler declares the supervisor's behavior when

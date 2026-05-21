@@ -285,6 +285,38 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 	return cmd.RowsAffected() == 1, nil
 }
 
+// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
+// dispatch row to `newFrameID`. Used by the hard-dep cascade extension
+// and the standard cascade-subscription path when a parked run is
+// woken: the woken run's frame_id stays at its parked-frame value
+// until rebound, which would otherwise hide it from
+// `GetInFlightRunForNode(node, newFrameID)` on the receiver side.
+// Idempotent — re-binding to the same frame is a no-op (RowsAffected==1
+// on the UPDATE, but the column value is unchanged).
+//
+// Returns `persistence.ErrRunRowMissing` when no row matches
+// `dispatchID`: callers always reach this primitive after resolving
+// the run row, so a silent no-op would hide programmer errors.
+func (q *queueImpl) RebindRunFrameInTx(
+	ctx context.Context, tx persistence.Tx,
+	dispatchID, newFrameID shared.UUID,
+) error {
+	if tx == nil {
+		return errors.New("postgres.RebindRunFrameInTx: tx required")
+	}
+	tag, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs SET frame_id = $1 WHERE id = $2`,
+		newFrameID, dispatchID,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres.RebindRunFrameInTx: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("postgres.RebindRunFrameInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+	}
+	return nil
+}
+
 // GetRetryNoProgress returns the per-row counter and override.
 func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (int, *int, error) {
 	var (

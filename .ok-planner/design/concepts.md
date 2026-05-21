@@ -47,7 +47,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `named-event` — Non-terminal executor emission with a name and inert payload, persisted to `rimsky_node_events` and consumable via substitution or subscription.
 - `named-lock` — Producer-independent capacity-counter primitive declared in `rimsky.yml` with mode mutex or counting, persisted as `lock_kind='named'`.
 - `node` (aliases: graph-node) — One declarative unit of work in a template's graph, materialized at runtime as a row in `rimsky_nodes`.
-- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — One execution of one node within a frame; persisted as a row in `rimsky_node_runs`. Post-2026-05-15 extended to run-tree (parent_run_id, child_key) carrying all state-bearing columns.
+- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — One execution of one node within a frame; persisted as a row in `rimsky_node_runs`. Post-2026-05-15 extended to run-tree (parent_run_id, child_key); post-2026-05-20 `rimsky_node_attributes` is also per-run (FK with `ON DELETE CASCADE`), completing the lift of all state-bearing columns off `rimsky_nodes`.
 - `node-subscription` — Impactee-side declaration of "fire me when this upstream topic transitions" via per-template `subscribes:`. Four topic kinds: `state`, `attribute`, `event`, `message`. Renamed from `subscription` in 2026-05-17 to disambiguate from `publisher-subscription`.
 - `observability` — Service-facing optional observability protocols (ExecutorObservability / ClaimProducerObservability) plus the startup handshake that probes them and populates the discovery cache.
 - `orphan-reaper` — Periodic sweep that hard-deletes stale `active` rows from `rimsky_node_runs` and `rimsky_claim_handles` past `5 × heartbeat_interval`, claimant-guarded; sibling sweep `SweepClaimHandleRetention` handles terminal-row cleanup.
@@ -71,7 +71,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `transition-reason` — Audit-vocabulary enum carried on every node-state transition (`ReasonHandlerComplete`, `ReasonPureCascade`, `ReasonSubGraphInternalCascadeFired`, etc.); sibling to `last_outcome` for the cascade-fire predicate.
 - `userdata` — Inert per-node JSON blob attached by the template author and consumed verbatim by the executor; never substituted or inspected by rimsky, with template-level defaults and per-instance overrides merged across four layers (template defaults → node userdata → per-executor overrides → per-node overrides).
 - `validation` — Cross-cutting service protocol for registration-time validation of node userdata against producer / executor / sensor / lifecycle-subscriber surfaces, per a `role` discriminator.
-- `wait-set` — Per-frame ledger (`rimsky_wait_set`) that records receiver→sender gating from cascade walks; settled-state drain releases rows on sender resolution; eligibility predicate is "wait-set empty in current frame."
+- `wait-set` — Per-frame ledger (`rimsky_wait_set`) that records receiver→sender gating from cascade walks; settled-state drain marks rows (`drained_at = NOW()`) rather than deleting them; eligibility predicate is "no undrained rows for this receiver in the current frame." Drained rows remain queryable for the substitution-context builder.
 - `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal scope.
 
 ## Retired concepts

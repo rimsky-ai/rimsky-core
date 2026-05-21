@@ -240,7 +240,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		frameID = src.FrameID
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.Nodes().MarkStaleForCascade(ctx, target.ID, *frameID, tx); err != nil {
+		if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, target.ID, *frameID, tx); err != nil {
 			return err
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -310,6 +310,62 @@ func walkCascadeForInvalidatedNode(
 	}
 	return cascadeSubscribersStaleInTx(ctx, args, tx,
 		senderNodeID, n.NodeType, senderRunID, instanceID, frameID)
+}
+
+// stalemarkAndEnqueueInFrame stale-marks `target` in `frameID` inside
+// the caller-owned tx, emits a `state_transition` audit event with
+// reason `hard_dep_pull` (only when the stale-mark actually inserted a
+// new run row), then recursively walks the cascade so the just-stale
+// upstream's own subscribers (within this frame) are gated on it too.
+//
+// Canonical in-tx sequence mirrors invalidateInFrame (#212-#268), but
+// accepts a pre-existing tx rather than opening its own — the hard-dep
+// pull runs inside cascadeSubscribersStaleInTx's existing tx, and
+// calling InvalidateNode would self-deadlock (it opens its own tx).
+//
+// Idempotency: `MarkStaleForCascade` returns `inserted=false` when the
+// row already had an in-flight run (e.g., diamond hard-dep topology
+// where A hard-deps B and C; both B and C hard-dep D, so the BFS
+// reaches D twice). On the no-op branch we skip the audit event AND
+// the recursive walk — both would be duplicates of work already done on
+// the first visit.
+//
+// Recursion choice: when the stale-mark DID insert a new run row, the
+// helper MUST call walkCascadeForInvalidatedNode. Skipping the
+// recursion would gate the upstream itself but leave its own
+// subscribers ungated within this frame, breaking the cascade's
+// single-frame-drain property.
+//
+//	@concept: cascade
+//	@concept: attribute
+func stalemarkAndEnqueueInFrame(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	target *persistence.NodeRow, frameID shared.UUID,
+) error {
+	inserted, err := args.Persist.Nodes().MarkStaleForCascade(ctx, target.ID, frameID, tx)
+	if err != nil {
+		return fmt.Errorf("stalemarkAndEnqueueInFrame: mark stale %s: %w", target.ID, err)
+	}
+	if !inserted {
+		// Row already in-flight under this (or another) frame — the
+		// earlier visit handled the audit event and the recursive walk.
+		// Re-emitting would duplicate the event and re-walk the cascade.
+		return nil
+	}
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &target.ID, InstanceID: &target.InstanceID,
+		Kind: "state_transition",
+		Payload: map[string]any{
+			"from":     "fresh",
+			"to":       "stale",
+			"reason":   "hard_dep_pull",
+			"frame_id": frameID.String(),
+		},
+	}, tx); err != nil {
+		return fmt.Errorf("stalemarkAndEnqueueInFrame: append event %s: %w", target.ID, err)
+	}
+	return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
+		args.Logger, target.ID, target.InstanceID, frameID)
 }
 
 // invalidateSourceBucket classifies the Reason string into a small
