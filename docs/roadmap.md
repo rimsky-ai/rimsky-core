@@ -118,8 +118,8 @@ control-api's `/v1/observability/*` surface. Spec at
 A first-class fan-in pattern for conditional subgraphs. Today the
 readiness-node pattern (a node parks waiting for `on_event` signals
 from optional upstream subgraphs) is correct but verbose. A bundled
-executor with a clean userdata schema centralizes the state-machine
-design once.
+executor with a clean expected-attributes schema centralizes the
+state-machine design once.
 
 ### Per-language executor SDKs
 
@@ -192,10 +192,10 @@ and declined:
   consumer-side wiring is actually verbose enough to earn primitive
   status.
 
-The producer-userdata-validation work originally proposed inside that
+The producer-attribute-validation work originally proposed inside that
 sketch landed separately as the `Validation` mix-in service — at a
 narrower surface than the sketch proposed (per-claim `data:` bytes
-only, not the full opaque node userdata) but with the same
+only, not the full node attribute bag) but with the same
 registration-time-validation intent.
 
 ## Explicit non-goals

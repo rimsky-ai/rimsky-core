@@ -8,7 +8,7 @@ Register a one-node template, deploy it, create an instance, observe the node se
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-The bundled `rimsky/executor-stub` image is always in stub mode: it returns a canned `Complete` event keyed only on `node_type`, ignoring `userdata` for behavior selection. (The `RIMSKY_EXECUTOR_STUB_MODE=1` env var is a separate mechanism on the bundled `rimsky/executor-http-node` and `rimsky/executor-claude-agent` images that short-circuits their network paths for testing.)
+The bundled `rimsky/executor-stub` image is always in stub mode: it returns a canned `Complete` event keyed only on `node_type`, ignoring the request's `attributes` bag for behavior selection. (The `RIMSKY_EXECUTOR_STUB_MODE=1` env var is a separate mechanism on the bundled `rimsky/executor-http-node` and `rimsky/executor-claude-agent` images that short-circuits their network paths for testing.)
 
 ## 1. The template
 

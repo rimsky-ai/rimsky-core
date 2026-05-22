@@ -36,6 +36,12 @@ func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, http
 			SupportsTraceStream:           true,
 			RetentionAfterTerminalSeconds: retentionSeconds,
 			HttpBridgeUrl:                 httpBridgeURL,
+			// Mirror ObservabilityServer.Capabilities: advertise a
+			// permissive open schema so the dispatch-time gate knows the
+			// http-node executor accepts any attribute shape (it reads a
+			// fixed set of transport-config keys and serialises the rest
+			// as the implicit body).
+			ExpectedAttributesSchema: []byte(`{"type":"object"}`),
 		}
 		writeProtoJSON(w, caps)
 	})

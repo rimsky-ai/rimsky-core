@@ -53,13 +53,16 @@ type SupervisorConfig struct {
 	Blob persistence.BlobBackend
 	// BlobSpillThreshold is the spill cutoff in bytes; zero disables.
 	BlobSpillThreshold int
-	// UserdataValidator is the dispatch-time userdata schema validator
-	// (plan F7). Optional. When set, the supervisor calls it inside
-	// buildExecuteRequest after applyUserdataOverrides; a non-nil
-	// return routes the dispatch through on_executor_errored with
-	// error_class="userdata_validation_failed". Production wiring
-	// constructs this from observability.NewUserdataValidator(disc).
-	UserdataValidator func(executorName string, merged map[string]any) error
+	// ExpectedAttributesSchemaFor returns the named executor's
+	// advertised expected_attributes_schema bytes (JSON Schema).
+	// Optional. When set, the supervisor threads it through to the
+	// runtime so dispatch-time effective-schema computation can merge
+	// the executor's contribution against L1 template defaults and L2
+	// per-node declarations. Production wiring constructs this from
+	// observability.NewExpectedAttributesSchemaResolver(disc).
+	//
+	// @concept: attribute
+	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	// Metrics is the prometheus instrumentation hook (plan I2).
 	// Optional; nil → no-op everywhere. Production wiring constructs an
 	// observability.RegistryHook from the per-process MetricsRegistry.
@@ -116,27 +119,27 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		return nil, fmt.Errorf("StartSupervisor: Driver.AdvisoryLocker() returned nil")
 	}
 	inner, err := runtime.Start(runtime.Config{
-		SupervisorID:          cfg.SupervisorID,
-		Persist:               persistStore,
-		Queue:                 persistQueue,
-		AdvisoryLocker:        coordinator,
-		Clock:                 cfg.Clock,
-		Logger:                cfg.Logger,
-		Concurrency:           cfg.Concurrency,
-		HeartbeatInterval:     cfg.HeartbeatInterval,
-		ClaimPollInterval:     cfg.ClaimPollInterval,
-		Resolver:              cfg.Resolver,
-		StoreRegistry:         registry,
-		NamedLocks:            cfg.NamedLocks,
-		CallbackHost:          cfg.CallbackHost,
-		CallbackPort:          cfg.CallbackPort,
-		CallbackAdvertiseHost: cfg.CallbackAdvertiseHost,
-		CallbackAdvertisePort: cfg.CallbackAdvertisePort,
-		Blob:                  cfg.Blob,
-		BlobSpillThreshold:    cfg.BlobSpillThreshold,
-		UserdataValidator:     cfg.UserdataValidator,
-		Metrics:               cfg.Metrics,
-		MaxParkDuration:       cfg.MaxParkDuration,
+		SupervisorID:                cfg.SupervisorID,
+		Persist:                     persistStore,
+		Queue:                       persistQueue,
+		AdvisoryLocker:              coordinator,
+		Clock:                       cfg.Clock,
+		Logger:                      cfg.Logger,
+		Concurrency:                 cfg.Concurrency,
+		HeartbeatInterval:           cfg.HeartbeatInterval,
+		ClaimPollInterval:           cfg.ClaimPollInterval,
+		Resolver:                    cfg.Resolver,
+		StoreRegistry:               registry,
+		NamedLocks:                  cfg.NamedLocks,
+		CallbackHost:                cfg.CallbackHost,
+		CallbackPort:                cfg.CallbackPort,
+		CallbackAdvertiseHost:       cfg.CallbackAdvertiseHost,
+		CallbackAdvertisePort:       cfg.CallbackAdvertisePort,
+		Blob:                        cfg.Blob,
+		BlobSpillThreshold:          cfg.BlobSpillThreshold,
+		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
+		Metrics:                     cfg.Metrics,
+		MaxParkDuration:             cfg.MaxParkDuration,
 	})
 	if err != nil {
 		registry.Close()

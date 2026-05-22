@@ -187,18 +187,22 @@ func TestUnknownNodeTypeReturnsError(t *testing.T) {
 	require.Contains(t, err.Error(), "no script for node_type")
 }
 
-// TestObservedRequestCapturesAttributesAndUserdata verifies the stub records
-// the dispatch-time `attributes` and `userdata` fields per spec §12.1 so
-// supervisor / scenario tests can assert that rimsky wired them through.
-func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
+// TestObservedRequestCapturesAttributes verifies the stub records the
+// dispatch-time `attributes` field per spec §12.1 so supervisor /
+// scenario tests can assert that rimsky wired the unified attribute
+// bag through (post-2026-05-21 userdata-collapse: the wire-level
+// `userdata` field is gone).
+func TestObservedRequestCapturesAttributes(t *testing.T) {
 	s := New()
 	s.WhenType("t.obs").Success(map[string]any{}, false, "")
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	attrs, err := structpb.NewStruct(map[string]any{"items": []any{"a", "b"}, "count": 2})
-	require.NoError(t, err)
-	ud, err := structpb.NewStruct(map[string]any{"endpoint": "https://example.test/api"})
+	attrs, err := structpb.NewStruct(map[string]any{
+		"items":    []any{"a", "b"},
+		"count":    2,
+		"endpoint": "https://example.test/api",
+	})
 	require.NoError(t, err)
 
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
@@ -206,7 +210,6 @@ func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 		InstanceId: "i-1",
 		NodeType:   "t.obs",
 		Attributes: attrs,
-		Userdata:   ud,
 	})
 	require.NoError(t, err)
 	_ = drain(t, stream)
@@ -218,7 +221,7 @@ func TestObservedRequestCapturesAttributesAndUserdata(t *testing.T) {
 	require.Equal(t, "t.obs", obs[0].NodeType)
 	require.Equal(t, float64(2), obs[0].Attributes["count"])
 	require.Equal(t, []any{"a", "b"}, obs[0].Attributes["items"])
-	require.Equal(t, "https://example.test/api", obs[0].Userdata["endpoint"])
+	require.Equal(t, "https://example.test/api", obs[0].Attributes["endpoint"])
 }
 
 // TestStubModeReturnsImmediateComplete verifies stub mode short-circuits to

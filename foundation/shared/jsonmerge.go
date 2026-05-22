@@ -2,17 +2,18 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// JSON deep-merge helper used by per-instance userdata overrides
-// (`runner_dispatch.go::buildExecuteRequest`).
+// JSON deep-merge helper used by per-instance attribute overrides
+// (`runner_dispatch.go::applyAttributeOverrides`).
 //
 // Why it lives here: the merge is a shape-blind composition of two
 // `map[string]any` JSON-decoded payloads. Both rimsky-internal layers
 // (graph, runtime) need it, so it sits in shared/
 // where both can import without crossing a feature boundary.
 //
-// @blessed-invariant 11 alignment: the merge does not inspect, validate,
-// or transform any value — it walks shapes and replaces leaves. Userdata
-// stays opaque to rimsky.
+// @concept:inertness alignment: the merge does not inspect, validate,
+// or transform any value — it walks shapes and replaces leaves. The
+// fragment values stay inert to rimsky (structural-inertness
+// discipline).
 package shared
 
 // DeepMergeJSON merges `over` into a copy of `base` and returns the

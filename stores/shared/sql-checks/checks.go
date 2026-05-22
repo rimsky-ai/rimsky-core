@@ -15,7 +15,7 @@
 // @concept: executor
 package sqlchecks
 
-// CheckSpec is one declarative check, decoded from userdata.
+// CheckSpec is one declarative check, decoded from the attribute bag.
 type CheckSpec struct {
 	Kind   string         `json:"kind" yaml:"kind"`
 	Config map[string]any `json:"config" yaml:"config"`

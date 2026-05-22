@@ -7,7 +7,7 @@ const logger = pino({ level: "silent" });
 describe("runStubAgent", () => {
   it("returns the default success outcome when no stub_outcome is supplied", async () => {
     const r = await runStubAgent({
-      userdata: {},
+      attributes: {},
       dispatch: async () => ({}),
       logger,
     });
@@ -19,7 +19,7 @@ describe("runStubAgent", () => {
   it("calls each gate in gates_to_call order", async () => {
     const seen: string[] = [];
     await runStubAgent({
-      userdata: {
+      attributes: {
         stub_outcome: {
           gates_to_call: [
             { name: "review_context", input: {} },
@@ -39,7 +39,7 @@ describe("runStubAgent", () => {
 
   it("maps an error terminal", async () => {
     const r = await runStubAgent({
-      userdata: {
+      attributes: {
         stub_outcome: {
           gates_to_call: [],
           terminal: { variant: "error", error_class: "silence_timeout" },
@@ -55,7 +55,7 @@ describe("runStubAgent", () => {
 
   it("maps a park terminal", async () => {
     const r = await runStubAgent({
-      userdata: {
+      attributes: {
         stub_outcome: {
           gates_to_call: [],
           terminal: { variant: "park", reason: "waiting" },

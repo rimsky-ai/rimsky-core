@@ -178,9 +178,10 @@ func main() {
 	resolver := executor.NewStaticResolver(endpoints)
 
 	// Run the observability handshake against each declared executor so
-	// the dispatch-time userdata-schema validator (plan F7) can see the
-	// advertised UserdataSchema. The validator is then plumbed into
-	// SupervisorConfig.UserdataValidator below.
+	// the dispatch-time effective-attribute-schema computation can see
+	// the advertised expected_attributes_schema. The resolver closure
+	// is plumbed into SupervisorConfig.ExpectedAttributesSchemaFor
+	// below.
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
 		execPeers = append(execPeers, observability.PeerSpec{
@@ -198,24 +199,24 @@ func main() {
 	mreg := observability.NewMetricsRegistry()
 
 	h, err := config.StartSupervisor(config.SupervisorConfig{
-		SupervisorID:          supID,
-		Driver:                driver,
-		Clock:                 shared.SystemClock{},
-		Logger:                log,
-		Concurrency:           concurrency,
-		HeartbeatInterval:     time.Duration(heartbeatMs) * time.Millisecond,
-		ClaimPollInterval:     time.Duration(claimPollMs) * time.Millisecond,
-		Resolver:              resolver,
-		Stores:                storesCfg,
-		NamedLocks:            namedLocksCfg,
-		CallbackHost:          callbackHost,
-		CallbackPort:          callbackPort,
-		CallbackAdvertiseHost: advertiseHost,
-		CallbackAdvertisePort: advertisePort,
-		Blob:                  blobBackend,
-		BlobSpillThreshold:    rimskyCfg.Blob.SpillThresholdBytes,
-		UserdataValidator:     observability.NewUserdataValidator(disc),
-		Metrics:               observability.MetricsHookOf(mreg),
+		SupervisorID:                supID,
+		Driver:                      driver,
+		Clock:                       shared.SystemClock{},
+		Logger:                      log,
+		Concurrency:                 concurrency,
+		HeartbeatInterval:           time.Duration(heartbeatMs) * time.Millisecond,
+		ClaimPollInterval:           time.Duration(claimPollMs) * time.Millisecond,
+		Resolver:                    resolver,
+		Stores:                      storesCfg,
+		NamedLocks:                  namedLocksCfg,
+		CallbackHost:                callbackHost,
+		CallbackPort:                callbackPort,
+		CallbackAdvertiseHost:       advertiseHost,
+		CallbackAdvertisePort:       advertisePort,
+		Blob:                        blobBackend,
+		BlobSpillThreshold:          rimskyCfg.Blob.SpillThresholdBytes,
+		ExpectedAttributesSchemaFor: observability.NewExpectedAttributesSchemaResolver(disc),
+		Metrics:                     observability.MetricsHookOf(mreg),
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())
@@ -234,8 +235,8 @@ func main() {
 	}
 
 	// Plan F6/F7: refresh the executor capability cache periodically so
-	// the userdata-schema validator sees healed peers without a process
-	// restart.
+	// the expected-attributes-schema resolver sees healed peers without
+	// a process restart.
 	go disc.RefreshLoop(gaugeCtx, config.ObservabilityRefreshInterval(), slog.Default())
 
 	metricsHost := os.Getenv("RIMSKY_METRICS_HOST")

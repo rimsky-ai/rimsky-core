@@ -37,24 +37,33 @@ policy:
   allow_modules_from: ["@project-alpha/*"]
 ```
 
-Per-template userdata references catalog entries by name:
+Per-template attribute defaults reference catalog entries by name:
 
 ```yaml
-userdata:
-  cli:
-    mcpServers:
-      - ref: project-tracker
-    system_prompt: "Use the tools to complete the task."
+attributes:
+  schema:
+    type: object
+    properties:
+      cli:
+        type: object
+        default:
+          mcpServers:
+            - ref: project-tracker
+      system_prompt:
+        type: string
+        default: "Use the tools to complete the task."
 ```
 
-The full userdata schema is documented in
-`docs/executors/claude-agent/userdata.md`.
+The full expected-attributes schema is documented in
+`docs/executors/claude-agent/expected-attributes.md`.
 
 ## Lifecycle features
 
-- **`Capabilities.userdata_schema`** — claude-agent declares the
-  userdata schema at handshake. Rimsky validates incoming template
-  userdata against it at template registration and at dispatch
+- **`ObservabilityCapabilities.expected_attributes_schema`** — claude-agent
+  declares its expected-attributes schema at handshake. Rimsky merges
+  it with the template's L1 defaults and L2 per-node declaration to
+  form the effective attribute schema, then validates the dispatch-time
+  attribute bag against it at template registration and at dispatch
   (post-substitution).
 - **Validate-on-`report_complete`** — the agent's structured output
   is validated against the dispatching node's `attributes_schema`.

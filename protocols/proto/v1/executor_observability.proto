@@ -33,15 +33,21 @@ message ObservabilityCapabilities {
   // empty, services expose only the gRPC surface.
   string http_bridge_url = 5;
 
-  // userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
-  // the executor's accepted userdata shape. Empty means "no schema; accept
-  // any userdata."
+  // expected_attributes_schema is a JSON Schema (RFC 8259 + draft 2020-12)
+  // describing the executor's accepted attribute shape. Empty means "no
+  // schema; accept any attributes."
   //
-  // Rimsky validates incoming template userdata against this schema at
-  // template registration and at dispatch (post-merge,
-  // post-substitution). Validation failures route through
-  // Error { error_class: "userdata_validation_failed" }.
-  bytes userdata_schema = 6;
+  // Each property in the schema is one of:
+  //   - an *input* the executor consumes at dispatch (no `readOnly`); or
+  //   - an *output* the executor produces at commit write-back, marked
+  //     `readOnly: true` per the JSON Schema standard keyword.
+  //
+  // Rimsky merges this schema with template-level defaults (L1) and
+  // per-node declarations (L2) at registration to compute the effective
+  // attribute schema, then validates the post-substitution attribute bag
+  // at dispatch and the post-write-back bag at commit. Validation
+  // failures route through Error { error_class: "template_validation_failed" }.
+  bytes expected_attributes_schema = 6;
 
   // declared_events is the set of event names this executor may emit
   // via the NamedEvent wire type on ExecuteEvent. Empty means

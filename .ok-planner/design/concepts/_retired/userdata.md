@@ -1,11 +1,23 @@
 ---
 concept: userdata
-status: as-is
+status: retired
 aliases: []
 references:
   - _discover/2026-05-10-opacity-of-userdata-claim-blob.md
   - _discover/2026-05-10-userdata-overrides-by-instance.md
 ---
+
+## Retirement
+
+2026-05-21 — Userdata retires as a distinct concept. The role userdata
+played (per-node executor configuration, structurally inert, with
+template-level and instance-level overrides) is now covered by
+attributes with `default:` properties (static-default attributes); see
+`concept:attribute`. Override mechanism renamed: `userdata_overrides` →
+`attribute_overrides`. Wire field removed:
+`proto:executor.proto::ExecuteRequest.userdata` is gone.
+`@blessed-invariant 11` retires. See
+`.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
 
 # Userdata
 

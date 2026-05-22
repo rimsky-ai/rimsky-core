@@ -116,11 +116,13 @@ type CallbackServer struct {
 	BlobSpillThreshold               int
 	InvalidateHandler                func(ctx context.Context, args InvalidateArgs) error
 	MaxRetriesWithoutProgressDefault int
-	// UserdataValidator is the dispatch-time userdata schema validator
-	// (plan F7), threaded into the async-callback RunArgs so an
-	// async-callback-driven re-dispatch (resume after park, retry) hits
-	// the same validator the synchronous path runs. Nil → skipped.
-	UserdataValidator func(executorName string, merged map[string]any) error
+	// ExpectedAttributesSchemaFor is the dispatch-time hook that returns
+	// the named executor's advertised expected_attributes_schema bytes,
+	// threaded into the async-callback RunArgs so an async-callback-
+	// driven re-dispatch (resume after park, retry) computes the same
+	// effective attribute schema the synchronous path computes. Nil →
+	// no executor schema in the merge.
+	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
 	// hook (plan I1/I2/I3). Threaded into RunArgs at driveTerminal time
 	// so async-callback-driven terminals contribute to the same
@@ -372,7 +374,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		BlobSpillThreshold:               c.BlobSpillThreshold,
 		InvalidateHandler:                c.InvalidateHandler,
 		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
-		UserdataValidator:                c.UserdataValidator,
+		ExpectedAttributesSchemaFor:      c.ExpectedAttributesSchemaFor,
 		Metrics:                          c.Metrics,
 	}
 	acq := &acquisition{

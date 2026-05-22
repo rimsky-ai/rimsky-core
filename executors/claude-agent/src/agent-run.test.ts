@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { renderTemplate, resolveCwd, runAgent } from "./agent-run.js";
+import { resolveCwd, runAgent } from "./agent-run.js";
 import {
   startInternalMcpServer,
   type CallbackServerHandle,
@@ -15,61 +15,6 @@ import {
 import type { CliRunner } from "./cli-runner.js";
 
 const logger = pino({ level: "silent" });
-
-describe("renderTemplate", () => {
-  it("substitutes userdata and attributes vars", () => {
-    const out = renderTemplate(
-      "sys={{userdata.model}} a={{attributes.area}} obj={{attributes.nested}}",
-      {
-        userdata: { model: "sonnet" },
-        attributes: { area: "alpha", nested: { ok: true } },
-      },
-    );
-    expect(out).toBe('sys=sonnet a=alpha obj={"ok":true}');
-  });
-
-  it("preserves {{...}} for missing keys", () => {
-    const out = renderTemplate("{{userdata.missing}} {{attributes.gone}}", {
-      userdata: {},
-      attributes: {},
-    });
-    expect(out).toBe("{{userdata.missing}} {{attributes.gone}}");
-  });
-
-  it("ignores unknown namespaces (preserves verbatim)", () => {
-    const out = renderTemplate("{{deps.foo}}", {
-      userdata: {},
-      attributes: {},
-    });
-    expect(out).toBe("{{deps.foo}}");
-  });
-
-  it("substitutes rimsky.* resume-context vars when supplied", () => {
-    const out = renderTemplate(
-      "payload={{rimsky.resume_payload}} reason={{rimsky.resume_reason}}",
-      {
-        userdata: {},
-        attributes: {},
-        rimsky: {
-          resume_payload: "blob-bytes",
-          resume_reason: "deadline_elapsed",
-        },
-      },
-    );
-    expect(out).toBe("payload=blob-bytes reason=deadline_elapsed");
-  });
-
-  it("preserves rimsky.* placeholders when bag is missing or key absent", () => {
-    const out = renderTemplate(
-      "{{rimsky.resume_payload}} {{rimsky.resume_reason}}",
-      {
-        userdata: {},
-        attributes: {},
-      },
-    );
-    expect(out).toBe("{{rimsky.resume_payload}} {{rimsky.resume_reason}}");
-  });
-});
 
 describe("resolveCwd", () => {
   let dir: string;
@@ -186,10 +131,9 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
       nodeType: "agent",
       model: "sonnet",
       systemPrompt: "you are helpful",
-      userPromptTemplate: "do it",
+      userPrompt: "do it",
       attributesSchema: {},
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       stores: {},
       cwdFromStore: "content",
       callbackUrl: "",
@@ -273,10 +217,9 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
       nodeType: "area-pass",
       model: "sonnet",
       systemPrompt: "you are helpful",
-      userPromptTemplate: "do it",
+      userPrompt: "do it",
       attributesSchema: {},
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       cwdOverride: tmpCwd,
       callbackUrl: "",
       cancelToken: "",
@@ -324,10 +267,9 @@ describe("runAgent in stub mode", () => {
       nodeType: "stub-type",
       model: "sonnet",
       systemPrompt: "you are helpful",
-      userPromptTemplate: "do it",
+      userPrompt: "do it",
       attributesSchema: {},
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,

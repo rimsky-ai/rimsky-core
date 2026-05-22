@@ -16,7 +16,7 @@
 // callable Go packages. The probes dial the in-process fused server's
 // gRPC endpoint and exercise the protocol contracts end-to-end.
 //
-// Stub-mode-only executor scenarios (`malformed_userdata`,
+// Stub-mode-only executor scenarios (`malformed_attributes`,
 // `attributes_serialization`, `heartbeats`, `park_reason_emission`) are
 // skipped automatically by the conformance runner because the fused
 // store's executor role is a verifier, not a stub. The non-stub-gated
@@ -124,8 +124,8 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 // `cmd/rimsky-executor-conformance` (conformance.Run) and asserts every
 // non-stub-mode scenario passes. Stub-mode-gated scenarios are skipped
 // automatically by the runner because the fused store's executor role
-// is a verifier (rejects `stub_probe: true` userdata with
-// invalid_userdata, which is a valid Error terminal — the happy-path
+// is a verifier (rejects `stub_probe: true` attributes with
+// invalid_attribute, which is a valid Error terminal — the happy-path
 // scenario tolerates Error outcomes).
 //
 // Async-gated scenarios are skipped because the postgres executor is

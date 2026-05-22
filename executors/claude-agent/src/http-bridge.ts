@@ -73,7 +73,6 @@ interface ExecuteBody {
   // trace via GET /observability/v1/trace/{dispatch_id}. Falls back to
   // the freshly-minted ackId for non-rimsky callers.
   dispatch_id?: string;
-  userdata?: unknown;
   attributes?: unknown;
   attributes_schema?: unknown;
   stores?: Record<string, unknown>;
@@ -176,25 +175,20 @@ async function runAndCallback(
   logger: Logger,
 ): Promise<void> {
   try {
-    const userdata = toRecord(body.userdata);
     const attributes = toRecord(body.attributes);
     const outcome = await runAgent({
       runId,
       nodeId: body.node_id ?? runId,
       nodeType: body.node_type ?? "unknown",
-      model: stringOr(userdata.model, "claude-sonnet-4-5"),
-      systemPrompt: stringOr(userdata.system_prompt, ""),
-      userPromptTemplate: stringOr(userdata.user_prompt_template, ""),
+      model: stringOr(attributes.model, "claude-sonnet-4-5"),
+      systemPrompt: stringOr(attributes.system_prompt, ""),
+      userPrompt: stringOr(attributes.user_prompt, ""),
       attributesSchema: body.attributes_schema ?? {},
       attributes,
-      templateVars: {
-        userdata,
-        attributes,
-      },
       stores: unwrapStores(body.stores ?? {}),
-      cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
-      cwdOverride: stringOrUndefined(userdata.cwd),
-      cliConfig: parseCliConfig(userdata.cli),
+      cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
+      cwdOverride: stringOrUndefined(attributes.cwd),
+      cliConfig: parseCliConfig(attributes.cli),
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
       cliRunner,
@@ -315,7 +309,7 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
 }
 
 // @source: src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
-// Mirror of the gRPC server's userdata unwrap. The HTTP bridge usually
+// Mirror of the gRPC server's attributes unwrap. The HTTP bridge usually
 // receives plain JSON (no Struct envelope) but accepts the proto-Struct
 // shape too so behavior stays consistent across transports. Both snake_case
 // and camelCase Value-kind discriminators are accepted — matches the
@@ -394,7 +388,7 @@ function stringOrUndefined(v: unknown): string | undefined {
 }
 
 // @source: src/server.ts (parseCliConfig + helpers)
-// Mirror of the gRPC path's userdata.cli reader.
+// Mirror of the gRPC path's attributes.cli reader.
 function boolOrUndefined(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }

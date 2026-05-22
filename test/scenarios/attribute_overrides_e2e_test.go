@@ -2,17 +2,19 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scenario — per-instance userdata_overrides drives end-to-end:
-//   - POST /instances accepts userdata_overrides
-//   - persistence round-trips it on rimsky_instances.userdata_overrides
-//   - acquisition reads it onto acquisition.InstanceUserdataOverrides
-//   - applyUserdataOverrides deep-merges template userdata + by_executor + by_node fragments
-//   - the merged map reaches the executor on ExecuteRequest.userdata
+// Scenario — per-instance attribute_overrides drives end-to-end:
+//   - POST /instances accepts attribute_overrides
+//   - persistence round-trips it on rimsky_instances.attribute_overrides
+//   - acquisition reads it onto acquisition.InstanceAttributeOverrides
+//   - applyAttributeOverrides deep-merges L1 template defaults (folded
+//     into the effective schema's `default:` values at registration) +
+//     L3 by_executor + L4 by_node fragments on top of resolved sources
+//   - the merged map reaches the executor on ExecuteRequest.attributes
 //
 // This test guards against regressions of the "load-bearing seam" between
-// the persisted column and the dispatch path. Before the fix, the
-// success-path acquisition struct omitted InstanceUserdataOverrides and
-// the entire feature was a silent no-op on dispatch.
+// the persisted column and the dispatch path. Before the 2026-05-21
+// userdata-collapse rewrite, this scenario asserted on the userdata
+// field; post-collapse it asserts on attributes.
 package scenarios
 
 import (
@@ -26,29 +28,45 @@ import (
 	"github.com/fallguy/rimsky/graph/scenario"
 )
 
-func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
+func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "ok")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "userdata-overrides-e2e", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(
-				node.TemplateNodeDef{
-					Type:     "worker",
-					Executor: "stub",
-					Userdata: map[string]any{
+		Name: "attribute-overrides-e2e", Version: "1",
+		Defaults: &node.TemplateDefaults{
+			Attributes: &node.TemplateAttributeDefaults{
+				ByExecutor: map[string]map[string]any{
+					"stub": {
 						"cli": map[string]any{
 							"silence_timeout_ms": float64(60000),
 							"trace_to":           "/template-default",
 						},
 					},
 				},
+			},
+		},
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{
+					Type:     "worker",
+					Executor: "stub",
+				},
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"ok": map[string]any{"type": "boolean"},
+						// `cli` carries no L2 declaration so L1's
+						// template-default ({silence_timeout_ms, trace_to})
+						// folds into the effective schema as the
+						// `default:` for the property at registration.
+						"cli": map[string]any{
+							"type": "object",
+						},
+						"ok": map[string]any{
+							"type":     "boolean",
+							"readOnly": true,
+						},
 					},
 				}),
 			),
@@ -70,7 +88,7 @@ func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 			},
 		},
 	}
-	iid := h.CreateInstanceWithOverrides(tid, "ck-uo-e2e", map[string]any{}, overrides)
+	iid := h.CreateInstanceWithOverrides(tid, "ck-ao-e2e", map[string]any{}, overrides)
 
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
@@ -78,16 +96,16 @@ func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 		"worker did not reach fresh")
 
 	// Find the stub's record of the worker dispatch and assert the
-	// userdata reaching the executor was the merged map: by_node wins
-	// the trace_to key (most specific), by_executor contributes
-	// synthetic_scenario, the template's silence_timeout_ms is
-	// preserved.
+	// attribute bag reaching the executor was the merged map: by_node
+	// wins the trace_to key (most specific), by_executor contributes
+	// synthetic_scenario, the template L1 default's silence_timeout_ms
+	// is preserved.
 	var got map[string]any
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, o := range h.Stub.Observed() {
 			if o.NodeType == "worker" {
-				got = o.Userdata
+				got = o.Attributes
 				break
 			}
 		}
@@ -99,7 +117,7 @@ func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 	require.NotNil(t, got, "stub did not record any worker dispatch")
 
 	cli, ok := got["cli"].(map[string]any)
-	require.True(t, ok, "userdata.cli missing or wrong shape: %#v", got)
+	require.True(t, ok, "attributes.cli missing or wrong shape: %#v", got)
 
 	// by_node wins for keys present in both by_executor and by_node.
 	require.Equal(t, "/by-node", cli["trace_to"],
@@ -107,7 +125,7 @@ func TestUserdataOverridesEndToEndDispatch(t *testing.T) {
 	// by_executor contributes a key absent from base + by_node.
 	require.Equal(t, "exit-clean-no-callback", cli["synthetic_scenario"],
 		"by_executor should contribute synthetic_scenario")
-	// template's per-node userdata key not touched by either override.
+	// L1 template default's silence_timeout_ms key not touched by either override.
 	require.Equal(t, float64(60000), cli["silence_timeout_ms"],
-		"template's silence_timeout_ms should be preserved")
+		"template L1 default's silence_timeout_ms should be preserved")
 }

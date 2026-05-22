@@ -171,7 +171,7 @@ func applyErrorPolicy(
 			ExecutorName:     acq.Executor,
 			TemplateHash:     acq.TemplateHash,
 			Params:           acq.InstanceParams,
-			UserdataMerged:   acq.MergedUserdata,
+			AttributesMerged: acq.MergedAttributes,
 			HeldClaims:       HeldClaimsForLineage(acq),
 			ParentRunID:      acq.ParentRunID,
 			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),

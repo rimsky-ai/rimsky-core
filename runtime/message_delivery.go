@@ -31,7 +31,7 @@
 // (which walks payload via `walkPath`) and the persistence-layer fetch
 // in `control/controlapi/messages.go::handleGetMessage` (which surfaces
 // the row verbatim to the operator). Same opacity discipline as
-// `@blessed-invariant 11/20/21`.
+// `@blessed-invariant 20/21`.
 
 package runtime
 

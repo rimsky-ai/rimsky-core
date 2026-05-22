@@ -25,8 +25,8 @@
 | Host executor agent-run pipeline | `executor/src/agent-run.ts`, `executor/src/stub-mode.ts`, `executor/src/silence-watch.ts` |
 | Claude CLI subprocess + auth | `executor/src/cli-runner.ts`, `executor/src/cli-env.ts` |
 | Executor → producer typed client | `executor/src/state-client.ts` |
-| Prompt loader (userdata-supplied) | `executor/src/prompt-loader.ts` |
-| Executor capabilities + observability | `executor/src/capabilities.ts`, `executor/src/userdata-schema.ts`, `executor/src/observability.ts` |
+| Prompt loader (reads `attributes.system_prompt`) | `executor/src/prompt-loader.ts` |
+| Executor capabilities + observability | `executor/src/capabilities.ts`, `executor/src/expected-attributes-schema.ts`, `executor/src/observability.ts` |
 | CLI wrapper | `cli/src/main.ts`, `cli/src/commands/*.ts`, `cli/src/rimsky-cli.ts` |
 | Shared types package | `shared/src/*.ts` (ids, fingerprint, error-classes, jsonl-rows, gate-io, scope-addresses, named-events, class-codec) |
 | Proto package | `proto/v1/crimefinder_state.proto` |

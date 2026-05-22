@@ -76,13 +76,13 @@ type ObservabilityCapabilities struct {
 	// the gRPC surface and the dashboard's HTTP proxy is unavailable.
 	HTTPBridgeURL string `json:"http_bridge_url,omitempty"`
 
-	// UserdataSchema, when non-empty, is a JSON Schema (RFC 8259 +
-	// draft 2020-12) advertised by an executor to describe its accepted
-	// userdata shape. Rimsky validates incoming template userdata against
+	// ExpectedAttributesSchema, when non-empty, is a JSON Schema (RFC 8259 +
+	// draft 2020-12) advertised by an executor to describe its expected
+	// attribute schema. Rimsky validates incoming template attributes against
 	// this schema at template registration and at dispatch (post-merge,
-	// post-substitution). Empty means "no schema; accept any userdata."
-	// Plumbed from ObservabilityCapabilities.userdata_schema (proto v1).
-	UserdataSchema []byte `json:"userdata_schema,omitempty"`
+	// post-substitution). Empty means "no schema; accept any attributes."
+	// Plumbed from ObservabilityCapabilities.expected_attributes_schema (proto v1).
+	ExpectedAttributesSchema []byte `json:"expected_attributes_schema,omitempty"`
 
 	// DeclaredEvents is the set of event names this executor may emit
 	// via the non-terminal NamedEvent wire type. Rimsky validates that

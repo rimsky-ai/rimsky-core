@@ -60,7 +60,6 @@ type ValidationClient interface {
 // validation. Mirrors the proto ExecutorContext.
 type ValidateExecutorInput struct {
 	NodeAlias        string
-	Userdata         []byte
 	AttributesSchema []byte
 	ClaimAliases     []string
 }

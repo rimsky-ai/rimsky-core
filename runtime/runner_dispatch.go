@@ -10,7 +10,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -21,18 +20,55 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
+	"github.com/fallguy/rimsky/graph/node"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// userdataValidationError wraps a UserdataValidator failure so the
-// dispatch path can classify it as an application-error
-// ("userdata_validation_failed") rather than infra. Plan F7.
-type userdataValidationError struct {
-	cause error
+// attributeValidationError wraps non-resolution attribute failures
+// raised by resolveAttributes: schema-invalid composition errors,
+// JSON-Schema-validation failures on the dispatch bag, and (post the
+// 2026-05-21 gap-closure cycle) the dispatch-time defense-in-depth
+// validation against the executor's raw expected_attributes_schema.
+//
+// Routed by applyAttributeFailure to the `template_validation_failed`
+// policy chain — distinct from `template_resolution_failed` (strict-
+// directive misses, *attributes.ErrMissingSource) and
+// `executor_schema_unavailable` (executor's schema not visible at
+// dispatch). Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Error handling".
+//
+// @concept: attribute
+type attributeValidationError struct {
+	Reason string
+	Cause  error
 }
 
-func (e *userdataValidationError) Error() string { return e.cause.Error() }
-func (e *userdataValidationError) Unwrap() error { return e.cause }
+func (e *attributeValidationError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", e.Reason, e.Cause)
+	}
+	return e.Reason
+}
+
+func (e *attributeValidationError) Unwrap() error { return e.Cause }
+
+// executorSchemaUnavailableError is the typed marker for the
+// `executor_schema_unavailable` class: the executor's
+// expected_attributes_schema isn't visible at dispatch (handshake not
+// completed, discovery cache empty, or executor advertises no schema).
+// Routed to its own policy chain so operators can override retry-after-
+// handshake-completes behaviour separately from validation failures.
+type executorSchemaUnavailableError struct {
+	Executor string
+}
+
+func (e *executorSchemaUnavailableError) Error() string {
+	return fmt.Sprintf(
+		"executor_schema_unavailable: executor %q has no visible expected_attributes_schema at dispatch (handshake not completed or discovery cache empty)",
+		e.Executor,
+	)
+}
 
 // dispatchContext carries the per-dispatch state through the
 // executor stream loop.
@@ -161,21 +197,6 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}
 	req, err := buildExecuteRequest(ctx, dctx)
 	if err != nil {
-		// Plan F7: userdata-validation failures route through the
-		// application-Error chain (Error{error_class} →
-		// on_executor_errored) rather than the infra-error chain. This
-		// lets templates declare an on_executor_errored handler with a
-		// `userdata_validation_failed` branch and react (e.g.
-		// invalidate the upstream attribute-producing node, or
-		// give_up).
-		var uerr *userdataValidationError
-		if errors.As(err, &uerr) {
-			return terminalEvent{
-				Kind:       terminalKindErrored,
-				ErrorClass: "userdata_validation_failed",
-				Payload:    map[string]any{"error": uerr.cause.Error()},
-			}, nil, nil
-		}
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
@@ -344,13 +365,51 @@ func readExecutorStream(
 // resolveAttributes is the runner's pre-dispatch substitution + validation
 // pass. Returns the populated attribute object and the schema (so
 // the terminal handler can re-validate at commit time).
+//
+// Under the 2026-05-21 userdata collapse, the schema returned is the
+// merged effective schema (executor.expected_attributes_schema ∪ L1
+// template defaults ∪ L2 per-node declaration) — the same shape the
+// validator computed at registration. The resolved attribute bag
+// carries source-resolved values, static-default values, and post-
+// merge L3 + L4 instance overrides.
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
 	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
 		return map[string]any{}, nil, nil
 	}
-	schema := acq.NodeDef.Attributes.Schema
+	schema, execSchema, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
 	if schema == nil {
 		return map[string]any{}, nil, nil
+	}
+	// Reapply the unified-attribute-surface check at dispatch. The
+	// registration-time validator soft-fails the readOnly leg when the
+	// discovery cache hasn't populated the executor's expected schema
+	// yet (e.g. test fixtures with no observability hook wired, or
+	// templates registered before an executor's first handshake). By
+	// dispatch time the executor MUST be reachable and have handshaked,
+	// so a missing schema here is a real problem — fail loud with
+	// `executor_schema_unavailable` rather than silently skipping the
+	// readOnly leg. This is the authoritative gate per spec
+	// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+	// §"Attribute as the unified surface".
+	//
+	// The executor name being non-empty is the precondition for needing
+	// schema visibility — nodes that don't reference an executor (e.g.
+	// pure deterministic templates in tests) don't go through expected-
+	// schema gating.
+	if acq.Executor != "" && !execSchemaVisible {
+		return nil, schema, &executorSchemaUnavailableError{Executor: acq.Executor}
+	}
+	if errs := node.CheckEffectiveAttributesSchema(
+		schema,
+		acq.NodeDef.Attributes.Schema,
+		extractReadOnlyPropsLocal(execSchema),
+		execSchemaVisible,
+		execSchemaVisible && node.IsPermissiveExecutorSchema(execSchema),
+	); len(errs) > 0 {
+		first := errs[0]
+		return nil, schema, &attributeValidationError{
+			Reason: fmt.Sprintf("attributes_schema_invalid: %s: %s", first.Path, first.Msg),
+		}
 	}
 	rctx, err := buildResolveContextForDispatch(ctx, args, acq)
 	if err != nil {
@@ -360,9 +419,38 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err != nil {
 		return nil, schema, err
 	}
+	resolved = applyAttributeOverrides(resolved, acq.InstanceAttributeOverrides, acq.Executor, acq.NodeType, args.Logger)
+	acq.MergedAttributes = resolved
 	dispatchSchema := relaxRequiredToSourceDriven(schema)
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
-		return nil, schema, err
+		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}
+	}
+	// Defense-in-depth: re-validate the merged bag against the executor's
+	// raw schema. The dispatch-relaxed `dispatchSchema` above tolerates
+	// executor-written `required:` properties (commit gate handles them);
+	// the executor's raw schema does not have that relaxation. This pass
+	// catches L3 / L4 override values that violate the executor's
+	// contract (shape-blind at instance creation per the structural-
+	// inertness rule) and any source-resolved value whose runtime type
+	// doesn't match what the executor declared. Per the 2026-05-21 gap-
+	// closure cycle (spec §"Effective schema computation").
+	if execSchema != nil {
+		// The executor's raw schema may carry `required:` entries for
+		// `readOnly: true` properties (executor-written outputs) — those
+		// are populated at commit by write-back, not at dispatch, so
+		// enforcing `required:` for them here would fire false positives.
+		// Per the userdata-collapse spec §"Effective schema computation":
+		// executor-written `required:` is enforced at the commit gate,
+		// not at dispatch. Source-bound and static-default `required:`
+		// entries stay enforced (they should already be in the dispatch
+		// bag).
+		execSchemaForDispatch := relaxRequiredForExecutorWritten(execSchema)
+		if err := attributes.Validate(execSchemaForDispatch, resolved, attributes.PhaseDispatch); err != nil {
+			return nil, schema, &attributeValidationError{
+				Reason: "dispatch_bag_violates_executor_schema",
+				Cause:  err,
+			}
+		}
 	}
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -495,8 +583,96 @@ func lookupEventPayload(
 	return out, found
 }
 
-// substituteAttributesSchema walks the schema's `properties` map and
-// substitutes any property with a `source:` string into the output.
+// computeEffectiveAttributeSchema returns the per-node effective
+// attribute schema at dispatch — the same shape the validator computed
+// at registration:
+//
+//	executor.expected_attributes_schema ∪ L1 template defaults ∪ L2 node schema
+//
+// Returns the effective schema plus the executor's expected schema
+// (parsed) and a visibility flag reporting whether the discovery hook
+// returned schema bytes. The dispatch path uses the visibility flag +
+// parsed executor schema to reapply
+// `node.CheckEffectiveAttributesSchema` against the merged effective
+// schema — closing the gap left by the registration-time validator's
+// soft-fail when the discovery cache isn't populated yet.
+//
+// The recompute happens at dispatch (per spec open-question 1,
+// "recompute rather than persist") so template-registration storage
+// stays unchanged. The merge is pure
+// (graph/node::MergeAttributeDefaults); shape-blind on the L1 + L4
+// value fragments.
+//
+// @concept: attribute
+func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string]any, map[string]any, bool) {
+	var nodeSchema map[string]any
+	if acq.NodeDef != nil && acq.NodeDef.Attributes != nil {
+		nodeSchema = acq.NodeDef.Attributes.Schema
+	}
+	var execSchema map[string]any
+	execSchemaVisible := false
+	if args.ExpectedAttributesSchemaFor != nil && acq.Executor != "" {
+		if bytesIn, ok := args.ExpectedAttributesSchemaFor(acq.Executor); ok && len(bytesIn) > 0 {
+			if err := json.Unmarshal(bytesIn, &execSchema); err != nil {
+				if args.Logger != nil {
+					args.Logger.Warn("computeEffectiveAttributeSchema: executor schema unmarshal failed",
+						"executor", acq.Executor, "error", err.Error())
+				}
+				execSchema = nil
+			} else {
+				execSchemaVisible = true
+			}
+		}
+	}
+	if execSchema == nil && nodeSchema == nil {
+		return nil, nil, execSchemaVisible
+	}
+	return node.MergeAttributeDefaults(execSchema, acq.TemplateAttributeDefaults, nodeSchema), execSchema, execSchemaVisible
+}
+
+// extractReadOnlyPropsLocal mirrors graph/node/template_validator.go::
+// extractReadOnlyProps. Kept private because the runtime only needs the
+// names-of-readOnly-props set when reapplying the unified-attribute-
+// surface check. @source: graph/node/template_validator.go:extractReadOnlyProps
+func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
+	out := map[string]bool{}
+	if schema == nil {
+		return out
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return out
+	}
+	for name, raw := range props {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ro, _ := prop["readOnly"].(bool); ro {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// substituteAttributesSchema walks the effective schema's `properties`
+// map and emits one entry per property:
+//   - source-bound (`source:` directive): resolved against rctx via the
+//     substitution engine. Strict directives (no marker) raise
+//     ErrMissingSource on missing; lenient (`?` marker) and fallback
+//     (`| <literal>`) directives are handled inside the engine and
+//     produce a typed value or null.
+//   - static-default (`default:` value with no source): copied verbatim
+//     from the schema. No substitution is applied to defaults.
+//   - executor-written (`readOnly: true` in the executor's expected
+//     schema; the effective schema carries the marker through): absent
+//     from the dispatch-time bag, populated at commit by write-back.
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Resolution waterfall".
+//
+// @concept: attribute
 func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveContext) (map[string]any, error) {
 	out := map[string]any{}
 	if schema == nil {
@@ -506,46 +682,53 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 	if props == nil {
 		return out, nil
 	}
-	required := stringSetFrom(schema["required"])
 	for name, propAny := range props {
 		prop, _ := propAny.(map[string]any)
 		if prop == nil {
 			continue
 		}
 		srcRaw, hasSource := prop["source"]
-		if !hasSource {
-			continue
-		}
-		source, _ := srcRaw.(string)
-		if source == "" {
-			continue
-		}
-		// Use SubstituteValue so the resolved JSON value lands in the
-		// attribute data map at its native type (object / array / number
-		// / bool / string). The receiver-side JSON Schema validation runs
-		// over the typed value; pre-spec stringified coercion is gone.
-		// Per spec
-		// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-		// Item 3.
-		val, err := attributes.SubstituteValue(source, rctx)
-		if err != nil {
-			if attributes.IsMissingSource(err) {
-				if _, isReq := required[name]; isReq {
-					return nil, err
-				}
+		defaultVal, hasDefault := prop["default"]
+		switch {
+		case hasSource:
+			source, _ := srcRaw.(string)
+			if source == "" {
 				continue
 			}
-			return nil, err
+			val, err := attributes.SubstituteValue(source, rctx)
+			if err != nil {
+				// Per spec §"Resolution waterfall" step 5: a strict (no
+				// `?` marker) missing directive fails dispatch with
+				// `template_resolution_failed`, regardless of whether
+				// the property is `required`. Lenient (`?`) and
+				// fallback (`| literal`) directives are handled inside
+				// SubstituteValue and never raise ErrMissingSource.
+				return nil, err
+			}
+			out[name] = val
+		case hasDefault:
+			// Static-default property — the default value flows into the
+			// dispatch bag verbatim. No substitution is applied to
+			// defaults; an operator-supplied `"{{X}}"` is a literal
+			// string here.
+			out[name] = defaultVal
 		}
-		out[name] = val
+		// Executor-written (readOnly + no source + no default) properties
+		// stay absent until the executor's commit write-back populates
+		// them; nothing to do at dispatch.
 	}
 	return out, nil
 }
 
 // relaxRequiredToSourceDriven returns a shallow copy of the supplied
-// JSON Schema whose `required` array is filtered to retain only
-// properties carrying a non-empty `source:` directive. Executor-
-// populated requireds get re-validated at commit (@blessed-invariant 12).
+// JSON Schema whose `required` array is filtered to drop only
+// properties that have neither a `source:` directive nor a `default:`
+// value (i.e. executor-written properties). Source-bound and
+// static-default properties stay in `required` — the dispatch bag
+// will already contain a value for them (resolved or static), and the
+// JSON Schema validation step on the dispatch bag should still see
+// them as required. Executor-populated requireds get re-validated at
+// commit (@blessed-invariant 12).
 func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
@@ -565,7 +748,8 @@ func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 		}
 		prop, _ := props[name].(map[string]any)
 		src, _ := prop["source"].(string)
-		if src == "" {
+		_, hasDefault := prop["default"]
+		if src == "" && !hasDefault {
 			dropped = true
 			continue
 		}
@@ -582,16 +766,64 @@ func relaxRequiredToSourceDriven(schema map[string]any) map[string]any {
 	return out
 }
 
-func stringSetFrom(v any) map[string]struct{} {
-	out := map[string]struct{}{}
-	arr, ok := v.([]any)
-	if !ok {
-		return out
+// relaxRequiredForExecutorWritten returns a shallow copy of the
+// supplied JSON Schema whose `required` array drops only the
+// `readOnly: true` properties (executor-written outputs). Source-bound
+// and static-default `required:` entries stay — those properties
+// already exist in the dispatch bag, so requiring them there is
+// correct. Executor-written `required:` entries are enforced at the
+// commit gate when the executor's write-back lands, not at dispatch.
+//
+// Sibling to `relaxRequiredToSourceDriven`: that helper builds the
+// dispatch-relaxed view of the *effective* schema (the executor ∪ L1
+// ∪ L2 composition) for the primary dispatch validation pass; this
+// helper builds the equivalent view of the executor's *raw* schema
+// for the defense-in-depth pass against L3 / L4 overrides. The two
+// relaxations differ in detection criterion: the effective-schema
+// view classifies via `source:` / `default:` (which only the effective
+// schema carries); the raw-executor view classifies via `readOnly:
+// true` (which only the executor schema carries).
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Effective schema computation".
+func relaxRequiredForExecutorWritten(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
 	}
-	for _, x := range arr {
-		if s, ok := x.(string); ok {
-			out[s] = struct{}{}
+	required, _ := schema["required"].([]any)
+	if len(required) == 0 {
+		return schema
+	}
+	props, _ := schema["properties"].(map[string]any)
+	keep := make([]any, 0, len(required))
+	dropped := false
+	for _, item := range required {
+		name, ok := item.(string)
+		if !ok {
+			keep = append(keep, item)
+			continue
 		}
+		prop, _ := props[name].(map[string]any)
+		if prop != nil {
+			if ro, _ := prop["readOnly"].(bool); ro {
+				dropped = true
+				continue
+			}
+		}
+		keep = append(keep, item)
+	}
+	if !dropped {
+		return schema
+	}
+	out := make(map[string]any, len(schema))
+	for k, v := range schema {
+		out[k] = v
+	}
+	if len(keep) == 0 {
+		delete(out, "required")
+	} else {
+		out["required"] = keep
 	}
 	return out
 }
@@ -633,56 +865,13 @@ func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *ac
 	return out
 }
 
-// buildExecuteRequest assembles the gRPC ExecuteRequest payload.
+// buildExecuteRequest assembles the gRPC ExecuteRequest payload. Under
+// the 2026-05-21 userdata collapse, `attributes` is the unified surface
+// for both rimsky-resolved inputs and template-author static defaults;
+// the L3/L4 merge already happened in `resolveAttributes`. The wire no
+// longer carries a separate `userdata` field.
 func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.ExecuteRequest, error) {
 	acq := dctx.Acquired
-	def := acq.NodeDef
-
-	// Build per-node userdata, then deep-merge in four layers of
-	// increasing specificity:
-	//   template defaults.userdata.by_executor[<executor>]
-	//     → node.userdata
-	//     → instance.userdata_overrides.by_executor[<executor>]
-	//     → instance.userdata_overrides.by_node[<node>]
-	// Per @blessed-invariant 11 the merge is shape-blind and rimsky never
-	// inspects the resulting fragment values.
-	var baseUserdata map[string]any
-	if def != nil && len(def.Userdata) > 0 {
-		baseUserdata = def.Userdata
-	}
-	merged := applyUserdataOverrides(acq.TemplateUserdataDefaults, baseUserdata, acq.InstanceUserdataOverrides, acq.Executor, acq.NodeType, dctx.Args.Logger)
-	// Snapshot the merged userdata on the acquisition so the lineage
-	// writer can hash the exact shape that shipped to the executor (not
-	// the pre-merge override blob). See `acquisition.MergedUserdata`
-	// docstring for the contract. Per @blessed-invariant 11 the merge
-	// is shape-blind; rimsky stores only the hash.
-	acq.MergedUserdata = merged
-	// Plan F7: dispatch-time userdata schema validation. Runs after
-	// applyUserdataOverrides so per-instance overrides are validated
-	// too. Failure routes through on_executor_errored (handled by the
-	// caller via the returned error).
-	if dctx.Args.UserdataValidator != nil && acq.Executor != "" {
-		if err := dctx.Args.UserdataValidator(acq.Executor, merged); err != nil {
-			return nil, &userdataValidationError{cause: err}
-		}
-	}
-	userdataStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
-	if len(merged) > 0 {
-		s, err := structpb.NewStruct(merged)
-		if err != nil {
-			// Steady-state this is unreachable: both layers feed the
-			// merge through json.Unmarshal so values are restricted to
-			// types structpb.NewStruct accepts. With per-instance
-			// overrides now operator-influenced, surface a Warn so
-			// "override silently dropped" leaves a trace rather than an
-			// empty userdata payload at the executor.
-			dctx.Args.Logger.Warn("buildExecuteRequest: structpb.NewStruct failed for userdata",
-				"node_id", acq.NodeID.String(),
-				"error", err.Error())
-		} else {
-			userdataStruct = s
-		}
-	}
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	if len(dctx.Attributes) > 0 {
 		s, err := structpb.NewStruct(dctx.Attributes)
@@ -716,7 +905,6 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		NodeId:           acq.NodeID.String(),
 		InstanceId:       acq.InstanceID.String(),
 		NodeType:         acq.NodeType,
-		Userdata:         userdataStruct,
 		Attributes:       attrStruct,
 		AttributesSchema: schemaStruct,
 		Stores:           stores,

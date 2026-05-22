@@ -159,13 +159,12 @@ func (*ValidateRequest_LifecycleSubscriber) isValidateRequest_Context() {}
 func (*ValidateRequest_Sensor) isValidateRequest_Context() {}
 
 // ExecutorContext carries the executor-side binding rimsky sees at
-// template registration: the node's userdata, the resolved
-// attributes schema, and the node-local claim aliases the executor
-// will see at dispatch.
+// template registration: the merged effective attribute schema for the
+// node and the node-local claim aliases the executor will see at
+// dispatch.
 type ExecutorContext struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	NodeAlias        string                 `protobuf:"bytes,1,opt,name=node_alias,json=nodeAlias,proto3" json:"node_alias,omitempty"`
-	Userdata         []byte                 `protobuf:"bytes,2,opt,name=userdata,proto3" json:"userdata,omitempty"`
 	AttributesSchema []byte                 `protobuf:"bytes,3,opt,name=attributes_schema,json=attributesSchema,proto3" json:"attributes_schema,omitempty"`
 	// claim_aliases lists the per-node aliases (claims + holds) the
 	// executor will receive in ExecuteRequest.stores at dispatch.
@@ -209,13 +208,6 @@ func (x *ExecutorContext) GetNodeAlias() string {
 		return x.NodeAlias
 	}
 	return ""
-}
-
-func (x *ExecutorContext) GetUserdata() []byte {
-	if x != nil {
-		return x.Userdata
-	}
-	return nil
 }
 
 func (x *ExecutorContext) GetAttributesSchema() []byte {
@@ -570,7 +562,7 @@ type ValidationFinding struct {
 	Class   string `protobuf:"bytes,1,opt,name=class,proto3" json:"class,omitempty"`
 	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	// path is a JSON-pointer-shaped breadcrumb into the request context
-	// (e.g. "/executor/userdata/some_field").
+	// (e.g. "/executor/attributes/some_field").
 	Path          string `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -638,13 +630,12 @@ const file_validation_proto_rawDesc = "" +
 	"\x0eclaim_producer\x18\x03 \x01(\v2\x1f.rimsky.v1.ClaimProducerContextH\x00R\rclaimProducer\x12Z\n" +
 	"\x14lifecycle_subscriber\x18\x04 \x01(\v2%.rimsky.v1.LifecycleSubscriberContextH\x00R\x13lifecycleSubscriber\x122\n" +
 	"\x06sensor\x18\x05 \x01(\v2\x18.rimsky.v1.SensorContextH\x00R\x06sensorB\t\n" +
-	"\acontext\"\x9e\x01\n" +
+	"\acontext\"\x92\x01\n" +
 	"\x0fExecutorContext\x12\x1d\n" +
 	"\n" +
-	"node_alias\x18\x01 \x01(\tR\tnodeAlias\x12\x1a\n" +
-	"\buserdata\x18\x02 \x01(\fR\buserdata\x12+\n" +
+	"node_alias\x18\x01 \x01(\tR\tnodeAlias\x12+\n" +
 	"\x11attributes_schema\x18\x03 \x01(\fR\x10attributesSchema\x12#\n" +
-	"\rclaim_aliases\x18\x04 \x03(\tR\fclaimAliases\"l\n" +
+	"\rclaim_aliases\x18\x04 \x03(\tR\fclaimAliasesJ\x04\b\x02\x10\x03R\buserdata\"l\n" +
 	"\x14ClaimProducerContext\x12#\n" +
 	"\rproducer_name\x18\x01 \x01(\tR\fproducerName\x12/\n" +
 	"\x06claims\x18\x02 \x03(\v2\x17.rimsky.v1.ClaimBindingR\x06claims\"\xdf\x01\n" +

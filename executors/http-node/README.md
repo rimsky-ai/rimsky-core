@@ -1,7 +1,7 @@
 # http-node executor
 
 Reference rimsky node executor for the `http.request@1` node type. Runs an
-outbound HTTP request based on `userdata` and emits a single terminal
+outbound HTTP request based on its `attributes` and emits a single terminal
 StreamClose `ExecuteEvent` carrying a `Success` outcome on 2xx JSON or
 binary, otherwise an `Error{error_class}` outcome.
 
@@ -38,10 +38,13 @@ rimsky — only this executor inspects it.
 ## Request body
 
 By default the per-run `attributes` map (populated by rimsky at dispatch and
-delivered in `ExecuteRequest.attributes`) is JSON-serialised and sent as the
-upstream request body with `Content-Type: application/json`. `userdata.body`
-is an explicit override useful for fixture tests; when set it wins and
-`attributes` is not appended. With neither set, no body is sent.
+delivered in `ExecuteRequest.attributes`), minus the fixed set of transport
+config keys in `configAttributeKeys` (`url`, `method`, `headers`, `body`,
+`expect_status`, `stub_probe`, `stub_response`), is JSON-serialised and
+sent as the upstream request body with `Content-Type: application/json`.
+`attributes.body` is an explicit override useful for fixture tests; when set
+it wins and the non-config attributes are not appended. With neither set,
+no body is sent.
 
 ## Response → attributes_delta
 
@@ -55,7 +58,7 @@ so the bytes are still visible to downstream nodes.
 
 | class | when |
 | --- | --- |
-| `invalid_userdata` | `url` missing, body not JSON-serialisable, request-construction failure, non-object `stub_response` |
+| `invalid_attribute` | `url` missing, body not JSON-serialisable, request-construction failure, non-object `stub_response` |
 | `http_request_failed` | network error or body read failure |
 | `http_unexpected_status` | response status not in `expect_status` |
 | `http_response_parse_failed` | JSON Content-Type with invalid body, or non-object JSON response |
@@ -64,8 +67,8 @@ so the bytes are still visible to downstream nodes.
 
 Set `RIMSKY_EXECUTOR_STUB_MODE=1` to short-circuit the network path. Execute
 always returns `{"stub": true}` as the terminal-StreamClose
-`Success.attributes_delta`, or `userdata.stub_response` if supplied (must be
-a JSON object). Required for offline scenario tests (spec §14.4, Plan B
+`Success.attributes_delta`, or `attributes.stub_response` if supplied (must
+be a JSON object). Required for offline scenario tests (spec §14.4, Plan B
 Phase 3).
 
 ## Env vars

@@ -13,8 +13,10 @@
 //
 // Two stages, ordered:
 //
-//  1. `userdata_schema` static check (existing; lives in
-//     `graph/node/template_validator.go` and runs at canonicalization).
+//  1. `expected_attributes_schema` static check (existing; lives in
+//     `graph/node/template_validator.go::checkAttributesSchema` and
+//     runs at canonicalization against the merged effective attribute
+//     schema).
 //  2. `Validate` RPC fan-out (this file). For each service the template
 //     references that advertises Validation for the relevant role,
 //     rimsky issues `Validate(...)` and collects errors / warnings.
@@ -31,6 +33,7 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/runtime/clientiface"
 )
 
@@ -64,11 +67,19 @@ const (
 // `ValidationOutcome`. Unreachable validators obey `policy`.
 //
 // The pipeline is intentionally additive — it does not re-run the
-// static `userdata_schema` checks the template validator already
-// performs at canonicalization. Errors at the static step were
-// already reported with a 400; this pipeline runs only after static
-// validation passes.
+// static `expected_attributes_schema` checks the template validator
+// already performs at canonicalization against the merged effective
+// attribute schema. Errors at the static step were already reported
+// with a 400; this pipeline runs only after static validation passes.
 //
+// ExpectedAttributesSchemaLookup returns the named executor's
+// advertised `expected_attributes_schema` JSON bytes (the
+// ObservabilityCapabilities contribution to the merged effective
+// attribute schema). nil → skip executor-side merging (the pipeline
+// then sends the bare L2 schema to validators, matching pre-collapse
+// behaviour). Empty bytes also mean "no schema visible".
+type ExpectedAttributesSchemaLookup func(executor string) ([]byte, bool)
+
 // Empty registry (`reg == nil` or returns nothing) → no-op success.
 func RunValidationPipeline(
 	ctx context.Context,
@@ -76,6 +87,7 @@ func RunValidationPipeline(
 	tpl spec.TemplateSpec,
 	templateID string,
 	policy UnreachableValidatorPolicy,
+	execSchemaLookup ExpectedAttributesSchemaLookup,
 ) (ValidationOutcome, error) {
 	out := ValidationOutcome{}
 	if reg == nil {
@@ -86,11 +98,11 @@ func RunValidationPipeline(
 	}
 
 	// Executor-role + ClaimProducer-role checks per node.
-	for _, node := range tpl.Nodes {
-		if err := runExecutorRoleCheck(ctx, reg, policy, node, &out); err != nil {
+	for _, n := range tpl.Nodes {
+		if err := runExecutorRoleCheck(ctx, reg, policy, n, tpl, execSchemaLookup, &out); err != nil {
 			return out, err
 		}
-		if err := runClaimProducerRoleChecks(ctx, reg, policy, node, &out); err != nil {
+		if err := runClaimProducerRoleChecks(ctx, reg, policy, n, &out); err != nil {
 			return out, err
 		}
 	}
@@ -126,58 +138,78 @@ func RunValidationPipeline(
 
 func runExecutorRoleCheck(
 	ctx context.Context, reg ValidationRegistry, policy UnreachableValidatorPolicy,
-	node spec.TemplateNodeDef, out *ValidationOutcome,
+	n spec.TemplateNodeDef, tpl spec.TemplateSpec,
+	execSchemaLookup ExpectedAttributesSchemaLookup,
+	out *ValidationOutcome,
 ) error {
-	if node.Executor == "" {
+	if n.Executor == "" {
 		return nil
 	}
-	client, ok := reg.Get(node.Executor)
+	client, ok := reg.Get(n.Executor)
 	if !ok || !clientAdvertisesRole(client, "executor") {
 		return nil
 	}
-	var userdataBytes []byte
-	if len(node.Userdata) > 0 {
-		b, err := json.Marshal(node.Userdata)
-		if err != nil {
-			return err
+	// Send the merged effective attribute schema (executor's
+	// expected_attributes_schema ∪ L1 template defaults ∪ L2 node
+	// schema) to executor-side validators. Pre-collapse, the bare L2
+	// schema was sufficient because L1 defaults lived in a separate
+	// userdata bag; post-collapse, executor validators that read
+	// `properties.<key>.default` (e.g. verifier-shape-checks's
+	// `checks` field) need to see L1 contributions too. Per spec
+	// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+	// §"Design changes" / `concept:validation`.
+	var nodeSchema map[string]any
+	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
+		nodeSchema = n.Attributes.Schema
+	}
+	var execSchema map[string]any
+	if execSchemaLookup != nil {
+		if bytesIn, ok := execSchemaLookup(n.Executor); ok && len(bytesIn) > 0 {
+			// Unmarshal failures fall back to a nil executor schema —
+			// the static-schema check earlier in registration already
+			// reports those, so the pipeline doesn't double-error.
+			_ = json.Unmarshal(bytesIn, &execSchema)
 		}
-		userdataBytes = b
+	}
+	var l1Defaults map[string]any
+	if tpl.Defaults != nil && tpl.Defaults.Attributes != nil {
+		l1Defaults = tpl.Defaults.Attributes.ByExecutor[n.Executor]
 	}
 	var attrsBytes []byte
-	if node.Attributes != nil && len(node.Attributes.Schema) > 0 {
-		b, err := json.Marshal(node.Attributes.Schema)
+	merged := node.MergeAttributeDefaults(execSchema, l1Defaults, nodeSchema)
+	if merged != nil {
+		b, err := json.Marshal(merged)
 		if err != nil {
 			return err
 		}
 		attrsBytes = b
 	}
-	aliases := make([]string, 0, len(node.Stores)+len(node.Holds))
-	for _, s := range node.Stores {
+	aliases := make([]string, 0, len(n.Stores)+len(n.Holds))
+	for _, s := range n.Stores {
 		aliases = append(aliases, s.AliasOf())
 	}
-	for alias := range node.Holds {
+	for alias := range n.Holds {
 		aliases = append(aliases, alias)
 	}
 	errs, warns, err := client.ValidateExecutor(ctx, ValidateExecutorInput{
-		NodeAlias:        node.Type,
-		Userdata:         userdataBytes,
+		NodeAlias:        n.Type,
 		AttributesSchema: attrsBytes,
 		ClaimAliases:     aliases,
 	})
-	appendFindings(out, client.Name(), "executor", node.Type, errs, warns, err, policy)
+	appendFindings(out, client.Name(), "executor", n.Type, errs, warns, err, policy)
 	return nil
 }
 
 func runClaimProducerRoleChecks(
 	ctx context.Context, reg ValidationRegistry, policy UnreachableValidatorPolicy,
-	node spec.TemplateNodeDef, out *ValidationOutcome,
+	n spec.TemplateNodeDef, out *ValidationOutcome,
 ) error {
-	if len(node.Stores) == 0 {
+	if len(n.Stores) == 0 {
 		return nil
 	}
 	// Group per producer name so each producer sees its claims.
 	byProducer := map[string][]spec.NodeStoreRef{}
-	for _, s := range node.Stores {
+	for _, s := range n.Stores {
 		byProducer[s.Name] = append(byProducer[s.Name], s)
 	}
 	for producer, refs := range byProducer {
@@ -188,7 +220,7 @@ func runClaimProducerRoleChecks(
 		bindings := make([]ValidateClaimBinding, 0, len(refs))
 		for _, s := range refs {
 			bindings = append(bindings, ValidateClaimBinding{
-				NodeAlias:  node.Type,
+				NodeAlias:  n.Type,
 				ClaimAlias: s.AliasOf(),
 				Selector:   s.Selector,
 				Intent:     s.Intent,
@@ -200,7 +232,7 @@ func runClaimProducerRoleChecks(
 			ProducerName: producer,
 			Claims:       bindings,
 		})
-		appendFindings(out, client.Name(), "claim_producer", node.Type, errs, warns, err, policy)
+		appendFindings(out, client.Name(), "claim_producer", n.Type, errs, warns, err, policy)
 	}
 	return nil
 }

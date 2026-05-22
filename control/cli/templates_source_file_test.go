@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fallguy/rimsky/graph/node"
 )
 
 func TestResolveSourceFileRefs_SimpleInline(t *testing.T) {
@@ -37,7 +39,7 @@ func TestResolveSourceFileRefs_SimpleInline(t *testing.T) {
 	}
 }
 
-func TestResolveSourceFileRefs_NestedUnderUserdata(t *testing.T) {
+func TestResolveSourceFileRefs_NestedUnderAttributesDefault(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "discover.md"), []byte("discover prompt"), 0o644); err != nil {
 		t.Fatal(err)
@@ -47,9 +49,14 @@ func TestResolveSourceFileRefs_NestedUnderUserdata(t *testing.T) {
 			map[string]any{
 				"type":     "discover",
 				"executor": "claude-agent",
-				"userdata": map[string]any{
-					"cli": map[string]any{
-						"system_prompt": map[string]any{"source_file": "discover.md"},
+				"attributes": map[string]any{
+					"schema": map[string]any{
+						"properties": map[string]any{
+							"system_prompt": map[string]any{
+								"type":    "string",
+								"default": map[string]any{"source_file": "discover.md"},
+							},
+						},
 					},
 				},
 			},
@@ -59,7 +66,7 @@ func TestResolveSourceFileRefs_NestedUnderUserdata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resolved := got.(map[string]any)["nodes"].([]any)[0].(map[string]any)["userdata"].(map[string]any)["cli"].(map[string]any)["system_prompt"]
+	resolved := got.(map[string]any)["nodes"].([]any)[0].(map[string]any)["attributes"].(map[string]any)["schema"].(map[string]any)["properties"].(map[string]any)["system_prompt"].(map[string]any)["default"]
 	if resolved != "discover prompt" {
 		t.Fatalf("got %v want %q", resolved, "discover prompt")
 	}
@@ -223,10 +230,13 @@ frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
-    userdata:
-      cli:
-        system_prompt:
-          source_file: system_a.md
+    attributes:
+      schema:
+        properties:
+          system_prompt:
+            type: string
+            default:
+              source_file: system_a.md
 `
 	yamlB := `name: demo
 version: "1.0"
@@ -234,10 +244,13 @@ frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
-    userdata:
-      cli:
-        system_prompt:
-          source_file: system_b.md
+    attributes:
+      schema:
+        properties:
+          system_prompt:
+            type: string
+            default:
+              source_file: system_b.md
 `
 	if err := os.WriteFile(specA, []byte(yamlA), 0o644); err != nil {
 		t.Fatal(err)
@@ -253,10 +266,10 @@ nodes:
 	if err != nil {
 		t.Fatalf("readSpecFile B: %v", err)
 	}
-	cliA, _ := parsedA.Nodes[0].Userdata["cli"].(map[string]any)
-	cliB, _ := parsedB.Nodes[0].Userdata["cli"].(map[string]any)
-	if cliA["system_prompt"] != cliB["system_prompt"] {
-		t.Fatalf("resolved content differs: %v vs %v", cliA["system_prompt"], cliB["system_prompt"])
+	defA, _ := propDefault(parsedA.Nodes[0].Attributes, "system_prompt")
+	defB, _ := propDefault(parsedB.Nodes[0].Attributes, "system_prompt")
+	if defA != defB {
+		t.Fatalf("resolved content differs: %v vs %v", defA, defB)
 	}
 }
 
@@ -274,10 +287,13 @@ frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
-    userdata:
-      cli:
-        system_prompt:
-          source_file: system.md
+    attributes:
+      schema:
+        properties:
+          system_prompt:
+            type: string
+            default:
+              source_file: system.md
 `
 	if err := os.WriteFile(specPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -296,10 +312,10 @@ nodes:
 	if err != nil {
 		t.Fatalf("readSpecFile v2: %v", err)
 	}
-	cliV1, _ := specV1.Nodes[0].Userdata["cli"].(map[string]any)
-	cliV2, _ := specV2.Nodes[0].Userdata["cli"].(map[string]any)
-	if cliV1["system_prompt"] == cliV2["system_prompt"] {
-		t.Fatalf("expected resolved content to differ across edits, got %v", cliV1["system_prompt"])
+	defV1, _ := propDefault(specV1.Nodes[0].Attributes, "system_prompt")
+	defV2, _ := propDefault(specV2.Nodes[0].Attributes, "system_prompt")
+	if defV1 == defV2 {
+		t.Fatalf("expected resolved content to differ across edits, got %v", defV1)
 	}
 }
 
@@ -319,10 +335,13 @@ frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
-    userdata:
-      cli:
-        system_prompt:
-          source_file: system.md
+    attributes:
+      schema:
+        properties:
+          system_prompt:
+            type: string
+            default:
+              source_file: system.md
 `
 	if err := os.WriteFile(specPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -334,11 +353,30 @@ nodes:
 	if len(spec.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(spec.Nodes))
 	}
-	cli, ok := spec.Nodes[0].Userdata["cli"].(map[string]any)
+	def, ok := propDefault(spec.Nodes[0].Attributes, "system_prompt")
 	if !ok {
-		t.Fatalf("expected userdata.cli to be a map, got %T", spec.Nodes[0].Userdata["cli"])
+		t.Fatalf("expected attributes.schema.properties.system_prompt.default to be set")
 	}
-	if cli["system_prompt"] != "you are an agent" {
-		t.Fatalf("expected resolved content, got %v", cli["system_prompt"])
+	if def != "you are an agent" {
+		t.Fatalf("expected resolved content, got %v", def)
 	}
+}
+
+// propDefault is a test helper: returns the `default:` value for the
+// named property on a NodeAttributesDef. Returns (nil, false) on any
+// missing intermediate.
+func propDefault(def *node.NodeAttributesDef, name string) (any, bool) {
+	if def == nil || def.Schema == nil {
+		return nil, false
+	}
+	props, ok := def.Schema["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	prop, ok := props[name].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	v, ok := prop["default"]
+	return v, ok
 }

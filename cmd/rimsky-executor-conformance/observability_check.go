@@ -74,18 +74,18 @@ func runObservabilityCheck(ctx context.Context, ep executor.Endpoint, _ bool) er
 		caps.GetRetentionAfterTerminalSeconds(), caps.GetHttpBridgeUrl())
 
 	// L2 plan: validate the new platform-extensions surfaces on
-	// ObservabilityCapabilities (userdata_schema + declared_events).
+	// ObservabilityCapabilities (expected_attributes_schema + declared_events).
 	// Both fields are optional — empty means "no schema" / "no events"
-	// respectively. When userdata_schema is non-empty it must parse as
+	// respectively. When expected_attributes_schema is non-empty it must parse as
 	// JSON; when declared_events is non-empty each entry must be a
 	// non-empty string.
-	if schema := caps.GetUserdataSchema(); len(schema) > 0 {
+	if schema := caps.GetExpectedAttributesSchema(); len(schema) > 0 {
 		if !looksLikeJSON(schema) {
-			return fmt.Errorf("Capabilities.userdata_schema is non-empty but does not parse as JSON (%d bytes)", len(schema))
+			return fmt.Errorf("Capabilities.expected_attributes_schema is non-empty but does not parse as JSON (%d bytes)", len(schema))
 		}
-		fmt.Printf("observability: userdata_schema declared (%d bytes JSON)\n", len(schema))
+		fmt.Printf("observability: expected_attributes_schema declared (%d bytes JSON)\n", len(schema))
 	} else {
-		fmt.Println("observability: userdata_schema = empty (executor accepts any userdata)")
+		fmt.Println("observability: expected_attributes_schema = empty (executor accepts any attributes)")
 	}
 	for i, name := range caps.GetDeclaredEvents() {
 		if name == "" {
@@ -168,7 +168,7 @@ var obsRetentionTestSeconds int
 func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.ExecutorObservabilityClient, dispatchID string) error {
 	ud, err := structpb.NewStruct(map[string]any{"stub_probe": true})
 	if err != nil {
-		return fmt.Errorf("build userdata: %w", err)
+		return fmt.Errorf("build attributes: %w", err)
 	}
 	exec := genv1.NewExecutorClient(conn)
 	stream, err := exec.Execute(ctx, &genv1.ExecuteRequest{
@@ -176,7 +176,7 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 		NodeId:     "obs-probe-node",
 		InstanceId: "obs-probe-instance",
 		NodeType:   "conformance-observability",
-		Userdata:   ud,
+		Attributes: ud,
 	})
 	if err != nil {
 		return fmt.Errorf("Execute: %w", err)
@@ -314,7 +314,7 @@ func stripScheme(s string) string {
 }
 
 // looksLikeJSON returns true when the bytes parse as valid JSON. Used
-// by the L2 conformance check to validate Capabilities.userdata_schema
+// by the L2 conformance check to validate Capabilities.expected_attributes_schema
 // without depending on a JSON Schema validator at the conformance
 // layer.
 func looksLikeJSON(b []byte) bool {

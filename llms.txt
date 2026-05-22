@@ -19,7 +19,7 @@ Read the TOC first to know what nouns the project traffics in, then read the per
 - [Minimal rimsky.yml](agents/examples/minimal-rimsky-yml.md)
 - [Minimal template and instance](agents/examples/minimal-template-and-instance.md)
 - [Two-node template with a claim dependency](agents/examples/two-node-with-claim.md)
-- [Claude-agent template demonstrating userdata substitution](agents/examples/claude-agent-userdata.md)
+- [Claude-agent template demonstrating attribute-default inertness](agents/examples/claude-agent-attribute-defaults.md)
 - [Holding-subgraph template demonstrating held-claim resolution](agents/examples/holding-subgraph.md)
 - [rimsky-compose multi-template project](agents/examples/rimsky-compose-multi-template.md)
 

@@ -33,7 +33,7 @@ func RunValidationConformance(ctx context.Context, c genv1.ValidationClient, rol
 	switch role {
 	case "executor":
 		results = append(results, checkExecutorHappy(ctx, c))
-		results = append(results, checkExecutorMalformedUserdata(ctx, c))
+		results = append(results, checkExecutorMalformedAttributesSchema(ctx, c))
 		results = append(results, checkExecutorMissingContext(ctx, c))
 		results = append(results, checkUnknownRole(ctx, c))
 	case "claim_producer":
@@ -60,17 +60,20 @@ func RunValidationConformance(ctx context.Context, c genv1.ValidationClient, rol
 // Whether errors / warnings are surfaced is producer-specific; the
 // check only pins shape.
 func checkExecutorHappy(ctx context.Context, c genv1.ValidationClient) CheckResult {
-	userdata, _ := json.Marshal(map[string]any{
-		"checks": []map[string]any{
-			{"kind": "no_nulls", "config": map[string]any{"field": "id"}},
+	schema, _ := json.Marshal(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"checks": map[string]any{
+				"type":    "array",
+				"default": []map[string]any{{"kind": "no_nulls", "config": map[string]any{"field": "id"}}},
+			},
 		},
 	})
 	req := &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
 			NodeAlias:        "conformance-executor-node",
-			Userdata:         userdata,
-			AttributesSchema: []byte(`{"type":"object"}`),
+			AttributesSchema: schema,
 			ClaimAliases:     []string{"input"},
 		}},
 	}
@@ -84,44 +87,44 @@ func checkExecutorHappy(ctx context.Context, c genv1.ValidationClient) CheckResu
 	return CheckResult{Name: "ExecutorHappy"}
 }
 
-// checkExecutorMalformedUserdata fires Validate with malformed JSON
-// in the userdata. The check asserts: the RPC returns without error
-// (validation is a reporting endpoint), and `valid` is false with at
-// least one error finding (the validator must reject syntactically
-// invalid input rather than silently passing it).
-func checkExecutorMalformedUserdata(ctx context.Context, c genv1.ValidationClient) CheckResult {
+// checkExecutorMalformedAttributesSchema fires Validate with malformed
+// JSON in the attributes_schema. The check asserts: the RPC returns
+// without error (validation is a reporting endpoint), and `valid` is
+// false with at least one error finding (the validator must reject
+// syntactically invalid input rather than silently passing it).
+func checkExecutorMalformedAttributesSchema(ctx context.Context, c genv1.ValidationClient) CheckResult {
 	req := &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: "conformance-executor-malformed",
-			Userdata:  []byte("this is not json {"),
+			NodeAlias:        "conformance-executor-malformed",
+			AttributesSchema: []byte("this is not json {"),
 		}},
 	}
 	resp, err := c.Validate(ctx, req)
 	if err != nil {
-		return CheckResult{Name: "ExecutorMalformedUserdata", Err: err}
+		return CheckResult{Name: "ExecutorMalformedAttributesSchema", Err: err}
 	}
 	if resp.GetValid() {
 		return CheckResult{
-			Name: "ExecutorMalformedUserdata",
-			Err:  fmt.Errorf("validator returned Valid=true for malformed JSON userdata; expected an error finding"),
+			Name: "ExecutorMalformedAttributesSchema",
+			Err:  fmt.Errorf("validator returned Valid=true for malformed JSON attributes_schema; expected an error finding"),
 		}
 	}
 	if len(resp.GetErrors()) == 0 {
 		return CheckResult{
-			Name: "ExecutorMalformedUserdata",
+			Name: "ExecutorMalformedAttributesSchema",
 			Err:  fmt.Errorf("validator returned Valid=false but zero error findings"),
 		}
 	}
 	for i, f := range resp.GetErrors() {
 		if f.GetClass() == "" {
 			return CheckResult{
-				Name: "ExecutorMalformedUserdata",
+				Name: "ExecutorMalformedAttributesSchema",
 				Err:  fmt.Errorf("errors[%d].class empty (validator must surface a stable discriminator)", i),
 			}
 		}
 	}
-	return CheckResult{Name: "ExecutorMalformedUserdata"}
+	return CheckResult{Name: "ExecutorMalformedAttributesSchema"}
 }
 
 // checkExecutorMissingContext fires Validate with role="executor"

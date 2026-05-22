@@ -50,7 +50,7 @@ don't need it.
 
    The stub records every `ExecuteRequest` it sees in `Observed()` so
    tests can assert on what the supervisor wired through (attributes,
-   userdata, store handles, callback URL).
+   store handles, callback URL).
 
 3. **`rimsky-executor-conformance`** — when invoked with
    `--require-stub-mode`, the conformance probe runs against a stub-mode

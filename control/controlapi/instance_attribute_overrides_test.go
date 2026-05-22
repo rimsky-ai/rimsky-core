@@ -2,10 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// HTTP-level coverage for the per-instance userdata_overrides field on
+// HTTP-level coverage for the per-instance attribute_overrides field on
 // POST /instances. Pairs with the deep-merge unit tests in
-// runtime/userdata_overrides_test.go and the validator
-// unit tests in userdata_overrides_test.go.
+// runtime/attribute_overrides_test.go and the validator
+// unit tests in attribute_overrides_test.go.
 
 package controlapi
 
@@ -21,7 +21,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/persistence"
 )
 
-func TestInstanceCreate_UserdataOverrides_RoundTripAndPersistence(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -49,9 +49,9 @@ func TestInstanceCreate_UserdataOverrides_RoundTripAndPersistence(t *testing.T) 
 		},
 	}
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template":           tplID,
-		"instance_key":       "ck-" + uuid.NewString(),
-		"userdata_overrides": overrides,
+		"template":            tplID,
+		"instance_key":        "ck-" + uuid.NewString(),
+		"attribute_overrides": overrides,
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
@@ -60,8 +60,8 @@ func TestInstanceCreate_UserdataOverrides_RoundTripAndPersistence(t *testing.T) 
 	// Round-trips via GET /instances/:id.
 	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
-	gotOverrides, ok := out["userdata_overrides"].(map[string]any)
-	require.True(t, ok, "userdata_overrides missing from GET response: %v", out)
+	gotOverrides, ok := out["attribute_overrides"].(map[string]any)
+	require.True(t, ok, "attribute_overrides missing from GET response: %v", out)
 	require.Equal(t, overrides, gotOverrides)
 
 	// Persisted on the row directly so the dispatch path (which reads
@@ -75,10 +75,10 @@ func TestInstanceCreate_UserdataOverrides_RoundTripAndPersistence(t *testing.T) 
 		return err
 	}))
 	require.NotNil(t, inst)
-	require.Equal(t, overrides, inst.UserdataOverrides)
+	require.Equal(t, overrides, inst.AttributeOverrides)
 }
 
-func TestInstanceCreate_UserdataOverrides_OmittedDefaultsEmpty(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_OmittedDefaultsEmpty(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -99,11 +99,11 @@ func TestInstanceCreate_UserdataOverrides_OmittedDefaultsEmpty(t *testing.T) {
 	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
 	// Omit-from-response when empty (omitempty on the struct tag).
-	_, present := out["userdata_overrides"]
-	require.False(t, present, "userdata_overrides should be omitted from the GET response when empty: %v", out)
+	_, present := out["attribute_overrides"]
+	require.False(t, present, "attribute_overrides should be omitted from the GET response when empty: %v", out)
 }
 
-func TestInstanceCreate_UserdataOverrides_RejectsUnknownExecutor(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_RejectsUnknownExecutor(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -117,7 +117,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsUnknownExecutor(t *testing.T) {
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
-		"userdata_overrides": map[string]any{
+		"attribute_overrides": map[string]any{
 			"by_executor": map[string]any{
 				"made-up-executor": map[string]any{"cli": "x"},
 			},
@@ -127,7 +127,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsUnknownExecutor(t *testing.T) {
 	require.Contains(t, fmt.Sprint(out["error"]), "unknown executor name")
 }
 
-func TestInstanceCreate_UserdataOverrides_RejectsUnknownNode(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_RejectsUnknownNode(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -141,7 +141,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsUnknownNode(t *testing.T) {
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
-		"userdata_overrides": map[string]any{
+		"attribute_overrides": map[string]any{
 			"by_node": map[string]any{
 				"made-up-node": map[string]any{"cli": "x"},
 			},
@@ -151,7 +151,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsUnknownNode(t *testing.T) {
 	require.Contains(t, fmt.Sprint(out["error"]), "unknown node name")
 }
 
-func TestInstanceCreate_UserdataOverrides_RejectsExecutorNotReferencedByTemplate(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_RejectsExecutorNotReferencedByTemplate(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -169,7 +169,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsExecutorNotReferencedByTemplate
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
-		"userdata_overrides": map[string]any{
+		"attribute_overrides": map[string]any{
 			"by_executor": map[string]any{
 				"unused-exec": map[string]any{"cli": "x"},
 			},
@@ -179,7 +179,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsExecutorNotReferencedByTemplate
 	require.Contains(t, fmt.Sprint(out["error"]), "executor not referenced by any template node")
 }
 
-func TestInstanceCreate_UserdataOverrides_IdempotentMatch_NoWarn(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -199,9 +199,9 @@ func TestInstanceCreate_UserdataOverrides_IdempotentMatch_NoWarn(t *testing.T) {
 	}
 	instanceKey := "ck-" + uuid.NewString()
 	status, _ := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template":           tplID,
-		"instance_key":       instanceKey,
-		"userdata_overrides": overrides,
+		"template":            tplID,
+		"instance_key":        instanceKey,
+		"attribute_overrides": overrides,
 	})
 	require.Equal(t, http.StatusCreated, status)
 
@@ -213,20 +213,20 @@ func TestInstanceCreate_UserdataOverrides_IdempotentMatch_NoWarn(t *testing.T) {
 	// overrides match the request, so nothing was actually discarded;
 	// the WARN must not fire.
 	status, _ = h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template":           tplID,
-		"instance_key":       instanceKey,
-		"userdata_overrides": overrides,
+		"template":            tplID,
+		"instance_key":        instanceKey,
+		"attribute_overrides": overrides,
 	})
 	require.Equal(t, http.StatusOK, status)
 	for _, rec := range h.logger.Records() {
-		if rec.Msg == "instance.userdata_overrides_replaced_by_idempotent_match" ||
-			rec.Msg == "instance.userdata_overrides_ignored_idempotent_match" {
+		if rec.Msg == "instance.attribute_overrides_replaced_by_idempotent_match" ||
+			rec.Msg == "instance.attribute_overrides_ignored_idempotent_match" {
 			t.Fatalf("expected no idempotent-match WARN; got %+v", rec)
 		}
 	}
 }
 
-func TestInstanceCreate_UserdataOverrides_IdempotentMismatch_Warns(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -246,9 +246,9 @@ func TestInstanceCreate_UserdataOverrides_IdempotentMismatch_Warns(t *testing.T)
 	}
 	instanceKey := "ck-" + uuid.NewString()
 	status, _ := h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template":           tplID,
-		"instance_key":       instanceKey,
-		"userdata_overrides": originalOverrides,
+		"template":            tplID,
+		"instance_key":        instanceKey,
+		"attribute_overrides": originalOverrides,
 	})
 	require.Equal(t, http.StatusCreated, status)
 
@@ -264,23 +264,23 @@ func TestInstanceCreate_UserdataOverrides_IdempotentMismatch_Warns(t *testing.T)
 		},
 	}
 	status, _ = h.httpJSON(t, "POST", "/instances", map[string]any{
-		"template":           tplID,
-		"instance_key":       instanceKey,
-		"userdata_overrides": differentOverrides,
+		"template":            tplID,
+		"instance_key":        instanceKey,
+		"attribute_overrides": differentOverrides,
 	})
 	require.Equal(t, http.StatusOK, status)
 
 	var found bool
 	for _, rec := range h.logger.Records() {
-		if rec.Msg == "instance.userdata_overrides_replaced_by_idempotent_match" {
+		if rec.Msg == "instance.attribute_overrides_replaced_by_idempotent_match" {
 			found = true
 			break
 		}
 	}
-	require.True(t, found, "expected instance.userdata_overrides_replaced_by_idempotent_match WARN; got records=%+v", h.logger.Records())
+	require.True(t, found, "expected instance.attribute_overrides_replaced_by_idempotent_match WARN; got records=%+v", h.logger.Records())
 }
 
-func TestInstanceCreate_UserdataOverrides_RejectsUnknownTopLevelKey(t *testing.T) {
+func TestInstanceCreate_AttributeOverrides_RejectsUnknownTopLevelKey(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -294,7 +294,7 @@ func TestInstanceCreate_UserdataOverrides_RejectsUnknownTopLevelKey(t *testing.T
 	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
-		"userdata_overrides": map[string]any{
+		"attribute_overrides": map[string]any{
 			"global": map[string]any{"cli": "x"},
 		},
 	})

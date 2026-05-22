@@ -12,7 +12,7 @@ import (
 	nodepkg "github.com/fallguy/rimsky/graph/node"
 )
 
-func TestValidateUserdataOverrides(t *testing.T) {
+func TestValidateAttributeOverrides(t *testing.T) {
 	executors := map[string]ExecutorEntry{
 		"claude-agent": {Transport: "grpc", Endpoint: "claude-agent:9090"},
 		"http-node":    {Transport: "grpc", Endpoint: "http-node:9090"},
@@ -172,13 +172,13 @@ func TestValidateUserdataOverrides(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateUserdataOverrides(tt.input, nodes, executors)
+			err := validateAttributeOverrides(tt.input, nodes, executors)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("want error containing %q, got nil", tt.errContains)
 				}
-				if !errors.Is(err, errUserdataOverridesInvalid) {
-					t.Fatalf("error not wrapped with errUserdataOverridesInvalid: %v", err)
+				if !errors.Is(err, errAttributeOverridesInvalid) {
+					t.Fatalf("error not wrapped with errAttributeOverridesInvalid: %v", err)
 				}
 				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Fatalf("error %q does not contain %q", err.Error(), tt.errContains)

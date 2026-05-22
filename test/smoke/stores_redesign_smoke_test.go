@@ -683,10 +683,6 @@ func scopeNode() map[string]any {
 				"required": []any{"scope_notes"},
 			},
 		},
-		"userdata": map[string]any{
-			"model":             "claude-sonnet-4-6",
-			"system_prompt_ref": "scope-system.md",
-		},
 		"locks": []map[string]any{
 			{"name": "model-budget"},
 		},
@@ -729,10 +725,6 @@ func draftNode() map[string]any {
 				"selector": "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md",
 				"intent":   "rw",
 			},
-		},
-		"userdata": map[string]any{
-			"model":             "claude-sonnet-4-6",
-			"system_prompt_ref": "draft-system.md",
 		},
 		"locks": []map[string]any{
 			{"name": "model-budget"},
@@ -781,10 +773,6 @@ func reviewNode() map[string]any {
 		},
 		"inherits": []map[string]any{
 			{"claim": "topics-ring"},
-		},
-		"userdata": map[string]any{
-			"model":             "claude-sonnet-4-6",
-			"system_prompt_ref": "review-system.md",
 		},
 		"locks": []map[string]any{
 			{"name": "model-budget"},

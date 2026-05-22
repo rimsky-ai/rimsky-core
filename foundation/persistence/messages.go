@@ -14,7 +14,7 @@ import (
 
 // MessageRow is the per-row representation of table:rimsky_messages.
 //
-// Envelopes are inert in rimsky per @blessed-invariant 11/21: payload
+// Envelopes are inert in rimsky per @blessed-invariant 21: payload
 // bytes are read by named-field path only at substitution-leaf
 // extraction (graph/attribute/substitution.go::walkPath); never
 // logged, formatted, or otherwise inspected.
@@ -29,7 +29,7 @@ type MessageRow struct {
 	Sender              string
 	SenderKind          string
 	Target              string          // node alias; "" when broadcast
-	Payload             json.RawMessage // opaque per @blessed-invariant 11/21
+	Payload             json.RawMessage // opaque per @blessed-invariant 21
 	BackfillOperationID *shared.UUID    // non-nil when part of a backfill
 	ReceivedAt          time.Time
 	DeliveredAt         *time.Time

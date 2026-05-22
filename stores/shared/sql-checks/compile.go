@@ -14,7 +14,7 @@ import (
 // query. Matches the convention used in stores/postgres/store
 // (`[a-z_][a-z0-9_]*`): lowercase letters, digits, underscores; not
 // starting with a digit. Validated at compile time so callers cannot
-// punch through with a tampered userdata blob.
+// punch through with a tampered attribute payload.
 var identRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 // selectOnlyRegex is the belt-and-suspenders SELECT-only enforcement.
@@ -223,7 +223,7 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 
 // fieldList parses a `field` (string) or `fields` ([]string) config
 // entry into a normalized slice. Mirrors the verifier-shape-checks
-// helper so the two vocabularies accept the same userdata shape.
+// helper so the two vocabularies accept the same attribute shape.
 func fieldList(cfg map[string]any) ([]string, error) {
 	if v, ok := cfg["field"].(string); ok && v != "" {
 		return []string{v}, nil

@@ -83,8 +83,8 @@ Templates reference catalog entries by `ref`. `policy.allow_inline:
 false` (the strict default) blocks templates from injecting
 unconfigured MCP servers at dispatch time. `policy.allow_modules_from`
 gates the `module` and `http-loopback` transports against an
-allow-list of glob patterns. See `docs/executors/claude-agent/userdata.md`
-for the full userdata schema.
+allow-list of glob patterns. See `docs/executors/claude-agent/expected-attributes.md`
+for the full expected-attributes schema.
 
 ## Observability: Prometheus metrics
 

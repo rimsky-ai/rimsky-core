@@ -128,12 +128,15 @@ type Config struct {
 	// the synchronous RunArgs (built per tryClaim) and the async-callback
 	// CallbackServer so async-callback-driven retries observe the same cap.
 	MaxRetriesWithoutProgressDefault int
-	// UserdataValidator is the dispatch-time userdata schema validator
-	// (plan F7). Threaded into RunArgs so buildExecuteRequest can run
-	// it after applyUserdataOverrides. Failures route through the
-	// on_executor_errored chain with error_class="userdata_validation_failed".
-	// Nil → validation skipped (used in unit tests).
-	UserdataValidator func(executorName string, merged map[string]any) error
+	// ExpectedAttributesSchemaFor returns the named executor's advertised
+	// expected_attributes_schema bytes. Threaded into RunArgs so the
+	// dispatch path can compute the per-node effective attribute schema
+	// (executor schema ∪ L1 defaults ∪ L2 node declaration) at
+	// dispatch. Nil → executor contributes no schema to the merge (used
+	// in unit tests).
+	//
+	// @concept: attribute
+	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
 	// hook (plan I1/I2/I3). Optional; nil → no-op everywhere.
 	Metrics MetricsHook
@@ -242,7 +245,7 @@ func Start(cfg Config) (*Handle, error) {
 		BlobSpillThreshold:               cfg.BlobSpillThreshold,
 		InvalidateHandler:                invalidateAdapter,
 		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
-		UserdataValidator:                cfg.UserdataValidator,
+		ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 		Metrics:                          cfg.Metrics,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
@@ -442,7 +445,7 @@ func runLoop(
 				BlobSpillThreshold:               cfg.BlobSpillThreshold,
 				InvalidateHandler:                invalidateAdapter,
 				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
-				UserdataValidator:                cfg.UserdataValidator,
+				ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 				Metrics:                          cfg.Metrics,
 			}, reg.Register)
 			if runErr != nil {

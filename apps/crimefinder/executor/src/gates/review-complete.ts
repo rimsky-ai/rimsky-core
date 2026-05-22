@@ -4,8 +4,9 @@ import { event } from "./types.js";
 
 export interface ReviewCompleteOptions {
   // Coverage threshold the producer enforces; pulled from cfg:coverage.
-  // The executor learns this at dispatch time via userdata and threads
-  // it into GateContext so the gate can decide without re-reading config.
+  // The executor learns this at dispatch time via the attribute bag and
+  // threads it into GateContext so the gate can decide without
+  // re-reading config.
   coverageThresholdPct: number;
   coverageOnBelow: "require_skip" | "warn" | "allow";
 }

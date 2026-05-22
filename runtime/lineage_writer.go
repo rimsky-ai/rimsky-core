@@ -100,7 +100,7 @@ type LeafRunRecord struct {
 	TemplateHash       string             `json:"template_hash,omitempty"`
 	TemplateNodeAlias  string             `json:"template_node_alias,omitempty"`
 	ParamsSnapshotHash string             `json:"params_snapshot_hash,omitempty"`
-	UserdataHash       string             `json:"userdata_hash,omitempty"`
+	AttributesHash     string             `json:"attributes_hash,omitempty"`
 	ScopeDataHash      string             `json:"scope_data_hash,omitempty"`
 	State              string             `json:"state"`
 	LastOutcome        string             `json:"last_outcome"`
@@ -213,7 +213,7 @@ func WriteClaimTerminalLineage(
 
 // HashCanonicalJSON returns the sha256-hex hash of a canonical JSON
 // representation of v. Used by the lineage writer to produce stable
-// hashes for params / userdata / scope_data fields. Spec §Content
+// hashes for params / attributes / scope_data fields. Spec §Content
 // lineage / Hash convention — the existing
 // `graph/template/canonical/CanonicalSpecHash` is the canonical-JCS
 // helper for template specs; for plain JSON payloads the cheaper
@@ -249,10 +249,10 @@ func HashBytes(b []byte) string {
 // directly:
 //   - NodeAlias, TemplateNodeAlias — `acquisition.NodeType`
 //   - ExecutorName                 — `acquisition.Executor`
-//   - InstanceParams, UserdataMerged — the merged userdata produced by
-//     `applyUserdataOverrides` at dispatch time; pass through
-//     `acquisition.MergedUserdata` so the hash reflects what the
-//     executor actually saw.
+//   - InstanceParams, AttributesMerged — the merged attribute bag the
+//     executor actually saw on this dispatch; pass through
+//     `acquisition.MergedAttributes` so the hash reflects what
+//     shipped, not the pre-merge per-instance override blob.
 //   - HeldClaims                   — `acquisition.HeldClaims`, mapped
 //     into the per-row shape.
 //
@@ -264,21 +264,21 @@ func HashBytes(b []byte) string {
 // either populated or explicitly set to a documented placeholder; new
 // sources land here as they become available.
 type LeafRunEmitInput struct {
-	InstanceID     shared.UUID
-	FrameID        shared.UUID
-	RunID          shared.UUID
-	NodeID         shared.UUID
-	ChildKey       string
-	State          string
-	LastOutcome    string
-	ErrorClass     string
-	Changed        bool
-	TerminalKind   string
-	NodeAlias      string
-	ExecutorName   string
-	Params         map[string]any
-	UserdataMerged map[string]any
-	HeldClaims     []LeafRunHeldClaim
+	InstanceID       shared.UUID
+	FrameID          shared.UUID
+	RunID            shared.UUID
+	NodeID           shared.UUID
+	ChildKey         string
+	State            string
+	LastOutcome      string
+	ErrorClass       string
+	Changed          bool
+	TerminalKind     string
+	NodeAlias        string
+	ExecutorName     string
+	Params           map[string]any
+	AttributesMerged map[string]any
+	HeldClaims       []LeafRunHeldClaim
 	// ParentRunID is sourced from `rimsky_node_runs.parent_run_id` at
 	// acquisition time (threaded through `acquisition.ParentRunID`).
 	// Nil for root runs (top-level template dispatches); the lineage
@@ -335,10 +335,10 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 			"run_id", in.RunID.String(),
 			"error", perr.Error())
 	}
-	userdataHash, uerr := HashCanonicalJSON(in.UserdataMerged)
+	attributesHash, uerr := HashCanonicalJSON(in.AttributesMerged)
 	if uerr != nil && args.Logger != nil {
 		args.Logger.Warn("lineage_writer.HashCanonicalJSON failed",
-			"field", "userdata",
+			"field", "attributes",
 			"run_id", in.RunID.String(),
 			"error", uerr.Error())
 	}
@@ -366,7 +366,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		ExecutorName:       in.ExecutorName,
 		TemplateHash:       in.TemplateHash,
 		ParamsSnapshotHash: paramsHash,
-		UserdataHash:       userdataHash,
+		AttributesHash:     attributesHash,
 		State:              in.State,
 		LastOutcome:        in.LastOutcome,
 		ErrorClass:         in.ErrorClass,

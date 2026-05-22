@@ -354,7 +354,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 // graph/attribute/substitution.go::resolveTrigger). Rimsky never logs,
 // formats with `%v`, validates beyond schema gates, transforms, or
 // includes payload bytes in error messages. Same opacity discipline as
-// `@blessed-invariant 11/20/21`.
+// `@blessed-invariant 20/21`.
 func handleGetMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")

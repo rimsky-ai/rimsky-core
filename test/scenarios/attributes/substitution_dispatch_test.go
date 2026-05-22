@@ -8,8 +8,9 @@
 // in the attributes payload that the supervisor persists alongside
 // any executor-supplied delta.
 //
-// Targets blessed invariants 11 (userdata opaque — never substituted)
-// and 12 (attributes validate twice).
+// Targets blessed invariant 12 (attributes validate twice) and the
+// structural-inertness discipline on attribute values
+// (concept:inertness).
 package attributes
 
 import (

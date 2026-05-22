@@ -114,7 +114,7 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "probe", InstanceId: "probe", NodeType: "conformance-probe",
-		Userdata:    ud,
+		Attributes:  ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(pctx, req)
@@ -142,7 +142,7 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 	return false, nil
 }
 
-// probeAsyncSupport sends an Execute with userdata.probe_async=true and
+// probeAsyncSupport sends an Execute with attributes.probe_async=true and
 // returns true iff the executor responds with a StreamClose whose outcome is
 // AwaitAsyncCallback on the gRPC stream. Unlike the regular terminal-await
 // flow, this probe deliberately stops at the gRPC terminal — receipt of
@@ -153,7 +153,7 @@ func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool
 	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "probe-async", InstanceId: "probe", NodeType: "conformance-probe-async",
-		Userdata:    ud,
+		Attributes:  ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(pctx, req)

@@ -70,9 +70,13 @@
   resolve deterministically to the most-recently-appended row.
 - Fix-cycle / re-review dispatch wiring rewritten to use address bytes
   (not userdata) for per-child `iter_num` and `assigned_finding_ids`,
-  honoring rimsky's userdata-opacity invariant (`runtime/userdata_overrides.go`
+  honoring rimsky's userdata-opacity invariant. (Post-collapse note: the
+  `runtime/userdata_overrides.go` file referenced below was renamed to
+  `runtime/attribute_overrides.go` when the 2026-05-21 userdata collapse
+  unified `userdata` into `attributes`; `graph/attribute/doc.go`'s
+  former invariant 11 was retired with that change.) `runtime/userdata_overrides.go`
   is deep-merge-only; `graph/attribute/doc.go` §invariant 11 forbids
-  substitution inside userdata). `splitAffected` now projects the cached
+  substitution inside userdata. `splitAffected` now projects the cached
   `findings_by_zone` map onto each per-zone scope identity; `openFanOutChild`
   threads the values into the source-tree-zone address; the executor reads
   them off `primary` rather than from userdata. The template's broken

@@ -45,7 +45,7 @@ export interface CliSpawnRequest {
    */
   sessionId?: string;
   /**
-   * Per-template CLI tuning, sourced from `userdata.cli.*` (spec §5.8 +
+   * Per-template CLI tuning, sourced from `attributes.cli.*` (spec §5.8 +
    * docs/concepts/executor-claude-agent.md). All optional; defaults
    * preserve current behavior. The executor maps each field to one or
    * more spawn args without rimsky inspecting them.
@@ -152,7 +152,7 @@ export interface CliRunner {
  *   - `-p <prompt>` provides the user prompt as the positional arg;
  *     stdin is closed (`stdio[0] = "ignore"`).
  *
- * Optional knobs forwarded from `userdata.cli.*` are spliced in
+ * Optional knobs forwarded from `attributes.cli.*` are spliced in
  * conditionally — each defaults to current behavior, so existing
  * templates are unaffected. `maxBudgetUsd` retains an env-var fallback
  * (`RIMSKY_DISPATCH_MAX_USD`) so deployments can cap spend without

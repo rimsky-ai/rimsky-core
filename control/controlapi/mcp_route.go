@@ -98,7 +98,7 @@ func builtinSchemas() map[string][]byte {
 		// Instances.
 		"instance_list":      obj,
 		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"userdata_overrides":{"type":"object"},"frame_delivery_mode":{"type":"string","enum":["serial_queue","coalesce"]}},"required":["template"]}`),
+		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"},"frame_delivery_mode":{"type":"string","enum":["serial_queue","coalesce"]}},"required":["template"]}`),
 		"instance_terminate": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 
 		// Templates.

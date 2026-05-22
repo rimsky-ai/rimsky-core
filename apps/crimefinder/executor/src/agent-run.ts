@@ -42,7 +42,9 @@ export interface AgentRunArgs {
   // computes runId from `req.node_id ?? randomUUID()`. When omitted here
   // we fall back to dispatchId so single-shot tests still work.
   runId?: string;
-  userdata: {
+  // Post-2026-05-21 userdata collapse: the wire field is `attributes`,
+  // and this executor-internal field carries the unpacked bag.
+  attributes: {
     mission?: string;
     stub_outcome?: unknown;
     system_prompt?: string;
@@ -126,7 +128,7 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
     },
   };
 
-  const mission = (args.userdata.mission ?? "review-zone") as
+  const mission = (args.attributes.mission ?? "review-zone") as
     | "review-zone"
     | "fix-cycle"
     | "dedup"
@@ -167,10 +169,11 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
 
   // Fix-cycle / re-review children carry `iter_num` and (fix-cycle only)
   // `assigned_finding_ids` on the source-tree-zone address. Rimsky does
-  // NOT run `{{...}}` substitution inside userdata (deep-merge only — see
-  // `runtime/userdata_overrides.go`, `graph/attribute/doc.go` §spec
-  // invariant 11), so the per-child wiring rides on the address bytes
-  // the producer's SplitScope → openFanOutChild populates.
+  // NOT run `{{...}}` substitution inside attribute `default:` values
+  // (deep-merge only — see `runtime/attribute_overrides.go`,
+  // `graph/attribute/doc.go` under concept:inertness), so the per-child
+  // wiring rides on the address bytes the producer's SplitScope →
+  // openFanOutChild populates.
   const assignedFindingIds =
     primary.kind === "source-tree-zone" ? primary.assigned_finding_ids : undefined;
   const iterNum =
@@ -225,7 +228,7 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
   }
 
   // Coverage threshold knobs. Priority order:
-  //   1. userdata.coverage_threshold_pct / coverage_on_below_threshold,
+  //   1. attributes.coverage_threshold_pct / coverage_on_below_threshold,
   //      if the template forwarded them (legacy / explicit override).
   //   2. .crimefinder/config.yml under REPO_ROOT (cfg:coverage), read at
   //      dispatch time. This is the spec-aligned path — the template DSL
@@ -241,14 +244,14 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
   });
   const completeOpts = {
     coverageThresholdPct:
-      typeof args.userdata.coverage_threshold_pct === "number"
-        ? args.userdata.coverage_threshold_pct
+      typeof args.attributes.coverage_threshold_pct === "number"
+        ? args.attributes.coverage_threshold_pct
         : repoCoverage.thresholdPct,
     coverageOnBelow:
-      args.userdata.coverage_on_below_threshold === "warn" ||
-      args.userdata.coverage_on_below_threshold === "allow" ||
-      args.userdata.coverage_on_below_threshold === "require_skip"
-        ? args.userdata.coverage_on_below_threshold
+      args.attributes.coverage_on_below_threshold === "warn" ||
+      args.attributes.coverage_on_below_threshold === "allow" ||
+      args.attributes.coverage_on_below_threshold === "require_skip"
+        ? args.attributes.coverage_on_below_threshold
         : repoCoverage.onBelow,
   };
 
@@ -282,7 +285,7 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
   let outcome: AgentOutcome;
   if (args.stubMode) {
     const r = await runStubAgent({
-      userdata: args.userdata,
+      attributes: args.attributes,
       dispatch: async (tool, input) => dispatch(tool, input),
       logger: args.logger,
     });
@@ -315,8 +318,8 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
     const prompts = loadPrompts(
       {
         mission,
-        systemPromptFromUserdata: args.userdata.system_prompt,
-        userPromptTemplateFromUserdata: args.userdata.user_prompt_template,
+        systemPromptFromAttributes: args.attributes.system_prompt,
+        userPromptTemplateFromAttributes: args.attributes.user_prompt_template,
       },
       args.logger,
     );
@@ -335,8 +338,8 @@ export async function runAgent(args: AgentRunArgs): Promise<AgentOutcome> {
           systemPrompt: prompts.systemPrompt,
           userPrompt: prompts.userPrompt,
           env,
-          model: args.userdata.model as string | undefined,
-          maxTurns: args.userdata.max_turns as number | undefined,
+          model: args.attributes.model as string | undefined,
+          maxTurns: args.attributes.max_turns as number | undefined,
         },
         () => silence.touch(),
       );

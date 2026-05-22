@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // ExecutorServer adapts the postgres store's connection pool to the
-// rimsky Executor protocol. Userdata shape (verifier role):
+// rimsky Executor protocol. Attribute shape (verifier role):
 //
 //	{
 //	  "schema": "<schema-name>",
@@ -62,19 +62,19 @@ func (e *ExecutorServer) Execute(req *genv1.ExecuteRequest, stream genv1.Executo
 type sendFunc func(*genv1.ExecuteEvent) error
 
 func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequest, send sendFunc) error {
-	ud := req.GetUserdata().AsMap()
-	schema, table, specs, err := parseVerifierUserdata(ud)
+	ud := req.GetAttributes().AsMap()
+	schema, table, specs, err := parseVerifierAttributes(ud)
 	if err != nil {
-		return sendVerifierError(send, "invalid_userdata", err.Error(), nil)
+		return sendVerifierError(send, "invalid_attribute", err.Error(), nil)
 	}
 	pool := e.store.Pool()
 	if pool == nil {
-		return sendVerifierError(send, "invalid_userdata", "postgres store has no live connection pool", nil)
+		return sendVerifierError(send, "invalid_attribute", "postgres store has no live connection pool", nil)
 	}
 	conn := pgxPoolConn{pool: pool}
 	results, err := sqlchecks.Run(ctx, conn, schema, table, specs)
 	if err != nil {
-		return sendVerifierError(send, "invalid_userdata", err.Error(), nil)
+		return sendVerifierError(send, "invalid_attribute", err.Error(), nil)
 	}
 	if anyFailed(results) {
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
@@ -93,19 +93,19 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	}})
 }
 
-// parseVerifierUserdata extracts and validates the userdata fields.
-func parseVerifierUserdata(ud map[string]any) (string, string, []sqlchecks.CheckSpec, error) {
+// parseVerifierAttributes extracts and validates the attribute fields.
+func parseVerifierAttributes(ud map[string]any) (string, string, []sqlchecks.CheckSpec, error) {
 	schema, _ := ud["schema"].(string)
 	if schema == "" {
-		return "", "", nil, fmt.Errorf("userdata.schema (string) required")
+		return "", "", nil, fmt.Errorf("attributes.schema (string) required")
 	}
 	table, _ := ud["table"].(string)
 	if table == "" {
-		return "", "", nil, fmt.Errorf("userdata.table (string) required")
+		return "", "", nil, fmt.Errorf("attributes.table (string) required")
 	}
 	raw, ok := ud["checks"].([]any)
 	if !ok || len(raw) == 0 {
-		return "", "", nil, fmt.Errorf("userdata.checks (non-empty array) required")
+		return "", "", nil, fmt.Errorf("attributes.checks (non-empty array) required")
 	}
 	out := make([]sqlchecks.CheckSpec, 0, len(raw))
 	for i, item := range raw {

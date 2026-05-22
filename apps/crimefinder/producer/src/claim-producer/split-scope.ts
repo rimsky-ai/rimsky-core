@@ -98,9 +98,9 @@ async function splitAffected(
 
   // For fix-cycle children, project the cached findings_by_zone map onto
   // each child so the per-zone finding IDs travel inline on the address.
-  // Rimsky does not substitute inside userdata (see
-  // `runtime/userdata_overrides.go` deep-merge-only;
-  // `graph/attribute/doc.go` §spec invariant 11), so the per-child IDs
+  // Rimsky does not substitute inside attribute `default:` values (see
+  // `runtime/attribute_overrides.go` deep-merge-only;
+  // `graph/attribute/doc.go` under concept:inertness), so the per-child IDs
   // must live on the scope identity / address — the only producer-owned
   // surface that flows from SplitScope through openFanOutChild to the
   // dispatched executor. Re-review children have no fix payload so the

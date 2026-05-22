@@ -58,9 +58,9 @@ type (
 	AggregationPolicy = spec.AggregationPolicy
 
 	// 2026-05-19 multi-instance-template-ergonomics additions:
-	// template-author userdata defaults.
-	TemplateDefaults         = spec.TemplateDefaults
-	TemplateUserdataDefaults = spec.TemplateUserdataDefaults
+	// template-author attribute defaults (L1 in the override merge).
+	TemplateDefaults          = spec.TemplateDefaults
+	TemplateAttributeDefaults = spec.TemplateAttributeDefaults
 )
 
 // Frame-resolution constants re-exported from foundation/spec.

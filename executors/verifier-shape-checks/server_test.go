@@ -31,13 +31,13 @@ func (f *fakeStream) terminal() *genv1.StreamClose {
 	return nil
 }
 
-func buildReq(t *testing.T, userdata map[string]any) *genv1.ExecuteRequest {
+func buildReq(t *testing.T, attrs map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
-	st, err := structpb.NewStruct(userdata)
+	st, err := structpb.NewStruct(attrs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &genv1.ExecuteRequest{NodeType: "verifier", Userdata: st}
+	return &genv1.ExecuteRequest{NodeType: "verifier", Attributes: st}
 }
 
 func TestExecuteCore_PassAllChecks(t *testing.T) {
@@ -93,7 +93,7 @@ func TestExecuteCore_FailureClassifiesAsVerifierFailed(t *testing.T) {
 	}
 }
 
-func TestExecuteCore_InvalidUserdataRejected(t *testing.T) {
+func TestExecuteCore_InvalidAttributesRejected(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"rows": []any{map[string]any{"id": "x"}},
@@ -111,7 +111,7 @@ func TestExecuteCore_InvalidUserdataRejected(t *testing.T) {
 	if errOut == nil {
 		t.Fatalf("expected Error, got %T", term.Outcome)
 	}
-	if errOut.GetErrorClass() != "invalid_userdata" {
+	if errOut.GetErrorClass() != "invalid_attribute" {
 		t.Errorf("error_class: %s", errOut.GetErrorClass())
 	}
 }

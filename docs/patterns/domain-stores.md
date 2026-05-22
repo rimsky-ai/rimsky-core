@@ -25,9 +25,9 @@ to participate in the rimsky control plane.
 
 Mechanically: an HTTP or stdio MCP server registered in the executor's
 catalog (claude-agent uses an `mcp_catalog` block in its startup
-config — see `docs/executors/claude-agent/userdata.md`). Templates
-reference catalog entries by `ref` in their userdata. Dispatch wires
-the entry into the agent's tool space.
+config — see `docs/executors/claude-agent/expected-attributes.md`). Templates
+reference catalog entries by `ref` in their attribute schema's `cli.mcpServers`
+default. Dispatch wires the entry into the agent's tool space.
 
 Conceptually: rimsky stays domain-agnostic; the domain store is where a
 consuming project lands its vocabulary, its data, and its operations.
@@ -84,11 +84,18 @@ policy:
 nodes:
   ingest:
     executor: claude-agent
-    userdata:
-      cli:
-        mcpServers:
-          - ref: project-tracker
-        system_prompt: "Use tools to fetch tickets and update status."
+    attributes:
+      schema:
+        type: object
+        properties:
+          cli:
+            type: object
+            default:
+              mcpServers:
+                - ref: project-tracker
+          system_prompt:
+            type: string
+            default: "Use tools to fetch tickets and update status."
 ```
 
 The project-tracker server exposes `tickets.list`, `tickets.get`,

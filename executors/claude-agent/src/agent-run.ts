@@ -76,8 +76,19 @@ export interface AgentRunOptions {
   nodeId: string;
   nodeType: string;
   model: string;
+  /**
+   * The fully rimsky-resolved system prompt. Post-2026-05-21 userdata
+   * collapse this is consumed verbatim — no executor-side template
+   * rendering pass. Rimsky resolves substitutions at dispatch via
+   * `code:graph/attribute/substitution.go::SubstituteValue`.
+   */
   systemPrompt: string;
-  userPromptTemplate: string;
+  /**
+   * The fully rimsky-resolved user prompt. Post-2026-05-21 userdata
+   * collapse this is consumed (with a fixed metadata-footer appended)
+   * — no executor-side template rendering pass.
+   */
+  userPrompt: string;
   /**
    * Declared JSON Schema for the node's attributes. The executor uses this
    * to validate any `attributes_delta` it produces locally; rimsky validates
@@ -93,16 +104,6 @@ export interface AgentRunOptions {
    */
   attributes: Record<string, unknown>;
   /**
-   * Userdata bag from the template (per spec §5.8). Rimsky never parses
-   * this; the executor reads `model`, `system_prompt`, etc. from here. The
-   * `templateVars.userdata` namespace below is what `{{userdata.x}}`
-   * resolves against in renderTemplate.
-   */
-  templateVars: {
-    userdata: Record<string, unknown>;
-    attributes: Record<string, unknown>;
-  };
-  /**
    * Per-store handles delivered in `ExecuteRequest.stores` (spec §19.1).
    * Keyed by store-config name; each entry is the unwrapped
    * `{kind, handle: {address, payload, alias, intent}}` shape. Opaque
@@ -110,7 +111,7 @@ export interface AgentRunOptions {
    */
   stores?: Record<string, unknown>;
   /**
-   * Optional store-config name from `userdata.cwd_from_store`. When set,
+   * Optional store-config name from `attributes.cwd_from_store`. When set,
    * the executor reads `stores[<name>].handle.address` (which the
    * filesystem store fills with an absolute path) and uses it as the
    * spawned CLI's cwd. Validated as an existing directory before spawn;
@@ -118,13 +119,13 @@ export interface AgentRunOptions {
    */
   cwdFromStore?: string;
   /**
-   * Optional raw cwd from `userdata.cwd`. Override-of-last-resort for
+   * Optional raw cwd from `attributes.cwd`. Override-of-last-resort for
    * deployments that pin a static workdir without going through a store.
    * Lower priority than `cwdFromStore`.
    */
   cwdOverride?: string;
   /**
-   * Per-template CLI tuning sourced from `userdata.cli.*`. Forwarded
+   * Per-template CLI tuning sourced from `attributes.cli.*`. Forwarded
    * verbatim to {@link CliRunner.spawn} so the executor (not rimsky)
    * decides how each field maps to spawn args. See CliSpawnRequest
    * for the mapping. All optional; absence preserves current defaults.
@@ -167,9 +168,11 @@ export interface AgentRunOptions {
    * J10: Resume context populated by the supervisor when this dispatch
    * is a resume after a prior `Park` terminal. When `sessionToken` is
    * non-empty, claude-agent launches the CLI with `--resume <token>`
-   * so the prior conversation resumes; `payload` and `reason` are
-   * surfaced to the prompt-template engine as
-   * `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}`.
+   * so the prior conversation resumes; `payload` and `resumeReason`
+   * are surfaced to the agent by appending a fixed `---`-delimited
+   * metadata footer to the user prompt (see the prompt-assembly block
+   * in `runAgentReal` below, ~lines 312-334). No template substitution
+   * runs — rimsky already resolved prompt attributes at dispatch.
    */
   resumeContext?: {
     payload?: Uint8Array;
@@ -185,20 +188,19 @@ export interface AgentRunOptions {
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
-  // Protocol contract: executors must reject malformed userdata
-  // consistently across stub and live modes (matches http-node's
-  // `userdata.url required` enforcement at server.go:142-148). The
-  // probe escape hatch (`stub_probe: true`) is *only* honored in
-  // stub mode; conformance scenarios that exercise malformed-shape
-  // rejection deliberately omit the flag so the heuristic fires.
-  const ud = (opts.templateVars.userdata ?? {}) as Record<string, unknown>;
-  const isProbe = ud.stub_probe === true && stubModeEnabled();
+  // Protocol contract: executors must reject malformed attribute bags
+  // consistently across stub and live modes. The probe escape hatch
+  // (`stub_probe: true`) is *only* honored in stub mode; conformance
+  // scenarios that exercise malformed-shape rejection deliberately
+  // omit the flag so the heuristic fires.
+  const attrs = opts.attributes ?? {};
+  const isProbe = attrs.stub_probe === true && stubModeEnabled();
   if (!isProbe) {
-    const reason = malformedUserdataReason(ud);
+    const reason = malformedAttributesReason(attrs);
     if (reason !== null) {
       return {
         kind: "errored",
-        errorClass: "invalid_userdata",
+        errorClass: "invalid_attribute",
         payload: { reason },
       };
     }
@@ -216,16 +218,16 @@ export function stubModeEnabled(): boolean {
 async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   opts.logger.info({ runId: opts.runId }, "agent-run: stub mode");
   await new Promise((r) => setTimeout(r, 50));
-  const ud = opts.templateVars.userdata ?? {};
+  const attrs = opts.attributes ?? {};
 
   // Conformance-probe escape hatch (mirrors http-node/server.go): when the
-  // suite flags userdata with `stub_probe: true`, return either the
+  // suite flags attributes with `stub_probe: true`, return either the
   // configured stub_response or the canonical {stub: true}. Malformed-
-  // userdata rejection runs in `runAgent` before this function is reached,
-  // so non-probe userdata that arrived here is already known good.
-  const isProbe = ud.stub_probe === true;
+  // attribute rejection runs in `runAgent` before this function is
+  // reached, so non-probe attributes that arrived here are known good.
+  const isProbe = attrs.stub_probe === true;
   if (!isProbe) {
-    // Stub-mode fallthrough for non-probe userdata: honor the §14.4
+    // Stub-mode fallthrough for non-probe attributes: honor the §14.4
     // contract by returning the canonical stub response.
     return {
       kind: "complete",
@@ -235,12 +237,12 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   }
 
-  const stubResponse = ud.stub_response;
+  const stubResponse = attrs.stub_response;
   if (stubResponse !== undefined) {
     if (typeof stubResponse !== "object" || stubResponse === null || Array.isArray(stubResponse)) {
       return {
         kind: "errored",
-        errorClass: "invalid_userdata",
+        errorClass: "invalid_attribute",
         payload: { reason: `stub_response must be a JSON object, got ${typeof stubResponse}` },
       };
     }
@@ -259,20 +261,17 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   };
 }
 
-// malformedUserdataReason returns a non-null reason string when userdata
-// matches a known "malformed" shape the conformance `malformed_userdata`
-// scenario uses. Keep this list aligned with the scenario in
-// `conformance/scenarios/malformed_userdata.go`.
+// malformedAttributesReason returns a non-null reason string when the
+// attribute bag matches a known "malformed" shape the conformance
+// `malformed_attributes` scenario uses. Keep this list aligned with the
+// scenario in `conformance/scenarios/malformed_attributes.go`.
 //
 // Reserved-key convention: malformed-shape markers MUST be `_`-prefixed
-// (`_invalid`, `_missing_url`, …) so plain field names a template author
-// might legitimately use cannot trip the rejection. The userdata schema
-// at registration uses `additionalProperties: false`, so production
-// templates are doubly protected; this heuristic guards ad-hoc / debug
-// paths that bypass schema validation.
-function malformedUserdataReason(ud: Record<string, unknown>): string | null {
-  if (ud._invalid !== undefined) return "userdata._invalid present (reserved)";
-  if (ud._missing_url === true) return "userdata._missing_url is set (reserved)";
+// (`_invalid`, `_missing_url`, …) so plain field names a template
+// author might legitimately use cannot trip the rejection.
+function malformedAttributesReason(attrs: Record<string, unknown>): string | null {
+  if (attrs._invalid !== undefined) return "attributes._invalid present (reserved)";
+  if (attrs._missing_url === true) return "attributes._missing_url is set (reserved)";
   return null;
 }
 
@@ -282,10 +281,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     nodeId,
     model,
     systemPrompt,
-    userPromptTemplate,
+    userPrompt,
     attributesSchema,
     attributes,
-    templateVars,
     stores,
     cwdFromStore,
     cwdOverride,
@@ -313,31 +311,29 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   }
   const cwd = cwdResolution.cwd;
 
-  // Generate the per-run callback token before rendering prompts so it can
-  // be substituted into the system / user prompt via `{{callback_token}}`.
-  // The agent (Claude Code CLI subprocess) needs this token to call any
-  // rimsky-callback MCP tool. Injecting it via the prompt avoids requiring
-  // the agent to have shell access to read `RIMSKY_CALLBACK_TOKEN` from env
-  // (the env var is still set on the child for tools that DO have shell).
+  // Generate the per-run callback token. The agent (Claude Code CLI
+  // subprocess) needs this token to call any rimsky-callback MCP tool.
+  // Post-2026-05-21 userdata collapse the executor no longer runs a
+  // template-rendering pass against the prompts — rimsky resolved the
+  // prompt attributes at dispatch. The token + resume metadata are
+  // delivered to the agent via a fixed `---`-delimited metadata footer
+  // appended to the user prompt only (the system prompt stays clean to
+  // preserve prompt caching: per-run mutable content invalidates the
+  // cache).
   const callbackToken = randomUUID();
-  // Expose resume context to the prompt-template engine as
-  // `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}` per J10.
-  // Templates that don't reference these vars are unaffected.
-  const rimskyVars: Record<string, string> = {};
-  if (resumeContext?.payload && resumeContext.payload.length > 0) {
-    rimskyVars.resume_payload = Buffer.from(resumeContext.payload).toString("utf8");
-  }
-  if (resumeContext?.resumeReason) {
-    rimskyVars.resume_reason = resumeContext.resumeReason;
-  }
-  const promptVars = {
-    ...templateVars,
-    callback_token: callbackToken,
-    rimsky: rimskyVars,
-  };
+  const resumePayload = resumeContext?.payload && resumeContext.payload.length > 0
+    ? Buffer.from(resumeContext.payload).toString("utf8")
+    : "";
+  const resumeReason = resumeContext?.resumeReason ?? "";
 
-  const renderedSystem = renderTemplate(systemPrompt, promptVars);
-  const renderedUser = renderTemplate(userPromptTemplate, promptVars);
+  const renderedSystem = systemPrompt;
+  const renderedUser =
+    userPrompt +
+    "\n\n---\n" +
+    `callback_token: ${callbackToken}\n` +
+    `resume_payload: ${resumePayload}\n` +
+    `resume_reason: ${resumeReason}\n` +
+    "---\n";
 
   // Per-dispatch internal MCP server. The shared / global server on `callback`
   // (passed in via RunArgs) was found to mishandle multi-spawn lifecycles —
@@ -780,7 +776,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     if (resolved) return; // a terminal MCP callback fired between exit and now
 
     // J9: rate-limit auto-park. When the CLI dies non-zero AND its
-    // stderr carries a rate-limit signal AND userdata.cli.handle_rate_limits
+    // stderr carries a rate-limit signal AND attributes.cli.handle_rate_limits
     // is enabled (default true), emit `park_requested` instead of
     // bouncing through the recovery path. The supervisor receives the
     // `Park` terminal and parks the node until the reset window (or
@@ -937,13 +933,13 @@ type CwdResolution =
   | { kind: "error"; message: string };
 
 /**
- * Resolve the spawn cwd from store handles + userdata hints.
+ * Resolve the spawn cwd from store handles + attribute hints.
  *
  * Precedence:
  *   1. `cwdFromStore` — look up `stores[<name>].handle.address`. The
  *      filesystem store sets this to an absolute path. Must be a string,
  *      and must point to an existing directory at spawn time.
- *   2. `cwdOverride` — raw path from `userdata.cwd`. Validated the same
+ *   2. `cwdOverride` — raw path from `attributes.cwd`. Validated the same
  *      way (must exist, must be a directory).
  *   3. Neither set → undefined; the subprocess inherits the executor
  *      process's cwd.
@@ -1008,52 +1004,9 @@ function validateDirectory(path: string, source: string): CwdResolution {
   return { kind: "ok", cwd: path };
 }
 
-/**
- * Minimal `{{ns.key}}` substitution for system / user prompts. Supported
- * namespaces are `userdata`, `attributes`, and `rimsky` (the last
- * carrying resume-context per J10). Substitution against unknown
- * namespaces is preserved verbatim.
- *
- * @source rimsky/src/supervisor/agentic-runner.ts:renderTemplate
- * @diverged: true
- * @reason: Adds the `rimsky` namespace for resume-context exposure
- *   (resume_payload, resume_reason). Upstream renderer does not yet
- *   carry this; scope is local to the executor's prompt-render path.
- */
-export function renderTemplate(
-  tpl: string,
-  vars: {
-    userdata: Record<string, unknown>;
-    attributes: Record<string, unknown>;
-    /**
-     * Per-J10 resume-context exposure. Templates may reference
-     * `{{rimsky.resume_payload}}` and `{{rimsky.resume_reason}}` to
-     * reach the bytes carried back from a parked node. Empty / missing
-     * values are preserved verbatim so non-resume dispatches see the
-     * literal placeholder rather than an empty string.
-     */
-    rimsky?: Record<string, string>;
-    /**
-     * The per-run rimsky-callback token. Exposed as a bare `{{callback_token}}`
-     * placeholder so templates can inject it into the system / user prompt
-     * without the agent needing shell access to read `RIMSKY_CALLBACK_TOKEN`
-     * from env. Optional — older callers don't pass it; the placeholder is
-     * preserved verbatim in that case.
-     */
-    callback_token?: string;
-  },
-): string {
-  let out = tpl.replace(
-    /\{\{(userdata|attributes|rimsky)\.([^}]+)\}\}/g,
-    (_, ns: "userdata" | "attributes" | "rimsky", key: string) => {
-      const bag = ns === "rimsky" ? (vars.rimsky ?? {}) : vars[ns];
-      const v = bag[key];
-      if (v === undefined) return `{{${ns}.${key}}}`;
-      return typeof v === "string" ? v : JSON.stringify(v);
-    },
-  );
-  if (vars.callback_token !== undefined) {
-    out = out.replace(/\{\{callback_token\}\}/g, vars.callback_token);
-  }
-  return out;
-}
+// renderTemplate retired in the 2026-05-21 userdata collapse.
+// Substitution now happens entirely at the rimsky layer
+// (`code:graph/attribute/substitution.go::SubstituteValue`); the
+// executor consumes resolved prompts verbatim and appends a fixed
+// metadata footer for executor-private vars (callback_token,
+// resume_payload, resume_reason). See `runAgentReal` above.

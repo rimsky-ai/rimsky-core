@@ -104,20 +104,19 @@ func (ParkReason) EnumDescriptor() ([]byte, []int) {
 	return file_executor_proto_rawDescGZIP(), []int{0}
 }
 
-// ExecuteRequest carries the full context of a node dispatch. Only `userdata`
-// is inert in rimsky — the rest is rimsky-populated. See spec §12.1.
+// ExecuteRequest carries the full context of a node dispatch. The
+// attributes bag is the unified surface for both rimsky-populated
+// inputs and executor-written outputs. See spec §12.1.
 type ExecuteRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	NodeId     string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	InstanceId string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
 	NodeType   string                 `protobuf:"bytes,3,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
-	// Opaque per-node config from the template. Rimsky never interprets this;
-	// only the executor does. NEVER substituted.
-	Userdata *structpb.Struct `protobuf:"bytes,4,opt,name=userdata,proto3" json:"userdata,omitempty"`
 	// Per-run typed attributes. Source-directive fields are pre-populated by
-	// rimsky at dispatch; sourceless fields are populated by the executor
-	// (terminal-final via attributes_delta on Success, or incremental via
-	// POST {callback_url}/v1/attributes/{node_id}).
+	// rimsky at dispatch; static-default fields carry their declared
+	// default value; sourceless/executor-written fields are populated by
+	// the executor (terminal-final via attributes_delta on Success, or
+	// incremental via POST {callback_url}/v1/attributes/{node_id}).
 	Attributes *structpb.Struct `protobuf:"bytes,5,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	// The declared JSON Schema for the node's attributes. For executor reference;
 	// rimsky validates at dispatch (substitution) and at commit (writeback)
@@ -199,13 +198,6 @@ func (x *ExecuteRequest) GetNodeType() string {
 		return x.NodeType
 	}
 	return ""
-}
-
-func (x *ExecuteRequest) GetUserdata() *structpb.Struct {
-	if x != nil {
-		return x.Userdata
-	}
-	return nil
 }
 
 func (x *ExecuteRequest) GetAttributes() *structpb.Struct {
@@ -1154,13 +1146,12 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf7\x04\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd2\x04\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
 	"instanceId\x12\x1b\n" +
-	"\tnode_type\x18\x03 \x01(\tR\bnodeType\x123\n" +
-	"\buserdata\x18\x04 \x01(\v2\x17.google.protobuf.StructR\buserdata\x127\n" +
+	"\tnode_type\x18\x03 \x01(\tR\bnodeType\x127\n" +
 	"\n" +
 	"attributes\x18\x05 \x01(\v2\x17.google.protobuf.StructR\n" +
 	"attributes\x12D\n" +
@@ -1173,8 +1164,8 @@ const file_executor_proto_rawDesc = "" +
 	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fR\aresumedR\vrun_attempt\"s\n" +
+	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\n" +
+	"\x10\vJ\x04\b\v\x10\fR\buserdataR\aresumedR\vrun_attempt\"s\n" +
 	"\rResumeContext\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12#\n" +
 	"\rsession_token\x18\x02 \x01(\tR\fsessionToken\x12#\n" +
@@ -1274,35 +1265,34 @@ var file_executor_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
-	14, // 0: rimsky.v1.ExecuteRequest.userdata:type_name -> google.protobuf.Struct
-	14, // 1: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
-	14, // 2: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	13, // 3: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
-	2,  // 4: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
-	14, // 5: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
-	11, // 6: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
-	12, // 7: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
-	5,  // 8: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
-	6,  // 9: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
-	7,  // 10: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
-	8,  // 11: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
-	9,  // 12: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
-	14, // 13: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
-	14, // 14: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
-	0,  // 15: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
-	15, // 16: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
-	12, // 17: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
-	6,  // 18: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
-	7,  // 19: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
-	8,  // 20: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	3,  // 21: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
-	1,  // 22: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	4,  // 23: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
-	23, // [23:24] is the sub-list for method output_type
-	22, // [22:23] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	14, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
+	14, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
+	13, // 2: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
+	2,  // 3: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
+	14, // 4: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
+	11, // 5: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
+	12, // 6: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
+	5,  // 7: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
+	6,  // 8: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
+	7,  // 9: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
+	8,  // 10: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
+	9,  // 11: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
+	14, // 12: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
+	14, // 13: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
+	0,  // 14: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
+	15, // 15: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
+	12, // 16: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
+	6,  // 17: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
+	7,  // 18: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
+	8,  // 19: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
+	3,  // 20: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
+	1,  // 21: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	4,  // 22: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
+	22, // [22:23] is the sub-list for method output_type
+	21, // [21:22] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }

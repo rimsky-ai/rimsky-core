@@ -29,10 +29,12 @@
 //
 // # Boundaries
 //
-// Per spec §4.10 invariant 11, no code path in this package inspects, parses,
-// substitutes, or validates `userdata`. The substitution grammar enumerates
-// exactly three source kinds (nodes / claim / params); userdata is not a
-// source kind and never participates in resolution.
+// Post-2026-05-21 userdata collapse: userdata is no longer a distinct
+// concept. The unified attribute schema covers both rimsky-resolved
+// inputs and template-author config (static defaults). The substitution
+// grammar enumerates source kinds (nodes / claim / params / trigger /
+// child); attribute values themselves are inert to rimsky under the
+// structural-inertness discipline (concept:inertness).
 //
 // Per spec §4.10 invariant 12, attributes are validated twice: once at
 // dispatch (after substitution, before the executor sees the request) and

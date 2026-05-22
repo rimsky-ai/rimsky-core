@@ -6,8 +6,9 @@ import { z } from "zod";
 // Minimal mirror of the producer's CrimefinderConfig for the executor —
 // the executor reads `.crimefinder/config.yml` directly at dispatch time
 // because the rimsky template DSL has no clean way to forward nested cfg
-// substructures into per-node userdata. The executor only needs the
-// coverage knobs; everything else is producer-side enforcement.
+// substructures into per-node attribute defaults. The executor only
+// needs the coverage knobs; everything else is producer-side
+// enforcement.
 //
 // Keep this in sync with `producer/src/config.ts::ConfigSchema` for the
 // fields we read. Drift is OK for other knobs (the executor doesn't

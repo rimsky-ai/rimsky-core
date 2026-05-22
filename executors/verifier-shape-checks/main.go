@@ -40,7 +40,7 @@ func main() {
 	genv1.RegisterExecutorServer(srv, NewServer(stubMode))
 	// Validation mix-in: verifier-shape-checks advertises role="executor"
 	// validation so rimsky's control-api can cross-check the resolved
-	// userdata at template registration. Per M / Section M2 in the
+	// attribute schema at template registration. Per M / Section M2 in the
 	// 2026-05-15 data-platform-extensions plan.
 	genv1.RegisterValidationServer(srv, NewValidationServer())
 	go func() {

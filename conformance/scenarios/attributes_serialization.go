@@ -42,7 +42,7 @@ func runAttributesSerialization(ctx context.Context, env conformance.Env) error 
 	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true, "stub_response": expected})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe", Userdata: ud,
+		NodeType: "conformance-probe", Attributes: ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(ctx, req)

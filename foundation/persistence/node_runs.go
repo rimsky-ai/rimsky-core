@@ -318,7 +318,7 @@ type ResumeMetadataRow struct {
 	Reason               string
 	// ReasonNote is the free-form human annotation persisted alongside
 	// the typed Reason (`col:rimsky_node_runs.parked_reason_note`).
-	// Inert in rimsky (`@blessed-invariant 11`-class opacity).
+	// Inert in rimsky (`concept:inertness structural-inertness discipline).
 	ReasonNote   string
 	SessionToken string
 	// WakeReason carries the WakeReason enum value persisted by

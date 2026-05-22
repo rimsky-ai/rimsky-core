@@ -37,7 +37,7 @@ func buildReq(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &genv1.ExecuteRequest{NodeType: "verifier-http", Userdata: st}
+	return &genv1.ExecuteRequest{NodeType: "verifier-http", Attributes: st}
 }
 
 func TestExecuteCore_HappyPath(t *testing.T) {
@@ -107,7 +107,7 @@ func TestExecuteCore_MissingURL(t *testing.T) {
 	if term == nil {
 		t.Fatal("no terminal")
 	}
-	if term.GetError().GetErrorClass() != "invalid_userdata" {
+	if term.GetError().GetErrorClass() != "invalid_attribute" {
 		t.Errorf("error_class: %s", term.GetError().GetErrorClass())
 	}
 }

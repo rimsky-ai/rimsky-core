@@ -24,21 +24,28 @@ service Executor {
   rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
 }
 
-// ExecuteRequest carries the full context of a node dispatch. Only `userdata`
-// is inert in rimsky — the rest is rimsky-populated. See spec §12.1.
+// ExecuteRequest carries the full context of a node dispatch. The
+// attributes bag is the unified surface for both rimsky-populated
+// inputs and executor-written outputs. See spec §12.1.
 message ExecuteRequest {
   string node_id = 1;
   string instance_id = 2;
   string node_type = 3;
 
-  // Opaque per-node config from the template. Rimsky never interprets this;
-  // only the executor does. NEVER substituted.
-  google.protobuf.Struct userdata = 4;
+  // Reserved (was: google.protobuf.Struct userdata = 4). The userdata
+  // concept retired in the 2026-05-21 collapse; all template-supplied
+  // values now flow through `attributes` (field 5), keyed by attribute
+  // name with each property either source-bound (rimsky resolves at
+  // dispatch), static-default (resolved at registration), or
+  // executor-written (populated at commit).
+  reserved 4;
+  reserved "userdata";
 
   // Per-run typed attributes. Source-directive fields are pre-populated by
-  // rimsky at dispatch; sourceless fields are populated by the executor
-  // (terminal-final via attributes_delta on Success, or incremental via
-  // POST {callback_url}/v1/attributes/{node_id}).
+  // rimsky at dispatch; static-default fields carry their declared
+  // default value; sourceless/executor-written fields are populated by
+  // the executor (terminal-final via attributes_delta on Success, or
+  // incremental via POST {callback_url}/v1/attributes/{node_id}).
   google.protobuf.Struct attributes = 5;
 
   // The declared JSON Schema for the node's attributes. For executor reference;

@@ -17,17 +17,17 @@ import (
 
 func init() {
 	conformance.Register(conformance.Scenario{
-		Name: "malformed_userdata",
+		Name: "malformed_attributes",
 		// Stub-mode-only: a non-stub claude-agent run would actually
 		// spawn the LLM CLI before any heuristic could detect the
-		// malformed-userdata markers. Same gate applied to
+		// malformed-attributes markers. Same gate applied to
 		// `attributes_serialization` and `heartbeats`.
 		RequiresStub: true,
-		Run:          runMalformedUserdata,
+		Run:          runMalformedAttributes,
 	})
 }
 
-// runMalformedUserdata sends userdata that should fail validation for any
+// runMalformedAttributes sends attributes that should fail validation for any
 // conforming executor (missing url, empty stub_response not applied, etc.)
 // and asserts a terminal StreamClose with an Error outcome carrying some
 // error class. AwaitTerminal transparently follows the callback for async
@@ -38,15 +38,15 @@ func init() {
 // markers. The `_` prefix is reserved across executors so plain field
 // names (which a real template author might use legitimately) cannot
 // silently trip the rejection heuristic. Keep this list aligned with
-// `executors/claude-agent/src/agent-run.ts::malformedUserdataReason`.
-func runMalformedUserdata(ctx context.Context, env conformance.Env) error {
+// `executors/claude-agent/src/agent-run.ts::malformedAttributesReason`.
+func runMalformedAttributes(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{
 		"_invalid":     map[string]any{"nested_null": nil},
 		"_missing_url": true,
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-malformed", Userdata: ud,
+		NodeType: "conformance-malformed", Attributes: ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(ctx, req)

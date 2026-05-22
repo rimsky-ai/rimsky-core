@@ -159,7 +159,7 @@ func (h *fusedHarness) runVerifier(t *testing.T, schema, table string, checks []
 		NodeId:     "scenario-verifier-" + table,
 		InstanceId: "scenario-verifier-instance",
 		NodeType:   "verify-staged-table",
-		Userdata:   ud,
+		Attributes: ud,
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)

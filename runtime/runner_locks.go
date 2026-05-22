@@ -394,19 +394,20 @@ func lookupTemplate(ctx context.Context, args RunArgs, tx persistence.Tx, inst *
 	return &tmpl.Spec
 }
 
-// templateUserdataDefaultsFor returns the already-routed by-executor
-// userdata fragment from the bound template's
-// `Defaults.Userdata.ByExecutor[executor]`. Returns nil when the
+// templateAttributeDefaultsFor returns the already-routed by-executor
+// attribute fragment from the bound template's
+// `Defaults.Attributes.ByExecutor[executor]`. Returns nil when the
 // template, defaults, or per-executor entry is absent. The runtime
-// path threads this through `acquisition.TemplateUserdataDefaults`
-// onto `applyUserdataOverrides` as the bottom merge layer.
+// path threads this through `acquisition.TemplateAttributeDefaults`
+// onto `computeEffectiveAttributeSchema` as the L1 layer merged into
+// the effective schema at dispatch.
 //
-// @concept: userdata
-func templateUserdataDefaultsFor(tmpl *node.TemplateSpec, executor string) map[string]any {
-	if tmpl == nil || tmpl.Defaults == nil || tmpl.Defaults.Userdata == nil {
+// @concept: attribute
+func templateAttributeDefaultsFor(tmpl *node.TemplateSpec, executor string) map[string]any {
+	if tmpl == nil || tmpl.Defaults == nil || tmpl.Defaults.Attributes == nil {
 		return nil
 	}
-	frag, ok := tmpl.Defaults.Userdata.ByExecutor[executor]
+	frag, ok := tmpl.Defaults.Attributes.ByExecutor[executor]
 	if !ok {
 		return nil
 	}

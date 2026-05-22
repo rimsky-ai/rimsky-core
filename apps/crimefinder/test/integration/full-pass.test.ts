@@ -19,11 +19,12 @@
  * to walk to terminal. The crimefinder template wires real
  * deterministic-mode handlers in the producer plus stub-mode executor
  * dispatches; threading per-mission stub_outcomes through the template's
- * userdata (which rimsky does NOT substitute `{{...}}` inside) requires
- * either a stub-mode env-var hook or a side-channel HTTP outcome
- * server. The harness leaves room for that follow-up; the scenario
- * exercises the wire-surface invariants and the JSONL substrate
- * (which is what the in-process scenarios cannot exercise at all).
+ * attribute `default:` values (which rimsky does NOT substitute
+ * `{{...}}` inside) requires either a stub-mode env-var hook or a
+ * side-channel HTTP outcome server. The harness leaves room for that
+ * follow-up; the scenario exercises the wire-surface invariants and the
+ * JSONL substrate (which is what the in-process scenarios cannot
+ * exercise at all).
  *
  * Gating: this test spawns five Go binaries + two Node subprocesses
  * and is slower than the in-process scenarios. It is NOT included in
@@ -92,7 +93,8 @@ describe("integration: full-pass against real rimsky stack", () => {
 
         // Snapshot the instance once — the full DAG-walk assertion is a
         // follow-up (requires per-mission stub-outcome plumbing through
-        // userdata; see file-header note). We assert the instance is
+        // attribute defaults; see file-header note). We assert the
+        // instance is
         // either still running OR already terminal — both prove the
         // control-api / scheduler / supervisor wire is alive.
         const snap = await h.getInstance(instanceId);

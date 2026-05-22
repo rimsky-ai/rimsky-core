@@ -570,3 +570,62 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 		}
 	})
 }
+
+// TestSubstitute_LenientMarker — per spec 2026-05-21 userdata-collapse:
+// the `?` marker opts a directive into lenient-on-missing resolution.
+// Missing source with `?` returns empty string (embedded mode);
+// missing source without `?` returns ErrMissingSource.
+func TestSubstitute_LenientMarker(t *testing.T) {
+	t.Run("strict missing source raises ErrMissingSource", func(t *testing.T) {
+		_, err := Substitute("{{nodes.x.attribute.y}}", ResolveContext{Deps: map[string]json.RawMessage{}})
+		if !IsMissingSource(err) {
+			t.Fatalf("strict missing source: want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("lenient missing source resolves to empty string", func(t *testing.T) {
+		s, err := Substitute("{{nodes.x.attribute.y?}}", ResolveContext{Deps: map[string]json.RawMessage{}})
+		if err != nil {
+			t.Fatalf("lenient missing source: want nil error, got %v", err)
+		}
+		if s != "" {
+			t.Fatalf("lenient missing source: want empty string, got %q", s)
+		}
+	})
+
+	t.Run("lenient with present value returns the value", func(t *testing.T) {
+		deps := map[string]json.RawMessage{"x": json.RawMessage(`{"y": "hello"}`)}
+		s, err := Substitute("{{nodes.x.attribute.y?}}", ResolveContext{Deps: deps})
+		if err != nil || s != "hello" {
+			t.Fatalf("lenient present source: want %q nil, got %q %v", "hello", s, err)
+		}
+	})
+}
+
+// TestSubstituteValue_LenientMarker — whole-directive mode null lift
+// for the lenient marker.
+func TestSubstituteValue_LenientMarker(t *testing.T) {
+	t.Run("missing source with ? returns nil (JSON null)", func(t *testing.T) {
+		v, err := SubstituteValue("{{nodes.x.attribute.y?}}", ResolveContext{Deps: map[string]json.RawMessage{}})
+		if err != nil {
+			t.Fatalf("lenient missing: want nil error, got %v", err)
+		}
+		if v != nil {
+			t.Fatalf("lenient missing: want nil, got %v", v)
+		}
+	})
+}
+
+// TestSubstitute_EmbeddedSourceWithMarkers — embedded sources may mix
+// strict directives, lenient (`?`) directives, and literal text. The
+// resolution stringifies each directive's value and concatenates.
+func TestSubstitute_EmbeddedSourceWithMarkers(t *testing.T) {
+	deps := map[string]json.RawMessage{"x": json.RawMessage(`{"y": "hello"}`)}
+	s, err := Substitute("greeting: {{nodes.x.attribute.y}}, optional: {{nodes.z.attribute.q?}}", ResolveContext{Deps: deps})
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if s != "greeting: hello, optional: " {
+		t.Fatalf("want %q, got %q", "greeting: hello, optional: ", s)
+	}
+}

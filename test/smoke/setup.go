@@ -164,19 +164,36 @@ func BringUpStack(t *testing.T) *SmokeStack {
 		_ = sh.Shutdown(ctx)
 	})
 
+	// Permissive expected_attributes_schema resolver: the smoke stub
+	// doesn't go through a real Capabilities handshake, so it has no
+	// schema in the discovery cache. The runtime now fails dispatch
+	// with `executor_schema_unavailable` when the resolver returns
+	// ok=false. A `{"type":"object"}` schema with no `properties` block
+	// is treated as permissive (open shape) by
+	// `node.IsPermissiveExecutorSchema`, so the readOnly-fallback leg
+	// of the unified-attribute-surface check is skipped — matching how
+	// a real permissive executor would behave.
+	expectedSchemaFor := func(executorName string) ([]byte, bool) {
+		if executorName != "claude-agent" {
+			return nil, false
+		}
+		return []byte(`{"type":"object"}`), true
+	}
+
 	sv, err := config.StartSupervisor(config.SupervisorConfig{
-		SupervisorID:      "smoke-supervisor",
-		Driver:            driver,
-		Clock:             clock,
-		Logger:            logger,
-		Concurrency:       8,
-		HeartbeatInterval: 500 * time.Millisecond,
-		ClaimPollInterval: 100 * time.Millisecond,
-		Resolver:          resolver,
-		Stores:            storesCfg,
-		NamedLocks:        namedLocksCfg,
-		CallbackHost:      "127.0.0.1",
-		CallbackPort:      0,
+		SupervisorID:                "smoke-supervisor",
+		Driver:                      driver,
+		Clock:                       clock,
+		Logger:                      logger,
+		Concurrency:                 8,
+		HeartbeatInterval:           500 * time.Millisecond,
+		ClaimPollInterval:           100 * time.Millisecond,
+		Resolver:                    resolver,
+		Stores:                      storesCfg,
+		NamedLocks:                  namedLocksCfg,
+		CallbackHost:                "127.0.0.1",
+		CallbackPort:                0,
+		ExpectedAttributesSchemaFor: expectedSchemaFor,
 	})
 	if err != nil {
 		t.Fatalf("BringUpStack: StartSupervisor: %v", err)

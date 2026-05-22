@@ -22,7 +22,7 @@ import (
 // rawExec is a per-driver test-helper that runs raw SQL against the
 // driver's underlying connection. Used by tests that need to bypass
 // the application-layer Create paths (e.g. the migration-backfill
-// case for instances.userdata_overrides). The helper is responsible
+// case for instances.attribute_overrides). The helper is responsible
 // for translating the question-mark placeholders into the driver-
 // native style (`$N` for postgres, `?` for sqlite). Pass nil to skip
 // tests that require it (none currently — both drivers must supply
@@ -51,9 +51,9 @@ func Suite(t *testing.T, factory func(*testing.T) persistence.Database, rawExec 
 	t.Run("NodeAttributesCascadeDeleteWithRun", func(t *testing.T) { testNodeAttributesCascadeDeleteWithRun(t, factory(t), rawExec) })
 	t.Run("NodeAttributesPerRunDenormConsistency", func(t *testing.T) { testNodeAttributesPerRunDenormConsistency(t, factory(t)) })
 	t.Run("InstancesFindAnyByInstanceKey", func(t *testing.T) { testInstancesFindAnyByInstanceKey(t, factory(t)) })
-	t.Run("InstancesUserdataOverridesRoundTrip", func(t *testing.T) { testInstancesUserdataOverridesRoundTrip(t, factory(t)) })
-	t.Run("InstancesUserdataOverridesDefaultsEmpty", func(t *testing.T) { testInstancesUserdataOverridesDefaultsEmpty(t, factory(t)) })
-	t.Run("InstancesUserdataOverridesMigrationBackfill", func(t *testing.T) { testInstancesUserdataOverridesMigrationBackfill(t, factory(t), rawExec) })
+	t.Run("InstancesAttributeOverridesRoundTrip", func(t *testing.T) { testInstancesAttributeOverridesRoundTrip(t, factory(t)) })
+	t.Run("InstancesAttributeOverridesDefaultsEmpty", func(t *testing.T) { testInstancesAttributeOverridesDefaultsEmpty(t, factory(t)) })
+	t.Run("InstancesAttributeOverridesMigrationBackfill", func(t *testing.T) { testInstancesAttributeOverridesMigrationBackfill(t, factory(t), rawExec) })
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15

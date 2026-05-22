@@ -80,7 +80,7 @@ type InvalidateArgs struct {
 //     in a single tx (no frame enqueue, no coalesce).
 //  4. Otherwise fall back to the next-frame path.
 //
-// kill_requested writes are gone (§blessed-invariant 11): operator
+// kill_requested writes are gone (concept:inertness): operator
 // invalidates do not preempt running work; they enqueue a frame.
 func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	if args.Persist == nil {

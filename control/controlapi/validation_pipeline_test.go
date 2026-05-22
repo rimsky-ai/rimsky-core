@@ -135,9 +135,9 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 		name:           "worker",
 		supportedRoles: []string{"executor"},
 		errs: []runtime.ValidationFinding{{
-			Class:   "userdata_shape_invalid",
+			Class:   "attribute_shape_invalid",
 			Message: "missing required field foo",
-			Path:    "/executor/userdata/foo",
+			Path:    "/executor/attributes/foo",
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
@@ -161,9 +161,9 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 		name:           "worker",
 		supportedRoles: []string{"executor"},
 		warns: []runtime.ValidationFinding{{
-			Class:   "userdata_deprecated_field",
+			Class:   "attribute_deprecated_field",
 			Message: "field bar is deprecated",
-			Path:    "/executor/userdata/bar",
+			Path:    "/executor/attributes/bar",
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)
@@ -184,7 +184,7 @@ func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 		name:           "worker",
 		supportedRoles: []string{"executor"},
 		warns: []runtime.ValidationFinding{{
-			Class: "userdata_deprecated_field",
+			Class: "attribute_deprecated_field",
 		}},
 	}
 	vr := newFakeValidatorRegistry(vfake)

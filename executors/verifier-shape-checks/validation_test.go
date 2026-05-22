@@ -11,20 +11,35 @@ import (
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
-// TestValidate_ExecutorHappy covers a well-shaped executor context
-// with a known check kind. Expect Valid=true and zero errors.
+// schemaWithChecks builds an attributes_schema JSON-Schema fragment
+// declaring a `checks` property with the supplied default value. Helper
+// used by the validator tests.
+func schemaWithChecks(checks any) []byte {
+	out, _ := json.Marshal(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"checks": map[string]any{
+				"type":    "array",
+				"default": checks,
+			},
+		},
+	})
+	return out
+}
+
+// TestValidate_ExecutorHappy covers the happy path: a valid executor
+// context with a well-shaped attribute schema declaring a `checks`
+// default array of known check kinds.
 func TestValidate_ExecutorHappy(t *testing.T) {
 	v := NewValidationServer()
-	userdata, _ := json.Marshal(map[string]any{
-		"checks": []map[string]any{
-			{"kind": "no_nulls", "config": map[string]any{"field": "id"}},
-		},
+	schema := schemaWithChecks([]map[string]any{
+		{"kind": "no_nulls", "config": map[string]any{"field": "id"}},
 	})
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: "verify",
-			Userdata:  userdata,
+			NodeAlias:        "verify",
+			AttributesSchema: schema,
 		}},
 	})
 	if err != nil {
@@ -42,16 +57,14 @@ func TestValidate_ExecutorHappy(t *testing.T) {
 // for an unrecognized check kind.
 func TestValidate_ExecutorUnknownKind(t *testing.T) {
 	v := NewValidationServer()
-	userdata, _ := json.Marshal(map[string]any{
-		"checks": []map[string]any{
-			{"kind": "totally_not_a_real_check"},
-		},
+	schema := schemaWithChecks([]map[string]any{
+		{"kind": "totally_not_a_real_check"},
 	})
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: "verify",
-			Userdata:  userdata,
+			NodeAlias:        "verify",
+			AttributesSchema: schema,
 		}},
 	})
 	if err != nil {
@@ -65,15 +78,15 @@ func TestValidate_ExecutorUnknownKind(t *testing.T) {
 	}
 }
 
-// TestValidate_ExecutorMalformedJSON surfaces an invalid_userdata
+// TestValidate_ExecutorMalformedJSON surfaces an invalid_attribute
 // error and short-circuits before walking checks.
 func TestValidate_ExecutorMalformedJSON(t *testing.T) {
 	v := NewValidationServer()
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: "verify",
-			Userdata:  []byte("not json {"),
+			NodeAlias:        "verify",
+			AttributesSchema: []byte("not json {"),
 		}},
 	})
 	if err != nil {
@@ -118,12 +131,12 @@ func TestValidate_MissingExecutorContext(t *testing.T) {
 // TestValidate_EmptyChecks rejects an empty checks list.
 func TestValidate_EmptyChecks(t *testing.T) {
 	v := NewValidationServer()
-	userdata, _ := json.Marshal(map[string]any{"checks": []any{}})
+	schema := schemaWithChecks([]any{})
 	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: "verify",
-			Userdata:  userdata,
+			NodeAlias:        "verify",
+			AttributesSchema: schema,
 		}},
 	})
 	if err != nil {
@@ -131,5 +144,35 @@ func TestValidate_EmptyChecks(t *testing.T) {
 	}
 	if resp.GetValid() {
 		t.Error("expected Valid=false for empty checks list")
+	}
+}
+
+// TestValidate_SourceBoundChecks accepts a `checks` property declared
+// via `source:` instead of `default:`. Per-element shape validation
+// defers to dispatch time; the registration-time gate just verifies
+// the property is satisfied (default: or source: present).
+func TestValidate_SourceBoundChecks(t *testing.T) {
+	v := NewValidationServer()
+	schemaBytes, _ := json.Marshal(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"checks": map[string]any{
+				"type":   "array",
+				"source": "{{nodes.upstream.attribute.shape_checks}}",
+			},
+		},
+	})
+	resp, err := v.Validate(context.Background(), &genv1.ValidateRequest{
+		Role: "executor",
+		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
+			NodeAlias:        "verify",
+			AttributesSchema: schemaBytes,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !resp.GetValid() {
+		t.Errorf("expected Valid=true for source-bound checks; errors=%+v", resp.GetErrors())
 	}
 }

@@ -5,7 +5,7 @@
 // J11 end-to-end test for claude-agent's parked + corrective + resume
 // lifecycle. The test spans:
 //
-//   (a) Stub-MCP dispatch — userdata-declared MCP catalog entry
+//   (a) Stub-MCP dispatch — attributes-declared MCP catalog entry
 //       (http transport at a test server) reaches the agent.
 //   (b) Simulated rate-limit park → resume cycle. The fake CLI emits a
 //       rate-limit-shaped stderr line and exits non-zero; runAgent emits
@@ -126,10 +126,9 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       nodeType: "agent",
       model: "sonnet",
       systemPrompt: "you are helpful",
-      userPromptTemplate: "do it",
+      userPrompt: "do it",
       attributesSchema: {},
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,
@@ -178,10 +177,9 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       nodeType: "agent",
       model: "sonnet",
       systemPrompt: "system",
-      userPromptTemplate: "user prompt",
+      userPrompt: "user prompt",
       attributesSchema: {},
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,
@@ -201,7 +199,12 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
     // subprocess exits 0 without report_complete; we only assert the
     // initial J10 invocation here.)
     expect(resumeRequests[0]!.sessionId).toBe("session-from-prior-park");
-    expect(resumeRequests[0]!.prompt).toBe("user prompt");
+    // The executor appends a fixed metadata footer to the user prompt
+    // post-2026-05-21 userdata collapse (callback_token + resume
+    // metadata). Assert the prompt starts with the resolved bytes and
+    // carries the footer with the correct resume_reason.
+    expect(resumeRequests[0]!.prompt.startsWith("user prompt\n\n---\n")).toBe(true);
+    expect(resumeRequests[0]!.prompt).toContain("resume_reason: deadline_elapsed");
     // The fake exits 0 without calling report_complete; the recovery
     // path drops back through to errored.
     expect(outcome.kind).toBe("errored");
@@ -287,14 +290,13 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
       nodeType: "agent",
       model: "sonnet",
       systemPrompt: "system",
-      userPromptTemplate: "user",
+      userPrompt: "user",
       attributesSchema: {
         type: "object",
         properties: { count: { type: "integer" } },
         required: ["count"],
       },
       attributes: {},
-      templateVars: { userdata: {}, attributes: {} },
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,
@@ -352,16 +354,12 @@ describe("J11 e2e — happy-path stub MCP dispatch", () => {
       nodeType: "stub-type",
       model: "sonnet",
       systemPrompt: "sys",
-      userPromptTemplate: "u",
+      userPrompt: "u",
       attributesSchema: {},
-      attributes: {},
-      templateVars: {
-        userdata: {
-          cli: {
-            mcpServers: [{ ref: "project-tracker" }],
-          },
+      attributes: {
+        cli: {
+          mcpServers: [{ ref: "project-tracker" }],
         },
-        attributes: {},
       },
       callbackUrl: "",
       cancelToken: "",

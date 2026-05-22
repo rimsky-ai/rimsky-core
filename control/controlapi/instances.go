@@ -92,18 +92,18 @@ type createInstanceRequest struct {
 	Template    string         `json:"template"` // tag or hash; per spec §2.2.
 	InstanceKey *string        `json:"instance_key,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
-	// UserdataOverrides is a per-instance ad-hoc override blob deep-merged
-	// into per-node userdata at dispatch time. Shape:
+	// AttributeOverrides is a per-instance ad-hoc override blob deep-merged
+	// into per-node attributes at dispatch time. Shape:
 	//   {
-	//     "by_executor": {"<executor-name>": {<userdata-fragment>}},
-	//     "by_node":     {"<node-name>":     {<userdata-fragment>}}
+	//     "by_executor": {"<executor-name>": {<attribute-fragment>}},
+	//     "by_node":     {"<node-name>":     {<attribute-fragment>}}
 	//   }
 	// Both keys optional. Executor names validated against the operator-
 	// declared executors block; node names validated against the locked
 	// template's nodes. Unknown names fail with 400. Per
-	// @blessed-invariant 11 the fragment values themselves are opaque to
+	// concept:inertness the fragment values themselves are inert to
 	// rimsky — only the keys are inspected (for routing / validation).
-	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
+	AttributeOverrides map[string]any `json:"attribute_overrides,omitempty"`
 	// FrameDeliveryMode selects per-instance message-delivery semantics
 	// for `DeliverPendingMessages` at frame creation
 	// (col:rimsky_instances.frame_delivery_mode). Valid values:
@@ -121,14 +121,14 @@ type createInstanceResponse struct {
 }
 
 type instanceItem struct {
-	ID                string         `json:"id"`
-	TemplateHash      string         `json:"template_hash"`
-	InstanceKey       *string        `json:"instance_key,omitempty"`
-	Params            map[string]any `json:"params"`
-	UserdataOverrides map[string]any `json:"userdata_overrides,omitempty"`
-	FrameDeliveryMode string         `json:"frame_delivery_mode"`
-	CreatedAt         time.Time      `json:"created_at"`
-	TerminatedAt      *time.Time     `json:"terminated_at,omitempty"`
+	ID                 string         `json:"id"`
+	TemplateHash       string         `json:"template_hash"`
+	InstanceKey        *string        `json:"instance_key,omitempty"`
+	Params             map[string]any `json:"params"`
+	AttributeOverrides map[string]any `json:"attribute_overrides,omitempty"`
+	FrameDeliveryMode  string         `json:"frame_delivery_mode"`
+	CreatedAt          time.Time      `json:"created_at"`
+	TerminatedAt       *time.Time     `json:"terminated_at,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
@@ -141,8 +141,8 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 		CreatedAt:         r.CreatedAt,
 		TerminatedAt:      r.TerminatedAt,
 	}
-	if len(r.UserdataOverrides) > 0 {
-		out.UserdataOverrides = r.UserdataOverrides
+	if len(r.AttributeOverrides) > 0 {
+		out.AttributeOverrides = r.AttributeOverrides
 	}
 	return out
 }
@@ -205,7 +205,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// don't have to re-read.
 		//
 		// Dry-run is honored AFTER the FOR UPDATE state check + the
-		// userdata_overrides validation; a dry-run create against an
+		// attribute_overrides validation; a dry-run create against an
 		// undeployed template returns the same 409
 		// `template_validation` error a real call would (per spec
 		// section "Dry-run mode": "Errors from validation surface as
@@ -231,12 +231,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
 			tplSpec = row.Spec
-			// Validate userdata_overrides against the locked template's
+			// Validate attribute_overrides against the locked template's
 			// node list and the operator-declared executors block. Done
 			// inside the tx so that template state at the time of
 			// validation matches the state of the row we'll insert
 			// against.
-			if vErr := validateUserdataOverrides(body.UserdataOverrides, row.Spec.Nodes, deps.Executors); vErr != nil {
+			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, deps.Executors); vErr != nil {
 				return vErr
 			}
 			// Dry-run gate: every validation step above has succeeded
@@ -256,7 +256,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				}
 				if existing != nil {
 					existedKey = true
-					existingOverrides = existing.UserdataOverrides
+					existingOverrides = existing.AttributeOverrides
 					respOut = createInstanceResponse{
 						InstanceID:   existing.ID.String(),
 						TemplateHash: existing.TemplateHash,
@@ -271,10 +271,10 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				deliveryMode = *body.FrameDeliveryMode
 			}
 			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
-				InstanceKey:       body.InstanceKey,
-				Params:            params,
-				UserdataOverrides: body.UserdataOverrides,
-				FrameDeliveryMode: deliveryMode,
+				InstanceKey:        body.InstanceKey,
+				Params:             params,
+				AttributeOverrides: body.AttributeOverrides,
+				FrameDeliveryMode:  deliveryMode,
 			})
 			if err != nil {
 				return err
@@ -295,7 +295,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				notFoundResp(w, foundationshared.ErrTemplateNotFound.Error())
 				return
 			}
-			if errors.Is(err, errUserdataOverridesInvalid) {
+			if errors.Is(err, errAttributeOverridesInvalid) {
 				badRequest(w, err.Error())
 				return
 			}
@@ -350,13 +350,13 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			status = http.StatusOK
 		}
 		// Audit trail for ad-hoc per-instance overrides. Logs key names
-		// only (per @blessed-invariant 11 the userdata fragments
-		// themselves are opaque and could carry arbitrary data — never
+		// only (under concept:inertness the attribute fragments
+		// themselves are inert and could carry arbitrary data — never
 		// log them). Operators can confirm via the /instances/:id GET
-		// response, which echoes the full userdata_overrides verbatim.
-		if !existedKey && len(body.UserdataOverrides) > 0 {
-			byExecutor, byNode := overridePresentKeys(body.UserdataOverrides)
-			deps.Logger.Info("instance.userdata_overrides_attached",
+		// response, which echoes the full attribute_overrides verbatim.
+		if !existedKey && len(body.AttributeOverrides) > 0 {
+			byExecutor, byNode := overridePresentKeys(body.AttributeOverrides)
+			deps.Logger.Info("instance.attribute_overrides_attached",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
@@ -370,9 +370,9 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// otherwise an operator's reconcile loop would emit a noisy
 		// "discarded" warning on every retry, even though nothing was
 		// actually discarded (the values are identical).
-		if existedKey && len(body.UserdataOverrides) > 0 && !overridesEqual(body.UserdataOverrides, existingOverrides) {
-			byExecutor, byNode := overridePresentKeys(body.UserdataOverrides)
-			deps.Logger.Warn("instance.userdata_overrides_replaced_by_idempotent_match",
+		if existedKey && len(body.AttributeOverrides) > 0 && !overridesEqual(body.AttributeOverrides, existingOverrides) {
+			byExecutor, byNode := overridePresentKeys(body.AttributeOverrides)
+			deps.Logger.Warn("instance.attribute_overrides_replaced_by_idempotent_match",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
@@ -667,9 +667,9 @@ func fanOutInstanceTerminatedFromLifecycleRows(
 // so the function signature stays narrow as new per-instance fields are
 // added — cold-read style discourages 5+ positional args.
 type provisionArgs struct {
-	InstanceKey       *string
-	Params            map[string]any
-	UserdataOverrides map[string]any
+	InstanceKey        *string
+	Params             map[string]any
+	AttributeOverrides map[string]any
 	// FrameDeliveryMode is one of "serial_queue" / "coalesce". Empty
 	// string falls through to the column DEFAULT 'coalesce'.
 	FrameDeliveryMode string
@@ -696,12 +696,12 @@ func provisionInstanceTx(
 ) (createInstanceResponse, error) {
 	// Create instance row (fails with ErrInstanceKeyConflict if duplicate).
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:                uuid.New(),
-		TemplateHash:      tpl.ID,
-		InstanceKey:       args.InstanceKey,
-		Params:            args.Params,
-		UserdataOverrides: args.UserdataOverrides,
-		FrameDeliveryMode: args.FrameDeliveryMode,
+		ID:                 uuid.New(),
+		TemplateHash:       tpl.ID,
+		InstanceKey:        args.InstanceKey,
+		Params:             args.Params,
+		AttributeOverrides: args.AttributeOverrides,
+		FrameDeliveryMode:  args.FrameDeliveryMode,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

@@ -78,8 +78,9 @@ async function openFanOutChild(
     });
     // For fix-cycle / re-review children, copy iter_num and
     // assigned_finding_ids straight off the scopeData built by SplitScope.
-    // Rimsky doesn't substitute inside userdata, so these per-child
-    // values can only reach the executor via the address bytes.
+    // Rimsky doesn't substitute inside attribute `default:` values, so
+    // these per-child values can only reach the executor via the address
+    // bytes.
     const address = SourceTreeZoneAddressSchema.parse({
       kind: "source-tree-zone",
       pass_id: parsed.pass_id,

@@ -16,12 +16,12 @@ import (
 	"github.com/fallguy/rimsky/foundation/spec"
 )
 
-// testInstancesUserdataOverridesRoundTrip verifies that
-// rimsky_instances.userdata_overrides round-trips through Create + Get
+// testInstancesAttributeOverridesRoundTrip verifies that
+// rimsky_instances.attribute_overrides round-trips through Create + Get
 // on every driver. The shape is opaque to rimsky, so the test asserts
 // byte-equivalence (after JSON unmarshal canonicalisation) of the
 // nested-map payload.
-func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Database) {
+func testInstancesAttributeOverridesRoundTrip(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
@@ -52,7 +52,7 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Databas
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
-				Name: "userdata-overrides", Version: "1",
+				Name: "attribute-overrides", Version: "1",
 				FrameResolutionMode: spec.FrameResolutionSerialQueue,
 				FrameTimeoutMs:      600000,
 				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
@@ -66,7 +66,7 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Databas
 			ID:                id,
 			TemplateHash:      tmpl,
 			Params:            map[string]any{},
-			UserdataOverrides: overrides,
+			AttributeOverrides: overrides,
 		}, tx)
 		return err
 	}); err != nil {
@@ -84,14 +84,14 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Databas
 	if got == nil {
 		t.Fatalf("Get returned nil")
 	}
-	if !reflect.DeepEqual(got.UserdataOverrides, overrides) {
-		t.Fatalf("UserdataOverrides round-trip mismatch:\n got = %#v\nwant = %#v", got.UserdataOverrides, overrides)
+	if !reflect.DeepEqual(got.AttributeOverrides, overrides) {
+		t.Fatalf("AttributeOverrides round-trip mismatch:\n got = %#v\nwant = %#v", got.AttributeOverrides, overrides)
 	}
 }
 
-// testInstancesUserdataOverridesMigrationBackfill verifies that
+// testInstancesAttributeOverridesMigrationBackfill verifies that
 // rimsky_instances rows inserted WITHOUT specifying the
-// userdata_overrides column receive the column's DEFAULT '{}' (mirrors
+// attribute_overrides column receive the column's DEFAULT '{}' (mirrors
 // the case where a pre-existing row was retroactively backfilled by
 // the migration that ALTERed the table to add the column NOT NULL
 // DEFAULT '{}'). Both drivers exercise.
@@ -102,7 +102,7 @@ func testInstancesUserdataOverridesRoundTrip(t *testing.T, d persistence.Databas
 // layer default. The raw INSERT is dispatched to a driver-specific
 // helper provided by the test harness (drivers do not expose raw SQL
 // via the persistence.Database interface).
-func testInstancesUserdataOverridesMigrationBackfill(
+func testInstancesAttributeOverridesMigrationBackfill(
 	t *testing.T,
 	d persistence.Database,
 	rawExec func(t *testing.T, d persistence.Database, sql string, args ...any),
@@ -121,7 +121,7 @@ func testInstancesUserdataOverridesMigrationBackfill(
 		return store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
-				Name: "userdata-overrides-backfill", Version: "1",
+				Name: "attribute-overrides-backfill", Version: "1",
 				FrameResolutionMode: spec.FrameResolutionSerialQueue,
 				FrameTimeoutMs:      600000,
 				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
@@ -133,7 +133,7 @@ func testInstancesUserdataOverridesMigrationBackfill(
 		t.Fatalf("template insert: %v", err)
 	}
 
-	// Raw INSERT omitting the userdata_overrides column. Mirrors a
+	// Raw INSERT omitting the attribute_overrides column. Mirrors a
 	// row that was created before the migration ran. Postgres will
 	// fill in DEFAULT '{}'::jsonb at INSERT time; SQLite will fill in
 	// '{}' at INSERT time. Either way the round-trip Get below should
@@ -159,18 +159,18 @@ func testInstancesUserdataOverridesMigrationBackfill(
 	if got == nil {
 		t.Fatalf("Get returned nil")
 	}
-	if got.UserdataOverrides == nil {
-		t.Fatalf("UserdataOverrides is nil after migration backfill; want empty map")
+	if got.AttributeOverrides == nil {
+		t.Fatalf("AttributeOverrides is nil after migration backfill; want empty map")
 	}
-	if len(got.UserdataOverrides) != 0 {
-		t.Fatalf("UserdataOverrides = %#v, want empty map after migration backfill", got.UserdataOverrides)
+	if len(got.AttributeOverrides) != 0 {
+		t.Fatalf("AttributeOverrides = %#v, want empty map after migration backfill", got.AttributeOverrides)
 	}
 }
 
-// testInstancesUserdataOverridesDefaultsEmpty verifies that omitting
-// UserdataOverrides on Create persists as an empty map (not nil), so
+// testInstancesAttributeOverridesDefaultsEmpty verifies that omitting
+// AttributeOverrides on Create persists as an empty map (not nil), so
 // dispatch-time reads can deep-merge unconditionally.
-func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Database) {
+func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Database) {
 	t.Helper()
 	defer d.Close()
 	ctx := context.Background()
@@ -185,7 +185,7 @@ func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Dat
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{
 			ID: tmpl,
 			Spec: spec.TemplateSpec{
-				Name: "userdata-overrides-default", Version: "1",
+				Name: "attribute-overrides-default", Version: "1",
 				FrameResolutionMode: spec.FrameResolutionSerialQueue,
 				FrameTimeoutMs:      600000,
 				Nodes:               []spec.TemplateNodeDef{{Type: "n", Executor: "e"}},
@@ -199,7 +199,7 @@ func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Dat
 			ID:           id,
 			TemplateHash: tmpl,
 			Params:       map[string]any{},
-			// UserdataOverrides intentionally omitted.
+			// AttributeOverrides intentionally omitted.
 		}, tx)
 		return err
 	}); err != nil {
@@ -217,10 +217,10 @@ func testInstancesUserdataOverridesDefaultsEmpty(t *testing.T, d persistence.Dat
 	if got == nil {
 		t.Fatalf("Get returned nil")
 	}
-	if got.UserdataOverrides == nil {
-		t.Fatalf("UserdataOverrides is nil; want empty map")
+	if got.AttributeOverrides == nil {
+		t.Fatalf("AttributeOverrides is nil; want empty map")
 	}
-	if len(got.UserdataOverrides) != 0 {
-		t.Fatalf("UserdataOverrides = %#v, want empty", got.UserdataOverrides)
+	if len(got.AttributeOverrides) != 0 {
+		t.Fatalf("AttributeOverrides = %#v, want empty", got.AttributeOverrides)
 	}
 }

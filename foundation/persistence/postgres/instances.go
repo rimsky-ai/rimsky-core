@@ -26,7 +26,7 @@ import (
 // identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, userdata_overrides, frame_delivery_mode, created_at, terminated_at`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at`
 
 // Create inserts a new rimsky_instances row. The caller supplies a
 // pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
@@ -40,12 +40,12 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal params: %w", err)
 	}
-	if in.UserdataOverrides == nil {
-		in.UserdataOverrides = map[string]any{}
+	if in.AttributeOverrides == nil {
+		in.AttributeOverrides = map[string]any{}
 	}
-	overridesBytes, err := json.Marshal(in.UserdataOverrides)
+	overridesBytes, err := json.Marshal(in.AttributeOverrides)
 	if err != nil {
-		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal userdata_overrides: %w", err)
+		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal attribute_overrides: %w", err)
 	}
 	if in.ID == (foundationshared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
@@ -60,7 +60,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		deliveryMode = in.FrameDeliveryMode
 	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, userdata_overrides, frame_delivery_mode)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode)
 		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'))
 		 RETURNING `+instanceCols,
 		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode,
@@ -327,7 +327,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	ov := map[string]any{}
 	if len(overrides) > 0 {
 		if err := json.Unmarshal(overrides, &ov); err != nil {
-			return persistence.InstanceRow{}, fmt.Errorf("unmarshal userdata_overrides: %w", err)
+			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides: %w", err)
 		}
 	}
 	return persistence.InstanceRow{
@@ -335,7 +335,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		TemplateHash:      templateHash,
 		InstanceKey:       instanceKey,
 		Params:            m,
-		UserdataOverrides: ov,
+		AttributeOverrides: ov,
 		FrameDeliveryMode: deliveryMode,
 		CreatedAt:         createdAt,
 		TerminatedAt:      terminatedAt,

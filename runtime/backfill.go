@@ -72,7 +72,7 @@ func CreateBackfill(
 	opID := shared.UUID(uuid.New())
 	msgID := shared.UUID(uuid.New())
 	// The payload carries the override + the op id + the reason. Rimsky
-	// does not interpret these bytes (`@blessed-invariant 11/21`); the
+	// does not interpret these bytes (`@blessed-invariant 21`); the
 	// fan-out node's `partition_request` substitution reads named
 	// fields by walkPath only.
 	payload := map[string]any{

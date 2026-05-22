@@ -9,8 +9,8 @@ describe("loadPrompts", () => {
     const r = loadPrompts(
       {
         mission: "review-zone",
-        systemPromptFromUserdata: "  SYS  ",
-        userPromptTemplateFromUserdata: "  USR  ",
+        systemPromptFromAttributes: "  SYS  ",
+        userPromptTemplateFromAttributes: "  USR  ",
       },
       logger,
     );
@@ -22,7 +22,7 @@ describe("loadPrompts", () => {
     const r = loadPrompts(
       {
         mission: "fix-cycle",
-        userPromptTemplateFromUserdata: "USR",
+        userPromptTemplateFromAttributes: "USR",
       },
       logger,
     );
@@ -36,7 +36,7 @@ describe("loadPrompts", () => {
     expect(r.userPrompt.length).toBeGreaterThan(0);
   });
 
-  it("throws UnknownMissionError on unknown mission with no userdata", () => {
+  it("throws UnknownMissionError on unknown mission with no attributes", () => {
     expect(() => loadPrompts({ mission: "made-up" }, logger)).toThrow(UnknownMissionError);
   });
 });

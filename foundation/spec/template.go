@@ -45,40 +45,43 @@ type TemplateSpec struct {
 	ParamsSchema map[string]any  `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
 	ParamsRedact []string        `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
-	// Defaults holds template-author userdata baselines, merged
-	// underneath per-node userdata and per-instance overrides per
-	// concept:userdata's documented order. See `TemplateDefaults` for
-	// the shape; absent means "no template-author defaults".
+	// Defaults holds template-author attribute baselines (L1 in the
+	// attribute override merge), merged into per-node effective schemas
+	// at registration. See `TemplateDefaults` for the shape; absent
+	// means "no template-author defaults".
 	//
-	// @concept: userdata
+	// @concept: attribute
 	Defaults *TemplateDefaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
 }
 
-// TemplateDefaults declares template-author baselines applied
-// underneath per-node userdata and per-instance overrides. See
-// concept:userdata's per-instance-overrides section for the
-// four-layer merge order:
+// TemplateDefaults declares template-author baselines applied at
+// template registration into per-node effective attribute schemas.
+// See concept:attribute for the four-layer merge order:
 //
-//	template.defaults.userdata.by_executor[<executor>]
-//	  → node.userdata
-//	  → instance.userdata_overrides.by_executor[<executor>]
-//	  → instance.userdata_overrides.by_node[<node>]
-//
-// @blessed-invariant 11: validation inspects only routing keys
-// (`by_executor` plus executor names), never fragment values.
-//
-// @concept: userdata
+//	L1: template.defaults.attributes.by_executor[<executor>]
+//	      → folded into the effective schema's `default:` values at registration
+//	L2: node.attributes.schema
+//	      → per-node declaration; overrides L1
+//	L3: instance.attribute_overrides.by_executor[<executor>]
+//	      → operator overrides at dispatch
+//	L4: instance.attribute_overrides.by_node[<node>]
+//	      → most specific; wins over L3
 type TemplateDefaults struct {
-	Userdata *TemplateUserdataDefaults `yaml:"userdata,omitempty" json:"userdata,omitempty"`
+	Attributes *TemplateAttributeDefaults `yaml:"attributes,omitempty" json:"attributes,omitempty"`
 }
 
-// TemplateUserdataDefaults carries per-executor userdata baselines.
-// Only `by_executor` is supported; per-node defaults are expressed by
-// declaring `userdata:` on the node itself (declaring a `by_node`
-// defaults layer would be redundant with that).
+// TemplateAttributeDefaults carries per-executor attribute-value
+// baselines. These contribute `default:` values to the effective
+// schema at template registration (L1 in the override merge); per-node
+// declarations (L2) override these where they conflict.
 //
-// @concept: userdata
-type TemplateUserdataDefaults struct {
+// Only `by_executor` is supported; per-node defaults are expressed by
+// declaring `default:` on the node's attribute schema property
+// directly (declaring a `by_node` defaults layer would be redundant
+// with that).
+//
+// @concept: attribute
+type TemplateAttributeDefaults struct {
 	ByExecutor map[string]map[string]any `yaml:"by_executor,omitempty" json:"by_executor,omitempty"`
 }
 
@@ -111,7 +114,6 @@ type TemplateNodeDef struct {
 	// @concept: node
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 
-	Userdata   map[string]any             `yaml:"userdata,omitempty" json:"userdata,omitempty"`
 	Stores     []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
 	Locks      []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
 	Attributes *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
@@ -189,7 +191,7 @@ type TemplateNodeDef struct {
 	// IsSubgraphEntryAbsorbed is set by the canonicalizer when this
 	// node is a sub-graph caller (has a non-empty Delegate). Its
 	// `rimsky_nodes` row carries the absorbed entry node's executor +
-	// any sub-graph-internal claims/holds/userdata declared on the
+	// any sub-graph-internal claims/holds/attributes declared on the
 	// entry, merged with what the calling node declared externally.
 	// At runtime the supervisor consults this marker on the success
 	// branch of `applyTerminalComplete` to route through the sub-graph

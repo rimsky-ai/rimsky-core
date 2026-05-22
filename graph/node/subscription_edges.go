@@ -293,6 +293,15 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 // `graph/node/template_validator.go::checkAttributeSource` so every
 // directive accepted at registration also produces an inverse-edge entry.
 func parseSubstitutionDirective(body string) (substitutionRef, bool) {
+	// Strip the optional fallback `| <literal>` and the optional `?`
+	// lenient marker so the source-kind dispatch below sees a clean
+	// directive body. Per the 2026-05-21 userdata-collapse grammar
+	// relaxation; the validator already rejected `?` + `|` combined.
+	body = strings.TrimSpace(body)
+	if idx := strings.Index(body, "|"); idx >= 0 {
+		body = strings.TrimSpace(body[:idx])
+	}
+	body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
 	parts := strings.Split(body, ".")
 	if len(parts) < 3 || parts[0] != "nodes" {
 		return substitutionRef{}, false

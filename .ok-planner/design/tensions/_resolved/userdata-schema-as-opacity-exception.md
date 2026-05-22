@@ -1,7 +1,7 @@
 ---
 tension: userdata-schema-as-opacity-exception
 category: unspecified
-status: open
+status: resolved
 affects:
   - opacity
   - userdata
@@ -31,6 +31,10 @@ A future contributor adding "validate userdata against `expected_size` field" mi
 - Add a sub-invariant under `@blessed-invariant 11` explicitly carving out structural schema validation.
 - Move the validator to the executor side (rimsky forwards bytes; executor validates against its own schema).
 - Document the carve-out in `docs/concepts/userdata.md`.
+
+## Resolution
+
+2026-05-21 — Resolved by userdata collapse. `concept:userdata` retires; `@blessed-invariant 11` retires. The opacity-exception muddiness was specifically about userdata-schema validation being a sanctioned but unnamed exception to the opacity invariant. With userdata gone, the exception is gone. The schema-validation surface that remains (attribute schema validation against the executor's `expected_attributes_schema`) is part of `concept:attribute`'s validation gate discipline, not an exception. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
 
 ## Evidence
 

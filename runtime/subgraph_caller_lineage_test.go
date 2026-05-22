@@ -184,12 +184,12 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		NodeType:   "outer-caller",
 		// Sub-graph callers have no executor (delegate + executor are
 		// mutually exclusive at the template layer); leave empty.
-		Executor:       "",
-		FrameID:        frameID,
-		NodeDef:        nodeDef,
-		InstanceParams: inst.Params,
-		MergedUserdata: map[string]any{"merged": true},
-		TemplateHash:   tmplHash,
+		Executor:         "",
+		FrameID:          frameID,
+		NodeDef:          nodeDef,
+		InstanceParams:   inst.Params,
+		MergedAttributes: map[string]any{"merged": true},
+		TemplateHash:     tmplHash,
 	}
 
 	args := RunArgs{
@@ -235,7 +235,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	require.Empty(t, rec.ExecutorName)
 	require.True(t, rec.Changed, "changed=true threaded through from terminalEvent")
 	require.NotEmpty(t, rec.ParamsSnapshotHash, "params snapshot hash must be populated from acq.InstanceParams")
-	require.NotEmpty(t, rec.UserdataHash, "userdata hash must be populated from acq.MergedUserdata")
+	require.NotEmpty(t, rec.AttributesHash, "attributes hash must be populated from acq.MergedAttributes")
 	require.Equal(t, tmplHash, rec.TemplateHash, "template_hash must be threaded through from acq.TemplateHash")
 	// Root caller: ParentRunID must be empty + the JSON key dropped.
 	require.Empty(t, rec.ParentRunID)

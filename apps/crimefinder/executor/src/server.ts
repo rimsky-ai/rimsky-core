@@ -95,7 +95,7 @@ function unwrapStores(raw: Record<string, { address?: Uint8Array | Buffer }>): D
   return out;
 }
 
-function unwrapUserdata(raw: unknown): Record<string, unknown> {
+function unwrapAttributes(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== "object") return {};
   // proto-loader keepCase decodes google.protobuf.Struct as { fields: { k: Value } }.
   // Otherwise it's a plain record we can pass through.
@@ -151,7 +151,7 @@ export async function startExecutorGrpcServer(
         dispatch_id?: string;
         instance_id?: string;
         stores?: Record<string, { address?: Uint8Array | Buffer }>;
-        userdata?: unknown;
+        attributes?: unknown;
         callback_url?: string;
       };
       const ackId = randomUUID();
@@ -175,11 +175,15 @@ export async function startExecutorGrpcServer(
       void (async () => {
         try {
           const stores = unwrapStores(req.stores ?? {});
-          const userdata = unwrapUserdata(req.userdata);
+          // Post-2026-05-21 userdata collapse: the unified attribute
+          // bag carries what used to live in `userdata` plus
+          // rimsky-resolved inputs. Wire field is `attributes`;
+          // executor-internal field shares the same name.
+          const attributes = unwrapAttributes(req.attributes);
           const outcome = await runAgent({
             dispatchId: req.dispatch_id ?? runId,
             runId,
-            userdata,
+            attributes,
             stores,
             callbackUrl: req.callback_url ?? "",
             silenceTimeoutMs: cfg.silenceTimeoutMs,
@@ -212,8 +216,8 @@ export async function startExecutorGrpcServer(
   });
 
   // Minimal ExecutorObservability so the supervisor's startup handshake
-  // works. The userdata_schema + declared_events come from a single
-  // module (capabilities.ts / userdata-schema.ts) so changes to either
+  // works. The expected_attributes_schema + declared_events come from a single
+  // module (capabilities.ts / expected-attributes-schema.ts) so changes to either
   // stay in lockstep.
   const caps = buildCapabilitiesResponse();
   server.addService(pkg.rimsky.v1.ExecutorObservability.service, {
@@ -223,7 +227,7 @@ export async function startExecutorGrpcServer(
         supports_trace_stream: false,
         retention_after_terminal_seconds: 3600,
         http_bridge_url: caps.http_bridge_url,
-        userdata_schema: Buffer.from(caps.userdata_schema),
+        expected_attributes_schema: Buffer.from(caps.expected_attributes_schema),
         declared_events: caps.declared_events,
       });
     }) as grpc.handleUnaryCall<unknown, unknown>,

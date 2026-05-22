@@ -150,7 +150,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			"error_class":          rec.ErrorClass,
 			"template_hash":        rec.TemplateHash,
 			"params_snapshot_hash": rec.ParamsSnapshotHash,
-			"userdata_hash":        rec.UserdataHash,
+			"attributes_hash":      rec.AttributesHash,
 			"executor_name":        rec.ExecutorName,
 			"executor_version":     rec.ExecutorVersion,
 			"frame_trigger_kind":   rec.FrameTriggerKind,

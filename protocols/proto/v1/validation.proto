@@ -37,12 +37,16 @@ message ValidateRequest {
 }
 
 // ExecutorContext carries the executor-side binding rimsky sees at
-// template registration: the node's userdata, the resolved
-// attributes schema, and the node-local claim aliases the executor
-// will see at dispatch.
+// template registration: the merged effective attribute schema for the
+// node and the node-local claim aliases the executor will see at
+// dispatch.
 message ExecutorContext {
   string node_alias        = 1;
-  bytes  userdata          = 2;
+  // Reserved (was: bytes userdata = 2). Userdata retired in the
+  // 2026-05-21 collapse; the pipeline now operates against the merged
+  // effective attribute schema carried in `attributes_schema` below.
+  reserved 2;
+  reserved "userdata";
   bytes  attributes_schema = 3;
   // claim_aliases lists the per-node aliases (claims + holds) the
   // executor will receive in ExecuteRequest.stores at dispatch.
@@ -102,6 +106,6 @@ message ValidationFinding {
   string class   = 1;
   string message = 2;
   // path is a JSON-pointer-shaped breadcrumb into the request context
-  // (e.g. "/executor/userdata/some_field").
+  // (e.g. "/executor/attributes/some_field").
   string path    = 3;
 }

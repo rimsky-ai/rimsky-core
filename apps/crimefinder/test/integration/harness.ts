@@ -23,11 +23,12 @@
  *     entry points exist.
  *
  * Stub-mode + no Claude CLI: the executor binary runs with
- * `CRIMEFINDER_EXECUTOR_STUB_MODE=1` and consults `userdata.stub_outcome`
- * for canned outcomes. The harness threads stub outcomes through the
- * `params.*` (which the template substitutes into userdata) when the
- * template wiring permits; otherwise each fan-out child receives the
- * default-success stub outcome.
+ * `CRIMEFINDER_EXECUTOR_STUB_MODE=1` and consults
+ * `attributes.stub_outcome` for canned outcomes. The harness threads
+ * stub outcomes through `params.*` (which the template substitutes into
+ * source-bound attribute properties) when the template wiring permits;
+ * otherwise each fan-out child receives the default-success stub
+ * outcome.
  *
  * @source: test/scenarios/harness.ts (in-process; this is the
  *          subprocess-orchestrating cousin).

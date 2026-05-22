@@ -92,14 +92,13 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
       node_id: "n-1",
       instance_id: "i-1",
       node_type: "stub-agent",
-      userdata: {
+      attributes: {
         fields: {
           model: { string_value: "sonnet" },
           system_prompt: { string_value: "sys" },
-          user_prompt_template: { string_value: "usr" },
+          user_prompt: { string_value: "usr" },
         },
       },
-      attributes: { fields: {} },
       attributes_schema: { fields: {} },
       stores: {},
       callback_url: fakeCallbackUrl,
@@ -209,14 +208,13 @@ describe("gRPC Execute observability ledger", () => {
       instance_id: "i-obs",
       node_type: "stub-agent",
       dispatch_id: dispatchId,
-      userdata: {
+      attributes: {
         fields: {
           model: { string_value: "sonnet" },
           system_prompt: { string_value: "sys" },
-          user_prompt_template: { string_value: "usr" },
+          user_prompt: { string_value: "usr" },
         },
       },
-      attributes: { fields: {} },
       attributes_schema: { fields: {} },
       stores: {},
       callback_url: "http://supervisor.invalid/cb",
@@ -332,14 +330,13 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       node_id: "n-e2e",
       instance_id: "i-e2e",
       node_type: "stub-agent",
-      userdata: {
+      attributes: {
         fields: {
           model: { string_value: "sonnet" },
           system_prompt: { string_value: "sys" },
-          user_prompt_template: { string_value: "usr" },
+          user_prompt: { string_value: "usr" },
         },
       },
-      attributes: { fields: {} },
       attributes_schema: { fields: {} },
       stores: {},
       callback_url: supervisorBase,
@@ -387,7 +384,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
 // Round-trip the production gRPC wire shape through unwrapStruct.
 // proto-loader runs with `keepCase: true` + `oneofs: true` (see
 // proto-loader.ts) which produces `{kind: "string_value", string_value: "x"}`
-// per Value. The dispatch path reads `userdata.model` from this shape;
+// per Value. The dispatch path reads `attributes.model` from this shape;
 // the fix in unwrapStructValue accepts both the kind-set production form
 // and the kind-omitted older fixture form. Both must be covered.
 describe("unwrapStruct production wire shape (kind-set discriminator)", () => {

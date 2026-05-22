@@ -64,10 +64,17 @@ graphs:
           claim: source-tree
           partition_request: '{"kind":"source-tree-partition","pass_id":"{{nodes.open-pass.attribute.pass_id}}","ignore_patterns_from_config":true}'
           error_policy: { kind: best_effort }
-        userdata:
-          mission: "review-zone"
-          system_prompt: { source_file: prompts/review-zone.system.md }
-          user_prompt_template: { source_file: prompts/review-zone.user.md }
+        # Post-2026-05-21 userdata collapse: per-mission executor config
+        # rides on the unified attribute schema. Each property's
+        # `default:` value is the static fallback the executor sees
+        # unless an instance override (attribute_overrides) replaces it.
+        attributes:
+          schema:
+            type: object
+            properties:
+              mission: { type: string, default: "review-zone" }
+              system_prompt: { type: string, default: { source_file: prompts/review-zone.system.md } }
+              user_prompt_template: { type: string, default: { source_file: prompts/review-zone.user.md } }
         error_types:
           silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
           tool_error:      { policy: [{ action: retry, count: 2 }, { action: pass }] }
@@ -105,10 +112,13 @@ graphs:
           claim: dedup-grouping
           partition_request: '{"kind":"dedup-partition","pass_id":"{{nodes.open-pass.attribute.pass_id}}","file_groups":{{nodes.aggregate-initial.attribute.dedup_file_groups}}}'
           error_policy: { kind: best_effort }
-        userdata:
-          mission: "dedup"
-          system_prompt: { source_file: prompts/dedup.system.md }
-          user_prompt_template: { source_file: prompts/dedup.user.md }
+        attributes:
+          schema:
+            type: object
+            properties:
+              mission: { type: string, default: "dedup" }
+              system_prompt: { type: string, default: { source_file: prompts/dedup.system.md } }
+              user_prompt_template: { type: string, default: { source_file: prompts/dedup.user.md } }
         error_types:
           silence_timeout: { policy: [{ action: pass }] }
           tool_error:      { policy: [{ action: retry, count: 1 }, { action: pass }] }
@@ -237,15 +247,18 @@ graphs:
           claim: fix-partition
           partition_request: '{"kind":"fix-partition","pass_id":"{{nodes.iter-guard.attribute.pass_id}}","iter_num":{{nodes.iter-guard.attribute.iter_num}},"affected_zones":{{nodes.iter-guard.attribute.affected_zones}}}'
           error_policy: { kind: best_effort }
-        userdata:
-          mission: "fix-cycle"
-          system_prompt: { source_file: prompts/fix.system.md }
-          user_prompt_template: { source_file: prompts/fix.user.md }
-          # iter_num and per-zone assigned_finding_ids are NOT carried in
-          # userdata. Rimsky doesn't substitute `{{...}}` inside userdata
-          # (see runtime/userdata_overrides.go deep-merge-only; spec
-          # invariant 11). They ride on the source-tree-zone address bytes
-          # the producer's SplitScope → openFanOutChild populates per child.
+        # iter_num and per-zone assigned_finding_ids are NOT carried in
+        # attribute schema property defaults. Static defaults are inert
+        # in rimsky (no `{{...}}` substitution; see concept:inertness).
+        # They ride on the source-tree-zone address bytes the producer's
+        # SplitScope → openFanOutChild populates per child.
+        attributes:
+          schema:
+            type: object
+            properties:
+              mission: { type: string, default: "fix-cycle" }
+              system_prompt: { type: string, default: { source_file: prompts/fix.system.md } }
+              user_prompt_template: { type: string, default: { source_file: prompts/fix.user.md } }
         error_types:
           silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
           tests_failed:    { policy: [{ action: pass }] }
@@ -264,13 +277,16 @@ graphs:
           claim: re-review-partition
           partition_request: '{"kind":"re-review-partition","pass_id":"{{nodes.iter-guard.attribute.pass_id}}","iter_num":{{nodes.iter-guard.attribute.iter_num}},"affected_zones":{{nodes.iter-guard.attribute.affected_zones}}}'
           error_policy: { kind: best_effort }
-        userdata:
-          mission: "re-review"
-          system_prompt: { source_file: prompts/re-review.system.md }
-          user_prompt_template: { source_file: prompts/re-review.user.md }
-          # iter_num rides on the source-tree-zone address bytes (see
-          # fix-fan-out comment above) — userdata can't carry per-child
-          # `{{...}}` substitutions in rimsky.
+        # iter_num rides on the source-tree-zone address bytes (see
+        # fix-fan-out comment above) — attribute defaults can't carry
+        # per-child `{{...}}` substitutions in rimsky.
+        attributes:
+          schema:
+            type: object
+            properties:
+              mission: { type: string, default: "re-review" }
+              system_prompt: { type: string, default: { source_file: prompts/re-review.system.md } }
+              user_prompt_template: { type: string, default: { source_file: prompts/re-review.user.md } }
         subscribes:
           - { node: fix-fan-out, on: state }
         error_types:

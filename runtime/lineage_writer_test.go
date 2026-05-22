@@ -433,7 +433,7 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"TemplateHash", "template_hash", true},
 		{"TemplateNodeAlias", "template_node_alias", true},
 		{"ParamsSnapshotHash", "params_snapshot_hash", true},
-		{"UserdataHash", "userdata_hash", true},
+		{"AttributesHash", "attributes_hash", true},
 		{"ScopeDataHash", "scope_data_hash", true},
 		{"State", "state", false},
 		{"LastOutcome", "last_outcome", false},

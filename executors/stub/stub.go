@@ -102,9 +102,10 @@ type Stub struct {
 }
 
 // ObservedRequest captures the dispatch-time fields a test may want to assert
-// against. Per spec §12.1 the executor receives `attributes` (rimsky-populated
-// per-run typed attributes) and opaque `userdata`; the stub records both
-// per call so tests can verify the supervisor wired them through correctly.
+// against. Under the 2026-05-21 userdata collapse the executor receives a
+// single unified attribute bag (source-resolved + static-default + post-
+// merge L3/L4 overrides) — recorded here per call so tests can verify the
+// supervisor wired the bag through correctly.
 //
 // CallbackURL and CancelToken are recorded so scenario tests exercising
 // the §12.5 incremental-writeback path can POST per-field deltas back to
@@ -114,7 +115,6 @@ type ObservedRequest struct {
 	InstanceID  string
 	NodeType    string
 	Attributes  map[string]any
-	Userdata    map[string]any
 	CallbackURL string
 	CancelToken string
 }
@@ -244,9 +244,9 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 }
 
 // Execute implements genv1.ExecutorServer by streaming scripted events.
-// Records the incoming request (id/type/attributes/userdata) for test
-// inspection. If stub mode is enabled, short-circuits to an immediate
-// StreamClose with Success outcome keyed by node_type via StubAttributesFor.
+// Records the incoming request (id/type/attributes) for test inspection.
+// If stub mode is enabled, short-circuits to an immediate StreamClose
+// with Success outcome keyed by node_type via StubAttributesFor.
 func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	s.mu.Lock()
 	s.observed = append(s.observed, ObservedRequest{
@@ -254,7 +254,6 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		InstanceID:  req.GetInstanceId(),
 		NodeType:    req.GetNodeType(),
 		Attributes:  req.GetAttributes().AsMap(),
-		Userdata:    req.GetUserdata().AsMap(),
 		CallbackURL: req.GetCallbackUrl(),
 		CancelToken: req.GetCancelToken(),
 	})
@@ -264,18 +263,18 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 
 	if stubMode {
 		// Park-emission probe path: rimsky-executor-conformance --check-park
-		// drives stub mode with userdata `{probe_park: true,
+		// drives stub mode with attributes `{probe_park: true,
 		// park_reason: "<storage-form>", park_reason_label: "..."}`. The
 		// probe asserts the executor's Park.reason taxonomy + reason_label
 		// requirement (when reason = OTHER, reason_label must be set). The
 		// stub honors the probe by emitting a Park with the requested
 		// fields verbatim — production executors are expected to do the
 		// same. Per plan §M5.
-		userdata := req.GetUserdata().AsMap()
-		if probe, _ := userdata["probe_park"].(bool); probe {
-			reasonStr, _ := userdata["park_reason"].(string)
-			reasonLabel, _ := userdata["park_reason_label"].(string)
-			reasonNote, _ := userdata["park_reason_note"].(string)
+		attrs := req.GetAttributes().AsMap()
+		if probe, _ := attrs["probe_park"].(bool); probe {
+			reasonStr, _ := attrs["park_reason"].(string)
+			reasonLabel, _ := attrs["park_reason_label"].(string)
+			reasonNote, _ := attrs["park_reason_note"].(string)
 			park := &genv1.Park{
 				Reason:      parkReasonFromStorageForm(reasonStr),
 				ReasonLabel: reasonLabel,

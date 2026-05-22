@@ -125,7 +125,7 @@ func TestExecutor_AllChecksPass(t *testing.T) {
 		},
 	})
 	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Userdata: ud}, send); err != nil {
+	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
 	if len(*out) != 1 {
@@ -155,7 +155,7 @@ func TestExecutor_RowCountFails(t *testing.T) {
 		},
 	})
 	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Userdata: ud}, send); err != nil {
+	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
 	sc := (*out)[0].GetStreamClose()
@@ -183,7 +183,7 @@ func TestExecutor_PKUniqueFails(t *testing.T) {
 		},
 	})
 	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Userdata: ud}, send); err != nil {
+	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
 	sc := (*out)[0].GetStreamClose()
@@ -212,7 +212,7 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 		},
 	})
 	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Userdata: ud}, send); err != nil {
+	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
 	sc := (*out)[0].GetStreamClose()
@@ -221,7 +221,7 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 	}
 }
 
-func TestExecutor_InvalidUserdata(t *testing.T) {
+func TestExecutor_InvalidAttributes(t *testing.T) {
 	_, ex := bootExecutor(t)
 	tests := map[string]map[string]any{
 		"missing schema": {"table": "items", "checks": []any{
@@ -234,7 +234,7 @@ func TestExecutor_InvalidUserdata(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ud, _ := structpb.NewStruct(in)
 			send, out := captureSend()
-			if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Userdata: ud}, send); err != nil {
+			if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
 				t.Fatalf("executeCore: %v", err)
 			}
 			sc := (*out)[0].GetStreamClose()
@@ -242,8 +242,8 @@ func TestExecutor_InvalidUserdata(t *testing.T) {
 			if errOutcome == nil {
 				t.Fatalf("expected Error")
 			}
-			if errOutcome.GetErrorClass() != "invalid_userdata" {
-				t.Errorf("error_class: %q want invalid_userdata", errOutcome.GetErrorClass())
+			if errOutcome.GetErrorClass() != "invalid_attribute" {
+				t.Errorf("error_class: %q want invalid_attribute", errOutcome.GetErrorClass())
 			}
 		})
 	}

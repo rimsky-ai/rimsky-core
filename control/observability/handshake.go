@@ -68,12 +68,12 @@ func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCap
 	if r == nil {
 		return nil
 	}
-	// Defensive copy of the userdata schema bytes: r.GetUserdataSchema()
+	// Defensive copy of the expected_attributes_schema bytes: r.GetExpectedAttributesSchema()
 	// returns the proto's underlying slice, which the gRPC layer may
 	// reuse or mutate after this call. Cloning here gives the cache a
 	// stable snapshot that survives the proto's lifetime.
 	var schema []byte
-	if rs := r.GetUserdataSchema(); len(rs) > 0 {
+	if rs := r.GetExpectedAttributesSchema(); len(rs) > 0 {
 		schema = append([]byte(nil), rs...)
 	}
 	return &ObservabilityCapabilities{
@@ -82,7 +82,7 @@ func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCap
 		RetentionAfterTerminalSeconds: r.GetRetentionAfterTerminalSeconds(),
 		CustomUI:                      customUIFromProto(r.GetCustomUi()),
 		HTTPBridgeURL:                 r.GetHttpBridgeUrl(),
-		UserdataSchema:                schema,
+		ExpectedAttributesSchema:      schema,
 		DeclaredEvents:                append([]string(nil), r.GetDeclaredEvents()...),
 	}
 }

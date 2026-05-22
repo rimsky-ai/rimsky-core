@@ -9,7 +9,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `api-key` (aliases: bearer token) — High-entropy Bearer-token credential (`rk_<44-char-base64url>`); SHA-256-hashed at rest; per-key JSONB permission grant; lifecycle of mint / rotate / revoke / sweep.
 - `asset` — Documented compound: a claim against a `DataProcessing`-capable producer with `lifetime: durable`. Not a new primitive; surfaced via `/instances/{id}/assets/...`.
 - `atomic-staging` — Producer-side stage-then-swap pattern composing subgraph-lifetime claims, co-holding verifier nodes, and aggregation.
-- `attribute` — Typed JSON-Schema inputs and outputs of a node, with `{{...}}` substitution at dispatch and validation at dispatch and commit.
+- `attribute` — Typed inputs, outputs, and configuration of a node, declared by JSON Schema. Each property is source-bound (rimsky substitution), static-default (resolved at registration), or executor-written (populated at commit). Persisted per-run; overrides via `attribute_overrides`.
 - `auto-terminal` (aliases: held-claim resolution) — Mechanism that fires `Commit` or `Abandon` exactly once at the end of a held claim's holding-subgraph, then promotes the row to `state = 'committed'`/`'abandoned'` for forensic preservation.
 - `backfill` — Invalidate-kind message with a `partition_request_override` payload, targeting a fan-out node; surfaced via `/instances/{id}/backfills`.
 - `blob-backend` — Pluggable byte-stream backend for spilled attribute values, parked payloads, and named-event payloads (inline, pg-largeobject, filesystem, memory).
@@ -34,8 +34,8 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `fan-out` — Node-level decision to partition a held claim into sub-claims via `ClaimProducer.SplitScope`, dispatching one work unit per sub-claim.
 - `frame` (aliases: cascade-frame) — One cascade resolution, tracked as a row in `rimsky_frames` and stamped on every dispatched run via `frame_id`. Message delivery is also a frame-creation site.
 - `graph` — Unit of node connectivity; uniform top-level declaration in `graphs:`. The reserved name `main` is the top-level graph.
-- `inertness` (aliases: opacity (legacy), inert bytes) — Cross-cutting discipline making six byte streams (userdata, claim scope, claim payload, blob content, named-event payload, message payload) inert in rimsky; two sub-disciplines: byte-opaque inertness and structural inertness.
-- `instance` — One live deployment of a template, identified by UUID, bound to a `template_hash`, carrying `params` and optional `userdata_overrides`.
+- `inertness` (aliases: opacity (legacy), inert bytes) — Cross-cutting discipline making five byte streams (claim scope, claim payload, blob content, named-event payload, message payload) inert in rimsky; two sub-disciplines: byte-opaque inertness and structural inertness.
+- `instance` — One live deployment of a template, identified by UUID, bound to a `template_hash`, carrying `params` and optional `attribute_overrides`.
 - `invalidate` — Sole graph-level message that marks a node `stale`. Post-2026-05-15: one `kind` of message (the V1 kind).
 - `last-outcome` — TEXT column on `rimsky_node_runs` carrying one of fresh_changed, fresh_unchanged, passed, pure_cascade, failed; gates cascade firing.
 - `lifecycle-handler` (aliases: reactive handler) — Per-node template declarations that route executor and acquisition events into resolve+invalidate actions across three slots.
@@ -69,8 +69,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `template` (aliases: canonical-spec) — Static artifact a consumer registers, keyed by `sha256-<hex>` over the JCS-canonicalized spec bytes, with a four-state lifecycle.
 - `terminal-resolution` (aliases: executor-terminal-spine) — End-to-end spine that takes one executor terminal and decides last_outcome, dispatch row fate, producer verb, and claim-handle release.
 - `transition-reason` — Audit-vocabulary enum carried on every node-state transition (`ReasonHandlerComplete`, `ReasonPureCascade`, `ReasonSubGraphInternalCascadeFired`, etc.); sibling to `last_outcome` for the cascade-fire predicate.
-- `userdata` — Inert per-node JSON blob attached by the template author and consumed verbatim by the executor; never substituted or inspected by rimsky, with template-level defaults and per-instance overrides merged across four layers (template defaults → node userdata → per-executor overrides → per-node overrides).
-- `validation` — Cross-cutting service protocol for registration-time validation of node userdata against producer / executor / sensor / lifecycle-subscriber surfaces, per a `role` discriminator.
+- `validation` — Cross-cutting service protocol for registration-time validation of node attributes against producer / executor / sensor / lifecycle-subscriber surfaces, per a `role` discriminator.
 - `wait-set` — Per-frame ledger (`rimsky_wait_set`) that records receiver→sender gating from cascade walks; settled-state drain marks rows (`drained_at = NOW()`) rather than deleting them; eligibility predicate is "no undrained rows for this receiver in the current frame." Drained rows remain queryable for the substitution-context builder.
 - `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal scope.
 
@@ -82,3 +81,4 @@ See `concepts/_retired/` for the full retirement notes.
 - `on-event-handler` — `on_event:` map retired in favor of `subscribes: [{node: X, on: event, name: Y}]`.
 - `quality-rule` — replaced by the verifier-executor pattern; no successor concept (pattern is documentation).
 - `schedule` — replaced by the bundled `sensor-cron`; cron is a sensor kind under `concept:sensor` + `concept:message`.
+- `userdata` — collapsed into `concept:attribute`; per-node executor configuration now uses `default:` properties on the unified attribute schema, with overrides via `attribute_overrides`.

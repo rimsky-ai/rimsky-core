@@ -56,17 +56,16 @@ type resumeMetadata struct {
 // paths it must add explicit synchronization (or pass copies of the
 // fields it needs) before sharing the pointer between goroutines.
 //
-// Per blessed-invariant 11 (userdata is opaque) and the cold-read
-// "Explicit Code" rule, most fields here are populated inside the
-// acquisition tx and remain immutable for the lifetime of the
-// acquisition. A small, documented set of fields is enriched at
-// dispatch time on the same goroutine that owns the acquisition;
-// today that is just `MergedUserdata` (filled by `buildExecuteRequest`
-// in `runner_dispatch.go` once the per-instance overrides have been
-// merged against the template userdata). The mutation is safe because
-// the dispatch path runs serially after acquisition completes on the
-// same goroutine that holds the acquisition value; no second
-// goroutine ever observes the field.
+// Per the cold-read "Explicit Code" rule, most fields here are
+// populated inside the acquisition tx and remain immutable for the
+// lifetime of the acquisition. A small, documented set of fields is
+// enriched at dispatch time on the same goroutine that owns the
+// acquisition; today that is just `MergedAttributes` (filled by
+// `resolveAttributes` in `runner_dispatch.go` once the L3 + L4
+// instance overrides have been merged against the resolved attribute
+// bag). The mutation is safe because the dispatch path runs serially
+// after acquisition completes on the same goroutine that holds the
+// acquisition value; no second goroutine ever observes the field.
 //
 // New fields added here must either preserve true post-acquisition
 // immutability OR document a similar dispatch-time-only mutation
@@ -83,26 +82,26 @@ type acquisition struct {
 	NodeDef        *node.TemplateNodeDef
 	HeldSubgraphs  []node.HoldingSubgraph
 	InstanceParams map[string]any
-	// InstanceUserdataOverrides is the per-instance override blob loaded
-	// from rimsky_instances.userdata_overrides at acquisition time.
+	// InstanceAttributeOverrides is the per-instance override blob loaded
+	// from rimsky_instances.attribute_overrides at acquisition time.
 	// Shape (validated at create-time by control-api):
-	//   {"by_executor": {<name>: {<userdata-fragment>}},
-	//    "by_node":     {<name>: {<userdata-fragment>}}}
+	//   {"by_executor": {<name>: {<attribute-fragment>}},
+	//    "by_node":     {<name>: {<attribute-fragment>}}}
 	// Empty / missing → no overrides; the dispatch path's merge is a no-op
-	// in that case. Per @blessed-invariant 11 the fragment values are
-	// opaque to rimsky.
-	InstanceUserdataOverrides map[string]any
+	// in that case. Per concept:inertness the fragment values are inert
+	// to rimsky.
+	InstanceAttributeOverrides map[string]any
 
-	// TemplateUserdataDefaults is the already-routed by-executor fragment
+	// TemplateAttributeDefaults is the already-routed by-executor fragment
 	// from the bound template's
-	// `TemplateSpec.Defaults.Userdata.ByExecutor[Executor]`. Populated at
+	// `TemplateSpec.Defaults.Attributes.ByExecutor[Executor]`. Populated at
 	// acquisition time from the bound template so the dispatch path does
-	// not re-fetch the template. Layered underneath `NodeDef.Userdata` and
-	// `InstanceUserdataOverrides` in `applyUserdataOverrides`. Per
-	// @blessed-invariant 11 the fragment values are opaque to rimsky.
+	// not re-fetch the template. L1 in the four-layer override merge —
+	// folded into the effective schema's `default:` values at dispatch
+	// (see runner_dispatch.go::computeEffectiveAttributeSchema).
 	//
-	// @concept: userdata
-	TemplateUserdataDefaults map[string]any
+	// @concept: attribute
+	TemplateAttributeDefaults map[string]any
 
 	// PartialLocks are locks that successfully Open'd before an
 	// Unavailable was encountered. Captured only when the acquisition
@@ -142,16 +141,17 @@ type acquisition struct {
 	// @concept: claim-co-holdership
 	HeldClaims map[string]locks.ClaimResult
 
-	// MergedUserdata is the per-instance userdata blob the executor
-	// actually saw on this dispatch — the result of
-	// `applyUserdataOverrides(template-userdata, InstanceUserdataOverrides,
-	// executor, node)`. Populated by `buildExecuteRequest` at dispatch
-	// time. Consumed by the lineage writer so the per-row
-	// `userdata_hash` reflects what shipped to the executor, not the
-	// pre-merge per-instance override blob. Per `@blessed-invariant 11`
-	// rimsky never inspects the fragment values; the hash is computed
-	// over the merged shape verbatim.
-	MergedUserdata map[string]any
+	// MergedAttributes is the per-dispatch attribute bag the executor
+	// actually saw on this dispatch — the result of source-resolution +
+	// static-default emission + L3 + L4 override merge. Populated by
+	// `resolveAttributes` in `runner_dispatch.go` once the bag is final.
+	// Consumed by the lineage writer so the per-row attribute hash
+	// reflects what shipped to the executor. Per concept:inertness
+	// rimsky never inspects fragment values; the hash is computed over
+	// the merged shape verbatim.
+	//
+	// @concept: attribute
+	MergedAttributes map[string]any
 
 	// ParentRunID is the parent run id from `rimsky_node_runs.parent_run_id`,
 	// loaded during acquisition. Nil for root runs (top-level template
@@ -368,7 +368,7 @@ func tryAcquire(
 	}
 	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
 	if err != nil {
-		// Per the Per-instance-userdata-overrides feature: instance row
+		// Per the per-instance attribute-overrides feature: instance row
 		// is load-bearing for dispatch (template lookup AND override
 		// blob). Surface the error to the caller (mirrors the Nodes().Get
 		// path above) so a sustained DB issue produces a visible signal
@@ -380,7 +380,7 @@ func tryAcquire(
 	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
-	templateUserdataDefaults := templateUserdataDefaultsFor(tmpl, nd.Executor)
+	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
 	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
@@ -418,21 +418,21 @@ func tryAcquire(
 			// the on_acquire_unavailable handler.
 			unavailableSpec, _ := sp.(locks.ClaimSpec)
 			out := acquisition{
-				DispatchID:               cand.DispatchID,
-				NodeID:                   cand.NodeID,
-				InstanceID:               nd.InstanceID,
-				NodeType:                 nd.NodeType,
-				Executor:                 nd.Executor,
-				FrameID:                  cand.FrameID,
-				NodeDef:                  nodeDef,
-				HeldSubgraphs:            heldSubgraphs,
-				PartialLocks:             acquiredLocks,
-				UnavailableSpec:          unavailableSpec,
-				TemplateUserdataDefaults: templateUserdataDefaults,
+				DispatchID:                cand.DispatchID,
+				NodeID:                    cand.NodeID,
+				InstanceID:                nd.InstanceID,
+				NodeType:                  nd.NodeType,
+				Executor:                  nd.Executor,
+				FrameID:                   cand.FrameID,
+				NodeDef:                   nodeDef,
+				HeldSubgraphs:             heldSubgraphs,
+				PartialLocks:              acquiredLocks,
+				UnavailableSpec:           unavailableSpec,
+				TemplateAttributeDefaults: templateAttributeDefaults,
 			}
 			if inst != nil {
 				out.InstanceParams = inst.Params
-				out.InstanceUserdataOverrides = inst.UserdataOverrides
+				out.InstanceAttributeOverrides = inst.AttributeOverrides
 				out.TemplateHash = inst.TemplateHash
 			}
 			return out, false, errAcquireUnavailable
@@ -442,20 +442,20 @@ func tryAcquire(
 	}
 
 	out := acquisition{
-		DispatchID:               cand.DispatchID,
-		NodeID:                   cand.NodeID,
-		InstanceID:               nd.InstanceID,
-		NodeType:                 nd.NodeType,
-		Executor:                 nd.Executor,
-		FrameID:                  cand.FrameID,
-		Locks:                    acquiredLocks,
-		NodeDef:                  nodeDef,
-		HeldSubgraphs:            heldSubgraphs,
-		TemplateUserdataDefaults: templateUserdataDefaults,
+		DispatchID:                cand.DispatchID,
+		NodeID:                    cand.NodeID,
+		InstanceID:                nd.InstanceID,
+		NodeType:                  nd.NodeType,
+		Executor:                  nd.Executor,
+		FrameID:                   cand.FrameID,
+		Locks:                     acquiredLocks,
+		NodeDef:                   nodeDef,
+		HeldSubgraphs:             heldSubgraphs,
+		TemplateAttributeDefaults: templateAttributeDefaults,
 	}
 	if inst != nil {
 		out.InstanceParams = inst.Params
-		out.InstanceUserdataOverrides = inst.UserdataOverrides
+		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
 	// Source ParentRunID from rimsky_node_runs.parent_run_id via the

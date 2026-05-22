@@ -29,12 +29,12 @@ const defaultStreamIdleTimeout = 5 * time.Minute
 
 // traceRecord holds the events for one dispatch plus terminal state.
 //
-// Note on @blessed-invariant 11: that invariant scopes Rimsky core's
-// behavior toward the userdata field on the wire. Executor-supplied
-// trace `attributes` are produced by the executor itself and are
-// fully introspectable by the executor — invariant 11 does NOT
-// restrict an executor's freedom to inspect, structure, or expose
-// its own trace data.
+// Note on @concept:inertness: the structural-inertness discipline
+// scopes Rimsky core's behavior toward attribute values on the wire.
+// Executor-supplied trace `attributes` are produced by the executor
+// itself and are fully introspectable by the executor — the
+// inertness discipline does NOT restrict an executor's freedom to
+// inspect, structure, or expose its own trace data.
 type traceRecord struct {
 	events     []*genv1.TraceEvent
 	terminal   bool
@@ -124,6 +124,17 @@ func (s *ObservabilityServer) RegisterDispatch(dispatchID string) {
 // Capabilities reports the http-node observability surface:
 // supports both GetTrace and StreamTrace, retention 1 hour, no custom
 // UI.
+//
+// The http-node executor reads a fixed set of transport-config keys from
+// the dispatched attribute bag (`url`, `method`, `headers`, `body`,
+// `expect_status`, `stub_probe`, `stub_response`) and serializes the
+// remaining keys as the implicit request body. To keep the
+// dispatch-time `executor_schema_unavailable` gate honest about that
+// "accepts any other keys" behavior we advertise a permissive open
+// schema (`{"type":"object"}` with no `properties` block) —
+// `graph/node.IsPermissiveExecutorSchema` recognises this as "open
+// shape" and skips the readOnly-fallback leg of the unified-attribute-
+// surface check.
 func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	s.mu.RLock()
 	url := s.httpBridgeURL
@@ -133,6 +144,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		SupportsTraceStream:           true,
 		RetentionAfterTerminalSeconds: retentionSeconds,
 		HttpBridgeUrl:                 url,
+		ExpectedAttributesSchema:      []byte(`{"type":"object"}`),
 	}, nil
 }
 

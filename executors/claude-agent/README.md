@@ -31,17 +31,22 @@ Setting `RIMSKY_EXECUTOR_STUB_MODE=1` short-circuits the agent runtime: no
 Claude CLI spawn, no network calls, no internal MCP server. Returns a canned
 `StreamClose{Success{attributes_delta: {stub: true}}}` after ~50ms. All tests run under stub mode.
 
-## Userdata fields
+## Attribute fields
 
-The executor reads these keys out of `userdata` per dispatch (rimsky never
-inspects them — they're opaque to the orchestrator per blessed invariant
-11):
+Post-2026-05-21 userdata-collapse, the executor reads these keys out of
+the unified `attributes` bag per dispatch. Each key surfaces through the
+node's attribute schema (`attributes.schema.properties.<key>`) — either
+as a `default:` value supplied at registration or a `source:` directive
+resolved at dispatch. The executor's expected attribute schema is
+declared in `src/expected-attributes-schema.ts`; see
+`docs/executors/claude-agent/expected-attributes.md` for the full
+catalog and migration table:
 
 | key | type | purpose |
 | --- | --- | --- |
 | `model` | string | Claude model passed to the CLI's `--model` flag |
-| `system_prompt` | string | system prompt template, rendered with `{{userdata.x}}` / `{{attributes.x}}` |
-| `user_prompt_template` | string | user prompt template, same rendering |
+| `system_prompt` | string | system prompt, typically a `default:` value (or a `source:` directive resolved from an upstream attribute) |
+| `user_prompt` | string | user prompt, typically a `source:` directive resolved at dispatch |
 | `cwd_from_store` | string | name of a store from `ExecuteRequest.stores` whose handle `address` (the filesystem store fills this with an absolute path) is used as the CLI's working directory. Validated as an existing directory before spawn; mismatches error as `invalid_cwd_from_store`. |
 | `cwd` | string | raw working-directory override. Lower priority than `cwd_from_store`. Same existing-directory validation. |
 

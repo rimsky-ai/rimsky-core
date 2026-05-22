@@ -308,9 +308,9 @@ func applyTerminalComplete(
 	// E8: emit leaf-run lineage record. Spec §Content lineage. Bytes
 	// are inert in rimsky (@blessed-invariant 20/21); the lineage row
 	// carries hashes + run identifiers + last_outcome, not raw bytes.
-	// MergedUserdata is the post-applyUserdataOverrides shape — the
-	// hash reflects what shipped to the executor (not the pre-merge
-	// override blob).
+	// MergedAttributes is the post-resolution + post-override shape —
+	// the hash reflects what shipped to the executor (not the
+	// pre-merge override blob).
 	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 		InstanceID:       acq.InstanceID,
 		FrameID:          acq.FrameID,
@@ -324,7 +324,7 @@ func applyTerminalComplete(
 		ExecutorName:     acq.Executor,
 		TemplateHash:     acq.TemplateHash,
 		Params:           acq.InstanceParams,
-		UserdataMerged:   acq.MergedUserdata,
+		AttributesMerged: acq.MergedAttributes,
 		HeldClaims:       HeldClaimsForLineage(acq),
 		ParentRunID:      acq.ParentRunID,
 		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),

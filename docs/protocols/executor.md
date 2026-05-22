@@ -35,7 +35,7 @@ Source: `protocols/proto/v1/executor_observability.proto`.
 
 Rimsky's supervisor dials the executor at dispatch time and streams events back via `Execute`. Dashboards (and other read-only consumers) dial the executor's observability service to pull or stream per-dispatch traces. Services MUST implement `Executor`; `ExecutorObservability` is opt-in but recommended for any executor whose dispatches are interesting to humans.
 
-`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes plus opaque userdata, and streams back zero or more events ending in one of: `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`.
+`Execute` is the load-bearing method. The executor receives an `ExecuteRequest` with substituted attributes, and streams back zero or more events ending in one of: `Complete`, `Error{error_class: "executor_blocked"}`, `Error{error_class}`, `AwaitAsyncCallback`.
 
 ## 2. The methods
 
@@ -44,8 +44,7 @@ Rimsky's supervisor dials the executor at dispatch time and streams events back 
 Dispatch a node. Inside `ExecuteRequest`:
 
 - **node identity** — the supervisor names which (instance, node) it is dispatching.
-- **attributes** — already substituted. The executor sees resolved values; the `{{...}}` directives have been resolved by the supervisor.
-- **userdata** — opaque bytes copied verbatim from the template.
+- **attributes** — already substituted. The executor sees resolved values; the `{{...}}` directives have been resolved by the supervisor. This is the only template-author-supplied input surface; the previous `userdata` field has been collapsed into `attributes` and is no longer carried on the wire.
 - **claim contexts** — for each claim the node holds (its own or inherited), the address, payload, and scope made available for executor access.
 
 Stream back any number of these events:
@@ -71,20 +70,21 @@ Pull a previously-streamed trace by `dispatch_id`. Useful for replaying past inv
 
 ### `ExecutorObservability.Capabilities(CapabilitiesRequest) → ObservabilityCapabilities`
 
-Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `userdata_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
+Startup handshake for the observability protocol. Declares whether the executor supports trace-get and trace-stream, the per-dispatch retention window, any custom UI URL the dashboard should embed, the executor's `expected_attributes_schema` (JSON Schema bytes; empty means accept-any), and the `declared_events` array (event names the executor may emit via `NamedEvent`). Probed once per service at process startup.
 
-`userdata_schema` is enforced by Rimsky at template registration and at dispatch (post-substitution); failures route through `Errored { error_class: "userdata_validation_failed" }`. `declared_events` is cross-validated against any `subscribes: [{on: event, name: <name>}]` entries in registering templates; references to undeclared events reject the registration.
+`expected_attributes_schema` is enforced by Rimsky at template registration (`template_validation_failed` when the declared template attribute schema is incompatible) and at dispatch (`attributes_schema_invalid` when the substituted bag violates the schema; the terminal write-back equivalent is `attributes_schema_failed`). `declared_events` is cross-validated against any `subscribes: [{on: event, name: <name>}]` entries in registering templates; references to undeclared events reject the registration.
 
-## 3. The userdata guarantee
+## 3. The attribute surface
 
-<!-- @source: ../../.ok-planner/design/concepts/userdata.md -->
-> Free-form opaque bytes a template author attaches to a node's executor invocation. Rimsky never inspects, parses, substitutes, or validates `userdata`. The executor receives the bytes verbatim. This is distinct from `attributes`, which are typed, substituted, and schema-validated.
+<!-- @source: ../../.ok-planner/design/concepts/attribute.md -->
+> The single template-author-supplied input surface for an executor dispatch. Attributes are declared as a JSON Schema on the template node, substituted (`{{...}}` directives resolved) by the supervisor, validated against the schema at dispatch and again at terminal write-back, and delivered to the executor verbatim. There is no peer "opaque" surface — the historical `userdata` field was collapsed into `attributes` (see `_retired/userdata.md` for the migration record).
 
 This means:
 
-- A `{{...}}` literal in `userdata` reaches the executor as a literal `{{...}}`.
-- The executor's contract with the template author defines what shape userdata must have. Rimsky is uninvolved.
-- Encrypted userdata stays encrypted in transit. Decryption is the executor's responsibility at point of use.
+- Every key the executor consumes — model name, system prompts, transport config, etc. — appears under `attributes` and is governed by the node's attributes schema.
+- The executor declares the shape it accepts via `expected_attributes_schema` on the `Capabilities` response; Rimsky enforces compatibility at template registration and the substituted bag at dispatch.
+- Static configuration (constants the template author wants to hand the executor) lives in attribute `default:` entries; dynamic configuration (values pulled from other nodes or params) lives in `source:` entries. Both surface to the executor identically.
+- Encrypted attribute values stay encrypted in transit. Decryption is the executor's responsibility at point of use.
 
 ## 4. The async-callback path
 
@@ -163,5 +163,4 @@ Each is runnable as a standalone process plus a Dockerfile.
 
 - [`../../.ok-planner/design/concepts/executor.md`](../../.ok-planner/design/concepts/executor.md)
 - [`../../.ok-planner/design/concepts/node.md`](../../.ok-planner/design/concepts/node.md)
-- [`../../.ok-planner/design/concepts/attributes.md`](../../.ok-planner/design/concepts/attributes.md)
-- [`../../.ok-planner/design/concepts/userdata.md`](../../.ok-planner/design/concepts/userdata.md)
+- [`../../.ok-planner/design/concepts/attribute.md`](../../.ok-planner/design/concepts/attribute.md)

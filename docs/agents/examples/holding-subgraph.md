@@ -2,7 +2,7 @@
 
 Three nodes: an acquirer and two inheritors. Both inheritors complete successfully; the held claim's automatic resolution computes the aggregate outcome (all-success → `Commit`) and fires `ClaimProducer.Commit`.
 
-The bundled `executor-stub` keys behavior on `node_type` only and ignores `userdata`. To demonstrate the all-success path, every node in this example reaches a terminal `Complete` event from the stub. To exercise the any-failure → `Abandon` path, you would need an executor that drives the desired outcome (e.g. `claude-agent`, or a scripted stub registered programmatically by a scenario test).
+The bundled `executor-stub` keys behavior on `node_type` only and ignores the request's `attributes` bag. To demonstrate the all-success path, every node in this example reaches a terminal `Complete` event from the stub. To exercise the any-failure → `Abandon` path, you would need an executor that drives the desired outcome (e.g. `claude-agent`, or a scripted stub registered programmatically by a scenario test).
 
 **Precondition:** the bundled docker-compose stack is up:
 

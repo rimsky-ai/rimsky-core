@@ -122,7 +122,7 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 			events, _, ok := deps.ExecutorCapabilities(name)
 			return events, ok
 		}
-		hooks.ExecutorUserdataSchema = func(name string) ([]byte, bool) {
+		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
 			_, schema, ok := deps.ExecutorCapabilities(name)
 			return schema, ok
 		}
@@ -190,8 +190,18 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// Spec §Protocol surfaces / Validation / Pipeline integration.
 		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
 		tValidatePipeline := time.Now()
+		var execSchemaLookup runtime.ExpectedAttributesSchemaLookup
+		if deps.ExecutorCapabilities != nil {
+			execSchemaLookup = func(executor string) ([]byte, bool) {
+				_, schema, ok := deps.ExecutorCapabilities(executor)
+				if !ok || len(schema) == 0 {
+					return nil, false
+				}
+				return schema, true
+			}
+		}
 		outcome, vErr := runtime.RunValidationPipeline(
-			req.Context(), deps.Validators, spec, hash, deps.UnreachableValidatorPolicy,
+			req.Context(), deps.Validators, spec, hash, deps.UnreachableValidatorPolicy, execSchemaLookup,
 		)
 		log.Debug("register.validate_pipeline.done",
 			"elapsed_ms", time.Since(tValidatePipeline).Milliseconds(),

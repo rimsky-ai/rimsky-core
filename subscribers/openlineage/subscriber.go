@@ -76,7 +76,7 @@ type LeafRunRecord struct {
 	TemplateHash       string            `json:"template_hash,omitempty"`
 	TemplateNodeAlias  string            `json:"template_node_alias,omitempty"`
 	ParamsSnapshotHash string            `json:"params_snapshot_hash,omitempty"`
-	UserdataHash       string            `json:"userdata_hash,omitempty"`
+	AttributesHash     string            `json:"attributes_hash,omitempty"`
 	ScopeDataHash      string            `json:"scope_data_hash,omitempty"`
 	State              string            `json:"state"`
 	LastOutcome        string            `json:"last_outcome"`

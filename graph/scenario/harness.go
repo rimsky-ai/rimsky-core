@@ -188,20 +188,39 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		h.Scheduler = sh
 	}
 
+	// Scenario tests assume the stub executor (and any extras the test
+	// declares) is reachable by dispatch time. The runtime fails dispatch
+	// with `executor_schema_unavailable` when the resolver returns
+	// ok=false for an executor referenced by a node — a deliberate hard
+	// failure (see `runtime/runner_dispatch.go::resolveAttributes`). The
+	// stub's real Capabilities response advertises no schema; this
+	// resolver papers over that for the in-process harness by returning a
+	// permissive object schema (no `properties` block ⇒
+	// `node.IsPermissiveExecutorSchema` returns true ⇒ the readOnly-
+	// fallback leg of the unified-attribute-surface check is skipped, the
+	// way a permissive real executor is treated).
+	expectedSchemaFor := func(executorName string) ([]byte, bool) {
+		if _, known := executors[executorName]; !known {
+			return nil, false
+		}
+		return []byte(`{"type":"object"}`), true
+	}
+
 	if !opts.NoSupervisor {
 		sv, err := config.StartSupervisor(config.SupervisorConfig{
-			SupervisorID:      "scenario-supervisor",
-			Driver:            driver,
-			Clock:             clock,
-			Logger:            shared.SilentLogger{},
-			Concurrency:       4,
-			HeartbeatInterval: heartbeatInterval,
-			ClaimPollInterval: 100 * time.Millisecond,
-			Resolver:          resolver,
-			Stores:            opts.Stores,
-			NamedLocks:        opts.NamedLocks,
-			CallbackHost:      "127.0.0.1",
-			CallbackPort:      0,
+			SupervisorID:                "scenario-supervisor",
+			Driver:                      driver,
+			Clock:                       clock,
+			Logger:                      shared.SilentLogger{},
+			Concurrency:                 4,
+			HeartbeatInterval:           heartbeatInterval,
+			ClaimPollInterval:           100 * time.Millisecond,
+			Resolver:                    resolver,
+			Stores:                      opts.Stores,
+			NamedLocks:                  opts.NamedLocks,
+			CallbackHost:                "127.0.0.1",
+			CallbackPort:                0,
+			ExpectedAttributesSchemaFor: expectedSchemaFor,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start supervisor: %v", err)
@@ -304,15 +323,15 @@ func (h *Harness) CreateInstance(templateHash string, consumerKey string, params
 	return h.CreateInstanceWithOverrides(templateHash, consumerKey, params, nil)
 }
 
-// CreateInstanceWithOverrides is the per-instance-userdata-overrides
-// variant. Pass a non-nil overrides map to attach a `userdata_overrides`
-// blob to the create request. nil overrides reproduces CreateInstance's
-// behaviour exactly.
+// CreateInstanceWithOverrides is the per-instance-attribute-overrides
+// variant. Pass a non-nil overrides map to attach an
+// `attribute_overrides` blob to the create request. nil overrides
+// reproduces CreateInstance's behaviour exactly.
 func (h *Harness) CreateInstanceWithOverrides(
 	templateHash string,
 	consumerKey string,
 	params map[string]any,
-	userdataOverrides map[string]any,
+	attributeOverrides map[string]any,
 ) shared.UUID {
 	h.T.Helper()
 	bodyMap := map[string]any{
@@ -322,8 +341,8 @@ func (h *Harness) CreateInstanceWithOverrides(
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey
 	}
-	if len(userdataOverrides) > 0 {
-		bodyMap["userdata_overrides"] = userdataOverrides
+	if len(attributeOverrides) > 0 {
+		bodyMap["attribute_overrides"] = attributeOverrides
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {
@@ -564,6 +583,13 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	if len(spec.ParamsRedact) > 0 {
 		out["params_redact"] = spec.ParamsRedact
 	}
+	if spec.Defaults != nil && spec.Defaults.Attributes != nil && len(spec.Defaults.Attributes.ByExecutor) > 0 {
+		out["defaults"] = map[string]any{
+			"attributes": map[string]any{
+				"by_executor": spec.Defaults.Attributes.ByExecutor,
+			},
+		}
+	}
 	return out
 }
 
@@ -576,9 +602,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	}
 	if n.Executor != "" {
 		nd["executor"] = n.Executor
-	}
-	if len(n.Userdata) > 0 {
-		nd["userdata"] = n.Userdata
 	}
 	if len(n.Subscribes) > 0 {
 		subs := make([]map[string]any, 0, len(n.Subscribes))

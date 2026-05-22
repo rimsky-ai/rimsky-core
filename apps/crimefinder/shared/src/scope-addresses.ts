@@ -11,10 +11,10 @@ export const SourceTreeZoneAddressSchema = z.object({
   session_token: z.string(),
   // For fix-cycle / re-review children: the iteration this dispatch
   // belongs to, and (fix-cycle only) the per-zone finding IDs the agent
-  // owns. These travel in the address — NOT in userdata — because rimsky
-  // does not run `{{...}}` substitution inside userdata (see
-  // `runtime/userdata_overrides.go` deep-merge-only; `graph/attribute/doc.go`
-  // §spec invariant 11; `.ok-planner/design/_discover/2026-05-10-opacity-of-userdata-claim-blob.md`).
+  // owns. These travel in the address — NOT in attribute defaults —
+  // because rimsky does not run `{{...}}` substitution inside attribute
+  // `default:` values (see `runtime/attribute_overrides.go`
+  // deep-merge-only; `graph/attribute/doc.go` under concept:inertness).
   // The producer's SplitScope writes them into per-child scopeData and
   // openFanOutChild copies them into the SourceTreeZoneAddress; the
   // executor reads them off `primary` in agent-run.ts.

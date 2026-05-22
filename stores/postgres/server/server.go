@@ -42,7 +42,7 @@ type Config struct {
 	EnableLifecycle bool
 	// EnableExecutor, when true, registers the Executor service
 	// alongside ClaimProducer for the verifier role. The executor
-	// consumes a userdata `checks: [...]` DSL and runs read-only
+	// consumes an attributes `checks: [...]` DSL and runs read-only
 	// aggregate SQL against the schema named by
 	// {{claim.<alias>.address}}. Per spec
 	// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md

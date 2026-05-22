@@ -39,7 +39,7 @@ type harness struct {
 	stores  *locks.Registry
 	// logger is a CapturingLogger so tests can assert presence/absence
 	// of structured log records (e.g. the
-	// `instance.userdata_overrides_*` audit lines emitted on the
+	// `instance.attribute_overrides_*` audit lines emitted on the
 	// instance-create path). Tests that don't care about log records
 	// can ignore this field.
 	logger *shared.CapturingLogger
@@ -84,7 +84,7 @@ func newHarness(t *testing.T) (*harness, func()) {
 		// silently nil and missing-executor templates pass deploy).
 		// `unused-exec` is declared but intentionally not referenced by
 		// any test template — used by
-		// TestInstanceCreate_UserdataOverrides_RejectsExecutorNotReferencedByTemplate
+		// TestInstanceCreate_AttributeOverrides_RejectsExecutorNotReferencedByTemplate
 		// to drive the validator's "declared-but-unused executor"
 		// rejection branch end-to-end.
 		Executors: map[string]ExecutorEntry{

@@ -123,7 +123,9 @@ func readSpecFile(path string) (node.TemplateSpec, error) {
 // The "exact shape" rule: only an object with exactly one entry whose
 // key is `source_file` and whose value is a string qualifies. Objects
 // with additional siblings or non-string `source_file` values are
-// left intact (they may be legitimate userdata fragments).
+// left intact (they may be legitimate attribute fragments — e.g. an
+// attribute `default:` whose value happens to mention `source_file:`
+// inside other keys).
 //
 // Implementation note: yaml.v3 unmarshals YAML mappings into
 // `map[string]any` and sequences into `[]any`, so those are the only

@@ -45,7 +45,6 @@ func (c *ValidationClient) ValidateExecutor(ctx context.Context, in clientiface.
 		Context: &genv1.ValidateRequest_Executor{
 			Executor: &genv1.ExecutorContext{
 				NodeAlias:        in.NodeAlias,
-				Userdata:         in.Userdata,
 				AttributesSchema: in.AttributesSchema,
 				ClaimAliases:     in.ClaimAliases,
 			},

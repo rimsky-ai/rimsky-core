@@ -13,7 +13,7 @@ import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
-import { userdataSchemaBytes, declaredEvents } from "./userdata-schema.js";
+import { expectedAttributesSchemaBytes, declaredEvents } from "./expected-attributes-schema.js";
 
 /**
  * gRPC Executor implementation. Always responds with the async-handoff
@@ -80,17 +80,15 @@ interface ExecuteRequest {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
-  // Opaque per-node config from the template (spec §5.8). Rimsky never
-  // interprets this; the executor reads `model`, `system_prompt`,
-  // `user_prompt_template`, `attributes_schema` from here.
-  userdata?: unknown;
-  // Per-run typed attributes object (spec §5.7). Source-driven fields are
-  // pre-populated by rimsky at dispatch.
+  // Per-run typed attributes object (spec §5.7). The unified attribute
+  // bag carries both rimsky-resolved inputs (`model`, `system_prompt`,
+  // `user_prompt`, `cli.*`, ...) and executor-populated outputs.
+  // Source-driven fields are pre-populated by rimsky at dispatch.
   attributes?: unknown;
   // Declared JSON Schema for `attributes` (spec §5.7.1).
   attributes_schema?: unknown;
-  // Per-store handles keyed by store-config name (spec §12.1). Surfaced to
-  // the agent via the userdata bag — no in-process interpretation.
+  // Per-store handles keyed by store-config name (spec §12.1). Surfaced
+  // to the agent via the attribute bag — no in-process interpretation.
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
@@ -145,10 +143,11 @@ export async function startGrpcServer(
 
   // Plan A1 — register the ExecutorObservability service so the rimsky
   // supervisor's discovery handshake succeeds against the gRPC endpoint
-  // (otherwise the cached `userdata_schema` and `declared_events` are
-  // never populated and dispatch-time userdata-schema validation
-  // silently falls through). The handlers bridge into the same
-  // `Observability` ledger the HTTP+JSON routes expose.
+  // (otherwise the cached `expected_attributes_schema` and
+  // `declared_events` are never populated and dispatch-time
+  // effective-attribute-schema computation silently falls through). The
+  // handlers bridge into the same `Observability` ledger the HTTP+JSON
+  // routes expose.
   server.addService(pkg.rimsky.v1.ExecutorObservability.service, {
     Capabilities: (
       _call: grpc.ServerUnaryCall<unknown, unknown>,
@@ -160,7 +159,7 @@ export async function startGrpcServer(
         retention_after_terminal_seconds: 3600,
         custom_ui: null,
         http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
-        userdata_schema: Buffer.from(userdataSchemaBytes()),
+        expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()),
         declared_events: declaredEvents,
       });
     },
@@ -334,8 +333,8 @@ function handleExecute(
   logger.info(
     {
       instance_id: req.instance_id,
-      model: stringOrUndefined(toRecord(req.userdata).model),
-      cwd_from_store: stringOrUndefined(toRecord(req.userdata).cwd_from_store),
+      model: stringOrUndefined(toRecord(req.attributes).model),
+      cwd_from_store: stringOrUndefined(toRecord(req.attributes).cwd_from_store),
       stores: Object.keys(req.stores ?? {}),
     },
     "execute.received",
@@ -386,25 +385,20 @@ async function runAndCallback(
   logger: Logger,
 ): Promise<void> {
   try {
-    const userdata = toRecord(req.userdata);
     const attributes = toRecord(req.attributes);
     const outcome = await runAgent({
       runId,
       nodeId: req.node_id ?? runId,
       nodeType: req.node_type ?? "unknown",
-      model: stringOr(userdata.model, "claude-sonnet-4-5"),
-      systemPrompt: stringOr(userdata.system_prompt, ""),
-      userPromptTemplate: stringOr(userdata.user_prompt_template, ""),
+      model: stringOr(attributes.model, "claude-sonnet-4-5"),
+      systemPrompt: stringOr(attributes.system_prompt, ""),
+      userPrompt: stringOr(attributes.user_prompt, ""),
       attributesSchema: req.attributes_schema ?? {},
       attributes,
-      templateVars: {
-        userdata,
-        attributes,
-      },
       stores: unwrapStores(req.stores ?? {}),
-      cwdFromStore: stringOrUndefined(userdata.cwd_from_store),
-      cwdOverride: stringOrUndefined(userdata.cwd),
-      cliConfig: parseCliConfig(userdata.cli),
+      cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
+      cwdOverride: stringOrUndefined(attributes.cwd),
+      cliConfig: parseCliConfig(attributes.cli),
       callbackUrl: req.callback_url ?? "",
       cancelToken: req.cancel_token ?? "",
       cliRunner,
@@ -541,8 +535,8 @@ function outcomeToCallbackBody(
 
 // Unwraps a google.protobuf.Struct value (as decoded by @grpc/proto-loader
 // with the default options: { fields: { [key]: Value } }) into a plain
-// object. Without this, downstream lookups like `userdata.model` see
-// `undefined` because the actual value is at `userdata.fields.model.stringValue`.
+// object. Without this, downstream lookups like `attributes.model` see
+// `undefined` because the actual value is at `attributes.fields.model.stringValue`.
 // Unwrap a google.protobuf.Value carried over the wire by @grpc/proto-loader.
 // Accepts both shapes proto-loader can produce:
 //   - keepCase: true → {kind: "string_value", string_value: "x"} (snake_case;
@@ -646,9 +640,10 @@ function stringArrayOrUndefined(v: unknown): string[] | undefined {
 }
 
 /**
- * Parses the `userdata.cli` sub-object into the typed shape consumed by
- * runAgent + cliRunner. Returns `undefined` when the input is missing or
- * empty, so the executor's defaults (current behavior) take effect.
+ * Parses the `attributes.cli` sub-object into the typed shape consumed
+ * by runAgent + cliRunner. Returns `undefined` when the input is
+ * missing or empty, so the executor's defaults (current behavior) take
+ * effect.
  *
  * Field-to-spawn-arg mapping is documented on `CliSpawnRequest` in
  * cli-runner.ts; rimsky never inspects the values, so the validation
@@ -679,7 +674,7 @@ function parseCliConfig(v: unknown): {
   if (ad !== undefined) out!.addDirs = ad;
   const mb = stringOrUndefined(cli.max_budget_usd);
   if (mb !== undefined) out!.maxBudgetUsd = mb;
-  // userdata.cli.handle_rate_limits — default true (J9). Explicit
+  // attributes.cli.handle_rate_limits — default true (J9). Explicit
   // false disables the auto-park behavior.
   const hr = boolOrUndefined(cli.handle_rate_limits);
   if (hr !== undefined) out!.handleRateLimits = hr;

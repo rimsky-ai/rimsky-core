@@ -338,7 +338,7 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 //     `terminal_kind: "subgraph_call"` + `state: "running"`. The
 //     calling node has just absorbed its entry's terminal; the parent
 //     run stays running while the internal cascade runs, so the row
-//     captures the inputs (params_snapshot_hash, userdata_hash,
+//     captures the inputs (params_snapshot_hash, attributes_hash,
 //     held_claims, parent_run_id) at internal-cascade-fire — the
 //     "what the caller saw" moment.
 //  2. The second row fires later from the standard `applyTerminalComplete`
@@ -588,7 +588,7 @@ func applyTerminalCompleteSubgraphCaller(
 		ExecutorName:     acq.Executor,
 		TemplateHash:     acq.TemplateHash,
 		Params:           acq.InstanceParams,
-		UserdataMerged:   acq.MergedUserdata,
+		AttributesMerged: acq.MergedAttributes,
 		HeldClaims:       HeldClaimsForLineage(acq),
 		ParentRunID:      acq.ParentRunID,
 		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),

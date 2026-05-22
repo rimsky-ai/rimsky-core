@@ -117,11 +117,14 @@ func TestProtoSmoke_AsyncCallbackBody(t *testing.T) {
 }
 
 // TestProtoSmoke_ObservabilityCapabilitiesNewFields round-trips
-// userdata_schema and declared_events on ObservabilityCapabilities.
+// expected_attributes_schema and declared_events on
+// ObservabilityCapabilities. The field was renamed from
+// `userdata_schema` to `expected_attributes_schema` under the
+// 2026-05-21 userdata-collapse spec (proto field number unchanged).
 func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	src := &ObservabilityCapabilities{
-		UserdataSchema: []byte(`{"type":"object"}`),
-		DeclaredEvents: []string{"phase_observed", "rate_limit_observed"},
+		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
+		DeclaredEvents:           []string{"phase_observed", "rate_limit_observed"},
 	}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
@@ -131,8 +134,8 @@ func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if string(got.GetUserdataSchema()) != string(src.UserdataSchema) {
-		t.Fatalf("userdata_schema bytes mismatch")
+	if string(got.GetExpectedAttributesSchema()) != string(src.ExpectedAttributesSchema) {
+		t.Fatalf("expected_attributes_schema bytes mismatch")
 	}
 	if len(got.GetDeclaredEvents()) != 2 {
 		t.Fatalf("declared_events: got %d, want 2", len(got.GetDeclaredEvents()))

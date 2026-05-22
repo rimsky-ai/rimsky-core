@@ -64,11 +64,17 @@ func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Execut
 //	      Error outcome on the wire.
 //	how:  called by the gRPC Execute method and by the HTTP+JSON bridge.
 //	handles: stub_mode (short-circuits before network), JSON and non-JSON
-//	         responses, custom expect_status lists, user-supplied headers,
-//	         per-run attributes posted as the request body. Userdata is
-//	         opaque executor configuration (url, method, headers,
-//	         expect_status, optional body override); rimsky never inspects
-//	         it.
+//	         responses, custom expect_status lists, user-supplied headers.
+//	         Post-userdata-collapse, the executor reads its full input from
+//	         the unified `attributes` bag. A fixed set of attribute keys
+//	         (`url`, `method`, `headers`, `body`, `expect_status`,
+//	         `stub_probe`, `stub_response` — see `configAttributeKeys`)
+//	         drives the transport; every other attribute key is serialised
+//	         as the implicit JSON request body via `buildRequestBody`'s
+//	         configAttributeKeys subtraction. An explicit `attributes.body`
+//	         overrides the implicit body. Rimsky validates the substituted
+//	         attribute bag against the executor's expected attribute
+//	         schema; the executor sees the resolved values verbatim.
 //	does not: retry, paginate, stream response bodies, or honor redirects
 //	          beyond Go stdlib defaults.
 //	thread-safety: reentrant; the http.Client is safe for concurrent use.
@@ -131,24 +137,25 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		return origSend(ev)
 	}
 
-	ud := req.GetUserdata().AsMap()
+	ud := req.GetAttributes().AsMap()
 
 	// Conformance-probe escape hatch: the conformance harness uses
-	// executor-agnostic userdata flagged `stub_probe: true`. When stub mode
-	// is on, short-circuit before per-executor shape validation so the
-	// suite's basic-happy-path scenarios work regardless of which executor
-	// is under test. Scenarios that intentionally exercise malformed-shape
-	// rejection (e.g. `malformed_userdata`) omit the flag.
+	// executor-agnostic attributes flagged `stub_probe: true`. When stub
+	// mode is on, short-circuit before per-executor shape validation so
+	// the suite's basic-happy-path scenarios work regardless of which
+	// executor is under test. Scenarios that intentionally exercise
+	// malformed-shape rejection (e.g. `malformed_attributes`) omit the
+	// flag.
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return s.executeStub(req, send)
 	}
 
-	// Validate userdata shape even in stub mode — the protocol contract
+	// Validate attribute shape even in stub mode — the protocol contract
 	// requires executors to reject malformed input consistently, not only
-	// in live mode. Spec §14.4 + conformance `malformed_userdata` scenario.
+	// in live mode. Spec §14.4 + conformance `malformed_attributes` scenario.
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return sendErrored(send, "invalid_userdata", "userdata.url required")
+		return sendErrored(send, "invalid_attribute", "attributes.url required")
 	}
 
 	if s.stubMode {
@@ -171,18 +178,18 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 
 	// Body composition: per spec §5.8, http-node puts the per-run
-	// `attributes` in the request body. `userdata.body` (if present) is an
+	// `attributes` in the request body. `attributes.body` (if present) is an
 	// explicit override useful for fixtures and ad-hoc payloads — when set,
 	// it wins. Otherwise the JSON-serialised `attributes` map becomes the
 	// body. Empty attributes + no override → no body.
 	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", err.Error())
+		return sendErrored(send, "invalid_attribute", err.Error())
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", err.Error())
+		return sendErrored(send, "invalid_attribute", err.Error())
 	}
 	if hdrs, ok := ud["headers"].(map[string]any); ok {
 		for k, v := range hdrs {
@@ -237,10 +244,31 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}})
 }
 
-// buildRequestBody picks the upstream request body. `userdata.body` is an
-// explicit override (string passed verbatim, structured value JSON-marshalled
-// with implicit application/json). When absent, the per-run `attributes` map
-// is JSON-marshalled. When attributes is also empty, no body is sent.
+// configAttributeKeys is the set of attribute keys the http-node
+// executor treats as transport configuration (URL, method, headers,
+// body override, etc.). When building the implicit request body from
+// the attribute bag, these keys are subtracted so transport config
+// never leaks into the upstream payload.
+var configAttributeKeys = map[string]struct{}{
+	"url":           {},
+	"method":        {},
+	"headers":       {},
+	"body":          {},
+	"expect_status": {},
+	"stub_probe":    {},
+	"stub_response": {},
+}
+
+// buildRequestBody picks the upstream request body. `attributes.body`
+// is an explicit override (string passed verbatim, structured value
+// JSON-marshalled with implicit application/json). When absent, the
+// per-run input attributes (`attrs` minus known config keys) are
+// JSON-marshalled. When the resulting input bag is empty, no body is
+// sent.
+//
+// Under the 2026-05-21 userdata collapse `ud` and `attrs` are typically
+// the same map (the unified attribute bag); subtracting config keys
+// from the implicit-body path keeps the two roles distinguishable.
 func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 	if b, ok := ud["body"]; ok && b != nil {
 		switch bb := b.(type) {
@@ -254,10 +282,17 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 			return strings.NewReader(string(jb)), "application/json", nil
 		}
 	}
-	if len(attrs) == 0 {
+	inputs := map[string]any{}
+	for k, v := range attrs {
+		if _, isConfig := configAttributeKeys[k]; isConfig {
+			continue
+		}
+		inputs[k] = v
+	}
+	if len(inputs) == 0 {
 		return nil, "", nil
 	}
-	jb, err := json.Marshal(attrs)
+	jb, err := json.Marshal(inputs)
 	if err != nil {
 		return nil, "", fmt.Errorf("attributes not JSON-serialisable: %w", err)
 	}
@@ -292,22 +327,22 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 }
 
 // executeStub short-circuits the network path; used when RIMSKY_EXECUTOR_STUB_MODE=1.
-// Returns userdata.stub_response if provided, else {stub: true}. The response
+// Returns attributes.stub_response if provided, else {stub: true}. The response
 // becomes the StreamClose-Success.attributes_delta — must be a JSON object
 // per spec §12.2.
 func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
-	ud := req.GetUserdata().AsMap()
+	ud := req.GetAttributes().AsMap()
 	delta := map[string]any{"stub": true}
 	if sr, ok := ud["stub_response"]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
-			return sendErrored(send, "invalid_userdata", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
+			return sendErrored(send, "invalid_attribute", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
 		}
 		delta = m
 	}
 	v, err := structpb.NewStruct(delta)
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", "stub_response not JSON-representable: "+err.Error())
+		return sendErrored(send, "invalid_attribute", "stub_response not JSON-representable: "+err.Error())
 	}
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{

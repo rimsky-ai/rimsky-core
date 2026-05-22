@@ -564,63 +564,14 @@ func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].max_park_duration")
 }
 
-func TestValidateUserdataSchema_Ok(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			Userdata: map[string]any{"max_tokens": 1024},
-		}},
-	}
-	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
-		ExecutorUserdataSchema: func(name string) ([]byte, bool) {
-			return []byte(`{
-				"$schema": "https://json-schema.org/draft/2020-12/schema",
-				"type": "object",
-				"properties": { "max_tokens": { "type": "integer" } }
-			}`), true
-		},
-	}
-	res := ValidateTemplate(spec, hooks)
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateUserdataSchema_Violation(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:     "a",
-			Executor: "h",
-			Userdata: map[string]any{"max_tokens": "should-be-int"},
-		}},
-	}
-	hooks := RegistryHooks{
-		StoreDeclared: storeDeclaredLookup(knownStores),
-		ExecutorUserdataSchema: func(name string) ([]byte, bool) {
-			return []byte(`{
-				"$schema": "https://json-schema.org/draft/2020-12/schema",
-				"type": "object",
-				"properties": { "max_tokens": { "type": "integer" } },
-				"required": ["max_tokens"]
-			}`), true
-		},
-	}
-	res := ValidateTemplate(spec, hooks)
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].userdata")
-}
-
 // TestTemplateValidator_DefaultsByExecutor covers the per-spec routing-
-// key cross-check on `defaults.userdata.by_executor.<name>` (template-
-// level userdata defaults per spec
+// key cross-check on `defaults.attributes.by_executor.<name>` (template-
+// level attribute defaults — L1 in the four-layer override merge). Per
+// spec
 // .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 1).
+// Item 1 and
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Override layering".
 func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	t.Run("unknown executor name is rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
@@ -628,7 +579,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 			Version:             "1.0.0",
 			FrameResolutionMode: FrameResolutionSerialQueue,
 			Defaults: &TemplateDefaults{
-				Userdata: &TemplateUserdataDefaults{
+				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
 						"unknown-executor": {"cli": map[string]any{"model": "claude-opus"}},
 					},
@@ -638,7 +589,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 		}
 		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 		require.False(t, res.Ok())
-		hasErrorAt(t, res, `defaults.userdata.by_executor["unknown-executor"]`)
+		hasErrorAt(t, res, `defaults.attributes.by_executor["unknown-executor"]`)
 	})
 
 	t.Run("matching executor name is accepted", func(t *testing.T) {
@@ -647,7 +598,7 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 			Version:             "1.0.0",
 			FrameResolutionMode: FrameResolutionSerialQueue,
 			Defaults: &TemplateDefaults{
-				Userdata: &TemplateUserdataDefaults{
+				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
 						"claude-agent": {"cli": map[string]any{"model": "claude-opus"}},
 					},
@@ -661,13 +612,14 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 
 	t.Run("fragment values are not inspected (only routing keys)", func(t *testing.T) {
 		// Arbitrary garbage in the fragment must still validate — the
-		// userdata-inertness invariant says we never read fragment values.
+		// structural-inertness discipline (concept:inertness) says we
+		// never read fragment values.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
 			FrameResolutionMode: FrameResolutionSerialQueue,
 			Defaults: &TemplateDefaults{
-				Userdata: &TemplateUserdataDefaults{
+				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
 						"claude-agent": {
 							// arbitrary nested shape, deeply non-conforming
@@ -771,6 +723,9 @@ func TestTemplateValidator_Tags(t *testing.T) {
 // the runtime supports the form but registration rejects it.
 func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 	t.Run("bare nodes attribute pull accepted", func(t *testing.T) {
+		// Stage declares `row` as executor-written (readOnly+default
+		// allows the property to live under the unified-surface rules);
+		// verify pulls the bare nodes.stage.attribute form.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -782,7 +737,10 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"row": map[string]any{"type": "object"},
+							"row": map[string]any{
+								"type":    "object",
+								"default": map[string]any{},
+							},
 						},
 					}},
 				},
@@ -924,7 +882,7 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"out": map[string]any{"type": "string"},
+						"out": map[string]any{"type": "string", "default": ""},
 					},
 				}},
 			},
@@ -976,4 +934,762 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 	if res.Ok() {
 		t.Fatalf("expected error for multi-pipe chain")
 	}
+}
+
+// TestCheckAttributeSource_RelaxedGrammar — per the 2026-05-21
+// userdata collapse, source declarations admit literal text alongside
+// {{...}} directives and multiple directives in one source string.
+func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
+	t.Run("literal text + one directive accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt": map[string]any{
+							"type":   "string",
+							"source": "Generate config for {{params.domain}}.",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("multiple directives separated by text accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt": map[string]any{
+							"type":   "string",
+							"source": "Hello {{params.x}}, world {{params.y}}.",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("? marker on a single directive accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{
+				{
+					Type: "verify", Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"warnings_block": map[string]any{
+								"type":    "string",
+								"default": "",
+							},
+						},
+					}},
+				},
+				{
+					Type: "generate", Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"prompt": map[string]any{
+								"type":   "string",
+								"source": "{{nodes.verify.attribute.warnings_block?}}",
+							},
+						},
+					}},
+				},
+			},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("? marker on directive in embedded source accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{
+				{
+					Type: "verify", Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"warnings_block": map[string]any{
+								"type":    "string",
+								"default": "",
+							},
+						},
+					}},
+				},
+				{
+					Type: "generate", Executor: "h",
+					Attributes: &NodeAttributesDef{Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"prompt": map[string]any{
+								"type":   "string",
+								"source": "warnings: {{nodes.verify.attribute.warnings_block?}}",
+							},
+						},
+					}},
+				},
+			},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("? + | on the same directive rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type: "a", Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"v": map[string]any{
+							"type":   "string",
+							"source": `{{params.x? | "y"}}`,
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.v.source")
+	})
+}
+
+// TestCheckAttributesSchema_UnifiedSurface — per the 2026-05-21
+// userdata collapse, each property must declare exactly one of
+// `source:` or `default:`, or be marked `readOnly: true` in the
+// executor's expected_attributes_schema. Both-set is rejected.
+func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
+	t.Run("property with source: and no default: accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt": map[string]any{
+							"type":   "string",
+							"source": "{{params.x}}",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("property with default: and no source: accepted", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"model": map[string]any{
+							"type":    "string",
+							"default": "claude-sonnet-4-5",
+						},
+					},
+				}},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("property with both source: and default: rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"both": map[string]any{
+							"type":    "string",
+							"source":  "{{params.x}}",
+							"default": "fallback",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"both":{"type":"string"}}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.both")
+	})
+
+	t.Run("readOnly property without source/default accepted when executor declares readOnly", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"summary": map[string]any{
+							"type":     "string",
+							"readOnly": true,
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"summary":{"type":"string","readOnly":true}}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("template readOnly without executor readOnly rejected", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"summary": map[string]any{
+							"type":     "string",
+							"readOnly": true,
+						},
+					},
+				}},
+			}},
+		}
+		// Executor's schema declares the property but does NOT mark
+		// it readOnly. Template claiming readOnly contradicts the
+		// executor — the executor is authoritative.
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"summary":{"type":"string"}}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.summary")
+	})
+
+	t.Run("property with neither source/default/readOnly rejected when executor schema is visible", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"orphan": map[string]any{
+							"type": "string",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				// Executor declares no readOnly properties; orphan is
+				// unknown to the executor's schema either.
+				return []byte(`{"type":"object","properties":{}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.orphan")
+	})
+
+	t.Run("L1 default plus L2 source on same property: L2 source wins (no both-set error)", func(t *testing.T) {
+		// L1 (template defaults.attributes.by_executor.<exec>.<attr>)
+		// contributes a `default:` value for property `cli`. L2 (the
+		// per-node attribute schema) declares a `source:` directive for
+		// the same property. The merge must drop the L1 `default:` so the
+		// effective schema is a clean source-bound property. Without the
+		// fix in MergeAttributeDefaults, checkAttributesSchema would
+		// reject the template for declaring both source: and default:.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			ParamsSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"override_cli": map[string]any{"type": "object"},
+				},
+			},
+			Defaults: &TemplateDefaults{
+				Attributes: &TemplateAttributeDefaults{
+					ByExecutor: map[string]map[string]any{
+						"h": {
+							"cli": map[string]any{"silence_timeout_ms": 60000},
+						},
+					},
+				},
+			},
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cli": map[string]any{
+							"type":   "object",
+							"source": "{{params.override_cli}}",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"cli":{"type":"object"}}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "L2 source: should override L1 default: cleanly; errors: %+v", res.Errors)
+	})
+
+	t.Run("L1 source plus L2 default on same property: L2 default wins (no both-set error)", func(t *testing.T) {
+		// Symmetric to the previous case. L1 contributes a value
+		// (intent: serve as a default), L2 declares its own default.
+		// The L2 default must override. Note: L1 only ever contributes
+		// via `default:` per MergeAttributeDefaults's contract, but the
+		// reverse case (L1 default + L2 default) confirms the drop-then-
+		// overwrite shape leaves a single `default:` set.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Defaults: &TemplateDefaults{
+				Attributes: &TemplateAttributeDefaults{
+					ByExecutor: map[string]map[string]any{
+						"h": {
+							"model": "claude-sonnet-4-5",
+						},
+					},
+				},
+			},
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"model": map[string]any{
+							"type":    "string",
+							"default": "claude-opus-4-7",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "L2 default: should override L1 default: cleanly; errors: %+v", res.Errors)
+	})
+
+	t.Run("permissive executor schema skips readOnly leg", func(t *testing.T) {
+		// L2 declares one property with no `source:`, no `default:`, and no
+		// `readOnly: true`. The executor advertises a permissive schema
+		// (`{"type":"object"}` with no `properties` block) — `IsPermissive
+		// ExecutorSchema` returns true ⇒ the readOnly-fallback leg is
+		// skipped ⇒ the property is allowed through. This mirrors the
+		// in-tree stub / http-node executors which advertise the
+		// permissive shape to signal "open contract; accept any keys."
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"freeform": map[string]any{
+							"type": "string",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object"}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "permissive executor schema: should accept the sourceless/defaultless property; errors: %+v", res.Errors)
+	})
+}
+
+// TestIsPermissiveExecutorSchema pins the "open contract" recogniser the
+// readOnly-fallback leg uses to decide whether to fire. An executor
+// schema with no `properties` block declares open shape; a schema with
+// a `properties` block (even an empty one) declares a closed contract
+// with a known property set.
+//
+// The function operates on the parsed JSON Schema map[string]any, so
+// these subtests construct the canonical shapes directly rather than
+// going through json.Unmarshal.
+func TestIsPermissiveExecutorSchema(t *testing.T) {
+	t.Run("nil schema is not permissive", func(t *testing.T) {
+		// nil means "executor didn't advertise a schema at all" — the
+		// dispatch gate handles that case at a higher level (returning
+		// `executor_schema_unavailable`). IsPermissiveExecutorSchema
+		// reports false for nil so the readOnly leg doesn't get
+		// short-circuited; the visibility flag carries the "schema not
+		// reachable" semantics separately.
+		assert.False(t, IsPermissiveExecutorSchema(nil))
+	})
+
+	t.Run("empty object is permissive", func(t *testing.T) {
+		// `{}` is "no properties block, no constraints declared" — open
+		// shape. The readOnly-fallback leg is skipped because the
+		// executor declined to enumerate.
+		assert.True(t, IsPermissiveExecutorSchema(map[string]any{}))
+	})
+
+	t.Run("type-only object is permissive", func(t *testing.T) {
+		// `{"type":"object"}` still has no `properties` block — open
+		// shape. This is the canonical permissive form the stub and
+		// http-node executors advertise.
+		assert.True(t, IsPermissiveExecutorSchema(map[string]any{"type": "object"}))
+	})
+
+	t.Run("empty properties block is closed (not permissive)", func(t *testing.T) {
+		// `{"properties": {}}` declares "I have zero properties." That's
+		// a closed contract distinct from "I don't enumerate" — the
+		// readOnly-fallback leg should still fire on it.
+		assert.False(t, IsPermissiveExecutorSchema(map[string]any{
+			"properties": map[string]any{},
+		}))
+	})
+
+	t.Run("populated properties block is closed", func(t *testing.T) {
+		assert.False(t, IsPermissiveExecutorSchema(map[string]any{
+			"properties": map[string]any{
+				"x": map[string]any{"type": "string"},
+			},
+		}))
+	})
+}
+
+// TestValidateAttributesSchema_TypeRedeclarationConflict — Gap 1 of the
+// 2026-05-21 userdata-collapse cleanup. When the L2 template node-def
+// redeclares a property `type:` and the executor's expected schema also
+// declares a `type:` for the same property, the two MUST match. The
+// executor is authoritative on types; a redeclared-but-conflicting type
+// is rejected at registration with `template_validation_failed`.
+func TestValidateAttributesSchema_TypeRedeclarationConflict(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"model": map[string]any{
+						"type":    "integer",
+						"default": 42,
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{"type":"object","properties":{"model":{"type":"string"}}}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.model.type")
+}
+
+// TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2 — Gap 2.
+// When the executor's expected schema sets `additionalProperties: false`
+// and L2 declares a property the executor doesn't enumerate, the
+// template is rejected. The executor's closed-schema policy is
+// authoritative.
+func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"extra_field": map[string]any{
+						"type":    "string",
+						"default": "hi",
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":false}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.extra_field")
+}
+
+// TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L1 — Gap 2,
+// symmetric L1 case. When the executor's expected schema sets
+// `additionalProperties: false`, an L1 default-value entry for a
+// property the executor doesn't enumerate is also rejected. The
+// rejection's `Path` lives under defaults.attributes.by_executor since
+// the violation originates at L1.
+func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L1(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Defaults: &TemplateDefaults{
+			Attributes: &TemplateAttributeDefaults{
+				ByExecutor: map[string]map[string]any{
+					"h": {
+						"extra_field": "hi",
+					},
+				},
+			},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"known": map[string]any{
+						"type":    "string",
+						"default": "x",
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{"type":"object","properties":{"known":{"type":"string"}},"additionalProperties":false}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "defaults.attributes.by_executor.extra_field")
+}
+
+// TestValidateAttributesSchema_NestedDefaultTypeConflict — Gap 2 case
+// (c). L2 declares a `default:` value whose runtime shape contradicts
+// the executor's nested-property type declaration. The flat L2-vs-
+// executor type comparison cannot catch this (the L2 property type is
+// fine; only the default value is wrong); the JSON-Schema validation
+// of the composed defaults bag against the executor's raw schema
+// catches the violation.
+func TestValidateAttributesSchema_NestedDefaultTypeConflict(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"cli": map[string]any{
+						"type": "object",
+						"default": map[string]any{
+							// silence_timeout_ms is declared `integer` by
+							// the executor, but here we set it to a string
+							// ("60s"). The composed-defaults-bag validation
+							// catches this.
+							"silence_timeout_ms": "60s",
+						},
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{
+				"type":"object",
+				"properties":{
+					"cli":{
+						"type":"object",
+						"properties":{
+							"silence_timeout_ms":{"type":"integer"}
+						}
+					}
+				}
+			}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].attributes.schema.defaults")
+}
+
+// TestValidateCompositionAgainstExecutor_RequiredInputWithSource pins the
+// fix for a false-positive that fired when an executor's expected schema
+// declared `required: ["X"]` and the template bound `X` via `source:`
+// (no `default:`). The defaults bag at registration is intentionally a
+// proper subset of the dispatch bag — source-bound properties have no
+// default and are absent from the bag — so enforcing the executor's
+// `required:` against it would (incorrectly) flag X as missing. The
+// fix strips `required:` from the schema used for the defaults-bag
+// validation pass; type and nested-shape checks against present values
+// continue to fire.
+func TestValidateCompositionAgainstExecutor_RequiredInputWithSource(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"system_prompt": map[string]any{
+						"type":   "string",
+						"source": "{{params.x}}",
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			return []byte(`{
+				"type":"object",
+				"properties":{
+					"system_prompt":{"type":"string"}
+				},
+				"required":["system_prompt"]
+			}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	assert.True(t, res.Ok(),
+		"executor required + template source: registration must not fire false-positive `required:`; errors: %+v",
+		res.Errors)
+}
+
+// TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty — control
+// case for Gap 2. When the executor's expected schema does NOT set
+// `additionalProperties: false`, L2 declarations for properties the
+// executor doesn't enumerate are admissible (the schema is open). The
+// executor's enumerated property (`known`) is `readOnly: true` so the
+// template needn't declare a source/default for it.
+func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "h",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"extra_field": map[string]any{
+						"type":    "string",
+						"default": "hi",
+					},
+				},
+			}},
+		}},
+	}
+	hooks := RegistryHooks{
+		StoreDeclared: storeDeclaredLookup(knownStores),
+		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+			// additionalProperties default is true (open). `known` is
+			// executor-written (readOnly: true) so its absence in L2 is
+			// admissible under the unified-surface check.
+			return []byte(`{"type":"object","properties":{"known":{"type":"string","readOnly":true}}}`), true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	assert.True(t, res.Ok(), "open executor schema should admit extra L2 props; errors: %+v", res.Errors)
 }

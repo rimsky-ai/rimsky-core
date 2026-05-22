@@ -88,11 +88,17 @@ type RegistryHooks struct {
 	// check (e.g. tests that don't wire an observability cache).
 	ExecutorDeclaredEvents func(name string) ([]string, bool)
 
-	// ExecutorUserdataSchema returns the JSON Schema bytes the named
-	// executor advertises via ObservabilityCapabilities.userdata_schema
-	// (plan A1 / F7). Empty bytes mean "no schema; accept any
-	// userdata." nil → skip the check.
-	ExecutorUserdataSchema func(name string) ([]byte, bool)
+	// ExecutorExpectedAttributesSchema returns the JSON Schema bytes the
+	// named executor advertises via
+	// ObservabilityCapabilities.expected_attributes_schema. Empty bytes
+	// mean "no schema; accept any attributes." nil → skip the check.
+	//
+	// Used by checkAttributesSchema to (a) merge into the per-node
+	// effective attribute schema at registration and (b) recognise
+	// properties the executor marks `readOnly: true` (executor-write-
+	// back populates at commit; template need not declare a source or
+	// default).
+	ExecutorExpectedAttributesSchema func(name string) ([]byte, bool)
 
 	// StoreAdvertisesDataProcessing returns true when the named store's
 	// Capabilities.Protocols includes "data_processing". Used to gate
@@ -139,9 +145,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 
 	// Template-author defaults validation runs after canonicalization so
 	// it sees the flattened Nodes list and can cross-check each
-	// `defaults.userdata.by_executor.<name>` routing key against the
-	// template's actual executor names. Per @blessed-invariant 11 only
-	// routing keys are inspected; fragment values are never read.
+	// `defaults.attributes.by_executor.<name>` routing key against the
+	// template's actual executor names. Per the structural-inertness
+	// discipline (concept:inertness), only routing keys are inspected;
+	// fragment values are never read.
 	validateDefaults(spec, &res)
 
 	declared := make(map[string]int, len(spec.Nodes))
@@ -170,12 +177,11 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
-		validateAttributesSchema(n, base, declared, &res)
+		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateOnAcquireUnavailable(n, base, &res)
 		validateOnExecutorComplete(n, base, &res)
 		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", &res)
 		validateMaxParkDuration(n, base, &res)
-		validateUserdataAgainstSchema(n, base, hooks, &res)
 		// D3 + D4 — data-platform-extensions additions.
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
@@ -303,18 +309,19 @@ func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 }
 
 // validateDefaults inspects only the routing keys under
-// `spec.Defaults.Userdata.ByExecutor`, rejecting entries whose executor
+// `spec.Defaults.Attributes.ByExecutor`, rejecting entries whose executor
 // name does not match any node's `Executor`. The fragment values are
-// never inspected (preserves `@blessed-invariant 11`). Per spec
+// never inspected (preserves the structural-inertness discipline for
+// attribute values; concept:inertness). Per spec
 // .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
 // Item 1.
 //
-// @concept: userdata
+// @concept: attribute
 func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
-	if spec.Defaults == nil || spec.Defaults.Userdata == nil {
+	if spec.Defaults == nil || spec.Defaults.Attributes == nil {
 		return
 	}
-	if len(spec.Defaults.Userdata.ByExecutor) == 0 {
+	if len(spec.Defaults.Attributes.ByExecutor) == 0 {
 		return
 	}
 	known := make(map[string]struct{}, len(spec.Nodes))
@@ -323,10 +330,10 @@ func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
 			known[n.Executor] = struct{}{}
 		}
 	}
-	for execName := range spec.Defaults.Userdata.ByExecutor {
+	for execName := range spec.Defaults.Attributes.ByExecutor {
 		if _, ok := known[execName]; !ok {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("defaults.userdata.by_executor[%q]", execName),
+				Path: fmt.Sprintf("defaults.attributes.by_executor[%q]", execName),
 				Msg:  fmt.Sprintf("executor name %q does not match any node's executor", execName),
 			})
 		}
@@ -593,6 +600,8 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 func isBuiltinErrorClass(name string) bool {
 	switch name {
 	case "template_resolution_failed",
+		"template_validation_failed",
+		"executor_schema_unavailable",
 		"attributes_schema_failed",
 		"executor_blocked",
 		"executor_errored",
@@ -621,12 +630,13 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 		})
 	}
 	if !hasExecutor && !hasDelegate {
-		// Pure-cascade pseudo-node — legal. Warn only if userdata
-		// is present (it has no consumer).
-		if len(n.Userdata) > 0 {
+		// Pure-cascade pseudo-node — legal. Warn only if an attribute
+		// schema is declared (those properties have no executor to
+		// consume them).
+		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 			res.Warnings = append(res.Warnings, ValidationWarning{
-				Path: fmt.Sprintf("%s.userdata", base),
-				Msg:  "pure-cascade node has userdata; userdata is only consumed by executors",
+				Path: fmt.Sprintf("%s.attributes", base),
+				Msg:  "pure-cascade node declares attributes; attribute values are only consumed by executors",
 			})
 		}
 	}
@@ -786,12 +796,31 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 
 // validateAttributesSchema parses the JSON Schema and checks that
 // every `source:` directive in `properties[*].source` is syntactically
-// valid: a single `{{...}}` body matching deps/claim/params shapes.
-// Referenced upstream node names must exist in the template;
-// referenced claim aliases must be acquired by this node OR present
-// via inherits: declarations (the latter is checked alongside the
-// holding-subgraph computation in ValidateInheritance).
-func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, res *ValidationResult) {
+// valid. Sources admit literal text and one or more {{...}} directives;
+// each directive resolves independently against its source kind
+// (`nodes`, `claim`, `params`, `trigger`, `child`). Per-directive
+// strict-default with `?` opt-in to lenient.
+//
+// Also runs checkAttributesSchema: each property must declare at most
+// one of `source:` or `default:`, and must satisfy one of "has source",
+// "has default", or "is marked readOnly: true in the executor's
+// expected_attributes_schema" (executor-write-back populates at commit).
+//
+// Also runs validateCompositionAgainstExecutor when the executor's
+// expected_attributes_schema is visible: (a) type-redeclaration
+// conflicts (L2 vs executor), (b) closed-schema-forbidden properties
+// (L1 + L2 can't introduce undeclared properties when the executor's
+// schema sets additionalProperties: false), (c) default-value-vs-
+// executor-type checks via JSON Schema (catches deep-nested type
+// mismatches in L1/L2 default values).
+//
+// Referenced upstream node names must exist in the template; referenced
+// claim aliases must be acquired by this node OR present via inherits:
+// declarations (the latter is checked alongside the holding-subgraph
+// computation in ValidateInheritance).
+//
+// @concept: attribute
+func validateAttributesSchema(n TemplateNodeDef, base string, declared map[string]int, spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
 		return
 	}
@@ -839,42 +868,299 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		if !ok {
 			continue
 		}
-		srcRaw, ok := propMap["source"]
-		if !ok {
-			continue
-		}
-		src, ok := srcRaw.(string)
-		if !ok {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("%s.properties.%s.source", sbase, fname),
-				Msg:  "source must be a string",
-			})
-			continue
-		}
-		checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, res)
-
-		// Validate hard_dep, if present.
-		if hd, present := propMap["hard_dep"]; present {
-			hdBool, ok := hd.(bool)
+		srcRaw, hasSource := propMap["source"]
+		if hasSource {
+			src, ok := srcRaw.(string)
 			if !ok {
 				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
-					Msg:  "hard_dep must be a boolean",
+					Path: fmt.Sprintf("%s.properties.%s.source", sbase, fname),
+					Msg:  "source must be a string (array-form multi-source is not admitted)",
 				})
-			} else if hdBool {
-				// hard_dep only applies to nodes.<X>.attribute.<Y> reads.
-				// Reject the flag on other source kinds (claim, params,
-				// trigger, child, event) — those are intrinsically per-frame
-				// or instance-scoped and the flag is meaningless.
-				if !isAttributeSourceDirective(src) {
+				continue
+			}
+			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, res)
+
+			// Validate hard_dep, if present.
+			if hd, present := propMap["hard_dep"]; present {
+				hdBool, ok := hd.(bool)
+				if !ok {
 					res.Errors = append(res.Errors, ValidationError{
 						Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
-						Msg:  "hard_dep applies only to nodes.<X>.attribute.<Y> sources; other source kinds are intrinsically per-frame or instance-scoped and don't admit hard_dep",
+						Msg:  "hard_dep must be a boolean",
 					})
+				} else if hdBool {
+					// hard_dep only applies to nodes.<X>.attribute.<Y> reads.
+					// Reject the flag on other source kinds (claim, params,
+					// trigger, child, event) — those are intrinsically per-frame
+					// or instance-scoped and the flag is meaningless.
+					if !isAttributeSourceDirective(src) {
+						res.Errors = append(res.Errors, ValidationError{
+							Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
+							Msg:  "hard_dep applies only to nodes.<X>.attribute.<Y> sources; other source kinds are intrinsically per-frame or instance-scoped and don't admit hard_dep",
+						})
+					}
 				}
 			}
 		}
 	}
+
+	// Compute the effective schema (executor's expected schema ∪ L1
+	// defaults ∪ L2 node declaration) and run the unified-attribute-
+	// surface check against it. The merged schema is also what the
+	// runtime recomputes at dispatch (recompute-rather-than-persist;
+	// see runtime/runner_dispatch.go::substituteAttributesSchema).
+	//
+	// When the executor's expected_attributes_schema is not visible
+	// (no hook wired, hook returns ok=false, or empty bytes), the
+	// "executor-write-back" leg of the unified-surface check cannot be
+	// evaluated — we can't tell whether a sourceless+defaultless
+	// property is one the executor produces. In that case the
+	// readOnly-fallback check is skipped; the validator still enforces
+	// "at most one of source/default" and the L2 readOnly authorship
+	// rule. The runtime dispatch path's effective-schema computation
+	// applies the same recompute under the same lookup; when the
+	// executor's schema lands at dispatch the readOnly properties flow
+	// through correctly.
+	var execSchema map[string]any
+	var execReadOnlyProps map[string]bool
+	execSchemaVisible := false
+	if n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
+		if execBytes, ok := hooks.ExecutorExpectedAttributesSchema(n.Executor); ok && len(execBytes) > 0 {
+			if err := json.Unmarshal(execBytes, &execSchema); err != nil {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: base + ".attributes",
+					Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not valid JSON: %v", n.Executor, err),
+				})
+				return
+			}
+			execReadOnlyProps = extractReadOnlyProps(execSchema)
+			execSchemaVisible = true
+		}
+	}
+	if execReadOnlyProps == nil {
+		execReadOnlyProps = map[string]bool{}
+	}
+
+	var l1Defaults map[string]any
+	if spec != nil && spec.Defaults != nil && spec.Defaults.Attributes != nil && n.Executor != "" {
+		l1Defaults = spec.Defaults.Attributes.ByExecutor[n.Executor]
+	}
+
+	effective := MergeAttributeDefaults(execSchema, l1Defaults, n.Attributes.Schema)
+	execSchemaPermissive := execSchemaVisible && IsPermissiveExecutorSchema(execSchema)
+	checkAttributesSchema(effective, n.Attributes.Schema, execReadOnlyProps, execSchemaVisible, execSchemaPermissive, sbase, res)
+	if execSchemaVisible {
+		validateCompositionAgainstExecutor(execSchema, l1Defaults, n.Attributes.Schema, sbase, res)
+	}
+}
+
+// validateCompositionAgainstExecutor enforces three executor-authority
+// rules over the composed (executor ∪ L1 ∪ L2) attribute schema:
+//
+//  1. **Type-redeclaration conflicts.** When L2 redeclares a property's
+//     `type:` and the executor also declares one for the same property,
+//     the types must match. The executor is authoritative on types.
+//  2. **Closed-schema-forbidden properties.** When the executor's schema
+//     sets `additionalProperties: false` and the executor does not
+//     declare a property `X`, neither L1 nor L2 may introduce `X`. L1
+//     adding a value for an undeclared property is symmetric to L2
+//     declaring it.
+//  3. **Default-value vs. executor-type checks.** L1 + L2 default values
+//     compose into a "defaults-only" data bag (L2 wins on collision);
+//     the bag is JSON-Schema-validated against the executor's raw
+//     schema. Catches deep-nested type mismatches that the flat
+//     property-type comparison in (1) cannot see.
+//
+// Only fires when the executor's expected schema is visible (per the
+// soft-fail discipline elsewhere in this validator). Adds findings to
+// `res.Errors`; surfaces at the operator layer as
+// `template_validation_failed`.
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Effective schema computation" / §"Error handling".
+//
+// @concept: attribute
+func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[string]any, sbase string, res *ValidationResult) {
+	if execSchema == nil {
+		return
+	}
+	execProps, _ := execSchema["properties"].(map[string]any)
+	nodeProps, _ := nodeSchema["properties"].(map[string]any)
+	additionalProperties, hasAddProps := execSchema["additionalProperties"]
+	// The closed-schema gate fires only when the executor's schema both
+	// has a `properties` block (i.e. is not permissive) and explicitly
+	// declares `additionalProperties: false`. JSON Schema's default for
+	// `additionalProperties` is true; absence ⇒ open.
+	closed := false
+	if hasAddProps {
+		if b, ok := additionalProperties.(bool); ok && !b {
+			closed = true
+		}
+	}
+
+	// (1) Type-redeclaration conflicts. Walk L2's declared properties.
+	for name, raw := range nodeProps {
+		nodeProp, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		nodeType, nodeHasType := nodeProp["type"]
+		if !nodeHasType {
+			continue
+		}
+		execProp, _ := execProps[name].(map[string]any)
+		if execProp == nil {
+			continue
+		}
+		execType, execHasType := execProp["type"]
+		if !execHasType {
+			continue
+		}
+		if !jsonValuesEqual(nodeType, execType) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.properties.%s.type", sbase, name),
+				Msg: fmt.Sprintf(
+					"template declares property %s.type: %v but executor's expected_attributes_schema declares type: %v — the executor is authoritative on types",
+					name, nodeType, execType),
+			})
+		}
+	}
+
+	// (2) Closed-schema-forbidden properties (L2 and L1).
+	if closed && execProps != nil {
+		for name := range nodeProps {
+			if _, declared := execProps[name]; !declared {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: fmt.Sprintf("%s.properties.%s", sbase, name),
+					Msg: fmt.Sprintf(
+						"property %s is not declared in executor's expected_attributes_schema and the executor's schema is closed (additionalProperties: false)",
+						name),
+				})
+			}
+		}
+		for name := range l1Defaults {
+			if _, declared := execProps[name]; declared {
+				continue
+			}
+			// Avoid duplicate reporting if L2 also declared it.
+			if _, declaredInNode := nodeProps[name]; declaredInNode {
+				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("defaults.attributes.by_executor.%s", name),
+				Msg: fmt.Sprintf(
+					"property %s is not declared in executor's expected_attributes_schema and the executor's schema is closed (additionalProperties: false)",
+					name),
+			})
+		}
+	}
+
+	// (3) Default-value-vs-executor-type checks. Compose L1 + L2 default
+	// values into a single map; L2 wins on collision per the most-
+	// specific-wins rule. Then JSON-Schema-validate the composed bag
+	// against the executor's raw schema. This catches deep-nested type
+	// mismatches the flat property-type check above cannot see.
+	defaultsBag := map[string]any{}
+	for name, val := range l1Defaults {
+		defaultsBag[name] = val
+	}
+	for name, raw := range nodeProps {
+		nodeProp, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if defaultVal, hasDefault := nodeProp["default"]; hasDefault {
+			defaultsBag[name] = defaultVal
+		}
+	}
+	if len(defaultsBag) == 0 {
+		return
+	}
+	// Strip `required:` from the executor schema before validating the
+	// defaults bag. The defaults bag is an intentionally-partial subset
+	// of what the dispatch bag will hold — properties bound via
+	// `source:` and properties the executor will write (`readOnly:
+	// true`) have no entry in defaults. Enforcing `required:` against
+	// that subset would fire false-positive missing-property errors at
+	// registration. We only want this pass to catch type / nested-shape
+	// mismatches on values that *are* present.
+	schemaForDefaults := schemaWithoutTopLevelRequired(execSchema)
+	if err := validateAgainstSchema(schemaForDefaults, defaultsBag); err != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("%s.defaults", sbase),
+			Msg: fmt.Sprintf(
+				"composed default values violate executor's expected_attributes_schema: %v",
+				err),
+		})
+	}
+}
+
+// schemaWithoutTopLevelRequired returns a shallow clone of `schema`
+// with the top-level `required` key removed. Used by
+// validateCompositionAgainstExecutor's defaults-bag pass: that bag is
+// a proper subset of the dispatch-time bag (only static defaults
+// populated; source-bound and executor-written properties are absent),
+// so `required:` enforcement against it would fire false positives.
+// The clone is shallow — nested schemas keep their `required:` keys.
+func schemaWithoutTopLevelRequired(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	if _, hasRequired := schema["required"]; !hasRequired {
+		return schema
+	}
+	out := make(map[string]any, len(schema))
+	for k, v := range schema {
+		if k == "required" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// validateAgainstSchema compiles `schema` and validates `data` against
+// it. Returns nil on success, the underlying validation error on
+// failure. Used by validateCompositionAgainstExecutor's nested-default
+// check; mirrors the call shape graph/attribute/validate.go::Validate
+// uses but stays local because the validator layer does not depend on
+// the runtime's phase taxonomy.
+func validateAgainstSchema(schema, data map[string]any) error {
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("marshal schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("composition.json", bytes.NewReader(schemaBytes)); err != nil {
+		return fmt.Errorf("add resource: %w", err)
+	}
+	compiled, err := compiler.Compile("composition.json")
+	if err != nil {
+		return fmt.Errorf("compile schema: %w", err)
+	}
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal data: %w", err)
+	}
+	var normalized any
+	if err := json.Unmarshal(dataBytes, &normalized); err != nil {
+		return fmt.Errorf("unmarshal data: %w", err)
+	}
+	return compiled.Validate(normalized)
+}
+
+// jsonValuesEqual compares two JSON-decoded `type:` declarations. Both
+// scalar string types ("string", "object") and array unions
+// (["string","null"]) are admissible. Equality is structural after
+// json round-trip to normalize map types.
+func jsonValuesEqual(a, b any) bool {
+	ab, errA := json.Marshal(a)
+	bb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(ab, bb)
 }
 
 // isValidFallbackLiteral reports whether s is a JSON literal admitted
@@ -922,9 +1208,14 @@ func isAttributeSourceDirective(src string) bool {
 }
 
 // checkAttributeSource enforces directive syntax + reference validity
-// for a single `source:` value. Per spec §16 the value must be exactly
-// one `{{...}}` directive (no surrounding text and no multiple
-// directives).
+// for a `source:` value. Per the 2026-05-21 userdata collapse the
+// grammar accepts literal text alongside one or more `{{...}}`
+// directives in a single source string; each directive resolves
+// independently against its source kind. Per-directive strict-default
+// with `?` opt-in to lenient (mutually exclusive with `| <literal>`
+// fallback).
+//
+// @concept: attribute
 func checkAttributeSource(src, path string, declared map[string]int, directAliases, inheritedAliases map[string]struct{}, res *ValidationResult) {
 	trimmed := strings.TrimSpace(src)
 	if trimmed == "" {
@@ -934,28 +1225,29 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 		return
 	}
 	matches := dispatchDirectiveRe.FindAllStringSubmatchIndex(trimmed, -1)
-	if len(matches) != 1 {
+	if len(matches) == 0 {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
-			Msg:  fmt.Sprintf("source must be exactly one {{...}} directive, got %q", trimmed),
+			Msg:  fmt.Sprintf("source must contain at least one {{...}} directive, got %q", trimmed),
 		})
 		return
 	}
-	m := matches[0]
-	if m[0] != 0 || m[1] != len(trimmed) {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: path,
-			Msg:  fmt.Sprintf("source must be exactly one {{...}} directive with no surrounding text, got %q", trimmed),
-		})
-		return
+	for _, m := range matches {
+		body := strings.TrimSpace(trimmed[m[2]:m[3]])
+		checkAttributeDirectiveBody(body, path, declared, directAliases, inheritedAliases, res)
 	}
-	body := strings.TrimSpace(trimmed[m[2]:m[3]])
-	// Fallback operator: `<directive> | <literal>` admits exactly one
-	// directive on the left and exactly one JSON literal on the right
-	// (`null`, `true`, `false`, a number, or a quoted string). Multi-
-	// pipe chains are rejected. Per spec
-	// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-	// §"Fallback operator".
+}
+
+// checkAttributeDirectiveBody validates the body of one `{{...}}`
+// directive (caller has already stripped the outer braces). Handles
+// `?` lenient marker and `| <literal>` fallback parsing, then routes
+// to per-kind validation.
+func checkAttributeDirectiveBody(body, path string, declared map[string]int, directAliases, inheritedAliases map[string]struct{}, res *ValidationResult) {
+	body = strings.TrimSpace(body)
+	// Pipe-fallback parsing first (longest reach) so a trailing `?` is
+	// still recognised on the left side of the pipe if present.
+	hasFallback := false
+	hasLenient := false
 	if idx := strings.Index(body, "|"); idx >= 0 {
 		left := strings.TrimSpace(body[:idx])
 		right := strings.TrimSpace(body[idx+1:])
@@ -974,6 +1266,21 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 			return
 		}
 		body = left
+		hasFallback = true
+	}
+	// Lenient `?` marker (must appear at the end of the directive body
+	// after optional whitespace and before the optional `| <literal>`
+	// fallback, which we already stripped).
+	if strings.HasSuffix(body, "?") {
+		hasLenient = true
+		body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
+	}
+	if hasLenient && hasFallback {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: path,
+			Msg:  "source directive has both `?` marker and `| <literal>` fallback — pick one (incoherent: `?` says null on missing, `|` says literal on missing)",
+		})
+		return
 	}
 	bodyMatch := directiveBodyRe.FindStringSubmatch(body)
 	if bodyMatch == nil {
@@ -1207,69 +1514,321 @@ func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResu
 	}
 }
 
-// validateUserdataAgainstSchema runs the executor's advertised userdata
-// schema (if any) against the template-level userdata bytes. Plan F7
-// (registration-time gate). Dispatch-time re-validation lives in the
-// foundation runner; this gate catches schema violations baked into the
-// template even when no per-instance overrides are applied.
+// AttributesSchemaCheckError reports a unified-attribute-surface
+// violation found by CheckEffectiveAttributesSchema. The path is in
+// `properties.<name>` form (no leading `attributes.schema`), suitable
+// for embedding in registration error messages or dispatch failure
+// classes.
+type AttributesSchemaCheckError struct {
+	Path string
+	Msg  string
+}
+
+// CheckEffectiveAttributesSchema enforces the unified-attribute-surface
+// invariant on a merged effective schema and returns one error per
+// violating property. The exported entry point is used by runtime
+// dispatch to re-enforce the rule once the executor's expected schema
+// is visible (the validator's registration-time pass soft-fails the
+// readOnly leg when the discovery cache hasn't populated yet; runtime
+// reapplies under the same MergeAttributeDefaults shape).
 //
-// Skipped silently when:
-//   - The node has no executor.
-//   - Hooks.ExecutorUserdataSchema is nil (e.g. unit tests).
-//   - The advertised schema is empty.
-//   - The node has no userdata.
-func validateUserdataAgainstSchema(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
-	if n.Executor == "" || hooks.ExecutorUserdataSchema == nil {
+// @concept: attribute
+func CheckEffectiveAttributesSchema(effective, nodeSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible, execSchemaPermissive bool) []AttributesSchemaCheckError {
+	var out []AttributesSchemaCheckError
+	if effective == nil {
+		return nil
+	}
+	effProps, _ := effective["properties"].(map[string]any)
+	nodeProps, _ := nodeSchema["properties"].(map[string]any)
+	for name, raw := range effProps {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		_, hasSource := prop["source"]
+		_, hasDefault := prop["default"]
+		execRO := executorReadOnlyProps[name]
+		if hasSource && hasDefault {
+			out = append(out, AttributesSchemaCheckError{
+				Path: fmt.Sprintf("properties.%s", name),
+				Msg:  "property declares both `source:` and `default:` — pick one",
+			})
+			continue
+		}
+		// The readOnly-fallback leg only fires when the executor's
+		// schema both is visible AND constrains its attribute shape
+		// (has a `properties` block). An executor whose advertised
+		// schema is "permissive" (e.g. `{"type":"object"}` with no
+		// `properties` block, or with `additionalProperties: true` and
+		// no constraints) is declaring "I accept any attribute shape" —
+		// there's no fixed set of executor-written properties to
+		// compare against.
+		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !execSchemaPermissive {
+			out = append(out, AttributesSchemaCheckError{
+				Path: fmt.Sprintf("properties.%s", name),
+				Msg:  "property has no `source:`, no `default:`, and is not marked `readOnly: true` in the executor's expected_attributes_schema — declare one of these or the property is unpopulated at dispatch",
+			})
+			continue
+		}
+		if nodeProps != nil && execSchemaVisible && !execSchemaPermissive {
+			if rawNode, present := nodeProps[name]; present {
+				if nodeProp, ok := rawNode.(map[string]any); ok {
+					if ro, _ := nodeProp["readOnly"].(bool); ro && !execRO {
+						out = append(out, AttributesSchemaCheckError{
+							Path: fmt.Sprintf("properties.%s", name),
+							Msg:  "template marks property `readOnly: true` but the executor's expected_attributes_schema does not — the executor is authoritative on which properties it produces",
+						})
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// IsPermissiveExecutorSchema reports whether the executor's advertised
+// schema declares "no constraint on attribute shape" — a missing
+// `properties` block. The unified-attribute-surface check skips the
+// readOnly-fallback leg for permissive schemas: an executor that
+// declines to enumerate its properties cannot be checked against
+// "which properties am I supposed to produce?" because the set is open.
+//
+// An executor that declares `"properties": {}` is NOT permissive — it
+// is declaring "closed: I have zero properties." That's a meaningful
+// contract distinct from "I don't enumerate."
+//
+// @concept: attribute
+func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
+	if execSchema == nil {
+		return false
+	}
+	_, hasProps := execSchema["properties"]
+	return !hasProps
+}
+
+// checkAttributesSchema enforces the unified-attribute-surface
+// invariant: each property must satisfy one of (a) has `source:`,
+// (b) has `default:`, or (c) is marked `readOnly: true` in the
+// executor's expected_attributes_schema (executor-write-back populates
+// at commit). Properties with both `source:` and `default:` are also
+// rejected.
+//
+// The template author's L2 declaration cannot set `readOnly: true` on
+// a property the executor's schema does not also mark `readOnly: true`
+// — the executor is authoritative on which properties it produces.
+//
+// `effective` is the merged effective schema (executor's
+// expected_attributes_schema ∪ L1 defaults ∪ L2 node declaration).
+// `nodeSchema` is the per-node L2 schema (used for `readOnly`
+// authorship checks since L1 doesn't carry `readOnly`).
+//
+// `execSchemaVisible` reports whether the executor's expected schema
+// was available at validation time. When false (no discovery hook
+// wired, executor not yet handshaked, or the executor advertises no
+// schema), the readOnly-fallback leg is skipped — without the
+// executor's schema we cannot tell whether a sourceless/defaultless
+// property is one the executor produces. The "at most one of
+// source/default" rule and the L2-readOnly-authorship rule still
+// fire unconditionally. Runtime dispatch's
+// `runtime/runner_dispatch.go::resolveAttributes` reapplies the full
+// check once the executor's schema is visible at dispatch time
+// (`code:runtime/runner_dispatch.go` calls
+// `node.CheckEffectiveAttributesSchema`).
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Attribute as the unified surface".
+//
+// @concept: attribute
+func checkAttributesSchema(effective, nodeSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible, execSchemaPermissive bool, sbase string, res *ValidationResult) {
+	if effective == nil {
 		return
 	}
-	schemaBytes, ok := hooks.ExecutorUserdataSchema(n.Executor)
-	if !ok || len(schemaBytes) == 0 {
-		return
+	effProps, _ := effective["properties"].(map[string]any)
+	nodeProps, _ := nodeSchema["properties"].(map[string]any)
+	for name, raw := range effProps {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		_, hasSource := prop["source"]
+		_, hasDefault := prop["default"]
+		execRO := executorReadOnlyProps[name]
+		if hasSource && hasDefault {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.properties.%s", sbase, name),
+				Msg:  "property declares both `source:` and `default:` — pick one",
+			})
+			continue
+		}
+		// readOnly-fallback leg: see CheckEffectiveAttributesSchema for
+		// the permissive-schema rationale (an executor that declines to
+		// enumerate its properties is declaring open shape, so no
+		// per-name comparison is meaningful).
+		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !execSchemaPermissive {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.properties.%s", sbase, name),
+				Msg:  "property has no `source:`, no `default:`, and is not marked `readOnly: true` in the executor's expected_attributes_schema — declare one of these or the property is unpopulated at dispatch",
+			})
+			continue
+		}
+		// L2 cannot grant `readOnly: true` on a property the executor's
+		// schema does not also mark `readOnly: true`. The executor is
+		// authoritative on which of its attributes it produces.
+		//
+		// Skipped when the executor's schema isn't visible at
+		// validation time — we cannot tell whether the executor
+		// produces the property or not, so we trust the author's
+		// declaration. Runtime dispatch reapplies the rule once the
+		// executor schema is known. Also skipped for permissive
+		// schemas (no `properties` block) — open shape, no contract.
+		if nodeProps != nil && execSchemaVisible && !execSchemaPermissive {
+			if rawNode, present := nodeProps[name]; present {
+				if nodeProp, ok := rawNode.(map[string]any); ok {
+					if ro, _ := nodeProp["readOnly"].(bool); ro && !execRO {
+						res.Errors = append(res.Errors, ValidationError{
+							Path: fmt.Sprintf("%s.properties.%s", sbase, name),
+							Msg:  "template marks property `readOnly: true` but the executor's expected_attributes_schema does not — the executor is authoritative on which properties it produces",
+						})
+					}
+				}
+			}
+		}
 	}
-	// Empty userdata is equivalent to {} — cheap to validate; catches
-	// schemas with required: [...]. We always run validation rather
-	// than short-circuiting on len(Userdata)==0 because a missing
-	// required field is a real schema violation that should surface
-	// at registration.
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("inline://schema.json", bytes.NewReader(schemaBytes)); err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".userdata",
-			Msg:  fmt.Sprintf("executor %q advertises invalid userdata_schema: %v", n.Executor, err),
-		})
-		return
+}
+
+// extractReadOnlyProps returns the set of top-level property names with
+// `readOnly: true` in the executor's expected_attributes_schema.
+// Returns an empty map when the schema is nil or has no `properties`.
+//
+// @concept: attribute
+func extractReadOnlyProps(schema map[string]any) map[string]bool {
+	out := map[string]bool{}
+	if schema == nil {
+		return out
 	}
-	schema, err := compiler.Compile("inline://schema.json")
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return out
+	}
+	for name, raw := range props {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if ro, _ := prop["readOnly"].(bool); ro {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// MergeAttributeDefaults computes the per-node effective attribute
+// schema as the union of (1) the executor's expected_attributes_schema,
+// (2) the L1 template defaults (`spec.Defaults.Attributes.ByExecutor`),
+// and (3) the node's L2 attribute schema. Most specific wins on
+// `default:`. Types come from the executor's schema where declared;
+// L1 contributes `default:` entries only; L2 deep-merges over both.
+//
+// Pure function — used both by the template validator at registration
+// and by the runtime at dispatch (recompute path; see
+// runtime/runner_dispatch.go::substituteAttributesSchema).
+//
+// @concept: attribute
+func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any, nodeSchema map[string]any) map[string]any {
+	out := deepCopyJSON(execSchema)
+	if out == nil {
+		out = map[string]any{}
+	}
+	props, _ := out["properties"].(map[string]any)
+	if props == nil {
+		props = map[string]any{}
+		out["properties"] = props
+	}
+	// L1: for each (attr, value), set properties[attr].default.
+	for attr, val := range l1Defaults {
+		prop, _ := props[attr].(map[string]any)
+		if prop == nil {
+			prop = map[string]any{}
+			props[attr] = prop
+		}
+		prop["default"] = val
+	}
+	// L2: deep-merge the node's properties on top.
+	if nodeSchema != nil {
+		if nodeProps, ok := nodeSchema["properties"].(map[string]any); ok {
+			for attr, raw := range nodeProps {
+				nodeProp, _ := raw.(map[string]any)
+				if nodeProp == nil {
+					continue
+				}
+				existing, _ := props[attr].(map[string]any)
+				if existing == nil {
+					// Deep copy so L2's prop isn't aliased.
+					props[attr] = deepCopyJSON(nodeProp)
+					continue
+				}
+				// `source:` and `default:` are mutually exclusive on a
+				// property. If L2 supplies one, it overrides L1's choice
+				// of the other — drop the pre-existing key so the
+				// effective schema doesn't carry both into
+				// checkAttributesSchema (which would reject the
+				// template). Most-specific-wins per spec
+				// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+				// §"Resolution waterfall" / §"Effective schema
+				// computation".
+				if _, l2HasSource := nodeProp["source"]; l2HasSource {
+					delete(existing, "default")
+				}
+				if _, l2HasDefault := nodeProp["default"]; l2HasDefault {
+					delete(existing, "source")
+				}
+				for k, v := range nodeProp {
+					existing[k] = v
+				}
+			}
+		}
+		// Carry over `required` from the node schema (union with any
+		// existing list from the executor's schema).
+		if nodeReq, ok := nodeSchema["required"].([]any); ok && len(nodeReq) > 0 {
+			existingReq, _ := out["required"].([]any)
+			seen := map[string]bool{}
+			for _, r := range existingReq {
+				if s, ok := r.(string); ok {
+					seen[s] = true
+				}
+			}
+			for _, r := range nodeReq {
+				if s, ok := r.(string); ok && !seen[s] {
+					existingReq = append(existingReq, r)
+					seen[s] = true
+				}
+			}
+			out["required"] = existingReq
+		}
+		// additionalProperties: the executor is authoritative when it
+		// declared the key (closed-schema policy); if the executor
+		// didn't declare it, fall back to the node's declaration.
+		if _, execHas := out["additionalProperties"]; !execHas {
+			if v, ok := nodeSchema["additionalProperties"]; ok {
+				out["additionalProperties"] = v
+			}
+		}
+	}
+	return out
+}
+
+func deepCopyJSON(v map[string]any) map[string]any {
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
 	if err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".userdata",
-			Msg:  fmt.Sprintf("executor %q userdata_schema does not compile: %v", n.Executor, err),
-		})
-		return
+		return map[string]any{}
 	}
-	// Convert n.Userdata (map[string]any) into a JSON-decoded value.
-	udBytes, err := json.Marshal(n.Userdata)
-	if err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".userdata",
-			Msg:  fmt.Sprintf("marshal userdata: %v", err),
-		})
-		return
-	}
-	var doc any
-	if err := json.Unmarshal(udBytes, &doc); err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".userdata",
-			Msg:  fmt.Sprintf("decode userdata: %v", err),
-		})
-		return
-	}
-	if err := schema.Validate(doc); err != nil {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: base + ".userdata",
-			Msg:  fmt.Sprintf("userdata fails executor %q schema: %v", n.Executor, err),
-		})
-	}
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+	return out
 }
 
 // parseDurationStrict wraps time.ParseDuration. Wrapped to keep the

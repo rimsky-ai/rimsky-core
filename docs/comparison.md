@@ -310,8 +310,8 @@ rimsky's eventual shape will most resemble Dagster's.
 - **dbt**: Out of scope; relies on external orchestration.
 - **rimsky**: Achievable today via a polling executor that parks and
   resumes; not first-class. Planned as a roadmap item, lower-
-  commitment first move as a bundled executor with conventional
-  userdata.
+  commitment first move as a bundled executor with a conventional
+  expected-attributes schema.
 
 ## Scope test heuristics
 

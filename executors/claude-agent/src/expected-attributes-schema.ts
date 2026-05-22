@@ -3,18 +3,26 @@
 // See LICENSE.apache at the repo root.
 
 /**
- * userdata-schema.ts — JSON Schema for claude-agent userdata.
+ * expected-attributes-schema.ts — JSON Schema for claude-agent's
+ * accepted attribute shape.
  *
  * Drives two paths:
- *   1. Returned in `Capabilities.userdata_schema` so rimsky can validate
- *      template userdata at registration and at dispatch.
+ *   1. Returned in `Capabilities.expected_attributes_schema` so rimsky
+ *      can merge into the per-node effective attribute schema at
+ *      template registration and validate the resolved attribute bag
+ *      at dispatch.
  *   2. Used internally for input validation when claude-agent receives
- *      a dispatch (defence in depth — rimsky already validated, but the
- *      executor re-checks before launching the CLI).
+ *      a dispatch (defence in depth — rimsky already validated, but
+ *      the executor re-checks before launching the CLI).
  *
- * Per @blessed-invariant 11 the rimsky-side validation never inspects
- * fragment values outside the schema-validation pass. The executor's
- * own re-check is in-process; both are read-only.
+ * Per the 2026-05-21 userdata-collapse, the executor advertises a
+ * single unified attribute schema (no separate `userdata_schema`).
+ * Inputs (`system_prompt`, `user_prompt`, `model`, `cli.*`) carry no
+ * `readOnly` marker; outputs would carry `readOnly: true` (none in
+ * claude-agent today). The schema admits `additionalProperties: true`
+ * so authors may declare extension attributes used purely for inter-
+ * node dataflow (e.g. a `warnings_block` attribute used in a producer-
+ * owned-recovery cycle that this executor does not read).
  */
 // Schema property names match parseCliConfig in server.ts /
 // http-bridge.ts: snake_case. Mismatched names (camelCase here +
@@ -22,27 +30,26 @@
 // real key names to fail schema validation, while templates using
 // camelCase would pass validation but be silently ignored at run
 // time. The parser is the source of truth; schema follows it.
-export const userdataSchema = {
+export const expectedAttributesSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   properties: {
-    // cwd_from_store / cwd are top-level userdata fields read by
+    // cwd_from_store / cwd are top-level attribute fields read by
     // server.ts and http-bridge.ts to resolve the agent's working
-    // directory. Templates that legitimately set either must pass
-    // schema validation; without these declarations the
-    // top-level `additionalProperties: false` would reject them.
+    // directory.
     cwd_from_store: { type: "string" },
     cwd: { type: "string" },
-    // model / system_prompt / user_prompt_template are read at the
-    // top level of userdata by runAndCallback in server.ts and
-    // runAndCallback in http-bridge.ts. They are NOT under `cli.*`
-    // even though they affect the spawned CLI. Keeping them at the
-    // schema's top level matches the parser; nesting them under
-    // `cli` would break dispatch-time validation against the
-    // executor's advertised Capabilities.userdata_schema.
-    model: { type: "string" },
+    // model / system_prompt / user_prompt are read at the top level
+    // by the dispatch entrypoint in agent-run.ts. They are NOT under
+    // `cli.*` even though they affect the spawned CLI. Keeping them
+    // at the schema's top level matches the dispatch entrypoint.
+    model: { type: "string", default: "claude-sonnet-4-5" },
     system_prompt: { type: "string" },
-    user_prompt_template: { type: "string" },
+    // user_prompt is the fully rimsky-resolved user prompt (post-
+    // collapse the executor reads the resolved value verbatim and
+    // appends a fixed metadata footer; the old `user_prompt_template`
+    // two-stage substitution is gone).
+    user_prompt: { type: "string" },
     cli: {
       type: "object",
       // The cli.* fields below are exactly those parseCliConfig
@@ -73,7 +80,11 @@ export const userdataSchema = {
       },
     },
   },
-  additionalProperties: false,
+  // Open schema: author-declared extension attributes used purely for
+  // inter-node dataflow (cycle communication, source-bound state
+  // pulls) are admitted. The executor reads only the keys it knows;
+  // unknown keys flow through untouched.
+  additionalProperties: true,
 } as const;
 
 /**
@@ -88,6 +99,6 @@ export const declaredEvents: string[] = [];
 /**
  * Serialize the schema to bytes for the Capabilities response.
  */
-export function userdataSchemaBytes(): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(userdataSchema));
+export function expectedAttributesSchemaBytes(): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(expectedAttributesSchema));
 }

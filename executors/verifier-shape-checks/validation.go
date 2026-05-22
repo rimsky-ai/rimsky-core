@@ -4,9 +4,11 @@
 // validation.go implements the Validation mix-in service-protocol for
 // verifier-shape-checks. Validate is called by rimsky's control-api at
 // template registration with role="executor"; the verifier inspects
-// the resolved userdata + claim aliases and surfaces structural
-// problems (missing checks, malformed config, unknown check kinds) as
-// errors / warnings before the template is deployed.
+// the merged effective attribute schema (looking for a `checks`
+// property declared via `default:` or `source:` on the per-node L2
+// schema) plus claim aliases, and surfaces structural problems
+// (missing checks, malformed config, unknown check kinds) as errors /
+// warnings before the template is deployed.
 //
 // Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Protocol surfaces / Validation.
@@ -80,32 +82,52 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 	errors := make([]*genv1.ValidationFinding, 0)
 	warnings := make([]*genv1.ValidationFinding, 0)
 
-	var userdata map[string]any
-	if len(exec.GetUserdata()) > 0 {
-		if err := json.Unmarshal(exec.GetUserdata(), &userdata); err != nil {
+	var attrs map[string]any
+	if len(exec.GetAttributesSchema()) > 0 {
+		if err := json.Unmarshal(exec.GetAttributesSchema(), &attrs); err != nil {
 			errors = append(errors, &genv1.ValidationFinding{
-				Class:   "invalid_userdata",
-				Message: fmt.Sprintf("userdata is not valid JSON: %v", err),
-				Path:    "/executor/userdata",
+				Class:   "invalid_attribute",
+				Message: fmt.Sprintf("attributes_schema is not valid JSON: %v", err),
+				Path:    "/executor/attributes_schema",
 			})
 			return &genv1.ValidateResponse{Valid: false, Errors: errors, Warnings: warnings}
 		}
 	}
 
-	rawChecks, ok := userdata["checks"].([]any)
-	if !ok {
+	// Extract the `checks` attribute's static-default value from the
+	// per-node L2 schema. Under the userdata collapse, this verifier
+	// expects the template author to declare `checks` either as a
+	// `default:` value (the common case) or via `source:` (derived at
+	// dispatch from another node's attributes). Both shapes route through
+	// schema.properties.checks; the registration-time gate accepts either
+	// shape as satisfying the requirement, deferring per-element shape
+	// validation to dispatch time when `source:` is used. Only when
+	// neither is present (and the property is not `readOnly`) does the
+	// gate emit `missing_checks`.
+	props, _ := attrs["properties"].(map[string]any)
+	checksProp, _ := props["checks"].(map[string]any)
+	_, hasSource := checksProp["source"].(string)
+	rawChecks, hasDefault := checksProp["default"].([]any)
+	readOnly, _ := checksProp["readOnly"].(bool)
+	if !hasSource && !hasDefault && !readOnly {
 		errors = append(errors, &genv1.ValidationFinding{
 			Class:   "missing_checks",
-			Message: "userdata.checks (non-empty array) required",
-			Path:    "/executor/userdata/checks",
+			Message: "attributes.checks (non-empty array) required via default: or source:",
+			Path:    "/executor/attributes.checks",
 		})
 		return &genv1.ValidateResponse{Valid: false, Errors: errors, Warnings: warnings}
+	}
+	// Source-bound `checks` is validated at dispatch time once the
+	// upstream produces the array; registration-time per-element checks
+	// only run when a static default is present.
+	if !hasDefault {
+		return &genv1.ValidateResponse{Valid: true, Errors: errors, Warnings: warnings}
 	}
 	if len(rawChecks) == 0 {
 		errors = append(errors, &genv1.ValidationFinding{
 			Class:   "empty_checks",
-			Message: "userdata.checks must be non-empty",
-			Path:    "/executor/userdata/checks",
+			Message: "attributes.checks must be non-empty",
+			Path:    "/executor/attributes.checks",
 		})
 		return &genv1.ValidateResponse{Valid: false, Errors: errors, Warnings: warnings}
 	}
@@ -115,8 +137,8 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		if !ok {
 			errors = append(errors, &genv1.ValidationFinding{
 				Class:   "malformed_check",
-				Message: fmt.Sprintf("userdata.checks[%d] must be an object", i),
-				Path:    fmt.Sprintf("/executor/userdata/checks/%d", i),
+				Message: fmt.Sprintf("attributes.checks[%d] must be an object", i),
+				Path:    fmt.Sprintf("/executor/attributes.checks/%d", i),
 			})
 			continue
 		}
@@ -124,16 +146,16 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		if kind == "" {
 			errors = append(errors, &genv1.ValidationFinding{
 				Class:   "missing_check_kind",
-				Message: fmt.Sprintf("userdata.checks[%d].kind required", i),
-				Path:    fmt.Sprintf("/executor/userdata/checks/%d/kind", i),
+				Message: fmt.Sprintf("attributes.checks[%d].kind required", i),
+				Path:    fmt.Sprintf("/executor/attributes.checks/%d/kind", i),
 			})
 			continue
 		}
 		if !knownCheckKinds[kind] {
 			warnings = append(warnings, &genv1.ValidationFinding{
 				Class:   "unknown_check_kind",
-				Message: fmt.Sprintf("userdata.checks[%d].kind=%q is not a registered shape check; will fail at runtime", i, kind),
-				Path:    fmt.Sprintf("/executor/userdata/checks/%d/kind", i),
+				Message: fmt.Sprintf("attributes.checks[%d].kind=%q is not a registered shape check; will fail at runtime", i, kind),
+				Path:    fmt.Sprintf("/executor/attributes.checks/%d/kind", i),
 			})
 		}
 	}

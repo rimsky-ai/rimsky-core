@@ -180,15 +180,21 @@ type ObservabilityCapabilities struct {
 	// dial this URL directly for browser-friendly fetch/SSE access. When
 	// empty, services expose only the gRPC surface.
 	HttpBridgeUrl string `protobuf:"bytes,5,opt,name=http_bridge_url,json=httpBridgeUrl,proto3" json:"http_bridge_url,omitempty"`
-	// userdata_schema is a JSON Schema (RFC 8259 + draft 2020-12) describing
-	// the executor's accepted userdata shape. Empty means "no schema; accept
-	// any userdata."
+	// expected_attributes_schema is a JSON Schema (RFC 8259 + draft 2020-12)
+	// describing the executor's accepted attribute shape. Empty means "no
+	// schema; accept any attributes."
 	//
-	// Rimsky validates incoming template userdata against this schema at
-	// template registration and at dispatch (post-merge,
-	// post-substitution). Validation failures route through
-	// Error { error_class: "userdata_validation_failed" }.
-	UserdataSchema []byte `protobuf:"bytes,6,opt,name=userdata_schema,json=userdataSchema,proto3" json:"userdata_schema,omitempty"`
+	// Each property in the schema is one of:
+	//   - an *input* the executor consumes at dispatch (no `readOnly`); or
+	//   - an *output* the executor produces at commit write-back, marked
+	//     `readOnly: true` per the JSON Schema standard keyword.
+	//
+	// Rimsky merges this schema with template-level defaults (L1) and
+	// per-node declarations (L2) at registration to compute the effective
+	// attribute schema, then validates the post-substitution attribute bag
+	// at dispatch and the post-write-back bag at commit. Validation
+	// failures route through Error { error_class: "template_validation_failed" }.
+	ExpectedAttributesSchema []byte `protobuf:"bytes,6,opt,name=expected_attributes_schema,json=expectedAttributesSchema,proto3" json:"expected_attributes_schema,omitempty"`
 	// declared_events is the set of event names this executor may emit
 	// via the NamedEvent wire type on ExecuteEvent. Empty means
 	// "executor does not emit events."
@@ -267,9 +273,9 @@ func (x *ObservabilityCapabilities) GetHttpBridgeUrl() string {
 	return ""
 }
 
-func (x *ObservabilityCapabilities) GetUserdataSchema() []byte {
+func (x *ObservabilityCapabilities) GetExpectedAttributesSchema() []byte {
 	if x != nil {
-		return x.UserdataSchema
+		return x.ExpectedAttributesSchema
 	}
 	return nil
 }
@@ -594,14 +600,14 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
 	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x1d\n" +
-	"\x1bExecutorCapabilitiesRequest\"\xf2\x02\n" +
+	"\x1bExecutorCapabilitiesRequest\"\x87\x03\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
 	" retention_after_terminal_seconds\x18\x03 \x01(\x04R\x1dretentionAfterTerminalSeconds\x120\n" +
 	"\tcustom_ui\x18\x04 \x01(\v2\x13.rimsky.v1.CustomUIR\bcustomUi\x12&\n" +
-	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12'\n" +
-	"\x0fuserdata_schema\x18\x06 \x01(\fR\x0euserdataSchema\x12'\n" +
+	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12<\n" +
+	"\x1aexpected_attributes_schema\x18\x06 \x01(\fR\x18expectedAttributesSchema\x12'\n" +
 	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\"\x8a\x01\n" +
 	"\bCustomUI\x12\x15\n" +
 	"\x06ui_url\x18\x01 \x01(\tR\x05uiUrl\x123\n" +

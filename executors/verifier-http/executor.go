@@ -10,7 +10,7 @@
 //
 //	@concept: verifier-pattern
 //
-// Userdata schema:
+// Attribute schema:
 //
 //	{
 //	  "url": "https://verifier.example.com/check",
@@ -59,13 +59,13 @@ func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Execut
 
 // executeCore is transport-neutral so tests can drive it directly.
 func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, send sendFunc) error {
-	ud := req.GetUserdata().AsMap()
+	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return send(stubSuccess())
 	}
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return sendErrored(send, "invalid_userdata", "userdata.url required")
+		return sendErrored(send, "invalid_attribute", "attributes.url required")
 	}
 	if s.stubMode {
 		return send(stubSuccess())
@@ -87,7 +87,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	if body, ok := ud["body"]; ok && body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return sendErrored(send, "invalid_userdata", "body not JSON-serialisable: "+err.Error())
+			return sendErrored(send, "invalid_attribute", "body not JSON-serialisable: "+err.Error())
 		}
 		bodyReader = bytes.NewReader(raw)
 	}
@@ -96,7 +96,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(dispatchCtx, http.MethodPost, urlStr, bodyReader)
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", err.Error())
+		return sendErrored(send, "invalid_attribute", err.Error())
 	}
 	if bodyReader != nil {
 		httpReq.Header.Set("Content-Type", "application/json")

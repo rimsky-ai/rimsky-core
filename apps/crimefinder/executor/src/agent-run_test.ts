@@ -15,7 +15,7 @@ describe("runAgent (stub mode)", () => {
     });
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: {},
+      attributes: {},
       stores: [{ alias: "pass-state", address: addr }],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,
@@ -28,7 +28,7 @@ describe("runAgent (stub mode)", () => {
   it("returns error when no usable store address", async () => {
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: {},
+      attributes: {},
       stores: [],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,
@@ -45,7 +45,7 @@ describe("runAgent (stub mode)", () => {
   it("succeeds with no work for fix-cycle when stores are empty", async () => {
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: { mission: "fix-cycle" },
+      attributes: { mission: "fix-cycle" },
       stores: [],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,
@@ -59,7 +59,7 @@ describe("runAgent (stub mode)", () => {
   it("succeeds with no work for re-review when stores are empty", async () => {
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: { mission: "re-review" },
+      attributes: { mission: "re-review" },
       stores: [],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,
@@ -79,7 +79,7 @@ describe("runAgent (stub mode)", () => {
     });
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: { mission: "fix-cycle" },
+      attributes: { mission: "fix-cycle" },
       stores: [{ alias: "pass-state", address: addr }],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,
@@ -90,10 +90,12 @@ describe("runAgent (stub mode)", () => {
     if (outcome.variant === "success") expect(outcome.changed).toBe(false);
   });
 
-  // Per spec invariant 11 (userdata is opaque to rimsky's substitution
-  // pass), iter_num and assigned_finding_ids ride on the source-tree-zone
-  // address bytes — NOT in userdata. Verify the address round-trips
-  // both fields and the runner finds the zone primary.
+  // Per concept:inertness (attribute values are structurally inert to
+  // rimsky's substitution pass) and the read-only `address:` channel
+  // for per-child data, iter_num and assigned_finding_ids ride on the
+  // source-tree-zone address bytes — NOT in the attribute bag. Verify
+  // the address round-trips both fields and the runner finds the zone
+  // primary.
   it("threads iter_num and assigned_finding_ids from the address into the gate context", async () => {
     const addr = encodeAddress({
       kind: "source-tree-zone",
@@ -119,7 +121,7 @@ describe("runAgent (stub mode)", () => {
     // zone_started, proving the runner found the zone address.
     const outcome = await runAgent({
       dispatchId: "d_1",
-      userdata: { mission: "fix-cycle" },
+      attributes: { mission: "fix-cycle" },
       stores: [{ alias: "source-tree", address: addr }],
       callbackUrl: "http://noop",
       silenceTimeoutMs: 10_000,

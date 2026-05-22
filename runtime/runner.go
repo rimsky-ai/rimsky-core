@@ -181,23 +181,19 @@ type RunArgs struct {
 	// directly.
 	InvalidateHandler func(ctx context.Context, args InvalidateArgs) error
 
-	// UserdataValidator runs the executor's advertised JSON Schema (if
-	// any) against the post-merge userdata bytes at dispatch time. Plan
-	// F7. Userdata is inert in Rimsky per @blessed-invariant 11 — no
-	// substitution pass is run on userdata, so the bytes the validator
-	// sees are exactly the result of the deep-merge across template,
-	// by_executor, and by_node fragments (foundation/shared.DeepMergeJSON).
-	// Do NOT add a substitution pre-pass here; the invariant forbids it.
+	// ExpectedAttributesSchemaFor returns the executor's advertised
+	// expected_attributes_schema bytes (JSON Schema) plus an ok flag
+	// (false for unknown executors). Used by
+	// `computeEffectiveAttributeSchema` (runner_dispatch.go) to merge
+	// the executor's schema into the per-node effective attribute
+	// schema at dispatch.
 	//
-	// Returns nil to indicate validation passed (or no schema is known
-	// for the executor); a non-nil error routes the dispatch through
-	// the on_executor_errored handler with
-	// error_class="userdata_validation_failed".
+	// Wired in cmd/rimsky-supervisor/main.go from the discovery cache
+	// (the same `disc` value that previously fed UserdataValidator
+	// before the 2026-05-21 userdata collapse).
 	//
-	// The hook lives outside runtime so the jsonschema
-	// dependency stays in the graph layer (foundation has a strict
-	// dependency budget — stdlib + pgx + uuid + modernc/sqlite).
-	UserdataValidator func(executorName string, merged map[string]any) error
+	// @concept: attribute
+	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
 
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
 	// hook (plan I1/I2/I3). Optional. The interface is intentionally
@@ -434,12 +430,17 @@ func RunNode(
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 	}
 
-	// Step 3 — resolve attribute source-directives. Failure here raises
-	// template_resolution_failed and routes through the policy chain.
+	// Step 3 — resolve attribute source-directives. Failure here routes
+	// through `applyAttributeFailure`, which inspects the typed error
+	// returned by `resolveAttributes` and selects one of three policy
+	// chains: `template_resolution_failed` (strict-directive miss),
+	// `executor_schema_unavailable` (executor's expected schema not
+	// visible at dispatch), or `template_validation_failed` (composition
+	// violations, type mismatches, override-vs-schema conflicts).
 	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
 	if err != nil {
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
-			applyTemplateResolutionFailure(ctx, args, &acq, err)
+			applyAttributeFailure(ctx, args, &acq, err)
 	}
 
 	// Persist the substituted attributes ahead of dispatch so the
@@ -534,16 +535,18 @@ func upsertAttributesPreDispatch(
 	})
 }
 
-// emitTemplateResolutionFailedEvent appends the typed event for a
-// dispatch-time substitution miss. Used by both the attribute-resolve
-// path and the lock/scope pre-substitution path.
-func emitTemplateResolutionFailedEvent(
-	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, directive, site, field, reason string,
+// emitAttributeFailureEvent appends the typed event for a dispatch-time
+// attribute failure. `kind` is the event name (`template_resolution_failed`,
+// `template_validation_failed`, or `executor_schema_unavailable`) and
+// determines how operator tooling routes the surface; the payload shape
+// is identical across all three classes.
+func emitAttributeFailureEvent(
+	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, kind, directive, site, field, reason string,
 ) {
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &nodeID, InstanceID: &instanceID,
-			Kind: "template_resolution_failed",
+			Kind: kind,
 			Payload: map[string]any{
 				"directive": directive,
 				"site":      site,
@@ -552,25 +555,68 @@ func emitTemplateResolutionFailedEvent(
 			},
 		}, tx)
 	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("emitTemplateResolutionFailedEvent: append event failed",
+		args.Logger.Warn("emitAttributeFailureEvent: append event failed",
 			"node_id", nodeID.String(),
 			"instance_id", instanceID.String(),
+			"kind", kind,
 			"directive", directive,
 			"error", err.Error())
 	}
 }
 
-// applyTemplateResolutionFailure routes a substitution miss through the
-// template_resolution_failed policy chain. State of the node is moved
-// `running → stale` (or failed) per the resolved action; lock-holder
-// rows are released via the give-up branch.
-func applyTemplateResolutionFailure(
+// applyAttributeFailure routes an attribute resolution / validation
+// failure through the correct policy chain based on the error type.
+// Three distinct classes are recognised:
+//
+//   - `*attributes.ErrMissingSource` → `template_resolution_failed`
+//     (strict-directive miss; the canonical retry-after-cascade case)
+//   - `*executorSchemaUnavailableError` → `executor_schema_unavailable`
+//     (executor's expected_attributes_schema not visible at dispatch;
+//     distinct so operators can retry after handshake completes)
+//   - `*attributeValidationError` → `template_validation_failed`
+//     (composition violations, dispatch-bag JSON Schema failures,
+//     executor-schema mismatches at dispatch)
+//
+// Any unrecognised error type falls back to `template_resolution_failed`
+// (defensive). Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Error handling".
+//
+// State of the node is moved `running → stale` (or failed) per the
+// resolved action; lock-holder rows are released via the give-up
+// branch of applyErrorPolicy.
+func applyAttributeFailure(
 	ctx context.Context, args RunArgs, acq *acquisition, err error,
 ) error {
-	emitTemplateResolutionFailedEvent(ctx, args, acq.NodeID, acq.InstanceID,
-		extractDirective(err), "attribute", "", err.Error())
-	return applyErrorPolicy(ctx, args, acq, "template_resolution_failed",
+	class, eventKind := classifyAttributeFailure(err)
+	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
+		eventKind, extractDirective(err), "attribute", "", err.Error())
+	return applyErrorPolicy(ctx, args, acq, class,
 		map[string]any{"error": err.Error()})
+}
+
+// classifyAttributeFailure inspects the error chain and returns the
+// (error_class, event_kind) pair used to route the failure. The two
+// names are kept equal for each class to simplify downstream tooling;
+// the split exists in case the event surface ever needs to evolve
+// independently of the policy class.
+func classifyAttributeFailure(err error) (string, string) {
+	var miss *attributes.ErrMissingSource
+	if errors.As(err, &miss) {
+		return "template_resolution_failed", "template_resolution_failed"
+	}
+	var schemaUnavail *executorSchemaUnavailableError
+	if errors.As(err, &schemaUnavail) {
+		return "executor_schema_unavailable", "executor_schema_unavailable"
+	}
+	var validation *attributeValidationError
+	if errors.As(err, &validation) {
+		return "template_validation_failed", "template_validation_failed"
+	}
+	// Defensive fallback: anything we didn't classify routes through the
+	// resolution chain. Preserves backwards-compatible behaviour for
+	// errors that didn't go through resolveAttributes' typed wrappers.
+	return "template_resolution_failed", "template_resolution_failed"
 }
 
 // extractDirective digs the directive name out of an *attributes.ErrMissingSource

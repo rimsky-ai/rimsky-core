@@ -59,13 +59,12 @@ nodes:
       schema:
         type: object
         properties:
-          area:        { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
-          subtopic:    { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
-          scope_notes: { type: string }
+          area:              { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
+          subtopic:          { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
+          scope_notes:       { type: string }
+          model:             { type: string, default: "claude-sonnet-4-6" }
+          system_prompt_ref: { type: string, default: "scope-system.md" }
         required: [scope_notes]
-    userdata:
-      model: claude-sonnet-4-6
-      system_prompt_ref: "scope-system.md"
     locks:
       - { name: model-budget }
     error_types:
@@ -80,17 +79,16 @@ nodes:
       schema:
         type: object
         properties:
-          area:        { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
-          subtopic:    { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
-          scope_notes: { type: string, source: "{{nodes.scope.attribute.scope_notes}}" }
+          area:              { type: string, source: "{{nodes.claim-topic.attribute.area}}" }
+          subtopic:          { type: string, source: "{{nodes.claim-topic.attribute.subtopic}}" }
+          scope_notes:       { type: string, source: "{{nodes.scope.attribute.scope_notes}}" }
+          model:             { type: string, default: "claude-sonnet-4-6" }
+          system_prompt_ref: { type: string, default: "draft-system.md" }
         required: [area, subtopic, scope_notes]
     stores:
       - name: content
         selector: "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md"
         intent: rw
-    userdata:
-      model: claude-sonnet-4-6
-      system_prompt_ref: "draft-system.md"
     quality_rules:
       - { type: must_match_regex, target: write, pattern: "^---\\n", severity: error }
     locks:
@@ -101,8 +99,10 @@ nodes:
     attributes:
       schema:
         properties:
-          accepted: { type: boolean }
-          notes:    { type: string }
+          accepted:          { type: boolean }
+          notes:             { type: string }
+          model:             { type: string, default: "claude-sonnet-4-6" }
+          system_prompt_ref: { type: string, default: "review-system.md" }
         required: [accepted]
     stores:
       - name: content
@@ -110,8 +110,5 @@ nodes:
         intent: r
     inherits:
       - { claim: topics-ring }
-    userdata:
-      model: claude-sonnet-4-6
-      system_prompt_ref: "review-system.md"
     locks:
       - { name: model-budget }

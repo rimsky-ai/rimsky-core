@@ -170,11 +170,6 @@ forbidden:
     replacement: ClaimProducerObservability
     scope: *public_surface_md
 
-  # Invariant 11 wording change (spec G.3).
-  - term: 'Userdata is opaque'
-    replacement: '"Userdata is inert in Rimsky" (per invariant 11)'
-    scope: *public_surface_md
-
   # Lifecycle slot retirement (spec E.10).
   - term: '\bon_executor_blocked\b'
     replacement: 'on_executor_errored (with error_types: { executor_blocked: ... } mapping)'

@@ -67,8 +67,8 @@ Each tool is a thin pass-through over the rimsky control-API.
 
 - `instance_list` — list instances.
 - `instance_get { id }` — fetch an instance.
-- `instance_create { template, instance_key?, params?, userdata_overrides? }`
-  — create a new instance. `userdata_overrides` mirrors the rimsky
+- `instance_create { template, instance_key?, params?, attribute_overrides? }`
+  — create a new instance. `attribute_overrides` mirrors the rimsky
   control-API's per-instance overrides surface
   (`{by_executor: {...}, by_node: {...}}`).
 - `instance_terminate { id }` — terminate an instance.

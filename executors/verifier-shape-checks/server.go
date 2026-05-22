@@ -12,7 +12,7 @@
 //
 // @concept: verifier-pattern
 //
-// Userdata schema (passed at Execute time):
+// Attribute schema (passed at Execute time via ExecuteRequest.attributes):
 //
 //	{
 //	  "checks": [
@@ -60,20 +60,20 @@ func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Execut
 // as http-node's transport seam.
 type sendFunc func(*genv1.ExecuteEvent) error
 
-// executeCore parses userdata, runs the configured checks against the
-// rows payload, and emits a single StreamClose terminal.
+// executeCore parses the attribute bag, runs the configured checks
+// against the rows payload, and emits a single StreamClose terminal.
 func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
-	ud := req.GetUserdata().AsMap()
+	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return send(stubSuccess())
 	}
 	specs, err := parseChecks(ud)
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", err.Error())
+		return sendErrored(send, "invalid_attribute", err.Error())
 	}
 	rows, err := parseRows(ud)
 	if err != nil {
-		return sendErrored(send, "invalid_userdata", err.Error())
+		return sendErrored(send, "invalid_attribute", err.Error())
 	}
 	results := make([]checks.Result, 0, len(specs))
 	failed := 0
@@ -105,12 +105,12 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 	}})
 }
 
-// parseChecks reads `userdata.checks` and validates each entry into a
-// CheckSpec. Missing / wrong-type → InvalidUserdata.
+// parseChecks reads `attributes.checks` and validates each entry into a
+// CheckSpec. Missing / wrong-type → InvalidAttribute.
 func parseChecks(ud map[string]any) ([]checks.CheckSpec, error) {
 	raw, ok := ud["checks"].([]any)
 	if !ok || len(raw) == 0 {
-		return nil, fmt.Errorf("userdata.checks (non-empty array) required")
+		return nil, fmt.Errorf("attributes.checks (non-empty array) required")
 	}
 	out := make([]checks.CheckSpec, 0, len(raw))
 	for i, item := range raw {
@@ -128,7 +128,7 @@ func parseChecks(ud map[string]any) ([]checks.CheckSpec, error) {
 	return out, nil
 }
 
-// parseRows reads `userdata.rows` and normalizes each entry into a
+// parseRows reads `attributes.rows` and normalizes each entry into a
 // `checks.Row`. Missing rows is acceptable (some checks like
 // row_count_absolute fire on empty input as a pass/fail signal).
 func parseRows(ud map[string]any) ([]checks.Row, error) {

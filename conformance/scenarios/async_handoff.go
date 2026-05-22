@@ -25,7 +25,7 @@ func init() {
 }
 
 // runAsyncHandoff asserts the executor can emit an AwaitAsyncCallback
-// terminal StreamClose outcome when prompted via userdata.probe_async,
+// terminal StreamClose outcome when prompted via attributes.probe_async,
 // AND that the executor follows through with a callback POST resolving
 // to a real terminal verdict (Success / Error / Park) at the
 // conformance receiver.
@@ -33,7 +33,7 @@ func runAsyncHandoff(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe-async", Userdata: ud,
+		NodeType: "conformance-probe-async", Attributes: ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(ctx, req)

@@ -55,19 +55,20 @@ func (s *fixtureValidationServer) Validate(_ context.Context, req *genv1.Validat
 			}},
 		}, nil
 	}
-	var userdata map[string]any
-	if len(exec.GetUserdata()) > 0 {
-		if err := json.Unmarshal(exec.GetUserdata(), &userdata); err != nil {
+	var attrs map[string]any
+	if len(exec.GetAttributesSchema()) > 0 {
+		if err := json.Unmarshal(exec.GetAttributesSchema(), &attrs); err != nil {
 			return &genv1.ValidateResponse{
 				Valid: false,
 				Errors: []*genv1.ValidationFinding{{
-					Class:   "invalid_userdata",
-					Message: fmt.Sprintf("fixture: userdata not valid JSON: %v", err),
-					Path:    "/executor/userdata",
+					Class:   "invalid_attributes_schema",
+					Message: fmt.Sprintf("fixture: attributes_schema not valid JSON: %v", err),
+					Path:    "/executor/attributes_schema",
 				}},
 			}, nil
 		}
 	}
+	_ = attrs
 	return &genv1.ValidateResponse{Valid: true}, nil
 }
 
@@ -113,10 +114,10 @@ func TestValidationConformance_Executor(t *testing.T) {
 	}
 	// Pin: every executor-role check name appears in results.
 	want := map[string]bool{
-		"ExecutorHappy":             false,
-		"ExecutorMalformedUserdata": false,
-		"ExecutorMissingContext":    false,
-		"UnknownRole":               false,
+		"ExecutorHappy":                     false,
+		"ExecutorMalformedAttributesSchema": false,
+		"ExecutorMissingContext":            false,
+		"UnknownRole":                       false,
 	}
 	for _, r := range results {
 		if _, ok := want[r.Name]; ok {

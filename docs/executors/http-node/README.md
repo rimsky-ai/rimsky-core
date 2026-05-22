@@ -15,30 +15,38 @@ For agent-driven work, see `docs/executors/claude-agent/README.md`. For
 custom logic that does not fit the HTTP-call shape, implement an
 executor against `protocols/proto/v1/executor.proto`.
 
-## Userdata shape
+## Attribute shape
+
+Under the post-2026-05-21 attribute surface, transport configuration
+(`url`, `method`, `headers`, `body`, `expect_status`) lives in the
+unified `attributes` schema alongside everything else the executor
+reads. The executor splits the resolved attribute bag at dispatch:
+the fixed set of "config" keys above drives the transport; every
+other attribute key is serialised as the implicit JSON request body
+(or overridden by an explicit `attributes.body`).
 
 ```yaml
-userdata:
-  request:
-    method: POST
-    url: https://api.example.com/v1/items
-    headers:
-      Authorization: Bearer ${API_TOKEN}
-    body_template: |
-      {
-        "name": "{{ params.name }}",
-        "value": {{ nodes.upstream.value.score }}
-      }
-  response:
-    success_codes: [200, 201]
-    extract:
-      id: $.data.id
-      created_at: $.data.created_at
+attributes:
+  schema:
+    type: object
+    properties:
+      url:           { type: string, default: "https://api.example.com/v1/items" }
+      method:        { type: string, default: "POST" }
+      headers:
+        type: object
+        default:
+          Authorization: "Bearer ${API_TOKEN}"
+      expect_status: { type: array, default: [200, 201] }
+      # Implicit-body keys: not in the config set, so they're
+      # serialised as the JSON request body.
+      name:          { type: string, source: "{{params.name}}" }
+      value:         { type: number, source: "{{nodes.upstream.attribute.score}}" }
 ```
 
-`body_template` runs through the standard substitution engine before
-dispatch. `response.extract` uses JSONPath to populate
-`attributes_delta` from the response.
+Source-bound attribute keys (`name`, `value` above) run through the
+standard substitution engine before dispatch. Response handling is
+configured on the same attribute bag — see `executors/http-node/server.go`
+for the full set of `configAttributeKeys`.
 
 ## Behavior
 

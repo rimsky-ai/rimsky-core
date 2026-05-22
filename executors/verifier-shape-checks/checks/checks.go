@@ -46,8 +46,8 @@ type Counters struct {
 }
 
 // CheckSpec is the discriminated-union shape callers serialize from
-// the verifier executor's `userdata.checks`. The verifier deserializes
-// `userdata.checks[*]` into this shape and dispatches to the per-kind
+// the verifier executor's `attributes.checks`. The verifier deserializes
+// `attributes.checks[*]` into this shape and dispatches to the per-kind
 // runner.
 type CheckSpec struct {
 	Kind   string         `json:"kind"`
@@ -86,7 +86,7 @@ func Run(spec CheckSpec, rows []Row) Result {
 
 // fieldList parses a `field` (string) or `fields` ([]string) config
 // entry into a normalized slice. Either key is accepted to keep
-// userdata YAML ergonomic.
+// attributes YAML ergonomic.
 func fieldList(cfg map[string]any) ([]string, error) {
 	if v, ok := cfg["field"].(string); ok && v != "" {
 		return []string{v}, nil

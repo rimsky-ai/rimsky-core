@@ -7,14 +7,22 @@
 // EvaluatorState, logs an `error` event, and applies the resolved action
 // (retry / invalidate / give_up).
 //
-// Routes every error class through one path. The new
-// `template_resolution_failed` (spec §10.4) and `attributes_schema_failed`
-// (spec §9.4) classes have no special-case handlers here: when a template
-// declares a policy override for them it flows through `lookupPolicy` →
-// `node.Evaluate`; absent an override, `node.Evaluate` (policy == nil)
-// defaults to give_up("unknown_error_class"), which is exactly the
-// `[ {give_up} ]` default §10.4 calls for. Templates may override either
-// class via the standard `error_types` block.
+// Routes every error class through one path. The attribute-pipeline
+// classes (`template_resolution_failed`, `template_validation_failed`,
+// `executor_schema_unavailable`, and `attributes_schema_failed`) have no
+// special-case handlers here: when a template declares a policy override
+// for them it flows through `lookupPolicy` → `node.Evaluate`; absent an
+// override, `node.Evaluate` (policy == nil) defaults to
+// give_up("unknown_error_class"), which is exactly the `[ {give_up} ]`
+// default §10.4 calls for. Templates may override any class via the
+// standard `error_types` block.
+//
+// Per spec
+// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+// §"Error handling" the three-class split lets operators set different
+// policies for strict-directive misses (retry-after-cascade) vs.
+// validation failures (give-up — the template's broken) vs. schema-
+// visibility issues (retry-after-handshake-completes).
 //
 // Concurrency-tag plumbing is gone — the redesign expresses concurrency
 // through named locks declared on the node and configured in
@@ -73,7 +81,8 @@ type OnErrorArgs struct {
 //
 // give_up   → transition → failed (reason policy_give_up). This is also
 //
-//	the §10.4 / §9.4 default for `template_resolution_failed` and
+//	the §10.4 / §9.4 default for `template_resolution_failed`,
+//	`template_validation_failed`, `executor_schema_unavailable`, and
 //	`attributes_schema_failed` when the template declares no override
 //	(via the policy == nil branch of node.Evaluate).
 func OnError(ctx context.Context, args OnErrorArgs) error {
@@ -195,8 +204,9 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 // lookupPolicy resolves the error_types[ErrorClass] block from the node's
 // template spec. Returns nil (with nil error) when the template does not
 // declare a policy for this error class — node.Evaluate treats that as a
-// give_up("unknown_error_class"). For the new redesign error classes
-// (`template_resolution_failed`, `attributes_schema_failed`) this is the
+// give_up("unknown_error_class"). For the attribute-pipeline classes
+// (`template_resolution_failed`, `template_validation_failed`,
+// `executor_schema_unavailable`, `attributes_schema_failed`) this is the
 // §10.4 / §9.4 default chain `[ {give_up} ]`.
 func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
 	var inst *persistence.InstanceRow

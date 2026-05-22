@@ -55,7 +55,7 @@ func TestPartitionSelectorOverride_RoundTripsThroughPayload(t *testing.T) {
 		t.Errorf("payload.reason mismatch: %v", payload["reason"])
 	}
 	// The override field round-trips verbatim — opaque to rimsky per
-	// @blessed-invariant 11/21.
+	// @blessed-invariant 21.
 	got, _ := json.Marshal(payload["partition_request_override"])
 	if string(got) != string(override) {
 		t.Errorf("partition_request_override round-trip mismatch: got %s want %s", got, override)

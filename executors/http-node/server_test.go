@@ -50,21 +50,27 @@ func newRequest(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	return newRequestWithAttrs(t, ud, nil)
 }
 
+// newRequestWithAttrs builds an ExecuteRequest with the merged attribute
+// bag the http-node executor reads from. Under the 2026-05-21 userdata
+// collapse, the two pre-collapse channels (userdata + attributes) merge
+// into a single `attributes` field on the wire: callers pass config
+// (url, method, body, ...) as `ud` and resolved per-run inputs as
+// `attrs`; the helper merges with `attrs` overriding `ud` on collisions
+// (matches the L4 > L1 specificity rule for attribute overrides).
 func newRequestWithAttrs(t *testing.T, ud, attrs map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
-	udStruct, err := structpb.NewStruct(ud)
+	merged := map[string]any{}
+	for k, v := range ud {
+		merged[k] = v
+	}
+	for k, v := range attrs {
+		merged[k] = v
+	}
+	st, err := structpb.NewStruct(merged)
 	if err != nil {
-		t.Fatalf("structpb userdata: %v", err)
+		t.Fatalf("structpb attributes: %v", err)
 	}
-	req := &genv1.ExecuteRequest{NodeType: "http.request@1", Userdata: udStruct}
-	if attrs != nil {
-		attrStruct, err := structpb.NewStruct(attrs)
-		if err != nil {
-			t.Fatalf("structpb attributes: %v", err)
-		}
-		req.Attributes = attrStruct
-	}
-	return req
+	return &genv1.ExecuteRequest{NodeType: "http.request@1", Attributes: st}
 }
 
 func testServer(t *testing.T, stub bool) *Server {
@@ -151,7 +157,7 @@ func TestExecute_NetworkError_ReturnsHTTPRequestFailed(t *testing.T) {
 	}
 }
 
-func TestExecute_MalformedUserdata_MissingURL(t *testing.T) {
+func TestExecute_MalformedAttributes_MissingURL(t *testing.T) {
 	s := testServer(t, false)
 	c := &collector{}
 	req := newRequest(t, map[string]any{"method": "GET"})
@@ -161,8 +167,8 @@ func TestExecute_MalformedUserdata_MissingURL(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_userdata" {
-		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
+	if errd.GetErrorClass() != "invalid_attribute" {
+		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
 	}
 }
 
@@ -188,10 +194,10 @@ func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 	}
 }
 
-// TestStubMode_RejectsMalformedUserdata verifies the protocol contract that
-// executors validate userdata shape consistently in both stub and live modes
-// (Spec §14.4 + conformance `malformed_userdata` scenario).
-func TestStubMode_RejectsMalformedUserdata(t *testing.T) {
+// TestStubMode_RejectsMalformedAttributes verifies the protocol contract that
+// executors validate attribute shape consistently in both stub and live modes
+// (Spec §14.4 + conformance `malformed_attributes` scenario).
+func TestStubMode_RejectsMalformedAttributes(t *testing.T) {
 	s := testServer(t, true)
 	c := &collector{}
 	req := newRequest(t, map[string]any{}) // no url
@@ -205,8 +211,8 @@ func TestStubMode_RejectsMalformedUserdata(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_userdata" {
-		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
+	if errd.GetErrorClass() != "invalid_attribute" {
+		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
 	}
 }
 
@@ -273,7 +279,7 @@ func TestHTTPBridge_PostExecute_ReturnsNdjsonStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqProto := &genv1.ExecuteRequest{NodeType: "http.request@1", Userdata: ud}
+	reqProto := &genv1.ExecuteRequest{NodeType: "http.request@1", Attributes: ud}
 	body, err := protojson.Marshal(reqProto)
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +368,7 @@ func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	}
 }
 
-// TestExecute_PostWithStructBody verifies that a userdata.body override is
+// TestExecute_PostWithStructBody verifies that a attributes.body override is
 // JSON-serialised and sent to the upstream verbatim, taking precedence over
 // any `attributes` payload.
 func TestExecute_PostWithStructBody(t *testing.T) {
@@ -382,7 +388,7 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 			"method": "POST",
 			"body":   map[string]any{"name": "bob"},
 		},
-		// Attributes are present but should be ignored when userdata.body
+		// Attributes are present but should be ignored when attributes.body
 		// overrides.
 		map[string]any{"name": "ignored", "extra": "ignored"},
 	)
@@ -393,13 +399,13 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 		t.Errorf("upstream got: %+v", got)
 	}
 	if _, ok := got["extra"]; ok {
-		t.Errorf("attributes leaked when userdata.body overrides: %+v", got)
+		t.Errorf("attributes leaked when attributes.body overrides: %+v", got)
 	}
 }
 
 // TestExecute_AttributesAsRequestBody verifies the spec §5.8 contract that
 // http-node POSTs the per-run `attributes` map as the JSON request body when
-// no explicit userdata.body override is set.
+// no explicit attributes.body override is set.
 func TestExecute_AttributesAsRequestBody(t *testing.T) {
 	var got map[string]any
 	var gotCT string
@@ -432,7 +438,7 @@ func TestExecute_AttributesAsRequestBody(t *testing.T) {
 	}
 }
 
-// TestExecute_NoAttributesNoBody verifies that with neither userdata.body nor
+// TestExecute_NoAttributesNoBody verifies that with neither attributes.body nor
 // attributes set, the upstream receives an empty body (no surprise payload).
 func TestExecute_NoAttributesNoBody(t *testing.T) {
 	var bodyLen int
@@ -480,7 +486,7 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 
 // TestStubMode_RejectsNonObjectStubResponse covers the new spec §12.2
 // constraint that attributes_delta is a JSON object — non-object
-// stub_response values must be rejected as invalid_userdata.
+// stub_response values must be rejected as invalid_attribute.
 func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	s := testServer(t, true)
 	c := &collector{}
@@ -495,7 +501,7 @@ func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_userdata" {
-		t.Errorf("error_class=%q, want invalid_userdata", errd.GetErrorClass())
+	if errd.GetErrorClass() != "invalid_attribute" {
+		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
 	}
 }

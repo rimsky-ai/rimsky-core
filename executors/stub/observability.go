@@ -38,6 +38,14 @@ func (*ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCap
 		SupportsTraceGet:              false,
 		SupportsTraceStream:           false,
 		RetentionAfterTerminalSeconds: 0,
+		// The stub executor accepts any attribute shape — declare an open
+		// schema so the dispatch-time gate knows this is intentional rather
+		// than a discovery cache miss. `{"type":"object"}` with no
+		// `properties` block is recognised by
+		// `graph/node.IsPermissiveExecutorSchema` as "open shape," so the
+		// readOnly-fallback leg of the unified-attribute-surface check is
+		// skipped.
+		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
 		DeclaredEvents: []string{
 			"ready",
 			"signal",

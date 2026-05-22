@@ -42,7 +42,7 @@ func runParkReasonEmission(ctx context.Context, env conformance.Env) error {
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe", Userdata: ud,
+		NodeType: "conformance-probe", Attributes: ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(ctx, req)
@@ -89,7 +89,7 @@ func runParkReasonOtherRequiresLabel(ctx context.Context, env conformance.Env) e
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe", Userdata: ud,
+		NodeType: "conformance-probe", Attributes: ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
 	stream, err := env.Client.Execute(ctx, req)

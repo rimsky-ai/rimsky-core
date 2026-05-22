@@ -13,20 +13,20 @@ import (
 	nodepkg "github.com/fallguy/rimsky/graph/node"
 )
 
-// errUserdataOverridesInvalid is the sentinel returned by
-// validateUserdataOverrides when the override blob is shape-malformed
+// errAttributeOverridesInvalid is the sentinel returned by
+// validateAttributeOverrides when the override blob is shape-malformed
 // or names an unknown executor / node. The handler maps it to HTTP
 // 400 (bad request) — distinct from ErrTemplateValidation, which is
 // 409 in the instance-create path because that error reflects template
 // state-machine conflicts, not malformed request data.
-var errUserdataOverridesInvalid = errors.New("userdata_overrides invalid")
+var errAttributeOverridesInvalid = errors.New("attribute_overrides invalid")
 
-// validateUserdataOverrides enforces the wire shape of
-// rimsky_instances.userdata_overrides:
+// validateAttributeOverrides enforces the wire shape of
+// rimsky_instances.attribute_overrides:
 //
 //	{
-//	  "by_executor": {"<executor-name>": { ...userdata-fragment... }},
-//	  "by_node":     {"<node-name>":     { ...userdata-fragment... }}
+//	  "by_executor": {"<executor-name>": { ...attribute-fragment... }},
+//	  "by_node":     {"<node-name>":     { ...attribute-fragment... }}
 //	}
 //
 // Both top-level keys are optional; any other top-level key is rejected
@@ -40,12 +40,12 @@ var errUserdataOverridesInvalid = errors.New("userdata_overrides invalid")
 // dispatch — which the validator's whole purpose is to prevent. `by_node`
 // keys must be Type values present in the locked template's nodes.
 //
-// The fragment values themselves are NOT inspected — they're userdata
-// per @blessed-invariant 11. This validator only inspects keys and
+// The fragment values themselves are NOT inspected — they're attribute values
+// under concept:inertness (structural-inertness for attribute values). This validator only inspects keys and
 // container shapes (objects vs everything else); contents are opaque.
 //
-// Errors wrap errUserdataOverridesInvalid; callers map to HTTP 400.
-func validateUserdataOverrides(
+// Errors wrap errAttributeOverridesInvalid; callers map to HTTP 400.
+func validateAttributeOverrides(
 	overrides map[string]any,
 	templateNodes []nodepkg.TemplateNodeDef,
 	executors map[string]ExecutorEntry,
@@ -55,14 +55,14 @@ func validateUserdataOverrides(
 	}
 	for k := range overrides {
 		if k != "by_executor" && k != "by_node" {
-			return wrapInvalidf("userdata_overrides: unknown top-level key (allowed: by_executor, by_node); got %q", k)
+			return wrapInvalidf("attribute_overrides: unknown top-level key (allowed: by_executor, by_node); got %q", k)
 		}
 	}
 
 	if raw, ok := overrides["by_executor"]; ok {
 		m, ok := raw.(map[string]any)
 		if !ok {
-			return wrapInvalid("userdata_overrides.by_executor must be an object")
+			return wrapInvalid("attribute_overrides.by_executor must be an object")
 		}
 		// Build the set of executor names this template actually
 		// dispatches to. An override targeting an executor declared in
@@ -76,13 +76,13 @@ func validateUserdataOverrides(
 		}
 		for name, val := range m {
 			if _, isObj := val.(map[string]any); !isObj {
-				return wrapInvalidf("userdata_overrides.by_executor entry must be an object: %q", name)
+				return wrapInvalidf("attribute_overrides.by_executor entry must be an object: %q", name)
 			}
 			if _, declared := executors[name]; !declared {
-				return wrapInvalidf("userdata_overrides.by_executor: unknown executor name %q", name)
+				return wrapInvalidf("attribute_overrides.by_executor: unknown executor name %q", name)
 			}
 			if _, used := usedExecutors[name]; !used {
-				return wrapInvalidf("userdata_overrides.by_executor: executor not referenced by any template node: %q", name)
+				return wrapInvalidf("attribute_overrides.by_executor: executor not referenced by any template node: %q", name)
 			}
 		}
 	}
@@ -90,7 +90,7 @@ func validateUserdataOverrides(
 	if raw, ok := overrides["by_node"]; ok {
 		m, ok := raw.(map[string]any)
 		if !ok {
-			return wrapInvalid("userdata_overrides.by_node must be an object")
+			return wrapInvalid("attribute_overrides.by_node must be an object")
 		}
 		nodeNames := make(map[string]struct{}, len(templateNodes))
 		for _, n := range templateNodes {
@@ -98,20 +98,20 @@ func validateUserdataOverrides(
 		}
 		for name, val := range m {
 			if _, isObj := val.(map[string]any); !isObj {
-				return wrapInvalidf("userdata_overrides.by_node entry must be an object: %q", name)
+				return wrapInvalidf("attribute_overrides.by_node entry must be an object: %q", name)
 			}
 			if _, ok := nodeNames[name]; !ok {
-				return wrapInvalidf("userdata_overrides.by_node: unknown node name %q", name)
+				return wrapInvalidf("attribute_overrides.by_node: unknown node name %q", name)
 			}
 		}
 	}
 	return nil
 }
 
-// wrapInvalid annotates msg with the errUserdataOverridesInvalid
+// wrapInvalid annotates msg with the errAttributeOverridesInvalid
 // sentinel via fmt's %w verb; callers use errors.Is to detect.
 func wrapInvalid(msg string) error {
-	return fmt.Errorf("%s: %w", msg, errUserdataOverridesInvalid)
+	return fmt.Errorf("%s: %w", msg, errAttributeOverridesInvalid)
 }
 
 // wrapInvalidf is the formatting variant. Use this when the message
@@ -121,19 +121,19 @@ func wrapInvalid(msg string) error {
 // any HTTP-response-injection surface from operator-supplied bytes
 // reaching the 400 body via badRequest(w, err.Error()).
 func wrapInvalidf(format string, args ...any) error {
-	return fmt.Errorf(format+": %w", append(args, errUserdataOverridesInvalid)...)
+	return fmt.Errorf(format+": %w", append(args, errAttributeOverridesInvalid)...)
 }
 
 // overridePresentKeys extracts the executor + node names listed under
 // the by_executor / by_node sub-maps. The fragment values are NOT
 // returned — only the names, suitable for structured-log audit emission
-// without leaking opaque userdata payload to logs.
+// without leaking opaque attribute fragments to logs.
 //
 // Returns (byExecutor, byNode), each sorted, each may be nil when the
 // corresponding sub-map is absent or empty.
 //
 // Precondition: callers MUST have validated the override blob via
-// validateUserdataOverrides first. This helper assumes well-formed
+// validateAttributeOverrides first. This helper assumes well-formed
 // shape (`by_executor` / `by_node` are `map[string]any` if present)
 // and silently returns empty slices for malformed input — the audit
 // log would otherwise mask shape errors. Validator-first wiring is the
@@ -160,13 +160,13 @@ func overridePresentKeys(overrides map[string]any) (byExecutor, byNode []string)
 
 // overridesEqual returns true when two override blobs are structurally
 // identical. Used to suppress the
-// `instance.userdata_overrides_replaced_by_idempotent_match` WARN when
+// `instance.attribute_overrides_replaced_by_idempotent_match` WARN when
 // an operator's reconcile loop issues idempotent retries with the same
 // body — without this comparison, every reconcile would emit a noisy
 // "discarded" warning even though the values are identical.
 //
 // reflect.DeepEqual handles the deeply-nested map[string]any shape
-// validateUserdataOverrides admits (objects of objects of any). Both
+// validateAttributeOverrides admits (objects of objects of any). Both
 // sides are post-validation / post-persistence shapes: nil and empty
 // `map[string]any{}` should compare equal because the column persists
 // `{}` for absent overrides and the request body may be either.

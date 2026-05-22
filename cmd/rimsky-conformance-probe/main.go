@@ -58,7 +58,7 @@ func main() {
 		NodeId:      "conformance-probe",
 		InstanceId:  "conformance-probe",
 		NodeType:    "conformance-probe",
-		Userdata:    ud,
+		Attributes:  ud,
 		CallbackUrl: receiver.URL(),
 	}
 	stream, err := client.Execute(ctx, req)

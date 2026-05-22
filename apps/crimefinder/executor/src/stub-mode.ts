@@ -31,7 +31,7 @@ export const StubOutcomeSchema = z.object({
 export type StubOutcome = z.infer<typeof StubOutcomeSchema>;
 
 export interface RunStubAgentArgs {
-  userdata: Record<string, unknown>;
+  attributes: Record<string, unknown>;
   dispatch: (toolName: string, input: unknown) => Promise<unknown>;
   logger: Logger;
 }
@@ -44,10 +44,10 @@ const DEFAULT_OUTCOME: StubOutcome = {
 
 export async function runStubAgent(args: RunStubAgentArgs): Promise<{ outcome: AgentOutcome }> {
   let outcome: StubOutcome;
-  if (args.userdata.stub_outcome === undefined) {
+  if (args.attributes.stub_outcome === undefined) {
     outcome = DEFAULT_OUTCOME;
   } else {
-    outcome = StubOutcomeSchema.parse(args.userdata.stub_outcome);
+    outcome = StubOutcomeSchema.parse(args.attributes.stub_outcome);
   }
   if (outcome.delay_ms) {
     await new Promise((r) => setTimeout(r, outcome.delay_ms));
