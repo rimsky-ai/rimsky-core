@@ -3,7 +3,12 @@
 // See LICENSE.apache at the repo root.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildClaudeCliArgs, type CliSpawnRequest } from "./cli-runner.js";
+import {
+  buildClaudeCliArgs,
+  buildClaudeCliResumeArgs,
+  type CliResumeRequest,
+  type CliSpawnRequest,
+} from "./cli-runner.js";
 
 const PATHS = {
   systemPromptPath: "/tmp/sys.md",
@@ -143,6 +148,50 @@ describe("buildClaudeCliArgs", () => {
   it("omits --session-id when sessionId is unset", () => {
     const args = buildClaudeCliArgs(baseReq(), PATHS);
     expect(args).not.toContain("--session-id");
+  });
+
+  it("emits --mcp-config on resume (regression: bug 2 — resume() dropping mcp-config wedged sessions with 'MCP server not connected')", () => {
+    // The bug: prior versions of resume() omitted --mcp-config on the
+    // assumption that --resume would restore it from session state.
+    // It does not; --mcp-config is process-local runtime config. The
+    // resumed subprocess had no rimsky-callback MCP server to dial,
+    // every tool call returned "MCP server not connected", and the
+    // dispatch stalled until the silence timer fired.
+    const req: CliResumeRequest = {
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+      prompt: "finish what you started",
+      tools: [{ kind: "mcp-http", name: "rimsky-callback", url: "http://x/mcp" }],
+      env: {},
+    };
+    const args = buildClaudeCliResumeArgs(req, { mcpConfigPath: "/tmp/mcp.json" });
+    const mcpIdx = args.indexOf("--mcp-config");
+    expect(mcpIdx).toBeGreaterThan(-1);
+    expect(args[mcpIdx + 1]).toBe("/tmp/mcp.json");
+  });
+
+  it("places --resume, --print, and -p in the expected slots", () => {
+    const args = buildClaudeCliResumeArgs(
+      {
+        sessionId: "abc",
+        prompt: "U",
+        tools: [],
+        env: {},
+      },
+      { mcpConfigPath: "/tmp/mcp.json" },
+    );
+    expect(args[0]).toBe("--resume");
+    expect(args[1]).toBe("abc");
+    expect(args[2]).toBe("--print");
+    expect(args[args.length - 2]).toBe("-p");
+    expect(args[args.length - 1]).toBe("U");
+  });
+
+  it("does NOT emit --system-prompt-file on resume (session-restored)", () => {
+    const args = buildClaudeCliResumeArgs(
+      { sessionId: "abc", prompt: "U", tools: [], env: {} },
+      { mcpConfigPath: "/tmp/mcp.json" },
+    );
+    expect(args).not.toContain("--system-prompt-file");
   });
 
   it("preserves arg ordering (-p prompt is always last) when all knobs set", () => {

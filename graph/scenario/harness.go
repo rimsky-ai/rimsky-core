@@ -499,12 +499,14 @@ func (h *Harness) WaitForDispatch(nodeID shared.UUID, timeout time.Duration) boo
 }
 
 // WaitForWorkerRequestDeleted polls until no in-flight rimsky_node_runs
-// rows remain for the given node. Used by tests that need to assert
-// post-terminal queue cleanup deterministically: `Queue.Complete` runs
-// inside the supervisor's poll-goroutine AFTER `applyTerminalComplete`
-// returns, so a "wait for fresh state, then check the queue row is
-// gone" sequence races. Polling on the in-flight-phase predicate
-// directly removes the race.
+// rows remain for the given node. Polling on the in-flight-phase
+// predicate is the right shape for "this dispatch has retired": post
+// the 2026-05-21 lifecycle reorder, the apply* terminal functions
+// flip the run row's phase to terminal inside their own tx (alongside
+// the node's state update), so by the time a state-transition event
+// is observable the queue row is already in 'completed'/'failed'.
+// Polling here keeps the helper robust against any future terminal
+// path that doesn't yet flip in-tx.
 //
 // Post-stage-1 lifecycle flip: terminal rows (phase IN
 // ('completed','failed')) survive past active terminal so frame-end +

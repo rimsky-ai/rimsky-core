@@ -314,6 +314,28 @@ func applyTerminalComplete(
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
 		return nil, err
 	}
+	// Flip the just-completed run row to a terminal phase BEFORE the
+	// cascade walk fires. Without this the row stays in
+	// phase='active' until the outer supervisor.go / callback.go
+	// post-apply `Queue.Complete` call, which means
+	// `MarkStaleForCascade`'s `NOT EXISTS (phase IN
+	// pending/active/held/parked)` guard rejects self-edges during
+	// the walk — `frame: in` self-subscriptions can't insert their
+	// new pending run because runOld is still active. Mirrors the
+	// in-tx phase flip every other terminal already does
+	// (`applyTerminalPass` at runner_terminal_handlers.go:109;
+	// `applyErrorPolicy` / `applyTerminalInfraError` at
+	// runner_error_policy.go:217/239/283; `applyTerminalPark` via
+	// `ParkActiveInTx`). Outer `Queue.Complete` calls in
+	// `supervisor.go` and `callback.go` become idempotent no-ops on
+	// every known happy path (their WHERE clauses filter on active
+	// phase set); kept as belt-and-suspenders cleanup.
+	//
+	//	@concept: node-run
+	//	@concept: cascade
+	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: remove for node: %w", err)
+	}
 	// Cascade-on-fresh_changed propagation: when this sender settles
 	// fresh_changed, the recursive subscription walk marks
 	// downstream subscribers stale-with-frame_id and gates the
@@ -570,9 +592,6 @@ func cascadeSubscribersStaleInTx(
 		for _, edge := range candidateEdges {
 			receivers := byType[edge.ReceiverNodeType]
 			for _, r := range receivers {
-				if r.ID == cur.nodeID {
-					continue
-				}
 				switch edge.Frame {
 				case node.FrameNext:
 					// Open a new frame for the receiver's instance.
@@ -610,6 +629,30 @@ func cascadeSubscribersStaleInTx(
 					}
 					continue
 				default: // FrameIn or empty (in-tx)
+					// Self-edges are permitted in both FrameIn and
+					// FrameNext branches as first-class drain-my-own-
+					// queue idioms. The two spellings differ in framing:
+					// FrameIn keeps iteration inside the current frame
+					// (one long-running frame, supervisor picks up each
+					// new pending run as it lands); FrameNext opens a
+					// fresh frame per iteration (one frame per queue
+					// item, cleaner frame.start/frame.end markers per
+					// operator's eye).
+					//
+					// Insert-then-drain-in-same-tx makes FrameIn safe:
+					// the wait-set row this branch inserts (gating the
+					// new pending run on this commit's run) gets cleared
+					// by drainWaitSetOnSettled at the end of
+					// applyTerminalComplete in the same tx, before the
+					// supervisor sees it. The BFS `visited` set blocks
+					// indirect cycles. MarkStaleForCascade does NOT
+					// touch rimsky_nodes.state (only inserts a new run
+					// row + re-stamps frame_id), so the just-committed
+					// state=fresh, last_outcome=fresh_changed survives
+					// intact for downstream consumers.
+					//
+					//	@concept: cascade
+					//	@concept: node-subscription
 					// Parked receivers need their parked node-run row
 					// resumed alongside the stale stamp; without that
 					// the queue still carries phase='parked' and the

@@ -7,7 +7,14 @@
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
+# Post-2026-05-12 layer restructure (commit:9c072b4): foundation and
+# protocols are separate Go modules tied together by go.work. Copy all
+# module manifests + the workspace file before `go mod download` so
+# the build sees the same module graph as the host workspace.
+COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
+COPY foundation/go.mod foundation/go.sum ./foundation/
+COPY protocols/go.mod protocols/go.sum ./protocols/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \

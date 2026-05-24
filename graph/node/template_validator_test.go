@@ -520,6 +520,63 @@ func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 	require.False(t, res.Ok())
 }
 
+// TestValidateSubscribes_SelfWithFrameNextOK: self-subscription is the
+// "drain my own queue" idiom; the `frame: next` spelling opens a fresh
+// frame for the same node-instance on every fresh_changed commit, with
+// clean frame.start / frame.end markers per queue item.
+func TestValidateSubscribes_SelfWithFrameNextOK(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "drainer", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "drainer", On: "state", When: "fresh", Outcome: "fresh_changed", Frame: "next"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateSubscribes_SelfWithFrameInOK: the `frame: in` spelling
+// of drain-my-own-queue keeps iteration inside the current frame. The
+// cascade walker's insert-then-drain-in-same-tx pattern (the new
+// pending self-run's wait-set blocker drains immediately on the same
+// commit that inserted it) makes this safe; the BFS visited set
+// handles cycle termination. Both spellings are first-class.
+func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "loopy", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "loopy", On: "state", When: "fresh"}, // frame defaults to "in"
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateSubscribes_SelfWithFrameInExplicitOK: same as above but
+// with an explicit `frame: in`.
+func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "loopy", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "loopy", On: "state", When: "fresh", Frame: "in"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
 // TestValidateSubscribes_EventNameRequired: on:event needs a name.
 func TestValidateSubscribes_EventNameRequired(t *testing.T) {
 	spec := &TemplateSpec{

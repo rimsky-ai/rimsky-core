@@ -206,6 +206,13 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
     // carries the footer with the correct resume_reason.
     expect(resumeRequests[0]!.prompt.startsWith("user prompt\n\n---\n")).toBe(true);
     expect(resumeRequests[0]!.prompt).toContain("resume_reason: deadline_elapsed");
+    // The J10 resume path must pass the rimsky-callback MCP tool config.
+    // The Claude CLI's --resume does not carry --mcp-config across, so
+    // without this the resumed subprocess has no MCP servers registered
+    // and every tool call returns "MCP server not connected".
+    const tool = resumeRequests[0]!.tools.find((t) => t.name === "rimsky-callback");
+    expect(tool).toBeDefined();
+    expect(tool!.kind).toBe("mcp-http");
     // The fake exits 0 without calling report_complete; the recovery
     // path drops back through to errored.
     expect(outcome.kind).toBe("errored");

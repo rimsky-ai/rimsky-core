@@ -490,12 +490,16 @@ func runLoop(
 			if result.Async {
 				return
 			}
-			// result.Ran covers both success and app/infra-error paths.
-			// For the infra case applyTerminalInfraError has already
-			// enqueued a fresh dispatch row; the Queue.Complete below
-			// deletes the original row we claimed. For resolver-miss the
-			// node transitioned directly to failed without enqueueing a
-			// retry, so deleting the original row is also correct.
+			// Defensive idempotent re-completion. Post-2026-05-21
+			// lifecycle reorder, every apply* terminal function flips
+			// the dispatch row to a terminal phase inside its own tx
+			// (applyTerminalComplete + applyTerminalPass via
+			// RemoveForNodeInTx; applyErrorPolicy + applyTerminalInfraError
+			// the same; applyTerminalPark via ParkActiveInTx). This
+			// outer call is a WHERE-clause-guarded no-op on every
+			// known happy path; it survives as a belt-and-suspenders
+			// against any future terminal path that forgets to flip
+			// in-tx.
 			if result.Ran && result.DispatchID != (shared.UUID{}) {
 				_ = cfg.Queue.Complete(context.Background(), result.DispatchID, cfg.SupervisorID)
 			}

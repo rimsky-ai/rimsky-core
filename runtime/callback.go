@@ -360,6 +360,14 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	// no state mutation; there is no dispatch row to Complete (or the
 	// row belongs to a successor dispatch that the rejecting callback
 	// must not touch).
+	//
+	// Post-2026-05-21 lifecycle reorder, every apply* terminal function
+	// flips the dispatch row to a terminal phase inside its own tx
+	// (RemoveForNodeInTx in Complete/Pass/Errored/InfraError;
+	// ParkActiveInTx in Park). This Queue.Complete call is therefore a
+	// WHERE-clause-guarded no-op on every known happy path; it survives
+	// as belt-and-suspenders cleanup against any future terminal path
+	// that forgets to flip in-tx.
 	if outcome.Status == ackStatusAccepted {
 		if err := c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID); err != nil {
 			c.Logger.Error("callback: queue.Complete failed after applied terminal",

@@ -99,6 +99,127 @@
 
 - **Matcher overlay for attribute_overrides.** `col:rimsky_instances.attribute_overrides` gains a third routing dimension `by_match` — an ordered list of `{matcher, overlay}` entries keyed by a dispatch-time predicate (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`). Equality-only grammar; ordinal addressing rejected. Recommended anchor for per-child fan-out routing is `child_key`. Per-entry match counter persists on new column `attribute_overrides_match_counts` for unused-entry observability. Enables consumer tests to script per-(partition, iter, …) executor stubs against a single real template, without forking template variants per child. Structural-inertness discipline (`concept:inertness`) gains a new sanctioned read site at the matcher evaluator — narrowly enumerated, primitive-equality only. Depends on the userdata-collapse work (`attribute_overrides` rename, post-collapse merge layering). See `.ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md`.
 
+- **Dispatch row phase flip moved into `applyTerminalComplete`'s tx,
+  before the cascade walk.** `applyTerminalComplete` now calls
+  `args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx)`
+  inside the outer state-mutation tx (between `UpdateState` and
+  `cascadeSubscribersStaleInTx`), aligning with the in-tx phase flip
+  every other terminal already does (`applyTerminalPass`,
+  `applyErrorPolicy`, `applyTerminalInfraError`, and
+  `applyTerminalPark` via `ParkActiveInTx`). Sits naturally inside
+  the callback-determinism tx-passing refactor: the apply* family
+  already receives the outer tx; this call is the one piece of in-tx
+  work `applyTerminalComplete` was still missing. Outer
+  `Queue.Complete` calls in `supervisor.go` and `callback.go` become
+  idempotent no-ops on every known happy path (their
+  `WHERE phase IN (...)` clauses don't match already-terminal rows);
+  kept as belt-and-suspenders cleanup against any future terminal
+  path that forgets to flip in-tx. Without this, `MarkStaleForCascade`'s
+  `NOT EXISTS (phase IN ('pending','active','held','parked'))` guard
+  rejects self-edges during the cascade walk — the sender's runOld
+  was still in `phase='active'`, so a `frame: in` self-subscription's
+  attempt to insert a new pending run for the same node became a
+  no-op. This is the architectural change that makes `frame: in`
+  self-subscriptions first-class — see the next entry.
+- **Self-subscription is first-class in both `frame: in` and `frame: next` shapes (cascade fix).**
+  The 2026-05-14 subscription-cascade resolution retired the send-side
+  `on_executor_complete: { invalidate: { targets: [self] } }` slot but
+  left no receiver-side replacement for the "drain my own queue"
+  idiom: the cascade walker at
+  `code:runtime/runner_terminal.go::cascadeSubscribersStaleInTx`
+  unconditionally skipped any edge where receiver-id == sender-id,
+  which silently broke `subscribes: { node: <self-type>, ... }`
+  declarations in both frame shapes even though the underlying
+  machinery handles self-receivers correctly. The fix removes the
+  over-broad receiver-id skip entirely; the BFS `visited` set already
+  blocks cycle re-walk. Both shapes now work as documented drain-
+  queue primitives:
+    - `frame: next` — opens a fresh frame for the same node-instance
+      per fresh_changed commit (one frame per queue item, clean
+      `frame.start`/`frame.end` markers per iteration).
+    - `frame: in` — keeps iteration inside the current frame (one
+      long-running frame, supervisor picks up each new pending run
+      as it lands). Safe via insert-then-drain-in-same-tx: the new
+      pending self-run's wait-set blocker (keyed on the just-
+      committed run) is drained by `drainWaitSetOnSettled` at the
+      end of `applyTerminalComplete` in the same tx, before the
+      supervisor sees it. `MarkStaleForCascade` does not touch
+      `rimsky_nodes.state` — only inserts a new run row + re-stamps
+      `frame_id` — so the just-committed `state=fresh,
+      last_outcome=fresh_changed` survives intact.
+  Spelling is a design choice, not a platform-imposed constraint.
+  Canonical pattern for either:
+  `subscribes: { node: <self-type>, on: state, when: fresh, outcome: fresh_changed, frame: <in|next> }`.
+  Scenario coverage:
+  `test/scenarios/subscription_cascade_test.go::TestSubscriptionCascade_SelfCycleAdvances`
+  (FrameNext drain) and
+  `test/scenarios/subscription_cascade_test.go::TestSubscriptionCascade_SelfCycleAdvances_FrameIn`
+  (FrameIn drain), plus
+  `test/scenarios/frame_coalesce_self_invalidate_test.go::TestFrameCoalesceSelfInvalidate`
+  (un-retired post the 2026-05-14 spec; exercises the receiver-side
+  syntax). Concept doc updated at
+  `.ok-planner/design/concepts/node-subscription.md`.
+- **claude-agent: multi-session HTTP routing in the internal MCP server (bug fix).**
+  `startInternalMcpServer` previously lazy-bound a single
+  `StreamableHTTPServerTransport` and held it for the executor's
+  process lifetime. The SDK's streamable-HTTP transport is one-session
+  per instance in stateful mode (see SDK source at
+  `executors/claude-agent/node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js:422-428`):
+  once `_initialized` is true, further initialize requests are
+  rejected with HTTP 400 `Invalid Request: Server already initialized`,
+  and non-init requests with a mismatched `mcp-session-id` header
+  return 404 `Session not found`. The singleton was therefore broken
+  for the multi-tenant executor: the first dispatch's CLI bound the
+  transport's sessionId; every subsequent dispatch's CLI got HTTP 400
+  on initialize, surfaced it as "MCP server not connected," and the
+  dispatch wedged until the silence timer fired. This is the bug
+  that caused the 22-hour docs-pipeline smoke run to stall.
+  The fix maintains a `Map<sessionId, {transport, mcp}>` and routes
+  by the `mcp-session-id` header — new sessions mint a fresh
+  transport + McpServer pair, registered via the SDK's
+  `onsessioninitialized` hook; transport `onclose` and an
+  idle-eviction sweep (default 10 minutes, controllable via
+  `sessionIdleMs`) remove stale entries. Orphaned clients (header
+  present, session not in map) get a clean 404 instead of an
+  ambiguous "Server not initialized" 400. New `httpServer` runtime
+  error handlers (`clientError`, `error`) surface HTTP-level faults
+  that previously went unobservable. Coverage in two new tests in
+  `internal-mcp-server.test.ts`: concurrent two-session and
+  sequential two-session.
+- **claude-agent: `cliRunner.resume()` now re-passes `--mcp-config` (bug fix).**
+  `executors/claude-agent/src/cli-runner.ts::resume` previously
+  omitted `--mcp-config` on the false assumption that `--resume`
+  carries MCP config across from session state. It does not — the
+  CLI's `--resume` restores the conversation, model, and system
+  prompt, but `--mcp-config` is process-local runtime config and
+  must be re-passed on every invocation. Resumed subprocesses
+  consequently had no `rimsky-callback` MCP server registered;
+  every tool call (`report_complete`, `report_blocked`,
+  `attributes_set`, etc.) returned "MCP server not connected" and
+  the dispatch stalled until the silence timer fired. The fix
+  writes a fresh `mcp.json` tmpfile on each `resume()` call and
+  passes `--mcp-config` on the argv, mirroring `spawn()`.
+  `CliResumeRequest` gains a required `tools` field; both
+  callsites in `agent-run.ts` (the J10 resume-after-park path and
+  the clean-exit-no-report recovery path) updated to pass the
+  rimsky-callback tool. New `buildClaudeCliResumeArgs` helper
+  exported for tests, with regression coverage in
+  `cli-runner.test.ts`, `agent-run.test.ts`, and
+  `lifecycle.e2e.test.ts`.
+- **claude-agent: process-level crash handlers wired (bug fix).**
+  `main.ts` previously registered only SIGINT and SIGTERM. An
+  `'error'` event with no listener on the gRPC server's underlying
+  HTTP/2 transport (observed shape: `NGHTTP2_ERR_PROTO` / code
+  `-505`) became an uncaught exception that killed the executor
+  process silently — the container died, but supervisor-side
+  polling continued to think the executor was alive until the
+  next health check. New `crash-handlers.ts` module exports
+  `registerCrashHandlers(logger, onFatal?)` which logs structured
+  via pino's `fatal` level and calls `onFatal(1)` (defaulting to
+  `process.exit(1)`) on both `uncaughtException` and
+  `unhandledRejection`. Wired as the first line of `main()`.
+  Coverage in `crash-handlers.test.ts`.
+
 - **Userdata collapse — `required:` enforcement against intentionally-partial bags relaxed in two places.** Both gap closures introduced in the previous cycle (registration-time defaults validation and dispatch-time defense-in-depth) passed the executor's raw schema to the JSON Schema validator with `required:` intact. The validator enforces every keyword unconditionally, so the bags those gates validate — which are intentionally proper subsets of the eventual commit bag — produced false-positive missing-`required:` errors.
   - **Registration (`code:graph/node/template_validator.go::validateCompositionAgainstExecutor`).** The defaults bag composed from L1 + L2 holds only static-default values; properties bound via `source:` and properties the executor will write (`readOnly: true`) are absent. A new helper `schemaWithoutTopLevelRequired` returns a shallow clone with the top-level `required` key stripped before the bag is validated. Per-property type and nested-shape checks still fire; only the missing-`required:` false-positive is suppressed. The defaults pass is now correctly scoped to "do values that *are* present match types?"
   - **Dispatch defense-in-depth (`code:runtime/runner_dispatch.go::resolveAttributes`).** The bag at dispatch holds source-bound + static-default + override values, but not executor-written (`readOnly: true`) properties (those land at commit via write-back). New helper `relaxRequiredForExecutorWritten` — sibling to `relaxRequiredToSourceDriven` — drops only `readOnly: true` entries from the executor schema's `required:` list. Input requireds stay enforced; executor-output requireds are enforced at the commit gate per spec §"Effective schema computation". The two relaxation helpers differ in classifier: the source-bound view uses `source:` / `default:` keys present only on the effective (merged) schema; the executor-written view uses `readOnly: true` present only on the executor's raw schema.

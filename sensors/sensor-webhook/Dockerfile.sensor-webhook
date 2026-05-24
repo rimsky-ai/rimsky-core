@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1.7
 FROM golang:1.25-alpine AS builder
 WORKDIR /build
+# Post-2026-05-12 layer restructure: foundation and protocols are
+# separate Go modules tied together by go.work. Copy all module
+# manifests + the workspace file before `go mod download`.
+COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
+COPY foundation/go.mod foundation/go.sum ./foundation/
+COPY protocols/go.mod protocols/go.sum ./protocols/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/sensor-webhook ./sensors/sensor-webhook

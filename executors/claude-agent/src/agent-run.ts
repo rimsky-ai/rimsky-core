@@ -633,6 +633,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       handle = await cliRunner.resume({
         sessionId: resumeContext.sessionToken,
         prompt: renderedUser,
+        tools: [
+          { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+        ],
         env: {
           RIMSKY_CALLBACK_URL: effectiveCallback.url,
           RIMSKY_CALLBACK_TOKEN: callbackToken,
@@ -856,6 +859,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         const retryHandle = await cliRunner.resume({
           sessionId: runId,
           prompt: reminderPrompt,
+          tools: [
+            { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+          ],
           env: {
             RIMSKY_CALLBACK_URL: effectiveCallback.url,
             RIMSKY_CALLBACK_TOKEN: callbackToken,

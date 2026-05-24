@@ -1,6 +1,12 @@
 FROM golang:1.25 AS builder
 WORKDIR /src
+# Post-2026-05-12 layer restructure: foundation and protocols are
+# separate Go modules tied together by go.work. Copy all module
+# manifests + the workspace file before `go mod download`.
+COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
+COPY foundation/go.mod foundation/go.sum ./foundation/
+COPY protocols/go.mod protocols/go.sum ./protocols/
 RUN go mod download
 COPY . .
 ARG VERSION=dev

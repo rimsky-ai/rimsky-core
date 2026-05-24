@@ -153,7 +153,11 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
 describe("runAgent retries via resume() when subprocess exits clean without report", () => {
   let cb: CallbackServerHandle;
   let tmpCwd: string;
-  let resumeInvocations: Array<{ sessionId: string; prompt: string }>;
+  let resumeInvocations: Array<{
+    sessionId: string;
+    prompt: string;
+    tools: Array<{ kind: string; name: string; url: string }>;
+  }>;
   let fakeCli: CliRunner;
 
   beforeEach(async () => {
@@ -198,7 +202,11 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
     fakeCli = {
       spawn: async () => makeQuietExit0Handle(),
       resume: async (req) => {
-        resumeInvocations.push({ sessionId: req.sessionId, prompt: req.prompt });
+        resumeInvocations.push({
+          sessionId: req.sessionId,
+          prompt: req.prompt,
+          tools: req.tools.map((t) => ({ kind: t.kind, name: t.name, url: t.url })),
+        });
         return makeQuietExit0Handle();
       },
     };
@@ -232,6 +240,13 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
     expect(resumeInvocations).toHaveLength(1);
     expect(resumeInvocations[0]!.sessionId).toBe(runId);
     expect(resumeInvocations[0]!.prompt).toContain("report_complete");
+    // Bug 2 regression: agent-run must pass the rimsky-callback MCP
+    // tool config to resume so the resumed subprocess can dial back
+    // into the executor's internal MCP server.
+    const tool = resumeInvocations[0]!.tools.find((t) => t.name === "rimsky-callback");
+    expect(tool).toBeDefined();
+    expect(tool!.kind).toBe("mcp-http");
+    expect(tool!.url).toMatch(/\/mcp$/);
     // Outcome should be errored, with retry_attempted: true in the payload.
     expect(outcome.kind).toBe("errored");
     if (outcome.kind === "errored") {

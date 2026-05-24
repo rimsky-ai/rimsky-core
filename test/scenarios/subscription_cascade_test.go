@@ -383,3 +383,124 @@ func TestSubscriptionCascade_FrameNextLoopConverges(t *testing.T) {
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should reach fresh in the deferred next frame")
 }
+
+// TestSubscriptionCascade_SelfCycleAdvances covers the post-2026-05-14
+// "drain my own queue" idiom: a node with
+// `subscribes: { node: <self-type>, on: state, when: fresh, outcome:
+// fresh_changed, frame: next }` re-fires after every fresh_changed
+// commit. This is the receiver-side replacement for the retired
+// send-side `on_executor_complete: { invalidate: { targets: [self] } }`.
+//
+// Asserts:
+//   - the node is dispatched at least twice (initial + at least one
+//     self-cycle iteration);
+//   - the cycle terminates cleanly when the stub flips to
+//     changed=false (the `outcome: fresh_changed` filter prevents
+//     fresh_unchanged commits from re-firing the self-edge).
+func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("drain").Success(map[string]any{"k": 1}, true, "changed")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "subscription-cascade-self-cycle", Version: "1",
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "drain", On: "state", When: "fresh",
+					Outcome: "fresh_changed", Frame: "next",
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-self-cycle", map[string]any{})
+	d := h.FindNode(iid, "drain")
+	require.NotNil(t, d)
+
+	// Self-cycle should produce multiple dispatches: initial + at
+	// least one re-fire from the fresh_changed commit's cascade walk.
+	require.Eventually(t, func() bool {
+		return len(h.Stub.Observed()) >= 2
+	}, 10*time.Second, 25*time.Millisecond,
+		"self-subscription with frame:next must re-fire the node after a fresh_changed commit")
+
+	// Flip the stub: subsequent commits report changed=false →
+	// last_outcome = fresh_unchanged → cascade walker's
+	// outcome:fresh_changed filter rejects the self-edge → loop
+	// terminates.
+	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
+	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
+		"node should settle at fresh once the stub stops reporting changed=true")
+
+	// Confirm termination: once the stub flips to changed=false the
+	// dispatch count must stabilize. A few in-flight dispatches may
+	// have been queued from prior fresh_changed commits before the
+	// flip propagated, so use Eventually to wait for the count to
+	// stop growing across consecutive observations.
+	var prev int
+	require.Eventually(t, func() bool {
+		now := len(h.Stub.Observed())
+		stable := now == prev
+		prev = now
+		return stable
+	}, 5*time.Second, 200*time.Millisecond,
+		"dispatch count should stabilize after the changed=false flip; "+
+			"continued growth would mean the outcome:fresh_changed filter is broken")
+}
+
+// TestSubscriptionCascade_SelfCycleAdvances_FrameIn is the FrameIn
+// spelling of the drain-my-own-queue idiom. Where the FrameNext shape
+// opens a fresh frame per iteration, FrameIn keeps iteration inside
+// the current frame — the supervisor picks up each new pending self-
+// run as it lands. Safe because `MarkStaleForCascade` does not touch
+// `rimsky_nodes.state` (only inserts a new run row + re-stamps
+// frame_id), and the cascade walker's insert-then-drain-in-same-tx
+// pattern drains the new pending run's wait-set blocker (keyed on the
+// just-committed run) before the supervisor sees it.
+func TestSubscriptionCascade_SelfCycleAdvances_FrameIn(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("drain").Success(map[string]any{"k": 1}, true, "changed")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "subscription-cascade-self-cycle-in", Version: "1",
+		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "drain", On: "state", When: "fresh",
+					Outcome: "fresh_changed", Frame: "in",
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-self-cycle-in", map[string]any{})
+	d := h.FindNode(iid, "drain")
+	require.NotNil(t, d)
+
+	// Self-cycle should produce multiple dispatches in the same frame.
+	require.Eventually(t, func() bool {
+		return len(h.Stub.Observed()) >= 2
+	}, 10*time.Second, 25*time.Millisecond,
+		"self-subscription with frame:in must re-fire the node after a fresh_changed commit")
+
+	// Flip the stub: subsequent commits report changed=false →
+	// last_outcome=fresh_unchanged → cascadeSubscribersStaleInTx is not
+	// called (gated on fresh_changed in applyTerminalComplete) → no
+	// new pending self-run → frame ends, node settles at fresh.
+	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
+	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
+		"node should settle at fresh once the stub stops reporting changed=true")
+
+	var prev int
+	require.Eventually(t, func() bool {
+		now := len(h.Stub.Observed())
+		stable := now == prev
+		prev = now
+		return stable
+	}, 5*time.Second, 200*time.Millisecond,
+		"dispatch count should stabilize after the changed=false flip")
+}

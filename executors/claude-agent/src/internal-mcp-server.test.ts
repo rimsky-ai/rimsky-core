@@ -2,12 +2,17 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import pino from "pino";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { registerTools } from "./internal-mcp-server.js";
+import {
+  registerTools,
+  startInternalMcpServer,
+  type CallbackServerHandle,
+} from "./internal-mcp-server.js";
 import { TokenRegistry } from "./token-registry.js";
 
 /**
@@ -275,5 +280,112 @@ describe("rimsky-callback MCP tools", () => {
     // in production. Either shape is acceptable; we just want to
     // assert the path doesn't crash.
     expect(typeof res.content).toBe("object");
+  });
+});
+
+/**
+ * Bug 1 regression coverage: prior versions of `startInternalMcpServer`
+ * lazily created a single `StreamableHTTPServerTransport` and held it
+ * for the executor's process lifetime. The SDK transport is one-session
+ * per instance in stateful mode (see SDK source
+ * `node_modules/@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js:422-428`),
+ * so the second dispatch's CLI got HTTP 400 `Invalid Request: Server
+ * already initialized` on its initialize handshake — surfacing in the
+ * CLI as "MCP server not connected." This is the multi-tenant executor
+ * bug that wedged the 22-hour docs-pipeline smoke run.
+ *
+ * These tests spin up the real HTTP server and open two concurrent MCP
+ * clients against it. Each must succeed independently.
+ */
+describe("startInternalMcpServer — multi-session HTTP routing", () => {
+  let handle: CallbackServerHandle;
+
+  beforeEach(async () => {
+    handle = await startInternalMcpServer({ logger });
+  });
+
+  afterEach(async () => {
+    await handle.close();
+  });
+
+  async function openClient(): Promise<Client> {
+    const transport = new StreamableHTTPClientTransport(new URL(handle.url));
+    const client = new Client({ name: "rimsky-test-client", version: "1.0.0" });
+    await client.connect(transport);
+    return client;
+  }
+
+  it("supports two concurrent sessions in one server process (bug 1 regression)", async () => {
+    // Register two distinct dispatches.
+    const completedA: { changed: boolean; summary: string | null }[] = [];
+    const completedB: { changed: boolean; summary: string | null }[] = [];
+    handle.registry.register(
+      "tok-A",
+      makeRegistryEntry({
+        onComplete: async (_delta, changed, summary) => {
+          completedA.push({ changed, summary });
+          return { status: "accepted" };
+        },
+      }),
+    );
+    handle.registry.register(
+      "tok-B",
+      makeRegistryEntry({
+        onComplete: async (_delta, changed, summary) => {
+          completedB.push({ changed, summary });
+          return { status: "accepted" };
+        },
+      }),
+    );
+
+    // Open two clients concurrently and confirm both handshake succeeds.
+    const [clientA, clientB] = await Promise.all([openClient(), openClient()]);
+
+    // Each client makes a tool call keyed to its own token. Per-session
+    // routing is the contract under test: both should land on the
+    // correct registry entry.
+    const [resA, resB] = await Promise.all([
+      clientA.callTool({
+        name: "report_complete",
+        arguments: { token: "tok-A", changed: true, change_summary: "A done" },
+      }),
+      clientB.callTool({
+        name: "report_complete",
+        arguments: { token: "tok-B", changed: false, change_summary: "B noop" },
+      }),
+    ]);
+    expect(parseToolText(resA.content)).toEqual({ status: "accepted" });
+    expect(parseToolText(resB.content)).toEqual({ status: "accepted" });
+    expect(completedA).toEqual([{ changed: true, summary: "A done" }]);
+    expect(completedB).toEqual([{ changed: false, summary: "B noop" }]);
+
+    await clientA.close();
+    await clientB.close();
+  });
+
+  it("supports a fresh session after a prior one closes (sequential dispatch shape)", async () => {
+    // This is the shape that wedged the 22-hour run: dispatch A finishes,
+    // its CLI exits, then dispatch B starts later in the same executor
+    // process and tries to initialize. A singleton transport would
+    // reject B's initialize with HTTP 400 `Server already initialized`.
+    handle.registry.register("tok-A", makeRegistryEntry({}));
+    handle.registry.register("tok-B", makeRegistryEntry({}));
+
+    const clientA = await openClient();
+    const resA = await clientA.callTool({
+      name: "report_complete",
+      arguments: { token: "tok-A", changed: true },
+    });
+    expect(parseToolText(resA.content)).toEqual({ status: "accepted" });
+    await clientA.close();
+
+    // Dispatch B follows in the same server.
+    const clientB = await openClient();
+    const resB = await clientB.callTool({
+      name: "report_complete",
+      arguments: { token: "tok-B", changed: true },
+    });
+    expect(parseToolText(resB.content)).toEqual({ status: "accepted" });
+    await clientB.close();
   });
 });

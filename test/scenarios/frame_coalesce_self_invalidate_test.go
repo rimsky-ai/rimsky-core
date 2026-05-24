@@ -2,28 +2,94 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 39 — frame_coalesce_self_invalidate.
+// Task 39 — frame_coalesce_self_invalidate (post-2026-05-14 model).
 //
-// Single-node template with on_executor_complete:
+// Single-node template with a self-subscription:
 //
-//	{ invalidate: { targets: [self], frame: next } }
+//	subscribes:
+//	  - { node: self-type, on: state, when: fresh, outcome: fresh_changed, frame: next }
 //
-// and frame_resolution: coalesce. Drive multiple rapid commits and
-// assert the pending self-invalidates collapse into a single trailing
-// frame, with no double-execute.
+// and frame_resolution_mode: coalesce. The self-cycle is the
+// post-2026-05-14 replacement for the retired
+// `invalidate: { targets: [self], frame: next }` send-side syntax;
+// the receiver-side subscription expresses the same intent ("re-fire
+// me on every fresh_changed commit") and is now permitted at the
+// validator + cascade-walker level (see graph/node/template_validator.go
+// `TestValidateSubscribes_SelfWithFrameNextOK` and
+// runtime/runner_terminal.go::cascadeSubscribersStaleInTx's FrameNext
+// branch).
+//
+// Asserts:
+//   - the node re-fires after each fresh_changed commit (Observed()
+//     count grows beyond 1 within a short window);
+//   - the cycle terminates cleanly when the stub flips to changed=false
+//     (no more frames enqueue, the trailing pending frame coalesces
+//     into a single follow-up dispatch — verified by checking the
+//     total dispatch count is bounded after the cutoff).
 package scenarios
 
 import (
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
 )
 
-// TestFrameCoalesceSelfInvalidate is retired under the 2026-05-14
-// subscription-cascade resolution: send-side handler.invalidate emits
-// (including the self-invalidate slot) are removed, and self-cascade
-// retires entirely. Frame-coalesce semantics for queued frames are
-// exercised by operator-driven invalidate scenarios (e.g.
-// reactive_loop_self_invalidate_in_frame_test under the new model).
 func TestFrameCoalesceSelfInvalidate(t *testing.T) {
-	t.Skip("retired: self-invalidate emit retired; coalesce semantics covered " +
-		"by operator-invalidate scenario tests under the post-2026-05-14 model")
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	// Initial stub state: changed=true. Each dispatch produces
+	// fresh_changed, the self-subscription opens a next-frame, the
+	// supervisor re-dispatches. The loop continues until we flip the
+	// stub to changed=false below.
+	h.Stub.WhenType("drainer").Success(map[string]any{"k": 1}, true, "first")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "frame-coalesce-self-cycle", Version: "1",
+		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "drainer", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "drainer", On: "state", When: "fresh",
+					Outcome: "fresh_changed", Frame: "next",
+				}),
+			),
+		},
+	})
+	iid := h.CreateInstance(tid, "ck-frame-coalesce-self", map[string]any{})
+	d := h.FindNode(iid, "drainer")
+	require.NotNil(t, d)
+
+	// Let the self-cycle iterate a few times. With coalesce
+	// frame_resolution_mode + a steady changed=true, each commit
+	// queues a single trailing frame; rapid commits collapse rather
+	// than fanning out.
+	require.Eventually(t, func() bool {
+		return len(h.Stub.Observed()) >= 3
+	}, 5*time.Second, 25*time.Millisecond, "expected >=3 dispatches from the self-cycle loop")
+
+	// Flip the stub to changed=false. The next commit settles as
+	// fresh_unchanged; the cascade walker's `outcome: fresh_changed`
+	// filter means the self-subscription does NOT fire, and the loop
+	// terminates.
+	h.Stub.WhenType("drainer").Success(map[string]any{"k": 2}, false, "settled")
+
+	// Wait for the node to settle at fresh (no further frame queued).
+	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
+		"node should reach fresh and stay there after stub flips to changed=false")
+
+	// Record the dispatch count once the loop has terminated, then
+	// confirm it stops growing (coalesce semantics: at most one
+	// trailing frame pending at any time, so the count stabilizes
+	// quickly after the changed=false flip).
+	count := len(h.Stub.Observed())
+	time.Sleep(500 * time.Millisecond)
+	require.LessOrEqual(t, len(h.Stub.Observed())-count, 2,
+		"after stub flips to changed=false the dispatch count must stabilize "+
+			"(coalesce semantics permit at most one trailing pending frame)")
 }

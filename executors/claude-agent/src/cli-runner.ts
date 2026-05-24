@@ -71,18 +71,24 @@ export interface CliSpawnRequest {
 
 /**
  * Args for {@link CliRunner.resume}. Resumes a prior session by id and
- * delivers a single follow-up user prompt. The CLI carries the model,
- * system prompt, MCP config, and tool history from the session — only
- * the prompt and trace-correlation env need to be supplied here.
+ * delivers a single follow-up user prompt.
+ *
+ * The CLI session restores its model and system prompt from the prior
+ * session's persisted state. MCP config, however, is process-local
+ * runtime configuration — it is NOT part of session state and must be
+ * re-passed on every invocation. Without `--mcp-config` the resumed
+ * subprocess has no `rimsky-callback` server to dial, so any tool call
+ * the agent makes returns "MCP server not connected" and the dispatch
+ * cannot finish.
  *
  * Used by agent-run.ts's exit-watcher when the subprocess exits with
- * code 0 without ever calling `mcp__rimsky-callback__report_complete`.
- * The resumed session sees its full prior context and gets one chance
- * to "remember" the missing terminal call.
+ * code 0 without ever calling `mcp__rimsky-callback__report_complete`,
+ * and by the J10 resume-after-park path.
  */
 export interface CliResumeRequest {
   sessionId: string;
   prompt: string;
+  tools: CliToolConfig[];
   env: Record<string, string>;
   cwd?: string;
 }
@@ -204,6 +210,61 @@ export function buildClaudeCliArgs(
 }
 
 /**
+ * Builds the argv passed to the `claude` binary for a resume invocation.
+ *
+ * `--resume <sessionId>` restores the prior conversation, model, and
+ * system prompt from session state. It does NOT restore `--mcp-config`,
+ * which is process-local runtime configuration — so the resume argv
+ * MUST include `--mcp-config` pointing at a freshly-written file or the
+ * resumed subprocess has no MCP servers registered and every tool call
+ * fails with "MCP server not connected."
+ *
+ * Exported for tests so the resume argv composition can be asserted
+ * directly without spawning a real subprocess.
+ */
+export function buildClaudeCliResumeArgs(
+  req: CliResumeRequest,
+  paths: { mcpConfigPath: string },
+): string[] {
+  return [
+    "--resume",
+    req.sessionId,
+    "--print",
+    // Keep stream-json + verbose for parity with spawn — the executor's
+    // silence-tracker still watches stdout, and the resume run is
+    // typically short (one prompt → one tool call).
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--mcp-config",
+    paths.mcpConfigPath,
+    "-p",
+    req.prompt,
+  ];
+}
+
+/**
+ * Serializes `tools` to a `mcp.json` payload matching Claude CLI's
+ * `--mcp-config` schema. Shared by spawn() and resume(): both
+ * invocations need the same MCP config on disk because `--mcp-config`
+ * is process-local runtime config, not session state — `--resume` does
+ * NOT carry it forward.
+ */
+function mcpConfigJson(tools: CliToolConfig[]): string {
+  const mcpServers: Record<string, unknown> = {};
+  for (const t of tools) {
+    if (t.kind === "mcp-http") {
+      mcpServers[t.name] = {
+        type: "http",
+        url: t.url,
+        headers: t.headers ?? {},
+      };
+    }
+  }
+  return JSON.stringify({ mcpServers });
+}
+
+/**
  * Wraps a spawned ChildProcess in the CliHandle observer surface.
  * Shared by spawn() and resume() so both produce identical handles.
  */
@@ -289,17 +350,7 @@ export function createClaudeCliRunner(opts: {
       const mcpConfigPath = join(tmp, "mcp.json");
       await writeFile(systemPromptPath, req.systemPrompt);
 
-      const mcpServers: Record<string, unknown> = {};
-      for (const t of req.tools) {
-        if (t.kind === "mcp-http") {
-          mcpServers[t.name] = {
-            type: "http",
-            url: t.url,
-            headers: t.headers ?? {},
-          };
-        }
-      }
-      await writeFile(mcpConfigPath, JSON.stringify({ mcpServers }));
+      await writeFile(mcpConfigPath, mcpConfigJson(req.tools));
 
       const { env: authEnv, cleanup: cleanupAuthEnv } = buildCliEnv(auth);
       const args = buildClaudeCliArgs(req, { systemPromptPath, mcpConfigPath });
@@ -317,29 +368,30 @@ export function createClaudeCliRunner(opts: {
       });
     },
     async resume(req: CliResumeRequest): Promise<CliHandle> {
-      // Resume re-uses the session's saved system prompt + MCP config,
-      // so we don't write tmpfiles for those. We DO still need a fresh
-      // auth-env mount (the original spawn's was cleaned up at exit).
+      // The CLI session carries the model + system prompt across resume,
+      // so we don't re-pass `--system-prompt-file`. MCP config, however,
+      // is NOT session-persisted — it's process-local runtime config —
+      // so we must write a fresh `mcp.json` and pass `--mcp-config` on
+      // every resume. Without it the resumed subprocess has no
+      // `rimsky-callback` server registered, every tool call returns
+      // "MCP server not connected", and the dispatch stalls.
+      //
+      // The auth env is also rebuilt: the original spawn's was cleaned
+      // up at exit.
+      const tmp = await mkdtemp(join(tmpdir(), "rimsky-cli-"));
+      const mcpConfigPath = join(tmp, "mcp.json");
+      await writeFile(mcpConfigPath, mcpConfigJson(req.tools));
+
       const { env: authEnv, cleanup: cleanupAuthEnv } = buildCliEnv(auth);
-      const args = [
-        "--resume",
-        req.sessionId,
-        "--print",
-        // Keep stream-json + verbose for parity with the original spawn
-        // — the executor's silence-tracker still watches stdout, and the
-        // resume run is typically short (one prompt → one tool call).
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "-p",
-        req.prompt,
-      ];
+      const args = buildClaudeCliResumeArgs(req, { mcpConfigPath });
       const child: ChildProcess = spawn(binary, args, {
         cwd: req.cwd,
         env: { ...authEnv, ...req.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
       return buildHandleFromChild(child, () => {
+        void unlink(mcpConfigPath).catch(() => {});
+        void rm(tmp, { recursive: true, force: true }).catch(() => {});
         try { cleanupAuthEnv(); } catch { /* ignore */ }
       });
     },

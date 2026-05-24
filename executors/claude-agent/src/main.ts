@@ -14,6 +14,7 @@ import { startInternalMcpServer } from "./internal-mcp-server.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import { stubModeEnabled } from "./agent-run.js";
 import { Observability } from "./observability.js";
+import { registerCrashHandlers } from "./crash-handlers.js";
 
 /**
  * Executable entry point for the claude-agent executor.
@@ -25,6 +26,10 @@ import { Observability } from "./observability.js";
  */
 async function main(): Promise<void> {
   const logger = pino({ name: "claude-agent-executor" });
+  // Registered before any server starts so a crash during startup (or
+  // during a server's lifetime) is logged and surfaced as a non-zero
+  // exit instead of a silent vanish.
+  registerCrashHandlers(logger);
   const host = process.env.RIMSKY_EXECUTOR_HOST ?? "0.0.0.0";
   const grpcPort = parseInt(
     process.env.RIMSKY_EXECUTOR_PORT_GRPC ?? "7071",
