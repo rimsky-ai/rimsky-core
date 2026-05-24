@@ -2,9 +2,9 @@
 resolved_by: spec:2026-05-12-nomenclature-resolution
 tension: region-vs-scope-legacy
 category: vestigial
-status: open
+status: resolved
 affects:
-  - scope
+  - claim-scope
   - claim
 ---
 
@@ -31,4 +31,8 @@ A reader grepping for `region` finds historical comments that look like they ref
 - `_discover/2026-05-10-byte-equal-scope-conflict.md` Observations bullet "region term".
 - `foundation/locks/conflict.go:14-18` comment.
 - `docs/concepts/scope.md` `deprecated_terms` block.
+
+## Notes
+
+- 2026-05-22 — Frontmatter status reconciled (was `open` despite file living under `_resolved/`). The 2026-05-22 ClaimScope rename per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md` is consistent with this resolution's original qualified-naming spirit — `Scope` (a vestigial-region synonym) became `ClaimScope` (a self-disambiguating qualified term), continuing the same nomenclature discipline.
 

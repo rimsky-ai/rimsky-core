@@ -70,7 +70,13 @@ Each tool is a thin pass-through over the rimsky control-API.
 - `instance_create { template, instance_key?, params?, attribute_overrides? }`
   — create a new instance. `attribute_overrides` mirrors the rimsky
   control-API's per-instance overrides surface
-  (`{by_executor: {...}, by_node: {...}}`).
+  (`{by_executor: {...}, by_node: {...}, by_match: [...]}`). `by_match`
+  is an ordered list of `{matcher, overlay}` entries whose matcher is a
+  content-keyed predicate (`node_type`, `executor`, `graph`,
+  `child_key`, `attrs.<path>`) — see `concept:attribute`'s "Matcher
+  overlay (by_match)" section. `instance_get` echoes
+  `attribute_overrides_match_counts` (per-entry counter) alongside the
+  overrides blob.
 - `instance_terminate { id }` — terminate an instance.
 
 ### Nodes

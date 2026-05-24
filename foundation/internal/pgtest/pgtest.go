@@ -213,6 +213,44 @@ func QueryForTest(ctx context.Context, t *testing.T, d persistence.Database,
 	}
 }
 
+// QueryRowsForTest is the column-name-keyed variant of QueryForTest.
+// Returns one map per row keyed by the column name; values land as
+// whatever pgx scans into `any` (typically string / []byte / int64 /
+// time.Time / nil). Cross-driver conformance tests that need to read
+// columns not surfaced by the application-layer projections (e.g.
+// claimed_by on sibling rimsky_node_runs rows that share a node_id)
+// use this helper.
+func QueryRowsForTest(ctx context.Context, t *testing.T, d persistence.Database,
+	sql string, args ...any) []map[string]any {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.QueryRowsForTest: not a postgres driver")
+	}
+	rows, err := pool.Query(ctx, sql, args...)
+	if err != nil {
+		t.Fatalf("pgtest.QueryRowsForTest: %v\nsql: %s", err, sql)
+	}
+	defer rows.Close()
+	descs := rows.FieldDescriptions()
+	var out []map[string]any
+	for rows.Next() {
+		vals, err := rows.Values()
+		if err != nil {
+			t.Fatalf("pgtest.QueryRowsForTest: values: %v\nsql: %s", err, sql)
+		}
+		row := make(map[string]any, len(descs))
+		for i, fd := range descs {
+			row[string(fd.Name)] = vals[i]
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("pgtest.QueryRowsForTest: rows: %v\nsql: %s", err, sql)
+	}
+	return out
+}
+
 // HoldAdvisoryLock acquires a single Postgres advisory lock on a fresh
 // connection from the driver's pool and returns a release fn. Test-only
 // helper for the scheduler advisory-lock test (which needs to simulate a

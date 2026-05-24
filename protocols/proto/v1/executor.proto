@@ -97,6 +97,42 @@ message ExecuteRequest {
   // Park. When absent, this is a fresh dispatch; when present, this
   // is a resume of a parked node. See ResumeContext.
   ResumeContext resume_context = 13;
+
+  // prior_dispatch_id is set when this dispatch supersedes a prior
+  // failed / abandoned / stale-recovered dispatch for the same
+  // (run_scope_id, node_id) pair. Used by executors that maintain
+  // per-dispatch session state to identify the predecessor and
+  // (optionally) recover or hand off work-in-progress. Unset on the
+  // initial dispatch of a node within a RunScope. Per spec
+  // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+  // §Recovery-aware executor protocol.
+  //
+  // @concept: run-scope
+  optional string prior_dispatch_id = 14;
+
+  // prior_dispatch_disposition explains why prior_dispatch_id is set,
+  // so the executor can route its recovery / handoff logic. Unset
+  // (== PRIOR_NONE) on the initial dispatch. Per spec.
+  optional PriorDispatchDisposition prior_dispatch_disposition = 15;
+}
+
+// PriorDispatchDisposition is the classifier accompanying
+// ExecuteRequest.prior_dispatch_id. Tells the executor *why* the
+// supervisor is asking it to take over from a predecessor dispatch.
+enum PriorDispatchDisposition {
+  // PRIOR_NONE is the wire default. Equivalent to the field being unset.
+  PRIOR_NONE              = 0;
+  // PRIOR_HEARTBEAT_STALE: the supervisor's heartbeat-loss sweep
+  // transitioned the prior run to stale; this dispatch is the
+  // re-enqueue.
+  PRIOR_HEARTBEAT_STALE   = 1;
+  // PRIOR_RETRY_AFTER_ERROR: the prior dispatch reported an Error
+  // terminal that the error-policy resolved to retry; this dispatch
+  // is the retry.
+  PRIOR_RETRY_AFTER_ERROR = 2;
+  // PRIOR_RECALCULATE: the cascade walker invalidated the prior run
+  // (upstream input changed); this dispatch is the recalculate.
+  PRIOR_RECALCULATE       = 3;
 }
 
 // ResumeContext is rimsky's way of handing back to the executor the
@@ -190,29 +226,27 @@ message Error {
 
 // ParkReason categorizes why an executor parked a node. Storage form
 // (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_CALLBACK_WAIT ->
-// callback_wait). The same form is used on the diagnostics
+// from the enum symbol (e.g. PARK_REASON_AWAIT_CALLBACK ->
+// await_callback). The same form is used on the diagnostics
 // endpoint, the rimsky `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
 //
-// The spec's 4-reason taxonomy (TIME_WAIT / CALLBACK_WAIT /
-// RETRY_BACKOFF / OTHER; see
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Parked-state taxonomy) is the canonical set for new emitters;
-// SIGNAL_WAIT and AWAITING_HUMAN are kept for existing emit sites
-// and map to OTHER in the rolled-up per-reason caps when not
-// explicitly configured. OTHER requires reason_label non-empty
-// (validated at the supervisor's terminal handler).
+// @blessed-invariant: ParkReason is a closed two-value set
+// (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
+// layer rejects any other value at decode. No UNSPECIFIED, no
+// OTHER, no fallback. Storage CHECK on
+// col:rimsky_node_runs.parked_reason mirrors the closed set. Per
+// spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+//
+// proto3 requires a defined zero value; PARK_REASON_AWAIT_CALLBACK
+// occupies tag 0 deliberately — an executor that forgets to set
+// the field gets the wait-on-callback interpretation, which won't
+// auto-resume, which is the safer default.
 //
 // @concept: parked-state
 enum ParkReason {
-  PARK_REASON_UNSPECIFIED    = 0;
-  PARK_REASON_TIME_WAIT      = 1;
-  PARK_REASON_SIGNAL_WAIT    = 2;
-  PARK_REASON_AWAITING_HUMAN = 3;
-  PARK_REASON_RETRY_BACKOFF  = 4;
-  PARK_REASON_CALLBACK_WAIT  = 5;
-  PARK_REASON_OTHER          = 99;
+  PARK_REASON_AWAIT_CALLBACK = 0;
+  PARK_REASON_SNOOZE         = 2;
 }
 
 // Park signals that the executor wants to pause the node and resume
@@ -237,10 +271,10 @@ message Park {
   string session_token = 4;
   // Free-form human annotation. Inert in rimsky.
   string reason_note = 5;
-  // reason_label is a freeform tag that MUST be set when
-  // reason = PARK_REASON_OTHER (validated at the supervisor's
-  // terminal handler). For taxonomy-mapped reasons it is optional
-  // additional context. Persisted on
+  // reason_label is a freeform tag carrying optional additional
+  // context for the (closed) ParkReason set (PARK_REASON_AWAIT_CALLBACK
+  // | PARK_REASON_SNOOZE). It is always optional under the post-collapse
+  // enum — there is no "other" variant that mandates it. Persisted on
   // col:rimsky_node_runs.parked_reason_label.
   string reason_label = 6;
 }

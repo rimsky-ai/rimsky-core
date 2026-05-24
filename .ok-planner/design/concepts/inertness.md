@@ -16,12 +16,12 @@ references:
 
 A uniform discipline applied across two overlapping lists.
 
-**Carrier streams the discipline governs** (seven, post-2026-05-21): claim scope, claim address, claim payload, blob content, attribute values, named-event payloads, message payloads. Plus the `Error.payload` Struct from the post-2026-05-12 proto restructure. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
+**Carrier streams the discipline governs** (seven, post-2026-05-21): claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, attribute values, named-event payloads, message payloads. Plus the `Error.payload` Struct from the post-2026-05-12 proto restructure. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
 
 **Read-site sub-disciplines** distinguish how strict the rule is per stream:
 
-- **Byte-opaque inertness** — rimsky never traverses the bytes at all. Applies to: claim scope, claim address, claim payload, blob content. Rimsky reads them only at substitution-leaf extraction (`walkPath`) or for transport into the executor's wire (per `@blessed-invariant 20` and `21`).
-- **Structural inertness** — rimsky may traverse the bytes for transport mechanics (event-log persistence, JSON-walk substitution) but does NOT inspect values to make decisions. Applies to: attribute values, named-event payloads, message payloads, `Error.payload`. Rimsky reads them only at substitution leaves and event-ledger writes; never logs, formats with `%v`, validates beyond schema gates, transforms, normalizes, hashes, indexes, pattern-matches, attaches to traces, or includes them in error messages.
+- **Byte-opaque inertness** — rimsky never traverses the bytes at all. Applies to: claim scope (per `concept:claim-scope`), claim address, claim payload, blob content. Rimsky reads them only at substitution-leaf extraction (`walkPath`) or for transport into the executor's wire (per `@blessed-invariant 20` and `21`).
+- **Structural inertness** — rimsky may traverse the bytes for transport mechanics (event-log persistence, JSON-walk substitution) and for the precisely-enumerated sanctioned read sites below, but does NOT inspect values to make routing or validation decisions outside those sites. Applies to: attribute values, named-event payloads, message payloads, `Error.payload`. Rimsky reads them only at the sanctioned read sites; never logs, formats with `%v`, validates beyond schema gates, transforms, normalizes, hashes, indexes, pattern-matches, attaches to traces, or includes them in error messages. The "pattern-matches" prohibition still binds for the three streams without a matcher-style sanctioned site (named-event payloads, message payloads, `Error.payload`); attribute values gained a sanctioned matcher read site via `evaluateMatcher` below.
 
 ## Purpose
 
@@ -29,22 +29,23 @@ Rimsky is a project-agnostic substrate. Logging, normalizing, or otherwise inspe
 
 ## Boundaries
 
-Owns: the cross-cutting "don't inspect" rule, the enumerated sanctioned read sites, the per-stream invariant annotations, and the two-sub-discipline taxonomy. Does NOT own: any one of the streams individually (each has its own concept and schema home). Adjacent: `concept:claim`, `concept:scope`, `concept:blob-backend`, `concept:named-event`, `concept:attribute` (substitution is the sanctioned exception).
+Owns: the cross-cutting "don't inspect" rule, the enumerated sanctioned read sites, the per-stream invariant annotations, and the two-sub-discipline taxonomy. Does NOT own: any one of the streams individually (each has its own concept and schema home). Adjacent: `concept:claim`, `concept:claim-scope`, `concept:blob-backend`, `concept:named-event`, `concept:attribute` (substitution is the sanctioned exception).
 
 ## Invariants
 
 Three `@blessed-invariant`s codify the discipline:
 
-- **§20** — claim payload, address, scope are byte-opaque inert (`foundation/locks/types.go::ClaimResult`).
+- **§20** — claim payload, address, claim scope are byte-opaque inert (`foundation/locks/types.go::ClaimResult`).
 - **§21** — blob content (`foundation/persistence/blob.go::BlobBackend`) and (by extension) named-event payloads + the `Error.payload` Struct are structurally inert.
 - **§24** (post-2026-05-15) — message payloads are inert. Read only at the substitution leaf in `graph/attribute/substitution.go::resolveTrigger` (via `walkPath` against the trigger message) and at the persistence-layer fetch in `control/controlapi/messages.go::handleGetMessage`. The message delivery path (`runtime/message_delivery.go`) touches envelope routing fields (kind, sender, sender_kind, target, frame_id, delivered_at) but never `payload`.
 
 Sanctioned read sites:
 
 - `walkPath` (substitution leaf in `graph/attribute/substitution.go`) — applies to every inert stream traversed at substitution time (claim payload, attribute values, named-event payloads, message payloads).
-- `stringifyRaw` (same file; top-level address/scope directives).
+- `stringifyRaw` (same file; top-level address / claim scope directives).
 - `makeClaimHandle` (wire-encoding into the executor's `google.protobuf.Struct` at `runtime/runner_dispatch.go`).
 - `handleGetMessage` (persistence-layer fetch surfacing the message row verbatim to the operator at `control/controlapi/messages.go`) — added 2026-05-15 for message payloads.
+- `evaluateMatcher` (`code:runtime/attribute_overrides.go`, the matcher-evaluator helper called from `applyAttributeOverrides`) — applies to attribute values only. Reads the resolved post-L4 attribute bag to evaluate `attrs.<path>` equality predicates from `attribute_overrides.by_match[].matcher`. The read is primitive-equality only; no traversal beyond the named path; values not logged, not formatted, not included in error messages. Sanctioned by `concept:attribute`'s L5 matcher-overlay invariant.
 
 ## Aliases and historical names
 
@@ -63,3 +64,5 @@ The `auth.access_attempted` and `auth.access_denied` event rows store the reques
 - Renamed from `concept:opacity` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #17). Adopts two-sub-discipline framing.
 - [2026-05-15] Clarifying addition: auth audit records store `request_params` verbatim (justified by structural-inertness + claim/payload-inert invariants — no secrets in any control-plane request body). Added by `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
 - 2026-05-21 — Userdata collapse. `concept:userdata` retires; `@blessed-invariant 11` retires. Attribute-value inertness covered by the structural-inertness discipline. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
+- 2026-05-21 — Matcher overlay added per `.ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md`. New sanctioned read site (`evaluateMatcher`) reads resolved attribute values for equality matching. Structural-inertness bullet at line 24 tightened to explicitly allow sanctioned-site reads while preserving the general "no value-driven decisions" discipline.
+- 2026-05-22 — Updated for ClaimScope rename per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: bare "scope" references in the claim-identity-bytes sense are qualified to "claim scope" and adjacency reference updated from `concept:scope` to `concept:claim-scope`. Invariant §20 wording adjusted accordingly.

@@ -114,6 +114,52 @@ func resolveParentClaimChain(
 			return nil
 		}
 	}
+	// Fan-out partition RunScope closure (Task 37 / concept:run-scope
+	// §"Lifecycle / RunScope closure"). When the aggregation walker
+	// confirms every child sub-claim has resolved, the fanout_partition
+	// RunScopes rooted at each child are eligible for closure: the
+	// parent-run rendezvous has fired. Closing the partition RunScopes
+	// atomically with the parent claim resolution ensures the
+	// supervisor's lazy-allocation primitive (AffirmNodeRunRow) refuses
+	// new in-flight rows in those scopes from this point onward — any
+	// in-flight callbacks for those scopes route through the
+	// determinism rule (callback.late_or_stale_run / ack-but-noop).
+	//
+	// Idempotent: Close() is a no-op on an already-closed RunScope, so
+	// non-fan-out parents (committed-durable children without partition
+	// RunScopes) and re-entry through the same chain are both safe.
+	//
+	// @concept: run-scope
+	// @concept: fan-out
+	if scopes := args.Persist.RunScopes(); scopes != nil {
+		for _, c := range children {
+			if c.NodeRunID == nil {
+				continue
+			}
+			childRun, err := args.Persist.RunTree().GetByID(ctx, tx, *c.NodeRunID)
+			if err != nil {
+				return fmt.Errorf("resolveParentClaimChain: load child run %s: %w", c.NodeRunID, err)
+			}
+			if childRun == nil {
+				continue
+			}
+			childScope, err := scopes.GetByID(ctx, tx, childRun.RunScopeID)
+			if err != nil {
+				return fmt.Errorf("resolveParentClaimChain: load child run scope %s: %w", childRun.RunScopeID, err)
+			}
+			// Only close fanout_partition scopes — those with a
+			// non-empty partition_key. Non-fan-out children (e.g.
+			// legacy callers that set ParentClaimHandleID on a
+			// non-fan-out leaf) live in the same RunScope as the
+			// parent and must not be closed here.
+			if childScope == nil || childScope.PartitionKey == "" {
+				continue
+			}
+			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
+				return fmt.Errorf("resolveParentClaimChain: close partition scope %s: %w", childRun.RunScopeID, err)
+			}
+		}
+	}
 	// Issue C: aggregate across ALL children using the snapshotted
 	// policy + per-outcome counters. `expected_children_count` reflects
 	// the total fan-out width set at AcquireSubClaims time; committed +
@@ -157,7 +203,7 @@ func resolveParentClaimChain(
 		Source:              HeldTerminal,
 		Outcome:             outcome,
 		Producer:            producer,
-		Scope:               []byte(parent.ScopeData),
+		Scope:               []byte(parent.ClaimScopeData),
 		Address:             []byte(parent.Address),
 		Lifetime:            parent.Lifetime,
 		CandidateHandle:     parent.ProducerCandidateHandle,

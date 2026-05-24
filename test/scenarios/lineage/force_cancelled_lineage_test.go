@@ -162,9 +162,17 @@ func seedForceCancelScenario(
 	ik := instanceKey
 	var inst persistence.InstanceRow
 	var nodeRow persistence.NodeRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: mainScopeID, GraphName: "main", InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ik, Params: map[string]any{},
+			ID: instID, TemplateHash: tmpl.ID, InstanceKey: &ik, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -207,7 +215,7 @@ func seedFanOutTree(
 			ID:                 parentID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &pName,
-			ScopeData:          []byte(`"parent-scope"`),
+			ClaimScopeData:     []byte(`"parent-scope"`),
 			Address:            []byte(`"parent-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: supervisorID,
@@ -226,7 +234,7 @@ func seedFanOutTree(
 				ID:                  sid,
 				LockKind:            persistence.LockKindScope,
 				ProducerName:        &pName,
-				ScopeData:           []byte(`"sub-scope"`),
+				ClaimScopeData:      []byte(`"sub-scope"`),
 				Address:             []byte(`"sub-addr"`),
 				Intent:              &intent,
 				HolderSupervisorID:  supervisorID,

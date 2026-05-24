@@ -147,11 +147,27 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		tplHash,
 	)
-	pgtest.ExecForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instID, tplHash, "ck-"+uuid.NewString(),
-	)
+	mainScopeID := uuid.New()
+	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
+	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED. Use the persistence
+	// layer to seed both rows in one tx.
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
+		ck := "ck-" + uuid.NewString()
+		_, err := h.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:             instID,
+			TemplateHash:   tplHash,
+			InstanceKey:    &ck,
+			MainRunScopeID: mainScopeID,
+		}, tx)
+		return err
+	}))
 	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
@@ -175,10 +191,14 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 	t.Helper()
 	// Seed a 'running' frame for the node's instance first so the FK
 	// rimsky_node_runs.frame_id resolves.
-	var instID, frameID shared.UUID
+	var instID, frameID, mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT instance_id FROM rimsky_nodes WHERE id = $1`,
 		[]any{nodeID}, &instID,
+	)
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
+		[]any{instID}, &mainScopeID,
 	)
 	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
@@ -188,10 +208,10 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 	)
 	var runID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'pending', 'stale', $2)
+		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+		 VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
 		 RETURNING id`,
-		[]any{nodeID, frameID}, &runID,
+		[]any{nodeID, frameID, mainScopeID}, &runID,
 	)
 	return runID
 }
@@ -209,7 +229,7 @@ func seedScopeClaimHandle(ctx context.Context, t *testing.T, h *adminHarness, no
 			ID:                 id,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producerName,
-			ScopeData:          []byte(`"r-1"`),
+			ClaimScopeData:     []byte(`"r-1"`),
 			Intent:             &intent,
 			HolderSupervisorID: "scenario-supervisor",
 			HolderNodeID:       nodeID,

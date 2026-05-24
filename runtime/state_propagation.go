@@ -38,11 +38,14 @@ import (
 
 // PropagationArgs is the in-context dependencies the propagation
 // transaction needs. RunTree handles the lock/read/write on
-// rimsky_node_runs; ClaimHandles is required so that strict.cancel_siblings
-// follow-up actions can walk the affected siblings' claim handles. Logger
-// is for audit lines; nil disables.
+// rimsky_node_runs; RunScopes resolves the parent run id from a child
+// run's RunScope (RunTreeRow no longer projects ParentRunID inline);
+// ClaimHandles is required so that strict.cancel_siblings follow-up
+// actions can walk the affected siblings' claim handles. Logger is for
+// audit lines; nil disables.
 type PropagationArgs struct {
 	RunTree      persistence.RunTreeTable
+	RunScopes    persistence.RunScopeTable
 	ClaimHandles persistence.ClaimHandleTable
 	Logger       shared.Logger
 }
@@ -65,15 +68,24 @@ type PropagationArgs struct {
 // pre-write the row in the same tx can still drive the walker; tests
 // that need that affordance must do their own write first).
 //
-// Returns the list of cancellation actions the caller must execute
-// (typically alongside the surrounding transaction). Callers may pass
-// the result to ApplyCancelActions to walk siblings' claim handles.
+// Returns:
+//
+//   - []CancelAction — follow-up sibling-cancellation work the caller
+//     must walk (typically passed to ApplyCancelActions).
+//   - []ParentSettlement — ancestors whose state transitioned to a
+//     terminal value as a result of this child's terminal. The caller
+//     fires cascadeSubscribersStaleInTx for each settlement to bridge
+//     cross-scope cascade: a parent run's downstream subscribers (in
+//     the parent's RunScope) must observe the parent's settlement, and
+//     the walker is the only path that produces those settlements.
+//     Without this bridge, fan-out / sub-graph parents that settle via
+//     aggregation walks leave their main-scope subscribers ungated.
 func PropagateFromChildState(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
 	childRunID shared.UUID, newState cascade.NodeState, newOutcome cascade.LastOutcome,
-) ([]CancelAction, error) {
+) ([]CancelAction, []ParentSettlement, error) {
 	if args.RunTree == nil {
-		return nil, fmt.Errorf("PropagateFromChildState: RunTree is required")
+		return nil, nil, fmt.Errorf("PropagateFromChildState: RunTree is required")
 	}
 	// Reference the args/state values so callers' intent shows up at the
 	// type level even though the walker re-reads canonical rows below.
@@ -81,38 +93,54 @@ func PropagateFromChildState(
 
 	childRow, err := args.RunTree.GetByID(ctx, tx, childRunID)
 	if err != nil {
-		return nil, fmt.Errorf("PropagateFromChildState: load child %s: %w", childRunID, err)
+		return nil, nil, fmt.Errorf("PropagateFromChildState: load child %s: %w", childRunID, err)
 	}
 	if childRow == nil {
-		return nil, fmt.Errorf("PropagateFromChildState: child run %s not found", childRunID)
+		return nil, nil, fmt.Errorf("PropagateFromChildState: child run %s not found", childRunID)
 	}
-	if childRow.ParentRunID == nil {
-		// Root run — no further propagation.
-		return nil, nil
+	if args.RunScopes == nil {
+		return nil, nil, fmt.Errorf("PropagateFromChildState: RunScopes is required")
 	}
-	return walkUpwards(ctx, args, tx, *childRow.ParentRunID)
+	scope, err := args.RunScopes.GetByID(ctx, tx, childRow.RunScopeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("PropagateFromChildState: load run scope %s: %w", childRow.RunScopeID, err)
+	}
+	if scope == nil || scope.ParentRunID == nil {
+		// Root RunScope (main) — no further propagation.
+		return nil, nil, nil
+	}
+	return walkUpwards(ctx, args, tx, *scope.ParentRunID)
 }
 
 // walkUpwards recurses up the tree, locking each ancestor in turn and
 // applying the aggregation rule table. Stops when the ancestor's state
 // did not change (no further propagation needed) or the root is updated.
+//
+// Settlements (parents whose state transitioned to a terminal value via
+// the aggregation walker) are accumulated and returned alongside cancel
+// actions. The caller fires cascadeSubscribersStaleInTx for each
+// settled parent so the parent's own downstream subscribers (in the
+// parent's RunScope) observe the settlement — this is the only path
+// that bridges fan-out / sub-graph parent settlement into the standard
+// subscription cascade.
 func walkUpwards(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
 	parentRunID shared.UUID,
-) ([]CancelAction, error) {
+) ([]CancelAction, []ParentSettlement, error) {
 	var actions []CancelAction
+	var settlements []ParentSettlement
 	current := parentRunID
 	for {
 		parent, err := args.RunTree.LockTreeForUpdate(ctx, tx, current)
 		if err != nil {
-			return actions, fmt.Errorf("walkUpwards: lock %s: %w", current, err)
+			return actions, settlements, fmt.Errorf("walkUpwards: lock %s: %w", current, err)
 		}
 		if parent == nil {
-			return actions, fmt.Errorf("walkUpwards: parent %s not found", current)
+			return actions, settlements, fmt.Errorf("walkUpwards: parent %s not found", current)
 		}
 		children, err := args.RunTree.ListChildren(ctx, tx, current)
 		if err != nil {
-			return actions, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
+			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
 		// Translate children rows into the pure aggregation function's
 		// input.
@@ -124,11 +152,11 @@ func walkUpwards(
 		if !result.IsTerminal {
 			// Parent stays in its current state. Nothing more to do
 			// upward.
-			return actions, nil
+			return actions, settlements, nil
 		}
 		if parent.State == result.ParentState && parent.LastOutcome == result.ParentOutcome {
 			// State unchanged — propagation halts.
-			return actions, nil
+			return actions, settlements, nil
 		}
 		// Validate the parent transition via NextStateParent. The
 		// machine returns a parentAggregateOK sentinel when the caller
@@ -136,12 +164,12 @@ func walkUpwards(
 		// shape for child_transitioned. Any other error is illegal.
 		if _, err := cascade.NextStateParent(parent.State, cascade.ReasonChildTransitioned); err != nil {
 			if !cascade.IsParentAggregateOK(err) {
-				return actions, fmt.Errorf("walkUpwards: state-machine rejects parent %s %s→%s: %w",
+				return actions, settlements, fmt.Errorf("walkUpwards: state-machine rejects parent %s %s→%s: %w",
 					current, parent.State, result.ParentState, err)
 			}
 		}
 		if err := args.RunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, result.ParentOutcome); err != nil {
-			return actions, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
+			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
 		}
 		// Record any follow-up action.
 		if result.Action != AggregateActionNone {
@@ -151,18 +179,58 @@ func walkUpwards(
 				Children:    children,
 			})
 		}
+		// Record terminal-state settlement so the caller can fire
+		// cascadeSubscribersStaleInTx for the parent's downstream
+		// subscribers. NodeID + FrameID + RunScopeID come from the
+		// parent's just-locked row; the caller resolves NodeType from
+		// the node row before invoking the cascade walker.
+		if isTerminal(result.ParentState) {
+			settlements = append(settlements, ParentSettlement{
+				ParentRunID:    current,
+				ParentNodeID:   parent.NodeID,
+				ParentRunScope: parent.RunScopeID,
+				FrameID:        parent.FrameID,
+				NewState:       result.ParentState,
+				NewOutcome:     result.ParentOutcome,
+			})
+		}
 		if !isTerminal(result.ParentState) {
 			// Parent still active (e.g. policy left it running with
 			// stale children) — no further propagation.
-			return actions, nil
+			return actions, settlements, nil
 		}
-		if parent.ParentRunID == nil {
-			// Reached root; further upward is just the frame's
-			// terminal-aggregation engine (not handled here).
-			return actions, nil
+		// Walk further up via the parent's RunScope: RunTreeRow no
+		// longer projects parent_run_id inline; the tree shape lives on
+		// rimsky_run_scopes (per concept:run-scope).
+		parentScope, err := args.RunScopes.GetByID(ctx, tx, parent.RunScopeID)
+		if err != nil {
+			return actions, settlements, fmt.Errorf("walkUpwards: load run scope %s: %w", parent.RunScopeID, err)
 		}
-		current = *parent.ParentRunID
+		if parentScope == nil || parentScope.ParentRunID == nil {
+			// Reached root (main RunScope) — further upward is the
+			// frame's terminal-aggregation engine (not handled here).
+			return actions, settlements, nil
+		}
+		current = *parentScope.ParentRunID
 	}
+}
+
+// ParentSettlement describes a parent run that transitioned to a
+// terminal state during a propagation walk. The caller (post-terminal
+// handler) uses this to fire cascadeSubscribersStaleInTx for the
+// parent's own downstream subscribers — the cross-scope cascade bridge
+// from fan-out / sub-graph parent settlement into the main-graph
+// subscription cascade.
+//
+// @concept: cascade
+// @concept: run-scope
+type ParentSettlement struct {
+	ParentRunID    shared.UUID
+	ParentNodeID   shared.UUID
+	ParentRunScope shared.UUID
+	FrameID        shared.UUID
+	NewState       cascade.NodeState
+	NewOutcome     cascade.LastOutcome
 }
 
 // CancelAction describes a follow-up cancellation the propagation
@@ -224,15 +292,25 @@ func PropagateIfChildAfterTerminal(
 	if rt == nil {
 		return nil, nil
 	}
+	scopes := args.Persist.RunScopes()
+	if scopes == nil {
+		return nil, nil
+	}
 	// Cheap pre-check: only children need propagation. A root run's
-	// terminal is the frame-engine's concern.
+	// terminal is the frame-engine's concern. The run-tree shape lives
+	// on rimsky_run_scopes — resolve the child's RunScope and check
+	// whether it has a parent_run_id.
 	var parentID *shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, err := rt.GetByID(ctx, tx, runID)
 		if err != nil || row == nil {
 			return err
 		}
-		parentID = row.ParentRunID
+		scope, err := scopes.GetByID(ctx, tx, row.RunScopeID)
+		if err != nil || scope == nil {
+			return err
+		}
+		parentID = scope.ParentRunID
 		return nil
 	}); err != nil {
 		return nil, err
@@ -241,14 +319,80 @@ func PropagateIfChildAfterTerminal(
 		return nil, nil
 	}
 	var actions []CancelAction
+	var settlements []ParentSettlement
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		out, err := PropagateFromChildState(ctx, PropagationArgs{
+		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
 			RunTree:      rt,
+			RunScopes:    scopes,
 			ClaimHandles: args.ClaimHandles,
 			Logger:       args.Logger,
 		}, tx, runID, newState, newOutcome)
-		actions = out
-		return err
+		actions = outActions
+		settlements = outSettlements
+		if err != nil {
+			return err
+		}
+		// Cross-scope cascade bridge: for each parent that settled to a
+		// terminal state via aggregation, fire the standard subscription
+		// cascade walker rooted at the parent's run. Without this, fan-
+		// out / sub-graph parents that settle here leave their main-
+		// scope subscribers ungated — the parent never went through a
+		// terminal handler that would naturally fire the walker.
+		//
+		// @concept: cascade
+		// @concept: run-scope
+		for _, s := range settlements {
+			if s.FrameID == (shared.UUID{}) {
+				// Defensive: no frame projected on the parent row means
+				// no current-frame cascade target. Skip rather than
+				// faulting; this is the orchestration-only-parent case.
+				//
+				// Log Warn so a degenerate case (e.g. parent row was
+				// created but frame_id never bound) is observable in
+				// logs rather than silently stranding the parent's
+				// downstream subscribers. Fan-out / sub-graph parents
+				// normally always carry a frame_id, so reaching here
+				// signals a logic gap worth surfacing.
+				if args.Logger != nil {
+					args.Logger.Warn("PropagateIfChildAfterTerminal: skip cascade bridge: parent frame_id is zero",
+						"parent_run_id", s.ParentRunID.String(),
+						"parent_node_id", s.ParentNodeID.String(),
+						"new_state", string(s.NewState),
+						"new_outcome", string(s.NewOutcome))
+				}
+				continue
+			}
+			nodeRow, err := args.Persist.Nodes().Get(ctx, s.ParentNodeID, tx)
+			if err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: load parent node %s: %w", s.ParentNodeID, err)
+			}
+			if nodeRow == nil {
+				continue
+			}
+			if err := cascadeSubscribersStaleInTx(
+				ctx, args, tx,
+				s.ParentNodeID,
+				nodeRow.NodeType,
+				s.ParentRunID,
+				nodeRow.InstanceID,
+				s.FrameID,
+			); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
+			}
+			// Drain wait-set rows where the just-settled parent is the
+			// gating sender. The cascade walker above inserts rows keyed
+			// on (sender=parent_run_id, receiver=downstream); without
+			// the drain, those rows stay blocking forever — downstream
+			// pending receivers never advance to dispatch. Mirrors the
+			// standard applyTerminalComplete pattern (cascade then
+			// drain) for the cross-scope bridge.
+			//
+			// @concept: wait-set
+			if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, s.FrameID, s.ParentRunID, tx); err != nil {
+				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentRunID, err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}

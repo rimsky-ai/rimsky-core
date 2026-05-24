@@ -36,18 +36,20 @@ import (
 )
 
 // parkReasonFromStorageForm maps the lower_snake_case storage form
-// (e.g. "callback_wait") back to the proto enum value. Unknown
-// inputs map to PARK_REASON_UNSPECIFIED. Mirrors the runtime helper
-// of the same name to keep the stub self-contained.
+// (e.g. "await_callback") back to the proto enum value. Unknown
+// inputs (including empty) fall back to PARK_REASON_AWAIT_CALLBACK,
+// the safer default in the closed two-value set (no auto-resume).
+// Mirrors the runtime helper of the same name to keep the stub
+// self-contained.
 func parkReasonFromStorageForm(s string) genv1.ParkReason {
 	if s == "" {
-		return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+		return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 	}
 	upper := "PARK_REASON_" + strings.ToUpper(s)
 	if v, ok := genv1.ParkReason_value[upper]; ok {
 		return genv1.ParkReason(v)
 	}
-	return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+	return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 }
 
 type terminalKind int
@@ -110,13 +112,23 @@ type Stub struct {
 // CallbackURL and CancelToken are recorded so scenario tests exercising
 // the §12.5 incremental-writeback path can POST per-field deltas back to
 // the supervisor with the same auth shape a real executor would use.
+//
+// PriorDispatchID and PriorDispatchDisposition surface the recovery-aware
+// fields per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+// §"Recovery-aware executor protocol" — scenario tests (F2 retry-after-
+// error, F3 heartbeat-stale recovery, recalculate) assert on these so
+// the wire-level populate path is regression-pinned end-to-end.
 type ObservedRequest struct {
-	NodeID      string
-	InstanceID  string
-	NodeType    string
-	Attributes  map[string]any
-	CallbackURL string
-	CancelToken string
+	NodeID                   string
+	InstanceID               string
+	NodeType                 string
+	Attributes               map[string]any
+	CallbackURL              string
+	CancelToken              string
+	DispatchID               string
+	PriorDispatchID          string                         // empty when unset on the wire
+	PriorDispatchDisposition genv1.PriorDispatchDisposition // PRIOR_NONE when unset on the wire
 }
 
 // New constructs a Stub with no scripted node types registered.
@@ -194,14 +206,15 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 
 // Park configures the scripted terminal as a Park event.
 // resumeAt may be zero (indefinite park; resumes only via external
-// invalidate). reason is the typed ParkReason enum (use
-// ParkReason_PARK_REASON_UNSPECIFIED for "unspecified", logged WARN
-// supervisor-side). reasonNote carries the optional free-form human
-// annotation. sessionToken is opaque to rimsky and round-tripped to
-// the executor on resume via ResumeContext.session_token.
+// invalidate). reason is the typed ParkReason enum from the closed
+// two-value set (PARK_REASON_AWAIT_CALLBACK | PARK_REASON_SNOOZE).
+// reasonNote carries the optional free-form human annotation.
+// sessionToken is opaque to rimsky and round-tripped to the executor
+// on resume via ResumeContext.session_token.
 //
 // Per plan A3 / E1 / L2; updated for 2026-05-14 Piece 2 (ParkReason
-// typed).
+// typed); ParkReason collapsed to a closed two-value set per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
 func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, payload []byte, resumeAt time.Time, sessionToken string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -250,12 +263,15 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	s.mu.Lock()
 	s.observed = append(s.observed, ObservedRequest{
-		NodeID:      req.GetNodeId(),
-		InstanceID:  req.GetInstanceId(),
-		NodeType:    req.GetNodeType(),
-		Attributes:  req.GetAttributes().AsMap(),
-		CallbackURL: req.GetCallbackUrl(),
-		CancelToken: req.GetCancelToken(),
+		NodeID:                   req.GetNodeId(),
+		InstanceID:               req.GetInstanceId(),
+		NodeType:                 req.GetNodeType(),
+		Attributes:               req.GetAttributes().AsMap(),
+		CallbackURL:              req.GetCallbackUrl(),
+		CancelToken:              req.GetCancelToken(),
+		DispatchID:               req.GetDispatchId(),
+		PriorDispatchID:          req.GetPriorDispatchId(),
+		PriorDispatchDisposition: req.GetPriorDispatchDisposition(),
 	})
 	stubMode := s.stubMode
 	sc, ok := s.scripts[req.NodeType]

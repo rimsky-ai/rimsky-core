@@ -46,6 +46,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/frame"
 	nodepkg "github.com/fallguy/rimsky/graph/node"
@@ -121,14 +122,15 @@ type createInstanceResponse struct {
 }
 
 type instanceItem struct {
-	ID                 string         `json:"id"`
-	TemplateHash       string         `json:"template_hash"`
-	InstanceKey        *string        `json:"instance_key,omitempty"`
-	Params             map[string]any `json:"params"`
-	AttributeOverrides map[string]any `json:"attribute_overrides,omitempty"`
-	FrameDeliveryMode  string         `json:"frame_delivery_mode"`
-	CreatedAt          time.Time      `json:"created_at"`
-	TerminatedAt       *time.Time     `json:"terminated_at,omitempty"`
+	ID                            string         `json:"id"`
+	TemplateHash                  string         `json:"template_hash"`
+	InstanceKey                   *string        `json:"instance_key,omitempty"`
+	Params                        map[string]any `json:"params"`
+	AttributeOverrides            map[string]any `json:"attribute_overrides,omitempty"`
+	AttributeOverridesMatchCounts []int64        `json:"attribute_overrides_match_counts,omitempty"`
+	FrameDeliveryMode             string         `json:"frame_delivery_mode"`
+	CreatedAt                     time.Time      `json:"created_at"`
+	TerminatedAt                  *time.Time     `json:"terminated_at,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
@@ -143,6 +145,9 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	}
 	if len(r.AttributeOverrides) > 0 {
 		out.AttributeOverrides = r.AttributeOverrides
+	}
+	if len(r.AttributeOverridesMatchCounts) > 0 {
+		out.AttributeOverridesMatchCounts = r.AttributeOverridesMatchCounts
 	}
 	return out
 }
@@ -236,7 +241,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			// inside the tx so that template state at the time of
 			// validation matches the state of the row we'll insert
 			// against.
-			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, deps.Executors); vErr != nil {
+			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, row.Spec.Graphs, deps.Executors); vErr != nil {
 				return vErr
 			}
 			// Dry-run gate: every validation step above has succeeded
@@ -270,11 +275,22 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if body.FrameDeliveryMode != nil {
 				deliveryMode = *body.FrameDeliveryMode
 			}
+			// Initialise the per-entry by_match counter array at zero-
+			// length matching the request's by_match list. Persisted
+			// alongside the row so dispatch-time increments find an
+			// indexed slot per entry. Per spec §"Persistence".
+			var initialMatchCounts []int64
+			if raw, ok := body.AttributeOverrides["by_match"]; ok {
+				if list, ok := raw.([]any); ok {
+					initialMatchCounts = make([]int64, len(list))
+				}
+			}
 			provisioned, err := provisionInstanceTx(ctx, deps, tx, row, provisionArgs{
-				InstanceKey:        body.InstanceKey,
-				Params:             params,
-				AttributeOverrides: body.AttributeOverrides,
-				FrameDeliveryMode:  deliveryMode,
+				InstanceKey:                   body.InstanceKey,
+				Params:                        params,
+				AttributeOverrides:            body.AttributeOverrides,
+				AttributeOverridesMatchCounts: initialMatchCounts,
+				FrameDeliveryMode:             deliveryMode,
 			})
 			if err != nil {
 				return err
@@ -355,12 +371,13 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// log them). Operators can confirm via the /instances/:id GET
 		// response, which echoes the full attribute_overrides verbatim.
 		if !existedKey && len(body.AttributeOverrides) > 0 {
-			byExecutor, byNode := overridePresentKeys(body.AttributeOverrides)
+			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
 			deps.Logger.Info("instance.attribute_overrides_attached",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
-				"by_node", byNode)
+				"by_node", byNode,
+				"by_match_count", byMatchCount)
 		}
 		// Idempotent re-create with a non-empty overrides body: rimsky
 		// returns the existing row's persisted overrides, so the
@@ -371,12 +388,13 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		// "discarded" warning on every retry, even though nothing was
 		// actually discarded (the values are identical).
 		if existedKey && len(body.AttributeOverrides) > 0 && !overridesEqual(body.AttributeOverrides, existingOverrides) {
-			byExecutor, byNode := overridePresentKeys(body.AttributeOverrides)
+			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
 			deps.Logger.Warn("instance.attribute_overrides_replaced_by_idempotent_match",
 				"instance_id", respOut.InstanceID,
 				"template_hash", respOut.TemplateHash,
 				"by_executor", byExecutor,
-				"by_node", byNode)
+				"by_node", byNode,
+				"by_match_count", byMatchCount)
 		}
 		writeJSON(w, status, respOut)
 	}
@@ -670,6 +688,11 @@ type provisionArgs struct {
 	InstanceKey        *string
 	Params             map[string]any
 	AttributeOverrides map[string]any
+	// AttributeOverridesMatchCounts is the initial per-entry counter
+	// array for AttributeOverrides.by_match. Length equals
+	// len(by_match); nil for instances with no by_match entries.
+	// Persisted verbatim on rimsky_instances.attribute_overrides_match_counts.
+	AttributeOverridesMatchCounts []int64
 	// FrameDeliveryMode is one of "serial_queue" / "coalesce". Empty
 	// string falls through to the column DEFAULT 'coalesce'.
 	FrameDeliveryMode string
@@ -694,14 +717,42 @@ func provisionInstanceTx(
 	tpl *persistence.TemplateRow,
 	args provisionArgs,
 ) (createInstanceResponse, error) {
+	// Allocate the instance + main RunScope ids up front so the two
+	// inserts (rimsky_run_scopes, rimsky_instances) reference each other.
+	// Per concept:run-scope, every instance has exactly one main RunScope
+	// rooted at the top of the run-tree (parent_run_scope_id IS NULL,
+	// parent_run_id IS NULL, graph_name = spec.MainGraphName).
+	//
+	// rimsky_instances.main_run_scope_id has an FK to rimsky_run_scopes(id),
+	// so the RunScope insert must precede the instance insert. The RunScope
+	// row in turn has rimsky_run_scopes.instance_id → rimsky_instances(id),
+	// which is satisfied because both FKs are declared `DEFERRABLE INITIALLY
+	// DEFERRED` (see migrations 007 + 010) — the FK check is postponed to
+	// COMMIT, by which time both rows exist.
+	//
+	// @concept: run-scope
+	instanceID := foundationshared.UUID(uuid.New())
+	mainRunScopeID := foundationshared.UUID(uuid.New())
+	if err := deps.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		ID:               mainRunScopeID,
+		ParentRunScopeID: nil,
+		ParentRunID:      nil,
+		GraphName:        spec.MainGraphName,
+		PartitionKey:     "",
+		InstanceID:       instanceID,
+	}); err != nil {
+		return createInstanceResponse{}, fmt.Errorf("instance-factory: create main run scope: %w", err)
+	}
 	// Create instance row (fails with ErrInstanceKeyConflict if duplicate).
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
-		ID:                 uuid.New(),
-		TemplateHash:       tpl.ID,
-		InstanceKey:        args.InstanceKey,
-		Params:             args.Params,
-		AttributeOverrides: args.AttributeOverrides,
-		FrameDeliveryMode:  args.FrameDeliveryMode,
+		ID:                            instanceID,
+		TemplateHash:                  tpl.ID,
+		InstanceKey:                   args.InstanceKey,
+		Params:                        args.Params,
+		AttributeOverrides:            args.AttributeOverrides,
+		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
+		FrameDeliveryMode:             args.FrameDeliveryMode,
+		MainRunScopeID:                mainRunScopeID,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

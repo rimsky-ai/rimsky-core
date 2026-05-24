@@ -37,7 +37,7 @@ func TestProtoSmoke_NamedEvent(t *testing.T) {
 // populated.
 func TestProtoSmoke_Park(t *testing.T) {
 	src := &Park{
-		Reason:       ParkReason_PARK_REASON_RETRY_BACKOFF,
+		Reason:       ParkReason_PARK_REASON_SNOOZE,
 		Payload:      []byte(`{"agent_state": "..."}`),
 		ResumeAt:     timestamppb.New(timestamppb.Now().AsTime()),
 		SessionToken: "sess-abc-123",
@@ -154,7 +154,7 @@ func TestProtoSmoke_ExecuteEventOneofWithStreamClose(t *testing.T) {
 	}{
 		{"named_event", &ExecuteEvent{Event: &ExecuteEvent_NamedEvent{NamedEvent: &NamedEvent{Name: "x"}}}},
 		{"park", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
-			StreamClose: &StreamClose{Outcome: &StreamClose_Park{Park: &Park{Reason: ParkReason_PARK_REASON_RETRY_BACKOFF}}},
+			StreamClose: &StreamClose{Outcome: &StreamClose_Park{Park: &Park{Reason: ParkReason_PARK_REASON_SNOOZE}}},
 		}}},
 		{"success", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
 			StreamClose: &StreamClose{Outcome: &StreamClose_Success{Success: &Success{Changed: true}}},

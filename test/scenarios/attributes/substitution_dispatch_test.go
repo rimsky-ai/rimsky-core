@@ -58,7 +58,7 @@ func TestParamsSubstitutionAtDispatch(t *testing.T) {
 
 	var row *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, g.ID, tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, g.ID, h.GetMainRunScopeID(iid), tx)
 		row = r
 		return err
 	}))

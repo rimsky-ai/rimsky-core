@@ -39,10 +39,10 @@ import (
 // LeafRunHeldClaim is the per-held-claim entry of LeafRunRecord.HeldClaims.
 // Mirrors subscribers/openlineage/subscriber.go::HeldClaimRef.
 type LeafRunHeldClaim struct {
-	ClaimHandleID string `json:"claim_handle_id"`
-	Role          string `json:"role"`
-	ProducerName  string `json:"producer_name"`
-	ScopeDataHash string `json:"scope_data_hash"`
+	ClaimHandleID      string `json:"claim_handle_id"`
+	Role               string `json:"role"`
+	ProducerName       string `json:"producer_name"`
+	ClaimScopeDataHash string `json:"claim_scope_data_hash"`
 }
 
 // SubstitutionRef is one entry of LeafRunRecord.SubstitutionRefs — the
@@ -86,9 +86,17 @@ type SubstitutionRef struct {
 // authoritative list); the subscriber treats empty strings as "not
 // available" rather than failing the decode.
 type LeafRunRecord struct {
-	RunID              shared.UUID        `json:"run_id"`
-	NodeID             shared.UUID        `json:"node_id"`
-	FrameID            shared.UUID        `json:"frame_id"`
+	RunID   shared.UUID `json:"run_id"`
+	NodeID  shared.UUID `json:"node_id"`
+	FrameID shared.UUID `json:"frame_id"`
+	// ChildKey is the lineage record's projection of the partition key
+	// (col:rimsky_run_scopes.partition_key). The JSON key stays
+	// `child_key` for external-consumer compatibility (lineage rows are
+	// externally queryable; renaming the JSON key would break decoders).
+	// Under the RunScope-first reshape the value is sourced from the
+	// run's RunScope.PartitionKey via resolveAcqScope, not from the
+	// retired rimsky_node_runs.child_key column. New consumers should
+	// read this field as "partition key (json: child_key)".
 	ChildKey           string             `json:"child_key,omitempty"`
 	NodeAlias          string             `json:"node_alias,omitempty"`
 	ParentRunID        string             `json:"parent_run_id,omitempty"`
@@ -101,7 +109,7 @@ type LeafRunRecord struct {
 	TemplateNodeAlias  string             `json:"template_node_alias,omitempty"`
 	ParamsSnapshotHash string             `json:"params_snapshot_hash,omitempty"`
 	AttributesHash     string             `json:"attributes_hash,omitempty"`
-	ScopeDataHash      string             `json:"scope_data_hash,omitempty"`
+	ClaimScopeDataHash string             `json:"claim_scope_data_hash,omitempty"`
 	State              string             `json:"state"`
 	LastOutcome        string             `json:"last_outcome"`
 	Changed            bool               `json:"changed,omitempty"`
@@ -144,7 +152,7 @@ type ClaimTerminalRecord struct {
 	SubClaimHandleIDs   []string       `json:"sub_claim_handle_ids,omitempty"`
 	CommittedAt         string         `json:"committed_at,omitempty"`
 	ProducerName        string         `json:"producer_name,omitempty"`
-	ScopeDataHash       string         `json:"scope_data_hash,omitempty"`
+	ClaimScopeDataHash  string         `json:"claim_scope_data_hash,omitempty"`
 	VersionID           string         `json:"version_id,omitempty"`
 	Outcome             string         `json:"outcome"`
 	Cause               string         `json:"cause,omitempty"`
@@ -213,7 +221,7 @@ func WriteClaimTerminalLineage(
 
 // HashCanonicalJSON returns the sha256-hex hash of a canonical JSON
 // representation of v. Used by the lineage writer to produce stable
-// hashes for params / attributes / scope_data fields. Spec §Content
+// hashes for params / attributes / claim_scope_data fields. Spec §Content
 // lineage / Hash convention — the existing
 // `graph/template/canonical/CanonicalSpecHash` is the canonical-JCS
 // helper for template specs; for plain JSON payloads the cheaper
@@ -229,7 +237,7 @@ func HashCanonicalJSON(v any) (string, error) {
 }
 
 // HashBytes returns the sha256-hex hash of arbitrary bytes. Used by the
-// lineage writer for scope_data hashing where the bytes already are the
+// lineage writer for claim_scope_data hashing where the bytes already are the
 // canonical-encoded form (rimsky doesn't re-canonicalize per
 // @blessed-invariant 20).
 func HashBytes(b []byte) string {
@@ -264,10 +272,15 @@ func HashBytes(b []byte) string {
 // either populated or explicitly set to a documented placeholder; new
 // sources land here as they become available.
 type LeafRunEmitInput struct {
-	InstanceID       shared.UUID
-	FrameID          shared.UUID
-	RunID            shared.UUID
-	NodeID           shared.UUID
+	InstanceID shared.UUID
+	FrameID    shared.UUID
+	RunID      shared.UUID
+	NodeID     shared.UUID
+	// ChildKey carries the partition key from the run's RunScope
+	// (col:rimsky_run_scopes.partition_key). Named ChildKey for
+	// lineage-record wire compatibility (the JSON tag stays
+	// `child_key`); callers source it from `resolveAcqScope(...).
+	// PartitionKey` under the RunScope-first reshape.
 	ChildKey         string
 	State            string
 	LastOutcome      string
@@ -405,10 +418,10 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 			continue
 		}
 		out = append(out, LeafRunHeldClaim{
-			ClaimHandleID: lk.ClaimHandleID.String(),
-			Role:          "claim",
-			ProducerName:  sp.ProducerName,
-			ScopeDataHash: HashBytes(lk.ClaimResult.Scope),
+			ClaimHandleID:      lk.ClaimHandleID.String(),
+			Role:               "claim",
+			ProducerName:       sp.ProducerName,
+			ClaimScopeDataHash: HashBytes(lk.ClaimResult.ClaimScope),
 		})
 	}
 	// `HeldClaims` map carries co-held / inherited aliases — the
@@ -419,10 +432,10 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 	// row id.
 	for alias, cr := range acq.HeldClaims {
 		out = append(out, LeafRunHeldClaim{
-			ClaimHandleID: "",
-			Role:          "held:" + alias,
-			ProducerName:  "",
-			ScopeDataHash: HashBytes(cr.Scope),
+			ClaimHandleID:      "",
+			Role:               "held:" + alias,
+			ProducerName:       "",
+			ClaimScopeDataHash: HashBytes(cr.ClaimScope),
 		})
 	}
 	return out

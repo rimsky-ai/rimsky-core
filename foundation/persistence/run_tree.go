@@ -36,11 +36,14 @@ import (
 // engine (`runtime/run_tree.go::Aggregate`) consumes the in-memory shape
 // so it can be unit-tested without a database.
 type RunTreeRow struct {
-	RunID       shared.UUID         `json:"run_id"`
-	NodeID      shared.UUID         `json:"node_id"`
-	FrameID     shared.UUID         `json:"frame_id"`
-	ParentRunID *shared.UUID        `json:"parent_run_id,omitempty"`
-	ChildKey    string              `json:"child_key,omitempty"`
+	RunID      shared.UUID `json:"run_id"`
+	NodeID     shared.UUID `json:"node_id"`
+	FrameID    shared.UUID `json:"frame_id"`
+	RunScopeID shared.UUID `json:"run_scope_id"`
+	// Phase carries the rimsky_node_runs.phase value so callers don't
+	// need a separate dispatch-row fetch. Optional projection: empty
+	// string when the implementation did not project it.
+	Phase       string              `json:"phase,omitempty"`
 	State       cascade.NodeState   `json:"state"`
 	LastOutcome cascade.LastOutcome `json:"last_outcome,omitempty"`
 	// AggregationPolicy is the parent's snapshot policy. Leaf runs have
@@ -54,6 +57,7 @@ type CreateRootRunInput struct {
 	RunID             shared.UUID
 	NodeID            shared.UUID
 	FrameID           shared.UUID
+	RunScopeID        shared.UUID
 	AggregationPolicy spec.AggregationPolicy
 	// ExecutorName + RequiredStores are forwarded to the underlying
 	// dispatch row insert so callers do not have to round-trip through
@@ -66,15 +70,14 @@ type CreateRootRunInput struct {
 
 // CreateChildRunInput is the payload for RunTreeTable.CreateChildRun.
 //
-// Idempotency: re-creating a child with the same `(parent_run_id,
-// child_key)` returns the existing row's run id. Callers ignore the
-// returned id and re-load via GetByID when they need the row.
+// Idempotency: re-creating a child with the same `(node_id,
+// run_scope_id)` returns nil without error. The existing run is
+// reachable via Queue.GetInFlightRunForNode(node_id, run_scope_id).
 type CreateChildRunInput struct {
 	RunID          shared.UUID
 	NodeID         shared.UUID
 	FrameID        shared.UUID
-	ParentRunID    shared.UUID
-	ChildKey       string
+	RunScopeID     shared.UUID
 	ExecutorName   string
 	RequiredStores []string
 	// AggregationPolicy is set when the child is itself a parent (nested
@@ -108,29 +111,24 @@ type RunTreeTable interface {
 	// run-tree-aware variant that ALSO carries the aggregation_policy).
 	CreateRootRun(ctx context.Context, tx Tx, in CreateRootRunInput) error
 
-	// CreateChildRun inserts a child run for the given parent +
-	// child_key. Idempotent on (parent_run_id, child_key): re-creates
-	// return nil without error and the existing row id is reachable via
-	// GetByParentChildKey.
+	// CreateChildRun inserts a child run within the given RunScope.
+	// Idempotent on (node_id, run_scope_id): re-creates return nil
+	// without error. Existing run is reachable via
+	// Queue.GetInFlightRunForNode(node_id, run_scope_id).
 	CreateChildRun(ctx context.Context, tx Tx, in CreateChildRunInput) error
 
 	// GetByID returns the run-tree row for a given run id, or nil when
 	// the row does not exist.
 	GetByID(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
 
-	// GetByParentChildKey returns the existing run for a (parent,
-	// child_key) pair. Used by callers that want the idempotency
-	// guarantee of CreateChildRun.
-	GetByParentChildKey(ctx context.Context, tx Tx, parentRunID shared.UUID, childKey string) (*RunTreeRow, error)
-
 	// LockTreeForUpdate runs SELECT ... FOR UPDATE on the run row
 	// identified by runID. Used by the state-propagation transaction
 	// before reading children + writing the parent state.
 	LockTreeForUpdate(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
 
-	// ListChildren returns all rows whose parent_run_id equals
-	// parentRunID. Used to evaluate aggregation rules over the parent's
-	// children.
+	// ListChildren returns all in-flight run rows in RunScopes whose
+	// parent_run_id equals parentRunID. Walks via rimsky_run_scopes JOIN.
+	// Used to evaluate aggregation rules over the parent's children.
 	ListChildren(ctx context.Context, tx Tx, parentRunID shared.UUID) ([]RunTreeRow, error)
 
 	// UpdateStateAndOutcome writes a new (state, last_outcome) pair on

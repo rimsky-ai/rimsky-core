@@ -111,6 +111,23 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 	}
 	fbase := base + ".fan_out"
 
+	// `delegate:` + `fan_out:` is not supported. The canonicalizer
+	// absorbs the sub-graph entry's executor (and stores / holds /
+	// attributes) onto the calling node, but it does NOT scope fan-out
+	// down into the absorbed sub-graph: every fan-out child would
+	// re-fire the internal cascade as a separate parent at dispatch,
+	// each thinking it's the canonical absorbed-entry caller. Reject
+	// at registration so the combination can never reach the runtime.
+	// If a sub-graph needs to fan out, declare `fan_out:` on the entry
+	// node inside the sub-graph instead.
+	if strings.TrimSpace(n.Delegate) != "" {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fbase,
+			Msg:  "delegate and fan_out are mutually exclusive — a calling node cannot itself fan-out (the sub-graph's entry can declare fan_out instead)",
+		})
+		return
+	}
+
 	claim := strings.TrimSpace(fo.Claim)
 	if claim == "" {
 		res.Errors = append(res.Errors, ValidationError{

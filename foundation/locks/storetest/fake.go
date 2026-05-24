@@ -48,12 +48,12 @@ type Fake struct {
 	// non-nil short-circuits the call.
 	ErrorFunc func(verb string, claimID locks.ClaimID) error
 
-	// SplitScopeFunc is an optional override the test sets to control
-	// the SubScopeDescriptor list returned by SplitScope. Default
+	// SplitClaimScopeFunc is an optional override the test sets to control
+	// the SubClaimScopeDescriptor list returned by SplitScope. Default
 	// behavior returns ErrSplitScopeUnsupported (the fake does not
 	// advertise SupportsSplitScope unless caps say so; scenarios that
 	// need split set this function explicitly).
-	SplitScopeFunc func(req locks.SplitScopeRequest) (locks.SplitScopeResponse, error)
+	SplitClaimScopeFunc func(req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error)
 
 	// ScopesConflictFunc is an optional override the test sets to
 	// control the boolean returned by ScopesConflict. Default
@@ -145,7 +145,7 @@ func (f *Fake) Open(_ context.Context, claimID locks.ClaimID, spec locks.ClaimSp
 	scope, _ := json.Marshal(spec.Selector)
 	outcome := locks.OpenOutcome{
 		Available: true,
-		Result:    locks.ClaimResult{Address: addr, Scope: scope},
+		Result:    locks.ClaimResult{Address: addr, ClaimScope: scope},
 	}
 	f.mu.Lock()
 	f.state[claimID] = fakeState{scope: scope, address: addr}
@@ -275,19 +275,19 @@ func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTermi
 	return f.recordLifecycle("on_instance_terminated", req.TemplateHash, req.InstanceID)
 }
 
-// SplitScope records the call and delegates to SplitScopeFunc. When
+// SplitScope records the call and delegates to SplitClaimScopeFunc. When
 // no function is set the fake returns ErrSplitScopeUnsupported —
-// scenarios that want sub-scope fan-out must register a function.
-func (f *Fake) SplitScope(_ context.Context, req locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+// scenarios that want sub-claim-scope fan-out must register a function.
+func (f *Fake) SplitScope(_ context.Context, req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb:     "split_scope",
 		Sequence: nextFakeSequence(),
 	})
-	fn := f.SplitScopeFunc
+	fn := f.SplitClaimScopeFunc
 	f.mu.Unlock()
 	if fn == nil {
-		return locks.SplitScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+		return locks.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
 	return fn(req)
 }

@@ -88,10 +88,13 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	}
 }
 
-// transitionToRunning is the short-tx state transition.
+// transitionToRunning is the short-tx state transition. Threads
+// `acq.RunScopeID` as the run-row disambiguator so the state-machine
+// update lands on this child's row even when fan-out siblings share
+// the same node_id (per `concept:fan-out`).
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
 			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
 	})
 }
@@ -134,7 +137,7 @@ func claimScope(lk AcquiredLock) []byte {
 	if lk.Producer == nil {
 		return nil
 	}
-	return []byte(lk.ClaimResult.Scope)
+	return []byte(lk.ClaimResult.ClaimScope)
 }
 
 // claimAddress returns the store's address bytes for a ClaimSpec

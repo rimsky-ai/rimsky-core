@@ -64,10 +64,11 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	// Reuse the frame_id from the node row (seeded by frame.RunTick).
 	require.NotNil(t, n.FrameID, "expected node to carry a frame_id from the initial frame advance")
 	dispatchID := uuid.New()
+	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), NOW(), $3)`,
-		dispatchID, n.ID, *n.FrameID,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id, run_scope_id)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), NOW(), $3, $4)`,
+		dispatchID, n.ID, *n.FrameID, mainScopeID,
 	)
 	require.NoError(t, err)
 

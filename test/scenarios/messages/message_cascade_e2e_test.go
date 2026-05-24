@@ -99,10 +99,18 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	ck := "ck-msg-cascade"
 	var inst persistence.InstanceRow
 	var senderNode, receiverNode, selfReceiverNode persistence.NodeRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: mainScopeID, GraphName: "main", InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmplRow.ID,
+			ID: instID, TemplateHash: tmplRow.ID,
 			InstanceKey: &ck, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -181,7 +189,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	// Drive the sweep — this dispatches DeliverPendingMessages +
 	// cascadeMessageSubscribersInTx for every running frame.
 	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(
-		ctx, backend, shared.SilentLogger{}, now))
+		ctx, backend, d.Queue(), shared.SilentLogger{}, now))
 
 	// Assert: the receiver's rimsky_nodes.state is now 'stale' with
 	// frame_id == frameID (the cascade walker fired MarkStaleForCascade).

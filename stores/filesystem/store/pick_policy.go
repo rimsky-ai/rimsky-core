@@ -299,7 +299,7 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 			Result: corestore.ClaimResult{
 				Address:                json.RawMessage(addr),
 				Payload:                json.RawMessage(payload),
-				Scope:                  json.RawMessage(scope),
+				ClaimScope:             json.RawMessage(scope),
 				RealizedWriteSemantics: corestore.WriteSemanticsSync,
 			},
 		}, lastItem, nil

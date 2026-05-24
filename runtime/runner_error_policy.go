@@ -21,6 +21,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -44,8 +45,8 @@ import (
 // retrying. Per plan E5.
 func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any,
-) error {
+	errorClass string, payload map[string]any, tx persistence.Tx,
+) (postCommitFn, error) {
 	// Short-circuit retry-loop guard: if this terminal would route to a
 	// retry action AND we'd be over the cap, rewrite the error_class
 	// before resolving the policy. retry_loop_no_progress's policy
@@ -69,18 +70,14 @@ func applyErrorPolicy(
 	}
 	policy, err := lookupPolicyForNode(ctx, args, acq, errorClass)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	state := node.EvaluatorState{}
-	var prior *persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
-		prior = p
-		return err
-	}); err != nil && args.Logger != nil {
+	prior, perr := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
+	if perr != nil && args.Logger != nil {
 		args.Logger.Warn("applyErrorPolicy: load prior node row failed; using zero EvaluatorState",
 			"node_id", acq.NodeID.String(),
-			"error", err.Error())
+			"error", perr.Error())
 	}
 	if prior != nil {
 		state = node.EvaluatorState{
@@ -111,80 +108,85 @@ func applyErrorPolicy(
 		carryForwardCount = 0
 	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
-			return err
+	// Primary state-mutation work runs inline in the caller's outer tx.
+	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
+	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
+	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
+	// On retry, re-stamp the counter onto the freshly-inserted
+	// dispatch row so the next iteration's
+	// shouldForceRetryLoopGiveUp can see accumulated retries.
+	switch resolved.Kind {
+	case "retry", "discard_then_retry", "resume_then_retry":
+		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, carryForwardCount); err != nil {
+			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 		}
-		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
-			return err
-		}
-		if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved); err != nil {
-			return err
-		}
-		// On retry, re-stamp the counter onto the freshly-inserted
-		// dispatch row so the next iteration's
-		// shouldForceRetryLoopGiveUp can see accumulated retries.
-		switch resolved.Kind {
-		case "retry", "discard_then_retry", "resume_then_retry":
-			return args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, carryForwardCount)
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "error",
-			Payload: map[string]any{
-				"error_class":  errorClass,
-				"details":      payload,
-				"action_taken": resolved.Kind,
-				"action_index": resolved.NewState.ActionIndex,
-				"delay_ms":     resolved.DelayMs,
-			},
-		}, tx)
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("applyErrorPolicy: append error event failed",
-			"node_id", acq.NodeID.String(),
-			"error_class", errorClass,
-			"action_taken", resolved.Kind,
-			"error", err.Error())
-	}
-	// Run-tree state propagation (E2): give_up is a terminal failure;
-	// the child's state has transitioned to NodeStateFailed and any
-	// parent must aggregate. Retry / discard_then_retry leave the node
-	// in a non-terminal state so propagation skips them.
-	if resolved.Kind == "give_up" {
-		// E8: emit leaf-run lineage record for the failed terminal.
-		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:       acq.InstanceID,
-			FrameID:          acq.FrameID,
-			RunID:            acq.DispatchID,
-			NodeID:           acq.NodeID,
-			State:            string(cascade.NodeStateFailed),
-			LastOutcome:      string(cascade.LastOutcomeFailed),
-			ErrorClass:       errorClass,
-			TerminalKind:     "errored",
-			NodeAlias:        acq.NodeType,
-			ExecutorName:     acq.Executor,
-			TemplateHash:     acq.TemplateHash,
-			Params:           acq.InstanceParams,
-			AttributesMerged: acq.MergedAttributes,
-			HeldClaims:       HeldClaimsForLineage(acq),
-			ParentRunID:      acq.ParentRunID,
-			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
-		})
-		if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
-			cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
-			args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
-				"run_id", acq.DispatchID.String(), "error", err.Error())
+	// Post-commit work: best-effort audit-log append, lineage emit (on
+	// give_up), run-tree propagation (on give_up).
+	dispatchID := acq.DispatchID
+	post := func(ctx context.Context) {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "error",
+				Payload: map[string]any{
+					"error_class":  errorClass,
+					"details":      payload,
+					"action_taken": resolved.Kind,
+					"action_index": resolved.NewState.ActionIndex,
+					"delay_ms":     resolved.DelayMs,
+				},
+			}, tx)
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("applyErrorPolicy: append error event failed",
+				"node_id", acq.NodeID.String(),
+				"error_class", errorClass,
+				"action_taken", resolved.Kind,
+				"error", err.Error())
+		}
+		// Run-tree state propagation (E2): give_up is a terminal failure;
+		// the child's state has transitioned to NodeStateFailed and any
+		// parent must aggregate. Retry / discard_then_retry leave the node
+		// in a non-terminal state so propagation skips them.
+		if resolved.Kind == "give_up" {
+			// E8: emit leaf-run lineage record for the failed terminal.
+			scope := resolveAcqScope(ctx, args, acq)
+			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+				InstanceID:       acq.InstanceID,
+				FrameID:          acq.FrameID,
+				RunID:            dispatchID,
+				NodeID:           acq.NodeID,
+				State:            string(cascade.NodeStateFailed),
+				LastOutcome:      string(cascade.LastOutcomeFailed),
+				ErrorClass:       errorClass,
+				TerminalKind:     "errored",
+				NodeAlias:        acq.NodeType,
+				ExecutorName:     acq.Executor,
+				TemplateHash:     acq.TemplateHash,
+				Params:           acq.InstanceParams,
+				AttributesMerged: acq.MergedAttributes,
+				HeldClaims:       HeldClaimsForLineage(acq),
+				ParentRunID:      scope.ParentRunID,
+				ChildKey:         scope.PartitionKey,
+				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+			})
+			if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+				cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
+				args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
+					"run_id", dispatchID.String(), "error", err.Error())
+			}
 		}
 	}
 	// `invalidate` action retired under the 2026-05-14 subscription-
 	// cascade resolution; the validator rejects it at deploy time.
-	return nil
+	return post, nil
 }
 
 // applyResolvedAction wraps the per-policy action SQL (state update,
@@ -192,6 +194,12 @@ func applyErrorPolicy(
 // 100-line guideline. The `invalidate` action retired under the
 // 2026-05-14 subscription-cascade resolution (validator rejects it at
 // template-deploy time — `template_validator.go::validateErrorTypes`).
+//
+// @blessed-invariant: State-machine writes for a single run must be
+// tx-atomic. Any operation that reads a run's current state to decide
+// what state to write must perform the read and the write in the same
+// transaction. Per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
 //
 //	@concept: wait-set
 func applyResolvedAction(
@@ -201,7 +209,7 @@ func applyResolvedAction(
 	switch resolved.Kind {
 	case "retry", "discard_then_retry", "resume_then_retry":
 		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
 				cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
 				return err
 			}
@@ -214,19 +222,50 @@ func applyResolvedAction(
 				return err
 			}
 		}
-		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx); err != nil {
+		// Thread `runScopeID` so fan-out children's retirement lands
+		// on this specific run, not every sibling claimed by this
+		// supervisor under the shared `node_id`.
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 			return err
 		}
-		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         acq.NodeID,
-			ExecutorName:   acq.Executor,
-			RequiredStores: requiredStoresForAcq(acq),
-			EnqueuedAt:     args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
-			FrameID:        acq.FrameID,
-		}, tx)
+		// Recovery-aware fields: this retry supersedes the prior
+		// dispatch (acq.DispatchID). The executor reads the
+		// predecessor id on
+		// proto:executor.proto::ExecuteRequest.prior_dispatch_id
+		// at the retry dispatch.
+		priorID := acq.DispatchID
+		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:                   acq.NodeID,
+			ExecutorName:             acq.Executor,
+			RequiredStores:           requiredStoresForAcq(acq),
+			EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+			FrameID:                  acq.FrameID,
+			RunScopeID:               acq.RunScopeID,
+			PriorDispatchID:          &priorID,
+			PriorDispatchDisposition: "retry_after_error",
+		}, tx); err != nil {
+			// Defensive: a closed RunScope means the rendezvous has
+			// fired while this runner was processing the terminal
+			// (e.g. a heartbeat-loss sweep retired the runner's own
+			// active dispatch via claimant-guard mismatch and closed
+			// the scope). Walker discipline per concept:run-scope:
+			// do not enqueue into a closed scope; the state writes
+			// above already committed. Mirrors OnError retry and
+			// SweepStaleHeartbeats.
+			if errors.Is(err, persistence.ErrRunScopeClosed) {
+				if args.Logger != nil {
+					args.Logger.Warn("applyResolvedAction retry: skip enqueue: run scope closed",
+						"node_id", acq.NodeID.String(),
+						"run_scope_id", acq.RunScopeID.String())
+				}
+				return nil
+			}
+			return err
+		}
+		return nil
 	case "give_up":
 		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
+			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
 				cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
 				return err
 			}
@@ -236,7 +275,10 @@ func applyResolvedAction(
 		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
-		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx)
+		// Thread `runScopeID` so fan-out children's retirement lands
+		// on this specific run, not every sibling claimed by this
+		// supervisor under the shared `node_id`.
+		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx)
 	}
 	return nil
 }
@@ -255,67 +297,84 @@ func applyResolvedAction(
 // indefinitely because the cap would reset to 0 every infra round-trip.
 func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any,
-) error {
-	var prior *persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		p, err := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
-		prior = p
-		return err
-	}); err != nil && args.Logger != nil {
+	errorClass string, payload map[string]any, tx persistence.Tx,
+) (postCommitFn, error) {
+	prior, perr := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
+	if perr != nil && args.Logger != nil {
 		args.Logger.Warn("applyTerminalInfraError: load prior node row failed",
 			"node_id", acq.NodeID.String(),
-			"error", err.Error())
+			"error", perr.Error())
 	}
 	// Read the current counter so we can carry it forward onto the
 	// freshly-inserted dispatch row.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
-			return err
+	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+	}
+	if prior != nil && prior.State == cascade.NodeStateRunning {
+		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+			cascade.NodeStateStale, cascade.ReasonInfraReenqueue, "", tx); err != nil {
+			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
-		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-				cascade.NodeStateStale, cascade.ReasonInfraReenqueue, "", tx); err != nil {
-				return err
+	}
+	// Thread `runScopeID` so fan-out children's retirement lands
+	// on this specific run, not every sibling claimed by this
+	// supervisor under the shared `node_id`.
+	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+	}
+	if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+		NodeID:         acq.NodeID,
+		ExecutorName:   acq.Executor,
+		RequiredStores: requiredStoresForAcq(acq),
+		EnqueuedAt:     args.Clock.Now(),
+		FrameID:        acq.FrameID,
+		RunScopeID:     acq.RunScopeID,
+	}, tx); err != nil {
+		// Defensive: a closed RunScope means the rendezvous has
+		// fired while this runner was processing the infra-error
+		// terminal. Walker discipline per concept:run-scope: do
+		// not enqueue into a closed scope; skip the counter
+		// re-stamp too (no row was inserted to stamp). The state
+		// writes above already committed. Mirrors OnError retry
+		// and SweepStaleHeartbeats.
+		if errors.Is(err, persistence.ErrRunScopeClosed) {
+			if args.Logger != nil {
+				args.Logger.Warn("applyTerminalInfraError: skip re-enqueue: run scope closed",
+					"node_id", acq.NodeID.String(),
+					"run_scope_id", acq.RunScopeID.String())
 			}
+		} else {
+			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
-		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, args.SupervisorID, tx); err != nil {
-			return err
-		}
-		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:         acq.NodeID,
-			ExecutorName:   acq.Executor,
-			RequiredStores: requiredStoresForAcq(acq),
-			EnqueuedAt:     args.Clock.Now(),
-			FrameID:        acq.FrameID,
-		}, tx); err != nil {
-			return err
-		}
+	} else {
 		// Re-stamp the counter on the freshly-inserted dispatch row so
 		// the infra round-trip preserves cap-eligibility.
-		return args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, priorCount)
-	}); err != nil {
-		return fmt.Errorf("applyTerminalInfraError: %w", err)
+		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount); err != nil {
+			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+		}
 	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "error",
-			Payload: map[string]any{
-				"error_class":  errorClass,
-				"details":      payload,
-				"action_taken": "infra_reenqueue",
-			},
-		}, tx)
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("applyTerminalInfraError: append error event failed",
-			"node_id", acq.NodeID.String(),
-			"error_class", errorClass,
-			"error", err.Error())
+	// Post-commit: best-effort audit-log append.
+	post := func(ctx context.Context) {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "error",
+				Payload: map[string]any{
+					"error_class":  errorClass,
+					"details":      payload,
+					"action_taken": "infra_reenqueue",
+				},
+			}, tx)
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("applyTerminalInfraError: append error event failed",
+				"node_id", acq.NodeID.String(),
+				"error_class", errorClass,
+				"error", err.Error())
+		}
 	}
-	return nil
+	return post, nil
 }
 
 // lookupPolicyForNode resolves the per-error-class policy from the

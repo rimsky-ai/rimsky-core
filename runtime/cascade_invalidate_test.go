@@ -68,14 +68,14 @@ func (f *invTestQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ s
 
 func (f *invTestQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
 
-func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ string) error {
+func (f *invTestQueue) RemoveForNode(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removedNodes = append(f.removedNodes, nodeID)
 	return nil
 }
 
-func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ string, _ persistence.Tx) error {
+func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removedNodes = append(f.removedNodes, nodeID)
@@ -102,9 +102,9 @@ func (f *invTestQueue) CountLive(_ context.Context, _ persistence.DispatchListFi
 func (f *invTestQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.DispatchRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
 	if f.real != nil {
-		return f.real.GetInFlightRunForNode(ctx, tx, nodeID, frameID)
+		return f.real.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
 	}
 	return shared.UUID{}, false, nil
 }
@@ -121,7 +121,7 @@ func (f *invTestQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, 
 func (f *invTestQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
+func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
@@ -133,7 +133,7 @@ func (f *invTestQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _
 func (f *invTestQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *invTestQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
+func (f *invTestQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ int) error {
 	return nil
 }
 func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
@@ -188,10 +188,20 @@ func newFixture(t *testing.T) *fixture {
 
 	ck := "ck-" + uuid.NewString()
 	var inst persistence.InstanceRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
-			Params: map[string]any{},
+			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
+			Params:         map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -270,9 +280,9 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	}
 	pgtest.ExecForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-        VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, $4, $5)
-    `, n.ID, executor, runPhase, string(state), frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+        VALUES (gen_random_uuid(), $1, $2, ARRAY[]::text[], NOW(), $3, $4, $5, $6)
+    `, n.ID, executor, runPhase, string(state), frameID, f.instance.MainRunScopeID)
 	n.State = state
 	return n
 }

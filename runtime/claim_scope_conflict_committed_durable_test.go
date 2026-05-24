@@ -2,11 +2,11 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Regression coverage for the scope-conflict property the Stage-4
+// Regression coverage for the claim-scope-conflict property the Stage-4
 // claim-handle state-column refactor must preserve: a committed-
-// durable row continues to occupy its scope (asset surface) and any
-// subsequent acquire of the same byte-equal scope sees it via
-// ListByProducerScope, even though `holder_supervisor_id` is NULL.
+// durable row continues to occupy its claim-scope (asset surface) and any
+// subsequent acquire of the same byte-equal claim-scope sees it via
+// ListByProducerClaimScope, even though `holder_supervisor_id` is NULL.
 
 package runtime_test
 
@@ -25,7 +25,7 @@ import (
 	"github.com/fallguy/rimsky/internal/pgtest"
 )
 
-func TestScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
+func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -38,14 +38,7 @@ func TestScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           shared.UUID(uuid.New()),
-			TemplateHash: tmpl.ID,
-			Params:       map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
 		inst = i
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "n", Executor: "stub",
@@ -68,7 +61,7 @@ func TestScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 			ID:                 idA,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producer,
-			ScopeData:          scopeBytes,
+			ClaimScopeData:     scopeBytes,
 			Address:            []byte(`"addr-A"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A",
@@ -95,7 +88,7 @@ func TestScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	require.Equal(t, spec.ClaimLifetimeDurable, rowA.Lifetime)
 	require.Empty(t, rowA.HolderSupervisorID, "committed row must have holder_supervisor_id NULL")
 
-	// 3. ListByProducerScope MUST surface the committed-durable row so
+	// 3. ListByProducerClaimScope MUST surface the committed-durable row so
 	//    a new acquire's in-Go scope-conflict check sees the
 	//    byte-equal scope as taken. This is the load-bearing property:
 	//    a committed-durable row remains in conflict-detection scope
@@ -105,19 +98,19 @@ func TestScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	//    @blessed-invariant 4b violation.
 	var hits []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := backend.ClaimHandles().ListByProducerScope(ctx, producer, tx)
+		rows, err := backend.ClaimHandles().ListByProducerClaimScope(ctx, producer, tx)
 		hits = rows
 		return err
 	}))
-	require.Len(t, hits, 1, "ListByProducerScope must surface the committed-durable row for conflict detection")
+	require.Len(t, hits, 1, "ListByProducerClaimScope must surface the committed-durable row for conflict detection")
 	require.Equal(t, idA, hits[0].ID)
 	require.Equal(t, spec.ClaimHandleStateCommitted, hits[0].State)
 	require.Equal(t, spec.ClaimLifetimeDurable, hits[0].Lifetime)
-	require.Equal(t, string(scopeBytes), string(hits[0].ScopeData),
-		"surfaced row must carry the byte-equal scope")
+	require.Equal(t, string(scopeBytes), string(hits[0].ClaimScopeData),
+		"surfaced row must carry the byte-equal claim-scope")
 }
 
-func TestScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
+func TestClaimScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
 	// Counterpoint to the durable case: a committed-subgraph row does
 	// NOT participate in conflict detection. The producer Released the
 	// scope on subgraph-Commit; only the rimsky-side ledger row
@@ -134,14 +127,7 @@ func TestScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           shared.UUID(uuid.New()),
-			TemplateHash: tmpl.ID,
-			Params:       map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
 		inst = i
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "n", Executor: "stub",
@@ -163,7 +149,7 @@ func TestScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
 			ID:                 idA,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producer,
-			ScopeData:          scopeBytes,
+			ClaimScopeData:     scopeBytes,
 			Address:            []byte(`"addr-A"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A",
@@ -178,7 +164,7 @@ func TestScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
 
 	var hits []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := backend.ClaimHandles().ListByProducerScope(ctx, producer, tx)
+		rows, err := backend.ClaimHandles().ListByProducerClaimScope(ctx, producer, tx)
 		hits = rows
 		return err
 	}))

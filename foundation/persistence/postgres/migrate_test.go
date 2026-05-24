@@ -8,6 +8,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/fallguy/rimsky/foundation/internal/pgtest"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
@@ -116,10 +118,31 @@ func TestMigration002Tags(t *testing.T) {
 		 VALUES ('tpl-1', '{}'::jsonb, 'deployed')`); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	if _, err := pgPool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key)
-		 VALUES (gen_random_uuid(), 'tpl-1', 'ck-1')`); err != nil {
+	// Post-RunScope-first migrations rimsky_instances.main_run_scope_id
+	// and rimsky_run_scopes.instance_id mutually FK each other; seed the
+	// pair in a single tx with DEFERRABLE constraints.
+	instUUID := uuid.New()
+	scopeUUID := uuid.New()
+	tx, err := pgPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatalf("defer constraints: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, main_run_scope_id)
+		 VALUES ($1, 'tpl-1', 'ck-1', $2)`, instUUID, scopeUUID); err != nil {
 		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id)
+		 VALUES ($1, 'main', '', $2)`, scopeUUID, instUUID); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 	var instID string
 	if err := pgPool.QueryRow(ctx,

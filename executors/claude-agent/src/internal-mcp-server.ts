@@ -233,16 +233,14 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
   mcp.tool(
     "report_park",
     "Park the dispatch. The supervisor pauses the node until resume_at " +
-      "elapses or an invalidate wakes it. Per 2026-05-14 Piece 2, reason " +
-      "is the typed ParkReason snake_case value (time_wait | signal_wait | " +
-      "awaiting_human | retry_backoff).",
+      "elapses or an invalidate wakes it. ParkReason is the closed " +
+      "two-value set (await_callback | snooze) per spec " +
+      ".ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.",
     {
       token: tokenField,
       reason: z.enum([
-        "time_wait",
-        "signal_wait",
-        "awaiting_human",
-        "retry_backoff",
+        "await_callback",
+        "snooze",
       ]),
       reason_note: z.string().optional(),
       resume_at: z.string().optional(),

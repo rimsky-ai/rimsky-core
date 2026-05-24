@@ -181,7 +181,7 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	}
 
 	// Commit fires Pop → DELETE FROM items_pop_test WHERE claim_token = 'claim-1'.
-	if err := st.Commit(context.Background(), "claim-1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
@@ -258,7 +258,7 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 	}
 
 	// Commit fires Recycle.
-	if err := st.Commit(context.Background(), "claim-1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 

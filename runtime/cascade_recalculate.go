@@ -12,6 +12,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
@@ -90,7 +91,16 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	}
 	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, *target.FrameID)
+		// Under RunScope-first the in-flight resolver keys on
+		// (node_id, run_scope_id). Receivers with no in-flight run
+		// have nothing for the wait-set walk to gate on; treat that
+		// as "no pending blockers" — the next scheduler tick re-runs
+		// the gate after the cascade walker affirms a row.
+		if target.RunScopeID == nil {
+			pending = 0
+			return nil
+		}
+		runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, target.ID, *target.RunScopeID)
 		if err != nil {
 			return err
 		}
@@ -127,11 +137,39 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	// RequiredStores is intentionally empty here. Per spec §6.2 an empty
 	// slice trivially satisfies the supervisor-pool predicate
 	// (RequiredStores ⊆ AcceptedStores).
-	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-		NodeID:         target.ID,
-		ExecutorName:   target.Executor,
-		RequiredStores: []string{},
-		EnqueuedAt:     args.Clock.Now(),
-		FrameID:        *target.FrameID,
-	})
+	var runScopeID shared.UUID
+	if target.RunScopeID != nil {
+		runScopeID = *target.RunScopeID
+	}
+	// Recovery-aware fields: the in-flight run row on the target
+	// (if any) is the predecessor whose output is now stale; surface
+	// its id on proto:executor.proto::ExecuteRequest.prior_dispatch_id
+	// so executors maintaining per-dispatch session state can recover
+	// or hand off the recalculate.
+	priorDispatchID := target.InFlightRunID
+	if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
+		NodeID:                   target.ID,
+		ExecutorName:             target.Executor,
+		RequiredStores:           []string{},
+		EnqueuedAt:               args.Clock.Now(),
+		FrameID:                  *target.FrameID,
+		RunScopeID:               runScopeID,
+		PriorDispatchID:          priorDispatchID,
+		PriorDispatchDisposition: "recalculate",
+	}); err != nil {
+		// Defensive: a closed RunScope means the target's scope has
+		// terminated (parent rendezvous has fired). Walker discipline
+		// per concept:run-scope: do not enqueue into a closed scope;
+		// drop the recalculate silently. Without this skip, a benign
+		// race between the source's commit cascade and the target's
+		// scope closure would surface as a recalculate error.
+		if errors.Is(err, persistence.ErrRunScopeClosed) {
+			log.Debug("RecalculateNode: skip enqueue: run scope closed",
+				"node_id", target.ID.String(),
+				"run_scope_id", runScopeID.String())
+			return nil
+		}
+		return err
+	}
+	return nil
 }

@@ -342,7 +342,8 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 	// being visible.
 	makeAcq := func() *acquisition {
 		return &acquisition{
-			Executor: "test-executor",
+			Executor:  "test-executor",
+			GraphName: "main",
 			NodeDef: &node.TemplateNodeDef{
 				Type:     "a",
 				Executor: "test-executor",

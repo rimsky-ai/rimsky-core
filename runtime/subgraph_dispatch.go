@@ -68,6 +68,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
@@ -179,7 +181,17 @@ func CarryExitWriteback(
 	if err != nil {
 		return fmt.Errorf("CarryExitWriteback: load exit run %s: %w", exitRunID, err)
 	}
-	if exit == nil || exit.ParentRunID == nil {
+	if exit == nil {
+		return fmt.Errorf("CarryExitWriteback: run %s not found", exitRunID)
+	}
+	if args.RunScopes == nil {
+		return fmt.Errorf("CarryExitWriteback: RunScopes is required")
+	}
+	exitScope, err := args.RunScopes.GetByID(ctx, tx, exit.RunScopeID)
+	if err != nil {
+		return fmt.Errorf("CarryExitWriteback: load exit run scope %s: %w", exit.RunScopeID, err)
+	}
+	if exitScope == nil || exitScope.ParentRunID == nil {
 		// Exit has no parent — not a sub-graph internal. Caller error;
 		// the helper should not be invoked on non-sub-graph terminals.
 		// Surface a precise error so callers don't silently miscarry.
@@ -215,7 +227,7 @@ func CarryExitWriteback(
 	// node's schema is stricter than exit's, the post-carry validation
 	// (at the parent's terminal commit) will catch the mismatch via
 	// @blessed-invariant 12.
-	parentRunID := *exit.ParentRunID
+	parentRunID := *exitScope.ParentRunID
 	parent, err := args.RunTree.GetByID(ctx, tx, parentRunID)
 	if err != nil {
 		return fmt.Errorf("CarryExitWriteback: load parent run %s: %w", parentRunID, err)
@@ -235,6 +247,17 @@ func CarryExitWriteback(
 			"parent_run_id", parentRunID.String(),
 			"parent_node_id", parent.NodeID.String(),
 			"writeback_field_count", len(asMap))
+	}
+	// Close the sub-graph RunScope atomically with the writeback carry.
+	// Per concept:run-scope §"Lifecycle / RunScope closure": a sub-graph
+	// RunScope is closed when the exit node terminates and the
+	// carry-rule fires. closed_at marks the parent-run rendezvous as
+	// having fired; subsequent AffirmNodeRunRow on this scope returns
+	// ErrRunScopeClosed. Close() is idempotent — re-closing is a no-op.
+	//
+	// @concept: run-scope
+	if err := args.RunScopes.Close(ctx, tx, exit.RunScopeID); err != nil {
+		return fmt.Errorf("CarryExitWriteback: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
 	return nil
 }
@@ -396,8 +419,8 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 //	@concept: run-tree
 func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	merged map[string]any, t terminalEvent,
-) error {
+	merged map[string]any, t terminalEvent, tx persistence.Tx,
+) (postCommitFn, error) {
 	// Resolve last_outcome the same way the standard handler does so
 	// downstream subscribers see the same firing-gate value.
 	resolve := node.ResolveByChanged
@@ -424,139 +447,172 @@ func applyTerminalCompleteSubgraphCaller(
 	// sentinel.
 	if _, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired); err != nil {
 		if !cascade.IsParentAggregateOK(err) {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"applyTerminalCompleteSubgraphCaller: state-machine rejects running→running under subgraph_internal_cascade_fired: %w",
 				err)
 		}
 	}
 
-	// Resolve the sub-graph's non-entry internal nodes once, outside the
-	// transaction below. The helper walks the deploy-time template; the
-	// rimsky_nodes rows for the internal nodes were created by
-	// `provisionInstanceTx` at instance creation, so the dispatch below
-	// just needs to (a) create one child run row per internal node
-	// (parent_run_id = the calling run) and (b) stale-mark the rimsky_nodes
-	// row so the next dispatcher tick picks it up.
+	// Resolve the sub-graph's non-entry internal nodes. The helper walks
+	// the deploy-time template; the rimsky_nodes rows for the internal
+	// nodes were created by `provisionInstanceTx` at instance creation,
+	// so the dispatch below just needs to (a) create one child run row
+	// per internal node (parent_run_id = the calling run) and (b)
+	// stale-mark the rimsky_nodes row so the next dispatcher tick picks
+	// it up. The template load happens inside the outer tx — a stale
+	// read of an immutable template is harmless and avoids a separate
+	// round-trip.
 	var internalNodes []node.TemplateNodeDef
+	var tmplSpec *node.TemplateSpec
 	{
-		// Lazy template lookup. The template hash is stable for the
-		// instance, so a stale-read is fine.
-		var tmplSpec *node.TemplateSpec
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)
-			if err != nil || inst == nil {
-				return err
-			}
-			tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-			if err != nil || tmpl == nil {
-				return err
-			}
-			tmplSpec = &tmpl.Spec
-			return nil
-		}); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphCaller: load template: %w", err)
+		inst, err := args.Persist.Instances().Get(ctx, acq.InstanceID, tx)
+		if err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load instance: %w", err)
 		}
-		if tmplSpec != nil {
-			nodes, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
-				CallingNodeRunID:  acq.DispatchID,
-				CallingNodeID:     acq.NodeID,
-				InstanceID:        acq.InstanceID,
-				FrameID:           acq.FrameID,
-				Template:          tmplSpec,
-				DelegateGraphName: acq.NodeDef.Delegate,
-			})
+		if inst != nil {
+			tmpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
 			if err != nil {
-				return fmt.Errorf("applyTerminalCompleteSubgraphCaller: resolve internals: %w", err)
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load template: %w", err)
 			}
-			internalNodes = nodes
+			if tmpl != nil {
+				tmplSpec = &tmpl.Spec
+			}
 		}
 	}
+	if tmplSpec != nil {
+		nodes, err := SubgraphInternalCascade(SubgraphInternalCascadeArgs{
+			CallingNodeRunID:  acq.DispatchID,
+			CallingNodeID:     acq.NodeID,
+			InstanceID:        acq.InstanceID,
+			FrameID:           acq.FrameID,
+			Template:          tmplSpec,
+			DelegateGraphName: acq.NodeDef.Delegate,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: resolve internals: %w", err)
+		}
+		internalNodes = nodes
+	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Persist the parent run's writeback (the absorbed entry's
-		// outcome) so any in-graph subscriber that reads the calling
-		// node's attributes sees the entry's bytes.
-		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphCaller: upsert attributes: %w", err)
+	// Primary state-mutation work runs inline in the caller's outer tx.
+	// Persist the parent run's writeback (the absorbed entry's outcome)
+	// so any in-graph subscriber that reads the calling node's
+	// attributes sees the entry's bytes.
+	if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: upsert attributes: %w", err)
+	}
+	// Record the transition reason on the run-tree row so the
+	// observability layer surfaces the cascade-fire. The run stays
+	// `running`; only the last_outcome moves.
+	if err := args.Persist.RunTree().UpdateStateAndOutcome(ctx, tx, acq.DispatchID,
+		cascade.NodeStateRunning, lastOutcome); err != nil {
+		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
+	}
+	// Sub-graph internal-cascade dispatch: for each non-entry internal
+	// node, create a child run row keyed to this calling run
+	// (`parent_run_id = acq.DispatchID`, `child_key = node-type alias`)
+	// and stale-mark the rimsky_nodes row so the next scheduler tick /
+	// SweepReady picks the row up for dispatch. State-propagation
+	// aggregates the children's terminals back to this parent on
+	// completion via PropagateFromChildState.
+	if len(internalNodes) > 0 {
+		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
+		if err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: list instance nodes: %w", err)
 		}
-		// Record the transition reason on the run-tree row so the
-		// observability layer surfaces the cascade-fire. The run stays
-		// `running`; only the last_outcome moves.
-		if err := args.Persist.RunTree().UpdateStateAndOutcome(ctx, tx, acq.DispatchID,
-			cascade.NodeStateRunning, lastOutcome); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
+		byType := make(map[string]persistence.NodeRow, len(instNodes))
+		for _, n := range instNodes {
+			byType[n.NodeType] = n
 		}
-		// Sub-graph internal-cascade dispatch: for each non-entry
-		// internal node, create a child run row keyed to this calling
-		// run (`parent_run_id = acq.DispatchID`, `child_key = node-type
-		// alias`) and stale-mark the rimsky_nodes row so the next
-		// scheduler tick / SweepReady picks the row up for dispatch.
-		// State-propagation aggregates the children's terminals back to
-		// this parent on completion via PropagateFromChildState.
-		if len(internalNodes) > 0 {
-			instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
-			if err != nil {
-				return fmt.Errorf("applyTerminalCompleteSubgraphCaller: list instance nodes: %w", err)
-			}
-			byType := make(map[string]persistence.NodeRow, len(instNodes))
-			for _, n := range instNodes {
-				byType[n.NodeType] = n
-			}
-			for _, def := range internalNodes {
-				nrow, ok := byType[def.Type]
-				if !ok {
-					return fmt.Errorf("applyTerminalCompleteSubgraphCaller: internal node %q has no rimsky_nodes row in instance %s",
-						def.Type, acq.InstanceID.String())
-				}
-				if _, err := CreateChildRun(ctx, tx, args.Persist.RunTree(),
-					acq.DispatchID, def.Type, nrow.ID, acq.FrameID,
-					def.Executor, node.RequiredStores(def),
-					spec.AggregationPolicy{}); err != nil {
-					return fmt.Errorf("applyTerminalCompleteSubgraphCaller: create child run %q: %w", def.Type, err)
-				}
-				if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, nrow.ID, acq.FrameID, tx); err != nil {
-					return fmt.Errorf("applyTerminalCompleteSubgraphCaller: stale-mark %q: %w", def.Type, err)
-				}
-			}
+		// Allocate the subgraph RunScope shared by every internal
+		// node's run. Per concept:run-scope, sub-graph RunScopes are
+		// inserted eagerly at the calling-node success terminal.
+		// `partition_key` is empty for the subgraph kind;
+		// `parent_run_id` is the calling run.
+		parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, acq.RunScopeID)
+		if err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load parent scope: %w", err)
 		}
-		// Emit the cascade-fire event for observability + audit. Two
-		// events fire here: the legacy `subgraph_internal_cascade_fired`
-		// (transitioning observers can still rely on the existing kind
-		// string) and the post-2026-05-16 forensics kind
-		// `subgraph.dispatched` summarizing the per-invocation dispatch
-		// across child runs. Payloads carry rimsky-side identifiers
-		// only; @blessed-invariant 20 + 21 preserved.
-		childAliases := make([]string, 0, len(internalNodes))
+		if parentScope == nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: parent run scope %s not found", acq.RunScopeID)
+		}
+		subgraphScopeID := shared.UUID(uuid.New())
+		parentScopeIDCopy := parentScope.ID
+		callingRunID := acq.DispatchID
+		if err := args.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               subgraphScopeID,
+			ParentRunScopeID: &parentScopeIDCopy,
+			ParentRunID:      &callingRunID,
+			GraphName:        acq.NodeDef.Delegate,
+			InstanceID:       acq.InstanceID,
+		}); err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: create subgraph scope: %w", err)
+		}
 		for _, def := range internalNodes {
-			childAliases = append(childAliases, def.Type)
+			nrow, ok := byType[def.Type]
+			if !ok {
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: internal node %q has no rimsky_nodes row in instance %s",
+					def.Type, acq.InstanceID.String())
+			}
+			if _, err := CreateChildRun(ctx, tx, args.Persist.RunTree(), args.Queue,
+				nrow.ID, acq.FrameID, subgraphScopeID,
+				def.Executor, node.RequiredStores(def),
+				spec.AggregationPolicy{}); err != nil {
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: create child run %q: %w", def.Type, err)
+			}
+			// MarkStaleForCascade now keys on (run_id, frame_id);
+			// resolve the just-created run id via the queue helper.
+			// AffirmNodeRunRow is unnecessary because CreateChildRun
+			// above already INSERTed the run row inside the same tx.
+			runID, found, err := args.Queue.GetInFlightRunForNode(ctx, tx, nrow.ID, subgraphScopeID)
+			if err != nil {
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: resolve run for %q: %w", def.Type, err)
+			}
+			if !found {
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: in-flight run missing for %q", def.Type)
+			}
+			if err := args.Persist.Nodes().MarkStaleForCascade(ctx, runID, acq.FrameID, tx); err != nil {
+				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: stale-mark %q: %w", def.Type, err)
+			}
 		}
-		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "subgraph_internal_cascade_fired",
-			Payload: map[string]any{
-				"delegate_graph":    acq.NodeDef.Delegate,
-				"calling_run_id":    acq.DispatchID.String(),
-				"last_outcome":      string(lastOutcome),
-				"changed":           t.Changed,
-				"transition_reason": cascade.ReasonSubGraphInternalCascadeFired.Kind,
-				"child_count":       len(internalNodes),
-			},
-		}, tx); err != nil {
-			return err
-		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "subgraph.dispatched",
-			Payload: map[string]any{
-				"caller_run_id":  acq.DispatchID.String(),
-				"caller_node_id": acq.NodeID.String(),
-				"subgraph_name":  acq.NodeDef.Delegate,
-				"child_aliases":  childAliases,
-				"child_count":    len(internalNodes),
-			},
-		}, tx)
-	}); err != nil {
-		return err
+	}
+	// Emit the cascade-fire event for observability + audit. Two events
+	// fire here: the legacy `subgraph_internal_cascade_fired`
+	// (transitioning observers can still rely on the existing kind
+	// string) and the post-2026-05-16 forensics kind
+	// `subgraph.dispatched` summarizing the per-invocation dispatch
+	// across child runs. Payloads carry rimsky-side identifiers only;
+	// @blessed-invariant 20 + 21 preserved.
+	childAliases := make([]string, 0, len(internalNodes))
+	for _, def := range internalNodes {
+		childAliases = append(childAliases, def.Type)
+	}
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+		Kind: "subgraph_internal_cascade_fired",
+		Payload: map[string]any{
+			"delegate_graph":    acq.NodeDef.Delegate,
+			"calling_run_id":    acq.DispatchID.String(),
+			"last_outcome":      string(lastOutcome),
+			"changed":           t.Changed,
+			"transition_reason": cascade.ReasonSubGraphInternalCascadeFired.Kind,
+			"child_count":       len(internalNodes),
+		},
+	}, tx); err != nil {
+		return nil, err
+	}
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+		Kind: "subgraph.dispatched",
+		Payload: map[string]any{
+			"caller_run_id":  acq.DispatchID.String(),
+			"caller_node_id": acq.NodeID.String(),
+			"subgraph_name":  acq.NodeDef.Delegate,
+			"child_aliases":  childAliases,
+			"child_count":    len(internalNodes),
+		},
+	}, tx); err != nil {
+		return nil, err
 	}
 
 	if args.Logger != nil {
@@ -566,34 +622,33 @@ func applyTerminalCompleteSubgraphCaller(
 			"delegate", acq.NodeDef.Delegate,
 			"last_outcome", string(lastOutcome))
 	}
-	// E8: emit leaf-run lineage record for the sub-graph caller terminal.
-	// Without this emit, sub-graph instances are missing a `leaf_run`
-	// row for every caller terminal — breaking the rebuildability of
-	// the lineage projection. The `terminal_kind: "subgraph_call"`
-	// discriminator lets consumers filter caller rows out of pure
-	// leaf-executor accounting. The parent run stays `running` here
-	// (the absorbed entry just terminated; the internal cascade is the
-	// real "completion"), so State is "running" — distinct from the
-	// "fresh" rows emitted by leaf-executor terminals.
-	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-		InstanceID:       acq.InstanceID,
-		FrameID:          acq.FrameID,
-		RunID:            acq.DispatchID,
-		NodeID:           acq.NodeID,
-		State:            string(cascade.NodeStateRunning),
-		LastOutcome:      string(lastOutcome),
-		Changed:          t.Changed,
-		TerminalKind:     "subgraph_call",
-		NodeAlias:        acq.NodeType,
-		ExecutorName:     acq.Executor,
-		TemplateHash:     acq.TemplateHash,
-		Params:           acq.InstanceParams,
-		AttributesMerged: acq.MergedAttributes,
-		HeldClaims:       HeldClaimsForLineage(acq),
-		ParentRunID:      acq.ParentRunID,
-		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
-	})
-	return nil
+	// Post-commit: emit leaf-run lineage record for the sub-graph caller
+	// terminal. EmitLeafRunLineage opens its own tx so must run after
+	// the outer state-mutation tx commits.
+	dispatchID := acq.DispatchID
+	post := func(ctx context.Context) {
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:       acq.InstanceID,
+			FrameID:          acq.FrameID,
+			RunID:            dispatchID,
+			NodeID:           acq.NodeID,
+			State:            string(cascade.NodeStateRunning),
+			LastOutcome:      string(lastOutcome),
+			Changed:          t.Changed,
+			TerminalKind:     "subgraph_call",
+			NodeAlias:        acq.NodeType,
+			ExecutorName:     acq.Executor,
+			TemplateHash:     acq.TemplateHash,
+			Params:           acq.InstanceParams,
+			AttributesMerged: acq.MergedAttributes,
+			HeldClaims:       HeldClaimsForLineage(acq),
+			ParentRunID:      scope.ParentRunID,
+			ChildKey:         scope.PartitionKey,
+			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+	}
+	return post, nil
 }
 
 // applyTerminalCompleteSubgraphExit is the runner-tx wiring for the
@@ -608,7 +663,7 @@ func applyTerminalCompleteSubgraphCaller(
 //	@blessed-invariant: exit-node-writeback flows to parent run writeback
 func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	merged map[string]any,
+	merged map[string]any, tx persistence.Tx,
 ) error {
 	// Encode the merged attributes back to bytes so CarryExitWriteback's
 	// JSON-decodable check has something to validate. Per
@@ -623,58 +678,97 @@ func applyTerminalCompleteSubgraphExit(
 	if err != nil {
 		return fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
 	}
-	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := CarryExitWriteback(ctx, PropagationArgs{
-			RunTree:      args.Persist.RunTree(),
-			ClaimHandles: args.ClaimHandles,
-			Logger:       args.Logger,
-		}, tx, acq.DispatchID, wb); err != nil {
-			return err
-		}
+	if err := CarryExitWriteback(ctx, PropagationArgs{
+		RunTree:      args.Persist.RunTree(),
+		RunScopes:    args.Persist.RunScopes(),
+		ClaimHandles: args.ClaimHandles,
+		Logger:       args.Logger,
+	}, tx, acq.DispatchID, wb); err != nil {
+		return err
+	}
 
-		// Carry the exit's writeback to the parent run's attribute row.
-		// The blessed-invariant ("exit-node-writeback flows to parent
-		// run writeback") requires the parent's row to contain the
-		// exit's bytes so downstream consumers reading
-		// {{nodes.<calling-node>.attribute.<field>}} see the subgraph's
-		// output. CarryExitWriteback only validates + logs; the Upsert
-		// lives here because the caller has NodeAttributeTable in scope.
-		exit, err := args.Persist.RunTree().GetByID(ctx, tx, acq.DispatchID)
-		if err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run: %w", err)
-		}
-		if exit == nil || exit.ParentRunID == nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s has no parent", acq.DispatchID)
-		}
-		parent, err := args.Persist.RunTree().GetByID(ctx, tx, *exit.ParentRunID)
-		if err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: load parent run %s: %w", *exit.ParentRunID, err)
-		}
-		if parent == nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: parent run %s not found", *exit.ParentRunID)
-		}
-		if err := args.Persist.NodeAttributes().Upsert(
-			ctx, parent.RunID, parent.NodeID, merged, tx,
-		); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: upsert parent attributes: %w", err)
-		}
+	// Carry the exit's writeback to the parent run's attribute row.
+	// The blessed-invariant ("exit-node-writeback flows to parent
+	// run writeback") requires the parent's row to contain the
+	// exit's bytes so downstream consumers reading
+	// {{nodes.<calling-node>.attribute.<field>}} see the subgraph's
+	// output. CarryExitWriteback only validates + logs; the Upsert
+	// lives here because the caller has NodeAttributeTable in scope.
+	exit, err := args.Persist.RunTree().GetByID(ctx, tx, acq.DispatchID)
+	if err != nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run: %w", err)
+	}
+	if exit == nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s not found", acq.DispatchID)
+	}
+	exitScope, err := args.Persist.RunScopes().GetByID(ctx, tx, exit.RunScopeID)
+	if err != nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run scope %s: %w", exit.RunScopeID, err)
+	}
+	if exitScope == nil || exitScope.ParentRunID == nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s has no parent", acq.DispatchID)
+	}
+	parent, err := args.Persist.RunTree().GetByID(ctx, tx, *exitScope.ParentRunID)
+	if err != nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load parent run %s: %w", *exitScope.ParentRunID, err)
+	}
+	if parent == nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: parent run %s not found", *exitScope.ParentRunID)
+	}
+	if err := args.Persist.NodeAttributes().Upsert(
+		ctx, parent.RunID, parent.NodeID, merged, tx,
+	); err != nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: upsert parent attributes: %w", err)
+	}
 
-		// Forensics: emit `subgraph.exit_carry` for the carry-rule. The
-		// parent run row is already loaded; reuse instead of re-fetching.
-		nodeID := acq.NodeID
-		instanceID := acq.InstanceID
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID:     &nodeID,
-			InstanceID: &instanceID,
-			Kind:       "subgraph.exit_carry",
-			Payload: map[string]any{
-				"parent_run_id":   exit.ParentRunID.String(),
-				"exit_run_id":     acq.DispatchID.String(),
-				"exit_node_alias": acq.NodeType,
-				"outcome":         "fresh",
-			},
-		}, tx)
-	})
+	// Cascade-bridge: fire cascadeSubscribersStaleInTx for the
+	// calling node so main-graph subscribers receive the cascade
+	// when the sub-graph terminates. Without this, downstream nodes
+	// that subscribe to the calling node never get marked stale and
+	// never dispatch — the cascade-traversal regression that S4
+	// pins under the RunScope-first reshape.
+	//
+	// Resolve the calling node's node_type via the rimsky_nodes row.
+	// The cascade walker reads from the sender's run (parent.RunID)
+	// to compute the receiver RunScope, so threading through is
+	// straightforward.
+	callingNodeRow, err := args.Persist.Nodes().Get(ctx, parent.NodeID, tx)
+	if err != nil {
+		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load calling node: %w", err)
+	}
+	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
+		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
+			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
+			acq.InstanceID, *callingNodeRow.FrameID); err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: cascade subscribers of calling node: %w", err)
+		}
+		// The wait-set rows the cascade walker just inserted are
+		// gated on parent.RunID (the calling node's run). The
+		// calling node is effectively settled at this point — the
+		// carry-rule's writeback has landed and the run-tree's
+		// state-propagation will transition it to a terminal state
+		// — so drain the wait-set rows here so the freshly-stale
+		// downstream subscribers can advance in this frame.
+		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, *callingNodeRow.FrameID, parent.RunID, tx); err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: drain wait-set for calling node: %w", err)
+		}
+	}
+
+	// Forensics: emit `subgraph.exit_carry` for the carry-rule. The
+	// parent run row is already loaded; reuse instead of re-fetching.
+	nodeID := acq.NodeID
+	instanceID := acq.InstanceID
+	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID:     &nodeID,
+		InstanceID: &instanceID,
+		Kind:       "subgraph.exit_carry",
+		Payload: map[string]any{
+			"parent_run_id":   exitScope.ParentRunID.String(),
+			"exit_run_id":     acq.DispatchID.String(),
+			"exit_node_alias": acq.NodeType,
+			"outcome":         "fresh",
+		},
+	}, tx)
 }
 
 // isSubgraphExitNode is the runtime-side predicate for the carry-rule

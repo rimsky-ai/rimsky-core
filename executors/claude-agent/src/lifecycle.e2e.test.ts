@@ -140,11 +140,12 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
 
     expect(outcome.kind).toBe("park_requested");
     if (outcome.kind === "park_requested") {
-      // I3 (2026-05-15 data-platform-extensions): rate-limit auto-park
-      // classifies as the typed ParkReason `retry_backoff` per spec
-      // §Parked-state taxonomy / Bundled emitter updates. The free-form
+      // Rate-limit auto-park classifies as the typed ParkReason
+      // `snooze` per spec
+      // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+      // §ParkReason collapse (closed two-value set). The free-form
       // detail moves to `reasonNote`.
-      expect(outcome.reason).toBe("retry_backoff");
+      expect(outcome.reason).toBe("snooze");
       expect(outcome.reasonNote).toContain("rate_limit");
       // sessionToken == runId so the resume path can bring the CLI
       // session back via --resume.

@@ -55,14 +55,7 @@ func seedInstanceForIdempotencyTest(ctx context.Context, t *testing.T, d persist
 	})
 	var inst persistence.InstanceRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           shared.UUID(uuid.New()),
-			TemplateHash: tmpl.ID,
-			Params:       map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
 		inst = i
 		return nil
 	}))

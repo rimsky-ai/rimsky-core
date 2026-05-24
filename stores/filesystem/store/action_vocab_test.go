@@ -39,7 +39,7 @@ func TestAction_Pop_FolderStays(t *testing.T) {
 	if !o.Available {
 		t.Fatal("expected Available, got Unavailable")
 	}
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
 	// Folder still on disk.
 	if _, err := os.Stat(filepath.Join(root, sub, "alpha")); err != nil {
@@ -79,7 +79,7 @@ func TestAction_PopAndMove_FolderRenamed(t *testing.T) {
 	if !o.Available {
 		t.Fatal("expected Available, got Unavailable")
 	}
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
 	// Folder moved to archive/.
 	if _, err := os.Stat(filepath.Join(root, "archive", "alpha")); err != nil {
@@ -119,7 +119,7 @@ func TestAction_PopAndMove_GiveUpUsesGiveUpTarget(t *testing.T) {
 	if !o.Available {
 		t.Fatal("expected Available, got Unavailable")
 	}
-	must(t, st.Abandon(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Abandon(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
 	if _, err := os.Stat(filepath.Join(root, "failed", "alpha")); err != nil {
 		t.Errorf("expected folder at failed/alpha; stat err = %v", err)
@@ -147,7 +147,7 @@ func TestAction_PopAndDelete_FolderGone(t *testing.T) {
 
 	o, err := st.Open(context.Background(), "c", "@r")
 	must(t, err)
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("folder should be removed after pop_and_delete; stat err = %v", err)
@@ -173,7 +173,7 @@ func TestAction_Recycle_QueueCycles(t *testing.T) {
 
 	o, err := st.Open(context.Background(), "c", "@r")
 	must(t, err)
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
 	// Folder still on disk.
 	if _, err := os.Stat(filepath.Join(root, sub, "alpha")); err != nil {

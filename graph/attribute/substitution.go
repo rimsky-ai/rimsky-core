@@ -10,7 +10,7 @@
 //   - {{nodes.<node>.event.<event_name>.<field>}} — upstream node's most recent named-event payload
 //   - {{claim.<alias>.address}} — live claim's address bytes
 //   - {{claim.<alias>.payload.<field>}} — live claim's payload at named path
-//   - {{claim.<alias>.scope}} — live claim's scope bytes
+//   - {{claim.<alias>.claim_scope}} — live claim's claim-scope bytes
 //   - {{params.<key>}} — instance-level config params
 //
 // The post-2026-05-14 `nodes.X.attribute.Y` form replaces the legacy
@@ -24,7 +24,7 @@
 //	lazy-unmarshals into a transient map[string]any only inside the
 //	leaf-extraction call and discards it after extraction. The
 //	stringifyRaw helper (below) is the sanctioned shape-flattening
-//	site for top-level address/scope directives — it unwraps a
+//	site for top-level address/claim_scope directives — it unwraps a
 //	JSON-string value, otherwise returns the raw bytes verbatim, and
 //	performs no logging, normalization, or transformation. All other
 //	code paths must treat ClaimResult fields as opaque bytes (no
@@ -551,20 +551,20 @@ func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any
 
 // resolveClaimValue handles three sub-shapes per spec §16.1:
 //
-//   - claim.<alias>.address  → leaf is ClaimResult.Address bytes
+//   - claim.<alias>.address      → leaf is ClaimResult.Address bytes
 //   - claim.<alias>.payload(.<field-path>?)
-//   - claim.<alias>.scope    → leaf is ClaimResult.Scope bytes
+//   - claim.<alias>.claim_scope  → leaf is ClaimResult.ClaimScope bytes
 //
 // The alias is the per-claim name within the node (defaulting to the
 // store name when not explicitly set).
 //
-// `address` and `scope` continue to surface as strings (the sanctioned
+// `address` and `claim_scope` continue to surface as strings (the sanctioned
 // shape-flattening output via `stringifyRaw`); `payload(.<field>?)`
 // returns the JSON-decoded value at the named path or — with an empty
 // trailing path — the whole payload object.
 func resolveClaimValue(directive string, rest []string, claims map[string]locks.ClaimResult) (any, error) {
 	if len(rest) < 2 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|scope|payload[.<field>]}"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|claim_scope|payload[.<field>]}"}
 	}
 	alias := rest[0]
 	cr, ok := claims[alias]
@@ -580,14 +580,14 @@ func resolveClaimValue(directive string, rest []string, claims map[string]locks.
 			return nil, &ErrMissingSource{Directive: directive, Reason: "claim address is empty"}
 		}
 		return stringifyRaw(cr.Address), nil
-	case "scope":
+	case "claim_scope":
 		if len(rest) != 2 {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "claim.<alias>.scope takes no further field path"}
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim.<alias>.claim_scope takes no further field path"}
 		}
-		if len(cr.Scope) == 0 {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "claim scope is empty"}
+		if len(cr.ClaimScope) == 0 {
+			return nil, &ErrMissingSource{Directive: directive, Reason: "claim claim_scope is empty"}
 		}
-		return stringifyRaw(cr.Scope), nil
+		return stringifyRaw(cr.ClaimScope), nil
 	case "payload":
 		if len(cr.Payload) == 0 {
 			return nil, &ErrMissingSource{Directive: directive, Reason: "claim payload is empty"}
@@ -598,7 +598,7 @@ func resolveClaimValue(directive string, rest []string, claims map[string]locks.
 		}
 		return val, nil
 	default:
-		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|scope|payload"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive second segment must be address|claim_scope|payload"}
 	}
 }
 
@@ -633,7 +633,7 @@ func resolveParamsValue(directive string, rest []string, params json.RawMessage)
 //
 // @blessed-invariant 20: this is the sanctioned introspection site for
 //
-//	payload field-walks. The companion sanctioned sites (address/scope
+//	payload field-walks. The companion sanctioned sites (address/claim_scope
 //	shape-flattening and the wire-encoding projection) are documented
 //	at the top of this file.
 //
@@ -684,10 +684,10 @@ func stringify(v any) string {
 }
 
 // stringifyRaw extracts a sensible string from raw JSON bytes for
-// substitution at top-level claim address/scope directives. Strings
+// substitution at top-level claim address/claim_scope directives. Strings
 // unwrap (drop the surrounding quotes); other shapes pass through
 // verbatim. Per invariant 20, this is the sanctioned shape-flattening
-// site for address/scope leaves (walkPath is the sanctioned site for
+// site for address/claim_scope leaves (walkPath is the sanctioned site for
 // payload field-walks); the function does not log, hash, or
 // transform — it returns bytes the caller embeds in a downstream
 // substitution string. Keep these two sites in lock-step with the

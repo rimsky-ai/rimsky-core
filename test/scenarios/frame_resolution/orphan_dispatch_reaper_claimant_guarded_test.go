@@ -22,6 +22,7 @@
 package frame_resolution
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"strings"
@@ -31,6 +32,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/graph/frame"
 	"github.com/fallguy/rimsky/graph/scenario"
 )
@@ -91,11 +94,29 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		INSERT INTO rimsky_templates (id, spec, state)
 		VALUES ($1, '{"frame_resolution_mode":"serial_queue"}'::jsonb, 'deployed')
 	`, templateHash)
-	instanceID := uuid.New()
-	h.ExecSQL(`
-		INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
-		VALUES ($1, $2, 'ck-orphan-`+instanceID.String()[:8]+`', '{}'::jsonb)
-	`, instanceID, templateHash)
+	instanceID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
+	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
+	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED, so the pair must
+	// be inserted inside the same tx. Use the persistence layer so the
+	// canonical constructors land both rows correctly.
+	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		ck := "ck-orphan-" + instanceID.String()[:8]
+		_, err := h.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:             instanceID,
+			TemplateHash:   templateHash,
+			InstanceKey:    &ck,
+			MainRunScopeID: mainScopeID,
+		}, tx)
+		return err
+	}))
 	nodeID := uuid.New()
 	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	h.ExecSQL(`
@@ -111,8 +132,8 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, frameID, instanceID, nodeID, now)
 	dispatchID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id)
-		VALUES ($1, $2, NULL, '{}', $3, $4)
-	`, dispatchID, nodeID, claimedBy, frameID)
+		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id)
+		VALUES ($1, $2, NULL, '{}', $3, $4, $5)
+	`, dispatchID, nodeID, claimedBy, frameID, mainScopeID)
 	return dispatchID
 }

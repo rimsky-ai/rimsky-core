@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -207,11 +208,17 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	}
 
 	if !opts.NoSupervisor {
+		// Diagnostic: surface supervisor logs when SCENARIO_DEBUG=1 is set
+		// so a failing scenario can investigate why a row isn't claimed.
+		var supLogger shared.Logger = shared.SilentLogger{}
+		if os.Getenv("SCENARIO_DEBUG") != "" {
+			supLogger = shared.NewSlogLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		}
 		sv, err := config.StartSupervisor(config.SupervisorConfig{
 			SupervisorID:                "scenario-supervisor",
 			Driver:                      driver,
 			Clock:                       clock,
-			Logger:                      shared.SilentLogger{},
+			Logger:                      supLogger,
 			Concurrency:                 4,
 			HeartbeatInterval:           heartbeatInterval,
 			ClaimPollInterval:           100 * time.Millisecond,
@@ -531,6 +538,33 @@ func (h *Harness) InTx(fn func(tx persistence.Tx) error) error {
 	})
 }
 
+// GetMainRunScopeID returns the main RunScope id for an instance.
+// Convenience wrapper for scenario tests that need to pass the
+// `runScopeID` argument to per-run-keyed accessors like
+// `NodeAttributes().GetLatestByNode` or `Nodes().UpdateState`.
+//
+// @concept: run-scope
+func (h *Harness) GetMainRunScopeID(instanceID shared.UUID) shared.UUID {
+	h.T.Helper()
+	var out shared.UUID
+	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := h.Persist.Instances().Get(ctx, instanceID, tx)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			h.T.Fatalf("GetMainRunScopeID: instance %s not found", instanceID)
+			return nil
+		}
+		out = row.MainRunScopeID
+		return nil
+	})
+	if err != nil {
+		h.T.Fatalf("GetMainRunScopeID: %v", err)
+	}
+	return out
+}
+
 // GetNodes fetches all nodes for an instance.
 func (h *Harness) GetNodes(instanceID shared.UUID) []persistence.NodeRow {
 	h.T.Helper()
@@ -560,16 +594,29 @@ func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *persistence
 
 // templateSpecToJSON converts a node.TemplateSpec into the snake_case
 // JSON shape expected by POST /templates.
+//
+// When the spec carries a non-empty `graphs:` block, the serializer
+// emits the nested form and omits the legacy flat `nodes:` field —
+// the canonicalizer rejects templates that declare both. When `graphs:`
+// is empty, the legacy flat form is emitted unchanged.
 func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
-	nodes := make([]map[string]any, 0, len(spec.Nodes))
-	for _, n := range spec.Nodes {
-		nodes = append(nodes, templateNodeToJSON(n))
-	}
 	out := map[string]any{
 		"name":                  spec.Name,
 		"version":               spec.Version,
 		"frame_resolution_mode": spec.FrameResolutionMode,
-		"nodes":                 nodes,
+	}
+	if len(spec.Graphs) > 0 {
+		graphs := make([]map[string]any, 0, len(spec.Graphs))
+		for _, g := range spec.Graphs {
+			graphs = append(graphs, graphSpecToJSON(g))
+		}
+		out["graphs"] = graphs
+	} else {
+		nodes := make([]map[string]any, 0, len(spec.Nodes))
+		for _, n := range spec.Nodes {
+			nodes = append(nodes, templateNodeToJSON(n))
+		}
+		out["nodes"] = nodes
 	}
 	if spec.FrameTimeoutMs > 0 {
 		out["frame_timeout_ms"] = spec.FrameTimeoutMs
@@ -589,6 +636,29 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 				"by_executor": spec.Defaults.Attributes.ByExecutor,
 			},
 		}
+	}
+	return out
+}
+
+// graphSpecToJSON serializes one GraphSpec (the nested `graphs:` form
+// per spec §Sub-graphs). The reserved `main` graph omits `entry:` /
+// `exit:`; sub-graphs MUST declare both — the canonicalizer rejects
+// missing values, so the serializer emits whatever the in-memory
+// spec carries and lets the rejection happen on the receiver.
+func graphSpecToJSON(g node.GraphSpec) map[string]any {
+	nodes := make([]map[string]any, 0, len(g.Nodes))
+	for _, n := range g.Nodes {
+		nodes = append(nodes, templateNodeToJSON(n))
+	}
+	out := map[string]any{
+		"name":  g.Name,
+		"nodes": nodes,
+	}
+	if g.Entry != "" {
+		out["entry"] = g.Entry
+	}
+	if g.Exit != "" {
+		out["exit"] = g.Exit
 	}
 	return out
 }
@@ -710,7 +780,49 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if n.MaxRetriesWithoutProgress != nil {
 		nd["max_retries_without_progress"] = *n.MaxRetriesWithoutProgress
 	}
+	if n.FanOut != nil {
+		nd["fan_out"] = fanOutSpecToJSON(n.FanOut)
+	}
+	if n.Delegate != "" {
+		nd["delegate"] = n.Delegate
+	}
+	if len(n.Holds) > 0 {
+		holds := map[string]any{}
+		for alias, binding := range n.Holds {
+			entry := map[string]any{"from": binding.From}
+			if binding.As != "" {
+				entry["as"] = binding.As
+			}
+			holds[alias] = entry
+		}
+		nd["holds"] = holds
+	}
 	return nd
+}
+
+// fanOutSpecToJSON serializes a FanOutSpec into the snake_case shape
+// the control-api template registrar accepts. Mirrors the template-DSL
+// shape per spec §Fan-out template DSL.
+func fanOutSpecToJSON(fo *node.FanOutSpec) map[string]any {
+	out := map[string]any{
+		"claim":             fo.Claim,
+		"partition_request": fo.PartitionRequest,
+	}
+	if fo.Parallelism > 0 {
+		out["parallelism"] = fo.Parallelism
+	}
+	policy := map[string]any{}
+	if fo.ErrorPolicy.Kind != "" {
+		policy["kind"] = fo.ErrorPolicy.Kind
+	}
+	if fo.ErrorPolicy.MaxFailures > 0 {
+		policy["max_failures"] = fo.ErrorPolicy.MaxFailures
+	}
+	if fo.ErrorPolicy.CancelSiblings {
+		policy["cancel_siblings"] = fo.ErrorPolicy.CancelSiblings
+	}
+	out["error_policy"] = policy
+	return out
 }
 
 // handlerToJSON serializes a lifecycle handler block.
@@ -846,4 +958,12 @@ func WithInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
 // coupling under the post-2026-05-14 subscription model.
 func WithSubscribes(subs ...node.SubscriptionEntry) func(*node.TemplateNodeDef) {
 	return withSubscribes(subs...)
+}
+
+// WithFanOut attaches a FanOutSpec to the node. Used by scenario tests
+// that exercise the §Fan-out template DSL acquisition + dispatch path.
+func WithFanOut(fo *node.FanOutSpec) func(*node.TemplateNodeDef) {
+	return func(n *node.TemplateNodeDef) {
+		n.FanOut = fo
+	}
 }

@@ -53,6 +53,8 @@ See `.ok-planner/history/specs/2026-05-20-attribute-pull-resolution-design.md` f
 
 - The template-author L2 declaration cannot set `readOnly: true` on a property the executor's schema does not also mark `readOnly: true`. Rejected at registration. The executor is authoritative on which of its attributes it produces vs consumes.
 
+- A fifth override layer (L5) extends the four-layer merge: `instance.attribute_overrides.by_match` is an ordered list of `{matcher, overlay}` entries. The matcher predicate is equality-only over a fixed key set (`node_type`, `executor`, `graph`, `child_key`, `attrs.<path>`); evaluated against the dispatch context at runtime; missing keys are wildcards; AND across present keys. Each matching entry's overlay folds on top via `DeepMergeJSON` in declaration order — later entries win. Empty matcher (`{}`) matches every dispatch. The matcher reads from the post-L4 merged bag (overrides applied through L4 are visible to the matcher). Ordinal-shaped matcher keys (`dispatch_index`, `nth_child`, `partition_index`, `seq`) and expression-shaped values are rejected at registration. Enforced at `code:control/controlapi/attribute_overrides.go::validateAttributeOverrides` and `code:runtime/attribute_overrides.go::applyAttributeOverrides`.
+
 ## Aliases and historical names
 
 None live. `attributes:` is the template-key name and Go-package name.
@@ -70,6 +72,18 @@ Static-default properties replace the role userdata played pre-2026-05-21: per-n
 
 Static-default values are persisted per node-run alongside source-resolved and executor-written values in `table:rimsky_node_attributes.data`, providing dispatch-time forensic clarity. Template-default mutations do not retroactively rewrite history.
 
+## Matcher overlay (by_match)
+
+A third routing dimension on `attribute_overrides`, alongside the static `by_executor` (L3) and `by_node` (L4) maps. `by_match` is an ordered list of `{matcher, overlay}` entries where the matcher is a content-keyed predicate over dispatch-time identity — solving the problem that static routes can't differentiate among children of a fan-out node that share node type and executor.
+
+The matcher grammar is intentionally small: equality only, over a fixed key set. `child_key` is the recommended anchor for fan-out routing (the producer-emitted per-sub-scope identifier from `concept:fan-out`, stable across dispatch reorderings); `attrs.<path>` covers non-fan-out differentiation. Ordinal-style addressing (any "third call" / "index N" semantics) is rejected at registration: matchers address partitions by identity, never by execution order.
+
+Under RunScope-first (per spec 2026-05-22), the `child_key` matcher key sources its value from the dispatched run's RunScope's `partition_key` (per `concept:run-scope`); the equality semantics and ordinal-rejection vocabulary remain unchanged. Non-fan-out dispatches see an empty-string `child_key` (the parent / sub-graph RunScope's `partition_key` is empty).
+
+Override values are static — no substitution applied. The matcher reads from the post-L3+L4 bag, meaning earlier-layer overrides are visible to the matcher's `attrs.<path>` comparisons.
+
+Per-entry match counters persist on `col:rimsky_instances.attribute_overrides_match_counts`. The supervisor increments after the merge returns, in a short dedicated transaction. Operators and tests read the counter via `GET /instances/{id}` and assert on which entries fired. Entries that never match show 0 at instance terminal — the "silent miss becomes loud miss" discipline that makes matcher-overlay testing safe against producer key-scheme changes.
+
 ## Notes
 
 - 2026-05-19 — Grammar text corrected (retired `deps.*`, added live `trigger.*` and `child.*`) and whole-directive value-lift documented per spec 2026-05-19-multi-instance-template-ergonomics-design. Adjacent `tensions/substitution-grammar-count-drift.md` is partly addressed by this update; the cross-doc-prose sweep (CLAUDE.md, `docs/concepts/attributes.md`) remains open.
@@ -77,4 +91,6 @@ Static-default values are persisted per node-run alongside source-resolved and e
 - 2026-05-20 — Multi-source attribute substitution proposal declined. Sketch archived to `.ok-planner/history/sketches/2026-05-19-multi-source-attribute-substitution.md`; the per-field-arity invariant and Boundaries clarification above were added by this spec. Rationale: a first-non-missing fallback semantic loses signal (subscriptions fire on each upstream transition, but substitution would collapse to one candidate); an array-as-value semantic collapses to today's 1:1 schema with optional fields plus auto-subscribe; the read-vs-cascade arity split is the load-bearing distinction. See `.ok-planner/history/specs/2026-05-20-multi-source-substitution-decline-design.md` for the full reasoning trail.
 - 2026-05-20 — Per-run keying lift + minimalist substitution model. `rimsky_node_attributes` re-keyed from `node_id` to `node_run_id`, completing the 2026-05-15 run-tree extension's "all state-bearing columns" intent. Substitution context at dispatch reads only drained wait-set rows for this receiver in this frame (topic_kind='attribute', settled-success senders); no scope-walk, no cross-frame caching. Per-field `hard_dep: true` flag opt-in for "ensure upstream is invalidated in this frame," with cascade-walker proactive invalidation via `BuildHardDepEdges`. Fallback operator `{{<directive> | <literal>}}` added. New `## Non-goals` section above captures load-bearing decisions about what this concept deliberately does NOT support. The 2026-05-20 multi-source decline (per-field arity 1) remains intact — the fallback operator is "exactly one directive + one literal," not multi-source. See `.ok-planner/history/specs/2026-05-20-attribute-pull-resolution-design.md`.
 - 2026-05-21 — Userdata collapse. `concept:userdata` retires; its role moves to `default:` properties on the unified attribute schema. Substitution grammar relaxes (embedded text + multi-directive) per `code:graph/node/template_validator.go::checkAttributeSource`. Per-directive strict-default with `?` for lenient. New `checkAttributesSchema` validator enforces the "source or default or executor-write-back" rule. `@blessed-invariant 11` retires. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
+- 2026-05-21 — Matcher overlay (L5 `by_match`) added per `.ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md`. Equality-only matcher grammar over `{node_type, executor, graph, child_key, attrs.<path>}`. Per-entry match counter persisted on `attribute_overrides_match_counts`.
+- 2026-05-22 — `child_key` matcher anchor sourcing reconciled per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: matcher reads from RunScope's `partition_key` now that `parent_run_id` + `child_key` are removed from `rimsky_node_runs`. Operator semantics unchanged; only the implementation sourcing changes.
 

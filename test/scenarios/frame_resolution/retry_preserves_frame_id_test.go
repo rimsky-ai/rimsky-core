@@ -83,18 +83,19 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	require.NoError(t, err)
 	// Insert the in-flight active running run row (state machine reads
 	// current state from here for the retry simulation below).
+	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'active', 'running', $2)
-	`, uuid.UUID(worker.ID), frameID)
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'active', 'running', $2, $3)
+	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 	require.NoError(t, err)
 
 	// Simulate the runner's retry path: UpdateState(running → stale,
 	// ReasonPolicyRetry) must preserve the node-row frame_id.
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, "stale", cascade.ReasonPolicyRetry, "", tx)
+			worker.ID, h.GetMainRunScopeID(iid), "stale", cascade.ReasonPolicyRetry, "", tx)
 	}))
 
 	// Re-read frame_id; it must still be set.

@@ -31,12 +31,12 @@ import (
 // rimsky's predicate is the source of truth for invariant 4b.
 //
 // To prevent two supervisors from concurrently passing the in-Go
-// scope-conflict predicate against each other's uncommitted INSERTs
+// claim-scope-conflict predicate against each other's uncommitted INSERTs
 // (READ COMMITTED hides them), this function takes a per-(producer_name,
-// scope_data) transactional advisory lock before evaluateScopeConflict
+// claim_scope_data) transactional advisory lock before evaluateClaimScopeConflict
 // runs. Analogous to the named-lock advisory; under the same lock the
 // list-then-INSERT pair is atomic against any concurrent acquirer
-// targeting the same (producer, scope) pair.
+// targeting the same (producer, claim-scope) pair.
 func acquireClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
@@ -55,15 +55,15 @@ func acquireClaim(
 	if err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: marshal selector: %w", err)
 	}
-	if err := args.AdvisoryLocker.TakeScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
-		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeScopeLockInTx: %w", err)
+	if err := args.AdvisoryLocker.TakeClaimScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
+		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLockInTx: %w", err)
 	}
-	// Pre-Open conflict check: any existing scope-byte-equal holder must
-	// permit our intent under its own RealizedWriteSemantics. Per the
-	// uniformity invariant (spec §2.5), all byte-equal-scope claims share
-	// identical semantics, so the candidate's effective semantics on a
+	// Pre-Open conflict check: any existing claim-scope-byte-equal holder
+	// must permit our intent under its own RealizedWriteSemantics. Per the
+	// uniformity invariant (spec §2.5), all byte-equal-claim-scope claims
+	// share identical semantics, so the candidate's effective semantics on a
 	// match equals the holder's recorded value.
-	conflicted, err := evaluateScopeConflict(ctx, args, tx, spec, cand)
+	conflicted, err := evaluateClaimScopeConflict(ctx, args, tx, spec, cand)
 	if err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
@@ -87,7 +87,7 @@ func acquireClaim(
 		NodeRunID:          &dispatchID,
 		LockKind:           persistence.LockKindScope,
 		ProducerName:       &producerNameCopy,
-		ScopeData:          scopeInitial,
+		ClaimScopeData:     scopeInitial,
 		Intent:             &intentCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
@@ -121,11 +121,11 @@ func acquireClaim(
 	if err := args.ClaimHandles.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
-	// Pick-policy claims have store-chosen scope; scoped claims
+	// Pick-policy claims have store-chosen claim-scope; scoped claims
 	// keep the substituted selector (already written above).
-	if len(cr.Scope) > 0 && string(cr.Scope) != string(scopeInitial) {
-		if err := args.ClaimHandles.UpdateScope(ctx, rowID, args.SupervisorID, cr.Scope, tx); err != nil {
-			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateScope: %w", err)
+	if len(cr.ClaimScope) > 0 && string(cr.ClaimScope) != string(scopeInitial) {
+		if err := args.ClaimHandles.UpdateClaimScope(ctx, rowID, args.SupervisorID, cr.ClaimScope, tx); err != nil {
+			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateClaimScope: %w", err)
 		}
 	}
 	// Persist the per-claim RealizedWriteSemantics returned by the
@@ -155,28 +155,28 @@ func acquireClaim(
 	}, openResultAcquired, nil
 }
 
-// evaluateScopeConflict re-loads existing scope holders for the
-// store and runs ScopesByteEqual ∧ ModeCoexists against the candidate
+// evaluateClaimScopeConflict re-loads existing claim-scope holders for the
+// store and runs ClaimScopesByteEqual ∧ ModeCoexists against the candidate
 // spec. Skips own-node rows. Returns true if any holder conflicts AND
 // the modes don't coexist.
 //
 // Per spec §7.7: byte-equal comparison; the producer canonicalizes its
-// scope bytes such that two claims that should conflict produce
-// byte-equal scopes. The candidate's pre-Open scope is the
+// claim-scope bytes such that two claims that should conflict produce
+// byte-equal claim-scopes. The candidate's pre-Open claim-scope is the
 // substituted-selector bytes (scoped claims) — for pick-policy
 // claims the actual collision check happens in the producer's own
 // internal serialization.
 //
-// Per the uniformity invariant (spec §2.5) all byte-equal-Scope
+// Per the uniformity invariant (spec §2.5) all byte-equal-ClaimScope
 // claims share identical RealizedWriteSemantics. The conflict check
 // uses the holder's recorded RealizedWriteSemantics for both sides.
-func evaluateScopeConflict(
+func evaluateClaimScopeConflict(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec locks.ClaimSpec, cand persistence.Candidate,
 ) (bool, error) {
-	holders, err := args.ClaimHandles.ListByProducerScope(ctx, spec.ProducerName, tx)
+	holders, err := args.ClaimHandles.ListByProducerClaimScope(ctx, spec.ProducerName, tx)
 	if err != nil {
-		return false, fmt.Errorf("evaluateScopeConflict: ListByProducerScope: %w", err)
+		return false, fmt.Errorf("evaluateClaimScopeConflict: ListByProducerClaimScope: %w", err)
 	}
 	candidateScope, err := json.Marshal(spec.Selector)
 	if err != nil {
@@ -195,12 +195,12 @@ func evaluateScopeConflict(
 		// and the equality test naturally fails. A same-node retry
 		// through an existing durable asset is a no-op the caller must
 		// handle, not a scope conflict to skip — the listing query
-		// (`ListByProducerScope`) returns both active and
+		// (`ListByProducerClaimScope`) returns both active and
 		// committed-durable rows for exactly this reason.
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID != nil && *h.HolderSupervisorID == args.SupervisorID {
 			continue
 		}
-		if !locks.ScopesByteEqual(candidateScope, h.ScopeData) {
+		if !locks.ClaimScopesByteEqual(candidateScope, h.ClaimScopeData) {
 			continue
 		}
 		var holderIntent locks.Intent

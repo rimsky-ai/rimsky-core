@@ -99,13 +99,13 @@ func (c *advisoryLockerImpl) TakeNamedLockInTx(ctx context.Context, tx persisten
 	return err
 }
 
-// TakeScopeLockInTx — @blessed-invariant 3, 4b, 10.
-func (c *advisoryLockerImpl) TakeScopeLockInTx(ctx context.Context, tx persistence.Tx, storeName string, scopeData []byte) error {
+// TakeClaimScopeLockInTx — @blessed-invariant 3, 4b, 10.
+func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(ctx context.Context, tx persistence.Tx, storeName string, claimScopeData []byte) error {
 	pgT, err := unwrapTx(tx)
 	if err != nil {
-		return fmt.Errorf("postgres.TakeScopeLockInTx: %w", err)
+		return fmt.Errorf("postgres.TakeClaimScopeLockInTx: %w", err)
 	}
-	key := "rimsky_scope:" + storeName + ":" + hex.EncodeToString(scopeData)
+	key := "rimsky_scope:" + storeName + ":" + hex.EncodeToString(claimScopeData)
 	_, err = pgT.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", key)
 	return err
 }

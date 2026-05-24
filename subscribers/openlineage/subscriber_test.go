@@ -24,6 +24,38 @@ import (
 	"github.com/fallguy/rimsky/internal/pgtest"
 )
 
+// seedInstanceWithMainScope inserts a paired (rimsky_instances,
+// rimsky_run_scopes) tuple. Post-RunScope-first migration both columns
+// are NOT NULL and reference each other; the FK pair is DEFERRABLE
+// INITIALLY DEFERRED so the inserts must run inside a single tx.
+func seedInstanceWithMainScope(t *testing.T, ctx context.Context, pool *pgxpool.Pool, instanceID uuid.UUID, templateHash string) {
+	t.Helper()
+	mainScopeID := uuid.New()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatalf("defer constraints: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at, main_run_scope_id)
+		 VALUES ($1, $2, $3, '{}'::jsonb, now(), $4)`,
+		instanceID, templateHash, "ck-"+uuid.NewString(), mainScopeID); err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id)
+		 VALUES ($1, 'main', '', $2)`,
+		mainScopeID, instanceID); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
 // openMigratedDSN spins up a fresh Postgres container, runs all rimsky
 // migrations against it, and returns the DSN the subscriber-under-test
 // should use. Cleanup is via t.Cleanup hooks registered inside
@@ -68,13 +100,7 @@ func TestSubscriber_PollsAndEmits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	_, err = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instanceID, templateHash, "ck-"+uuid.NewString())
-	if err != nil {
-		t.Fatalf("seed instance: %v", err)
-	}
+	seedInstanceWithMainScope(t, ctx, pool, instanceID, templateHash)
 	_, err = pool.Exec(ctx,
 		`INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		 VALUES ($1, $2, 'serial_queue', 'running', ARRAY[$1]::UUID[], now(), now(), 600000)`,
@@ -197,10 +223,7 @@ func TestSubscriber_EmitFailureHaltsBatchAtFailingRow(t *testing.T) {
 		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		templateHash)
-	_, _ = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instanceID, templateHash, "ck-"+uuid.NewString())
+	seedInstanceWithMainScope(t, ctx, pool, instanceID, templateHash)
 	_, _ = pool.Exec(ctx,
 		`INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		 VALUES ($1, $2, 'serial_queue', 'running', ARRAY[$1]::UUID[], now(), now(), 600000)`,
@@ -264,10 +287,7 @@ func TestSubscriber_DecodeFailureAdvancesCursor(t *testing.T) {
 		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		templateHash)
-	_, _ = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instanceID, templateHash, "ck-"+uuid.NewString())
+	seedInstanceWithMainScope(t, ctx, pool, instanceID, templateHash)
 	_, _ = pool.Exec(ctx,
 		`INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		 VALUES ($1, $2, 'serial_queue', 'running', ARRAY[$1]::UUID[], now(), now(), 600000)`,
@@ -380,10 +400,7 @@ func TestSubscriber_TieBreakerSameObservedAt(t *testing.T) {
 		`INSERT INTO rimsky_templates (id, spec, state, registered_at)
 		 VALUES ($1, '{}'::jsonb, 'deployed', now())`,
 		templateHash)
-	_, _ = pool.Exec(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, created_at)
-		 VALUES ($1, $2, $3, '{}'::jsonb, now())`,
-		instanceID, templateHash, "ck-"+uuid.NewString())
+	seedInstanceWithMainScope(t, ctx, pool, instanceID, templateHash)
 	_, _ = pool.Exec(ctx,
 		`INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		 VALUES ($1, $2, 'serial_queue', 'running', ARRAY[$1]::UUID[], now(), now(), 600000)`,

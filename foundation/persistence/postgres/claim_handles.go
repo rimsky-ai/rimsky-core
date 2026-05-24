@@ -40,7 +40,7 @@ import (
 )
 
 const lockHolderCols = `
-  id, lock_kind, lock_name, producer_name, scope_data, address, intent,
+  id, lock_kind, lock_name, producer_name, claim_scope_data, address, intent,
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id,
@@ -73,7 +73,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 	}
 	_, err := s.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_claim_handles (
-		   id, lock_kind, lock_name, producer_name, scope_data, address, intent,
+		   id, lock_kind, lock_name, producer_name, claim_scope_data, address, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, last_heartbeat_at, expires_at, frame_id,
@@ -83,7 +83,7 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		in.ID, string(in.LockKind),
 		in.LockName, in.ProducerName,
-		nullableJSONB(in.ScopeData), nullableJSONB(in.Address),
+		nullableJSONB(in.ClaimScopeData), nullableJSONB(in.Address),
 		in.Intent,
 		rws,
 		in.HolderSupervisorID, in.HolderNodeID,
@@ -139,20 +139,20 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	return nil
 }
 
-// UpdateScope sets the scope_data column on an existing scope-kind
-// row. Claimant-guarded on supervisorID; mismatches are a no-op
-// (returns nil).
-func (s *claimHandlesImpl) UpdateScope(
+// UpdateClaimScope sets the claim_scope_data column on an existing
+// claim-scope-kind row. Claimant-guarded on supervisorID; mismatches
+// are a no-op (returns nil).
+func (s *claimHandlesImpl) UpdateClaimScope(
 	ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx persistence.Tx,
 ) error {
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
-		    SET scope_data = $1
+		    SET claim_scope_data = $1
 		  WHERE id = $2 AND holder_supervisor_id = $3`,
 		nullableJSONB(scope), id, supervisorID,
 	)
 	if err != nil {
-		return fmt.Errorf("lockholders.UpdateScope: %w", err)
+		return fmt.Errorf("lockholders.UpdateClaimScope: %w", err)
 	}
 	return nil
 }
@@ -391,7 +391,7 @@ func (s *claimHandlesImpl) SetVersionID(
 // ambiguous against the joined table's columns.
 func qualifiedLockHolderCols(alias string) string {
 	return alias + `.id, ` + alias + `.lock_kind, ` + alias + `.lock_name, ` +
-		alias + `.producer_name, ` + alias + `.scope_data, ` + alias + `.address, ` +
+		alias + `.producer_name, ` + alias + `.claim_scope_data, ` + alias + `.address, ` +
 		alias + `.intent, ` + alias + `.realized_write_semantics, ` +
 		alias + `.holder_supervisor_id, ` + alias + `.holder_node_id, ` +
 		alias + `.claimed_at, ` + alias + `.last_heartbeat_at, ` + alias + `.expires_at, ` +
@@ -525,32 +525,32 @@ func (s *claimHandlesImpl) CountByNamedLock(ctx context.Context, lockName string
 	return n, nil
 }
 
-// ListByProducerScope returns every scope-kind row for producerName
+// ListByProducerClaimScope returns every claim-scope-kind row for producerName
 // that is currently in conflict-detection scope: active OR
 // committed-durable (the asset surface; the durable holder still
-// occupies the scope until producer Release). Used by the
-// supervisor's scope-conflict re-check (§7.3 step 4a/4b).
+// occupies the claim-scope until producer Release). Used by the
+// supervisor's claim-scope-conflict re-check (§7.3 step 4a/4b).
 //
 // Predicate: `state = 'active' OR (state = 'committed' AND lifetime =
 // 'durable')`. Subgraph rows transition to state='committed' at
-// terminal but no longer occupy the scope (the producer released its
+// terminal but no longer occupy the claim-scope (the producer released its
 // hold on Commit; only the rimsky-side ledger row lingers for forensics
 // until the retention sweep reaps it). Abandoned rows are not in the
-// conflict set either — the producer Abandon released the scope.
+// conflict set either — the producer Abandon released the claim-scope.
 //
-// @blessed-invariant 4b (single-writer-per-scope)
+// @blessed-invariant 4b (single-writer-per-claim-scope)
 // @concept: claim-handle
 // @concept: asset
-func (s *claimHandlesImpl) ListByProducerScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
+func (s *claimHandlesImpl) ListByProducerClaimScope(ctx context.Context, producerName string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
 	rows, err := s.q(tx).Query(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
-		 WHERE lock_kind = 'scope' AND producer_name = $1
+		 WHERE lock_kind = 'claim_scope' AND producer_name = $1
 		   AND (state = 'active' OR (state = 'committed' AND lifetime = 'durable'))
 		 ORDER BY claimed_at ASC`,
 		producerName,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListByProducerScope: %w", err)
+		return nil, fmt.Errorf("lockholders.ListByProducerClaimScope: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)
@@ -805,7 +805,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	r.LockKind = persistence.LockKind(kind)
 	r.LockName = lockName
 	r.ProducerName = producerName
-	r.ScopeData = scopeData
+	r.ClaimScopeData = scopeData
 	r.Address = address
 	r.Intent = intent
 	if rws != nil {

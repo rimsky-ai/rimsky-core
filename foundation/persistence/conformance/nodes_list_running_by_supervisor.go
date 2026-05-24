@@ -72,6 +72,7 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 				RequiredStores: []string{},
 				EnqueuedAt:     time.Now().Add(-1 * time.Second),
 				FrameID:        fix.FrameID,
+				RunScopeID:     fix.MainRunScopeID,
 			}, tx); err != nil {
 				return err
 			}
@@ -97,11 +98,11 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 					}
 				}
 			}
-			if err := store.Nodes().UpdateState(ctx, id,
+			if err := store.Nodes().UpdateState(ctx, id, fix.MainRunScopeID,
 				cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
 				return err
 			}
-			return store.Nodes().UpdateHeartbeat(ctx, id, time.Now(), supervisorID, tx)
+			return store.Nodes().UpdateHeartbeat(ctx, id, fix.MainRunScopeID, time.Now(), supervisorID, tx)
 		}); err != nil {
 			t.Fatalf("transitionToRunning(%s, %q): %v", id, supervisorID, err)
 		}
@@ -121,10 +122,11 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        fix.FrameID,
+			RunScopeID:     fix.MainRunScopeID,
 		}, tx); err != nil {
 			return err
 		}
-		return store.Nodes().UpdateHeartbeat(ctx, staleSelfID, time.Now(), "sup-A", tx)
+		return store.Nodes().UpdateHeartbeat(ctx, staleSelfID, fix.MainRunScopeID, time.Now(), "sup-A", tx)
 	}); err != nil {
 		t.Fatalf("seed staleSelf: %v", err)
 	}

@@ -30,6 +30,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
@@ -82,6 +83,14 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 		def := lookupTemplateNodeDef(ctx, sb, n)
 		if hasClaimStore(def) {
 			if err := enqueueNativeClaimOnly(ctx, args, n, def); err != nil {
+				// Defensive: a closed RunScope means the rendezvous
+				// fired before the sweep could enqueue. Walker
+				// discipline per concept:run-scope: skip silently.
+				if errors.Is(err, persistence.ErrRunScopeClosed) {
+					log.Debug("ProcessPureCascade: skip native claim-only enqueue: run scope closed",
+						"node_id", n.ID.String())
+					continue
+				}
 				log.Warn("ProcessPureCascade: enqueue native claim-only failed",
 					"node_id", n.ID.String(), "error", err.Error())
 				continue
@@ -110,7 +119,14 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	// (per the defensive guard in enforceAndUpdate; spec §4.4 + §10.3,
 	// fresh nodes carry no frame_id). No separate SetFrameID call needed.
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return sb.Nodes().UpdateState(ctx, n.ID, cascade.NodeStateFresh, cascade.ReasonPureCascade, cascade.LastOutcomePureCascade, tx)
+		// Thread the projected RunScope id; pure-cascade nodes are
+		// non-executor and don't fan out today, but threading keeps
+		// the disambiguation consistent across paths. A node without
+		// a projected RunScope has nothing to transition.
+		if n.RunScopeID == nil {
+			return nil
+		}
+		return sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, cascade.LastOutcomePureCascade, tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
 			"node_id", n.ID.String(), "error", err.Error())
@@ -179,9 +195,42 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	// (per spec §4.4). The pure-cascade source's frame_id was set at
 	// frame-start; receivers inherit it so the frame-end predicate (§4.2)
 	// sees them as in-flight and the next sweep enqueues their dispatch.
+	//
+	// Per spec §"RunScope-first cascade", same-scope cascade affirms a
+	// pending row for the receiver in the source's RunScope so the
+	// receiver's RunScopeID projection lands before the recalculate
+	// enqueue. Without this, a stale-no-in-flight receiver loses the
+	// frame-and-scope binding and the dispatch enqueue errors with
+	// run_scope_id required.
+	var sourceRunScopeID shared.UUID
+	if n.RunScopeID != nil {
+		sourceRunScopeID = *n.RunScopeID
+	}
 	for _, dep := range receivers {
+		if n.FrameID != nil && sourceRunScopeID != (shared.UUID{}) {
+			affirmErr := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return sb.Nodes().AffirmNodeRunRow(ctx, dep.ID, sourceRunScopeID, *n.FrameID, tx)
+			})
+			// Defensive: a closed RunScope means the receiver's scope
+			// has terminated (parent rendezvous has fired). The walker
+			// MUST NOT cross into closed RunScopes — skip this receiver
+			// and continue per concept:run-scope. Mirror of the pattern
+			// at runtime/message_delivery.go::cascadeMessageSubscribersInTx.
+			// Without this skip a downstream cascadePropagateFrameID +
+			// RecalculateNode would enqueue a new in-flight row into a
+			// closed RunScope.
+			if errors.Is(affirmErr, persistence.ErrRunScopeClosed) {
+				continue
+			}
+			if affirmErr != nil {
+				log.Warn("ProcessPureCascade: affirm receiver run row failed",
+					"source_node_id", n.ID.String(),
+					"target_node_id", dep.ID.String(),
+					"error", affirmErr.Error())
+			}
+		}
 		if n.FrameID != nil {
-			cascadePropagateFrameID(ctx, sb, dep.ID, *n.FrameID, log)
+			cascadePropagateFrameID(ctx, sb, args.Queue, dep.ID, *n.FrameID, log)
 		}
 		srcID := n.ID
 		if rerr := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
@@ -219,12 +268,18 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persist
 		// Defer: frame engine hasn't advanced the originating frame yet.
 		return nil
 	}
+	if n.RunScopeID == nil {
+		// Defer: Phase B cascade allocator hasn't materialized a
+		// RunScope for this node yet.
+		return nil
+	}
 	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:         n.ID,
 		ExecutorName:   "",
 		RequiredStores: required,
 		EnqueuedAt:     args.Clock.Now(),
 		FrameID:        *n.FrameID,
+		RunScopeID:     *n.RunScopeID,
 	})
 }
 
@@ -272,10 +327,23 @@ func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 // fresh→stale via reasons unknown to it; the cascade message-pass is
 // the spec's mandated direct write. Errors are logged + swallowed so a
 // failed propagation to one child does not block siblings.
-func cascadePropagateFrameID(ctx context.Context, sb persistence.Tables, childID shared.UUID, frameID shared.UUID, log shared.Logger) {
+func cascadePropagateFrameID(ctx context.Context, sb persistence.Tables, queue persistence.Queue, childID shared.UUID, frameID shared.UUID, log shared.Logger) {
 	err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := sb.Nodes().MarkStaleForCascade(ctx, childID, frameID, tx)
-		return err
+		child, err := sb.Nodes().Get(ctx, childID, tx)
+		if err != nil || child == nil {
+			return err
+		}
+		if child.RunScopeID == nil {
+			// No in-flight RunScope projected on the child; the
+			// Phase B cascade allocator is responsible for affirming
+			// a row before MarkStaleForCascade can apply.
+			return nil
+		}
+		runID, ok, err := queue.GetInFlightRunForNode(ctx, tx, child.ID, *child.RunScopeID)
+		if err != nil || !ok {
+			return err
+		}
+		return sb.Nodes().MarkStaleForCascade(ctx, runID, frameID, tx)
 	})
 	if err != nil && log != nil {
 		log.Warn("cascadePropagateFrameID: failed",

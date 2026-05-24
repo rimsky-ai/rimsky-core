@@ -143,7 +143,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
 			Address:                outcome.Result.Address,
 			Payload:                outcome.Result.Payload,
-			Scope:                  outcome.Result.Scope,
+			ClaimScope:             outcome.Result.ClaimScope,
 			RealizedWriteSemantics: bridge.WriteSemanticsToProto(string(outcome.Result.RealizedWriteSemantics)),
 		}},
 	}, nil
@@ -151,7 +151,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 
 // Commit delegates.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
-	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
+	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.CommitResponse{}, nil
@@ -159,7 +159,7 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 
 // Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
-	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
+	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.AbandonResponse{}, nil
@@ -167,7 +167,7 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 
 // Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
-	if err := s.store.Release(ctx, req.GetClaimId(), req.GetScope(), req.GetAddress()); err != nil {
+	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
 	return &genv1.ReleaseResponse{}, nil

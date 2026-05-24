@@ -19,6 +19,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
@@ -162,7 +163,23 @@ func sweepParkedByReason(ctx context.Context, args ParkedSweepArgs, now time.Tim
 				log.Warn("SweepParkedNodes: parse node_id", "node_id", d.NodeID, "error", err.Error())
 				continue
 			}
-			row, err := args.Queue.GetParkedByNode(ctx, nodeID)
+			// Resolve the parked row's RunScope by looking up the
+			// run-tree row keyed on the diagnostic DispatchID — the
+			// diagnostic projection doesn't surface run_scope_id, but
+			// the run-tree row does. Then GetParkedByNode keys on
+			// (node_id, run_scope_id).
+			var runScopeID shared.UUID
+			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				rt, err := args.Persist.RunTree().GetByID(ctx, tx, d.DispatchID)
+				if err != nil || rt == nil {
+					return err
+				}
+				runScopeID = rt.RunScopeID
+				return nil
+			}); err != nil || runScopeID == (shared.UUID{}) {
+				continue
+			}
+			row, err := args.Queue.GetParkedByNode(ctx, nodeID, runScopeID)
 			if err != nil || row == nil {
 				continue
 			}
@@ -220,8 +237,27 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 	// Transition via the state machine (parked → failed under
 	// park_timeout). Use the Persist.Transaction so the queue removal,
 	// state transition, held-claim Abandon, and audit-log are atomic.
+	//
+	// Resolve the run's RunScope from the run-tree row keyed on the
+	// parked row's DispatchID — ParkedRow doesn't project
+	// run_scope_id directly. Without a RunScope we can't address
+	// state-machine writes under the new (node, run_scope) key.
+	var runScopeID shared.UUID
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rt, err := args.Persist.RunTree().GetByID(ctx, tx, row.DispatchID)
+		if err != nil || rt == nil {
+			return err
+		}
+		runScopeID = rt.RunScopeID
+		return nil
+	}); err != nil {
+		return err
+	}
+	if runScopeID == (shared.UUID{}) {
+		return fmt.Errorf("failOverdueParkedRow: no run scope for parked run %s", row.DispatchID)
+	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeID, runScopeID,
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, cascade.LastOutcomeFailed, tx); err != nil {
 			return err
 		}
@@ -250,7 +286,11 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		}
 		// Remove the node-run row outright. With held claims
 		// resolved above, no producer-side state is left dangling.
-		if err := args.Queue.RemoveForNodeInTx(ctx, row.NodeID, "", tx); err != nil {
+		//
+		// Thread `runScopeID` (already resolved above) so fan-out
+		// children's retirement lands on this specific run, not every
+		// sibling sharing the `node_id`.
+		if err := args.Queue.RemoveForNodeInTx(ctx, row.NodeID, runScopeID, "", tx); err != nil {
 			return err
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{

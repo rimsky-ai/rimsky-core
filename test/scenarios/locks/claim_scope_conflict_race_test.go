@@ -2,9 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Scope-conflict race scenario coverage — invariant 4b (single-
-// writer-per-scope), with explicit regression cover for the cycle-4
-// fix at `foundation/persistence/postgres/advisory_locker.go::TakeScopeLockInTx`
+// ClaimScope-conflict race scenario coverage — invariant 4b (single-
+// writer-per-claim-scope), with explicit regression cover for the cycle-4
+// fix at `foundation/persistence/postgres/advisory_locker.go::TakeClaimScopeLockInTx`
 // (called from `runtime/runner_acquire.go::acquireClaim`).
 //
 // Setup:
@@ -18,14 +18,14 @@
 //     ownership.
 //
 // The load-bearing assertion: at no point during acquisition do TWO
-// `rimsky_claim_handles` rows for the contended scope exist
-// simultaneously. The advisory lock on `(store, scope)` serializes
+// `rimsky_claim_handles` rows for the contended claim-scope exist
+// simultaneously. The advisory lock on `(store, claim_scope)` serializes
 // the two acquisition transactions; only one can pass
-// `evaluateScopeConflict` at a time. After the first commits, the
+// `evaluateClaimScopeConflict` at a time. After the first commits, the
 // second's predicate sees the holder row and returns conflict=true.
 //
-// SQL-primitive coverage of `TakeScopeLockInTx` itself lives in
-// `foundation/persistence/conformance/sort_order.go` (the scope-lock
+// SQL-primitive coverage of `TakeClaimScopeLockInTx` itself lives in
+// `foundation/persistence/conformance/sort_order.go` (the claim-scope-lock
 // branch of the sort-order conformance test, which both postgres and
 // sqlite drivers run). This scenario test exercises it through the real
 // supervisor acquisition flow.
@@ -51,11 +51,11 @@ import (
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
-// TestScopeClaimRace_OneAcquirerWins exercises the single-writer-per-
-// scope invariant by racing two supervisors against the same selector.
-// Exactly one wins; the other backs off with Ran=false (scope conflict
+// TestClaimScopeClaimRace_OneAcquirerWins exercises the single-writer-per-
+// claim-scope invariant by racing two supervisors against the same selector.
+// Exactly one wins; the other backs off with Ran=false (claim-scope conflict
 // is a soft skip, not an error).
-func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
+func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -206,7 +206,7 @@ func TestScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles
-		  WHERE producer_name = $1 AND lock_kind = 'scope'`,
+		  WHERE producer_name = $1 AND lock_kind = 'claim_scope'`,
 		"content",
 	).Scan(&lhCount))
 	require.LessOrEqual(t, lhCount, 1,

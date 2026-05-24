@@ -210,18 +210,18 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 
 	const storeName = "fan-out-store"
 	// Producer fake — advertises SplitScope so AcquireSubClaims can call
-	// it; SplitScopeFunc returns two sub-scopes.
+	// it; SplitClaimScopeFunc returns two sub-claim-scopes.
 	reg := locks.NewRegistry()
 	store := storetest.NewFake(storeName, locks.Capabilities{
 		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
-	store.SplitScopeFunc = func(req locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+	store.SplitClaimScopeFunc = func(req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
 		// Two sub-scopes; bytes are inert in rimsky.
-		return locks.SplitScopeResponse{
-			SubScopes: []locks.SubScopeDescriptor{
-				{PartitionKey: "alpha", ScopeData: []byte(`{"p":"alpha"}`)},
-				{PartitionKey: "beta", ScopeData: []byte(`{"p":"beta"}`)},
+		return locks.SplitClaimScopeResponse{
+			SubClaimScopes: []locks.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
+				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`)},
 			},
 		}, nil
 	}
@@ -254,12 +254,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmplRow.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
@@ -288,7 +283,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			ID:                 parentClaimID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producerName,
-			ScopeData:          parentScope,
+			ClaimScopeData:     parentScope,
 			Address:            parentAddr,
 			Intent:             &intent,
 			HolderSupervisorID: "sup-FAN",
@@ -305,7 +300,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := runtime.AcquireSubClaims(ctx, args, tx, runtime.AcquireSubClaimsInput{
 			ParentClaimHandleID: parentClaimID,
-			ParentScope:         parentScope,
+			ParentClaimScope:    parentScope,
 			ProducerName:        storeName,
 			NodeRunID:           parentRunID,
 			HolderNodeID:        parentNode.ID,

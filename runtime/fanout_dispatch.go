@@ -18,13 +18,13 @@
 //   - Acquisition-phase (E4, already landed): when a template node
 //     declares `fan_out:`, the supervisor's acquire-tx calls
 //     `ClaimProducer.SplitScope` on the parent claim and INSERTs one
-//     `rimsky_claim_handles` sub-claim row per `SubScopeDescriptor`.
+//     `rimsky_claim_handles` sub-claim row per `SubClaimScopeDescriptor`.
 //     `runtime/runner_subclaim.go::AcquireSubClaims` is the helper.
 //
 //   - Dispatch-phase (this file): post-acquisition, the supervisor
 //     creates one child `rimsky_node_runs` row per sub-claim
 //     (`parent_run_id = <fan-out node's run>`,
-//     `child_key = <partition_key from the SubScopeDescriptor>`). Each
+//     `child_key = <partition_key from the SubClaimScopeDescriptor>`). Each
 //     child run dispatches independently to the leaf executor; the
 //     parent run aggregates per its `AggregationPolicy` (the standard
 //     run-tree aggregation engine in `runtime/state_propagation.go`).
@@ -63,6 +63,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/google/uuid"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
@@ -233,27 +235,67 @@ func (r *FanOutSemaphoreRegistry) Drop(parentRunID shared.UUID) {
 }
 
 // CreateFanOutChildren is the dispatch-side helper that, given a slice
-// of `FanOutChildRunPlan`s, INSERTs one `rimsky_node_runs` child row
-// per plan via `persistence.RunTreeTable.CreateChildRun`. Idempotent
-// per the `(parent_run_id, child_key)` uniqueness constraint — a
-// duplicate plan returns the existing row id.
+// of `FanOutChildRunPlan`s, allocates a `fanout_partition` RunScope per
+// child and INSERTs one `rimsky_node_runs` child row per plan via
+// `persistence.RunTreeTable.CreateChildRun`. Idempotent per the
+// `(node_id, run_scope_id)` uniqueness constraint — a duplicate plan
+// returns the existing row id (queue lookup in `CreateChildRun`).
+//
+// The parent RunScope id is required so each child's `fanout_partition`
+// RunScope is rooted under the same instance and parent_run_scope
+// chain. The parent run id keys the per-partition uniqueness on
+// rimsky_run_scopes.
 //
 // Aggregation policy snapshotted from the fan-out node's `error_policy`
 // (the caller's responsibility to pass).
 //
-// Operates inside the caller's tx so the child INSERTs commit
-// atomically with the parent's acquisition / terminal write.
+// Operates inside the caller's tx so the RunScope + child INSERTs
+// commit atomically with the parent's acquisition / terminal write.
+//
+// @concept: run-scope
+// @concept: fan-out
 func CreateFanOutChildren(
 	ctx context.Context, tx persistence.Tx,
 	rt persistence.RunTreeTable,
+	scopes persistence.RunScopeTable,
+	queue persistence.Queue,
+	parentScope persistence.RunScopeRow,
+	parentRunID shared.UUID,
+	instanceID shared.UUID,
+	graphName string,
 	plans []FanOutChildRunPlan,
 	policy spec.AggregationPolicy,
 ) ([]shared.UUID, error) {
 	out := make([]shared.UUID, 0, len(plans))
+	parentScopeID := parentScope.ID
 	for _, p := range plans {
+		// First, look up (or create) the fanout_partition RunScope
+		// keyed on (parent_run_id, partition_key).
+		var childScopeID shared.UUID
+		existing, err := scopes.GetFanoutPartition(ctx, tx, parentRunID, p.PartitionKey)
+		if err != nil {
+			return nil, fmt.Errorf("CreateFanOutChildren: lookup partition %q: %w", p.PartitionKey, err)
+		}
+		if existing != nil {
+			childScopeID = existing.ID
+		} else {
+			childScopeID = shared.UUID(uuid.New())
+			parentRun := parentRunID
+			parentScopeIDCopy := parentScopeID
+			if err := scopes.Create(ctx, tx, persistence.RunScopeRow{
+				ID:               childScopeID,
+				ParentRunScopeID: &parentScopeIDCopy,
+				ParentRunID:      &parentRun,
+				GraphName:        graphName,
+				PartitionKey:     p.PartitionKey,
+				InstanceID:       instanceID,
+			}); err != nil {
+				return nil, fmt.Errorf("CreateFanOutChildren: create partition %q: %w", p.PartitionKey, err)
+			}
+		}
 		runID, err := CreateChildRun(
-			ctx, tx, rt,
-			p.ParentRunID, p.PartitionKey, p.NodeID, p.FrameID,
+			ctx, tx, rt, queue,
+			p.NodeID, p.FrameID, childScopeID,
 			p.Executor, p.RequiredStores, policy)
 		if err != nil {
 			return nil, fmt.Errorf("CreateFanOutChildren: child %q: %w", p.PartitionKey, err)
@@ -332,7 +374,19 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		if err := args.Persist.RunTree().UpdateAggregationPolicy(ctx, tx, acq.DispatchID, policy); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: snapshot policy: %w", err)
 		}
-		ids, err := CreateFanOutChildren(ctx, tx, args.Persist.RunTree(), plans, spec.AggregationPolicy{})
+		// Resolve the parent run's RunScope: each fanout child gets a
+		// fresh fanout_partition RunScope rooted under it.
+		parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, acq.RunScopeID)
+		if err != nil {
+			return fmt.Errorf("dispatchFanOutChildren: load parent run scope: %w", err)
+		}
+		if parentScope == nil {
+			return fmt.Errorf("dispatchFanOutChildren: parent run scope %s not found", acq.RunScopeID)
+		}
+		ids, err := CreateFanOutChildren(
+			ctx, tx, args.Persist.RunTree(), args.Persist.RunScopes(), args.Queue,
+			*parentScope, acq.DispatchID, acq.InstanceID, acq.GraphName,
+			plans, spec.AggregationPolicy{})
 		if err != nil {
 			return err
 		}

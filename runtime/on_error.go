@@ -32,6 +32,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -51,6 +52,14 @@ type OnErrorArgs struct {
 	Logger     shared.Logger
 	NodeID     shared.UUID
 	InstanceID shared.UUID
+	// RunScopeID identifies the RunScope this error pertains to.
+	// Required: every in-flight run belongs to some RunScope (main /
+	// subgraph / fanout_partition); the (node_id, run_scope_id) pair
+	// resolves the specific in-flight rimsky_node_runs row. Per
+	// concept:run-scope.
+	//
+	// @concept: run-scope
+	RunScopeID shared.UUID
 	// SupervisorID identifies the supervisor handling the current run. When
 	// non-empty, queue deletes (RemoveForNode) are claimant-guarded so a stale
 	// sweep from a different supervisor can't accidentally drop our row.
@@ -85,12 +94,25 @@ type OnErrorArgs struct {
 //	`template_validation_failed`, `executor_schema_unavailable`, and
 //	`attributes_schema_failed` when the template declares no override
 //	(via the policy == nil branch of node.Evaluate).
+//
+// @blessed-invariant: State-machine writes for a single run must be
+// tx-atomic. Any operation that reads a run's current state to
+// decide what state to write must perform the read and the write
+// in the same transaction. Per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
 func OnError(ctx context.Context, args OnErrorArgs) error {
 	sb, log := args.Persist, args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
 
+	// Outer read fetches only the immutable fields used outside the
+	// mutating tx — NodeType / InstanceID feed lookupPolicy and
+	// requiredStoresForNode; Executor is needed for the retry-branch
+	// enqueue. The mutable fields (State, FrameID, InFlightRunID) are
+	// re-read INSIDE each mutating tx below so the state-machine
+	// tx-atomicity invariant holds even if a concurrent sweep rotated
+	// the in-flight run between the outer read and the inner mutation.
 	var nd *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		n, err := sb.Nodes().Get(ctx, args.NodeID, tx)
@@ -109,15 +131,35 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		return err
 	}
 
-	state := node.EvaluatorState{
-		ActionIndex:       nd.ActionIndex,
-		RetryCounter:      nd.RetryCounter,
-		CurrentErrorClass: nd.CurrentErrorClass,
-	}
-	resolved := node.Evaluate(policy, state, args.ErrorClass, nil)
+	// Compute required stores BEFORE entering any outer state-mutation tx.
+	// requiredStoresForNode internally opens its own sb.Transaction —
+	// if called inside the outer tx, the nested Transaction blocks
+	// forever on the SQLite single-conn pool (MaxOpenConns=1) and ties
+	// up two pool connections concurrently under postgres. Capture the
+	// result here; pass into the closure via the captured variable.
+	requiredStores := requiredStoresForNode(ctx, sb, nd)
 
-	// Persist resolved EvaluatorState + log the occurrence in one short tx.
+	// Bundle the EvaluatorState read with the state mutation so they
+	// land in a single tx (state-machine tx atomicity invariant): the
+	// row's ActionIndex/RetryCounter/CurrentErrorClass that feed
+	// node.Evaluate are re-read here from the same tx that writes the
+	// advanced state, closing the race window where another writer
+	// could have advanced the row between read and write.
+	var resolved node.ResolvedAction
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
+		if err != nil {
+			return err
+		}
+		if cur == nil {
+			return nil
+		}
+		state := node.EvaluatorState{
+			ActionIndex:       cur.ActionIndex,
+			RetryCounter:      cur.RetryCounter,
+			CurrentErrorClass: cur.CurrentErrorClass,
+		}
+		resolved = node.Evaluate(policy, state, args.ErrorClass, nil)
 		if err := sb.Nodes().UpdateError(ctx, args.NodeID, resolved.NewState, tx); err != nil {
 			return err
 		}
@@ -139,9 +181,31 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 
 	switch resolved.Kind {
 	case "retry", "discard_then_retry", "resume_then_retry":
-		if nd.State == cascade.NodeStateRunning {
-			if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				if err := sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
+		// Wrap remove + enqueue (and the optional running→stale
+		// transition + cascade walk) in one tx so a partial commit
+		// can't strand the node with no in-flight row and no
+		// replacement. Mirrors `applyResolvedAction` in
+		// `runner_error_policy.go`. Without this, a remove that
+		// committed followed by an enqueue that failed would leave
+		// the node with no in-flight row.
+		return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			// Re-read mutable fields (State, FrameID, InFlightRunID)
+			// INSIDE this tx so the read-then-write pair is atomic.
+			// Using these from the outer read could race with a
+			// concurrent sweep that rotated the in-flight dispatch
+			// between the two reads.
+			cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
+			if err != nil {
+				return err
+			}
+			if cur == nil {
+				return nil
+			}
+			if cur.FrameID == nil {
+				return fmt.Errorf("OnError retry: node %s has nil frame_id", args.NodeID)
+			}
+			if cur.State == cascade.NodeStateRunning {
+				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
 					return err
 				}
 				// Pessimistic-invalidate: running → stale is this
@@ -150,29 +214,62 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				//
 				//	@concept: cascade
 				//	@concept: wait-set
-				if nd.FrameID != nil {
-					return walkCascadeForInvalidatedNode(ctx, sb, args.Queue, tx, log, args.NodeID, nd.InstanceID, *nd.FrameID)
+				if err := walkCascadeForInvalidatedNode(ctx, sb, args.Queue, tx, log, args.NodeID, cur.InstanceID, *cur.FrameID); err != nil {
+					return err
 				}
-				return nil
-			}); err != nil {
+			}
+			// Recovery-aware fields: the in-flight run row at this
+			// point is the predecessor dispatch being retired by
+			// RemoveForNodeInTx; capture its id BEFORE the remove so
+			// the new dispatch's proto:executor.proto::ExecuteRequest.
+			// prior_dispatch_id resolves to the run that errored.
+			priorID := cur.InFlightRunID
+			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
 				return err
 			}
-		}
-		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
-		if nd.FrameID == nil {
-			return fmt.Errorf("OnError retry: node %s has nil frame_id", args.NodeID)
-		}
-		return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:         args.NodeID,
-			ExecutorName:   nd.Executor,
-			RequiredStores: requiredStoresForNode(ctx, sb, nd),
-			EnqueuedAt:     args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
-			FrameID:        *nd.FrameID,
+			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+				NodeID:                   args.NodeID,
+				ExecutorName:             cur.Executor,
+				RequiredStores:           requiredStores,
+				EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+				FrameID:                  *cur.FrameID,
+				RunScopeID:               args.RunScopeID,
+				PriorDispatchID:          priorID,
+				PriorDispatchDisposition: "retry_after_error",
+			}, tx); err != nil {
+				// Defensive: closed RunScope means the rendezvous has
+				// fired before the retry could land. Walker discipline
+				// per concept:run-scope: do not enqueue into a closed
+				// scope; the policy chain's state advancement already
+				// committed (give-up path will fire on the next error
+				// occurrence if there is one).
+				if errors.Is(err, persistence.ErrRunScopeClosed) {
+					log.Warn("OnError retry: skip enqueue: run scope closed",
+						"node_id", args.NodeID.String(),
+						"run_scope_id", args.RunScopeID.String())
+					return nil
+				}
+				return err
+			}
+			return nil
 		})
 
 	case "give_up":
-		if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := sb.Nodes().UpdateState(ctx, args.NodeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
+		// Bundle state write + queue remove (and the optional wait-set
+		// drain) in one tx so a partial commit can't leave the run
+		// failed with its dispatch row stranded. Mirrors the retry
+		// branch's same-tx atomicity.
+		return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			// Re-read mutable fields inside the same tx that writes
+			// state (tx-atomicity invariant).
+			cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
+			if err != nil {
+				return err
+			}
+			if cur == nil {
+				return nil
+			}
+			if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
 				return err
 			}
 			// Settled-state drain on failed: any wait-set rows gating
@@ -181,20 +278,19 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			// helper.
 			//
 			//	@concept: wait-set
-			if nd.FrameID != nil {
-				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, *nd.FrameID)
+			if cur.FrameID != nil {
+				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID)
 				if err != nil {
 					return err
 				}
 				if ok {
-					return sb.WaitSet().MarkDrainedBySender(ctx, *nd.FrameID, runID, tx)
+					if err := sb.WaitSet().MarkDrainedBySender(ctx, *cur.FrameID, runID, tx); err != nil {
+						return err
+					}
 				}
 			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		_ = args.Queue.RemoveForNode(ctx, args.NodeID, args.SupervisorID)
+			return args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx)
+		})
 	}
 	// `invalidate` action retired under the 2026-05-14 subscription-
 	// cascade resolution; the validator rejects it at deploy time.

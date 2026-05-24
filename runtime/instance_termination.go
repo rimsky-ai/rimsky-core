@@ -82,7 +82,7 @@ func ReleaseHeldDurableClaims(
 			continue
 		}
 		claimID := locks.ClaimID(r.ID.String())
-		if err := producer.Release(ctx, claimID, []byte(r.ScopeData), []byte(r.Address)); err != nil {
+		if err := producer.Release(ctx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName, Err: err,
 			})

@@ -63,6 +63,6 @@ import (
 // `SupportsScopesConflict: true` may define overlap via `ScopesConflict`
 // (e.g. range-overlap, prefix-containment, MVCC snapshot overlap);
 // producers that don't advertise default to byte-equal comparison of
-// `rimsky_claim_handles.scope_data`. Either way, two writers cannot
-// simultaneously hold the same logical scope.
+// `rimsky_claim_handles.claim_scope_data`. Either way, two writers cannot
+// simultaneously hold the same logical claim-scope.
 type ClaimProducer = claimproducer.ClaimProducer

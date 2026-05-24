@@ -57,7 +57,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("pass 1 iteration %d: expected Available, got Unavailable", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-c%d", i), o.Result.Scope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p1-c%d", i), o.Result.ClaimScope, o.Result.Address))
 	}
 	if _, err := os.Stat(drainedPathFor(root, "@r")); err != nil {
 		t.Errorf("pass 1: expected drained sentinel after final pop; stat err = %v", err)
@@ -87,7 +87,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		if !o.Available {
 			t.Fatalf("pass 2 iteration %d: expected Available, got Unavailable", i)
 		}
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-c%d", i), o.Result.Scope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p2-c%d", i), o.Result.ClaimScope, o.Result.Address))
 	}
 	o, err = st.Open(context.Background(), "p2-x", "@r")
 	must(t, err)
@@ -105,7 +105,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 			break
 		}
 		picks++
-		must(t, st.Commit(context.Background(), fmt.Sprintf("p3-c%d", picks-1), o.Result.Scope, o.Result.Address))
+		must(t, st.Commit(context.Background(), fmt.Sprintf("p3-c%d", picks-1), o.Result.ClaimScope, o.Result.Address))
 		if picks > 5 {
 			t.Fatal("pass 3: more picks than expected")
 		}
@@ -247,7 +247,7 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 			if o.Available {
 				atomic.AddInt64(&available, 1)
 				if err := st.Commit(context.Background(), fmt.Sprintf("c-%d", i),
-					o.Result.Scope, o.Result.Address); err != nil {
+					o.Result.ClaimScope, o.Result.Address); err != nil {
 					t.Errorf("goroutine %d: Commit: %v", i, err)
 				}
 				return
@@ -297,7 +297,7 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 			break
 		}
 		must(t, st.Commit(context.Background(), fmt.Sprintf("post-storm-%d", i),
-			o.Result.Scope, o.Result.Address))
+			o.Result.ClaimScope, o.Result.Address))
 		curDrained := drainedFileExists(drainedPathFor(root, "@r"))
 		if curDrained != prevDrained {
 			drainedFlipped = true

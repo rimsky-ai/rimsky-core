@@ -160,6 +160,33 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.cancel_siblings")
 }
 
+// A calling node (`delegate:`) cannot itself declare `fan_out:`. The
+// canonicalizer absorbs the sub-graph entry's executor onto the
+// calling node, but it does NOT scope fan-out into the absorbed
+// sub-graph — every fan-out child would re-fire the internal cascade
+// as a separate parent at dispatch. Reject at registration so the
+// combination can't reach the runtime.
+func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "caller",
+				Delegate: "subgraph_x",
+				FanOut: &FanOutSpec{
+					Claim:            "items",
+					PartitionRequest: "{{trigger.message.payload.x}}",
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].fan_out")
+}
+
 func TestValidateFanOut_Ok(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",

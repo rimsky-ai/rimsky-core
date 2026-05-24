@@ -37,8 +37,8 @@ func TestSubstitute(t *testing.T) {
 		},
 		Claim: map[string]locks.ClaimResult{
 			"topics-ring": {
-				Address: mustJSON(t, "/data/topics/row-7"),
-				Scope:   mustJSON(t, "row-7"),
+				Address:    mustJSON(t, "/data/topics/row-7"),
+				ClaimScope: mustJSON(t, "row-7"),
 				Payload: mustJSON(t, map[string]any{
 					"area":     "rocky-shore",
 					"subtopic": "tidepools",
@@ -46,8 +46,8 @@ func TestSubstitute(t *testing.T) {
 				}),
 			},
 			"empty-payload": {
-				Address: mustJSON(t, "/data/none"),
-				Scope:   mustJSON(t, "row-8"),
+				Address:    mustJSON(t, "/data/none"),
+				ClaimScope: mustJSON(t, "row-8"),
 			},
 		},
 		Params: mustJSON(t, map[string]any{
@@ -89,7 +89,7 @@ func TestSubstitute(t *testing.T) {
 		{name: "claim bare payload (whole-object pull, embedded mode)", raw: " before {{claim.topics-ring.payload}} after",
 			want: ` before {"area":"rocky-shore","nested":{"deep":"from-claim"},"subtopic":"tidepools"} after`},
 		{name: "claim invalid second segment", raw: "{{claim.topics-ring.metadata.x}}", wantMissing: true,
-			missingSubstr: "second segment must be address|scope|payload"},
+			missingSubstr: "second segment must be address|claim_scope|payload"},
 		{name: "claim empty payload", raw: "{{claim.empty-payload.payload.area}}", wantMissing: true,
 			missingSubstr: "claim payload is empty"},
 
@@ -98,10 +98,10 @@ func TestSubstitute(t *testing.T) {
 		{name: "claim address takes no field", raw: "{{claim.topics-ring.address.x}}", wantMissing: true,
 			missingSubstr: "address takes no further field path"},
 
-		// claim scope
-		{name: "claim scope", raw: "{{claim.topics-ring.scope}}", want: "row-7"},
-		{name: "claim scope takes no field", raw: "{{claim.topics-ring.scope.x}}", wantMissing: true,
-			missingSubstr: "scope takes no further field path"},
+		// claim claim_scope
+		{name: "claim claim_scope", raw: "{{claim.topics-ring.claim_scope}}", want: "row-7"},
+		{name: "claim claim_scope takes no field", raw: "{{claim.topics-ring.claim_scope.x}}", wantMissing: true,
+			missingSubstr: "claim_scope takes no further field path"},
 
 		// params
 		{name: "params simple", raw: "{{params.customer_id}}", want: "cust-123"},

@@ -328,10 +328,16 @@ func handleBackfillPartitions(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			for _, c := range children {
+				// Resolve partition_key from the child's RunScope —
+				// RunTreeRow no longer projects child_key inline.
+				partitionKey := ""
+				if scope, _ := deps.Persist.RunScopes().GetByID(ctx, tx, c.RunScopeID); scope != nil {
+					partitionKey = scope.PartitionKey
+				}
 				partitions = append(partitions, backfillPartitionRow{
 					RunID:       c.RunID.String(),
 					NodeID:      c.NodeID.String(),
-					ChildKey:    c.ChildKey,
+					ChildKey:    partitionKey,
 					State:       string(c.State),
 					LastOutcome: string(c.LastOutcome),
 				})
@@ -415,7 +421,15 @@ func runTreeRowForNodeInFrame(
 	ctx context.Context, deps AppDeps, tx persistence.Tx,
 	nodeID shared.UUID, frameID shared.UUID,
 ) (*persistence.RunTreeRow, error) {
-	runID, ok, err := deps.Queue.GetInFlightRunForNode(ctx, tx, nodeID, frameID)
+	// Resolve the node's projected RunScope; GetInFlightRunForNode
+	// keys on (node_id, run_scope_id) under RunScope-first. Without a
+	// RunScope projection we have no key.
+	node, err := deps.Persist.Nodes().Get(ctx, nodeID, tx)
+	if err != nil || node == nil || node.RunScopeID == nil {
+		return nil, err
+	}
+	_ = frameID
+	runID, ok, err := deps.Queue.GetInFlightRunForNode(ctx, tx, nodeID, *node.RunScopeID)
 	if err != nil {
 		return nil, err
 	}

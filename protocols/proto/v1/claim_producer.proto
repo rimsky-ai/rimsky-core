@@ -14,7 +14,7 @@
 //   - claim_id is a UUID textual form (string), generated client-side
 //     before Open is called and threaded through every subsequent verb
 //     for that claim's lifecycle.
-//   - scope, address, payload are opaque bytes (json.RawMessage on the
+//   - claim_scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
 //   - selector, intent, alias, producer_name are strings.
 //
@@ -74,7 +74,7 @@ service ClaimProducer {
   // CapabilitiesResponse.supports_scopes_conflict = true MUST
   // implement this RPC. When unsupported, rimsky falls back to the
   // byte-equal default (per @blessed-invariant 4b).
-  rpc ScopesConflict(ScopesConflictRequest) returns (ScopesConflictResponse);
+  rpc ScopesConflict(ClaimScopesConflictRequest) returns (ScopesConflictResponse);
 }
 
 // WriteSemantics declares how a claim handle's writes coexist with
@@ -161,7 +161,7 @@ message OpenResponse {
 message Acquired {
   bytes address = 1;
   bytes payload = 2;
-  bytes scope   = 3;
+  bytes claim_scope = 3;
   WriteSemantics realized_write_semantics = 4;
 }
 
@@ -170,7 +170,7 @@ message Unavailable {}
 
 message CommitRequest {
   string claim_id = 1;
-  bytes  scope    = 2;
+  bytes  claim_scope = 2;
   bytes  address  = 3;
 }
 
@@ -187,7 +187,7 @@ message CommitResponse {
 
 message AbandonRequest {
   string claim_id = 1;
-  bytes  scope    = 2;
+  bytes  claim_scope = 2;
   bytes  address  = 3;  // may be empty; producer identifies state by claim_id
 }
 
@@ -195,7 +195,7 @@ message AbandonResponse {}
 
 message ReleaseRequest {
   string claim_id = 1;
-  bytes  scope    = 2;
+  bytes  claim_scope = 2;
   bytes  address  = 3;
 }
 
@@ -211,15 +211,15 @@ message SplitScopeRequest {
   bytes  partition_request = 2;
 }
 
-// SubScopeDescriptor identifies one of the sub-scopes the producer
-// partitioned the parent into. scope_data is producer-canonicalized
-// bytes (same shape rimsky stores on rimsky_claim_handles.scope_data);
+// SubScopeDescriptor identifies one of the sub-claim-scopes the producer
+// partitioned the parent into. claim_scope_data is producer-canonicalized
+// bytes (same shape rimsky stores on rimsky_claim_handles.claim_scope_data);
 // partition_key is the human-readable key rimsky persists in
 // col:rimsky_node_runs.child_key for run-tree bookkeeping;
-// producer_metadata is opaque per-sub-scope info the producer wants
+// producer_metadata is opaque per-sub-claim-scope info the producer wants
 // persisted on the row.
 message SubScopeDescriptor {
-  bytes  scope_data       = 1;
+  bytes  claim_scope_data  = 1;
   string partition_key    = 2;
   bytes  producer_metadata = 3;
 }
@@ -228,13 +228,13 @@ message SplitScopeResponse {
   repeated SubScopeDescriptor sub_scopes = 1;
 }
 
-// ScopesConflictRequest asks the producer whether two scope_data byte
-// strings should conflict (single-writer-per-scope serialization).
+// ClaimScopesConflictRequest asks the producer whether two claim_scope_data byte
+// strings should conflict (single-writer-per-claim-scope serialization).
 // When unsupported (CapabilitiesResponse.supports_scopes_conflict =
 // false), rimsky uses byte-equal as the trivial default.
-message ScopesConflictRequest {
-  bytes scope_a = 1;
-  bytes scope_b = 2;
+message ClaimScopesConflictRequest {
+  bytes claim_scope_a = 1;
+  bytes claim_scope_b = 2;
 }
 
 message ScopesConflictResponse {

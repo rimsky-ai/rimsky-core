@@ -123,10 +123,25 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 		 VALUES ('tpl-1', '{}', 'deployed')`); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	if _, err := db.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key)
-		 VALUES ('inst-1', 'tpl-1', 'ck-1')`); err != nil {
+	// Post-RunScope-first: instance + main_run_scope mutually FK each
+	// other (DEFERRABLE INITIALLY DEFERRED). Seed in one tx.
+	stx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = stx.Rollback() }()
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, main_run_scope_id)
+		 VALUES ('inst-1', 'tpl-1', 'ck-1', 'scope-1')`); err != nil {
 		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id)
+		 VALUES ('scope-1', 'main', '', 'inst-1')`); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := stx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type)

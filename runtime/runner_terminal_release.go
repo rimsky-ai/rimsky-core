@@ -128,7 +128,7 @@ func releaseClaim(
 		address []byte
 	)
 	if row != nil {
-		scope = []byte(row.ScopeData)
+		scope = []byte(row.ClaimScopeData)
 		address = []byte(row.Address)
 	}
 	verbAction := releaseActionString(success)

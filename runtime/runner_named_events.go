@@ -29,10 +29,16 @@ import (
 )
 
 // processNamedEvents walks the captured event list, persists each via
-// NodeEventTable (with blob-spill where appropriate), and fires any
-// matching on_event handlers on the emitter node. Best-effort: failures
-// to persist a single event are logged and the next event is processed;
-// the terminal verdict is not blocked.
+// NodeEventTable (with blob-spill where appropriate). Best-effort:
+// failures to persist a single event are logged and the next event is
+// processed; the terminal verdict is not blocked.
+//
+// Called BEFORE the terminal-determinism tx opens (in
+// runApplyTerminal). Each persist runs in its own short tx so per-row
+// emitted_at timestamps land in source order — postgres NOW() is
+// constant for a tx lifetime, so collapsing multiple emissions into
+// one tx would break LatestByName ordering
+// (TestOnEventMultipleEmissionsLatestWins).
 func processNamedEvents(ctx context.Context, args RunArgs, acq *acquisition, events []namedEventRecord) {
 	if len(events) == 0 {
 		return
@@ -93,8 +99,7 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 		FrameID:              acq.FrameID.String(),
 	}
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := args.Persist.NodeEvents().Insert(ctx, row, tx)
-		if err != nil {
+		if _, err := args.Persist.NodeEvents().Insert(ctx, row, tx); err != nil {
 			return fmt.Errorf("NodeEvents.Insert(%s/%s/%s): %w",
 				acq.InstanceID, acq.NodeID, evt.Name, err)
 		}

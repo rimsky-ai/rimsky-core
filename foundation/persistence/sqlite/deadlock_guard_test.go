@@ -161,6 +161,9 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Instances.CountByActive", func() {
 			_, _, _ = store.Instances().CountByActive(ctx, nil)
 		}},
+		{"Instances.IncrementAttributeOverrideMatchCounts", func() {
+			_ = store.Instances().IncrementAttributeOverrideMatchCounts(ctx, someID, []int{0}, nil)
+		}},
 		// LifecycleIdempotency
 		{"LifecycleIdempotency.Get", func() {
 			_, _ = store.LifecycleIdempotency().Get(ctx, "s", persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
@@ -212,22 +215,25 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_, _ = store.Nodes().CountByState(ctx, nil)
 		}},
 		{"Nodes.UpdateState", func() {
-			_ = store.Nodes().UpdateState(ctx, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
+			_ = store.Nodes().UpdateState(ctx, someID, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
 		}},
 		{"Nodes.UpdateHeartbeat", func() {
-			_ = store.Nodes().UpdateHeartbeat(ctx, someID, time.Now(), "sup", nil)
+			_ = store.Nodes().UpdateHeartbeat(ctx, someID, someID, time.Now(), "sup", nil)
 		}},
 		{"Nodes.SetFrameID", func() {
 			_ = store.Nodes().SetFrameID(ctx, someID, nil, nil)
 		}},
 		{"Nodes.ClearSupervisorAssignment", func() {
-			_ = store.Nodes().ClearSupervisorAssignment(ctx, someID, nil)
+			_ = store.Nodes().ClearSupervisorAssignment(ctx, someID, someID, nil)
+		}},
+		{"Nodes.ClearLastOutcome", func() {
+			_ = store.Nodes().ClearLastOutcome(ctx, someID, someID, nil)
 		}},
 		{"Nodes.DeleteByInstance", func() {
 			_ = store.Nodes().DeleteByInstance(ctx, someID, nil)
 		}},
 		{"Nodes.MarkStaleForCascade", func() {
-			_, _ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
+			_ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
 		}},
 		// ClaimHandles
 		{"ClaimHandles.Insert", func() {
@@ -257,8 +263,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.CountByNamedLock", func() {
 			_, _ = store.ClaimHandles().CountByNamedLock(ctx, "n", nil)
 		}},
-		{"ClaimHandles.ListByProducerScope", func() {
-			_, _ = store.ClaimHandles().ListByProducerScope(ctx, "s", nil)
+		{"ClaimHandles.ListByProducerClaimScope", func() {
+			_, _ = store.ClaimHandles().ListByProducerClaimScope(ctx, "s", nil)
 		}},
 		{"ClaimHandles.DeleteIfExpired", func() {
 			_, _ = store.ClaimHandles().DeleteIfExpired(ctx, someID, "sup", nil)
@@ -266,8 +272,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.LockForUpdate", func() {
 			_, _ = store.ClaimHandles().LockForUpdate(ctx, someID, nil)
 		}},
-		{"ClaimHandles.UpdateScope", func() {
-			_ = store.ClaimHandles().UpdateScope(ctx, someID, "sup", nil, nil)
+		{"ClaimHandles.UpdateClaimScope", func() {
+			_ = store.ClaimHandles().UpdateClaimScope(ctx, someID, "sup", nil, nil)
 		}},
 		{"ClaimHandles.UpdateRealizedWriteSemantics", func() {
 			_ = store.ClaimHandles().UpdateRealizedWriteSemantics(ctx, someID, "sup", "sync", nil)
@@ -317,7 +323,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_, _ = store.NodeAttributes().GetByRun(ctx, someID, nil)
 		}},
 		{"NodeAttributes.GetLatestByNode", func() {
-			_, _ = store.NodeAttributes().GetLatestByNode(ctx, someID, nil)
+			_, _ = store.NodeAttributes().GetLatestByNode(ctx, someID, someID, nil)
 		}},
 		{"NodeAttributes.Upsert", func() {
 			_ = store.NodeAttributes().Upsert(ctx, someID, someID, nil, nil)

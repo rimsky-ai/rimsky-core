@@ -120,7 +120,7 @@ func Run(ctx context.Context, c locks.ClaimProducer) []CheckResult {
 	// producers two Open calls return DIFFERENT scope bytes
 	// (different items), and asserting uniformity across non-byte-
 	// equal scopes is stricter than the invariant requires.
-	if !bytes.Equal(out1.Result.Scope, out2.Result.Scope) {
+	if !bytes.Equal(out1.Result.ClaimScope, out2.Result.ClaimScope) {
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
@@ -152,7 +152,7 @@ func runOptionalChecks(ctx context.Context, c locks.ClaimProducer, caps locks.Ca
 
 func checkSplitScope(ctx context.Context, c locks.ClaimProducer, caps locks.Capabilities) CheckResult {
 	if !caps.SupportsSplitScope {
-		_, err := c.SplitScope(ctx, locks.SplitScopeRequest{ClaimHandleID: "probe"})
+		_, err := c.SplitScope(ctx, locks.SplitClaimScopeRequest{ClaimHandleID: "probe"})
 		if err == nil {
 			return CheckResult{
 				Name: "SplitScopeSkipped",
@@ -169,7 +169,7 @@ func checkSplitScope(ctx context.Context, c locks.ClaimProducer, caps locks.Capa
 		}
 		return CheckResult{Name: "SplitScopeSkipped"}
 	}
-	req := locks.SplitScopeRequest{
+	req := locks.SplitClaimScopeRequest{
 		ClaimHandleID:    "rimsky/conformance/split-scope-probe",
 		PartitionRequest: []byte(`{"partition_keys":["a","b","c"]}`),
 	}
@@ -177,10 +177,10 @@ func checkSplitScope(ctx context.Context, c locks.ClaimProducer, caps locks.Capa
 	if err != nil {
 		return CheckResult{Name: "SplitScope", Err: err}
 	}
-	if len(resp.SubScopes) == 0 {
-		return CheckResult{Name: "SplitScope", Err: fmt.Errorf("SplitScope returned zero sub-scopes")}
+	if len(resp.SubClaimScopes) == 0 {
+		return CheckResult{Name: "SplitScope", Err: fmt.Errorf("SplitScope returned zero sub-claim-scopes")}
 	}
-	for i, sub := range resp.SubScopes {
+	for i, sub := range resp.SubClaimScopes {
 		if sub.PartitionKey == "" {
 			return CheckResult{
 				Name: "SplitScope",

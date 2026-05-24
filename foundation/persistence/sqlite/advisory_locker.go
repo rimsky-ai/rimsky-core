@@ -42,9 +42,9 @@ func (c *advisoryLockerImpl) TakeNamedLockInTx(_ context.Context, _ persistence.
 	return nil
 }
 
-// TakeScopeLockInTx is a no-op under SQLite. Same rationale as
+// TakeClaimScopeLockInTx is a no-op under SQLite. Same rationale as
 // TakeNamedLockInTx.
-func (c *advisoryLockerImpl) TakeScopeLockInTx(_ context.Context, _ persistence.Tx, _ string, _ []byte) error {
+func (c *advisoryLockerImpl) TakeClaimScopeLockInTx(_ context.Context, _ persistence.Tx, _ string, _ []byte) error {
 	return nil
 }
 

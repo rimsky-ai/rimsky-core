@@ -235,7 +235,7 @@ func (s *Store) openScoped(claimID, selector string) (corestore.OpenOutcome, err
 		Available: true,
 		Result: corestore.ClaimResult{
 			Address:                json.RawMessage(addrBytes),
-			Scope:                  json.RawMessage(scopeBytes),
+			ClaimScope:             json.RawMessage(scopeBytes),
 			RealizedWriteSemantics: corestore.WriteSemanticsSync,
 		},
 	}, nil

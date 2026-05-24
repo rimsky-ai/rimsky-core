@@ -94,7 +94,7 @@ type terminalEvent struct {
 	// Park fields — set when Kind == terminalKindPark.
 	ParkReason       genv1.ParkReason
 	ParkReasonNote   string
-	ParkReasonLabel  string // freeform label required when ParkReason == PARK_REASON_OTHER (spec E12)
+	ParkReasonLabel  string // freeform optional classification tag; opaque to rimsky (closed enum no longer requires it).
 	ParkPayload      []byte
 	ParkResumeAt     time.Time // zero ⇒ indefinite
 	ParkSessionToken string
@@ -298,7 +298,7 @@ func readExecutorStream(
 		switch e := ev.Event.(type) {
 		case *genv1.ExecuteEvent_Heartbeat:
 			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx)
+				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, acq.RunScopeID, args.Clock.Now(), args.SupervisorID, tx)
 			}); err != nil && args.Logger != nil {
 				args.Logger.Warn("runner_dispatch: update heartbeat failed",
 					"node_id", acq.NodeID.String(),
@@ -419,8 +419,19 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err != nil {
 		return nil, schema, err
 	}
-	resolved = applyAttributeOverrides(resolved, acq.InstanceAttributeOverrides, acq.Executor, acq.NodeType, args.Logger)
+	scope := resolveAcqScope(ctx, args, acq)
+	merged, matched := applyAttributeOverrides(
+		resolved,
+		acq.InstanceAttributeOverrides,
+		acq.Executor,
+		acq.NodeType,
+		acq.GraphName,
+		scope.PartitionKey,
+		args.Logger,
+	)
+	resolved = merged
 	acq.MergedAttributes = resolved
+	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
 	dispatchSchema := relaxRequiredToSourceDriven(schema)
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}
@@ -870,6 +881,25 @@ func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *ac
 // for both rimsky-resolved inputs and template-author static defaults;
 // the L3/L4 merge already happened in `resolveAttributes`. The wire no
 // longer carries a separate `userdata` field.
+// priorDispositionFromStorageForm maps the lower_snake_case storage
+// form persisted on col:rimsky_node_runs.prior_dispatch_disposition
+// back to the proto PriorDispatchDisposition enum. Unknown values
+// (including empty, which is the wire default) resolve to
+// PRIOR_NONE.
+//
+// @concept: run-scope
+func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
+	switch s {
+	case "heartbeat_stale":
+		return genv1.PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE
+	case "retry_after_error":
+		return genv1.PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR
+	case "recalculate":
+		return genv1.PriorDispatchDisposition_PRIOR_RECALCULATE
+	}
+	return genv1.PriorDispatchDisposition_PRIOR_NONE
+}
+
 func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.ExecuteRequest, error) {
 	acq := dctx.Acquired
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
@@ -911,6 +941,20 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
 		DispatchId:       acq.DispatchID.String(),
+	}
+	// Recovery-aware fields: surface the predecessor dispatch identity +
+	// classifier when this run supersedes a prior dispatch (heartbeat
+	// stale recovery, retry-after-error, recalculate). Both unset on
+	// initial dispatches. Per spec
+	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+	// §Recovery-aware executor protocol.
+	if acq.PriorDispatchID != nil {
+		pid := acq.PriorDispatchID.String()
+		req.PriorDispatchId = &pid
+	}
+	if acq.PriorDispatchDisposition != "" {
+		disposition := priorDispositionFromStorageForm(acq.PriorDispatchDisposition)
+		req.PriorDispatchDisposition = &disposition
 	}
 	// Resume dispatch: when this acquisition is resuming a parked node,
 	// attach the persisted park metadata as ResumeContext so the

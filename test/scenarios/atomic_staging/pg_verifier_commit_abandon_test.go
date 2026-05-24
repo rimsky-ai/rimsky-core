@@ -228,9 +228,9 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 	commitCtx, commitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer commitCancel()
 	if _, err := producer.Commit(commitCtx, &genv1.CommitRequest{
-		ClaimId: claimID,
-		Address: acquired.GetAddress(),
-		Scope:   acquired.GetScope(),
+		ClaimId:    claimID,
+		Address:    acquired.GetAddress(),
+		ClaimScope: acquired.GetClaimScope(),
 	}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -299,9 +299,9 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	abandonCtx, abandonCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer abandonCancel()
 	if _, err := producer.Abandon(abandonCtx, &genv1.AbandonRequest{
-		ClaimId: claimID,
-		Address: acquired.GetAddress(),
-		Scope:   acquired.GetScope(),
+		ClaimId:    claimID,
+		Address:    acquired.GetAddress(),
+		ClaimScope: acquired.GetClaimScope(),
 	}); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}

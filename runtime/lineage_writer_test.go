@@ -90,14 +90,14 @@ func TestWriteClaimTerminalLineage_VersionIDPersisted(t *testing.T) {
 	now := time.Now().UTC()
 	handle := shared.UUID(uuid.New())
 	rec := ClaimTerminalRecord{
-		ClaimHandleID: handle,
-		RunID:         shared.UUID(uuid.New()),
-		NodeID:        shared.UUID(uuid.New()),
-		FrameID:       frame,
-		ProducerName:  "parquet-store",
-		VersionID:     "v123",
-		ScopeDataHash: HashBytes([]byte(`{"dataset":"d"}`)),
-		Outcome:       persistence.LineageOutcomeCommitted,
+		ClaimHandleID:      handle,
+		RunID:              shared.UUID(uuid.New()),
+		NodeID:             shared.UUID(uuid.New()),
+		FrameID:            frame,
+		ProducerName:       "parquet-store",
+		VersionID:          "v123",
+		ClaimScopeDataHash: HashBytes([]byte(`{"dataset":"d"}`)),
+		Outcome:            persistence.LineageOutcomeCommitted,
 	}
 	if err := WriteClaimTerminalLineage(ctx, nil, lt, inst, frame, now, rec); err != nil {
 		t.Fatalf("WriteClaimTerminalLineage: %v", err)
@@ -295,8 +295,9 @@ func (f *emitFakePersist) Lineage() persistence.LineageTable                    
 func (f *emitFakePersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (f *emitFakePersist) RunTree() persistence.RunTreeTable { return nil }
-func (f *emitFakePersist) APIKeys() persistence.APIKeyTable  { return nil }
+func (f *emitFakePersist) RunTree() persistence.RunTreeTable    { return nil }
+func (f *emitFakePersist) RunScopes() persistence.RunScopeTable { return nil }
+func (f *emitFakePersist) APIKeys() persistence.APIKeyTable     { return nil }
 
 func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	// The writer is tx-agnostic — the in-memory fake doesn't care about
@@ -308,10 +309,10 @@ func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.C
 // end-to-end via a minimal RunArgs fixture and pins the nil-pointer →
 // empty-string conversion for ParentRunID:
 //
-//  1. With acq.ParentRunID == nil, the emitted row's LeafRunRecord has
+//  1. With in.ParentRunID == nil, the emitted row's LeafRunRecord has
 //     `ParentRunID == ""` (and the JSONB payload omits the key via
 //     `omitempty`, preserving the descendant-walker predicate).
-//  2. With acq.ParentRunID = &someID, the emitted row's LeafRunRecord
+//  2. With in.ParentRunID = &someID, the emitted row's LeafRunRecord
 //     has `ParentRunID == someID.String()`.
 //
 // The pre-2026-05-17 shape of this test called WriteLeafRunLineage
@@ -434,7 +435,7 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"TemplateNodeAlias", "template_node_alias", true},
 		{"ParamsSnapshotHash", "params_snapshot_hash", true},
 		{"AttributesHash", "attributes_hash", true},
-		{"ScopeDataHash", "scope_data_hash", true},
+		{"ClaimScopeDataHash", "claim_scope_data_hash", true},
 		{"State", "state", false},
 		{"LastOutcome", "last_outcome", false},
 		{"Changed", "changed", true},
@@ -466,7 +467,7 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"SubClaimHandleIDs", "sub_claim_handle_ids", true},
 		{"CommittedAt", "committed_at", true},
 		{"ProducerName", "producer_name", true},
-		{"ScopeDataHash", "scope_data_hash", true},
+		{"ClaimScopeDataHash", "claim_scope_data_hash", true},
 		{"VersionID", "version_id", true},
 		{"Outcome", "outcome", false},
 		{"Cause", "cause", true},

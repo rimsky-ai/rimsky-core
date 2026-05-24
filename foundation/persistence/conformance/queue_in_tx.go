@@ -40,6 +40,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        fix.FrameID,
+			RunScopeID:     fix.MainRunScopeID,
 		}, tx); err != nil {
 			return err
 		}
@@ -63,6 +64,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        fix.FrameID,
+			RunScopeID:     fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("EnqueueInTx commit: %v", err)
@@ -128,7 +130,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	// ---- RemoveForNodeInTx: rollback preserves the row ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := q.RemoveForNodeInTx(ctx, fix.NodeID, supID, tx); err != nil {
+		if err := q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx); err != nil {
 			return err
 		}
 		return rollbackErr
@@ -146,7 +148,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	// ---- RemoveForNodeInTx: claimant-guard mismatch is no-op ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, "different-supervisor", tx)
+		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, "different-supervisor", tx)
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx wrong sup: %v", err)
 	}
@@ -167,7 +169,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	// the row as active. The row itself survives so frame-end / retention
 	// / run-tree aggregation can read the terminal state + last_outcome.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.RemoveForNodeInTx(ctx, fix.NodeID, supID, tx)
+		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
 	}); err != nil {
 		t.Fatalf("RemoveForNodeInTx commit: %v", err)
 	}
@@ -189,6 +191,7 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        fix.FrameID,
+			RunScopeID:     fix.MainRunScopeID,
 		}, tx)
 	}); err != nil {
 		t.Fatalf("EnqueueInTx after retire: %v", err)

@@ -193,7 +193,7 @@ func lookupClaimAliasForProducer(s spec.TemplateSpec, nodeType, producerName str
 func toAssetItem(r persistence.ClaimHandleRow, node persistence.NodeRow, claimAlias string) assetItem {
 	out := assetItem{
 		ClaimID:      r.ID.String(),
-		Scope:        r.ScopeData,
+		Scope:        r.ClaimScopeData,
 		VersionID:    r.VersionID,
 		State:        string(r.State),
 		Lifetime:     string(r.Lifetime),
@@ -703,7 +703,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 		// ClaimProducer. Skip when no producer name is recorded (defensive).
 		if deps.Stores != nil && row.ProducerName != nil {
 			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
-				if err := producer.Release(req.Context(), locks.ClaimID(row.ID.String()), row.ScopeData, row.Address); err != nil {
+				if err := producer.Release(req.Context(), locks.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]any{
 						"error": "ClaimProducer.Release failed: " + err.Error(),
 					})

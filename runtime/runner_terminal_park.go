@@ -48,7 +48,9 @@ func parkReasonStorageForm(r genv1.ParkReason) string {
 
 // parkReasonFromStorageForm inverts parkReasonStorageForm: given the
 // snake_case text (used on the async-callback body), return the proto
-// enum value. Unrecognized inputs map to PARK_REASON_UNSPECIFIED.
+// enum value. Unrecognized inputs fall back to
+// PARK_REASON_AWAIT_CALLBACK, the safer of the two values in the
+// closed set (no auto-resume).
 //
 //	@concept: parked-state
 func parkReasonFromStorageForm(s string) genv1.ParkReason {
@@ -56,32 +58,26 @@ func parkReasonFromStorageForm(s string) genv1.ParkReason {
 	if v, ok := genv1.ParkReason_value[upper]; ok {
 		return genv1.ParkReason(v)
 	}
-	return genv1.ParkReason_PARK_REASON_UNSPECIFIED
+	return genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 }
 
 // applyTerminalPark handles the Park terminal event. Persists
 // the park metadata, spills large payloads, transitions the node-run
 // phase to parked, and transitions the node state to parked.
 //
-// Per spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Parked-state taxonomy: when ParkReason == PARK_REASON_OTHER, the
-// executor MUST supply a non-empty ParkReasonLabel; rimsky rejects the
-// park terminal otherwise.
+// Per the post-collapse ParkReason invariant (proto closed two-value
+// set: AWAIT_CALLBACK | SNOOZE; see proto:executor.proto::ParkReason),
+// the runtime no longer rejects park terminals on enum value: the
+// proto wire layer caps the set at decode, and both values are
+// unconditionally valid here.
 func applyTerminalPark(
-	ctx context.Context, args RunArgs, acq *acquisition, t terminalEvent,
-) error {
-	if t.ParkReason == genv1.ParkReason_PARK_REASON_UNSPECIFIED {
-		args.Logger.Warn("applyTerminalPark: reason unspecified (recommended typed)",
-			"node_id", acq.NodeID.String(),
-			"dispatch_id", acq.DispatchID.String())
-	}
-	if t.ParkReason == genv1.ParkReason_PARK_REASON_OTHER && strings.TrimSpace(t.ParkReasonLabel) == "" {
-		return fmt.Errorf("applyTerminalPark: park_reason_label is required when reason == OTHER (node=%s dispatch=%s)",
-			acq.NodeID.String(), acq.DispatchID.String())
-	}
+	ctx context.Context, args RunArgs, acq *acquisition, t terminalEvent, tx persistence.Tx,
+) (postCommitFn, error) {
 
 	// Compute payload spill: inline-or-handle based on threshold and
-	// backend availability.
+	// backend availability. Blob.Write is out-of-DB-tx by design (the
+	// blob backend is its own storage); fine to call inside the
+	// supervisor's outer tx.
 	var (
 		payloadInline        []byte
 		payloadHandle        string
@@ -141,77 +137,80 @@ func applyTerminalPark(
 		PayloadHandleBackend: payloadHandleBackend,
 	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
-			return err
-		}
-		// Per-row dispatch tuning denormalization (F2/F3) — populated at
-		// park-time so SweepParkedNodes can find the deadline without
-		// joining through templates.
-		if maxParkSec != nil || maxRetries != nil {
-			if err := args.Queue.UpdateDispatchTuningInTx(ctx, tx, acq.DispatchID, maxParkSec, maxRetries); err != nil {
-				return err
-			}
-		}
-		// Transition node state running → parked.
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-			cascade.NodeStateParked, cascade.ReasonHandlerPark, "", tx); err != nil {
-			return err
-		}
-		// Settled-state drain on park: the sender reached a settled
-		// state (parked); any wait-set rows gating receivers on this
-		// sender's run release.
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
-			return err
-		}
-		// Audit-log the park event.
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "park_requested",
-			Payload: map[string]any{
-				"reason":            parkReasonStorageForm(t.ParkReason),
-				"reason_note":       t.ParkReasonNote,
-				"reason_label":      t.ParkReasonLabel,
-				"resume_at":         resumeAtForLog(t.ParkResumeAt),
-				"has_session_token": t.ParkSessionToken != "",
-				"payload_bytes":     len(t.ParkPayload),
-				"spilled_to_blob":   payloadHandle != "",
-			},
-		}, tx)
-	}); err != nil {
-		return fmt.Errorf("applyTerminalPark: %w", err)
+	// Primary state-mutation work runs inline in the caller's outer tx.
+	if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
-	// E8: emit leaf-run lineage record for the park terminal. Spec
-	// §Content lineage requires every leaf-run terminal to record a
-	// lineage row, including parked (with `last_outcome` left empty per
-	// the park-has-no-outcome convention). Bytes are inert per
-	// @blessed-invariant 20/21; the lineage row carries hashes + run
-	// identifiers + state, not raw payload bytes.
-	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-		InstanceID:       acq.InstanceID,
-		FrameID:          acq.FrameID,
-		RunID:            acq.DispatchID,
-		NodeID:           acq.NodeID,
-		State:            string(cascade.NodeStateParked),
-		TerminalKind:     "park",
-		NodeAlias:        acq.NodeType,
-		ExecutorName:     acq.Executor,
-		TemplateHash:     acq.TemplateHash,
-		Params:           acq.InstanceParams,
-		AttributesMerged: acq.MergedAttributes,
-		HeldClaims:       HeldClaimsForLineage(acq),
-		ParentRunID:      acq.ParentRunID,
-		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
-	})
-	// Run-tree state propagation (E2): a parked child still produces a
-	// settled per-child state for the aggregator. Empty LastOutcome
-	// because park has no fresh-vs-changed distinction.
-	if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
-		cascade.NodeStateParked, ""); err != nil {
-		args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
-			"run_id", acq.DispatchID.String(), "error", err.Error())
+	// Per-row dispatch tuning denormalization (F2/F3) — populated at
+	// park-time so SweepParkedNodes can find the deadline without
+	// joining through templates.
+	if maxParkSec != nil || maxRetries != nil {
+		if err := args.Queue.UpdateDispatchTuningInTx(ctx, tx, acq.DispatchID, maxParkSec, maxRetries); err != nil {
+			return nil, fmt.Errorf("applyTerminalPark: %w", err)
+		}
 	}
-	return nil
+	// Transition node state running → parked. Thread acq.RunScopeID
+	// so fan-out children's state-machine update lands on the
+	// correct sibling row.
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+		cascade.NodeStateParked, cascade.ReasonHandlerPark, "", tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
+	// Settled-state drain on park: the sender reached a settled
+	// state (parked); any wait-set rows gating receivers on this
+	// sender's run release.
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
+	// Audit-log the park event.
+	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+		Kind: "park_requested",
+		Payload: map[string]any{
+			"reason":            parkReasonStorageForm(t.ParkReason),
+			"reason_note":       t.ParkReasonNote,
+			"reason_label":      t.ParkReasonLabel,
+			"resume_at":         resumeAtForLog(t.ParkResumeAt),
+			"has_session_token": t.ParkSessionToken != "",
+			"payload_bytes":     len(t.ParkPayload),
+			"spilled_to_blob":   payloadHandle != "",
+		},
+	}, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
+
+	// Post-commit: lineage emit, run-tree propagation.
+	dispatchID := acq.DispatchID
+	post := func(ctx context.Context) {
+		// E8: emit leaf-run lineage record for the park terminal.
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:       acq.InstanceID,
+			FrameID:          acq.FrameID,
+			RunID:            dispatchID,
+			NodeID:           acq.NodeID,
+			State:            string(cascade.NodeStateParked),
+			TerminalKind:     "park",
+			NodeAlias:        acq.NodeType,
+			ExecutorName:     acq.Executor,
+			TemplateHash:     acq.TemplateHash,
+			Params:           acq.InstanceParams,
+			AttributesMerged: acq.MergedAttributes,
+			HeldClaims:       HeldClaimsForLineage(acq),
+			ParentRunID:      scope.ParentRunID,
+			ChildKey:         scope.PartitionKey,
+			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+		// Run-tree state propagation (E2): a parked child still
+		// produces a settled per-child state for the aggregator. Empty
+		// LastOutcome because park has no fresh-vs-changed distinction.
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+			cascade.NodeStateParked, ""); err != nil {
+			args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
+				"run_id", dispatchID.String(), "error", err.Error())
+		}
+	}
+	return post, nil
 }
 
 // shouldSpillBlob is a thin wrapper around persistence.ShouldSpillBlob

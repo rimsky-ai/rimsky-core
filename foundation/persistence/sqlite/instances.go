@@ -20,7 +20,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -37,6 +37,13 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if err != nil {
 		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal attribute_overrides: %w", err)
 	}
+	if in.AttributeOverridesMatchCounts == nil {
+		in.AttributeOverridesMatchCounts = []int64{}
+	}
+	matchCountsBytes, err := json.Marshal(in.AttributeOverridesMatchCounts)
+	if err != nil {
+		return persistence.InstanceRow{}, fmt.Errorf("instances.create: marshal attribute_overrides_match_counts: %w", err)
+	}
 	if in.ID == (foundationshared.UUID{}) {
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
@@ -50,10 +57,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		deliveryMode = in.FrameDeliveryMode
 	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at)
-		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id)
+		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(),
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(),
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -194,6 +201,13 @@ func (s *instancesImpl) List(
 }
 
 func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
+	// Mirror postgres: rely on the schema's ON DELETE CASCADE chain
+	// (migrations 007/008 declare CASCADE on rimsky_run_scopes.instance_id,
+	// parent_run_id, parent_run_scope_id, and rimsky_node_runs.run_scope_id)
+	// so a single DELETE on the instance row walks the entire scope/
+	// dispatch tree atomically. rimsky_instances.main_run_scope_id is
+	// DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of
+	// instance and main scope satisfies the mutual FK at commit time.
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_instances WHERE id = ?`, id.String())
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -224,6 +238,105 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 		return 0, fmt.Errorf("instances.countActiveByTemplate: %w", err)
 	}
 	return n, nil
+}
+
+// IncrementAttributeOverrideMatchCounts aggregates per-index counts
+// (duplicates count per-occurrence: `[0, 0, 1]` adds 2 to index 0 and
+// 1 to index 1), then issues ONE json_set UPDATE per unique index
+// inside the caller-supplied tx. Mirrors the postgres backend's
+// per-iteration shape (foundation/persistence/postgres/instances.go).
+//
+// Out-of-range indices (>= array length) are silently no-ops, matching
+// the persistence-interface contract. SQLite's json_set has NO
+// equivalent of postgres jsonb_set's `create_missing=false` flag — for
+// arrays, json_set at `$[N]` where N >= length will EXTEND the array
+// rather than no-op. To preserve cross-backend parity we read the
+// current array length up-front and filter out-of-range indices before
+// emitting any json_set call.
+//
+// Per-iteration UPDATEs (not a chained single-statement json_set):
+// the textually-chained variant grows O(2^N) characters in the number
+// of unique indices because each iteration substitutes the prior
+// setExpr twice (once as the json_set target, once inside the value
+// subexpression `coalesce(json_extract(<prev>, ...), 0)`). For N≈20
+// in a single dispatch that's ~1MB of SQL, which is precisely the
+// hazard the postgres backend was rewritten to avoid. SQLite under
+// `BEGIN IMMEDIATE` (the wrap shape `Tables.Transaction` uses)
+// serialises transactions naturally, and the per-row updates within
+// one tx see each other's writes via the same write transaction.
+//
+// tx must be non-nil — s.q(tx) panics on nil per the package's
+// universal convention. Callers wrap with args.Persist.Transaction.
+//
+// @concept: attribute (L5 matcher overlay)
+func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
+	ctx context.Context,
+	instanceID foundationshared.UUID,
+	indices []int,
+	tx persistence.Tx,
+) error {
+	if len(indices) == 0 {
+		return nil
+	}
+	// Read the array length first so we can filter out-of-range indices.
+	// json_array_length returns NULL when the column is NULL or not an
+	// array; coalesce to 0 (treat as "no slots") so the loop below
+	// uniformly skips everything in that pathological case rather than
+	// emitting a no-op write.
+	q := s.q(tx)
+	var arrLen sql.NullInt64
+	if err := q.QueryRowContext(ctx,
+		`SELECT json_array_length(attribute_overrides_match_counts)
+		   FROM rimsky_instances WHERE id = ?`,
+		instanceID.String(),
+	).Scan(&arrLen); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Instance not found — same shape as a successful no-op
+			// update (no rows affected). Callers can't distinguish via
+			// this surface today; the dispatch path only invokes us for
+			// instances it just observed via the acquire-tx snapshot.
+			return nil
+		}
+		return fmt.Errorf("instances.incrementAttributeOverrideMatchCounts: %w", err)
+	}
+	maxIdx := int(arrLen.Int64) // 0 when NULL
+	deltas := map[int]int{}
+	order := make([]int, 0, len(indices))
+	for _, idx := range indices {
+		if idx < 0 || idx >= maxIdx {
+			continue // silent no-op per contract
+		}
+		if _, seen := deltas[idx]; !seen {
+			order = append(order, idx)
+		}
+		deltas[idx]++
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	// One UPDATE per unique index. Constant-size SQL per statement; the
+	// per-row updates serialise inside the caller-supplied write tx so
+	// concurrent callers don't see partial increments outside their own
+	// tx boundary. The idx values come from the runtime's matched-
+	// indices slice and the delta is a count, both integer-valued and
+	// locally produced, so SQL injection is not a concern.
+	for _, idx := range order {
+		path := fmt.Sprintf("$[%d]", idx)
+		query := fmt.Sprintf(
+			`UPDATE rimsky_instances
+			   SET attribute_overrides_match_counts = json_set(
+			       attribute_overrides_match_counts,
+			       '%s',
+			       coalesce(json_extract(attribute_overrides_match_counts, '%s'), 0) + %d
+			   )
+			 WHERE id = ?`,
+			path, path, deltas[idx],
+		)
+		if _, err := q.ExecContext(ctx, query, instanceID.String()); err != nil {
+			return fmt.Errorf("instances.incrementAttributeOverrideMatchCounts: %w", err)
+		}
+	}
+	return nil
 }
 
 // CountByActive returns (active, terminated) instance counts.
@@ -275,16 +388,18 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		idStr           string
-		templateHash    string
-		instanceKey     sql.NullString
-		paramsStr       string
-		overridesStr    string
-		deliveryMode    string
-		createdAtStr    string
-		terminatedAtStr sql.NullString
+		idStr             string
+		templateHash      string
+		instanceKey       sql.NullString
+		paramsStr         string
+		overridesStr      string
+		deliveryMode      string
+		createdAtStr      string
+		terminatedAtStr   sql.NullString
+		matchCountsStr    string
+		mainRunScopeIDStr string
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -303,17 +418,33 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides: %w", err)
 		}
 	}
+	mc := []int64{}
+	if matchCountsStr != "" {
+		if err := json.Unmarshal([]byte(matchCountsStr), &mc); err != nil {
+			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides_match_counts: %w", err)
+		}
+	}
 	createdAt, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.InstanceRow{}, err
 	}
+	var mainRunScopeID foundationshared.UUID
+	if mainRunScopeIDStr != "" {
+		parsed, err := uuid.Parse(mainRunScopeIDStr)
+		if err != nil {
+			return persistence.InstanceRow{}, fmt.Errorf("scanInstance: bad main_run_scope_id %q: %w", mainRunScopeIDStr, err)
+		}
+		mainRunScopeID = parsed
+	}
 	out := persistence.InstanceRow{
-		ID:                id,
-		TemplateHash:      templateHash,
-		Params:            m,
-		AttributeOverrides: overrides,
-		FrameDeliveryMode: deliveryMode,
-		CreatedAt:         createdAt,
+		ID:                            id,
+		TemplateHash:                  templateHash,
+		Params:                        m,
+		AttributeOverrides:            overrides,
+		AttributeOverridesMatchCounts: mc,
+		FrameDeliveryMode:             deliveryMode,
+		MainRunScopeID:                mainRunScopeID,
+		CreatedAt:                     createdAt,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

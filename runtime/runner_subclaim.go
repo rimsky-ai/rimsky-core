@@ -12,8 +12,8 @@
 // When a template node declares `fan_out:`, the acquisition transaction
 // grows to call `ClaimProducer.SplitScope` on the parent claim handle
 // (already Open'd via the standard acquireClaim path). The producer
-// returns a list of `SubScopeDescriptor`s; rimsky INSERTs one
-// rimsky_claim_handles row per sub-scope with `parent_claim_handle_id`
+// returns a list of `SubClaimScopeDescriptor`s; rimsky INSERTs one
+// rimsky_claim_handles row per sub-claim-scope with `parent_claim_handle_id`
 // pointing at the parent. Each sub-claim is Open'd against the producer
 // in the same transaction so atomicity discipline holds
 // (`@blessed-invariant 10`).
@@ -44,7 +44,7 @@ import (
 // fan-out spec the caller wants to split across.
 type AcquireSubClaimsInput struct {
 	ParentClaimHandleID shared.UUID
-	ParentScope         json.RawMessage
+	ParentClaimScope    json.RawMessage
 	ProducerName        string
 	NodeRunID           shared.UUID
 	HolderNodeID        shared.UUID
@@ -88,7 +88,7 @@ type SubClaim struct {
 	ClaimHandleID           shared.UUID
 	PartitionKey            string
 	Address                 json.RawMessage
-	Scope                   json.RawMessage
+	ClaimScope              json.RawMessage
 	ProducerCandidateHandle []byte
 }
 
@@ -96,17 +96,17 @@ type SubClaim struct {
 // claim handle, call SplitScope on the producer, then for each
 // sub-scope returned: INSERT a sub-claim row with
 // `parent_claim_handle_id = parent` and the producer-canonicalized
-// `scope_data`. When the producer advertises `data_processing`, also
+// `claim_scope_data`. When the producer advertises `data_processing`, also
 // call `BeginCandidate` and persist the returned `candidate_handle`;
 // otherwise the candidate handle slot stays empty (the leaf executor
 // can still operate against the parent's address + the sub-claim's
-// scope_data).
+// claim_scope_data).
 //
 // Per-sub-claim Open is NOT issued: the SplitScope response IS the
 // per-sub-claim acquisition (the producer already partitioned the
 // parent's scope), and the proto's `OpenRequest.selector` field is a
-// `string` that cannot losslessly carry arbitrary `scope_data` bytes.
-// Re-issuing Open with `string(desc.ScopeData)` as the selector
+// `string` that cannot losslessly carry arbitrary `claim_scope_data` bytes.
+// Re-issuing Open with `string(desc.ClaimScopeData)` as the selector
 // double-encoded the canonicalized scope into a substitution-time
 // selector form the producer's parser does not expect (the
 // scope-data canonical form is producer-internal; the selector is the
@@ -116,7 +116,7 @@ type SubClaim struct {
 // standard ClaimProducer surface.
 //
 // Returns one SubClaim per descriptor. The slice ordering matches the
-// producer's SubScopes ordering — caller may sort by `partition_key` if
+// producer's SubClaimScopes ordering — caller may sort by `partition_key` if
 // the dispatcher needs deterministic ordering for child-run idempotency.
 //
 // Atomicity per `@blessed-invariant 10`: every sub-claim INSERT + every
@@ -135,7 +135,7 @@ func AcquireSubClaims(
 	// claimproducer.ErrSplitScopeUnsupported when the producer doesn't
 	// advertise. Surface as a typed error so callers can route to the
 	// validation pipeline (D4).
-	resp, err := producer.SplitScope(ctx, locks.SplitScopeRequest{
+	resp, err := producer.SplitScope(ctx, locks.SplitClaimScopeRequest{
 		ClaimHandleID:    in.ParentClaimHandleID.String(),
 		PartitionRequest: in.PartitionRequest,
 	})
@@ -144,14 +144,14 @@ func AcquireSubClaims(
 	}
 	// Resolve the optional DataProcessing client; absence is fine — the
 	// candidate handle slot stays empty and the leaf executor falls
-	// back to scope_data + parent address alone.
+	// back to claim_scope_data + parent address alone.
 	var dpClient DataProcessingClient
 	if args.DataProcessors != nil {
 		if c, ok := args.DataProcessors.Get(in.ProducerName); ok {
 			dpClient = c
 		}
 	}
-	out := make([]SubClaim, 0, len(resp.SubScopes))
+	out := make([]SubClaim, 0, len(resp.SubClaimScopes))
 	parentID := in.ParentClaimHandleID
 	lifetime := in.Lifetime
 	if lifetime == "" {
@@ -176,7 +176,7 @@ func AcquireSubClaims(
 			}
 		}
 	}
-	for _, desc := range resp.SubScopes {
+	for _, desc := range resp.SubClaimScopes {
 		subID := shared.UUID(uuid.New())
 		// BeginCandidate runs BEFORE the row INSERT so the
 		// `producer_candidate_handle` column carries the producer's
@@ -189,7 +189,7 @@ func AcquireSubClaims(
 			beginOut, beginErr := dpClient.BeginCandidate(ctx, BeginCandidateInput{
 				ProducerName:       in.ProducerName,
 				ClaimHandleID:      subID.String(),
-				SubScopeDescriptor: desc.ScopeData,
+				SubScopeDescriptor: desc.ClaimScopeData,
 				IdempotencyKey:     subID.String(),
 			})
 			if beginErr != nil {
@@ -204,11 +204,11 @@ func AcquireSubClaims(
 			// acquisition tx still commits the sub-claim row.
 			emitSubclaimBeginCandidate(ctx, args, tx, parentID, subID, in.ProducerName, len(candidateHandle))
 		}
-		// Persist the sub-claim row. The canonical scope_data flows
+		// Persist the sub-claim row. The canonical claim_scope_data flows
 		// verbatim onto the row (inert per @blessed-invariant 20). No
 		// per-sub-claim Open RPC fires — SplitScope's response IS the
 		// per-sub-claim acquisition; address bytes default to empty and
-		// the leaf executor reads scope_data + candidate_handle when
+		// the leaf executor reads claim_scope_data + candidate_handle when
 		// dispatching.
 		intent := "rw"
 		insert := persistence.ClaimHandleInsertInput{
@@ -216,7 +216,7 @@ func AcquireSubClaims(
 			NodeRunID:           &in.NodeRunID,
 			LockKind:            persistence.LockKindScope,
 			ProducerName:        &in.ProducerName,
-			ScopeData:           json.RawMessage(desc.ScopeData),
+			ClaimScopeData:      json.RawMessage(desc.ClaimScopeData),
 			Intent:              &intent,
 			HolderSupervisorID:  in.HolderSupervisorID,
 			HolderNodeID:        in.HolderNodeID,
@@ -245,7 +245,7 @@ func AcquireSubClaims(
 			ClaimHandleID:           subID,
 			PartitionKey:            desc.PartitionKey,
 			Address:                 nil,
-			Scope:                   json.RawMessage(desc.ScopeData),
+			ClaimScope:              json.RawMessage(desc.ClaimScopeData),
 			ProducerCandidateHandle: candidateHandle,
 		})
 	}

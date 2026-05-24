@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
 )
@@ -164,7 +166,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		reasonArg = reasonFilter
 	}
 	rows, err := q.q(tx).QueryContext(ctx,
-		`SELECT n.instance_id, d.node_id, d.frame_id,
+		`SELECT d.id, n.instance_id, d.node_id, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
@@ -181,6 +183,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	for rows.Next() {
 		var (
 			r           persistence.ParkedDiagnosticRow
+			dispatchStr string
 			instID      sql.NullString
 			frameID     sql.NullString
 			parkedAtStr string
@@ -189,9 +192,14 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			reasonNote  sql.NullString
 			nodeID      string
 		)
-		if err := rows.Scan(&instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason, &reasonNote); err != nil {
+		if err := rows.Scan(&dispatchStr, &instID, &nodeID, &frameID, &parkedAtStr, &resumeAtStr, &reason, &reasonNote); err != nil {
 			return nil, err
 		}
+		dispatchID, err := uuid.Parse(dispatchStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.ListParkedDiagnostic: parse dispatch id: %w", err)
+		}
+		r.DispatchID = dispatchID
 		if instID.Valid {
 			r.InstanceID = instID.String
 		}
@@ -226,7 +234,15 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 }
 
 // GetParkedByNode returns the parked row for a node, or nil.
-func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
+//
+// When `runID` is non-nil the SELECT is narrowed to that specific
+// in-flight row — fan-out children share a node_id with their siblings,
+// so a SELECT by node_id alone can return any of the in-flight parked
+// rows while children race. Nil `runID` preserves the legacy by-node
+// lookup for paths that don't face fan-out ambiguity.
+//
+// @concept: fan-out
+func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
@@ -234,8 +250,9 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = ?
+		    AND d.run_scope_id = ?
 		    AND d.phase = 'parked'`,
-		nodeID.String(),
+		nodeID.String(), runScopeID.String(),
 	)
 	r, err := scanOneSqliteParkedRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -347,15 +364,24 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 // carry-forward retry counter onto the current node-run row keyed
 // by node_id (used by the retry round-trip to accumulate the counter
 // across the remove-and-reinsert cycle).
-func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, count int) error {
+//
+// Scoped to `phase = 'pending' AND claimed_by IS NULL` so only the
+// freshly-inserted pending row is touched — fan-out siblings still
+// mid-flight in other phases keep their counters intact.
+//
+// @concept: fan-out
+func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("sqlite.SetRetryNoProgressForNodeInTx: tx required")
 	}
 	_, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET consecutive_retries_no_progress = ?
-		  WHERE node_id = ?`,
-		count, nodeID.String(),
+		  WHERE node_id = ?
+		    AND run_scope_id = ?
+		    AND phase = 'pending'
+		    AND claimed_by IS NULL`,
+		count, nodeID.String(), runScopeID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.SetRetryNoProgressForNodeInTx: %w", err)

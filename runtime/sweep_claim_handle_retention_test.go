@@ -45,14 +45,7 @@ func seedClaimHandleForSweep(
 	var inst persistence.InstanceRow
 	var nd persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID:           shared.UUID(uuid.New()),
-			TemplateHash: tmpl.ID,
-			Params:       map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, nil)
 		inst = i
 		n, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "n", Executor: "stub",
@@ -72,7 +65,7 @@ func seedClaimHandleForSweep(
 			ID:                 chID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producer,
-			ScopeData:          []byte(`"scope-` + chID.String() + `"`),
+			ClaimScopeData:     []byte(`"scope-` + chID.String() + `"`),
 			Address:            []byte(`"addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: supervisorID,
@@ -123,6 +116,39 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State)
 }
 
+// Notes (diagnostic — testcontainer-startup-bound, not a
+// production-code bug):
+//
+//	Symptom: under heavy parallel load (full
+//	./foundation/persistence/... + ./runtime/... runs with -race +
+//	-parallel=N), this test occasionally hits the default `go test`
+//	per-test timeout (10m unless overridden) — not because the test
+//	logic is slow, but because pgtest.OpenDriver below has to spin
+//	up a fresh postgres:14-alpine container and the per-poll Docker
+//	state-query can spike to 15-20s under contention.
+//
+//	Ruled out: the production code under test —
+//	runtime.SweepClaimHandleRetention is a single synchronous SQL
+//	DELETE with a deterministic predicate
+//	(state IN ('committed','abandoned') AND lifetime='subgraph' AND
+//	resolved_at < $cutoff). The test calls it inline; there is no
+//	scheduler, no supervisor, no executor, and no polling loop.
+//	Once OpenDriver returns the latency to assertion is sub-second.
+//
+//	Root cause located: testcontainer cold-start latency in
+//	internal/pgtest/pgtest.go::StartFreshPostgresDSN. That helper
+//	already documents the 300s container-startup ceiling and the
+//	"~1-6s per Docker poll under saturated parallel load;
+//	occasional 15-20s spikes" envelope; under -parallel=N the
+//	container starts compete for the same docker socket.
+//
+//	Resolution: rely on `go test -timeout` (10m default) plus the
+//	300s wait-strategy ceiling inside StartFreshPostgresDSN. No
+//	in-test deadline is set here because the work itself is
+//	bounded — adding one would only mask a real container-startup
+//	regression. If a future flake recurs here, look at docker
+//	daemon health and parallel-container saturation, not at the
+//	sweep predicate.
 func TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -95,6 +95,11 @@ interface ExecuteBody {
     session_token?: string;
     resume_reason?: string;
   };
+  // Recovery-aware fields (per spec
+  // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+  // §Recovery-aware executor protocol).
+  prior_dispatch_id?: string;
+  prior_dispatch_disposition?: string;
 }
 
 export async function startHttpBridge(

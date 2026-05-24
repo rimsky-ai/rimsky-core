@@ -17,6 +17,8 @@ build:
 
 lint:
 	golangci-lint run
+	cd foundation && golangci-lint run
+	cd protocols && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
@@ -160,7 +162,9 @@ lint-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) sh -c '\
 	  command -v golangci-lint >/dev/null || \
 	    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m ./...'
+	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
+	  cd foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
+	  cd ../protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy

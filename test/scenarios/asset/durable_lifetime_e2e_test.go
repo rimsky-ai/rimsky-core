@@ -59,10 +59,18 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	ck := "ck-durable-e2e"
 	var inst persistence.InstanceRow
 	var acqNode persistence.NodeRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID: mainScopeID, GraphName: "main", InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID,
+			ID: instID, TemplateHash: tmpl.ID,
 			InstanceKey: &ck, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -95,7 +103,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &prodName, ScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
+			ProducerName: &prodName, ClaimScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-E2E", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -248,6 +256,25 @@ func seedRunForNodeAsset(
 ) shared.UUID {
 	t.Helper()
 	var out shared.UUID
+	var scopeID shared.UUID
+	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nd, err := sb.Nodes().Get(ctx, nodeID, tx)
+		if err != nil {
+			return err
+		}
+		if nd == nil {
+			t.Fatalf("seedRunForNodeAsset: node %s missing", nodeID)
+		}
+		inst, err := sb.Instances().Get(ctx, nd.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		if inst == nil {
+			t.Fatalf("seedRunForNodeAsset: instance %s missing", nd.InstanceID)
+		}
+		scopeID = inst.MainRunScopeID
+		return nil
+	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         nodeID,
@@ -255,6 +282,7 @@ func seedRunForNodeAsset(
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        frameID,
+			RunScopeID:     scopeID,
 		}, tx); err != nil {
 			return err
 		}

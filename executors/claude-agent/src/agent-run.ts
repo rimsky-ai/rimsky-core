@@ -50,14 +50,15 @@ export type AgentOutcome =
       // The supervisor receives the `Park` terminal via the gRPC stream
       // or async callback (see plan A3).
       //
-      // Post-2026-05-15 (I3) the `reason` field is the typed
-      // ParkReason snake_case value (time_wait | callback_wait |
-      // retry_backoff | other | signal_wait | awaiting_human).
-      // `reasonNote` is the free-form annotation
-      // (`col:rimsky_node_runs.parked_reason_note`). The MCP
-      // `report_park` tool resolves this same outcome shape; the
-      // rate-limit detection path emits `reason: retry_backoff` with
-      // a descriptive `reasonNote`.
+      // `reason` is the typed ParkReason snake_case value from the
+      // closed two-value set (await_callback | snooze) per spec
+      // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+      // §ParkReason collapse. `reasonNote` is the free-form
+      // annotation (`col:rimsky_node_runs.parked_reason_note`). The
+      // MCP `report_park` tool resolves this same outcome shape; the
+      // rate-limit detection path emits `reason: snooze` (deadline-
+      // based wake via SweepParkedNodes) with a descriptive
+      // `reasonNote`.
       kind: "park_requested";
       reason: string;
       reasonNote: string;
@@ -801,12 +802,15 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         );
         safeResolve({
           kind: "park_requested",
-          // I3: rate-limit-aware waits classify as PARK_REASON_RETRY_BACKOFF
-          // per spec §Parked-state taxonomy / Bundled emitter updates.
-          // `reasonNote` preserves the prior free-form `reason` text
-          // so operators / dashboards still see "claude rate-limit
-          // detected; resume at <ts>".
-          reason: "retry_backoff",
+          // Rate-limit-aware waits classify as PARK_REASON_SNOOZE
+          // (the closed two-value set's deadline-based reason) — the
+          // CLI surfaces a wall-clock resume_at, which the supervisor
+          // wakes via SweepParkedNodes. Per spec
+          // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+          // §ParkReason collapse. `reasonNote` preserves the prior
+          // free-form `reason` text so operators / dashboards still
+          // see "claude rate-limit detected; resume at <ts>".
+          reason: "snooze",
           reasonNote:
             signalRL.reason !== ""
               ? signalRL.reason

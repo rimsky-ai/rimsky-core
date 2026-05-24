@@ -235,8 +235,11 @@ func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
 			payloadBytes = []byte(payloadStr)
 		}
 	}
+	// ParkReason is a closed two-value set (proto:executor.proto::ParkReason).
+	// Unknown / empty falls back to PARK_REASON_AWAIT_CALLBACK — the safer
+	// default (no auto-resume).
 	reasonStr := asString(m["reason"])
-	reasonEnum := genv1.ParkReason_PARK_REASON_UNSPECIFIED
+	reasonEnum := genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 	if reasonStr != "" {
 		upper := "PARK_REASON_" + strings.ToUpper(reasonStr)
 		if v, ok := genv1.ParkReason_value[upper]; ok {

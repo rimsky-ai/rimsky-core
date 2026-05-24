@@ -78,7 +78,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 			ID:                 lockHolderID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &producerName,
-			ScopeData:          []byte(`"r-1"`),
+			ClaimScopeData:     []byte(`"r-1"`),
 			Intent:             &intent,
 			HolderSupervisorID: "scenario-supervisor",
 			HolderNodeID:       worker.ID,

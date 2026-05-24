@@ -81,18 +81,18 @@ type NamedLockSpec struct {
 }
 
 // ClaimResult bundles the four producer-supplied outputs of a claim
-// acquisition. Address, Payload, and Scope are opaque-bytes from rimsky's
+// acquisition. Address, Payload, and ClaimScope are opaque-bytes from rimsky's
 // perspective; the substitution engine extracts named-field paths only at
 // the leaf extraction site (graph/attribute/substitution.go::walkPath).
 //
 // RealizedWriteSemantics declares the per-claim semantics; MUST be a
 // member of the producer's Capabilities.WriteSemanticsAllowed; MUST be
-// uniform across byte-equal-Scope claims (uniformity invariant per spec
+// uniform across byte-equal-ClaimScope claims (uniformity invariant per spec
 // §2.5).
 //
 // @blessed-invariant 20: claim content is inert in rimsky.
 //
-//	Address, Payload, Scope are producer-supplied opaque bytes.
+//	Address, Payload, ClaimScope are producer-supplied opaque bytes.
 //	Rimsky reads them by named-field path only at substitution-leaf
 //	extraction (graph/attribute/substitution.go::walkPath); does not
 //	log, validate, transform, normalize, decrypt, hash, index,
@@ -160,13 +160,13 @@ func ParseWriteSemantics(s string) (WriteSemantics, bool) {
 // at startup.
 type Capabilities = claimproducer.Capabilities
 
-// SplitScopeRequest / SplitScopeResponse / SubScopeDescriptor are Go
-// type aliases for the canonical types in protocols/claimproducer.
-type SplitScopeRequest = claimproducer.SplitScopeRequest
+// SplitClaimScopeRequest / SplitClaimScopeResponse / SubClaimScopeDescriptor
+// are Go type aliases for the canonical types in protocols/claimproducer.
+type SplitClaimScopeRequest = claimproducer.SplitClaimScopeRequest
 
-// SplitScopeResponse is the producer's reply to SplitScope.
-type SplitScopeResponse = claimproducer.SplitScopeResponse
+// SplitClaimScopeResponse is the producer's reply to SplitClaimScope.
+type SplitClaimScopeResponse = claimproducer.SplitClaimScopeResponse
 
-// SubScopeDescriptor identifies one of the sub-scopes the producer
+// SubClaimScopeDescriptor identifies one of the sub-claim-scopes the producer
 // partitioned the parent into. Per spec §Fan-out template DSL.
-type SubScopeDescriptor = claimproducer.SubScopeDescriptor
+type SubClaimScopeDescriptor = claimproducer.SubClaimScopeDescriptor

@@ -56,7 +56,7 @@ func (s *Server) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenRes
 		Result: &genv1.OpenResponse_Acquired{
 			Acquired: &genv1.Acquired{
 				Address:                []byte(entry.StagingPath),
-				Scope:                  []byte(req.GetSelector()),
+				ClaimScope:             []byte(req.GetSelector()),
 				RealizedWriteSemantics: genv1.WriteSemantics_WRITE_SEMANTICS_STAGED_ASYNC,
 			},
 		},

@@ -144,7 +144,7 @@ func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {
 	var isHeld bool
 	for time.Now().Before(deadline) {
 		err := h.Pool.QueryRow(h.Ctx,
-			`SELECT is_held FROM rimsky_claim_handles WHERE holder_node_id = $1 AND lock_kind = 'scope'`,
+			`SELECT is_held FROM rimsky_claim_handles WHERE holder_node_id = $1 AND lock_kind = 'claim_scope'`,
 			n.ID,
 		).Scan(&isHeld)
 		if err == nil {

@@ -89,4 +89,21 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&finalFrameID))
 	require.Nil(t, finalFrameID,
 		"fresh node must carry no frame_id after work_completed")
+
+	// Pin Issue 5 fix: the failed-terminal row's `last_outcome` must
+	// have been reset by ResetFailedTerminalLastOutcome (called from
+	// handleResetNode) so the dashboard's nodeSelect projection no
+	// longer surfaces the stale 'failed' resolution flavor. Before
+	// the fix, the prior ClearLastOutcome(runID=nil) was a no-op
+	// because its `phase IN ('pending','active','held','parked')`
+	// predicate excludes `phase='failed'`.
+	var failedRowLastOutcome string
+	require.NoError(t, h.Pool.QueryRow(h.Ctx,
+		`SELECT last_outcome FROM rimsky_node_runs
+		   WHERE node_id = $1 AND phase = 'failed'
+		   ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
+		   LIMIT 1`,
+		uuid.UUID(worker.ID)).Scan(&failedRowLastOutcome))
+	require.Equal(t, "fresh_unchanged", failedRowLastOutcome,
+		"failed-terminal row's last_outcome must be reset to 'fresh_unchanged' by handleResetNode")
 }

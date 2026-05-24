@@ -214,9 +214,15 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// Populates required_stores from the template node-def so the
 	// supervisor's SelectCandidates pool-predicate
 	// (required_stores ⊆ accepted_stores) routes the row correctly.
+	//
+	// Under RunScope-first the new row lives in the instance's main
+	// RunScope (the only RunScope a frame source's run can belong to;
+	// sub-graph + fan-out children allocate via AffirmNodeRunRow /
+	// CreateFanOutChildren, not via the frame source path).
+	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
         SELECT gen_random_uuid(), n.id, n.executor,
                COALESCE((
                  SELECT array_agg(store->>'name')
@@ -228,8 +234,9 @@ func (s *framesImpl) MarkSourceNodeStale(
                     AND nd->>'type' = n.node_type
                     AND store IS NOT NULL
                ), ARRAY[]::text[]) AS required_stores,
-               NOW(), 'pending', 'stale', $1
+               NOW(), 'pending', 'stale', $1, inst.main_run_scope_id
           FROM rimsky_nodes n
+          JOIN rimsky_instances inst ON inst.id = n.instance_id
          WHERE n.id = $2
            AND n.instance_id = $3
            AND NOT EXISTS (

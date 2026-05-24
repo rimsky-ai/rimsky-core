@@ -81,6 +81,11 @@ type SupervisorConfig struct {
 type SupervisorHandle interface {
 	Shutdown(ctx context.Context) error
 	CallbackAddr() string
+	// CallbackRegistry exposes the supervisor's callback registry for
+	// test-only callers (the F4 callback-determinism scenario; see
+	// runtime.Handle.CallbackRegistry doc). Production callers should
+	// NOT reach into the registry directly.
+	CallbackRegistry() *runtime.CallbackRegistry
 }
 
 // StartSupervisor starts a supervisor process. SupervisorID must be
@@ -163,4 +168,8 @@ func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
 
 func (h supervisorHandleWithRegistry) CallbackAddr() string {
 	return h.inner.CallbackAddr()
+}
+
+func (h supervisorHandleWithRegistry) CallbackRegistry() *runtime.CallbackRegistry {
+	return h.inner.CallbackRegistry()
 }

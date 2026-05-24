@@ -21,7 +21,7 @@
 //   - rimsky_claim_handles postgres helpers (lockholders.go) — the
 //     bookkeeping table that backs invariant 9a.
 //   - Pure rimsky-side comparators (conflict.go) — ModeCoexists for
-//     the C3.1 mode-coexistence matrix; ScopesByteEqual for v3's
+//     the C3.1 mode-coexistence matrix; ClaimScopesByteEqual for v3's
 //     byte-equal scope conflict (per spec §7.7).
 //
 // Concrete implementations:

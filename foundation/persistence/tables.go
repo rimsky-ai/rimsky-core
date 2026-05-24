@@ -38,6 +38,11 @@ type Tables interface {
 	// Spec §Run-tree and aggregation.
 	RunTree() RunTreeTable
 
+	// RunScopes is the rimsky_run_scopes accessor — first-class
+	// execution-context rows per concept:run-scope. Spec
+	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+	RunScopes() RunScopeTable
+
 	// APIKeys is the rimsky_api_keys accessor — Bearer-token auth keys
 	// for control-api. Introduced by the 2026-05-15 control-plane MCP
 	// and auth spec.

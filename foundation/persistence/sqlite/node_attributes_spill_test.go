@@ -216,12 +216,29 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	_, err = rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
-		instanceID, templateID,
-	)
+	// Post-RunScope-first: instance + run_scope mutually FK each other
+	// (DEFERRABLE INITIALLY DEFERRED). Seed in one tx; rimsky_node_runs
+	// also requires a run_scope_id below.
+	scopeID := uuid.New().String()
+	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = stx.Rollback() }()
+	if _, err = stx.ExecContext(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
+		instanceID, templateID, scopeID,
+	); err != nil {
 		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err = stx.ExecContext(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+		scopeID, instanceID,
+	); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := stx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type) VALUES (?, ?, 'fixture')`,
@@ -246,9 +263,9 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	// satisfied.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'pending', 'stale', ?)`,
-		runID.String(), nodeID.String(), frameID,
+		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'pending', 'stale', ?, ?)`,
+		runID.String(), nodeID.String(), frameID, scopeID,
 	)
 	if err != nil {
 		t.Fatalf("seed run: %v", err)

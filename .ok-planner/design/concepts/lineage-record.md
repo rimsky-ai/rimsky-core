@@ -13,7 +13,7 @@ references:
 An append-only record in `rimsky_lineage`. Two kinds:
 
 - **`leaf_run`** — one per leaf-run terminal. Captures the computational unit: run_id, node alias, child_key, parent_run_id, frame trigger metadata, substitution refs, held claims, executor + template metadata, terminal kind and last_outcome.
-- **`claim_terminal`** — one per claim-handle terminal (Commit, natural Abandon, force-cancelled Abandon). Captures the data-promotion unit: claim_handle_id, version_id (when DataProcessing-capable), producer name, scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. Pre-2026-05-16 this was `claim_commit` and covered only Commit; the rename extends the projection to every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled Abandon flows alongside Commits.
+- **`claim_terminal`** — one per claim-handle terminal (Commit, natural Abandon, force-cancelled Abandon). Captures the data-promotion unit: claim_handle_id, version_id (when DataProcessing-capable), producer name, claim_scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. Pre-2026-05-16 this was `claim_commit` and covered only Commit; the rename extends the projection to every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled Abandon flows alongside Commits.
 
 ## Boundaries
 
@@ -25,7 +25,7 @@ Owns: the per-kind record shape, the projection-write path. Does NOT own: the ta
 - `leaf_run` records emit at the leaf-run terminal path (`runtime/lineage_writer.go::WriteLeafRunLineage`, fired from the per-terminal handlers in `runtime/runner_terminal*.go`).
 - `claim_terminal` records emit at the unified terminal-decision engine's forensics emit site (`runtime/lineage_writer.go::WriteClaimTerminalLineage`, fired from `runtime/terminal_decision_forensics.go::emitTerminalForensics`) so every Commit / Abandon / force-cancelled resolution lands a row in the same shape.
 - Outcome is REQUIRED on `claim_terminal` rows. The writer rejects an empty Outcome — an Abandon path that forgets to set it cannot silently produce a row marked `committed`.
-- All fields are scalars (no payload bytes); held-claim references carry `scope_data_hash` (SHA-256 over `scope_data` bytes), not the bytes themselves. Per `@blessed-invariant 20/21` the inert bytes don't appear in lineage records.
+- All fields are scalars (no payload bytes); held-claim references carry `claim_scope_data_hash` (SHA-256 over `claim_scope_data` bytes), not the bytes themselves. Per `@blessed-invariant 20/21` the inert bytes don't appear in lineage records.
 
 ## Leaf-run record shape
 
@@ -39,10 +39,10 @@ Owns: the per-kind record shape, the projection-write path. Does NOT own: the ta
     substitution_refs: [
       {source_kind, source_node_alias, source_version_or_id}
     ],
-    held_claims: [{claim_handle_id, role, producer_name, scope_data_hash}],
+    held_claims: [{claim_handle_id, role, producer_name, claim_scope_data_hash}],
     executor_name, executor_version,
     template_hash, template_node_alias,
-    params_snapshot_hash, userdata_hash, scope_data_hash,
+    params_snapshot_hash, userdata_hash, claim_scope_data_hash,
     state, last_outcome, changed, terminal_kind,
     error_class, extra
   }
@@ -109,7 +109,7 @@ Downstream consumers pair the two rows by `run_id` and discriminate on `terminal
     claim_handle_id, run_id, node_id, frame_id,
     parent_claim_handle_id, parent_run_id,
     sub_claim_handle_ids: [...],
-    producer_name, scope_data_hash, version_id,
+    producer_name, claim_scope_data_hash, version_id,
     outcome, cause,                       # "natural" | "sibling_cancel" | "descendant_cancel"
     committed_at,
     producer_metadata
@@ -129,3 +129,5 @@ The per-row `outcome` column on `rimsky_lineage` mirrors the JSON `outcome` fiel
 ## Notes
 
 Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`; renamed and extended on 2026-05-16 (forensics extension) so the projection covers every claim-handle terminal rather than only Commits. The two-kind decomposition mirrors OpenLineage's run-vs-dataset event split, so the subscriber's mapping (`subscribers/openlineage/emitter.go::MakeLeafRunEvent` / `::MakeClaimTerminalEvent`) is a thin transformation rather than a re-projection.
+
+2026-05-22 — Updated for ClaimScope rename and run-tree reshape per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`. `scope_data_hash` references renamed to `claim_scope_data_hash` (reflecting the underlying column rename `scope_data` → `claim_scope_data`). The lineage JSON's `parent_run_id` and `child_key` fields on `leaf_run` rows are preserved for back-compat with existing forensic queries, but their source changes: rather than reading from now-dropped inline columns on `rimsky_node_runs`, the writer joins through `rimsky_node_runs.run_scope_id → rimsky_run_scopes` and reads `parent_run_id` and `partition_key` from there (`partition_key` projects as `child_key` in the lineage JSON for back-compat).

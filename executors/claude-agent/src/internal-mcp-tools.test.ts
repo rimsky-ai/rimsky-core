@@ -87,11 +87,11 @@ describe("internal-mcp-tools schemas", () => {
   it("ReportParkInput accepts a typed reason + optional fields", () => {
     const parsed = ReportParkInput.parse({
       token: "tok",
-      reason: "awaiting_human",
+      reason: "await_callback",
       reason_note: "operator review pending",
       resume_at: "2026-05-15T12:00:00Z",
     });
-    expect(parsed.reason).toBe("awaiting_human");
+    expect(parsed.reason).toBe("await_callback");
     expect(parsed.reason_note).toBe("operator review pending");
     expect(parsed.resume_at).toBe("2026-05-15T12:00:00Z");
   });
@@ -108,10 +108,10 @@ describe("internal-mcp-tools schemas", () => {
   it("ReportParkInput accepts a minimal payload (reason only)", () => {
     const parsed = ReportParkInput.parse({
       token: "tok",
-      reason: "time_wait",
+      reason: "snooze",
     });
     expect(parsed.token).toBe("tok");
-    expect(parsed.reason).toBe("time_wait");
+    expect(parsed.reason).toBe("snooze");
     expect(parsed.reason_note).toBeUndefined();
     expect(parsed.resume_at).toBeUndefined();
   });

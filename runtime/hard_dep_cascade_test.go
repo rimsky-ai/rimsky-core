@@ -59,9 +59,19 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		bN   persistence.NodeRow
 		cN   persistence.NodeRow
 	)
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
+			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -106,9 +116,9 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4)
-    `, aRunID, aN.ID, "stub", frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4, $5)
+    `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
@@ -118,9 +128,9 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	bParkedRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, parked_at, parked_reason)
-        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 'parked', $3, NOW(), 'signal_wait')
-    `, bParkedRunID, bN.ID, earlierFrameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, parked_at, parked_reason, run_scope_id)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'parked', 'parked', $3, NOW(), 'await_callback', $4)
+    `, bParkedRunID, bN.ID, earlierFrameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, earlierFrameID, bN.ID)
 
@@ -185,9 +195,19 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		bN   persistence.NodeRow
 		cN   persistence.NodeRow
 	)
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
+			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -218,9 +238,9 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4)
-    `, aRunID, aN.ID, "stub", frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+        VALUES ($1, $2, $3, ARRAY[]::text[], NOW(), 'active', 'running', $4, $5)
+    `, aRunID, aN.ID, "stub", frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
@@ -229,9 +249,9 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	bRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'pending', 'stale', $3)
-    `, bRunID, bN.ID, frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+        VALUES ($1, $2, 'stub', ARRAY[]::text[], NOW(), 'pending', 'stale', $3, $4)
+    `, bRunID, bN.ID, frameID, mainScopeID)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, bN.ID)
 

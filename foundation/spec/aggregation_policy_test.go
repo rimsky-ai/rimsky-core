@@ -34,8 +34,7 @@ func TestAggregationPolicy_Validate(t *testing.T) {
 
 func TestParkReason_IsValid(t *testing.T) {
 	valid := []ParkReason{
-		ParkReasonTimeWait, ParkReasonCallbackWait, ParkReasonRetryBackoff,
-		ParkReasonOther, ParkReasonSignalWait, ParkReasonAwaitingHuman,
+		ParkReasonAwaitCallback, ParkReasonSnooze,
 	}
 	for _, r := range valid {
 		if !r.IsValid() {

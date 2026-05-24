@@ -55,10 +55,30 @@ func seedTemplateAndInstance(t *testing.T, ctx context.Context, d persistence.Da
     `, templateHash, spec)
 
 	instanceID = uuid.New()
-	pgtest.ExecForTest(ctx, t, d, `
-        INSERT INTO rimsky_instances (id, template_hash, instance_key, params)
-        VALUES ($1, $2, $3, '{}'::jsonb)
-    `, instanceID, templateHash, "ck-"+instanceID.String()[:8])
+	mainScopeID := uuid.New()
+	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
+	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED; both inserts
+	// must land in one tx.
+	tables := d.Tables()
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		ck := "ck-" + instanceID.String()[:8]
+		_, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:             instanceID,
+			TemplateHash:   templateHash,
+			InstanceKey:    &ck,
+			MainRunScopeID: mainScopeID,
+		}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("seed instance + run_scope: %v", err)
+	}
 	return templateHash, instanceID
 }
 

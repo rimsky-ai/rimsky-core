@@ -14,7 +14,7 @@
 //   - claim_id is a UUID textual form (string), generated client-side
 //     before Open is called and threaded through every subsequent verb
 //     for that claim's lifecycle.
-//   - scope, address, payload are opaque bytes (json.RawMessage on the
+//   - claim_scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
 //   - selector, intent, alias, producer_name are strings.
 //
@@ -96,7 +96,7 @@ type ClaimProducerClient interface {
 	// CapabilitiesResponse.supports_scopes_conflict = true MUST
 	// implement this RPC. When unsupported, rimsky falls back to the
 	// byte-equal default (per @blessed-invariant 4b).
-	ScopesConflict(ctx context.Context, in *ScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error)
+	ScopesConflict(ctx context.Context, in *ClaimScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error)
 }
 
 type claimProducerClient struct {
@@ -167,7 +167,7 @@ func (c *claimProducerClient) SplitScope(ctx context.Context, in *SplitScopeRequ
 	return out, nil
 }
 
-func (c *claimProducerClient) ScopesConflict(ctx context.Context, in *ScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error) {
+func (c *claimProducerClient) ScopesConflict(ctx context.Context, in *ClaimScopesConflictRequest, opts ...grpc.CallOption) (*ScopesConflictResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ScopesConflictResponse)
 	err := c.cc.Invoke(ctx, ClaimProducer_ScopesConflict_FullMethodName, in, out, cOpts...)
@@ -223,7 +223,7 @@ type ClaimProducerServer interface {
 	// CapabilitiesResponse.supports_scopes_conflict = true MUST
 	// implement this RPC. When unsupported, rimsky falls back to the
 	// byte-equal default (per @blessed-invariant 4b).
-	ScopesConflict(context.Context, *ScopesConflictRequest) (*ScopesConflictResponse, error)
+	ScopesConflict(context.Context, *ClaimScopesConflictRequest) (*ScopesConflictResponse, error)
 	mustEmbedUnimplementedClaimProducerServer()
 }
 
@@ -252,7 +252,7 @@ func (UnimplementedClaimProducerServer) Release(context.Context, *ReleaseRequest
 func (UnimplementedClaimProducerServer) SplitScope(context.Context, *SplitScopeRequest) (*SplitScopeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SplitScope not implemented")
 }
-func (UnimplementedClaimProducerServer) ScopesConflict(context.Context, *ScopesConflictRequest) (*ScopesConflictResponse, error) {
+func (UnimplementedClaimProducerServer) ScopesConflict(context.Context, *ClaimScopesConflictRequest) (*ScopesConflictResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ScopesConflict not implemented")
 }
 func (UnimplementedClaimProducerServer) mustEmbedUnimplementedClaimProducerServer() {}
@@ -385,7 +385,7 @@ func _ClaimProducer_SplitScope_Handler(srv interface{}, ctx context.Context, dec
 }
 
 func _ClaimProducer_ScopesConflict_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ScopesConflictRequest)
+	in := new(ClaimScopesConflictRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -397,7 +397,7 @@ func _ClaimProducer_ScopesConflict_Handler(srv interface{}, ctx context.Context,
 		FullMethod: ClaimProducer_ScopesConflict_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ClaimProducerServer).ScopesConflict(ctx, req.(*ScopesConflictRequest))
+		return srv.(ClaimProducerServer).ScopesConflict(ctx, req.(*ClaimScopesConflictRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

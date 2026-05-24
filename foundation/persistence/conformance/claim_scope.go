@@ -2,13 +2,13 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// scope.go — ScopeByteEquality conformance area.
+// claim_scope.go — ClaimScopeByteEquality conformance area.
 //
-// Inv 14: scope conflict is byte-equal.
+// Inv 14: claim-scope conflict is byte-equal.
 //
-// Per spec §7.7 the store canonicalises scope bytes before handing them
-// to rimsky, so two scopes that should conflict produce byte-equal
-// scope_data on the wire. For round-trip equality across drivers the
+// Per spec §7.7 the store canonicalises claim-scope bytes before handing
+// them to rimsky, so two claim-scopes that should conflict produce byte-equal
+// claim_scope_data on the wire. For round-trip equality across drivers the
 // test compares semantic JSON equality (decode-and-compare), since
 // Postgres JSONB normalises whitespace at storage time while SQLite TEXT
 // preserves the exact bytes — both behaviours satisfy "the bytes come
@@ -69,7 +69,7 @@ func jsonValueEqual(a, b any) bool {
 	}
 }
 
-func testScopeByteEquality(t *testing.T, d persistence.Database) {
+func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
@@ -87,7 +87,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Database) {
 				ID:                 uuid.New(),
 				LockKind:           persistence.LockKindScope,
 				ProducerName:       &producerName,
-				ScopeData:          scope,
+				ClaimScopeData:     scope,
 				Intent:             &intent,
 				HolderSupervisorID: supID,
 				HolderNodeID:       fix.NodeID,
@@ -101,7 +101,7 @@ func testScopeByteEquality(t *testing.T, d persistence.Database) {
 	// Two byte-equal scopes: both rows land successfully (the
 	// rimsky_claim_handles table doesn't unique-constrain scope; the
 	// supervisor's in-go conflict predicate is what catches the conflict).
-	// We verify that ListByProducerScope returns both, and that the rows'
+	// We verify that ListByProducerClaimScope returns both, and that the rows'
 	// scope_data bytes round-trip equal.
 	insert(t, scopeA)
 	insert(t, scopeA)
@@ -109,23 +109,23 @@ func testScopeByteEquality(t *testing.T, d persistence.Database) {
 	var rows []persistence.ClaimHandleRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.ClaimHandles().ListByProducerScope(ctx, producerName, tx)
+		rows, err = store.ClaimHandles().ListByProducerClaimScope(ctx, producerName, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("ListByProducerScope: %v", err)
+		t.Fatalf("ListByProducerClaimScope: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 scope rows, got %d", len(rows))
 	}
 	// Both stored rows must be byte-equal to each other (the store
 	// canonicalisation guarantee), and semantically equal to scopeA.
-	if string(rows[0].ScopeData) != string(rows[1].ScopeData) {
-		t.Fatalf("byte-equal scopes did not round-trip equal:\n  %q\n  %q",
-			string(rows[0].ScopeData), string(rows[1].ScopeData))
+	if string(rows[0].ClaimScopeData) != string(rows[1].ClaimScopeData) {
+		t.Fatalf("byte-equal claim-scopes did not round-trip equal:\n  %q\n  %q",
+			string(rows[0].ClaimScopeData), string(rows[1].ClaimScopeData))
 	}
-	if !jsonEqual(rows[0].ScopeData, scopeA) {
-		t.Fatalf("stored scope not semantically equal to input:\n  stored=%q input=%q",
-			string(rows[0].ScopeData), string(scopeA))
+	if !jsonEqual(rows[0].ClaimScopeData, scopeA) {
+		t.Fatalf("stored claim-scope not semantically equal to input:\n  stored=%q input=%q",
+			string(rows[0].ClaimScopeData), string(scopeA))
 	}
 
 	// Insert a byte-different scope; rows for the store now: 3, with the
@@ -134,10 +134,10 @@ func testScopeByteEquality(t *testing.T, d persistence.Database) {
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
-		rows, err = store.ClaimHandles().ListByProducerScope(ctx, producerName, tx)
+		rows, err = store.ClaimHandles().ListByProducerClaimScope(ctx, producerName, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("ListByProducerScope #2: %v", err)
+		t.Fatalf("ListByProducerClaimScope #2: %v", err)
 	}
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 scope rows, got %d", len(rows))
@@ -146,12 +146,12 @@ func testScopeByteEquality(t *testing.T, d persistence.Database) {
 	matchB := 0
 	for _, r := range rows {
 		switch {
-		case jsonEqual(r.ScopeData, scopeA):
+		case jsonEqual(r.ClaimScopeData, scopeA):
 			matchA++
-		case jsonEqual(r.ScopeData, scopeB):
+		case jsonEqual(r.ClaimScopeData, scopeB):
 			matchB++
 		default:
-			t.Fatalf("unexpected scope bytes: %q", string(r.ScopeData))
+			t.Fatalf("unexpected scope bytes: %q", string(r.ClaimScopeData))
 		}
 	}
 	if matchA != 2 || matchB != 1 {

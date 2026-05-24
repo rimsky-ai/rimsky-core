@@ -29,15 +29,15 @@ func TestClaimTerminalRecordCreation(t *testing.T) {
 	lt := &fakeLineage{}
 	ctx := context.Background()
 	rec := runtime.ClaimTerminalRecord{
-		ClaimHandleID:    shared.UUID(uuid.New()),
-		RunID:            shared.UUID(uuid.New()),
-		NodeID:           shared.UUID(uuid.New()),
-		FrameID:          shared.UUID(uuid.New()),
-		ProducerName:     "stub",
-		ScopeDataHash:    runtime.HashBytes([]byte(`{"partition_key":"a"}`)),
-		VersionID:        "v1",
-		Outcome:          persistence.LineageOutcomeCommitted,
-		ProducerMetadata: map[string]any{"row_count": float64(1)},
+		ClaimHandleID:      shared.UUID(uuid.New()),
+		RunID:              shared.UUID(uuid.New()),
+		NodeID:             shared.UUID(uuid.New()),
+		FrameID:            shared.UUID(uuid.New()),
+		ProducerName:       "stub",
+		ClaimScopeDataHash: runtime.HashBytes([]byte(`{"partition_key":"a"}`)),
+		VersionID:          "v1",
+		Outcome:            persistence.LineageOutcomeCommitted,
+		ProducerMetadata:   map[string]any{"row_count": float64(1)},
 	}
 	if err := runtime.WriteClaimTerminalLineage(ctx, nil, lt,
 		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec); err != nil {

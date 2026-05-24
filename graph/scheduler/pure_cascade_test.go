@@ -51,10 +51,10 @@ func (f *fakeQueue) ClaimDispatchRow(_ context.Context, _ persistence.Tx, _ shar
 	return false, nil
 }
 func (f *fakeQueue) Complete(_ context.Context, _ shared.UUID, _ string) error { return nil }
-func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ string) error {
+func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUID, _ string) error {
 	return nil
 }
-func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ string, _ persistence.Tx) error {
+func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
 func (f *fakeQueue) ListOrphanedClaims(_ context.Context, _ time.Time) ([]persistence.DispatchRow, error) {
@@ -93,7 +93,7 @@ func (f *fakeQueue) ListParkedReadyForResume(_ context.Context, _ time.Time, _ i
 func (f *fakeQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID) (*persistence.ParkedRow, error) {
+func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
@@ -105,7 +105,7 @@ func (f *fakeQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _
 func (f *fakeQueue) GetRetryNoProgress(_ context.Context, _ shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *fakeQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ int) error {
+func (f *fakeQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID, _ int) error {
 	return nil
 }
 func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
@@ -164,9 +164,19 @@ func pcCreateInstance(ctx context.Context, t *testing.T, b persistence.Tables, t
 	t.Helper()
 	ckCopy := ck
 	var inst persistence.InstanceRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	inTxTest(t, ctx, b, func(tx persistence.Tx) error {
+		if err := b.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		row, err := b.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: uuid.New(), TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
+			ID: instID, TemplateHash: templateHash, InstanceKey: &ckCopy, Params: map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -254,11 +264,15 @@ func forceState(ctx context.Context, t *testing.T, f *pcFixture, id shared.UUID,
 	if state == "running" {
 		runPhase = "active"
 	}
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
+		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
-		                               enqueued_at, phase, state, frame_id)
-		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, $4, $5::uuid)`,
-		id, executorN.String, runPhase, state, frameN.String)
+		                               enqueued_at, phase, state, frame_id, run_scope_id)
+		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), $3, $4, $5::uuid, $6)`,
+		id, executorN.String, runPhase, state, frameN.String, mainScopeID)
 }
 
 // pcSeedFrame inserts a running rimsky_frames row for the given instance

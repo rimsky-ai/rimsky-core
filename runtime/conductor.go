@@ -37,6 +37,8 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
@@ -105,43 +107,129 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 		//
 		//	@concept: cascade
 		//	@concept: wait-set
+		if n.RunScopeID == nil {
+			// No in-flight RunScope projected — nothing to transition.
+			// Phase B's cascade allocation path is responsible for
+			// affirming a row before state-machine writes can land.
+			continue
+		}
+		// Bundle the state-mutation (UpdateState + zombie row retirement +
+		// cascade walk) AND the recovery Enqueue in a single tx so a
+		// crash between them can't strand the node in state=stale with no
+		// in-flight dispatch row. Mirrors the OnError-retry branch's
+		// tx-atomic remove+enqueue pair. See @blessed-invariant:
+		// "State-machine writes for a single run must be tx-atomic".
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := args.Persist.Nodes().UpdateState(ctx, n.ID,
+			// Re-read mutable fields (FrameID, InFlightRunID, Executor,
+			// RunScopeID) INSIDE this tx so the read-then-write pair is
+			// atomic. Using these from the outer batch read (the `stale`
+			// slice populated by ListWithStaleHeartbeat) could race with
+			// another supervisor's orphan reaper that rotated the
+			// in-flight run between the outer batch read and this tx —
+			// in which case `n.InFlightRunID` would point at a pre-
+			// predecessor instead of the row this tx is about to retire.
+			// Per @blessed-invariant: "State-machine writes for a single
+			// run must be tx-atomic".
+			cur, err := args.Persist.Nodes().Get(ctx, n.ID, tx)
+			if err != nil {
+				return err
+			}
+			if cur == nil {
+				return nil
+			}
+			// Use the re-read RunScopeID — a concurrent close + reopen
+			// could move the node into a different scope; we want this
+			// tx to address whatever scope the node is in NOW.
+			if cur.RunScopeID == nil {
+				return nil
+			}
+			curScopeID := *cur.RunScopeID
+			// Thread the projected RunScope id so the running →
+			// stale transition addresses this specific run row even when
+			// fan-out siblings share the same node_id.
+			if err := args.Persist.Nodes().UpdateState(ctx, cur.ID, curScopeID,
 				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, "", tx); err != nil {
 				return err
 			}
-			if n.FrameID == nil {
+			// Capture the predecessor dispatch id BEFORE retiring the
+			// zombie row. Querying GetInFlightRunForNode inside the
+			// same tx returns the row this sweep is about to retire,
+			// which is the correct prior_dispatch_id for the recovery
+			// enqueue. Falling back to cur.InFlightRunID is safe — the
+			// re-read above was tx-atomic with the projection.
+			priorDispatchID, _, err := args.Queue.GetInFlightRunForNode(ctx, tx, cur.ID, curScopeID)
+			if err != nil {
+				return fmt.Errorf("resolve prior dispatch id: %w", err)
+			}
+			// Retire the zombie row to phase='completed' so the
+			// (node_id, run_scope_id) in-flight slot frees up — without
+			// this the recovery EnqueueInTx below is blocked by the NOT
+			// EXISTS guard on the in-flight uniqueness predicate. Empty
+			// expectedClaimedBy: the sweep is by definition retiring a
+			// row whose holder is gone; no claimant guard.
+			if err := args.Queue.RemoveForNodeInTx(ctx, cur.ID, curScopeID, "", tx); err != nil {
+				return fmt.Errorf("retire zombie run: %w", err)
+			}
+			if cur.FrameID != nil {
+				if err := walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
+					log, cur.ID, cur.InstanceID, *cur.FrameID); err != nil {
+					return err
+				}
+			}
+			// Re-enqueue without bumping retry_counter. RequiredStores is
+			// left empty — the foundation tick does not have the in-memory
+			// template registry threaded through, and an empty
+			// RequiredStores trivially satisfies the supervisor-pool
+			// predicate (RequiredStores ⊆ AcceptedStores). FrameID is
+			// sourced from the node row — heartbeat-lost nodes were
+			// running in a frame and that frame_id remains the running
+			// frame (per blessed-invariant 19). A nil FrameID skips
+			// re-enqueue (the row is stranded only until the next tick
+			// re-resolves a frame; the state transition still commits).
+			if cur.FrameID == nil {
+				log.Warn("tick: skip re-enqueue: node frame_id is nil",
+					"node_id", cur.ID.String())
 				return nil
 			}
-			return walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
-				log, n.ID, n.InstanceID, *n.FrameID)
+			// Recovery-aware fields: the predecessor dispatch_id is the
+			// id captured above (or the in-flight projection if the
+			// lookup raced with retirement). The new dispatch supersedes
+			// it; the executor reads the predecessor id on
+			// proto:executor.proto::ExecuteRequest.prior_dispatch_id at
+			// dispatch.
+			priorPtr := cur.InFlightRunID
+			if priorDispatchID != (shared.UUID{}) {
+				idCopy := priorDispatchID
+				priorPtr = &idCopy
+			}
+			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+				NodeID:                   cur.ID,
+				ExecutorName:             cur.Executor,
+				RequiredStores:           []string{},
+				EnqueuedAt:               args.Clock.Now(),
+				FrameID:                  *cur.FrameID,
+				RunScopeID:               curScopeID,
+				PriorDispatchID:          priorPtr,
+				PriorDispatchDisposition: "heartbeat_stale",
+			}, tx); err != nil {
+				// Defensive: closed RunScope means the rendezvous fired
+				// while the sweep was preparing the retry. Walker
+				// discipline per concept:run-scope: do not enqueue into
+				// a closed scope; the state-machine writes above
+				// already committed.
+				if errors.Is(err, persistence.ErrRunScopeClosed) {
+					log.Warn("tick: skip re-enqueue: run scope closed",
+						"node_id", cur.ID.String(),
+						"run_scope_id", curScopeID.String())
+					return nil
+				}
+				return err
+			}
+			return nil
 		}); err != nil {
 			log.Warn("tick: heartbeat_lost state transition failed",
 				"node_id", n.ID.String(), "error", err.Error())
 			continue
-		}
-		// Re-enqueue without bumping retry_counter. RequiredStores is left
-		// empty — the foundation tick does not have the in-memory template
-		// registry threaded through, and an empty RequiredStores trivially
-		// satisfies the supervisor-pool predicate
-		// (RequiredStores ⊆ AcceptedStores). FrameID is sourced from the
-		// node row — heartbeat-lost nodes were running in a frame and
-		// that frame_id remains the running frame (per
-		// blessed-invariant 19).
-		if n.FrameID == nil {
-			log.Warn("tick: skip re-enqueue: node frame_id is nil",
-				"node_id", n.ID.String())
-			continue
-		}
-		if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-			NodeID:         n.ID,
-			ExecutorName:   n.Executor,
-			RequiredStores: []string{},
-			EnqueuedAt:     args.Clock.Now(),
-			FrameID:        *n.FrameID,
-		}); err != nil {
-			log.Warn("tick: re-enqueue after heartbeat_lost failed",
-				"node_id", n.ID.String(), "error", err.Error())
 		}
 	}
 	return nil
@@ -226,13 +314,28 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 				"node_id", n.ID.String())
 			continue
 		}
+		if n.RunScopeID == nil {
+			log.Debug("tick: ready-sweep skip: node has no in-flight RunScope",
+				"node_id", n.ID.String())
+			continue
+		}
 		if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 			NodeID:         n.ID,
 			ExecutorName:   n.Executor,
 			RequiredStores: []string{},
 			EnqueuedAt:     args.Clock.Now(),
 			FrameID:        *n.FrameID,
+			RunScopeID:     *n.RunScopeID,
 		}); err != nil {
+			// Defensive: a closed RunScope means the rendezvous fired
+			// while the sweep was preparing the dispatch. Walker
+			// discipline per concept:run-scope: skip silently.
+			if errors.Is(err, persistence.ErrRunScopeClosed) {
+				log.Debug("tick: ready-sweep skip: run scope closed",
+					"node_id", n.ID.String(),
+					"run_scope_id", n.RunScopeID.String())
+				continue
+			}
 			log.Warn("tick: ready-sweep enqueue failed",
 				"node_id", n.ID.String(), "error", err.Error())
 		}

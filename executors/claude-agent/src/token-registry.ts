@@ -62,8 +62,10 @@ export interface TokenEntry {
     scheduleTeardown: (td: () => Promise<void>) => void,
   ) => Promise<void>;
   /**
-   * Park the dispatch. Per 2026-05-14 Piece 2, `reason` is the typed
-   * ParkReason snake_case value. `resumeAt` is optional ISO 8601.
+   * Park the dispatch. `reason` is the typed ParkReason snake_case
+   * value from the closed two-value set (await_callback | snooze) per
+   * spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+   * `resumeAt` is optional ISO 8601.
    */
   onPark?: (
     reason: string,

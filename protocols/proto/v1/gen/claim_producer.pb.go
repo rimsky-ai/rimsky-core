@@ -14,7 +14,7 @@
 //   - claim_id is a UUID textual form (string), generated client-side
 //     before Open is called and threaded through every subsequent verb
 //     for that claim's lifecycle.
-//   - scope, address, payload are opaque bytes (json.RawMessage on the
+//   - claim_scope, address, payload are opaque bytes (json.RawMessage on the
 //     rimsky side; producers choose their own canonical encoding).
 //   - selector, intent, alias, producer_name are strings.
 //
@@ -434,7 +434,7 @@ type Acquired struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	Address                []byte                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
 	Payload                []byte                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
-	Scope                  []byte                 `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
+	ClaimScope             []byte                 `protobuf:"bytes,3,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
 	RealizedWriteSemantics WriteSemantics         `protobuf:"varint,4,opt,name=realized_write_semantics,json=realizedWriteSemantics,proto3,enum=rimsky.v1.WriteSemantics" json:"realized_write_semantics,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -484,9 +484,9 @@ func (x *Acquired) GetPayload() []byte {
 	return nil
 }
 
-func (x *Acquired) GetScope() []byte {
+func (x *Acquired) GetClaimScope() []byte {
 	if x != nil {
-		return x.Scope
+		return x.ClaimScope
 	}
 	return nil
 }
@@ -538,7 +538,7 @@ func (*Unavailable) Descriptor() ([]byte, []int) {
 type CommitRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	Scope         []byte                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
 	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -581,9 +581,9 @@ func (x *CommitRequest) GetClaimId() string {
 	return ""
 }
 
-func (x *CommitRequest) GetScope() []byte {
+func (x *CommitRequest) GetClaimScope() []byte {
 	if x != nil {
-		return x.Scope
+		return x.ClaimScope
 	}
 	return nil
 }
@@ -656,7 +656,7 @@ func (x *CommitResponse) GetProducerMetadata() []byte {
 type AbandonRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	Scope         []byte                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
 	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"` // may be empty; producer identifies state by claim_id
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -699,9 +699,9 @@ func (x *AbandonRequest) GetClaimId() string {
 	return ""
 }
 
-func (x *AbandonRequest) GetScope() []byte {
+func (x *AbandonRequest) GetClaimScope() []byte {
 	if x != nil {
-		return x.Scope
+		return x.ClaimScope
 	}
 	return nil
 }
@@ -752,7 +752,7 @@ func (*AbandonResponse) Descriptor() ([]byte, []int) {
 type ReleaseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	Scope         []byte                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	ClaimScope    []byte                 `protobuf:"bytes,2,opt,name=claim_scope,json=claimScope,proto3" json:"claim_scope,omitempty"`
 	Address       []byte                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -795,9 +795,9 @@ func (x *ReleaseRequest) GetClaimId() string {
 	return ""
 }
 
-func (x *ReleaseRequest) GetScope() []byte {
+func (x *ReleaseRequest) GetClaimScope() []byte {
 	if x != nil {
-		return x.Scope
+		return x.ClaimScope
 	}
 	return nil
 }
@@ -902,16 +902,16 @@ func (x *SplitScopeRequest) GetPartitionRequest() []byte {
 	return nil
 }
 
-// SubScopeDescriptor identifies one of the sub-scopes the producer
-// partitioned the parent into. scope_data is producer-canonicalized
-// bytes (same shape rimsky stores on rimsky_claim_handles.scope_data);
+// SubScopeDescriptor identifies one of the sub-claim-scopes the producer
+// partitioned the parent into. claim_scope_data is producer-canonicalized
+// bytes (same shape rimsky stores on rimsky_claim_handles.claim_scope_data);
 // partition_key is the human-readable key rimsky persists in
 // col:rimsky_node_runs.child_key for run-tree bookkeeping;
-// producer_metadata is opaque per-sub-scope info the producer wants
+// producer_metadata is opaque per-sub-claim-scope info the producer wants
 // persisted on the row.
 type SubScopeDescriptor struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	ScopeData        []byte                 `protobuf:"bytes,1,opt,name=scope_data,json=scopeData,proto3" json:"scope_data,omitempty"`
+	ClaimScopeData   []byte                 `protobuf:"bytes,1,opt,name=claim_scope_data,json=claimScopeData,proto3" json:"claim_scope_data,omitempty"`
 	PartitionKey     string                 `protobuf:"bytes,2,opt,name=partition_key,json=partitionKey,proto3" json:"partition_key,omitempty"`
 	ProducerMetadata []byte                 `protobuf:"bytes,3,opt,name=producer_metadata,json=producerMetadata,proto3" json:"producer_metadata,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -948,9 +948,9 @@ func (*SubScopeDescriptor) Descriptor() ([]byte, []int) {
 	return file_claim_producer_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *SubScopeDescriptor) GetScopeData() []byte {
+func (x *SubScopeDescriptor) GetClaimScopeData() []byte {
 	if x != nil {
-		return x.ScopeData
+		return x.ClaimScopeData
 	}
 	return nil
 }
@@ -1013,32 +1013,32 @@ func (x *SplitScopeResponse) GetSubScopes() []*SubScopeDescriptor {
 	return nil
 }
 
-// ScopesConflictRequest asks the producer whether two scope_data byte
-// strings should conflict (single-writer-per-scope serialization).
+// ClaimScopesConflictRequest asks the producer whether two claim_scope_data byte
+// strings should conflict (single-writer-per-claim-scope serialization).
 // When unsupported (CapabilitiesResponse.supports_scopes_conflict =
 // false), rimsky uses byte-equal as the trivial default.
-type ScopesConflictRequest struct {
+type ClaimScopesConflictRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ScopeA        []byte                 `protobuf:"bytes,1,opt,name=scope_a,json=scopeA,proto3" json:"scope_a,omitempty"`
-	ScopeB        []byte                 `protobuf:"bytes,2,opt,name=scope_b,json=scopeB,proto3" json:"scope_b,omitempty"`
+	ClaimScopeA   []byte                 `protobuf:"bytes,1,opt,name=claim_scope_a,json=claimScopeA,proto3" json:"claim_scope_a,omitempty"`
+	ClaimScopeB   []byte                 `protobuf:"bytes,2,opt,name=claim_scope_b,json=claimScopeB,proto3" json:"claim_scope_b,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ScopesConflictRequest) Reset() {
-	*x = ScopesConflictRequest{}
+func (x *ClaimScopesConflictRequest) Reset() {
+	*x = ClaimScopesConflictRequest{}
 	mi := &file_claim_producer_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ScopesConflictRequest) String() string {
+func (x *ClaimScopesConflictRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ScopesConflictRequest) ProtoMessage() {}
+func (*ClaimScopesConflictRequest) ProtoMessage() {}
 
-func (x *ScopesConflictRequest) ProtoReflect() protoreflect.Message {
+func (x *ClaimScopesConflictRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_claim_producer_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1050,21 +1050,21 @@ func (x *ScopesConflictRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ScopesConflictRequest.ProtoReflect.Descriptor instead.
-func (*ScopesConflictRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ClaimScopesConflictRequest.ProtoReflect.Descriptor instead.
+func (*ClaimScopesConflictRequest) Descriptor() ([]byte, []int) {
 	return file_claim_producer_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *ScopesConflictRequest) GetScopeA() []byte {
+func (x *ClaimScopesConflictRequest) GetClaimScopeA() []byte {
 	if x != nil {
-		return x.ScopeA
+		return x.ClaimScopeA
 	}
 	return nil
 }
 
-func (x *ScopesConflictRequest) GetScopeB() []byte {
+func (x *ClaimScopesConflictRequest) GetClaimScopeB() []byte {
 	if x != nil {
-		return x.ScopeB
+		return x.ClaimScopeB
 	}
 	return nil
 }
@@ -1138,45 +1138,48 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\fOpenResponse\x121\n" +
 	"\bacquired\x18\x01 \x01(\v2\x13.rimsky.v1.AcquiredH\x00R\bacquired\x12:\n" +
 	"\vunavailable\x18\x02 \x01(\v2\x16.rimsky.v1.UnavailableH\x00R\vunavailableB\b\n" +
-	"\x06result\"\xa9\x01\n" +
+	"\x06result\"\xb4\x01\n" +
 	"\bAcquired\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\fR\aaddress\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload\x12\x14\n" +
-	"\x05scope\x18\x03 \x01(\fR\x05scope\x12S\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\x12\x1f\n" +
+	"\vclaim_scope\x18\x03 \x01(\fR\n" +
+	"claimScope\x12S\n" +
 	"\x18realized_write_semantics\x18\x04 \x01(\x0e2\x19.rimsky.v1.WriteSemanticsR\x16realizedWriteSemantics\"\r\n" +
-	"\vUnavailable\"Z\n" +
+	"\vUnavailable\"e\n" +
 	"\rCommitRequest\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x14\n" +
-	"\x05scope\x18\x02 \x01(\fR\x05scope\x12\x18\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
+	"\vclaim_scope\x18\x02 \x01(\fR\n" +
+	"claimScope\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\fR\aaddress\"\\\n" +
 	"\x0eCommitResponse\x12\x1d\n" +
 	"\n" +
 	"version_id\x18\x01 \x01(\tR\tversionId\x12+\n" +
-	"\x11producer_metadata\x18\x02 \x01(\fR\x10producerMetadata\"[\n" +
+	"\x11producer_metadata\x18\x02 \x01(\fR\x10producerMetadata\"f\n" +
 	"\x0eAbandonRequest\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x14\n" +
-	"\x05scope\x18\x02 \x01(\fR\x05scope\x12\x18\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
+	"\vclaim_scope\x18\x02 \x01(\fR\n" +
+	"claimScope\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\fR\aaddress\"\x11\n" +
-	"\x0fAbandonResponse\"[\n" +
+	"\x0fAbandonResponse\"f\n" +
 	"\x0eReleaseRequest\x12\x19\n" +
-	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x14\n" +
-	"\x05scope\x18\x02 \x01(\fR\x05scope\x12\x18\n" +
+	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
+	"\vclaim_scope\x18\x02 \x01(\fR\n" +
+	"claimScope\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\fR\aaddress\"\x11\n" +
 	"\x0fReleaseResponse\"h\n" +
 	"\x11SplitScopeRequest\x12&\n" +
 	"\x0fclaim_handle_id\x18\x01 \x01(\tR\rclaimHandleId\x12+\n" +
-	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\x85\x01\n" +
-	"\x12SubScopeDescriptor\x12\x1d\n" +
-	"\n" +
-	"scope_data\x18\x01 \x01(\fR\tscopeData\x12#\n" +
+	"\x11partition_request\x18\x02 \x01(\fR\x10partitionRequest\"\x90\x01\n" +
+	"\x12SubScopeDescriptor\x12(\n" +
+	"\x10claim_scope_data\x18\x01 \x01(\fR\x0eclaimScopeData\x12#\n" +
 	"\rpartition_key\x18\x02 \x01(\tR\fpartitionKey\x12+\n" +
 	"\x11producer_metadata\x18\x03 \x01(\fR\x10producerMetadata\"R\n" +
 	"\x12SplitScopeResponse\x12<\n" +
 	"\n" +
-	"sub_scopes\x18\x01 \x03(\v2\x1d.rimsky.v1.SubScopeDescriptorR\tsubScopes\"I\n" +
-	"\x15ScopesConflictRequest\x12\x17\n" +
-	"\ascope_a\x18\x01 \x01(\fR\x06scopeA\x12\x17\n" +
-	"\ascope_b\x18\x02 \x01(\fR\x06scopeB\"6\n" +
+	"sub_scopes\x18\x01 \x03(\v2\x1d.rimsky.v1.SubScopeDescriptorR\tsubScopes\"d\n" +
+	"\x1aClaimScopesConflictRequest\x12\"\n" +
+	"\rclaim_scope_a\x18\x01 \x01(\fR\vclaimScopeA\x12\"\n" +
+	"\rclaim_scope_b\x18\x02 \x01(\fR\vclaimScopeB\"6\n" +
 	"\x16ScopesConflictResponse\x12\x1c\n" +
 	"\tconflicts\x18\x01 \x01(\bR\tconflicts*\xac\x01\n" +
 	"\x0eWriteSemantics\x12\x1b\n" +
@@ -1184,7 +1187,7 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\x14WRITE_SEMANTICS_SYNC\x10\x01\x12 \n" +
 	"\x1cWRITE_SEMANTICS_STAGED_ASYNC\x10\x02\x12\"\n" +
 	"\x1eWRITE_SEMANTICS_BLOCKING_ASYNC\x10\x03\x12\x1d\n" +
-	"\x19WRITE_SEMANTICS_READ_ONLY\x10\x042\xfe\x03\n" +
+	"\x19WRITE_SEMANTICS_READ_ONLY\x10\x042\x83\x04\n" +
 	"\rClaimProducer\x12O\n" +
 	"\fCapabilities\x12\x1e.rimsky.v1.CapabilitiesRequest\x1a\x1f.rimsky.v1.CapabilitiesResponse\x127\n" +
 	"\x04Open\x12\x16.rimsky.v1.OpenRequest\x1a\x17.rimsky.v1.OpenResponse\x12=\n" +
@@ -1192,8 +1195,8 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\aAbandon\x12\x19.rimsky.v1.AbandonRequest\x1a\x1a.rimsky.v1.AbandonResponse\x12@\n" +
 	"\aRelease\x12\x19.rimsky.v1.ReleaseRequest\x1a\x1a.rimsky.v1.ReleaseResponse\x12I\n" +
 	"\n" +
-	"SplitScope\x12\x1c.rimsky.v1.SplitScopeRequest\x1a\x1d.rimsky.v1.SplitScopeResponse\x12U\n" +
-	"\x0eScopesConflict\x12 .rimsky.v1.ScopesConflictRequest\x1a!.rimsky.v1.ScopesConflictResponseB8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"SplitScope\x12\x1c.rimsky.v1.SplitScopeRequest\x1a\x1d.rimsky.v1.SplitScopeResponse\x12Z\n" +
+	"\x0eScopesConflict\x12%.rimsky.v1.ClaimScopesConflictRequest\x1a!.rimsky.v1.ScopesConflictResponseB8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_claim_producer_proto_rawDescOnce sync.Once
@@ -1210,24 +1213,24 @@ func file_claim_producer_proto_rawDescGZIP() []byte {
 var file_claim_producer_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_claim_producer_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_claim_producer_proto_goTypes = []any{
-	(WriteSemantics)(0),            // 0: rimsky.v1.WriteSemantics
-	(*CapabilitiesRequest)(nil),    // 1: rimsky.v1.CapabilitiesRequest
-	(*CapabilitiesResponse)(nil),   // 2: rimsky.v1.CapabilitiesResponse
-	(*OpenRequest)(nil),            // 3: rimsky.v1.OpenRequest
-	(*OpenResponse)(nil),           // 4: rimsky.v1.OpenResponse
-	(*Acquired)(nil),               // 5: rimsky.v1.Acquired
-	(*Unavailable)(nil),            // 6: rimsky.v1.Unavailable
-	(*CommitRequest)(nil),          // 7: rimsky.v1.CommitRequest
-	(*CommitResponse)(nil),         // 8: rimsky.v1.CommitResponse
-	(*AbandonRequest)(nil),         // 9: rimsky.v1.AbandonRequest
-	(*AbandonResponse)(nil),        // 10: rimsky.v1.AbandonResponse
-	(*ReleaseRequest)(nil),         // 11: rimsky.v1.ReleaseRequest
-	(*ReleaseResponse)(nil),        // 12: rimsky.v1.ReleaseResponse
-	(*SplitScopeRequest)(nil),      // 13: rimsky.v1.SplitScopeRequest
-	(*SubScopeDescriptor)(nil),     // 14: rimsky.v1.SubScopeDescriptor
-	(*SplitScopeResponse)(nil),     // 15: rimsky.v1.SplitScopeResponse
-	(*ScopesConflictRequest)(nil),  // 16: rimsky.v1.ScopesConflictRequest
-	(*ScopesConflictResponse)(nil), // 17: rimsky.v1.ScopesConflictResponse
+	(WriteSemantics)(0),                // 0: rimsky.v1.WriteSemantics
+	(*CapabilitiesRequest)(nil),        // 1: rimsky.v1.CapabilitiesRequest
+	(*CapabilitiesResponse)(nil),       // 2: rimsky.v1.CapabilitiesResponse
+	(*OpenRequest)(nil),                // 3: rimsky.v1.OpenRequest
+	(*OpenResponse)(nil),               // 4: rimsky.v1.OpenResponse
+	(*Acquired)(nil),                   // 5: rimsky.v1.Acquired
+	(*Unavailable)(nil),                // 6: rimsky.v1.Unavailable
+	(*CommitRequest)(nil),              // 7: rimsky.v1.CommitRequest
+	(*CommitResponse)(nil),             // 8: rimsky.v1.CommitResponse
+	(*AbandonRequest)(nil),             // 9: rimsky.v1.AbandonRequest
+	(*AbandonResponse)(nil),            // 10: rimsky.v1.AbandonResponse
+	(*ReleaseRequest)(nil),             // 11: rimsky.v1.ReleaseRequest
+	(*ReleaseResponse)(nil),            // 12: rimsky.v1.ReleaseResponse
+	(*SplitScopeRequest)(nil),          // 13: rimsky.v1.SplitScopeRequest
+	(*SubScopeDescriptor)(nil),         // 14: rimsky.v1.SubScopeDescriptor
+	(*SplitScopeResponse)(nil),         // 15: rimsky.v1.SplitScopeResponse
+	(*ClaimScopesConflictRequest)(nil), // 16: rimsky.v1.ClaimScopesConflictRequest
+	(*ScopesConflictResponse)(nil),     // 17: rimsky.v1.ScopesConflictResponse
 }
 var file_claim_producer_proto_depIdxs = []int32{
 	0,  // 0: rimsky.v1.CapabilitiesResponse.write_semantics_allowed:type_name -> rimsky.v1.WriteSemantics
@@ -1241,7 +1244,7 @@ var file_claim_producer_proto_depIdxs = []int32{
 	9,  // 8: rimsky.v1.ClaimProducer.Abandon:input_type -> rimsky.v1.AbandonRequest
 	11, // 9: rimsky.v1.ClaimProducer.Release:input_type -> rimsky.v1.ReleaseRequest
 	13, // 10: rimsky.v1.ClaimProducer.SplitScope:input_type -> rimsky.v1.SplitScopeRequest
-	16, // 11: rimsky.v1.ClaimProducer.ScopesConflict:input_type -> rimsky.v1.ScopesConflictRequest
+	16, // 11: rimsky.v1.ClaimProducer.ScopesConflict:input_type -> rimsky.v1.ClaimScopesConflictRequest
 	2,  // 12: rimsky.v1.ClaimProducer.Capabilities:output_type -> rimsky.v1.CapabilitiesResponse
 	4,  // 13: rimsky.v1.ClaimProducer.Open:output_type -> rimsky.v1.OpenResponse
 	8,  // 14: rimsky.v1.ClaimProducer.Commit:output_type -> rimsky.v1.CommitResponse

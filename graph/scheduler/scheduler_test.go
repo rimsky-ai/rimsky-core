@@ -58,10 +58,20 @@ func newSchedFixture(t *testing.T) *schedFixture {
 	})
 	ck := "ck-" + uuid.NewString()
 	var inst persistence.InstanceRow
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
 	inTxTest(t, ctx, d.Tables(), func(tx persistence.Tx) error {
+		if err := d.Tables().RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		row, err := d.Tables().Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: uuid.New(), TemplateHash: tpl.ID, InstanceKey: &ck,
-			Params: map[string]any{},
+			ID: instID, TemplateHash: tpl.ID, InstanceKey: &ck,
+			Params:         map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -122,10 +132,10 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, claimed_by, claimed_at, last_heartbeat_at,
-		                               phase, state, frame_id)
+		                               phase, state, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL, NULL,
-		         $3, $4, $5)`,
-		n.ID, executor, runPhase, string(state), frameID)
+		         $3, $4, $5, $6)`,
+		n.ID, executor, runPhase, string(state), frameID, f.instance.MainRunScopeID)
 	n.State = state
 	return n
 }
@@ -263,12 +273,16 @@ func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
 	})
 	require.NotEmpty(t, events.Events, "expected a heartbeat_lost event")
 
-	// Dispatch row was re-enqueued.
-	var count int
+	// Two dispatch rows: the retired zombie (phase='completed' after
+	// SweepStaleHeartbeats retired it) + the re-enqueued pending row.
+	// Total row count = 2 (retired + new); the in-flight count = 1.
+	var inFlightCount int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
-		[]any{n.ID}, &count)
-	assert.Equal(t, 1, count, "expected a re-enqueued dispatch row")
+		`SELECT COUNT(*) FROM rimsky_node_runs
+		  WHERE node_id = $1
+		    AND phase IN ('pending','active','held','parked')`,
+		[]any{n.ID}, &inFlightCount)
+	assert.Equal(t, 1, inFlightCount, "expected exactly one in-flight re-enqueued dispatch row")
 }
 
 func TestScheduler_OrphanedClaim_Released(t *testing.T) {
@@ -285,7 +299,8 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 	// container's clock.
 	require.NoError(t, f.queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID: n.ID, ExecutorName: "worker", EnqueuedAt: time.Now().Add(-time.Second),
-		FrameID: *n.FrameID,
+		FrameID:    *n.FrameID,
+		RunScopeID: f.instance.MainRunScopeID,
 	}))
 
 	var dispatchID shared.UUID

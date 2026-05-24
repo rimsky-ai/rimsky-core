@@ -70,6 +70,34 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 // turns the constraint into a friendly no-op for the pure-cascade-sweep
 // and retry-after-retry paths that may try to enqueue a row that already
 // exists in 'pending'.
+//
+// Closed-scope enforcement: the INSERT's source row JOINs
+// rimsky_run_scopes ON id = $6 AND closed_at IS NULL so a new in-flight
+// row cannot land in a closed RunScope (TOCTOU on closed_at — concurrent
+// RunScopes().Close() commit between a SELECT-then-INSERT pair cannot
+// let a row through). Mirrors AffirmNodeRunRow's fix. On zero rows
+// affected we re-resolve to distinguish "row already in-flight" (silent
+// success), "scope closed" (ErrRunScopeClosed), or "scope absent"
+// (error).
+//
+// Auto-commit fallback race (tx == nil only): when the caller uses the
+// `Enqueue` wrapper, the INSERT and the fallback SELECT run on separate
+// pool connections. A concurrent `RunScopes().Close()` commit between
+// the two can flip `closed_at` from NULL to non-NULL — sequence: scope
+// open → INSERT zero-rows because the NOT EXISTS gate sees an existing
+// in-flight row → concurrent scope close commits → fallback SELECT
+// reads `closed_at != nil` → returns `ErrRunScopeClosed` when the
+// correct answer is silent success. The function over-reports closed
+// in this narrow race. This is operationally benign because every
+// caller's correct behavior on ErrRunScopeClosed is "skip silently",
+// which is identical to silent success — but callers MUST NOT use
+// ErrRunScopeClosed as a signal for any side effect beyond skipping.
+// Callers that need a stable closed-vs-success answer should pass a
+// non-nil tx so the INSERT and the fallback SELECT share a snapshot.
+// The SQLite path is unaffected because BEGIN IMMEDIATE serialises
+// writers.
+//
+// @concept: run-scope
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredStores
 	if stores == nil {
@@ -79,17 +107,63 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.FrameID == (shared.UUID{}) {
 		return fmt.Errorf("postgres.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
 	}
-	_, err := q.q(tx).Exec(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
-		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5
-		  WHERE NOT EXISTS (
-		    SELECT 1 FROM rimsky_node_runs
-		     WHERE node_id = $1
-		       AND phase IN ('pending','active','held','parked')
-		  )`,
-		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID,
+	if req.RunScopeID == (shared.UUID{}) {
+		return fmt.Errorf("postgres.Enqueue: run_scope_id required for node %s", req.NodeID)
+	}
+	// Recovery-aware fields: $7 / $8 carry the predecessor dispatch
+	// id + disposition for retries / heartbeat-stale recovery /
+	// recalculates. Both NULL for initial dispatches. Per spec
+	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+	// §Recovery-aware executor protocol.
+	var priorID any
+	if req.PriorDispatchID != nil {
+		priorID = *req.PriorDispatchID
+	}
+	priorDisposition := nullableText(req.PriorDispatchDisposition)
+	// Single-branch NOT EXISTS guard keyed on (node_id, run_scope_id) —
+	// unambiguous per uq_node_runs_in_flight_per_run_scope. The
+	// rimsky_run_scopes JOIN enforces closed_at IS NULL at INSERT time.
+	tag, err := q.q(tx).Exec(ctx,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
+		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5, rs.id, $7, $8
+		   FROM rimsky_run_scopes rs
+		  WHERE rs.id = $6
+		    AND rs.closed_at IS NULL
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_node_runs
+		       WHERE node_id = $1
+		         AND run_scope_id = $6
+		         AND phase IN ('pending','active','held','parked')
+		    )`,
+		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
+		priorID, priorDisposition,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("postgres.Enqueue: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	// Zero rows: (a) in-flight row already exists (silent success),
+	// (b) scope closed (return ErrRunScopeClosed), or (c) scope absent
+	// (error). Re-resolve via separate SELECTs.
+	var closedAt *time.Time
+	err = q.q(tx).QueryRow(ctx,
+		`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
+		req.RunScopeID,
+	).Scan(&closedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("postgres.Enqueue: run scope %s not found", req.RunScopeID)
+	}
+	if err != nil {
+		return fmt.Errorf("postgres.Enqueue: lookup run scope: %w", err)
+	}
+	if closedAt != nil {
+		return persistence.ErrRunScopeClosed
+	}
+	// Scope is open: zero rows means an in-flight row already exists;
+	// silent success per the existing no-op contract.
+	return nil
 }
 
 // SelectCandidates is the §7.3 step 1 candidate-selection helper. The
@@ -132,7 +206,8 @@ func (q *queueImpl) SelectCandidates(
 	// remains reachable for those rows; pure-cascade rows are
 	// excluded here via the non-empty required_stores guard.
 	rows, err := pgT.Query(ctx,
-		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
+		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
@@ -161,12 +236,15 @@ func (q *queueImpl) SelectCandidates(
 	var out []persistence.Candidate
 	for rows.Next() {
 		var (
-			c            persistence.Candidate
-			executorName *string
+			c                persistence.Candidate
+			executorName     *string
+			priorID          *shared.UUID
+			priorDisposition *string
 		)
 		if err := rows.Scan(
 			&c.DispatchID, &c.NodeID, &c.NodeType,
 			&executorName, &c.RequiredStores, &c.EnqueuedAt, &c.FrameID,
+			&priorID, &priorDisposition,
 		); err != nil {
 			return nil, fmt.Errorf("postgres.SelectCandidates: scan: %w", err)
 		}
@@ -175,6 +253,10 @@ func (q *queueImpl) SelectCandidates(
 		}
 		if c.RequiredStores == nil {
 			c.RequiredStores = []string{}
+		}
+		c.PriorDispatchID = priorID
+		if priorDisposition != nil {
+			c.PriorDispatchDisposition = *priorDisposition
 		}
 		out = append(out, c)
 	}
@@ -247,8 +329,8 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 	return err
 }
 
-func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string) error {
-	return q.RemoveForNodeInTx(ctx, nodeID, expectedClaimedBy, nil)
+func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error {
+	return q.RemoveForNodeInTx(ctx, nodeID, runScopeID, expectedClaimedBy, nil)
 }
 
 // RemoveForNodeInTx retires the in-flight run row for a node by flipping
@@ -267,8 +349,18 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expec
 // any in-flight row for the node retires (the park-timeout / sweep
 // paths use this shape).
 //
+// `runID` (when non-nil) narrows the retirement to that specific
+// `rimsky_node_runs.id` — required for fan-out children that share a
+// node_id with parent and siblings. A supervisor that holds the claim
+// on several siblings could otherwise retire them all in one call;
+// the claimant-guard alone does not save us when the same supervisor
+// owns multiple in-flight rows. Nil `runID` preserves the legacy
+// by-node retirement for operator / sweep paths with no fan-out
+// ambiguity.
+//
 // @blessed-invariant 4: claimant-guarded release.
-func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+// @concept: fan-out
+func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).Exec(ctx,
 			`UPDATE rimsky_node_runs
@@ -277,9 +369,10 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, e
 			        last_heartbeat_at = NULL,
 			        active_terminal_at = NOW()
 			  WHERE node_id = $1
-			    AND claimed_by = $2
+			    AND run_scope_id = $2
+			    AND claimed_by = $3
 			    AND phase IN ('pending','active','held','parked')`,
-			nodeID, expectedClaimedBy,
+			nodeID, runScopeID, expectedClaimedBy,
 		)
 		return err
 	}
@@ -290,8 +383,9 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, e
 		        last_heartbeat_at = NULL,
 		        active_terminal_at = NOW()
 		  WHERE node_id = $1
+		    AND run_scope_id = $2
 		    AND phase IN ('pending','active','held','parked')`,
-		nodeID,
+		nodeID, runScopeID,
 	)
 	return err
 }
@@ -577,18 +671,20 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 }
 
 // GetInFlightRunForNode resolves the in-flight rimsky_node_runs.id for
-// the (node, frame) pair. Returns (zero, false, nil) when no in-flight
-// row exists. See persistence.Queue.GetInFlightRunForNode for usage.
-func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+// the (node, run scope) pair. Returns (zero, false, nil) when no
+// in-flight row exists. Keying on run_scope_id is unambiguous per
+// uq_node_runs_in_flight_per_run_scope.
+//
+// @concept: run-scope
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
 	ex := q.q(tx)
 	var id shared.UUID
 	err := ex.QueryRow(ctx,
 		`SELECT id FROM rimsky_node_runs
-		  WHERE node_id = $1 AND frame_id = $2
+		  WHERE node_id = $1 AND run_scope_id = $2
 		    AND phase IN ('pending','active','held','parked')
-		  ORDER BY enqueued_at DESC, id DESC
 		  LIMIT 1`,
-		nodeID, frameID).Scan(&id)
+		nodeID, runScopeID).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return shared.UUID{}, false, nil

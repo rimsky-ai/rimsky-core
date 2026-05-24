@@ -189,7 +189,7 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.O
 	if pp, ok := s.pickPolicies[selector]; ok {
 		out, err := s.openPickPolicy(ctx, claimID, pp)
 		if err == nil && out.Available {
-			s.ledger.RecordOpen(claimID, selector, out.Result.Address, out.Result.Scope)
+			s.ledger.RecordOpen(claimID, selector, out.Result.Address, out.Result.ClaimScope)
 		}
 		return out, err
 	}
@@ -202,7 +202,7 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (corestore.O
 		Available: true,
 		Result: corestore.ClaimResult{
 			Address:                json.RawMessage(addr),
-			Scope:                  json.RawMessage(addr),
+			ClaimScope:             json.RawMessage(addr),
 			RealizedWriteSemantics: s.writeSemantics,
 		},
 	}, nil
@@ -252,7 +252,7 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 		Result: corestore.ClaimResult{
 			Address:                json.RawMessage(addrBytes),
 			Payload:                rawJSON,
-			Scope:                  json.RawMessage(scopeBytes),
+			ClaimScope:             json.RawMessage(scopeBytes),
 			RealizedWriteSemantics: s.writeSemantics,
 		},
 	}, nil

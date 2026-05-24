@@ -73,12 +73,32 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, nodeID, frameID shared.UUID) shared.UUID {
 	t.Helper()
 	runID := shared.UUID(uuid.New())
+	var scopeID shared.UUID
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nd, err := backend.Nodes().Get(ctx, nodeID, tx)
+		if err != nil {
+			return err
+		}
+		if nd == nil {
+			t.Fatalf("seedRunRow: node %s missing", nodeID)
+		}
+		inst, err := backend.Instances().Get(ctx, nd.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		if inst == nil {
+			t.Fatalf("seedRunRow: instance %s missing", nd.InstanceID)
+		}
+		scopeID = inst.MainRunScopeID
+		return nil
+	}))
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
 			RunID:        runID,
 			NodeID:       nodeID,
 			FrameID:      frameID,
 			ExecutorName: "stub",
+			RunScopeID:   scopeID,
 		})
 	}))
 	return runID

@@ -64,20 +64,20 @@ type ClaimProducer interface {
 	Release(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
 
 	// SplitScope is optional. Producers that advertise
-	// Capabilities.SupportsSplitScope partition a parent scope into
-	// disjoint sub-scopes for fan-out dispatch. The parent
+	// Capabilities.SupportsSplitScope partition a parent claim-scope into
+	// disjoint sub-claim-scopes for fan-out dispatch. The parent
 	// claim_handle MUST already be Open'd; rimsky calls SplitScope
 	// inside the same acquisition transaction that opened the parent.
 	//
 	// partition_request is producer-interpreted bytes (e.g., a date
 	// range, a list of regions, a hash bucket count). The producer
-	// returns a list of SubScopeDescriptors. Per spec §Fan-out.
+	// returns a list of SubClaimScopeDescriptors. Per spec §Fan-out.
 	//
 	// Producers that do NOT support partitioning return
 	// ErrSplitScopeUnsupported. Rimsky validates Capabilities at
 	// canonicalization and only calls SplitScope for producers that
 	// advertise it.
-	SplitScope(ctx context.Context, req SplitScopeRequest) (SplitScopeResponse, error)
+	SplitScope(ctx context.Context, req SplitClaimScopeRequest) (SplitClaimScopeResponse, error)
 
 	// ScopesConflict is optional. Producers that advertise
 	// Capabilities.SupportsScopesConflict implement producer-specific

@@ -61,6 +61,19 @@ func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest
 // per node" invariant; the WHERE NOT EXISTS gate turns the constraint
 // into a friendly no-op for the pure-cascade-sweep / retry-after-retry
 // paths that may try to enqueue a row that already exists in 'pending'.
+//
+// Closed-scope enforcement: the INSERT's source row SELECTs from
+// rimsky_run_scopes filtered by closed_at IS NULL so a new in-flight
+// row cannot land in a closed RunScope. Mirrors postgres EnqueueInTx
+// and AffirmNodeRunRow. On zero rows affected we re-resolve to
+// distinguish "row already in-flight" (silent success), "scope closed"
+// (ErrRunScopeClosed), or "scope absent" (error). SQLite's BEGIN
+// IMMEDIATE write-serialisation makes the original SELECT-then-INSERT
+// shape safe in practice, but folding the check into the INSERT keeps
+// cross-backend symmetry and prevents future refactors from missing
+// the invariant.
+//
+// @concept: run-scope
 func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchRequest, tx persistence.Tx) error {
 	stores := req.RequiredStores
 	if stores == nil {
@@ -69,20 +82,71 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.FrameID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: frame_id required (per blessed-invariant 19) for node %s", req.NodeID)
 	}
-	_, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id)
-		 SELECT ?, ?, ?, ?, ?, 'pending', ?
-		  WHERE NOT EXISTS (
-		    SELECT 1 FROM rimsky_node_runs
-		     WHERE node_id = ?
-		       AND phase IN ('pending','active','held','parked')
-		  )`,
+	if req.RunScopeID == (shared.UUID{}) {
+		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
+	}
+	// Recovery-aware fields: prior_dispatch_id / prior_dispatch_disposition
+	// carry the predecessor dispatch identity for retries / heartbeat-stale
+	// recovery / recalculates. Both NULL for initial dispatches. Per spec
+	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+	// §Recovery-aware executor protocol.
+	var priorDispatchID any
+	if req.PriorDispatchID != nil {
+		priorDispatchID = req.PriorDispatchID.String()
+	}
+	priorDisposition := nullableString(req.PriorDispatchDisposition)
+	// Single-branch guard keyed on (node_id, run_scope_id) — unambiguous
+	// per uq_node_runs_in_flight_per_run_scope. The rimsky_run_scopes
+	// SELECT enforces closed_at IS NULL at INSERT time.
+	res, err := q.q(tx).ExecContext(ctx,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
+		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?
+		   FROM rimsky_run_scopes rs
+		  WHERE rs.id = ?
+		    AND rs.closed_at IS NULL
+		    AND NOT EXISTS (
+		      SELECT 1 FROM rimsky_node_runs
+		       WHERE node_id = ?
+		         AND run_scope_id = ?
+		         AND phase IN ('pending','active','held','parked')
+		    )`,
 		uuid.New().String(), req.NodeID.String(),
 		nullableString(req.ExecutorName), marshalStringArray(stores),
 		formatTime(req.EnqueuedAt), req.FrameID.String(),
-		req.NodeID.String(),
+		priorDispatchID, priorDisposition,
+		req.RunScopeID.String(),
+		req.NodeID.String(), req.RunScopeID.String(),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("sqlite.Enqueue: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.Enqueue: rows affected: %w", err)
+	}
+	if affected > 0 {
+		return nil
+	}
+	// Zero rows: (a) in-flight row already exists (silent success),
+	// (b) scope closed (return ErrRunScopeClosed), or (c) scope absent
+	// (error). Re-resolve via a separate SELECT.
+	var closedAt sql.NullString
+	err = q.q(tx).QueryRowContext(ctx,
+		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`,
+		req.RunScopeID.String(),
+	).Scan(&closedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("sqlite.Enqueue: run scope %s not found", req.RunScopeID)
+	}
+	if err != nil {
+		return fmt.Errorf("sqlite.Enqueue: lookup run scope: %w", err)
+	}
+	if closedAt.Valid {
+		return persistence.ErrRunScopeClosed
+	}
+	// Scope is open: zero rows means an in-flight row already exists;
+	// silent success per the existing no-op contract.
+	return nil
 }
 
 // SelectCandidates returns up to req.Limit dispatch rows. SQLite has no
@@ -120,7 +184,8 @@ func (q *queueImpl) SelectCandidates(
 	// than being directly claimed). Per the 2026-05-08 platform-extensions
 	// plan E2/E3.
 	rows, err := q.q(tx).QueryContext(ctx,
-		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id
+		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
+		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.claimed_by IS NULL
@@ -173,22 +238,35 @@ func (q *queueImpl) SelectCandidates(
 	var out []persistence.Candidate
 	for rows.Next() {
 		var (
-			c                 persistence.Candidate
-			dispatchIDStr     string
-			nodeIDStr         string
-			nodeType          string
-			executorName      sql.NullString
-			requiredStoresStr string
-			enqueuedAtStr     string
-			frameIDStr        string
+			c                   persistence.Candidate
+			dispatchIDStr       string
+			nodeIDStr           string
+			nodeType            string
+			executorName        sql.NullString
+			requiredStoresStr   string
+			enqueuedAtStr       string
+			frameIDStr          string
+			priorDispatchIDStr  sql.NullString
+			priorDispositionStr sql.NullString
 		)
 		if err := rows.Scan(&dispatchIDStr, &nodeIDStr, &nodeType, &executorName,
-			&requiredStoresStr, &enqueuedAtStr, &frameIDStr); err != nil {
+			&requiredStoresStr, &enqueuedAtStr, &frameIDStr,
+			&priorDispatchIDStr, &priorDispositionStr); err != nil {
 			return nil, fmt.Errorf("sqlite.SelectCandidates: scan: %w", err)
 		}
 		c.NodeType = nodeType
 		if executorName.Valid {
 			c.ExecutorName = executorName.String
+		}
+		if priorDispatchIDStr.Valid {
+			pid, perr := uuid.Parse(priorDispatchIDStr.String)
+			if perr != nil {
+				return nil, fmt.Errorf("sqlite.SelectCandidates: parse prior_dispatch_id: %w", perr)
+			}
+			c.PriorDispatchID = &pid
+		}
+		if priorDispositionStr.Valid {
+			c.PriorDispatchDisposition = priorDispositionStr.String
 		}
 		stores, err := unmarshalStringArray(requiredStoresStr)
 		if err != nil {
@@ -282,15 +360,16 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 	return err
 }
 
-func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string) error {
-	return q.RemoveForNodeInTx(ctx, nodeID, expectedClaimedBy, nil)
+func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error {
+	return q.RemoveForNodeInTx(ctx, nodeID, runScopeID, expectedClaimedBy, nil)
 }
 
-// RemoveForNodeInTx retires the in-flight run row for a node by flipping
-// phase to a terminal value. See the postgres impl for the rationale.
+// RemoveForNodeInTx retires the in-flight run row for a (node, run scope)
+// by flipping phase to a terminal value.
 //
 // @blessed-invariant 4: claimant-guarded release.
-func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
+// @concept: run-scope
+func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx persistence.Tx) error {
 	now := nowUTC()
 	if expectedClaimedBy != "" {
 		_, err := q.q(tx).ExecContext(ctx,
@@ -300,9 +379,10 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, e
 			        last_heartbeat_at = NULL,
 			        active_terminal_at = ?
 			  WHERE node_id = ?
+			    AND run_scope_id = ?
 			    AND claimed_by = ?
 			    AND phase IN ('pending','active','held','parked')`,
-			now, nodeID.String(), expectedClaimedBy,
+			now, nodeID.String(), runScopeID.String(), expectedClaimedBy,
 		)
 		return err
 	}
@@ -313,8 +393,9 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, e
 		        last_heartbeat_at = NULL,
 		        active_terminal_at = ?
 		  WHERE node_id = ?
+		    AND run_scope_id = ?
 		    AND phase IN ('pending','active','held','parked')`,
-		now, nodeID.String(),
+		now, nodeID.String(), runScopeID.String(),
 	)
 	return err
 }
@@ -661,16 +742,16 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 }
 
 // GetInFlightRunForNode resolves the in-flight rimsky_node_runs.id for
-// the (node, frame) pair. Mirrors the postgres impl. See
-// persistence.Queue.GetInFlightRunForNode for usage.
-func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error) {
+// the (node, run scope) pair. Unambiguous per uq_node_runs_in_flight_per_run_scope.
+//
+// @concept: run-scope
+func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
 	row := q.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
-		  WHERE node_id = ? AND frame_id = ?
+		  WHERE node_id = ? AND run_scope_id = ?
 		    AND phase IN ('pending','active','held','parked')
-		  ORDER BY enqueued_at DESC, id DESC
 		  LIMIT 1`,
-		nodeID.String(), frameID.String())
+		nodeID.String(), runScopeID.String())
 	var idStr string
 	if err := row.Scan(&idStr); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

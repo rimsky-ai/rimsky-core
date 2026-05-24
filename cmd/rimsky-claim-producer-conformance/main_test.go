@@ -75,7 +75,7 @@ func TestClaimProducerConformance_NoPartitioning(t *testing.T) {
 			Available: true,
 			Result: locks.ClaimResult{
 				Address:                bytes,
-				Scope:                  bytes,
+				ClaimScope:             bytes,
 				RealizedWriteSemantics: locks.WriteSemanticsSync,
 			},
 		}, nil

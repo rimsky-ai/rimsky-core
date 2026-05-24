@@ -6,10 +6,10 @@ package locks
 
 import "testing"
 
-// TestScopesByteEqual covers the rimsky-side byte-equal scope conflict
-// predicate (per v3 spec §7.7). Empty scopes never conflict; identical
-// bytes conflict; different bytes do not.
-func TestScopesByteEqual(t *testing.T) {
+// TestClaimScopesByteEqual covers the rimsky-side byte-equal claim-scope
+// conflict predicate (per v3 spec §7.7). Empty claim-scopes never conflict;
+// identical bytes conflict; different bytes do not.
+func TestClaimScopesByteEqual(t *testing.T) {
 	cases := []struct {
 		name string
 		a, b []byte
@@ -28,9 +28,9 @@ func TestScopesByteEqual(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ScopesByteEqual(tc.a, tc.b)
+			got := ClaimScopesByteEqual(tc.a, tc.b)
 			if got != tc.want {
-				t.Fatalf("ScopesByteEqual(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+				t.Fatalf("ClaimScopesByteEqual(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 			}
 		})
 	}

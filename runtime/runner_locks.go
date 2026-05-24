@@ -230,8 +230,8 @@ func collectCoHeldClaims(
 			localAlias = binding.As
 		}
 		out[localAlias] = locks.ClaimResult{
-			Address: lh.Address,
-			Scope:   lh.ScopeData,
+			Address:    lh.Address,
+			ClaimScope: lh.ClaimScopeData,
 		}
 	}
 }
@@ -284,8 +284,8 @@ func collectInheritedClaims(
 			continue
 		}
 		out[alias] = locks.ClaimResult{
-			Address: lh.Address,
-			Scope:   lh.ScopeData,
+			Address:    lh.Address,
+			ClaimScope: lh.ClaimScopeData,
 		}
 	}
 }

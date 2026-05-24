@@ -7,6 +7,8 @@ package node
 import (
 	"fmt"
 	"strings"
+
+	"github.com/fallguy/rimsky/foundation/shared"
 )
 
 // canonicalizeGraphs normalizes a TemplateSpec that declares `graphs:`
@@ -36,6 +38,10 @@ import (
 //   - subgraph_recursion_unsupported: delegate: cycle across graphs.
 //   - subgraph_internal_references_outer: an internal node subscribes to /
 //     depends on / holds-from a node not declared in its own graph.
+//   - subgraph_absorption_alias_conflict: the calling node and the entry
+//     node it absorbs both declare the same store / holds alias. The
+//     canonicalizer cannot pick a winner without silently dropping one
+//     side's binding; reject so the template author picks a side.
 //
 // If any of the above is reported, canonicalizeGraphs returns a partial
 // `Nodes` list (best-effort merge so downstream validators can still
@@ -207,7 +213,35 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 //     node per-invocation (the entry is absorbed into the calling
 //     node, so the structural entry alias never has its own
 //     rimsky_nodes row to attach a sender to).
+//
+// Entry-into-calling absorption merge (per spec §Identity and
+// absorption): for every node that declares `delegate: X`, the
+// canonicalizer locates X's entry node (X.Entry → matching node in
+// X.Nodes) and merges the entry's executor + stores + holds +
+// attribute schema onto the calling node. The calling node's
+// externally-declared bindings take precedence; collisions on
+// store / holds alias are rejected with
+// `subgraph_absorption_alias_conflict` (the canonicalizer cannot
+// silently drop one side's binding).
+//
+// Note: the entry node ALSO remains in the flat Nodes list (its row
+// is still provisioned per the existing instance-factory flow). The
+// runtime `SubgraphInternalCascade` helper filters the entry out of
+// the internal-cascade dispatch set so it never runs as a standalone
+// child; the absorbed copy on the calling node is what dispatches at
+// the parent's executor invocation. Removing the entry row entirely
+// is a follow-up change that touches provisioning + runtime cascade
+// resolution — out of scope for the canonicalizer-only absorption
+// merge that lands here.
 func flatten(spec *TemplateSpec, res *ValidationResult) {
+	// Index entries by graph name for the absorption merge below.
+	// Only well-formed sub-graphs (non-main, with a declared entry
+	// that names a real node) contribute an entry-node lookup;
+	// malformed shapes are reported by validateGraphShape and
+	// silently skipped here so the absorption pass doesn't
+	// double-report.
+	entryByGraph := buildEntryIndex(spec)
+
 	seen := make(map[string]string, 16)
 	flat := make([]TemplateNodeDef, 0, 16)
 	for gi, g := range spec.Graphs {
@@ -231,12 +265,23 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 			}
 			seen[n.Type] = fmt.Sprintf("graph %q", g.Name)
 			emitted := n
-			// Marker 1: the calling node carries IsSubgraphEntryAbsorbed
-			// when it has a non-empty Delegate. The marker is emitted at
-			// canonicalization so the runtime can route on it without a
-			// per-template lookup at every terminal.
+			// Marker 1 + absorption merge: the calling node carries
+			// IsSubgraphEntryAbsorbed when it has a non-empty Delegate,
+			// and the entry node's executor + stores + holds +
+			// attribute schema are merged onto the calling node so the
+			// runtime dispatch path sees a fully populated row. The
+			// marker is emitted at canonicalization so the runtime can
+			// route on it without a per-template lookup at every
+			// terminal; the merge is what makes the entry's identity
+			// "be" the calling node per concept:delegation.
 			if strings.TrimSpace(emitted.Delegate) != "" {
 				emitted.IsSubgraphEntryAbsorbed = true
+				if entry, ok := entryByGraph[emitted.Delegate]; ok {
+					absorbed, errs := absorbEntryIntoCaller(emitted, entry,
+						fmt.Sprintf("graphs[%d].nodes[%d]", gi, ni))
+					emitted = absorbed
+					res.Errors = append(res.Errors, errs...)
+				}
 			}
 			// Marker 2: the exit node of a non-main graph carries
 			// IsSubgraphExit. The runtime consults this marker (via
@@ -264,6 +309,212 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 		}
 	}
 	spec.Nodes = flat
+}
+
+// buildEntryIndex returns a `graph-name → entry node` map for every
+// well-formed sub-graph in spec.Graphs. Malformed shapes (missing
+// entry, entry naming a non-declared node) are reported separately
+// by validateGraphShape and silently skipped here so the absorption
+// pass doesn't double-report. The map is keyed on the sub-graph's
+// name so a calling node's `delegate: X` resolves in O(1).
+func buildEntryIndex(spec *TemplateSpec) map[string]TemplateNodeDef {
+	out := make(map[string]TemplateNodeDef, len(spec.Graphs))
+	for _, g := range spec.Graphs {
+		if g.Name == MainGraphName || g.Entry == "" {
+			continue
+		}
+		for _, n := range g.Nodes {
+			if n.Type == g.Entry {
+				out[g.Name] = n
+				break
+			}
+		}
+	}
+	return out
+}
+
+// absorbEntryIntoCaller merges the entry node's runtime-bearing
+// declarations onto the calling node. The calling node's
+// externally-declared fields win on collision (per spec §Identity
+// and absorption: "merged with what the calling node declared
+// externally"); store / holds alias collisions with diverging
+// bindings are rejected because there is no well-defined merge
+// (the canonicalizer cannot drop one side silently).
+//
+// Fields merged:
+//
+//   - Executor: entry's executor wins. The calling node's
+//     mutual-exclusion with `delegate:` is enforced by
+//     validateExecutorCoherence; this site assumes the calling node
+//     does NOT carry an externally-declared executor, but is
+//     defensive: a non-empty caller executor is preserved (the
+//     mutual-exclusion validator surfaces the rejection separately).
+//   - Stores: append entry's after caller's, dedupe by alias,
+//     conflict-reject on shared alias with non-identical bindings.
+//   - Holds: union the maps, conflict-reject on key overlap with
+//     diverging bindings.
+//   - Attributes.Schema: deep-merge caller's external schema over
+//     entry's so caller wins on overlapping keys.
+//
+// Returns the merged node + any conflict-detection errors. caller
+// is not mutated.
+func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (TemplateNodeDef, []ValidationError) {
+	out := caller
+	var errs []ValidationError
+
+	// D2 mutual-exclusion — AUTHORED state. The caller's
+	// IsSubgraphEntryAbsorbed marker is set BEFORE we get here, which
+	// disables the `validateExecutorCoherence` check downstream
+	// (otherwise every absorbed caller would false-positive after the
+	// merge populates Executor). Surface the mutual-exclusion violation
+	// here because this is the ONLY site that still sees the author's
+	// original declaration. The check fires whenever the author wrote
+	// both `executor:` AND `delegate:` on the same node, regardless of
+	// whether the entry itself declares an executor — without this an
+	// author who delegates to a sub-graph whose entry has no executor
+	// of its own would slip past every check.
+	if caller.Executor != "" && caller.Delegate != "" {
+		errs = append(errs, ValidationError{
+			Path: basePath + ".executor",
+			Msg: fmt.Sprintf(
+				"delegate and executor are mutually exclusive (executor=%q, delegate=%q)",
+				caller.Executor, caller.Delegate),
+		})
+	}
+	// Only run the diverging-executor check when the mutual-exclusion
+	// check above did NOT fire. Otherwise an author who wrote BOTH
+	// `executor:` AND `delegate:` whose entry happens to declare a
+	// different executor would land two overlapping errors on the same
+	// path — the mutual-exclusion error is the root cause, and the
+	// diverging-executor message is redundant noise on top of it.
+	if len(errs) == 0 && out.Executor != "" && entry.Executor != "" && out.Executor != entry.Executor {
+		// The author declared an executor on the calling node AND the
+		// entry declared an executor of its own. The mutual-exclusion
+		// check is the catch-all for `executor:` + `delegate:`; this
+		// site is more specific about which executor would win the
+		// merge so operators see a coherent absorption-conflict
+		// vocabulary in the diverging-executor case.
+		errs = append(errs, ValidationError{
+			Path: basePath + ".executor",
+			Msg: fmt.Sprintf(
+				"subgraph_absorption_alias_conflict: calling node declares executor %q, but the absorbed entry declares executor %q; remove the calling node's executor (the entry's wins)",
+				out.Executor, entry.Executor),
+		})
+	}
+	if out.Executor == "" {
+		out.Executor = entry.Executor
+	}
+
+	if len(entry.Stores) > 0 {
+		mergedStores, storeErrs := mergeStoresOnAbsorb(caller.Stores, entry.Stores, basePath)
+		out.Stores = mergedStores
+		errs = append(errs, storeErrs...)
+	}
+
+	if len(entry.Holds) > 0 {
+		mergedHolds, holdErrs := mergeHoldsOnAbsorb(caller.Holds, entry.Holds, basePath)
+		out.Holds = mergedHolds
+		errs = append(errs, holdErrs...)
+	}
+
+	if entry.Attributes != nil && len(entry.Attributes.Schema) > 0 {
+		// Deep-merge: caller's external schema is the L2 override; the
+		// entry's schema is the absorbed baseline. shared.DeepMergeJSON
+		// gives over-wins-on-conflict, so the caller wins as required.
+		entryAsAny := any(entry.Attributes.Schema)
+		var callerAsAny any
+		if caller.Attributes != nil && len(caller.Attributes.Schema) > 0 {
+			callerAsAny = any(caller.Attributes.Schema)
+		}
+		mergedAny := shared.DeepMergeJSON(entryAsAny, callerAsAny)
+		if m, ok := mergedAny.(map[string]any); ok && len(m) > 0 {
+			out.Attributes = &NodeAttributesDef{Schema: m}
+		}
+	}
+
+	return out, errs
+}
+
+// mergeStoresOnAbsorb concatenates `caller` and `entry` store
+// declarations, deduping by alias. When both sides declare a store
+// with the same alias, the bindings must be identical (same Name +
+// Selector + Intent + Alias + Lifetime + Data); divergence is
+// rejected with `subgraph_absorption_alias_conflict`. Caller-
+// declared entries appear first in the output so caller's ordering
+// is preserved.
+func mergeStoresOnAbsorb(callerStores, entryStores []NodeStoreRef, basePath string) ([]NodeStoreRef, []ValidationError) {
+	var errs []ValidationError
+	byAlias := make(map[string]NodeStoreRef, len(callerStores)+len(entryStores))
+	out := make([]NodeStoreRef, 0, len(callerStores)+len(entryStores))
+	for _, s := range callerStores {
+		byAlias[s.AliasOf()] = s
+		out = append(out, s)
+	}
+	for _, s := range entryStores {
+		alias := s.AliasOf()
+		existing, dup := byAlias[alias]
+		if !dup {
+			byAlias[alias] = s
+			out = append(out, s)
+			continue
+		}
+		if !storeRefIdentical(existing, s) {
+			errs = append(errs, ValidationError{
+				Path: fmt.Sprintf("%s.stores[%s]", basePath, alias),
+				Msg: fmt.Sprintf(
+					"subgraph_absorption_alias_conflict: store alias %q declared on both the calling node and the absorbed entry with diverging bindings; rename one side",
+					alias),
+			})
+			continue
+		}
+		// Identical re-declaration: the caller's copy already covers
+		// the slot; the entry adds nothing new.
+	}
+	return out, errs
+}
+
+// storeRefIdentical reports whether two NodeStoreRefs are
+// byte-equivalent for the absorption-conflict check. Comparing the
+// opaque-to-rimsky `Data` field via string conversion is safe here
+// because both copies come from the same template-deploy payload
+// (byte-for-byte equality is the right test); rimsky never inspects
+// the bytes per @blessed-invariant 20.
+func storeRefIdentical(a, b NodeStoreRef) bool {
+	if a.Name != b.Name || a.Selector != b.Selector || a.Intent != b.Intent {
+		return false
+	}
+	if a.Alias != b.Alias || a.Lifetime != b.Lifetime {
+		return false
+	}
+	return string(a.Data) == string(b.Data)
+}
+
+// mergeHoldsOnAbsorb unions the caller's and entry's holds maps.
+// The map key IS the local alias; key overlap with diverging
+// bindings is rejected with `subgraph_absorption_alias_conflict`.
+// Identical re-declarations are accepted (the caller's copy
+// survives unchanged).
+func mergeHoldsOnAbsorb(callerHolds, entryHolds map[string]HoldsBinding, basePath string) (map[string]HoldsBinding, []ValidationError) {
+	var errs []ValidationError
+	out := make(map[string]HoldsBinding, len(callerHolds)+len(entryHolds))
+	for k, v := range callerHolds {
+		out[k] = v
+	}
+	for k, v := range entryHolds {
+		if existing, dup := out[k]; dup {
+			if existing != v {
+				errs = append(errs, ValidationError{
+					Path: fmt.Sprintf("%s.holds[%s]", basePath, k),
+					Msg: fmt.Sprintf(
+						"subgraph_absorption_alias_conflict: holds alias %q declared on both the calling node and the absorbed entry with diverging bindings; rename one side",
+						k),
+				})
+			}
+			continue
+		}
+		out[k] = v
+	}
+	return out, errs
 }
 
 // detectDelegateCycles builds a directed graph of `graph.delegate-to-graph`

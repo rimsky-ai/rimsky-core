@@ -76,6 +76,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}},
 	}
 	instanceID = uuid.New()
+	mainScopeID := uuid.New()
 	ck := "ck-" + uuid.NewString()
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := f.persist.Templates().Insert(ctx, persistence.TemplateInsertInput{
@@ -83,9 +84,17 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 		}, tx); err != nil {
 			return err
 		}
+		if err := f.persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
 		if _, err := f.persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instanceID, TemplateHash: templateHash, InstanceKey: &ck,
-			Params: map[string]any{},
+			Params:         map[string]any{},
+			MainRunScopeID: mainScopeID,
 		}, tx); err != nil {
 			return err
 		}

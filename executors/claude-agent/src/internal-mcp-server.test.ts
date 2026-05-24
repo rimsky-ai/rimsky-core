@@ -235,14 +235,14 @@ describe("rimsky-callback MCP tools", () => {
       name: "report_park",
       arguments: {
         token: "tok-park",
-        reason: "awaiting_human",
+        reason: "await_callback",
         reason_note: "operator review pending",
         resume_at: "2026-05-15T12:00:00Z",
       },
     });
     expect(parseToolText(res.content)).toEqual({ status: "accepted" });
     expect(captured).toEqual({
-      reason: "awaiting_human",
+      reason: "await_callback",
       reasonNote: "operator review pending",
       resumeAt: "2026-05-15T12:00:00Z",
     });
@@ -267,7 +267,7 @@ describe("rimsky-callback MCP tools", () => {
 
     const res = await client.callTool({
       name: "report_park",
-      arguments: { token: "tok-no-park", reason: "time_wait" },
+      arguments: { token: "tok-no-park", reason: "snooze" },
     });
     // The handler returns a structured "park_not_supported" payload
     // (not isError) so the agent can surface a meaningful message to

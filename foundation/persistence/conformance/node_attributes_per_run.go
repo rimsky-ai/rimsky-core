@@ -91,7 +91,7 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 
 	var latest *persistence.NodeAttributesRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeAttributes().GetLatestByNode(ctx, fix.NodeID, tx)
+		r, err := store.NodeAttributes().GetLatestByNode(ctx, fix.NodeID, fix.MainRunScopeID, tx)
 		latest = r
 		return err
 	}); err != nil {
@@ -110,7 +110,7 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	// Sanity: GetLatestByNode for a node with no rows returns (nil, nil).
 	missingNodeID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		r, err := store.NodeAttributes().GetLatestByNode(ctx, missingNodeID, tx)
+		r, err := store.NodeAttributes().GetLatestByNode(ctx, missingNodeID, fix.MainRunScopeID, tx)
 		if err != nil {
 			return err
 		}

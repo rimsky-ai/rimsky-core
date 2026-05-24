@@ -127,7 +127,7 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 			Result: corestore.ClaimResult{
 				Address:                json.RawMessage(addrBytes),
 				Payload:                head.payload,
-				Scope:                  json.RawMessage(scopeBytes),
+				ClaimScope:             json.RawMessage(scopeBytes),
 				RealizedWriteSemantics: rws,
 			},
 		}, nil
@@ -138,7 +138,7 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 		Available: true,
 		Result: corestore.ClaimResult{
 			Address:                json.RawMessage(addr),
-			Scope:                  json.RawMessage(scope),
+			ClaimScope:             json.RawMessage(scope),
 			RealizedWriteSemantics: rws,
 		},
 	}, nil

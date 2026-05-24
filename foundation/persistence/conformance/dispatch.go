@@ -32,6 +32,7 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		RequiredStores: []string{},
 		EnqueuedAt:     time.Now().Add(-1 * time.Second),
 		FrameID:        fix.FrameID,
+		RunScopeID:     fix.MainRunScopeID,
 	}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

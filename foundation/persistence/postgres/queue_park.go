@@ -150,7 +150,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 		reasonArg = reasonFilter
 	}
 	rows, err := q.q(tx).Query(ctx,
-		`SELECT n.instance_id, d.node_id, d.frame_id,
+		`SELECT d.id, n.instance_id, d.node_id, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
@@ -174,7 +174,7 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 			reasonNote sql.NullString
 			nodeID     string
 		)
-		if err := rows.Scan(&instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason, &reasonNote); err != nil {
+		if err := rows.Scan(&r.DispatchID, &instID, &nodeID, &frameID, &r.ParkedAt, &resumeAt, &reason, &reasonNote); err != nil {
 			return nil, err
 		}
 		if instID.Valid {
@@ -203,7 +203,15 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 
 // GetParkedByNode returns the parked row for a node, or (nil, nil) when
 // the node has no parked node-run row.
-func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*persistence.ParkedRow, error) {
+//
+// When `runID` is non-nil the SELECT is narrowed to that specific
+// in-flight row — fan-out children share a node_id with their siblings,
+// so a SELECT by node_id alone can return any of the in-flight parked
+// rows while children race. Nil `runID` preserves the legacy by-node
+// lookup for paths that don't face fan-out ambiguity.
+//
+// @concept: fan-out
+func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
 		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
@@ -211,8 +219,9 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*p
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = $1
+		    AND d.run_scope_id = $2
 		    AND d.phase = 'parked'`,
-		nodeID,
+		nodeID, runScopeID,
 	)
 	r, err := scanOneParkedRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -346,15 +355,27 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 // the current node-run row for nodeID. Used by the retry path to
 // accumulate the counter across retry round-trips (each retry deletes
 // the prior row and inserts a new one with default counter=0).
-func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, count int) error {
+//
+// The UPDATE is scoped to `phase = 'pending' AND claimed_by IS NULL` so
+// only the freshly-inserted pending row (no other phase / no claimant
+// yet) is touched. Without this gate, fan-out children sharing a
+// node_id would have their counters clobbered on every sibling retry —
+// the retry path's `RemoveForNodeInTx` is claimant-guarded but the
+// counter stamp would still leak across siblings still mid-flight.
+//
+// @concept: fan-out
+func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("postgres.SetRetryNoProgressForNodeInTx: tx required")
 	}
 	_, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET consecutive_retries_no_progress = $2
-		  WHERE node_id = $1`,
-		nodeID, count,
+		    SET consecutive_retries_no_progress = $3
+		  WHERE node_id = $1
+		    AND run_scope_id = $2
+		    AND phase = 'pending'
+		    AND claimed_by IS NULL`,
+		nodeID, runScopeID, count,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.SetRetryNoProgressForNodeInTx: %w", err)

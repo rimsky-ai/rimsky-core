@@ -94,9 +94,19 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			return err
 		}
 		ck := "ck-subgraph-emit"
+		instID := shared.UUID(uuid.New())
+		mainScopeID := shared.UUID(uuid.New())
+		if err := backend.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  "main",
+			InstanceID: instID,
+		}); err != nil {
+			return err
+		}
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmplHash, InstanceKey: &ck,
-			Params: map[string]any{"region": "us-east"},
+			ID: instID, TemplateHash: tmplHash, InstanceKey: &ck,
+			Params:         map[string]any{"region": "us-east"},
+			MainRunScopeID: mainScopeID,
 		}, tx)
 		if err != nil {
 			return err
@@ -153,9 +163,10 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		// the lineage row's parent_run_id key drops via omitempty).
 		callerRunID = shared.UUID(uuid.New())
 		if err := backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
-			RunID:   callerRunID,
-			NodeID:  callerNode.ID,
-			FrameID: frameID,
+			RunID:      callerRunID,
+			NodeID:     callerNode.ID,
+			FrameID:    frameID,
+			RunScopeID: inst.MainRunScopeID,
 			// ExecutorName empty: sub-graph callers carry delegate, not
 			// executor (the two are mutually exclusive at the template
 			// layer).
@@ -185,7 +196,9 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		// Sub-graph callers have no executor (delegate + executor are
 		// mutually exclusive at the template layer); leave empty.
 		Executor:         "",
+		GraphName:        "main",
 		FrameID:          frameID,
+		RunScopeID:       inst.MainRunScopeID,
 		NodeDef:          nodeDef,
 		InstanceParams:   inst.Params,
 		MergedAttributes: map[string]any{"merged": true},
@@ -205,12 +218,26 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	// caller would normally pass through to upsertFinalAttributesTx as
 	// the absorbed entry's attribute writeback; an empty map is fine
 	// for the lineage assertion since the row encodes hashed inputs,
-	// not raw bytes.
-	require.NoError(t, applyTerminalCompleteSubgraphCaller(
-		ctx, args, acq, map[string]any{}, terminalEvent{
-			Kind:    terminalKindComplete,
-			Changed: true,
-		}))
+	// not raw bytes. Runs in the same outer-tx shape the runtime uses
+	// — applyTerminalCompleteSubgraphCaller now expects to participate
+	// in the determinism tx and returns a postCommit closure for the
+	// lineage emit + observability.
+	var post postCommitFn
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		pc, err := applyTerminalCompleteSubgraphCaller(
+			ctx, args, acq, map[string]any{}, terminalEvent{
+				Kind:    terminalKindComplete,
+				Changed: true,
+			}, tx)
+		if err != nil {
+			return err
+		}
+		post = pc
+		return nil
+	}))
+	if post != nil {
+		post(ctx)
+	}
 
 	// Inspect the lineage projection for the caller's run.
 	rows, err := backend.Lineage().GetByRunID(ctx, callerRunID)

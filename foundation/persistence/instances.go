@@ -32,9 +32,27 @@ type InstanceRow struct {
 	InstanceKey        *string        `json:"instance_key"`  // nullable
 	Params             map[string]any `json:"params"`
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
-	FrameDeliveryMode  string         `json:"frame_delivery_mode"`
-	CreatedAt          time.Time      `json:"created_at"`
-	TerminatedAt       *time.Time     `json:"terminated_at"` // nullable; set at terminal-state detection
+	// AttributeOverridesMatchCounts is the per-entry match counter for
+	// AttributeOverrides.by_match. Indexed by by_match entry position;
+	// each int64 counts how many dispatches matched that entry. Length
+	// equals len(AttributeOverrides["by_match"]); empty for instances
+	// with no by_match entries. Read via GET /instances/{id}; written by
+	// the supervisor's IncrementAttributeOverrideMatchCounts call after
+	// applyAttributeOverrides returns matched indices.
+	//
+	// @concept: attribute (L5 matcher overlay)
+	AttributeOverridesMatchCounts []int64 `json:"attribute_overrides_match_counts,omitempty"`
+	FrameDeliveryMode             string  `json:"frame_delivery_mode"`
+	// MainRunScopeID projects rimsky_instances.main_run_scope_id — the
+	// instance's main RunScope (FK to rimsky_run_scopes.id). Every
+	// instance has exactly one main RunScope, allocated by the create
+	// handler before the InstanceRow row is INSERTed. Per
+	// concept:run-scope.
+	//
+	// @concept: run-scope
+	MainRunScopeID shared.UUID `json:"main_run_scope_id"`
+	CreatedAt      time.Time   `json:"created_at"`
+	TerminatedAt   *time.Time  `json:"terminated_at"` // nullable; set at terminal-state detection
 }
 
 // InstanceTable is the rimsky_instances accessor.
@@ -54,6 +72,25 @@ type InstanceTable interface {
 	// CountByActive returns (active, terminated) instance counts for the
 	// system summary endpoint. Active = TerminatedAt IS NULL.
 	CountByActive(ctx context.Context, tx Tx) (active int, terminated int, err error)
+	// IncrementAttributeOverrideMatchCounts atomically increments the
+	// counter at each of the given by_match entry positions on the
+	// instance's attribute_overrides_match_counts column. Out-of-range
+	// indices are silently no-op'd at the persistence layer;
+	// observability surface is the application-layer caller. The
+	// runtime's `incrementMatchCountersAfterMerge` Warn-logs failures
+	// of the entire call but does not enumerate per-index drops.
+	//
+	// tx is required (non-nil); the backend's q(tx) accessor panics on
+	// nil tx per the package's universal convention. Dispatch-path
+	// callers wrap with args.Persist.Transaction(...) to open a short
+	// dedicated tx (the dispatch-row write has already committed via
+	// transitionToRunning before this is invoked, so the increment
+	// runs in its own separate tx, not nested with anything).
+	//
+	// Per spec
+	// .ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md
+	// §"Persistence API".
+	IncrementAttributeOverrideMatchCounts(ctx context.Context, instanceID shared.UUID, indices []int, tx Tx) error
 }
 
 // InstanceCreateInput is the per-row input for Create.
@@ -71,7 +108,21 @@ type InstanceCreateInput struct {
 	InstanceKey        *string // nullable
 	Params             map[string]any
 	AttributeOverrides map[string]any
-	FrameDeliveryMode  string
+	// AttributeOverridesMatchCounts is the initial counter array,
+	// typically a zero-filled slice of length len(by_match). The control-
+	// API handler initialises this from the request body's by_match
+	// length; the persistence layer persists it verbatim.
+	AttributeOverridesMatchCounts []int64
+	FrameDeliveryMode             string
+	// MainRunScopeID is the main RunScope's id, allocated by the
+	// create handler before Create is called. Required (non-nullable;
+	// every instance has exactly one main RunScope). The column
+	// rimsky_instances.main_run_scope_id lands via the Phase B
+	// migration; in Phase A the wiring is in place but the migration
+	// is deferred. Per concept:run-scope.
+	//
+	// @concept: run-scope
+	MainRunScopeID shared.UUID
 }
 
 // InstanceListFilter is the observability/list filter for instances.

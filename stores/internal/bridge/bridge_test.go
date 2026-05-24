@@ -93,9 +93,9 @@ func TestOpenBridge_AcquiredOneof(t *testing.T) {
 		OpenFunc: func(_ *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 			return &genv1.OpenResponse{
 				Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
-					Address: addr,
-					Payload: payload,
-					Scope:   scope,
+					Address:    addr,
+					Payload:    payload,
+					ClaimScope: scope,
 				}},
 			}, nil
 		},
@@ -117,8 +117,8 @@ func TestOpenBridge_AcquiredOneof(t *testing.T) {
 	if !bytes.Equal(acq.GetPayload(), payload) {
 		t.Errorf("payload mismatch: got %q want %q", acq.GetPayload(), payload)
 	}
-	if !bytes.Equal(acq.GetScope(), scope) {
-		t.Errorf("scope mismatch: got %q want %q", acq.GetScope(), scope)
+	if !bytes.Equal(acq.GetClaimScope(), scope) {
+		t.Errorf("scope mismatch: got %q want %q", acq.GetClaimScope(), scope)
 	}
 }
 

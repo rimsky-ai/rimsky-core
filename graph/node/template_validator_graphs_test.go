@@ -522,3 +522,43 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 		t.Fatalf("promote subscribes to transform; should not carry ResolvesViaCallingNode: %+v", promote)
 	}
 }
+
+// D2 mutual-exclusion under graphs shape: an author who declares BOTH
+// `executor:` and `delegate:` on a calling node in the `graphs:` shape
+// must be rejected — even when the sub-graph's entry node declares no
+// executor of its own. The IsSubgraphEntryAbsorbed marker disables the
+// flat-shape `validateExecutorCoherence` check, so the rejection has to
+// fire from inside `absorbEntryIntoCaller` where it sees the author's
+// original declaration.
+func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "tmpl",
+		Version:             "1",
+		FrameResolutionMode: FrameResolutionCoalesce,
+		Graphs: []GraphSpec{
+			{
+				Name: MainGraphName,
+				Nodes: []TemplateNodeDef{
+					// Author error: calling node carries both executor:
+					// and delegate:. The entry node below has no
+					// executor of its own, which previously slipped
+					// past the diverging-executor merge guard.
+					{Type: "caller", Executor: "stub", Delegate: "sub"},
+				},
+			},
+			{
+				Name:  "sub",
+				Entry: "validate",
+				Exit:  "promote",
+				Nodes: []TemplateNodeDef{
+					{Type: "validate"},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
+				},
+			},
+		},
+	}
+	msgs := validateMultiGraph(t, spec)
+	if !hasErrorContaining(msgs, "delegate and executor are mutually exclusive") {
+		t.Fatalf("expected mutual-exclusion rejection; got: %v", msgs)
+	}
+}

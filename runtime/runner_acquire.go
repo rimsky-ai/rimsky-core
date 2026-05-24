@@ -32,8 +32,32 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 )
+
+// lookupGraphName returns the GraphSpec.Name whose Nodes contains
+// nodeType. Falls back to spec.MainGraphName when no GraphSpec
+// contains the type or when the template carries no sub-graphs
+// (legacy flat-Nodes templates with empty Graphs list).
+//
+// For entry-absorbed dispatches the outer-graph resolution is
+// automatic: the calling node is declared in the outer graph's
+// Nodes list, so the lookup finds the outer GraphSpec. Sub-graph
+// *internal* nodes are declared inside the sub-graph's Nodes list,
+// so the lookup naturally returns the sub-graph name for them.
+//
+// @concept: attribute (L5 matcher overlay's graph-key derivation)
+func lookupGraphName(graphs []spec.GraphSpec, nodeType string) string {
+	for _, g := range graphs {
+		for _, n := range g.Nodes {
+			if n.Type == nodeType {
+				return g.Name
+			}
+		}
+	}
+	return spec.MainGraphName
+}
 
 // resumeMetadata captures the parked metadata for a resumed run. When
 // non-nil, the runner attaches a ResumeContext to the ExecuteRequest
@@ -72,11 +96,56 @@ type resumeMetadata struct {
 // window. Mutable state that would outlive the dispatch goroutine
 // belongs in a per-call value, not on `acquisition`.
 type acquisition struct {
-	DispatchID     shared.UUID
-	NodeID         shared.UUID
-	InstanceID     shared.UUID
-	NodeType       string
-	Executor       string
+	DispatchID shared.UUID
+	NodeID     shared.UUID
+	InstanceID shared.UUID
+	NodeType   string
+	Executor   string
+	// GraphName is the name of the template's graph this dispatch
+	// belongs to — "main" (spec.MainGraphName) for main-graph dispatches
+	// and the sub-graph name for internal-sub-graph dispatches. For
+	// entry-absorbed dispatches (where a sub-graph's entry node shares
+	// runtime identity with the calling node per concept:delegation),
+	// the outer graph wins — the row's declared template location.
+	//
+	// Derived at acquisition time by consulting the bound template's
+	// Graphs list (spec.TemplateSpec.Graphs) and finding the GraphSpec
+	// whose Nodes contains NodeType. Legacy flat-Nodes templates with
+	// an empty Graphs list resolve to "main".
+	//
+	// Consumed by applyAttributeOverrides (L5 matcher evaluation).
+	//
+	// @concept: attribute (L5 matcher overlay)
+	GraphName string
+
+	// RunScopeID is the RunScope this dispatch lives in. Non-zero for
+	// every acquisition. Per concept:run-scope. ChildKey (the
+	// producer-emitted partition key for fan-out children) and
+	// ParentRunID (the calling-run id for sub-graph / fan-out
+	// children) used to be carried inline; both are now derived by
+	// looking up the RunScope (see runtime/runner_acquire_scope.go).
+	//
+	// @concept: run-scope
+	RunScopeID shared.UUID
+
+	// PriorDispatchID, when non-nil, is the rimsky_node_runs.id of
+	// the predecessor dispatch this run supersedes — populated when
+	// the supervisor enqueues a recovery / retry / recalculate. Nil
+	// on initial dispatches. Surfaced on
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_id at
+	// dispatch.
+	//
+	// @concept: run-scope
+	PriorDispatchID *shared.UUID
+	// PriorDispatchDisposition classifies why PriorDispatchID is set
+	// (lower_snake_case storage form: "heartbeat_stale" /
+	// "retry_after_error" / "recalculate"). Empty when
+	// PriorDispatchID is nil. Surfaced on
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_disposition.
+	//
+	// @concept: run-scope
+	PriorDispatchDisposition string
+
 	FrameID        shared.UUID
 	Locks          []AcquiredLock
 	NodeDef        *node.TemplateNodeDef
@@ -152,16 +221,6 @@ type acquisition struct {
 	//
 	// @concept: attribute
 	MergedAttributes map[string]any
-
-	// ParentRunID is the parent run id from `rimsky_node_runs.parent_run_id`,
-	// loaded during acquisition. Nil for root runs (top-level template
-	// dispatches and non-child internal nodes). Threaded into
-	// `LeafRunRecord.ParentRunID` so the lineage descendant walker
-	// (`LineageTable.QueryByParentRunID`) can build run-tree ancestry
-	// queries without re-deriving the link from cascade metadata.
-	//
-	// @concept: run-tree
-	ParentRunID *shared.UUID
 
 	// TemplateHash is the content-addressed template id
 	// (`rimsky_instances.template_hash`) loaded during acquisition.
@@ -242,7 +301,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 		// audit append must not abort the dispatch. We WARN-and-continue
 		// so the loss is visible without losing the in-flight work.
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
+			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, acq.RunScopeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
 				return err
 			}
 			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -381,6 +440,27 @@ func tryAcquire(
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
+	// Derive the dispatch-time graph name for the L5 matcher-overlay
+	// layer. Graph name comes from the bound template's Graphs list
+	// (or `spec.MainGraphName` for legacy flat-Nodes templates).
+	// RunScopeID comes from the run-tree row; partition_key /
+	// parent_run_id are looked up on demand via the RunScope
+	// (resolveAcqScopeTuple / resolveAcqPartitionKey).
+	graphName := spec.MainGraphName
+	if tmpl != nil {
+		graphName = lookupGraphName(tmpl.Graphs, nd.NodeType)
+	}
+	var runScopeID shared.UUID
+	if rt := args.Persist.RunTree(); rt != nil {
+		if row, err := rt.GetByID(ctx, tx, cand.DispatchID); err != nil {
+			args.Logger.Warn("tryAcquire: run-tree GetByID failed; lineage row will omit parent_run_id",
+				"node_id", cand.NodeID.String(),
+				"run_id", cand.DispatchID.String(),
+				"error", err.Error())
+		} else if row != nil {
+			runScopeID = row.RunScopeID
+		}
+	}
 	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
@@ -423,6 +503,10 @@ func tryAcquire(
 				InstanceID:                nd.InstanceID,
 				NodeType:                  nd.NodeType,
 				Executor:                  nd.Executor,
+				GraphName:                 graphName,
+				RunScopeID:                runScopeID,
+				PriorDispatchID:           cand.PriorDispatchID,
+				PriorDispatchDisposition:  cand.PriorDispatchDisposition,
 				FrameID:                   cand.FrameID,
 				NodeDef:                   nodeDef,
 				HeldSubgraphs:             heldSubgraphs,
@@ -447,6 +531,10 @@ func tryAcquire(
 		InstanceID:                nd.InstanceID,
 		NodeType:                  nd.NodeType,
 		Executor:                  nd.Executor,
+		GraphName:                 graphName,
+		RunScopeID:                runScopeID,
+		PriorDispatchID:           cand.PriorDispatchID,
+		PriorDispatchDisposition:  cand.PriorDispatchDisposition,
 		FrameID:                   cand.FrameID,
 		Locks:                     acquiredLocks,
 		NodeDef:                   nodeDef,
@@ -457,21 +545,6 @@ func tryAcquire(
 		out.InstanceParams = inst.Params
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
-	}
-	// Source ParentRunID from rimsky_node_runs.parent_run_id via the
-	// run-tree accessor (single row read inside the acquisition tx). Root
-	// runs return ParentRunID = nil; the lineage writer drops the
-	// `parent_run_id` JSON key for those rows via `omitempty`.
-	if rt := args.Persist.RunTree(); rt != nil {
-		if row, err := rt.GetByID(ctx, tx, cand.DispatchID); err != nil {
-			args.Logger.Warn("tryAcquire: run-tree GetByID failed; lineage row will omit parent_run_id",
-				"node_id", cand.NodeID.String(),
-				"run_id", cand.DispatchID.String(),
-				"error", err.Error())
-		} else if row != nil && row.ParentRunID != nil {
-			pid := *row.ParentRunID
-			out.ParentRunID = &pid
-		}
 	}
 	if err := acquireFanOutIfDeclared(ctx, args, tx, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
 		return acquisition{}, false, err

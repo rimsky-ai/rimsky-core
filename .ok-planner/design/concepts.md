@@ -21,6 +21,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `claim-handle` — Rimsky-side ledger row in `rimsky_claim_handles` representing one acquired claim or named-lock, with a 3-state lifecycle (`active`/`committed`/`abandoned`) and claimant-guarded transitions via `Promote`.
 - `claim-lifetime` — Per-claim property: `subgraph` (default; promoted on Commit and reaped at retention cutoff) vs `durable` (promoted on Commit and exempt from retention sweep — the asset surface).
 - `claim-producer` (aliases: store (bundled-services-layer colloquialism)) — Out-of-process service that implements the gRPC ClaimProducer protocol (4 verbs Open / Commit / Abandon / Release plus the Capabilities() startup handshake). Post-2026-05-15 gains optional SplitScope / ScopesConflict / Validation mix-in.
+- `claim-scope` (aliases: scope (pre-2026-05-22, retired)) — Opaque byte stream that `ClaimProducer.Open` returns to identify what was acquired; compared byte-equally by the conflict predicate. Renamed from `scope` per 2026-05-22 to disambiguate from `run-scope`.
 - `claim-tree` — Self-referential tree on `rimsky_claim_handles` via `parent_claim_handle_id`; created by fan-out, traversed bottom-up by recursive auto-terminal and top-down by descendant-cancel (which skips non-active rows).
 - `conformance` — Standalone binaries that exercise third-party executor, claim-producer, blob-backend, DataProcessing, Validation, and Sensor implementations against rimsky's protocol expectations.
 - `control-api` — HTTP+JSON operator interface served by `rimsky-control-api` at bare paths; also fires LifecycleSubscriber events synchronously, and hosts the agentic MCP shim.
@@ -31,10 +32,10 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `error-policy` (aliases: error-types policy chain) — Template-level `error_types:` block mapping per-error_class strings to retry/invalidate/give_up/pass actions, with a retry-loop cap.
 - `event-log` (aliases: audit log, rimsky_events table) — Rimsky's internal append-only audit log (`rimsky_events`) with free-form `kind` TEXT and rimsky-readable JSONB payload, feeding the cascade-graph `/events` route.
 - `executor` — Out-of-process service that implements `Executor.Execute`, streaming heartbeats and events and exactly one terminal.
-- `fan-out` — Node-level decision to partition a held claim into sub-claims via `ClaimProducer.SplitScope`, dispatching one work unit per sub-claim.
+- `fan-out` — Node-level decision to partition a held claim into sub-claims via `ClaimProducer.SplitScope`, dispatching one work unit per sub-claim. Each child runs in its own fan-out partition RunScope (per `concept:run-scope`).
 - `frame` (aliases: cascade-frame) — One cascade resolution, tracked as a row in `rimsky_frames` and stamped on every dispatched run via `frame_id`. Message delivery is also a frame-creation site.
 - `graph` — Unit of node connectivity; uniform top-level declaration in `graphs:`. The reserved name `main` is the top-level graph.
-- `inertness` (aliases: opacity (legacy), inert bytes) — Cross-cutting discipline making five byte streams (claim scope, claim payload, blob content, named-event payload, message payload) inert in rimsky; two sub-disciplines: byte-opaque inertness and structural inertness.
+- `inertness` (aliases: opacity (legacy), inert bytes) — Cross-cutting discipline making seven carrier streams (claim scope, claim address, claim payload, blob content, attribute values, named-event payloads, message payloads, plus `Error.payload`) inert in rimsky; two sub-disciplines (byte-opaque + structural) with a precisely-enumerated set of sanctioned read sites including `evaluateMatcher` for attribute-value matcher predicates.
 - `instance` — One live deployment of a template, identified by UUID, bound to a `template_hash`, carrying `params` and optional `attribute_overrides`.
 - `invalidate` — Sole graph-level message that marks a node `stale`. Post-2026-05-15: one `kind` of message (the V1 kind).
 - `last-outcome` — TEXT column on `rimsky_node_runs` carrying one of fresh_changed, fresh_unchanged, passed, pure_cascade, failed; gates cascade firing.
@@ -47,11 +48,11 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `named-event` — Non-terminal executor emission with a name and inert payload, persisted to `rimsky_node_events` and consumable via substitution or subscription.
 - `named-lock` — Producer-independent capacity-counter primitive declared in `rimsky.yml` with mode mutex or counting, persisted as `lock_kind='named'`.
 - `node` (aliases: graph-node) — One declarative unit of work in a template's graph, materialized at runtime as a row in `rimsky_nodes`.
-- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — One execution of one node within a frame; persisted as a row in `rimsky_node_runs`. Post-2026-05-15 extended to run-tree (parent_run_id, child_key); post-2026-05-20 `rimsky_node_attributes` is also per-run (FK with `ON DELETE CASCADE`), completing the lift of all state-bearing columns off `rimsky_nodes`.
+- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — One execution of one node within a frame; persisted as a row in `rimsky_node_runs`. Post-2026-05-15 extended to run-tree; post-2026-05-20 `rimsky_node_attributes` is also per-run; post-2026-05-22 inline `parent_run_id` + `child_key` removed in favor of non-null `run_scope_id` FK (run-tree shape lives on `concept:run-scope`).
 - `node-subscription` — Impactee-side declaration of "fire me when this upstream topic transitions" via per-template `subscribes:`. Four topic kinds: `state`, `attribute`, `event`, `message`. Renamed from `subscription` in 2026-05-17 to disambiguate from `publisher-subscription`.
 - `observability` — Service-facing optional observability protocols (ExecutorObservability / ClaimProducerObservability) plus the startup handshake that probes them and populates the discovery cache.
 - `orphan-reaper` — Periodic sweep that hard-deletes stale `active` rows from `rimsky_node_runs` and `rimsky_claim_handles` past `5 × heartbeat_interval`, claimant-guarded; sibling sweep `SweepClaimHandleRetention` handles terminal-row cleanup.
-- `parked-state` (aliases: park, parked node) — Fifth legal node-state entered from `running` when the executor emits `Snooze`. Post-2026-05-15 4-reason taxonomy (`TIME_WAIT | CALLBACK_WAIT | RETRY_BACKOFF | OTHER`) + freeform label.
+- `parked-state` (aliases: park, parked node) — Fifth legal node-state entered from `running` when the executor emits a park terminal. Post-2026-05-22 closed two-value `ParkReason` taxonomy (`AWAIT_CALLBACK | SNOOZE`) + freeform label.
 - `permission` (aliases: grant, action) — Verb-noun action grammar; per-key JSONB grant; wildcards `*`, `<noun>:*`, `*:<verb>` with colon-boundary; first-match-wins; `mode: execute | dry_run` modifier.
 - `persistence-database` — Umbrella `persistence.Database` interface (runtime object analogous to stdlib `sql.DB`) with per-row-type `<RowKind>Table` accessors hung off `Tables()`, abstracting Postgres vs SQLite via a shared migrator.
 - `publisher` — Peer service that pushes messages into rimsky via the Publisher protocol (`Subscribe`/`Unsubscribe`/`ListSubscriptions`); emits message envelopes to `POST /instances/{id}/messages` with `sender_kind: "publisher"`. Sensors are one class of publisher implementation.
@@ -60,7 +61,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `rimsky` (aliases: rimsky-cli) — Thin HTTP+JSON client over the control-api; every CLI verb is one or more HTTP calls, with `compose` for manifest deployments and (post-2026-05-15) an `auth` subcommand group.
 - `rimsky-yml` (aliases: unified config) — Single YAML file read by all three runtime processes plus migrate, declaring persistence, named_locks, claim_producers, executors, and publishers. Carries no auth-related keys.
 - `role-template` (aliases: bundled role) — CLI-bundled JSON resource that expands into a permission grant at key-creation time; server has no role concept. V1 ships admin, operator, read-only, agent-supervisor, publisher-service.
-- `scope` — Opaque byte stream that `ClaimProducer.Open` returns to identify what was acquired, compared byte-equally by the conflict predicate.
+- `run-scope` — First-class execution context for one graph instantiation (main / subgraph / fanout_partition); persisted as `rimsky_run_scopes`; owns the per-RunScope set of `rimsky_node_runs` rows and forms a tree via `parent_run_scope_id`. Introduced 2026-05-22.
 - `sensor` — One class of `publisher` implementation that observes external state. Bundled reference impls under `sensors/sensor-{cron,http,object-store,webhook}/`.
 - `service` (aliases: peer (legacy), peer service (legacy)) — Out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky; umbrella for executor, claim-producer, lifecycle-subscriber, blob-backend, publisher.
 - `sub-graph` — Graph with declared `entry:` and `exit:`; invocable from another node via `delegate:`.
@@ -71,7 +72,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `transition-reason` — Audit-vocabulary enum carried on every node-state transition (`ReasonHandlerComplete`, `ReasonPureCascade`, `ReasonSubGraphInternalCascadeFired`, etc.); sibling to `last_outcome` for the cascade-fire predicate.
 - `validation` — Cross-cutting service protocol for registration-time validation of node attributes against producer / executor / sensor / lifecycle-subscriber surfaces, per a `role` discriminator.
 - `wait-set` — Per-frame ledger (`rimsky_wait_set`) that records receiver→sender gating from cascade walks; settled-state drain marks rows (`drained_at = NOW()`) rather than deleting them; eligibility predicate is "no undrained rows for this receiver in the current frame." Drained rows remain queryable for the substitution-context builder.
-- `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal scope.
+- `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal claim scope.
 
 ## Retired concepts
 

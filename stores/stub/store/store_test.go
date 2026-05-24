@@ -50,8 +50,8 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 	if !o2.Available {
 		t.Fatalf("Open c2 should be Available; got Unavailable")
 	}
-	if string(o1.Result.Scope) == string(o2.Result.Scope) {
-		t.Fatalf("different items should have different regions; got %s twice", o1.Result.Scope)
+	if string(o1.Result.ClaimScope) == string(o2.Result.ClaimScope) {
+		t.Fatalf("different items should have different regions; got %s twice", o1.Result.ClaimScope)
 	}
 	// Third Open should signal Unavailable (queue drained).
 	o3, err := st.Open(ctx, "c3", "@queue")
@@ -75,7 +75,7 @@ func TestApplyPickActionDelete(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Pop}, action.Action{Kind: action.Pop})
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
-	if err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if got := len(st.InFlight("@queue")); got != 0 {
@@ -95,7 +95,7 @@ func TestApplyPickActionReleaseToBack(t *testing.T) {
 	ctx := context.Background()
 
 	o, _ := st.Open(ctx, "c1", "@queue")
-	if err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if got := st.QueueLen("@queue"); got != 2 {
@@ -119,22 +119,22 @@ func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 
 	o, _ := st.Open(ctx, "c1", "@queue")
 	var pickedID string
-	_ = json.Unmarshal(o.Result.Scope, &pickedID)
+	_ = json.Unmarshal(o.Result.ClaimScope, &pickedID)
 
-	if err := st.Abandon(ctx, "c1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Abandon(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
 	// Recycle puts a back at the tail → next pick is b.
 	o2, _ := st.Open(ctx, "c2", "@queue")
 	var nextID string
-	_ = json.Unmarshal(o2.Result.Scope, &nextID)
+	_ = json.Unmarshal(o2.Result.ClaimScope, &nextID)
 	if pickedID == "" || pickedID == nextID {
 		t.Fatalf("recycle should send to tail, not head; got picked=%q, next=%q", pickedID, nextID)
 	}
 	// Third pick gets the recycled a.
 	o3, _ := st.Open(ctx, "c3", "@queue")
 	var lastID string
-	_ = json.Unmarshal(o3.Result.Scope, &lastID)
+	_ = json.Unmarshal(o3.Result.ClaimScope, &lastID)
 	if lastID != pickedID {
 		t.Fatalf("third pick should be the recycled item; got %q, want %q", lastID, pickedID)
 	}
@@ -146,7 +146,7 @@ func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Kind("what-is-this")}, action.Action{Kind: action.Kind("what-is-this")})
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")
-	err := st.Commit(ctx, "c1", o.Result.Scope, o.Result.Address)
+	err := st.Commit(ctx, "c1", o.Result.ClaimScope, o.Result.Address)
 	if err == nil {
 		t.Fatal("expected error for unknown configured action; got nil")
 	}
@@ -164,7 +164,7 @@ func TestRegionalSelectorEchoesAsAddressAndRegion(t *testing.T) {
 	}
 	var addr, scope string
 	_ = json.Unmarshal(o.Result.Address, &addr)
-	_ = json.Unmarshal(o.Result.Scope, &scope)
+	_ = json.Unmarshal(o.Result.ClaimScope, &scope)
 	if addr != "concrete/path" || scope != "concrete/path" {
 		t.Fatalf("scope selector should echo; got addr=%q scope=%q", addr, scope)
 	}

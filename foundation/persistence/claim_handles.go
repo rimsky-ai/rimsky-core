@@ -18,16 +18,23 @@ type LockKind string
 
 const (
 	LockKindNamed LockKind = "named"
-	LockKindScope LockKind = "scope"
+	// LockKindScope is the on-the-wire / on-disk lock kind for claim-
+	// scope rows. Post-2026-05-22 ClaimScope rename: the enum value
+	// stored in rimsky_claim_handles.lock_kind is 'claim_scope' (see
+	// migration 009-claim-scope-rename.sql). The Go-level constant
+	// name `LockKindScope` is preserved for ergonomic call sites but
+	// its string value is 'claim_scope' so the CHECK constraint on
+	// rimsky_claim_handles passes.
+	LockKindScope LockKind = "claim_scope"
 )
 
 // ClaimHandleRow mirrors a row of rimsky_claim_handles.
 type ClaimHandleRow struct {
-	ID           shared.UUID     `json:"claim_id"`
-	LockKind     LockKind        `json:"lock_kind"`
-	LockName     *string         `json:"lock_name,omitempty"`
-	ProducerName *string         `json:"producer_name,omitempty"`
-	ScopeData    json.RawMessage `json:"scope_data,omitempty"`
+	ID             shared.UUID     `json:"claim_id"`
+	LockKind       LockKind        `json:"lock_kind"`
+	LockName       *string         `json:"lock_name,omitempty"`
+	ProducerName   *string         `json:"producer_name,omitempty"`
+	ClaimScopeData json.RawMessage `json:"claim_scope_data,omitempty"`
 	// Address carries `json:"-"` so the observability handlers can
 	// pass *ClaimHandleRow to writeJSON without leaking store-supplied
 	// claim address bytes (spec §1.3 / blessed-invariant 20). Scope
@@ -56,8 +63,8 @@ type ClaimHandleRow struct {
 	FrameID            *shared.UUID `json:"frame_id,omitempty"`
 	// RealizedWriteSemantics is the per-claim semantics returned by
 	// ClaimProducer.Open. Persisted on the lock-holder row so the
-	// scope-conflict check (runtime/runner_acquire.go::
-	// evaluateScopeConflict) can apply ModeCoexists without re-dialing
+	// claim-scope-conflict check (runtime/runner_acquire.go::
+	// evaluateClaimScopeConflict) can apply ModeCoexists without re-dialing
 	// the producer. Empty for named-lock rows.
 	RealizedWriteSemantics string `json:"realized_write_semantics,omitempty"`
 	// NodeRunID is the parent node-run this claim handle
@@ -133,7 +140,7 @@ type ClaimHandleInsertInput struct {
 	LockKind               LockKind
 	LockName               *string
 	ProducerName           *string
-	ScopeData              json.RawMessage
+	ClaimScopeData         json.RawMessage
 	Address                json.RawMessage
 	Intent                 *string
 	HolderSupervisorID     string
@@ -191,11 +198,11 @@ type ClaimHandleTable interface {
 	// counting-mode eligibility check inside the acquisition tx.
 	CountByNamedLock(ctx context.Context, lockName string, tx Tx) (int, error)
 
-	// ListByProducerScope returns all lock-holder rows for a given
-	// producer name. The supervisor uses this for the in-Go scope-
-	// conflict check inside the acquisition tx (byte-equal on scope_data
-	// per spec §7.7).
-	ListByProducerScope(ctx context.Context, producerName string, tx Tx) ([]ClaimHandleRow, error)
+	// ListByProducerClaimScope returns all lock-holder rows for a given
+	// producer name. The supervisor uses this for the in-Go claim-scope-
+	// conflict check inside the acquisition tx (byte-equal on
+	// claim_scope_data per spec §7.7).
+	ListByProducerClaimScope(ctx context.Context, producerName string, tx Tx) ([]ClaimHandleRow, error)
 
 	// DeleteIfExpired claimant-guards a delete on (id, supervisor_id,
 	// expires_at). Returns true when the row was deleted; false otherwise.
@@ -209,17 +216,17 @@ type ClaimHandleTable interface {
 	// a prior resolution).
 	LockForUpdate(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
 
-	// UpdateScope writes a new scope_data to a scope-kind row,
+	// UpdateClaimScope writes a new claim_scope_data to a claim-scope-kind row,
 	// claimant-guarded on supervisorID. Used by the supervisor's
-	// acquireClaim path when the store-chosen scope differs from the
-	// substituted-selector scope the supervisor wrote at INSERT time.
-	UpdateScope(ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx Tx) error
+	// acquireClaim path when the store-chosen claim-scope differs from the
+	// substituted-selector claim-scope the supervisor wrote at INSERT time.
+	UpdateClaimScope(ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx Tx) error
 
 	// UpdateRealizedWriteSemantics writes the per-claim ClaimProducer-
-	// declared realized_write_semantics on a scope-kind row,
+	// declared realized_write_semantics on a claim-scope-kind row,
 	// claimant-guarded on supervisorID. Called after ClaimProducer.Open
-	// returns; the value is then consumed by the in-Go scope-conflict
-	// check (runtime/runner_acquire.go::evaluateScopeConflict)
+	// returns; the value is then consumed by the in-Go claim-scope-conflict
+	// check (runtime/runner_acquire.go::evaluateClaimScopeConflict)
 	// without re-dialing the producer.
 	UpdateRealizedWriteSemantics(ctx context.Context, id shared.UUID, supervisorID string, ws string, tx Tx) error
 

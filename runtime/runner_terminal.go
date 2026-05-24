@@ -30,6 +30,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
@@ -40,32 +41,116 @@ import (
 	"github.com/fallguy/rimsky/graph/node"
 )
 
+// postCommitFn is the deferred-side-effect closure returned by every
+// applyTerminal* handler. Callers run it AFTER the outer state-mutation
+// tx commits; it covers observability emits (lineage, audit events
+// appended in best-effort txns), run-tree state propagation, and
+// post-commit cascade fan-out. Returning nil is permitted and means
+// "no post-commit work."
+//
+// The split exists so the callback-determinism phase-check and the
+// terminal's primary state-mutation share one tx (per
+// @blessed-invariant: Callback determinism) while the open-its-own-tx
+// observability work continues to run after commit (which it must,
+// since SQLite uses a single-conn pool and would self-deadlock on a
+// nested Transaction call).
+type postCommitFn func(ctx context.Context)
+
 // applyTerminal is the omnibus runner's terminal-event entry point.
+//
+// Threading discipline: the caller passes the outer state-mutation tx
+// (`tx`); every handler runs its primary state-mutation work inside
+// that tx (lock release, attribute upsert, state-machine write, queue
+// mutation, wait-set drain). Post-commit work (best-effort audit-log
+// appends, leaf-run lineage emit, run-tree propagation, fan-out
+// recalculate) is returned as a `postCommitFn` the caller invokes
+// AFTER the outer tx commits.
+//
+// @blessed-invariant: Callback determinism. The phase-check read +
+// terminal state mutation share one tx; the structural enforcement is
+// at the two call sites (driveTerminal in callback.go, runner.go in
+// the sync path) that open the outer tx and pass it through. Per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+// §"Callback determinism".
 func applyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
-	t terminalEvent,
-) error {
-	// Persist any NamedEvent emissions captured during the dispatch's
-	// gRPC stream BEFORE applying the terminal verdict, per plan H1.
-	// Failures here are best-effort and logged — events that fail to
-	// persist do not block the terminal verdict.
-	if len(t.NamedEvents) > 0 {
-		processNamedEvents(ctx, args, acq, t.NamedEvents)
-	}
+	t terminalEvent, tx persistence.Tx,
+) (postCommitFn, error) {
 	// Plan I2: record the terminal verdict by class + error_class.
 	metricsOf(args).IncTerminal(string(terminalClassFor(t.Kind)), t.ErrorClass)
 	switch t.Kind {
 	case terminalKindComplete:
-		return applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t)
+		return applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
 	case terminalKindErrored:
-		return applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload)
+		return applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
 	case terminalKindInfra:
-		return applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload)
+		return applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
 	case terminalKindPark:
-		return applyTerminalPark(ctx, args, acq, t)
+		return applyTerminalPark(ctx, args, acq, t, tx)
 	}
-	return fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
+	return nil, fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
+}
+
+// runApplyTerminal opens the outer state-mutation tx, threads it
+// through applyTerminal, and runs the returned postCommit closure
+// after the tx commits. Both the synchronous runner path
+// (runner.go::RunNode) and the async-callback path
+// (callback.go::driveTerminal) wrap their phase-check + apply-terminal
+// chain in this helper so the determinism invariant is structurally
+// enforced at every call site.
+//
+// `setup` is an optional hook the caller runs INSIDE the outer tx
+// before applyTerminal — used by driveTerminal to perform the
+// FOR-UPDATE phase check + populate acq.RunScopeID from the run row.
+// Returning a non-nil error from `setup` skips applyTerminal entirely
+// (the determinism path's ack-but-noop branch).
+//
+// @blessed-invariant: Callback determinism — the phase-check read +
+// terminal state mutation share one tx.
+func runApplyTerminal(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	resolvedAttrs map[string]any, schema map[string]any,
+	t terminalEvent,
+	setup func(ctx context.Context, tx persistence.Tx) (skip bool, err error),
+) error {
+	// Persist any NamedEvent emissions captured during the dispatch's
+	// gRPC stream BEFORE applying the terminal verdict, per plan H1.
+	// Each event opens its own short tx so per-row emitted_at
+	// timestamps land in source order — under postgres NOW() is
+	// constant for a tx, so threading these into the determinism tx
+	// would collapse multi-emission ordering and break
+	// `LatestByName` (see TestOnEventMultipleEmissionsLatestWins).
+	// Named-event persistence is observability data and is not part of
+	// the callback-determinism invariant. Failures are best-effort and
+	// logged.
+	if len(t.NamedEvents) > 0 {
+		processNamedEvents(ctx, args, acq, t.NamedEvents)
+	}
+	var postCommit postCommitFn
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if setup != nil {
+			skip, err := setup(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if skip {
+				return nil
+			}
+		}
+		pc, err := applyTerminal(ctx, args, acq, resolvedAttrs, schema, t, tx)
+		if err != nil {
+			return err
+		}
+		postCommit = pc
+		return nil
+	}); err != nil {
+		return err
+	}
+	if postCommit != nil {
+		postCommit(ctx)
+	}
+	return nil
 }
 
 // terminalClassFor returns the metric label for a terminal kind. Kept
@@ -114,26 +199,24 @@ func terminalClassFor(k terminalKind) string {
 func applyTerminalComplete(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
-	t terminalEvent,
-) error {
+	t terminalEvent, tx persistence.Tx,
+) (postCommitFn, error) {
 	merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
 	if t.Changed && len(t.AttributesDel) > 0 && schema != nil {
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
-			if appendErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-					NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-					Kind: "attributes_schema_failed",
-					Payload: map[string]any{
-						"errors": []map[string]any{{"message": err.Error()}},
-					},
-				}, tx)
-			}); appendErr != nil && args.Logger != nil {
+			if appendErr := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "attributes_schema_failed",
+				Payload: map[string]any{
+					"errors": []map[string]any{{"message": err.Error()}},
+				},
+			}, tx); appendErr != nil && args.Logger != nil {
 				args.Logger.Warn("runner_terminal: append attributes_schema_failed event failed",
 					"node_id", acq.NodeID.String(),
 					"error", appendErr.Error())
 			}
 			return applyErrorPolicy(ctx, args, acq, "attributes_schema_failed",
-				map[string]any{"error": err.Error()})
+				map[string]any{"error": err.Error()}, tx)
 		}
 	}
 
@@ -143,7 +226,7 @@ func applyTerminalComplete(
 	// success branch the parent run stays `running` and the sub-graph's
 	// non-entry internals dispatch as children of this run.
 	if acq.NodeDef != nil && acq.NodeDef.IsSubgraphEntryAbsorbed {
-		return applyTerminalCompleteSubgraphCaller(ctx, args, acq, merged, t)
+		return applyTerminalCompleteSubgraphCaller(ctx, args, acq, merged, t, tx)
 	}
 
 	// Exit-node carry-rule: when this run is a sub-graph exit, copy its
@@ -157,8 +240,8 @@ func applyTerminalComplete(
 	// row carries the bytes via applyTerminalCompleteSubgraphExit.
 	isSubgraphExit := isSubgraphExitNode(acq)
 	if isSubgraphExit {
-		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged); err != nil {
-			return err
+		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged, tx); err != nil {
+			return nil, err
 		}
 		// Fall through to the standard release/cascade path below so
 		// exit's own state transitions to `fresh` and the parent
@@ -205,146 +288,147 @@ func applyTerminalComplete(
 		}
 	}
 
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
-			return err
+	// Primary state-mutation work runs inline in the caller's outer tx.
+	// Per @blessed-invariant: Callback determinism — phase-check read
+	// and these writes must share one tx.
+	if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
+		return nil, err
+	}
+	// Per spec §Sub-graphs / Writeback carry-rule for exit: the
+	// exit's own attribute row stays empty because the exit is
+	// internal to the subgraph and not externally addressable. The
+	// parent run's row was already populated by
+	// applyTerminalCompleteSubgraphExit above.
+	if !isSubgraphExit {
+		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+			return nil, fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
 		}
-		// Per spec §Sub-graphs / Writeback carry-rule for exit: the
-		// exit's own attribute row stays empty because the exit is
-		// internal to the subgraph and not externally addressable. The
-		// parent run's row was already populated by
-		// applyTerminalCompleteSubgraphExit above.
-		if !isSubgraphExit {
-			if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
-				return fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
-			}
+	}
+	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
+	}
+	// running → fresh via the on_executor_complete handler.
+	// Thread acq.RunScopeID so fan-out children's state-machine
+	// update lands on the correct sibling row.
+	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
+		return nil, err
+	}
+	// Cascade-on-fresh_changed propagation: when this sender settles
+	// fresh_changed, the recursive subscription walk marks
+	// downstream subscribers stale-with-frame_id and gates the
+	// downstream subgraph (R=C, S=B; etc.). The same tx then drains
+	// rows where this sender is the gating sender (R=B, S=A) so
+	// direct subscribers can advance — the immediate inserts at
+	// the first-level (R=B, S=A) are intentionally transient
+	// (insert-then-drain in same tx is benign; the deeper levels
+	// gate properly). Cascade fires iff last_outcome == fresh_changed
+	// per `concept:cascade`'s firing gate invariant; diverges under
+	// always_propagate / never_propagate (lifecycle-handler.go).
+	//
+	// This walk is complementary to the cascade-on-invalidation
+	// walks at invalidateInFrame / applyResolvedAction / etc. The
+	// invalidation-side walks gate receivers across multiple
+	// in-flight senders (multi-invalidator); the settlement-side
+	// walk gates the initial-instance case (non-root subscribers
+	// that never went through an explicit invalidation transition
+	// from a settled state but still need frame_id stamping +
+	// wait-set rows seeded under the recursive deeper levels).
+	//
+	//	@concept: cascade
+	//	@concept: wait-set
+	if lastOutcome == cascade.LastOutcomeFreshChanged {
+		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
+			return nil, err
 		}
-		if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
-			return fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
-		}
-		// running → fresh via the on_executor_complete handler.
-		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID,
-			cascade.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
-			return err
-		}
-		// Cascade-on-fresh_changed propagation: when this sender settles
-		// fresh_changed, the recursive subscription walk marks
-		// downstream subscribers stale-with-frame_id and gates the
-		// downstream subgraph (R=C, S=B; etc.). The same tx then drains
-		// rows where this sender is the gating sender (R=B, S=A) so
-		// direct subscribers can advance — the immediate inserts at
-		// the first-level (R=B, S=A) are intentionally transient
-		// (insert-then-drain in same tx is benign; the deeper levels
-		// gate properly). Cascade fires iff last_outcome == fresh_changed
-		// per `concept:cascade`'s firing gate invariant; diverges under
-		// always_propagate / never_propagate (lifecycle-handler.go).
-		//
-		// This walk is complementary to the cascade-on-invalidation
-		// walks at invalidateInFrame / applyResolvedAction / etc. The
-		// invalidation-side walks gate receivers across multiple
-		// in-flight senders (multi-invalidator); the settlement-side
-		// walk gates the initial-instance case (non-root subscribers
-		// that never went through an explicit invalidation transition
-		// from a settled state but still need frame_id stamping +
-		// wait-set rows seeded under the recursive deeper levels).
-		//
-		//	@concept: cascade
-		//	@concept: wait-set
-		if lastOutcome == cascade.LastOutcomeFreshChanged {
-			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
-				return err
-			}
-		}
-		// Settled-state drain: the sender just reached `fresh`. Any
-		// wait-set rows the sender was gating get removed in bulk so
-		// downstream receivers can advance.
-		//
-		//	@concept: wait-set
-		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
-			return err
-		}
-		return nil
-	}); err != nil {
-		return err
+	}
+	// Settled-state drain: the sender just reached `fresh`. Any
+	// wait-set rows the sender was gating get removed in bulk so
+	// downstream receivers can advance.
+	//
+	//	@concept: wait-set
+	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
+		return nil, err
 	}
 
 	commitKind := "attributes_committed"
 	if !t.Changed {
 		commitKind = "no_op_commit"
 	}
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: commitKind,
-			Payload: map[string]any{
-				"changed":        t.Changed,
-				"updated_fields": fieldNames(t.AttributesDel),
-				"change_summary": t.ChangeSummary,
-				"last_outcome":   string(lastOutcome),
-			},
-		}, tx); err != nil {
-			return err
-		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "work_completed",
-			Payload: map[string]any{
-				"outcome":        outcomeForChanged(t.Changed),
-				"change_summary": t.ChangeSummary,
-				"node_type":      acq.NodeType,
-				"last_outcome":   string(lastOutcome),
-			},
-		}, tx)
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("runner_terminal: append commit/work_completed events failed",
-			"node_id", acq.NodeID.String(),
-			"commit_kind", commitKind,
-			"error", err.Error())
-	}
-	if lastOutcome == cascade.LastOutcomeFreshChanged {
-		fanoutRecalculate(ctx, args, acq)
-	}
-	// E8: emit leaf-run lineage record. Spec §Content lineage. Bytes
-	// are inert in rimsky (@blessed-invariant 20/21); the lineage row
-	// carries hashes + run identifiers + last_outcome, not raw bytes.
-	// MergedAttributes is the post-resolution + post-override shape —
-	// the hash reflects what shipped to the executor (not the
-	// pre-merge override blob).
-	EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-		InstanceID:       acq.InstanceID,
-		FrameID:          acq.FrameID,
-		RunID:            acq.DispatchID,
-		NodeID:           acq.NodeID,
-		State:            string(cascade.NodeStateFresh),
-		LastOutcome:      string(lastOutcome),
-		Changed:          t.Changed,
-		TerminalKind:     "complete",
-		NodeAlias:        acq.NodeType,
-		ExecutorName:     acq.Executor,
-		TemplateHash:     acq.TemplateHash,
-		Params:           acq.InstanceParams,
-		AttributesMerged: acq.MergedAttributes,
-		HeldClaims:       HeldClaimsForLineage(acq),
-		ParentRunID:      acq.ParentRunID,
-		SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
-	})
-	// Run-tree state propagation (E2): if this run is a child (fan-out
-	// or sub-graph internal), aggregate up to the parent. No-op on root
-	// runs.
-	if _, err := PropagateIfChildAfterTerminal(ctx, args, acq.DispatchID,
-		cascade.NodeStateFresh, lastOutcome); err != nil {
-		args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
-			"run_id", acq.DispatchID.String(), "error", err.Error())
-	}
-	// Per the 2026-05-14 subscription-cascade resolution, the
-	// invalidate-emit slot retired; cascade coupling is declared
-	// receiver-side via Subscribes. cascadeSubscribersStaleInTx
-	// (called above when last_outcome == fresh_changed) handles the
-	// recursive subscription walk + wait-set inserts for downstream
-	// receivers.
 	_ = completeHandler
-	return nil
+
+	// Post-commit work: best-effort audit-log appends, lineage emit,
+	// fan-out recalculate, run-tree propagation. Each opens its own tx
+	// (or runs further out-of-tx work like PropagateIfChildAfterTerminal
+	// which walks the run-tree under its own transactions); they MUST
+	// run after the outer tx commits to avoid nested-tx deadlock under
+	// the SQLite single-conn pool.
+	dispatchID := acq.DispatchID
+	post := func(ctx context.Context) {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: commitKind,
+				Payload: map[string]any{
+					"changed":        t.Changed,
+					"updated_fields": fieldNames(t.AttributesDel),
+					"change_summary": t.ChangeSummary,
+					"last_outcome":   string(lastOutcome),
+				},
+			}, tx); err != nil {
+				return err
+			}
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+				Kind: "work_completed",
+				Payload: map[string]any{
+					"outcome":        outcomeForChanged(t.Changed),
+					"change_summary": t.ChangeSummary,
+					"node_type":      acq.NodeType,
+					"last_outcome":   string(lastOutcome),
+				},
+			}, tx)
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("runner_terminal: append commit/work_completed events failed",
+				"node_id", acq.NodeID.String(),
+				"commit_kind", commitKind,
+				"error", err.Error())
+		}
+		if lastOutcome == cascade.LastOutcomeFreshChanged {
+			fanoutRecalculate(ctx, args, acq)
+		}
+		// E8: emit leaf-run lineage record. Spec §Content lineage.
+		scope := resolveAcqScope(ctx, args, acq)
+		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
+			InstanceID:       acq.InstanceID,
+			FrameID:          acq.FrameID,
+			RunID:            dispatchID,
+			NodeID:           acq.NodeID,
+			State:            string(cascade.NodeStateFresh),
+			LastOutcome:      string(lastOutcome),
+			Changed:          t.Changed,
+			TerminalKind:     "complete",
+			NodeAlias:        acq.NodeType,
+			ExecutorName:     acq.Executor,
+			TemplateHash:     acq.TemplateHash,
+			Params:           acq.InstanceParams,
+			AttributesMerged: acq.MergedAttributes,
+			HeldClaims:       HeldClaimsForLineage(acq),
+			ParentRunID:      scope.ParentRunID,
+			ChildKey:         scope.PartitionKey,
+			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+		})
+		// Run-tree state propagation (E2): if this run is a child
+		// (fan-out or sub-graph internal), aggregate up to the parent.
+		// No-op on root runs.
+		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
+			cascade.NodeStateFresh, lastOutcome); err != nil {
+			args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
+				"run_id", dispatchID.String(), "error", err.Error())
+		}
+	}
+	return post, nil
 }
 
 // cascadeSubscribersStaleInTx marks subscriber nodes stale + frame_id
@@ -416,6 +500,53 @@ func cascadeSubscribersStaleInTx(
 	for _, n := range instNodes {
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
+	// Resolve the sender's RunScope: same-scope cascade is the common
+	// case — the receiver inherits the sender's RunScope. Cross-scope
+	// propagation is bridged by the caller:
+	//
+	//   - Sub-graph entry-success cascading into sub-graph internal
+	//     nodes: handled by the entry-absorbed marker path in
+	//     code:runtime/subgraph_dispatch.go.
+	//   - Fan-out / sub-graph parent settlement cascading to the parent's
+	//     downstream subscribers: handled by
+	//     code:runtime/state_propagation.go::PropagateIfChildAfterTerminal,
+	//     which fires a fresh cascadeSubscribersStaleInTx rooted at the
+	//     parent run's main-scope id when the propagation walker settles
+	//     a parent at a terminal state.
+	//
+	// Non-main scopes (fanout_partition, sub-graph) are CLOSED contexts:
+	// only nodes that have been explicitly dispatched into them belong.
+	// When the sender lives in a non-main scope and a receiver does NOT
+	// already have an in-flight row in that scope, the receiver is not
+	// a member of the scope — it lives in some ancestor scope (typically
+	// main). The walker MUST NOT lazy-allocate a new row for that
+	// receiver in the sender's scope: doing so creates an orphan row in
+	// the wrong scope (which then never gets dispatched cleanly because
+	// the scope closes during parent aggregation) and bypasses the
+	// cross-scope bridge. Per concept:run-scope §"Lifecycle / RunScope
+	// closure" + the F1/strict-cascade scenario invariants.
+	//
+	// @concept: run-scope
+	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
+	if err != nil {
+		return fmt.Errorf("cascadeSubscribersStaleInTx: load sender run: %w", err)
+	}
+	if senderRun == nil {
+		return nil
+	}
+	senderRunScopeID := senderRun.RunScopeID
+	// Detect non-main sender scope so the walker can refuse to
+	// lazy-allocate run rows for cross-scope receivers. Main RunScopes
+	// have ParentRunID == nil; non-main scopes (sub-graph,
+	// fanout_partition) carry a ParentRunID.
+	senderRunScope, err := args.Persist.RunScopes().GetByID(ctx, tx, senderRunScopeID)
+	if err != nil {
+		return fmt.Errorf("cascadeSubscribersStaleInTx: load sender run scope: %w", err)
+	}
+	if senderRunScope == nil {
+		return nil
+	}
+	senderScopeIsMain := senderRunScope.ParentRunID == nil
 	// BFS over the subscription graph rooted at the sender. Each
 	// receiver newly marked stale joins the queue so its own subscribers
 	// are processed in turn (cycle-guarded by visited). `runID` carries
@@ -490,30 +621,81 @@ func cascadeSubscribersStaleInTx(
 					//
 					//	@concept: parked-state
 					//	@concept: cascade
+					// Same-scope membership check. Non-main scopes
+					// (sub-graph, fanout_partition) are closed
+					// contexts: a receiver belongs to the sender's
+					// scope only if it already has an in-flight row
+					// there. The lazy-allocation discipline of
+					// AffirmNodeRunRow only applies to main RunScopes;
+					// for non-main scopes, allocating a new row for a
+					// cross-scope receiver creates an orphan in the
+					// wrong scope (which then gets stranded when the
+					// scope closes during parent aggregation). The
+					// cross-scope bridge in
+					// state_propagation.PropagateIfChildAfterTerminal
+					// handles the receiver via the parent's
+					// settlement cascade.
+					//
+					// @concept: run-scope
+					receiverRunScopeID := senderRunScopeID
+					if !senderScopeIsMain {
+						existingID, existingOK, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
+						if err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver run %s: %w", r.ID, err)
+						}
+						if !existingOK {
+							// Cross-scope receiver — skip; the bridge
+							// at the parent's terminal handles it.
+							continue
+						}
+						_ = existingID
+					}
+					// Affirm-then-read: under RunScope-first, the
+					// cascade walker is the lazy-allocation primitive
+					// for the receiver's in-flight row. AffirmNodeRunRow
+					// INSERTs a pending stale row keyed on
+					// (receiver_node_id, sender_run_scope_id) when
+					// none exists; no-op if one already does. The
+					// subsequent GetInFlightRunForNode read returns
+					// the row id under the same tx. Per
+					// concept:run-scope §"Persistence primitives /
+					// AffirmNodeRunRow" — every cascade match within
+					// the same RunScope produces an in-flight row.
+					//
+					// @concept: run-scope
+					// @blessed-invariant: AffirmNodeRunRow
+					// no-return-value-dependency.
+					if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverRunScopeID, senderFrameID, tx); err != nil {
+						// Defensive: a closed RunScope means the
+						// receiver's scope rendezvous has fired and
+						// is no longer accepting new in-flight rows.
+						// The cascade walker MUST NOT cross into
+						// closed RunScopes per concept:run-scope;
+						// skip this receiver and continue the walk.
+						if errors.Is(err, persistence.ErrRunScopeClosed) {
+							continue
+						}
+						return fmt.Errorf("cascadeSubscribersStaleInTx: affirm receiver run %s: %w", r.ID, err)
+					}
+					receiverRunID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
+					if err != nil {
+						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
+					}
+					if !ok {
+						// Race-with-terminal: the receiver's row
+						// just terminated between affirm and read.
+						// Safe to skip — its terminal handler will
+						// drive its own cascade walk.
+						continue
+					}
 					if r.State == cascade.NodeStateParked {
 						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
 							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
 						}
 					} else {
-						if _, err := args.Persist.Nodes().MarkStaleForCascade(ctx, r.ID, senderFrameID, tx); err != nil {
+						if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiverRunID, senderFrameID, tx); err != nil {
 							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
 						}
-					}
-					// Resolve the receiver's in-flight run id (just
-					// inserted/refreshed by MarkStaleForCascade or
-					// wakeParkedReceiverInTx) so the wait-set row keys on
-					// per-run identity post-stage-5.
-					receiverRunID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, senderFrameID)
-					if err != nil {
-						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
-					}
-					if !ok {
-						// No in-flight run row — either the receiver is
-						// already terminal in this frame (race with a
-						// concurrent dispatcher) or the stale-mark path
-						// elected not to enqueue. Skip the wait-set INSERT;
-						// without a run row there's no gate to install.
-						continue
 					}
 					if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 						FrameID:           senderFrameID,
@@ -531,7 +713,10 @@ func cascadeSubscribersStaleInTx(
 					// threaded down so the hard-dep walk skips upstreams
 					// already covered by the subscription BFS — pathological
 					// mixed soft+hard topologies stay bounded.
-					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, senderFrameID, inst.TemplateHash, visited); err != nil {
+					// The upstream lives in the same RunScope as the
+					// receiver (hard-dep is intra-scope; cross-scope
+					// hard-deps are not expressible).
+					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
 						return err
 					}
 					// Recurse via BFS: the receiver R is itself newly
@@ -570,6 +755,7 @@ func pullHardDepUpstreams(
 	receiver persistence.NodeRow,
 	byType map[string][]persistence.NodeRow,
 	receiverRunID foundationshared.UUID,
+	targetRunScopeID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
 	templateHash string,
 	visited map[foundationshared.UUID]struct{},
@@ -600,79 +786,77 @@ func pullHardDepUpstreams(
 			continue
 		}
 
+		// Parked-upstream handling (BEFORE AffirmNodeRunRow).
+		//
+		// Under RunScope-first GetInFlightRunForNode includes phase=
+		// 'parked' rows (the unique-per-RunScope in-flight predicate
+		// covers the four in-flight phases). So we can't rely on
+		// hasRun=false to detect parked upstreams. Probe explicitly via
+		// GetParkedByNode (frame-agnostic) first, wake the parked run
+		// if any, and only then fall through to the affirm-and-read
+		// path. The wake transitions parked → pending in-place at the
+		// new frame so AffirmNodeRunRow's NOT EXISTS guard correctly
+		// no-ops and the subsequent GetInFlightRunForNode resolves the
+		// resumed row.
+		//
+		//	@concept: parked-state
+		//	@concept: run-scope
+		//	@concept: cascade
+		upstreamRunScopeID := targetRunScopeID
+		parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID, upstreamRunScopeID)
+		if err != nil {
+			return fmt.Errorf("cascadeSubscribersStaleInTx: get parked upstream %s: %w",
+				upstreamType, err)
+		}
+		if parked != nil {
+			// `wakeParkedReceiverInTx` rebinds the run's frame_id
+			// internally — no separate RebindRunFrameInTx call here.
+			if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
+					upstreamType, err)
+			}
+		}
+
+		// Affirm-then-read: the upstream lives in the same RunScope as
+		// the receiver (hard-dep is intra-scope by construction —
+		// cross-scope hard-deps are not expressible). AffirmNodeRunRow
+		// INSERTs a pending row keyed on (upstream_node_id,
+		// target_run_scope_id) when none exists.
+		//
+		// @concept: run-scope
+		// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
+			// Defensive: a closed RunScope means the upstream's scope
+			// rendezvous has fired. Hard-dep upstreams in closed scopes
+			// cannot be reactivated — skip; the receiver's wait-set is
+			// not populated for this upstream, and the receiver
+			// re-evaluates substitutions when it next dispatches.
+			if errors.Is(err, persistence.ErrRunScopeClosed) {
+				continue
+			}
+			return fmt.Errorf("cascadeSubscribersStaleInTx: affirm upstream %s: %w", upstreamType, err)
+		}
 		upstreamRunID, hasRun, err := args.Queue.GetInFlightRunForNode(
-			ctx, tx, upstreamNode.ID, senderFrameID,
+			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)
 		if err != nil {
 			return fmt.Errorf("cascadeSubscribersStaleInTx: get in-flight upstream %s: %w",
 				upstreamType, err)
 		}
 
-		// Parked-upstream handling.
-		//
-		// `GetInFlightRunForNode` filters to (frame=senderFrameID,
-		// phase IN (pending,active,held)); it does NOT return parked
-		// runs. So `hasRun=true` here means the upstream is already
-		// pending/active/held in this frame — the standard wait-set
-		// insert below gates the receiver correctly and no wake is
-		// needed. We only probe `GetParkedByNode` when `hasRun=false`:
-		//
-		//  1. The upstream is parked IN THIS FRAME (parked run pinned
-		//     to senderFrameID). Its phase stays 'parked' indefinitely
-		//     without a wake; the receiver's wait-set blocker would
-		//     point at a never-draining run.
-		//  2. The upstream is parked in an EARLIER frame (parked row
-		//     pinned to some prior frame). `MarkStaleForCascade`'s
-		//     NOT EXISTS guard would skip the new-frame insert because
-		//     the parked row counts as in-flight; the receiver-side
-		//     re-fetch would then return hasRun=false and we'd error
-		//     out. The wake primitive transitions the run pending and
-		//     `wakeParkedReceiverInTx` itself rebinds the run's
-		//     frame_id to senderFrameID so the resolver finds it.
-		//
-		// Probe is `GetParkedByNode` (frame-agnostic) which catches
-		// both cases without trusting the ListByInstance snapshot's
-		// State field (snapshots can lag a concurrent park terminal).
-		//
-		//	@concept: parked-state
-		//	@concept: cascade
-		//	@concept: attribute
 		if !hasRun {
-			parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID)
-			if err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: get parked upstream %s: %w",
-					upstreamType, err)
-			}
-			if parked != nil {
-				// `wakeParkedReceiverInTx` rebinds the run's frame_id
-				// internally — no separate RebindRunFrameInTx call here.
-				if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
-					return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
-						upstreamType, err)
-				}
-				upstreamRunID, hasRun, err = args.Queue.GetInFlightRunForNode(
-					ctx, tx, upstreamNode.ID, senderFrameID,
-				)
-				if err != nil {
-					return fmt.Errorf("cascadeSubscribersStaleInTx: re-fetch in-flight upstream %s after parked-wake: %w",
-						upstreamType, err)
-				}
-				if !hasRun {
-					return fmt.Errorf("cascadeSubscribersStaleInTx: parked upstream %s lost in-flight row after wake",
-						upstreamType)
-				}
-			}
-		}
-
-		if !hasRun {
+			// Pass the just-affirmed upstreamRunScopeID through —
+			// upstreamNode.RunScopeID on the NodeRow projection is stale
+			// (loaded before this AffirmNodeRunRow call); the affirm may
+			// have just attached a new in-flight row to upstreamRunScopeID.
 			if err := stalemarkAndEnqueueInFrame(
-				ctx, args, tx, &upstreamNode, senderFrameID,
+				ctx, args, tx, &upstreamNode, upstreamRunScopeID, senderFrameID,
 			); err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: stale-mark upstream %s: %w",
 					upstreamType, err)
 			}
 			upstreamRunID, hasRun, err = args.Queue.GetInFlightRunForNode(
-				ctx, tx, upstreamNode.ID, senderFrameID,
+				ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 			)
 			if err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: re-fetch in-flight upstream %s after stale-mark: %w",

@@ -158,7 +158,7 @@ func TestOpenPickPolicy_Basic(t *testing.T) {
 	}
 	var addr, scope string
 	must(t, json.Unmarshal(outcome.Result.Address, &addr))
-	must(t, json.Unmarshal(outcome.Result.Scope, &scope))
+	must(t, json.Unmarshal(outcome.Result.ClaimScope, &scope))
 	wantAddr := filepath.Join(root, sub, "alpha")
 	wantScope := filepath.Join(sub, "alpha")
 	if addr != wantAddr {
@@ -206,9 +206,9 @@ func TestOpenSelectorDispatch(t *testing.T) {
 		t.Fatal("scope selector should be Available")
 	}
 	// Scope bytes must be byte-equal.
-	if string(o1.Result.Scope) != string(o2.Result.Scope) {
+	if string(o1.Result.ClaimScope) != string(o2.Result.ClaimScope) {
 		t.Errorf("pick-policy scope (%s) != scope (%s) for same logical folder",
-			o1.Result.Scope, o2.Result.Scope)
+			o1.Result.ClaimScope, o2.Result.ClaimScope)
 	}
 }
 
@@ -279,7 +279,7 @@ func TestCommit_ReleaseToBack(t *testing.T) {
 	}
 	var first struct{ Folder string }
 	must(t, json.Unmarshal(o.Result.Payload, &first))
-	must(t, st.Commit(context.Background(), "c-1", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c-1", o.Result.ClaimScope, o.Result.Address))
 	// After release_to_back, the first folder sits at the tail; the
 	// other folder must be picked next.
 	o2, _ := st.Open(context.Background(), "c-2", "@r")
@@ -299,7 +299,7 @@ func TestCommit_PopAndDelete_RemovesFolder(t *testing.T) {
 	if !o.Available {
 		t.Fatal("pick should be Available")
 	}
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 	if _, err := os.Stat(filepath.Join(root, sub, "doomed")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("folder should be removed after pop_and_delete commit; stat err = %v", err)
 	}
@@ -322,9 +322,9 @@ func TestCommit_Idempotent(t *testing.T) {
 	st, root, sub := newRingStore(t, action.Action{Kind: action.Recycle}, action.Action{Kind: action.Recycle})
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 	o, _ := st.Open(context.Background(), "c", "@r")
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 	// Second commit must be a no-op (no error).
-	must(t, st.Commit(context.Background(), "c", o.Result.Scope, o.Result.Address))
+	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 }
 
 func TestSweep_ReclaimsExpired(t *testing.T) {
@@ -392,7 +392,7 @@ func TestOpenPickPolicy_StoreRootSingleEntry(t *testing.T) {
 	}
 	var addr, scope string
 	must(t, json.Unmarshal(outcome.Result.Address, &addr))
-	must(t, json.Unmarshal(outcome.Result.Scope, &scope))
+	must(t, json.Unmarshal(outcome.Result.ClaimScope, &scope))
 	wantAddr := filepath.Join(root, "guidance")
 	wantScope := "guidance"
 	if addr != wantAddr {

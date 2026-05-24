@@ -304,8 +304,8 @@ func (s *Server) SplitScope(_ context.Context, req *genv1.SplitScopeRequest) (*g
 	for _, key := range decoded.PartitionKeys {
 		scope, _ := json.Marshal(map[string]string{"partition_key": key})
 		out = append(out, &genv1.SubScopeDescriptor{
-			ScopeData:    scope,
-			PartitionKey: key,
+			ClaimScopeData: scope,
+			PartitionKey:   key,
 		})
 	}
 	return &genv1.SplitScopeResponse{SubScopes: out}, nil

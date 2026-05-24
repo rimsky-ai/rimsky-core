@@ -26,54 +26,106 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// PriorDispatchDisposition is the classifier accompanying
+// ExecuteRequest.prior_dispatch_id. Tells the executor *why* the
+// supervisor is asking it to take over from a predecessor dispatch.
+type PriorDispatchDisposition int32
+
+const (
+	// PRIOR_NONE is the wire default. Equivalent to the field being unset.
+	PriorDispatchDisposition_PRIOR_NONE PriorDispatchDisposition = 0
+	// PRIOR_HEARTBEAT_STALE: the supervisor's heartbeat-loss sweep
+	// transitioned the prior run to stale; this dispatch is the
+	// re-enqueue.
+	PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE PriorDispatchDisposition = 1
+	// PRIOR_RETRY_AFTER_ERROR: the prior dispatch reported an Error
+	// terminal that the error-policy resolved to retry; this dispatch
+	// is the retry.
+	PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR PriorDispatchDisposition = 2
+	// PRIOR_RECALCULATE: the cascade walker invalidated the prior run
+	// (upstream input changed); this dispatch is the recalculate.
+	PriorDispatchDisposition_PRIOR_RECALCULATE PriorDispatchDisposition = 3
+)
+
+// Enum value maps for PriorDispatchDisposition.
+var (
+	PriorDispatchDisposition_name = map[int32]string{
+		0: "PRIOR_NONE",
+		1: "PRIOR_HEARTBEAT_STALE",
+		2: "PRIOR_RETRY_AFTER_ERROR",
+		3: "PRIOR_RECALCULATE",
+	}
+	PriorDispatchDisposition_value = map[string]int32{
+		"PRIOR_NONE":              0,
+		"PRIOR_HEARTBEAT_STALE":   1,
+		"PRIOR_RETRY_AFTER_ERROR": 2,
+		"PRIOR_RECALCULATE":       3,
+	}
+)
+
+func (x PriorDispatchDisposition) Enum() *PriorDispatchDisposition {
+	p := new(PriorDispatchDisposition)
+	*p = x
+	return p
+}
+
+func (x PriorDispatchDisposition) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PriorDispatchDisposition) Descriptor() protoreflect.EnumDescriptor {
+	return file_executor_proto_enumTypes[0].Descriptor()
+}
+
+func (PriorDispatchDisposition) Type() protoreflect.EnumType {
+	return &file_executor_proto_enumTypes[0]
+}
+
+func (x PriorDispatchDisposition) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PriorDispatchDisposition.Descriptor instead.
+func (PriorDispatchDisposition) EnumDescriptor() ([]byte, []int) {
+	return file_executor_proto_rawDescGZIP(), []int{0}
+}
+
 // ParkReason categorizes why an executor parked a node. Storage form
 // (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
-// from the enum symbol (e.g. PARK_REASON_CALLBACK_WAIT ->
-// callback_wait). The same form is used on the diagnostics
+// from the enum symbol (e.g. PARK_REASON_AWAIT_CALLBACK ->
+// await_callback). The same form is used on the diagnostics
 // endpoint, the rimsky `parked list --reason=` flag, and the
 // Prometheus rimsky_parked_nodes_by_reason gauge label.
 //
-// The spec's 4-reason taxonomy (TIME_WAIT / CALLBACK_WAIT /
-// RETRY_BACKOFF / OTHER; see
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Parked-state taxonomy) is the canonical set for new emitters;
-// SIGNAL_WAIT and AWAITING_HUMAN are kept for existing emit sites
-// and map to OTHER in the rolled-up per-reason caps when not
-// explicitly configured. OTHER requires reason_label non-empty
-// (validated at the supervisor's terminal handler).
+// @blessed-invariant: ParkReason is a closed two-value set
+// (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
+// layer rejects any other value at decode. No UNSPECIFIED, no
+// OTHER, no fallback. Storage CHECK on
+// col:rimsky_node_runs.parked_reason mirrors the closed set. Per
+// spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+//
+// proto3 requires a defined zero value; PARK_REASON_AWAIT_CALLBACK
+// occupies tag 0 deliberately — an executor that forgets to set
+// the field gets the wait-on-callback interpretation, which won't
+// auto-resume, which is the safer default.
 //
 // @concept: parked-state
 type ParkReason int32
 
 const (
-	ParkReason_PARK_REASON_UNSPECIFIED    ParkReason = 0
-	ParkReason_PARK_REASON_TIME_WAIT      ParkReason = 1
-	ParkReason_PARK_REASON_SIGNAL_WAIT    ParkReason = 2
-	ParkReason_PARK_REASON_AWAITING_HUMAN ParkReason = 3
-	ParkReason_PARK_REASON_RETRY_BACKOFF  ParkReason = 4
-	ParkReason_PARK_REASON_CALLBACK_WAIT  ParkReason = 5
-	ParkReason_PARK_REASON_OTHER          ParkReason = 99
+	ParkReason_PARK_REASON_AWAIT_CALLBACK ParkReason = 0
+	ParkReason_PARK_REASON_SNOOZE         ParkReason = 2
 )
 
 // Enum value maps for ParkReason.
 var (
 	ParkReason_name = map[int32]string{
-		0:  "PARK_REASON_UNSPECIFIED",
-		1:  "PARK_REASON_TIME_WAIT",
-		2:  "PARK_REASON_SIGNAL_WAIT",
-		3:  "PARK_REASON_AWAITING_HUMAN",
-		4:  "PARK_REASON_RETRY_BACKOFF",
-		5:  "PARK_REASON_CALLBACK_WAIT",
-		99: "PARK_REASON_OTHER",
+		0: "PARK_REASON_AWAIT_CALLBACK",
+		2: "PARK_REASON_SNOOZE",
 	}
 	ParkReason_value = map[string]int32{
-		"PARK_REASON_UNSPECIFIED":    0,
-		"PARK_REASON_TIME_WAIT":      1,
-		"PARK_REASON_SIGNAL_WAIT":    2,
-		"PARK_REASON_AWAITING_HUMAN": 3,
-		"PARK_REASON_RETRY_BACKOFF":  4,
-		"PARK_REASON_CALLBACK_WAIT":  5,
-		"PARK_REASON_OTHER":          99,
+		"PARK_REASON_AWAIT_CALLBACK": 0,
+		"PARK_REASON_SNOOZE":         2,
 	}
 )
 
@@ -88,11 +140,11 @@ func (x ParkReason) String() string {
 }
 
 func (ParkReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_executor_proto_enumTypes[0].Descriptor()
+	return file_executor_proto_enumTypes[1].Descriptor()
 }
 
 func (ParkReason) Type() protoreflect.EnumType {
-	return &file_executor_proto_enumTypes[0]
+	return &file_executor_proto_enumTypes[1]
 }
 
 func (x ParkReason) Number() protoreflect.EnumNumber {
@@ -101,7 +153,7 @@ func (x ParkReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ParkReason.Descriptor instead.
 func (ParkReason) EnumDescriptor() ([]byte, []int) {
-	return file_executor_proto_rawDescGZIP(), []int{0}
+	return file_executor_proto_rawDescGZIP(), []int{1}
 }
 
 // ExecuteRequest carries the full context of a node dispatch. The
@@ -145,8 +197,23 @@ type ExecuteRequest struct {
 	// Park. When absent, this is a fresh dispatch; when present, this
 	// is a resume of a parked node. See ResumeContext.
 	ResumeContext *ResumeContext `protobuf:"bytes,13,opt,name=resume_context,json=resumeContext,proto3" json:"resume_context,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// prior_dispatch_id is set when this dispatch supersedes a prior
+	// failed / abandoned / stale-recovered dispatch for the same
+	// (run_scope_id, node_id) pair. Used by executors that maintain
+	// per-dispatch session state to identify the predecessor and
+	// (optionally) recover or hand off work-in-progress. Unset on the
+	// initial dispatch of a node within a RunScope. Per spec
+	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+	// §Recovery-aware executor protocol.
+	//
+	// @concept: run-scope
+	PriorDispatchId *string `protobuf:"bytes,14,opt,name=prior_dispatch_id,json=priorDispatchId,proto3,oneof" json:"prior_dispatch_id,omitempty"`
+	// prior_dispatch_disposition explains why prior_dispatch_id is set,
+	// so the executor can route its recovery / handoff logic. Unset
+	// (== PRIOR_NONE) on the initial dispatch. Per spec.
+	PriorDispatchDisposition *PriorDispatchDisposition `protobuf:"varint,15,opt,name=prior_dispatch_disposition,json=priorDispatchDisposition,proto3,enum=rimsky.v1.PriorDispatchDisposition,oneof" json:"prior_dispatch_disposition,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ExecuteRequest) Reset() {
@@ -247,6 +314,20 @@ func (x *ExecuteRequest) GetResumeContext() *ResumeContext {
 		return x.ResumeContext
 	}
 	return nil
+}
+
+func (x *ExecuteRequest) GetPriorDispatchId() string {
+	if x != nil && x.PriorDispatchId != nil {
+		return *x.PriorDispatchId
+	}
+	return ""
+}
+
+func (x *ExecuteRequest) GetPriorDispatchDisposition() PriorDispatchDisposition {
+	if x != nil && x.PriorDispatchDisposition != nil {
+		return *x.PriorDispatchDisposition
+	}
+	return PriorDispatchDisposition_PRIOR_NONE
 }
 
 // ResumeContext is rimsky's way of handing back to the executor the
@@ -802,7 +883,7 @@ func (x *Park) GetReason() ParkReason {
 	if x != nil {
 		return x.Reason
 	}
-	return ParkReason_PARK_REASON_UNSPECIFIED
+	return ParkReason_PARK_REASON_AWAIT_CALLBACK
 }
 
 func (x *Park) GetPayload() []byte {
@@ -1146,7 +1227,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd2\x04\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa0\x06\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -1161,10 +1242,14 @@ const file_executor_proto_rawDesc = "" +
 	"\fcancel_token\x18\t \x01(\tR\vcancelToken\x12\x1f\n" +
 	"\vdispatch_id\x18\f \x01(\tR\n" +
 	"dispatchId\x12?\n" +
-	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x1aQ\n" +
+	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x12/\n" +
+	"\x11prior_dispatch_id\x18\x0e \x01(\tH\x00R\x0fpriorDispatchId\x88\x01\x01\x12f\n" +
+	"\x1aprior_dispatch_disposition\x18\x0f \x01(\x0e2#.rimsky.v1.PriorDispatchDispositionH\x01R\x18priorDispatchDisposition\x88\x01\x01\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\n" +
+	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01B\x14\n" +
+	"\x12_prior_dispatch_idB\x1d\n" +
+	"\x1b_prior_dispatch_dispositionJ\x04\b\x04\x10\x05J\x04\b\n" +
 	"\x10\vJ\x04\b\v\x10\fR\buserdataR\aresumedR\vrun_attempt\"s\n" +
 	"\rResumeContext\x12\x18\n" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12#\n" +
@@ -1219,16 +1304,17 @@ const file_executor_proto_rawDesc = "" +
 	"\n" +
 	"NamedEvent\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload*\xd6\x01\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload*y\n" +
+	"\x18PriorDispatchDisposition\x12\x0e\n" +
 	"\n" +
-	"ParkReason\x12\x1b\n" +
-	"\x17PARK_REASON_UNSPECIFIED\x10\x00\x12\x19\n" +
-	"\x15PARK_REASON_TIME_WAIT\x10\x01\x12\x1b\n" +
-	"\x17PARK_REASON_SIGNAL_WAIT\x10\x02\x12\x1e\n" +
-	"\x1aPARK_REASON_AWAITING_HUMAN\x10\x03\x12\x1d\n" +
-	"\x19PARK_REASON_RETRY_BACKOFF\x10\x04\x12\x1d\n" +
-	"\x19PARK_REASON_CALLBACK_WAIT\x10\x05\x12\x15\n" +
-	"\x11PARK_REASON_OTHER\x10c2K\n" +
+	"PRIOR_NONE\x10\x00\x12\x19\n" +
+	"\x15PRIOR_HEARTBEAT_STALE\x10\x01\x12\x1b\n" +
+	"\x17PRIOR_RETRY_AFTER_ERROR\x10\x02\x12\x15\n" +
+	"\x11PRIOR_RECALCULATE\x10\x03*D\n" +
+	"\n" +
+	"ParkReason\x12\x1e\n" +
+	"\x1aPARK_REASON_AWAIT_CALLBACK\x10\x00\x12\x16\n" +
+	"\x12PARK_REASON_SNOOZE\x10\x022K\n" +
 	"\bExecutor\x12?\n" +
 	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x17.rimsky.v1.ExecuteEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
@@ -1244,55 +1330,57 @@ func file_executor_proto_rawDescGZIP() []byte {
 	return file_executor_proto_rawDescData
 }
 
-var file_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_executor_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_executor_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_executor_proto_goTypes = []any{
-	(ParkReason)(0),               // 0: rimsky.v1.ParkReason
-	(*ExecuteRequest)(nil),        // 1: rimsky.v1.ExecuteRequest
-	(*ResumeContext)(nil),         // 2: rimsky.v1.ResumeContext
-	(*StoreHandle)(nil),           // 3: rimsky.v1.StoreHandle
-	(*ExecuteEvent)(nil),          // 4: rimsky.v1.ExecuteEvent
-	(*StreamClose)(nil),           // 5: rimsky.v1.StreamClose
-	(*Success)(nil),               // 6: rimsky.v1.Success
-	(*Error)(nil),                 // 7: rimsky.v1.Error
-	(*Park)(nil),                  // 8: rimsky.v1.Park
-	(*AwaitAsyncCallback)(nil),    // 9: rimsky.v1.AwaitAsyncCallback
-	(*AsyncCallbackBody)(nil),     // 10: rimsky.v1.AsyncCallbackBody
-	(*Heartbeat)(nil),             // 11: rimsky.v1.Heartbeat
-	(*NamedEvent)(nil),            // 12: rimsky.v1.NamedEvent
-	nil,                           // 13: rimsky.v1.ExecuteRequest.StoresEntry
-	(*structpb.Struct)(nil),       // 14: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
+	(PriorDispatchDisposition)(0), // 0: rimsky.v1.PriorDispatchDisposition
+	(ParkReason)(0),               // 1: rimsky.v1.ParkReason
+	(*ExecuteRequest)(nil),        // 2: rimsky.v1.ExecuteRequest
+	(*ResumeContext)(nil),         // 3: rimsky.v1.ResumeContext
+	(*StoreHandle)(nil),           // 4: rimsky.v1.StoreHandle
+	(*ExecuteEvent)(nil),          // 5: rimsky.v1.ExecuteEvent
+	(*StreamClose)(nil),           // 6: rimsky.v1.StreamClose
+	(*Success)(nil),               // 7: rimsky.v1.Success
+	(*Error)(nil),                 // 8: rimsky.v1.Error
+	(*Park)(nil),                  // 9: rimsky.v1.Park
+	(*AwaitAsyncCallback)(nil),    // 10: rimsky.v1.AwaitAsyncCallback
+	(*AsyncCallbackBody)(nil),     // 11: rimsky.v1.AsyncCallbackBody
+	(*Heartbeat)(nil),             // 12: rimsky.v1.Heartbeat
+	(*NamedEvent)(nil),            // 13: rimsky.v1.NamedEvent
+	nil,                           // 14: rimsky.v1.ExecuteRequest.StoresEntry
+	(*structpb.Struct)(nil),       // 15: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
 }
 var file_executor_proto_depIdxs = []int32{
-	14, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
-	14, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
-	13, // 2: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
-	2,  // 3: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
-	14, // 4: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
-	11, // 5: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
-	12, // 6: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
-	5,  // 7: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
-	6,  // 8: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
-	7,  // 9: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
-	8,  // 10: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
-	9,  // 11: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
-	14, // 12: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
-	14, // 13: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
-	0,  // 14: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
-	15, // 15: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
-	12, // 16: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
-	6,  // 17: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
-	7,  // 18: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
-	8,  // 19: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
-	3,  // 20: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
-	1,  // 21: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
-	4,  // 22: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
-	22, // [22:23] is the sub-list for method output_type
-	21, // [21:22] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	15, // 0: rimsky.v1.ExecuteRequest.attributes:type_name -> google.protobuf.Struct
+	15, // 1: rimsky.v1.ExecuteRequest.attributes_schema:type_name -> google.protobuf.Struct
+	14, // 2: rimsky.v1.ExecuteRequest.stores:type_name -> rimsky.v1.ExecuteRequest.StoresEntry
+	3,  // 3: rimsky.v1.ExecuteRequest.resume_context:type_name -> rimsky.v1.ResumeContext
+	0,  // 4: rimsky.v1.ExecuteRequest.prior_dispatch_disposition:type_name -> rimsky.v1.PriorDispatchDisposition
+	15, // 5: rimsky.v1.StoreHandle.handle:type_name -> google.protobuf.Struct
+	12, // 6: rimsky.v1.ExecuteEvent.heartbeat:type_name -> rimsky.v1.Heartbeat
+	13, // 7: rimsky.v1.ExecuteEvent.named_event:type_name -> rimsky.v1.NamedEvent
+	6,  // 8: rimsky.v1.ExecuteEvent.stream_close:type_name -> rimsky.v1.StreamClose
+	7,  // 9: rimsky.v1.StreamClose.success:type_name -> rimsky.v1.Success
+	8,  // 10: rimsky.v1.StreamClose.error:type_name -> rimsky.v1.Error
+	9,  // 11: rimsky.v1.StreamClose.park:type_name -> rimsky.v1.Park
+	10, // 12: rimsky.v1.StreamClose.await_async:type_name -> rimsky.v1.AwaitAsyncCallback
+	15, // 13: rimsky.v1.Success.attributes_delta:type_name -> google.protobuf.Struct
+	15, // 14: rimsky.v1.Error.payload:type_name -> google.protobuf.Struct
+	1,  // 15: rimsky.v1.Park.reason:type_name -> rimsky.v1.ParkReason
+	16, // 16: rimsky.v1.Park.resume_at:type_name -> google.protobuf.Timestamp
+	13, // 17: rimsky.v1.AsyncCallbackBody.events:type_name -> rimsky.v1.NamedEvent
+	7,  // 18: rimsky.v1.AsyncCallbackBody.success:type_name -> rimsky.v1.Success
+	8,  // 19: rimsky.v1.AsyncCallbackBody.error:type_name -> rimsky.v1.Error
+	9,  // 20: rimsky.v1.AsyncCallbackBody.park:type_name -> rimsky.v1.Park
+	4,  // 21: rimsky.v1.ExecuteRequest.StoresEntry.value:type_name -> rimsky.v1.StoreHandle
+	2,  // 22: rimsky.v1.Executor.Execute:input_type -> rimsky.v1.ExecuteRequest
+	5,  // 23: rimsky.v1.Executor.Execute:output_type -> rimsky.v1.ExecuteEvent
+	23, // [23:24] is the sub-list for method output_type
+	22, // [22:23] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_executor_proto_init() }
@@ -1300,6 +1388,7 @@ func file_executor_proto_init() {
 	if File_executor_proto != nil {
 		return
 	}
+	file_executor_proto_msgTypes[0].OneofWrappers = []any{}
 	file_executor_proto_msgTypes[3].OneofWrappers = []any{
 		(*ExecuteEvent_Heartbeat)(nil),
 		(*ExecuteEvent_NamedEvent)(nil),
@@ -1321,7 +1410,7 @@ func file_executor_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_executor_proto_rawDesc), len(file_executor_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,

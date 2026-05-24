@@ -64,7 +64,7 @@ func testSortOrderCoordination(t *testing.T, d persistence.Database) {
 		for i := 0; i < iterations; i++ {
 			err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				for _, r := range scopes {
-					if err := coord.TakeScopeLockInTx(ctx, tx, storeName, r); err != nil {
+					if err := coord.TakeClaimScopeLockInTx(ctx, tx, storeName, r); err != nil {
 						return err
 					}
 				}

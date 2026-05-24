@@ -252,9 +252,13 @@ func (s *framesImpl) MarkSourceNodeStale(
 	}
 	// Populate required_stores from the template node-def via a JSON
 	// lookup; see postgres mirror for rationale.
+	//
+	// Under RunScope-first the new row lives in the instance's main
+	// RunScope (the only RunScope a frame source's run can belong to).
+	// @concept: run-scope
 	res, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
         SELECT ?, n.id, n.executor,
                COALESCE((
                  SELECT json_group_array(json_extract(store.value, '$.name'))
@@ -265,8 +269,9 @@ func (s *framesImpl) MarkSourceNodeStale(
                   WHERE i.id = n.instance_id
                     AND json_extract(nd.value, '$.type') = n.node_type
                ), '[]'),
-               ?, 'pending', 'stale', ?
+               ?, 'pending', 'stale', ?, inst.main_run_scope_id
           FROM rimsky_nodes n
+          JOIN rimsky_instances inst ON inst.id = n.instance_id
          WHERE n.id = ?
            AND n.instance_id = ?
            AND NOT EXISTS (

@@ -512,11 +512,15 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1
     `, []any{inst.ID}, &frameID)
+	var mainScopeID shared.UUID
+	pgtest.QueryRowForTest(ctx, t, h.driver, `
+        SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
+    `, []any{inst.ID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at)
-        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', 'failed', $2, now())
-    `, nodeRow.ID, frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at, run_scope_id)
+        VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', 'failed', $2, now(), $3)
+    `, nodeRow.ID, frameID, mainScopeID)
 	status, _ = h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 

@@ -60,7 +60,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	// `TestParkedLifecycleHeldClaimRetentionAcrossPark`).
 	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_RETRY_BACKOFF, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-deadline", Version: "1",
@@ -130,7 +130,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Indefinite park — no resume_at.
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_AWAITING_HUMAN, "human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
+		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-external", Version: "1",
@@ -177,7 +177,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// Park indefinitely so SweepParkedNodes' watchdog branch fires; the
 	// runtime measures overrun against parked_at + max_park_duration.
-	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "waiting", nil, time.Time{}, "")
+	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting", nil, time.Time{}, "")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-overrun", Version: "1",
@@ -205,32 +205,12 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 		"worker should land in failed after park_timeout")
 }
 
-// TestParkedLifecycleEmptyReasonPermitted covers E6 case (d). Empty reason
-// is permitted (logs WARN supervisor-side); the node still parks.
-func TestParkedLifecycleEmptyReasonPermitted(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	resumeAt := time.Now().Add(200 * time.Millisecond)
-	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_UNSPECIFIED, "", nil, resumeAt, "")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "parked-empty-reason", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-park-empty-reason", map[string]any{})
-	worker := h.FindNode(iid, "worker")
-	require.NotNil(t, worker)
-
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked even with empty reason")
-
-	// Confirm the audit-log row was emitted with empty reason permitted.
-	require.True(t, h.WaitForEventKind(worker.ID, "park_requested", 5*time.Second),
-		"park_requested audit log should be present")
-}
+// TestParkedLifecycleUnspecifiedReasonRejected retired per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md:
+// PARK_REASON_UNSPECIFIED was removed entirely in the 7→2 collapse —
+// the only legal ParkReason values are now AWAIT_CALLBACK and SNOOZE,
+// and proto3 dropped the unspecified zero value at the wire layer.
+// The "reject unspecified" runtime test is no longer expressible.
 
 // TestParkedLifecycleIntraGraphInvalidateAgainstParked covers E6 case (g).
 // Node A parks; later, an upstream cascade walk visits A and must
@@ -255,7 +235,7 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 	// A parks indefinitely on first dispatch. B emits the "ready"
 	// event then completes successfully (the event is incidental;
 	// the cascade walk fires on B's state transition).
-	h.Stub.WhenType("a").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "await_signal", nil, time.Time{}, "session-A")
+	h.Stub.WhenType("a").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "await_signal", nil, time.Time{}, "session-A")
 	h.Stub.WhenType("b").EmitNamedEvent("ready", []byte(`{"go":true}`)).
 		Success(map[string]any{}, true, "b-done")
 
@@ -324,6 +304,45 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 // or never fire (leaking producer state). The test asserts the handle
 // row is present at all three checkpoints: pre-park, mid-park, and
 // post-resume completion (post-terminal it is auto-deleted).
+//
+// Notes (diagnostic — testcontainer-startup-bound, not a
+// production-code bug):
+//
+//	Symptom (flagged across cycles 4, 6, 7): under heavy parallel
+//	load the resume_at scheduling could fire BEFORE the Success
+//	script replaced the Park script, causing a re-park loop and a
+//	WaitForNodeState(..., Fresh) timeout.
+//
+//	Root cause located: NOT a race in
+//	runtime.SweepParkedNodes or the wake-parked-node path. The
+//	race is between (a) the test's own setup sequence (deploy
+//	template → create instance → wait-for-parked → SQL probes →
+//	re-script stub) and (b) the wall-clock resume_at deadline. The
+//	setup sequence's wall-time is dominated by testcontainer
+//	cold-start: each scenario test calls pgtest.OpenDriver which
+//	spins up its own postgres:14-alpine container; the harness's
+//	per-poll Docker state-query is "~1-6s under saturated parallel
+//	load; occasional 15-20s spikes" (see
+//	internal/pgtest/pgtest.go::StartFreshPostgresDSN). Under the
+//	historical 1-2s resume_at budget the sweep could fire before
+//	the rescript landed.
+//
+//	Ruled out: SweepParkedNodes' wake path (sub-second once
+//	triggered), the auto-terminal Commit logic (separate held-
+//	subgraph completion test exercises it directly), the stub
+//	executor's WhenType swap (in-process, instantaneous), the
+//	wait-set drain logic.
+//
+//	Resolution: the 10s resume_at + the 30s WaitForNodeState
+//	budgets below were chosen to cover one testcontainer
+//	cold-start spike plus the in-process steady-state latency,
+//	with no overlap into the resume window. Do NOT compress these
+//	without first re-instrumenting the harness to share a single
+//	postgres container across scenarios (see also
+//	`runtime/sweep_claim_handle_retention_test.go`
+//	::TestSweepClaimHandleRetention_SweepsSubgraphCommittedPastCutoff
+//	for the same testcontainer-cold-start diagnosis on a
+//	non-scenario test).
 func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	t.Parallel()
 	// Two-node scenario: `acquirer` holds a scope-claim with alias
@@ -365,7 +384,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// container speeds and was the documented flake source.
 	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("acquirer").
-		Park(genv1.ParkReason_PARK_REASON_TIME_WAIT, "checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
 	// Inheritor is pre-scripted but won't be reached until the
 	// acquirer resumes and completes.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
@@ -420,8 +439,8 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	)
 	require.Equal(t, "parked", phase, "node-run must be in parked phase")
 	require.NotNil(t, parkedReason, "parked_reason must survive parked transition")
-	require.Equal(t, "time_wait", *parkedReason,
-		"parked_reason should store the enum form (snake_case)")
+	require.Equal(t, "snooze", *parkedReason,
+		"parked_reason should store the enum form (snake_case); TIME_WAIT collapsed to SNOOZE per the 2026-05-22 ParkReason collapse")
 
 	// Held claim_handle row exists during park: the held subgraph
 	// (acquirer + inheritor) is still active, so auto-terminal cannot
@@ -505,7 +524,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 			},
 		},
 	})
-	h.Stub.WhenType("acquirer").Park(genv1.ParkReason_PARK_REASON_SIGNAL_WAIT, "waiting_held", nil, time.Time{}, "")
+	h.Stub.WhenType("acquirer").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting_held", nil, time.Time{}, "")
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{

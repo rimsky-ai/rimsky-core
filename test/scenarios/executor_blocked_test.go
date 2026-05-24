@@ -55,7 +55,46 @@ func TestExecutorBlocked(t *testing.T) {
 	require.NotNil(t, n)
 
 	// give_up on executor_blocked → node fails.
-	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 20*time.Second),
+	//
+	// Notes (diagnostic — testcontainer-startup-bound, not a
+	// production-code bug):
+	//
+	//   Symptom: under heavy parallel load (full
+	//   ./test/scenarios/... run with -race + -parallel=N), this
+	//   wait sometimes exceeds 20s for the node row to flip to
+	//   `failed`. Reproducer attempt: 20-rep -race -parallel=16
+	//   isolated run of this test PASSED 20/20 (single-test
+	//   isolation is stable); full-package -race -parallel=16
+	//   -count=10 reliably surfaces a sibling test (e.g.
+	//   TestParkedLifecycleMaxParkDurationOverrun) hitting its own
+	//   15s budget.
+	//
+	//   Root cause located: the supervisor's give_up code path is a
+	//   single short transaction (runtime/on_error.go::OnError
+	//   `case "give_up"`). End-to-end latency from Error response →
+	//   `failed` row is well under 100ms when the node is dispatched
+	//   promptly. The dominant cost when the budget overruns is
+	//   testcontainer Postgres cold-start: each scenario test calls
+	//   pgtest.OpenDriver, spinning up its own postgres:14-alpine
+	//   container, and the harness's per-poll Docker state-query is
+	//   "~1-6s under saturated parallel load; occasional 15-20s
+	//   spikes when the daemon is heavily contended" (see
+	//   internal/pgtest/pgtest.go::StartFreshPostgresDSN).
+	//
+	//   Ruled out: scheduler tick rate (100ms claim poll, 250ms
+	//   scheduler tick; sub-second under any healthy load); the
+	//   give_up state-update transaction itself (a single
+	//   sb.Nodes().UpdateState + queue RemoveForNode); the
+	//   WaitForNodeState poller (50ms cadence).
+	//
+	//   Resolution: keep the 30s budget so the per-test slice
+	//   includes one testcontainer cold-start spike without
+	//   tripping. The peer scenarios that exercise the same
+	//   `failed` terminal already use 30s
+	//   (give_up_test.go::TestGiveUp, retry_loop_cap_test.go,
+	//   lifecycle_handlers_test.go); the previous 20s here was an
+	//   outlier predating the cold-start diagnostic.
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
 		"gated did not reach failed")
 
 	// Verify error event carries executor_blocked class.

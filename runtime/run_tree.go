@@ -313,10 +313,13 @@ func aggregateSuccessOutcome(children []ChildState) cascade.LastOutcome {
 // CreateRootRun is the runtime-side wrapper around
 // persistence.RunTreeTable.CreateRootRun. Used by dispatch sites that
 // need to create a top-level outer-graph run with a snapshotted
-// aggregation policy.
+// aggregation policy. The supplied RunScopeID flows through as the
+// run's RunScope; for top-level outer-graph dispatches that is the
+// instance's main RunScope.
 func CreateRootRun(
 	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
-	nodeID shared.UUID, frameID shared.UUID, executor string, requiredStores []string,
+	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
+	executor string, requiredStores []string,
 	policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
 	runID := shared.UUID(uuid.New())
@@ -324,6 +327,7 @@ func CreateRootRun(
 		RunID:             runID,
 		NodeID:            nodeID,
 		FrameID:           frameID,
+		RunScopeID:        runScopeID,
 		ExecutorName:      executor,
 		RequiredStores:    requiredStores,
 		AggregationPolicy: policy,
@@ -335,29 +339,39 @@ func CreateRootRun(
 
 // CreateChildRun is the runtime-side wrapper around
 // persistence.RunTreeTable.CreateChildRun. Used by fan-out and
-// sub-graph dispatch sites. Idempotent on (parent_run_id, child_key):
-// re-creating returns the existing row.
+// sub-graph dispatch sites. Idempotent on (node_id, run_scope_id):
+// re-creating returns the existing run id reachable via
+// Queue.GetInFlightRunForNode.
+//
+// Under RunScope-first the (parent_run_id, child_key) identity moves
+// to the RunScope: the caller allocates the fan-out_partition /
+// subgraph RunScope (via RunScopes().Create) BEFORE invoking this
+// helper, and threads the resulting RunScope id in. The CreateChildRun
+// persistence call is internally idempotent on (node_id, run_scope_id);
+// when an in-flight row already exists, the existing run id is reachable
+// via queue.GetInFlightRunForNode(nodeID, runScopeID).
 func CreateChildRun(
-	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable,
-	parentRunID shared.UUID, childKey string, nodeID shared.UUID, frameID shared.UUID,
+	ctx context.Context, tx persistence.Tx, rt persistence.RunTreeTable, queue persistence.Queue,
+	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredStores []string, policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
-	// Re-load idempotently in case the (parent, child_key) pair already
-	// exists.
-	existing, err := rt.GetByParentChildKey(ctx, tx, parentRunID, childKey)
-	if err != nil {
-		return shared.UUID{}, fmt.Errorf("CreateChildRun: %w", err)
-	}
-	if existing != nil {
-		return existing.RunID, nil
+	// Idempotent pre-check: if an in-flight run already exists for this
+	// (node, run_scope) pair return its id without inserting.
+	if queue != nil {
+		existing, ok, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
+		if err != nil {
+			return shared.UUID{}, fmt.Errorf("CreateChildRun: lookup in-flight: %w", err)
+		}
+		if ok {
+			return existing, nil
+		}
 	}
 	runID := shared.UUID(uuid.New())
 	if err := rt.CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
 		RunID:             runID,
 		NodeID:            nodeID,
 		FrameID:           frameID,
-		ParentRunID:       parentRunID,
-		ChildKey:          childKey,
+		RunScopeID:        runScopeID,
 		ExecutorName:      executor,
 		RequiredStores:    requiredStores,
 		AggregationPolicy: policy,

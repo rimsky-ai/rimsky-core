@@ -235,19 +235,31 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Clear error bookkeeping + defensively clear stale frame_id +
-		// clear last_outcome in one tx. Clearing last_outcome here means
-		// the dashboard does not show a stale `failed` resolution
-		// flavor while the node transitions back through stale →
-		// running → fresh — UpdateState's COALESCE pattern preserves
-		// last_outcome on stale → running, so without this clear, a
-		// failed → stale → running → (fresh+changed) sequence would
-		// briefly display state=stale, last_outcome=failed.
+		// reset the failed-terminal row's last_outcome in one tx.
+		// Resetting last_outcome on the failed-terminal row means the
+		// dashboard's `nodeSelect` projection (which surfaces the
+		// failed-terminal row's last_outcome when no in-flight row
+		// exists) no longer shows the stale `failed` resolution flavor.
+		// Without this, the prior `ClearLastOutcome(runID=nil)` was a
+		// no-op against the failed-terminal row (its predicate
+		// `phase IN ('pending','active','held','parked')` excludes
+		// `phase='failed'`).
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
 				return err
 			}
-			if err := deps.Persist.Nodes().ClearLastOutcome(ctx, id, tx); err != nil {
+			// Resolve the failed-terminal row's RunScope so the reset
+			// keys on the correct row. NodeRow.RunScopeID is the
+			// in-flight scope (nil for a failed node), so look up the
+			// scope of the most-recent failed-terminal run directly.
+			scopeID, err := deps.Persist.Nodes().GetFailedTerminalRunScopeID(ctx, id, tx)
+			if err != nil {
 				return err
+			}
+			if scopeID != nil {
+				if err := deps.Persist.Nodes().ResetFailedTerminalLastOutcome(ctx, id, *scopeID, tx); err != nil {
+					return err
+				}
 			}
 			return deps.Persist.Nodes().SetFrameID(ctx, id, nil, tx)
 		}); err != nil {

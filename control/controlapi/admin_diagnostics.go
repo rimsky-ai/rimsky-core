@@ -43,14 +43,12 @@ func isKnownParkReasonFilter(v string) bool {
 }
 
 // knownParkReasonFilters returns the sorted set of snake_case
-// ParkReason values usable as the `?reason=` filter, excluding
-// PARK_REASON_UNSPECIFIED (a placeholder; not a real reason).
+// ParkReason values usable as the `?reason=` filter — the closed
+// two-value set per the post-collapse ParkReason invariant
+// (proto:executor.proto::ParkReason).
 func knownParkReasonFilters() []string {
 	out := make([]string, 0, len(genv1.ParkReason_name))
 	for _, name := range genv1.ParkReason_name {
-		if name == "PARK_REASON_UNSPECIFIED" {
-			continue
-		}
 		const prefix = "PARK_REASON_"
 		if strings.HasPrefix(name, prefix) {
 			out = append(out, strings.ToLower(name[len(prefix):]))

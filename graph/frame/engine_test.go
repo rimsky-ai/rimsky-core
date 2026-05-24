@@ -60,11 +60,15 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 	case "parked":
 		phase = "parked"
 	}
+	var mainScopeID uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
+		[]any{instanceID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, $3, $4)
-    `, nodeID, phase, state, frameID)
+            (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+        VALUES (gen_random_uuid(), $1, NULL, ARRAY[]::text[], NOW(), $2, $3, $4, $5)
+    `, nodeID, phase, state, frameID, mainScopeID)
 }
 
 // seedFrameRow inserts a rimsky_frames row with explicit fields. Goes
@@ -108,11 +112,17 @@ func seedDispatch(t *testing.T, ctx context.Context, d persistence.Database,
 	if claimedBy == "" {
 		claimedByPtr = nil
 	}
+	var mainScopeID uuid.UUID
+	pgtest.QueryRowForTest(ctx, t, d, `
+        SELECT i.main_run_scope_id FROM rimsky_instances i
+        JOIN rimsky_nodes n ON n.instance_id = i.id
+        WHERE n.id = $1
+    `, []any{nodeID}, &mainScopeID)
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, claimed_by, frame_id)
-        VALUES ($1, $2, NULL, '{}', $3, $4)
-    `, uuid.New(), nodeID, claimedByPtr, frameID)
+            (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id)
+        VALUES ($1, $2, NULL, '{}', $3, $4, $5)
+    `, uuid.New(), nodeID, claimedByPtr, frameID, mainScopeID)
 }
 
 func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {

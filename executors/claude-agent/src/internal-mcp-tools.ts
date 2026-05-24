@@ -53,14 +53,12 @@ export const ReportErrorInput = z.object({
   payload: z.unknown().optional(),
 });
 
-// Allowed snake_case ParkReason values (excluding "unspecified",
-// which is a placeholder enum value rather than a real reason). Mirrors
-// the proto ParkReason enum's lower_snake_case projection.
+// Allowed snake_case ParkReason values: the closed two-value set
+// per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+// §ParkReason collapse. Mirrors proto:executor.proto::ParkReason.
 export const PARK_REASONS = [
-  "time_wait",
-  "signal_wait",
-  "awaiting_human",
-  "retry_backoff",
+  "await_callback",
+  "snooze",
 ] as const;
 
 export const ReportParkInput = z.object({

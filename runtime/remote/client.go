@@ -75,7 +75,7 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 		Result: locks.ClaimResult{
 			Address:                acq.GetAddress(),
 			Payload:                acq.GetPayload(),
-			Scope:                  acq.GetScope(),
+			ClaimScope:             acq.GetClaimScope(),
 			RealizedWriteSemantics: rws,
 		},
 	}, nil
@@ -84,9 +84,9 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 // Commit RPCs to the remote producer.
 func (c *Client) Commit(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
-		ClaimId: string(claimID),
-		Scope:   scope,
-		Address: address,
+		ClaimId:    string(claimID),
+		ClaimScope: scope,
+		Address:    address,
 	})
 	if err != nil {
 		return fmt.Errorf("remote producer %q: Commit: %w", c.name, err)
@@ -98,9 +98,9 @@ func (c *Client) Commit(ctx context.Context, claimID locks.ClaimID, scope, addre
 // response was lost — the producer identifies state by claim_id.
 func (c *Client) Abandon(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
-		ClaimId: string(claimID),
-		Scope:   scope,
-		Address: address,
+		ClaimId:    string(claimID),
+		ClaimScope: scope,
+		Address:    address,
 	})
 	if err != nil {
 		return fmt.Errorf("remote producer %q: Abandon: %w", c.name, err)
@@ -111,9 +111,9 @@ func (c *Client) Abandon(ctx context.Context, claimID locks.ClaimID, scope, addr
 // Release RPCs to the remote producer.
 func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
-		ClaimId: string(claimID),
-		Scope:   scope,
-		Address: address,
+		ClaimId:    string(claimID),
+		ClaimScope: scope,
+		Address:    address,
 	})
 	if err != nil {
 		return fmt.Errorf("remote producer %q: Release: %w", c.name, err)
@@ -126,21 +126,21 @@ func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, addr
 // Producers that do not advertise SupportsSplitScope return
 // ErrSplitScopeUnsupported; rimsky validates at registration so this
 // path is normally unreachable.
-func (c *Client) SplitScope(ctx context.Context, req locks.SplitScopeRequest) (locks.SplitScopeResponse, error) {
+func (c *Client) SplitScope(ctx context.Context, req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
 	if !c.caps.SupportsSplitScope {
-		return locks.SplitScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+		return locks.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
 	resp, err := c.rpc.SplitScope(ctx, &genv1.SplitScopeRequest{
 		ClaimHandleId:    req.ClaimHandleID,
 		PartitionRequest: req.PartitionRequest,
 	})
 	if err != nil {
-		return locks.SplitScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
+		return locks.SplitClaimScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
 	}
-	out := locks.SplitScopeResponse{}
+	out := locks.SplitClaimScopeResponse{}
 	for _, sub := range resp.GetSubScopes() {
-		out.SubScopes = append(out.SubScopes, locks.SubScopeDescriptor{
-			ScopeData:        sub.GetScopeData(),
+		out.SubClaimScopes = append(out.SubClaimScopes, locks.SubClaimScopeDescriptor{
+			ClaimScopeData:   sub.GetClaimScopeData(),
 			PartitionKey:     sub.GetPartitionKey(),
 			ProducerMetadata: sub.GetProducerMetadata(),
 		})
@@ -156,9 +156,9 @@ func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) 
 	if !c.caps.SupportsScopesConflict {
 		return claimproducer.ErrScopesConflictUnsupportedFallback(a, b), nil
 	}
-	resp, err := c.rpc.ScopesConflict(ctx, &genv1.ScopesConflictRequest{
-		ScopeA: a,
-		ScopeB: b,
+	resp, err := c.rpc.ScopesConflict(ctx, &genv1.ClaimScopesConflictRequest{
+		ClaimScopeA: a,
+		ClaimScopeB: b,
 	})
 	if err != nil {
 		return false, fmt.Errorf("remote producer %q: ScopesConflict: %w", c.name, err)

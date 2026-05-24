@@ -45,11 +45,28 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash) VALUES (?, ?)`,
-		instanceID, templateID,
+	// Post-RunScope-first: instance + main_run_scope mutually FK each
+	// other; seed in one tx with deferred constraints.
+	scopeID := uuid.New().String()
+	stx, err := rawDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = stx.Rollback() }()
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
+		instanceID, templateID, scopeID,
 	); err != nil {
 		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+		scopeID, instanceID,
+	); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := stx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
 	}
 	// rimsky_frames requires frame_timeout_ms >= 60000 (CHECK). Use the
 	// minimum permitted value; the test never trips the timeout.
@@ -73,9 +90,9 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	// node-run starts in phase='active' so ParkActiveInTx accepts it.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, phase, frame_id)
-		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'sup-1', datetime('now'), datetime('now'), 'active', ?)`,
-		uuid.UUID(dispatchID).String(), nodeID.String(), frameID.String(),
+		   (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, phase, frame_id, run_scope_id)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'sup-1', datetime('now'), datetime('now'), 'active', ?, ?)`,
+		uuid.UUID(dispatchID).String(), nodeID.String(), frameID.String(), scopeID,
 	); err != nil {
 		t.Fatalf("seed node-run: %v", err)
 	}

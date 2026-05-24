@@ -82,11 +82,12 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	// the run row).
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
+	mainScopeID := h.GetMainRunScopeID(iid)
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs
-		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
-		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2)
-	`, uuid.UUID(worker.ID), frameID)
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
+	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
 	// Capture log output via a buffer-backed slog handler.
 	var buf bytes.Buffer

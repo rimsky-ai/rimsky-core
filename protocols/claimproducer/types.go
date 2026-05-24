@@ -92,16 +92,16 @@ type ClaimSpec struct {
 }
 
 // ClaimResult bundles the four producer-supplied outputs of a claim
-// acquisition. Address, Payload, and Scope are inert in Rimsky
+// acquisition. Address, Payload, and ClaimScope are inert in Rimsky
 // (foundation invariant 20): rimsky reads them only at substitution-leaf
 // extraction. RealizedWriteSemantics declares the per-claim semantics;
 // must be a member of the producer's Capabilities.WriteSemanticsEnvelope;
-// must be uniform across byte-equal-scope claims (uniformity invariant
+// must be uniform across byte-equal-claim-scope claims (uniformity invariant
 // per spec §2.5).
 type ClaimResult struct {
 	Address                json.RawMessage // producer-supplied pointer the executor uses
 	Payload                json.RawMessage // producer-supplied data captured at acquisition
-	Scope                  json.RawMessage // canonicalized scope bytes
+	ClaimScope             json.RawMessage // canonicalized claim-scope bytes
 	RealizedWriteSemantics WriteSemantics
 }
 
@@ -165,30 +165,30 @@ func (c Capabilities) AdvertisesProtocol(p string) bool {
 	return false
 }
 
-// SplitScopeRequest is the rimsky-side input to ClaimProducer.SplitScope.
+// SplitClaimScopeRequest is the rimsky-side input to ClaimProducer.SplitClaimScope.
 // The parent claim handle MUST already be Open'd. partition_request is
 // producer-interpreted opaque bytes. Per spec §Fan-out template DSL.
-type SplitScopeRequest struct {
+type SplitClaimScopeRequest struct {
 	ClaimHandleID    string
 	PartitionRequest []byte
 }
 
-// SubScopeDescriptor identifies one of the sub-scopes the producer
-// partitioned the parent into. ScopeData is producer-canonicalized
-// bytes (same shape rimsky stores on rimsky_claim_handles.scope_data);
+// SubClaimScopeDescriptor identifies one of the sub-claim-scopes the producer
+// partitioned the parent into. ClaimScopeData is producer-canonicalized
+// bytes (same shape rimsky stores on rimsky_claim_handles.claim_scope_data);
 // PartitionKey is the human-readable key rimsky persists in
 // col:rimsky_node_runs.child_key for run-tree bookkeeping;
-// ProducerMetadata is opaque per-sub-scope info the producer wants
+// ProducerMetadata is opaque per-sub-claim-scope info the producer wants
 // persisted on the row.
-type SubScopeDescriptor struct {
-	ScopeData        []byte
+type SubClaimScopeDescriptor struct {
+	ClaimScopeData   []byte
 	PartitionKey     string
 	ProducerMetadata []byte
 }
 
-// SplitScopeResponse is the producer's reply to SplitScope.
-type SplitScopeResponse struct {
-	SubScopes []SubScopeDescriptor
+// SplitClaimScopeResponse is the producer's reply to SplitClaimScope.
+type SplitClaimScopeResponse struct {
+	SubClaimScopes []SubClaimScopeDescriptor
 }
 
 // Mix-in protocol names producers may advertise in

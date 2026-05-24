@@ -103,7 +103,7 @@ func TestCascadeInvalidate(t *testing.T) {
 	// (written by b's executor delta).
 	var bRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, b.ID, tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, b.ID, h.GetMainRunScopeID(iid), tx)
 		bRow = r
 		return err
 	}))

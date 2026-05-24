@@ -129,7 +129,7 @@ type DeliveredMessages struct {
 // invariant + the number of active instances, so a single page batch is
 // sufficient for v1 throughput.
 func SweepDeliverMessagesForRunningFrames(
-	ctx context.Context, persist persistence.Tables, logger shared.Logger, now time.Time,
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, logger shared.Logger, now time.Time,
 ) error {
 	if persist == nil {
 		return nil
@@ -147,7 +147,7 @@ func SweepDeliverMessagesForRunningFrames(
 			return fmt.Errorf("SweepDeliverMessagesForRunningFrames: list: %w", err)
 		}
 		for _, f := range page.Rows {
-			if err := deliverForRunningFrame(ctx, persist, f.InstanceID, f.FrameID, now); err != nil {
+			if err := deliverForRunningFrame(ctx, persist, queue, f.InstanceID, f.FrameID, now); err != nil {
 				if logger != nil {
 					logger.Warn("SweepDeliverMessagesForRunningFrames: deliver failed",
 						"frame_id", f.FrameID.String(),
@@ -176,7 +176,7 @@ func SweepDeliverMessagesForRunningFrames(
 // §Delivery: "Matched subscribers' nodes are stale-marked within the
 // new frame."
 func deliverForRunningFrame(
-	ctx context.Context, persist persistence.Tables,
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
 	instanceID, frameID shared.UUID, now time.Time,
 ) error {
 	return persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -199,7 +199,7 @@ func deliverForRunningFrame(
 		if len(delivered.Messages) == 0 {
 			return nil
 		}
-		return cascadeMessageSubscribersInTx(ctx, persist, tx,
+		return cascadeMessageSubscribersInTx(ctx, persist, queue, tx,
 			instanceID, frameID, delivered.Messages, inst.TemplateHash)
 	})
 }
@@ -222,7 +222,7 @@ func deliverForRunningFrame(
 // without a `node:` (the normal shape for `on: message`) also land
 // under the empty key.
 func cascadeMessageSubscribersInTx(
-	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
 	instanceID, frameID shared.UUID, messages []persistence.MessageRow,
 	templateHash string,
 ) error {
@@ -281,7 +281,47 @@ func cascadeMessageSubscribersInTx(
 				if e.Filter.Target == "self" && msg.Target != r.NodeType {
 					continue
 				}
-				if _, err := persist.Nodes().MarkStaleForCascade(ctx, r.ID, frameID, tx); err != nil {
+				// Resolve receiver's RunScope. If the LATERAL didn't
+				// project one (no in-flight row), default to the
+				// instance's main RunScope — message cascade is intra-
+				// scope on the main RunScope. AffirmNodeRunRow inserts
+				// a pending row keyed on (receiver_node_id, scope) so
+				// MarkStaleForCascade has a row to UPDATE.
+				var receiverScopeID shared.UUID
+				if r.RunScopeID != nil {
+					receiverScopeID = *r.RunScopeID
+				} else {
+					inst, err := persist.Instances().Get(ctx, instanceID, tx)
+					if err != nil {
+						return fmt.Errorf("cascadeMessageSubscribersInTx: get instance %s: %w", instanceID, err)
+					}
+					if inst == nil {
+						continue
+					}
+					receiverScopeID = inst.MainRunScopeID
+				}
+				if err := persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverScopeID, frameID, tx); err != nil {
+					// Defensive: a closed RunScope means the
+					// receiver's scope has terminated (parent
+					// rendezvous has fired). The walker MUST NOT
+					// cross into closed RunScopes — skip this
+					// receiver and continue the cascade walk per
+					// concept:run-scope. Without this, a benign race
+					// with scope closure surfaces as a cascade-walk
+					// abort that strands the rest of the receivers.
+					if errors.Is(err, persistence.ErrRunScopeClosed) {
+						continue
+					}
+					return fmt.Errorf("cascadeMessageSubscribersInTx: affirm receiver run %s: %w", r.ID, err)
+				}
+				runID, ok, err := queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverScopeID)
+				if err != nil {
+					return fmt.Errorf("cascadeMessageSubscribersInTx: resolve receiver run %s: %w", r.ID, err)
+				}
+				if !ok {
+					continue
+				}
+				if err := persist.Nodes().MarkStaleForCascade(ctx, runID, frameID, tx); err != nil {
 					return fmt.Errorf("cascadeMessageSubscribersInTx: mark stale %s: %w", r.ID, err)
 				}
 			}

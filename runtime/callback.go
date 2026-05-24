@@ -45,6 +45,39 @@ import (
 	rimskyattrs "github.com/fallguy/rimsky/graph/attribute"
 )
 
+// callbackAckBody is the structured response the supervisor writes for
+// every callback per spec §"HTTP callback ack body: structured response".
+// HTTP status stays 200 for both accepted and rejected — ack_status is
+// the authoritative signal. CurrentDispatchID is set on rejection when
+// the supervisor can compute the canonical successor via the run row's
+// RunScope (an in-flight run for the same node in the same RunScope
+// supersedes the rejected dispatch).
+//
+// @blessed-invariant: Callback determinism.
+type callbackAckBody struct {
+	AckStatus         string  `json:"ack_status"`
+	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
+}
+
+// ack_status enum values for callbackAckBody. Per spec §"HTTP callback
+// ack body: structured response": closed enum, no UNSPECIFIED.
+const (
+	ackStatusAccepted            = "accepted"
+	ackStatusRejectedRunTerminal = "rejected_run_terminal"
+	ackStatusRejectedRunStale    = "rejected_run_stale"
+	ackStatusRejectedRunParked   = "rejected_run_parked"
+	ackStatusRejectedUnknown     = "rejected_unknown"
+)
+
+// ackOutcomeRecord is the per-dispatch ack state captured in
+// driveTerminal's phase-check tx and surfaced to handleCallback for the
+// HTTP response body. The phase string (for rejected outcomes) drives
+// the optional `current_dispatch_id` lookup at response time.
+type ackOutcomeRecord struct {
+	Status string
+	Phase  string // empty for accepted / unknown
+}
+
 // CallbackRegistry tracks pending async executions. Runners register an
 // AsyncContext (defined in runner.go) when an executor returns
 // AwaitAsyncCallback; the HTTP endpoint resolves ackID to the context on callback.
@@ -131,6 +164,43 @@ type CallbackServer struct {
 	Metrics MetricsHook
 	addr    string
 	srv     *http.Server
+	// ackOutcomes records the per-dispatch ack status produced by
+	// driveTerminal's phase-check tx so handleCallback can write the
+	// structured response body. Keyed by dispatch_id; entries are
+	// removed by handleCallback once consumed (single-shot per
+	// callback). Guarded by ackMu.
+	ackMu       sync.Mutex
+	ackOutcomes map[shared.UUID]ackOutcomeRecord
+}
+
+// recordAckOutcome stores the per-dispatch ack status produced inside
+// driveTerminal's phase-check tx. handleCallback consumes it after
+// driveTerminal returns to write the structured ack body.
+func (c *CallbackServer) recordAckOutcome(dispatchID shared.UUID, status, phase string, _ bool) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	if c.ackOutcomes == nil {
+		c.ackOutcomes = make(map[shared.UUID]ackOutcomeRecord)
+	}
+	c.ackOutcomes[dispatchID] = ackOutcomeRecord{Status: status, Phase: phase}
+}
+
+// consumeAckOutcome returns and removes the recorded ack outcome for
+// dispatchID, or a default (accepted, no current_dispatch_id) when no
+// record exists. The fallback handles paths that bypass the phase-check
+// tx (defensive; should not occur in steady state).
+func (c *CallbackServer) consumeAckOutcome(dispatchID shared.UUID) ackOutcomeRecord {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	if c.ackOutcomes == nil {
+		return ackOutcomeRecord{Status: ackStatusAccepted}
+	}
+	rec, ok := c.ackOutcomes[dispatchID]
+	if !ok {
+		return ackOutcomeRecord{Status: ackStatusAccepted}
+	}
+	delete(c.ackOutcomes, dispatchID)
+	return rec
 }
 
 // Start listens on host:port (port=0 for OS-assigned). Safe to call before
@@ -259,30 +329,83 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		c.Registry.Register(ackID, asyncCtx)
 		c.Logger.Warn("callback: driveTerminal failed",
 			"node_id", asyncCtx.NodeID.String(), "error", err.Error())
+		// driveTerminal records the ack outcome via recordAckOutcome
+		// BEFORE applyTerminal runs (so the phase-check tx's verdict is
+		// captured even if applyTerminal later fails). On the error path
+		// we won't ship a structured ack body — but we MUST consume here
+		// to evict the map entry, otherwise it leaks for the lifetime of
+		// the CallbackServer when the executor never retries (or retries
+		// to a different ack id).
+		_ = c.consumeAckOutcome(asyncCtx.DispatchID)
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	// After outcome applies, clean up the dispatch row. Mirror the
-	// synchronous-runner path in supervisor.go that calls
-	// Queue.Complete after a non-async run.
-	//
-	// The terminal has already been applied to the node-run row and
-	// downstream wait-set state; the executor receives 200 OK so its
-	// idempotent retry path is unaffected. Queue.Complete failure here
-	// means the dispatch row was already removed by another supervisor
-	// or the queue layer encountered a transient error — neither
-	// invalidates the applied terminal, but both warrant operator-
-	// visible logging so the discrepancy surfaces in dashboards rather
-	// than being silently dropped.
-	if err := c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID); err != nil {
-		c.Logger.Error("callback: queue.Complete failed after applied terminal",
-			"node_id", asyncCtx.NodeID.String(),
+	// Read the ack outcome the phase-check tx recorded in driveTerminal.
+	// Per spec §"HTTP callback ack body: structured response": HTTP 200
+	// for both accepted and rejected; ack_status discriminates, and
+	// current_dispatch_id (optional) surfaces the canonical successor.
+	outcome := c.consumeAckOutcome(asyncCtx.DispatchID)
+	body := callbackAckBody{AckStatus: outcome.Status}
+	if outcome.Status != ackStatusAccepted && outcome.Status != ackStatusRejectedUnknown {
+		// Look up the canonical successor by walking from the rejected
+		// run's RunScope to the current in-flight run for the same node
+		// in the same RunScope. The node + scope id are fetched once;
+		// failures are tolerated (current_dispatch_id stays unset).
+		if successor := c.findCanonicalSuccessor(r.Context(), asyncCtx); successor != nil {
+			s := successor.String()
+			body.CurrentDispatchID = &s
+		}
+	}
+	// Cleanup runs only for accepted callbacks. Rejected callbacks left
+	// no state mutation; there is no dispatch row to Complete (or the
+	// row belongs to a successor dispatch that the rejecting callback
+	// must not touch).
+	if outcome.Status == ackStatusAccepted {
+		if err := c.Queue.Complete(r.Context(), asyncCtx.DispatchID, asyncCtx.SupervisorID); err != nil {
+			c.Logger.Error("callback: queue.Complete failed after applied terminal",
+				"node_id", asyncCtx.NodeID.String(),
+				"dispatch_id", asyncCtx.DispatchID.String(),
+				"supervisor_id", asyncCtx.SupervisorID,
+				"error", err.Error())
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		c.Logger.Warn("callback: encode ack body failed",
 			"dispatch_id", asyncCtx.DispatchID.String(),
-			"supervisor_id", asyncCtx.SupervisorID,
 			"error", err.Error())
 	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"accepted"}`))
+}
+
+// findCanonicalSuccessor walks from the rejected dispatch's run row to
+// its RunScope and returns the in-flight run id for the same node in the
+// same RunScope, when one exists. The result is the canonical successor
+// the executor should target on retry / handoff.
+//
+// Failures (no run row, no in-flight successor, DB error) return nil
+// without surfacing — `current_dispatch_id` stays unset on the ack body
+// and the executor falls back to no-handoff semantics. The supervisor's
+// log of the original rejection (callback.late_or_stale_run) is the
+// authoritative diagnostic trail; this is a best-effort enrichment.
+func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncContext) *shared.UUID {
+	var successor *shared.UUID
+	_ = c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.DispatchID, tx)
+		if err != nil || row == nil {
+			return nil
+		}
+		nextID, ok, err := c.Queue.GetInFlightRunForNode(ctx, tx, row.NodeID, row.RunScopeID)
+		if err != nil || !ok {
+			return nil
+		}
+		if nextID == ac.DispatchID {
+			return nil // same row — no successor distinct from the rejected one
+		}
+		successor = &nextID
+		return nil
+	})
+	return successor
 }
 
 // parseAsyncCallback parses the AsyncCallbackBody shape. Exactly one
@@ -359,6 +482,19 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 // in `runner_terminal.go`. Keeps the per-lock release tx, §5.6.4
 // resolution, state→fresh / stale / failed transitions, dispatch
 // re-enqueue, and event audit trail in one place.
+//
+// @blessed-invariant: A callback for a run is honored if and only if
+// the run's phase ∈ {active, held} at acceptance, checked atomically
+// inside the same tx as the state mutation. Otherwise: HTTP 200
+// ack-but-noop with a structured log event. Per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+// §"Callback determinism". The invariant is structurally enforced:
+// the phase-check FOR-UPDATE read and applyTerminal's state-mutation
+// writes share one tx via runApplyTerminal's outer Transaction block.
+// Refactor history: pre-fan-out-safety the phase-check tx committed
+// before applyTerminal opened its own state-mutation tx — the TOCTOU
+// window between commits closed when applyTerminal was rewritten to
+// accept the outer tx.
 func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t terminalEvent) error {
 	args := RunArgs{
 		Persist:                          c.Persist,
@@ -378,18 +514,112 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		Metrics:                          c.Metrics,
 	}
 	acq := &acquisition{
-		DispatchID:     ac.DispatchID,
-		NodeID:         ac.NodeID,
-		InstanceID:     ac.InstanceID,
-		NodeType:       ac.NodeType,
-		Executor:       ac.Executor,
+		DispatchID: ac.DispatchID,
+		NodeID:     ac.NodeID,
+		InstanceID: ac.InstanceID,
+		NodeType:   ac.NodeType,
+		Executor:   ac.Executor,
+		GraphName:  "", // resume-callback path doesn't run applyAttributeOverrides
+		// Partition key (formerly inline `ChildKey`) is derived from
+		// the RunScope on demand via `resolveAcqScope`; the resume
+		// path leaves it implicit. The phase-check tx below also
+		// populates RunScopeID directly from the run row.
 		FrameID:        ac.FrameID,
 		Locks:          ac.AcquiredLocks,
 		NodeDef:        ac.NodeDef,
 		InstanceParams: nil,
 	}
-	return applyTerminal(ctx, args, acq, ac.ResolvedAttributes, ac.AttributesSchema, t)
+	// Callback determinism rule (per spec §"Callback determinism"):
+	// open a single tx that (1) SELECTs the run FOR UPDATE and checks
+	// phase ∈ {active, held}, then (2) runs applyTerminal's state
+	// mutation in the same tx. ack-but-noop on rejection.
+	//
+	// @blessed-invariant: Callback determinism — phase-check + state
+	// mutation share one tx; structurally enforced here.
+	// @concept: run-scope
+	var ackStatus string
+	var phase string
+	rejected := false
+	setup := func(ctx context.Context, tx persistence.Tx) (bool, error) {
+		row, err := c.Persist.Nodes().GetRunByDispatchIDForUpdate(ctx, ac.DispatchID, tx)
+		if err != nil {
+			return false, fmt.Errorf("driveTerminal: GetRunByDispatchIDForUpdate: %w", err)
+		}
+		if row == nil {
+			rejected = true
+			ackStatus = ackStatusRejectedUnknown
+			c.Logger.Warn("callback.late_or_stale_run",
+				"dispatch_id", ac.DispatchID.String(),
+				"reason", "run_not_found")
+			return true, nil
+		}
+		if row.Phase != "active" && row.Phase != "held" {
+			rejected = true
+			phase = row.Phase
+			ackStatus = ackStatusForPhase(row.Phase)
+			c.Logger.Warn("callback.late_or_stale_run",
+				"dispatch_id", ac.DispatchID.String(),
+				"current_phase", row.Phase,
+				"expected_phase", "active|held")
+			return true, nil
+		}
+		// Accepted: populate the acquisition's RunScopeID directly from
+		// the run row (no separate RunTree.GetByID needed under
+		// RunScope-first; the row carries run_scope_id), and populate
+		// the instance-row-driven lineage fields (template_hash,
+		// instance params) inside the same tx — the instance row is
+		// immutable for the run's lifetime, so reading it under the
+		// determinism tx is a single round-trip rather than two.
+		acq.RunScopeID = row.RunScopeID
+		ackStatus = ackStatusAccepted
+		if inst, err := c.Persist.Instances().Get(ctx, acq.InstanceID, tx); err == nil && inst != nil {
+			acq.TemplateHash = inst.TemplateHash
+			acq.InstanceParams = inst.Params
+		} else if err != nil && c.Logger != nil {
+			c.Logger.Warn("driveTerminal: instances.Get failed; lineage will omit template_hash and params",
+				"node_id", acq.NodeID.String(),
+				"instance_id", acq.InstanceID.String(),
+				"error", err.Error())
+		}
+		return false, nil
+	}
+	if err := runApplyTerminal(ctx, args, acq, ac.ResolvedAttributes, ac.AttributesSchema, t, setup); err != nil {
+		// Defer recording the ack outcome — handler treats this as a
+		// retryable failure (re-registers the ack id), so we must NOT
+		// leave a stale rejected entry in the ack-outcome map.
+		return err
+	}
+	// Attach the structured ack-body fields to the AsyncContext so the
+	// HTTP handler can serialize the response after driveTerminal
+	// returns. The handler reads these via the per-call ackOutcome map
+	// keyed by dispatch id (set below). Per spec §"HTTP callback ack
+	// body: structured response".
+	c.recordAckOutcome(ac.DispatchID, ackStatus, phase, rejected)
+	return nil
 }
+
+// ackStatusForPhase maps a non-{active,held} run phase to the
+// corresponding rejected ack_status enum per spec §"HTTP callback ack
+// body".
+func ackStatusForPhase(phase string) string {
+	switch phase {
+	case "stale":
+		return ackStatusRejectedRunStale
+	case "parked":
+		return ackStatusRejectedRunParked
+	default:
+		// terminal phases (fresh/failed) and any new phases default to
+		// terminal — the run is no longer eligible for callback.
+		return ackStatusRejectedRunTerminal
+	}
+}
+
+// populateInstanceLineageFields was the predecessor to inlining the
+// instance-row read into driveTerminal's determinism tx setup. Removed
+// when applyTerminal collapsed onto the determinism tx — the read now
+// happens inline alongside the phase check, eliminating a round-trip
+// and ensuring TemplateHash + InstanceParams are populated under the
+// same MVCC snapshot as the FOR UPDATE row lookup.
 
 // attributesAuth validates the §12.5 incremental-writeback callback's
 // `Authorization` header. The token is the supervisor-issued

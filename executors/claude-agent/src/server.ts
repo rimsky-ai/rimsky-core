@@ -109,6 +109,17 @@ interface ExecuteRequest {
     session_token?: string;
     resume_reason?: string;
   };
+  // Recovery-aware fields (per spec
+  // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+  // §Recovery-aware executor protocol). When this dispatch supersedes a
+  // failed / heartbeat-stale / recalculated predecessor for the same
+  // (run_scope_id, node_id), the supervisor stamps the predecessor's
+  // dispatch_id here so the executor can identify itself as a
+  // continuation. `prior_dispatch_disposition` classifies why
+  // (`heartbeat_stale` | `retry_after_error` | `recalculate`).
+  // Both fields are optional and unset on initial dispatches.
+  prior_dispatch_id?: string;
+  prior_dispatch_disposition?: string;
 }
 
 type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
@@ -510,11 +521,11 @@ function outcomeToCallbackBody(
     // The proto-JSON convention for `bytes` fields is base64 — Go's
     // `encoding/json` decodes []byte fields from base64 strings.
     //
-    // Post-2026-05-14 the supervisor consumes `reason` as a snake_case
-    // ParkReason enum projection (time_wait | signal_wait |
-    // awaiting_human | retry_backoff) and `reason_note` as the
-    // free-form human annotation. `reason` is the typed discriminator;
-    // `reason_note` is inert in rimsky.
+    // The supervisor consumes `reason` as the closed two-value
+    // ParkReason projection (await_callback | snooze) per spec
+    // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+    // §ParkReason collapse. `reason_note` is the free-form human
+    // annotation; inert in rimsky.
     return {
       park: {
         reason: outcome.reason,

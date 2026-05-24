@@ -62,7 +62,7 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 
 	// Scope is a JSON-encoded path string identical to the selector.
 	var scope string
-	if err := json.Unmarshal(outcome.Result.Scope, &scope); err != nil {
+	if err := json.Unmarshal(outcome.Result.ClaimScope, &scope); err != nil {
 		t.Fatalf("unmarshal scope: %v", err)
 	}
 	if scope != "alpha/beta.txt" {
@@ -84,12 +84,12 @@ func TestScopeByteEqualForSamePath(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	o1, _ := st.Open(context.Background(), "c1", "x/y.txt")
 	o2, _ := st.Open(context.Background(), "c2", "x/y.txt")
-	if string(o1.Result.Scope) != string(o2.Result.Scope) {
-		t.Fatalf("same-path regions must be byte-equal; got %s vs %s", o1.Result.Scope, o2.Result.Scope)
+	if string(o1.Result.ClaimScope) != string(o2.Result.ClaimScope) {
+		t.Fatalf("same-path regions must be byte-equal; got %s vs %s", o1.Result.ClaimScope, o2.Result.ClaimScope)
 	}
 	o3, _ := st.Open(context.Background(), "c3", "x/z.txt")
-	if string(o1.Result.Scope) == string(o3.Result.Scope) {
-		t.Fatalf("different-path regions must differ; got identical %s", o1.Result.Scope)
+	if string(o1.Result.ClaimScope) == string(o3.Result.ClaimScope) {
+		t.Fatalf("different-path regions must differ; got identical %s", o1.Result.ClaimScope)
 	}
 }
 
@@ -110,9 +110,9 @@ func TestScopeCanonicalizationCollapsesEquivalentForms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open(%q): %v", sel, err)
 		}
-		if string(o.Result.Scope) != string(first.Result.Scope) {
+		if string(o.Result.ClaimScope) != string(first.Result.ClaimScope) {
 			t.Fatalf("scope for %q differs from %q: %q vs %q",
-				sel, equivalents[0], o.Result.Scope, first.Result.Scope)
+				sel, equivalents[0], o.Result.ClaimScope, first.Result.ClaimScope)
 		}
 	}
 }
@@ -153,7 +153,7 @@ func TestCommitAbandonReleaseAreNoops(t *testing.T) {
 	st, _ := New(Config{Root: t.TempDir()})
 	o, _ := st.Open(context.Background(), "claim-1", "x.txt")
 
-	if err := st.Commit(context.Background(), "claim-1", o.Result.Scope, o.Result.Address); err != nil {
+	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 	if err := st.Abandon(context.Background(), "claim-2", nil, nil); err != nil {

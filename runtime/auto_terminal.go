@@ -235,7 +235,7 @@ func CheckAndFireResolution(
 		Source:              HeldTerminal,
 		Outcome:             outcome,
 		Producer:            producer,
-		Scope:               []byte(row.ScopeData),
+		Scope:               []byte(row.ClaimScopeData),
 		Address:             []byte(row.Address),
 		Lifetime:            row.Lifetime,
 		CandidateHandle:     row.ProducerCandidateHandle,

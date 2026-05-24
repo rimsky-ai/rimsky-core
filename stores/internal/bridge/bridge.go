@@ -144,7 +144,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Commit(ctx, &genv1.CommitRequest{
-			ClaimId: req.ClaimID, Scope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
 		})
 	case "abandon":
 		var req actionBody
@@ -152,7 +152,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Abandon(ctx, &genv1.AbandonRequest{
-			ClaimId: req.ClaimID, Scope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
 		})
 	case "release":
 		var req actionBody
@@ -160,7 +160,7 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
 		return srv.Release(ctx, &genv1.ReleaseRequest{
-			ClaimId: req.ClaimID, Scope: req.Scope, Address: req.Address,
+			ClaimId: req.ClaimID, ClaimScope: req.Scope, Address: req.Address,
 		})
 	}
 	return nil, errUnknownVerb

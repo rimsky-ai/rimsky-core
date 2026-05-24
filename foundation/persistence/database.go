@@ -76,10 +76,10 @@ type AdvisoryLocker interface {
 	// SQLite: no-op (writer slot already held).
 	TakeNamedLockInTx(ctx context.Context, tx Tx, name string) error
 
-	// TakeScopeLockInTx: same pattern, scoped to (storeName, scopeData).
+	// TakeClaimScopeLockInTx: same pattern, scoped to (storeName, claimScopeData).
 	// Inv 3, 4b, 10.
 	//
-	// Postgres: pg_advisory_xact_lock(hashtext('rimsky_scope:'+store+':'+hex(scope))).
+	// Postgres: pg_advisory_xact_lock(hashtext('rimsky_scope:'+store+':'+hex(claim_scope))).
 	// SQLite: no-op.
-	TakeScopeLockInTx(ctx context.Context, tx Tx, storeName string, scopeData []byte) error
+	TakeClaimScopeLockInTx(ctx context.Context, tx Tx, storeName string, claimScopeData []byte) error
 }

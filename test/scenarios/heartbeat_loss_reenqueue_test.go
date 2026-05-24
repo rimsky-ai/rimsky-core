@@ -67,14 +67,15 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
 		uuid.UUID(iid),
 	).Scan(&frameID))
+	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
 		                               enqueued_at, claimed_by, claimed_at,
-		                               last_heartbeat_at, phase, state, frame_id)
+		                               last_heartbeat_at, phase, state, frame_id, run_scope_id)
 		 VALUES (gen_random_uuid(), $1, 'stub', '{}', NOW(), 'zombie-sup',
 		         NOW() - INTERVAL '30 seconds', NOW() - INTERVAL '30 seconds',
-		         'active', 'running', $2)`,
-		n.ID, frameID,
+		         'active', 'running', $2, $3)`,
+		n.ID, frameID, mainScopeID,
 	)
 	require.NoError(t, err)
 

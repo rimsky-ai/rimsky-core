@@ -35,7 +35,9 @@ const nodeCols = `
   COALESCE(r.state, 'fresh') AS state, r.last_outcome,
   n.current_error_class, n.retry_counter, n.action_index,
   r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
-  n.frame_id, n.tags, n.created_at, n.updated_at
+  n.frame_id, n.tags, n.created_at, n.updated_at,
+  CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.id END AS in_flight_run_id,
+  CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.run_scope_id END AS in_flight_run_scope_id
 `
 
 // nodeSelect — see postgres mirror. SQLite emulation uses ROW_NUMBER
@@ -43,7 +45,7 @@ const nodeCols = `
 // Includes all phases (completed terminals carry last_outcome).
 const nodeSelect = `FROM rimsky_nodes n
 LEFT JOIN (
-    SELECT id, node_id, state, last_outcome, last_heartbeat_at, claimed_by, frame_id, phase,
+    SELECT id, node_id, state, last_outcome, last_heartbeat_at, claimed_by, frame_id, phase, run_scope_id,
            ROW_NUMBER() OVER (
                PARTITION BY node_id
                ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
@@ -300,24 +302,35 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 // `lastOutcome` is the resolution flavor for terminal-for-this-frame
 // transitions; the empty string "" preserves the existing column value
 // via COALESCE.
+//
+// `runID` (when non-nil) disambiguates which in-flight rimsky_node_runs
+// row to address — required for fan-out children that share a node_id
+// with the parent and siblings. See the interface contract for the
+// fan-out rationale.
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
 	id foundationshared.UUID,
+	runScopeID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
 	lastOutcome cascade.LastOutcome,
 	tx persistence.Tx,
 ) error {
-	return s.enforceAndUpdate(ctx, s.q(tx), id, state, reason, lastOutcome)
+	return s.enforceAndUpdate(ctx, s.q(tx), id, runScopeID, state, reason, lastOutcome)
 }
 
 // enforceAndUpdate — sqlite mirror. See postgres impl for the cutover
 // rationale: state lives on rimsky_node_runs; rimsky_nodes carries only
 // identity + scheduling metadata + frame_id.
+//
+// `targetRunID` (when non-nil) narrows the in-flight SELECT to the
+// specific row identified by the caller, addressing the fan-out
+// ambiguity where multiple in-flight rows share a node_id.
 func (s *nodesImpl) enforceAndUpdate(
 	ctx context.Context,
 	ex querier,
 	id foundationshared.UUID,
+	runScopeID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
 	lastOutcome cascade.LastOutcome,
@@ -332,7 +345,9 @@ func (s *nodesImpl) enforceAndUpdate(
 		`SELECT id, state, frame_id
 		   FROM rimsky_node_runs
 		  WHERE node_id = ?
-		    AND phase IN ('pending','active','held','parked')`, id.String(),
+		    AND run_scope_id = ?
+		    AND phase IN ('pending','active','held','parked')`,
+		id.String(), runScopeID.String(),
 	).Scan(&runIDStr, &stateStr, &runFrameIDStr)
 	switch {
 	case err == nil:
@@ -415,17 +430,18 @@ func (s *nodesImpl) enforceAndUpdate(
 		if nodeFrameIDStr.Valid {
 			if _, err := ex.ExecContext(ctx,
 				`INSERT INTO rimsky_node_runs
-				   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, last_outcome, frame_id)
-				 SELECT ?, n.id, n.executor, '[]', ?, 'pending', 'stale', ?, ?
+				   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, last_outcome, frame_id, run_scope_id)
+				 SELECT ?, n.id, n.executor, '[]', ?, 'pending', 'stale', ?, ?, ?
 				   FROM rimsky_nodes n
 				  WHERE n.id = ?
 				    AND NOT EXISTS (
 				      SELECT 1 FROM rimsky_node_runs r
 				       WHERE r.node_id = ?
+				         AND r.run_scope_id = ?
 				         AND r.phase IN ('pending','active','held','parked')
 				    )`,
 				uuid.New().String(), nowUTC(), outcomeArg,
-				nodeFrameIDStr.String, id.String(), id.String(),
+				nodeFrameIDStr.String, runScopeID.String(), id.String(), id.String(), runScopeID.String(),
 			); err != nil {
 				return fmt.Errorf("nodes.updateState: seed stale run-row: %w", err)
 			}
@@ -468,14 +484,19 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, e
 
 // UpdateHeartbeat writes last_heartbeat_at on the in-flight run row.
 // Post-stage-3: the run row is the sole heartbeat authority.
-func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
+//
+// `runID` (when non-nil) disambiguates which in-flight row to address —
+// required for fan-out children to prevent claimed_by leaking across
+// siblings. See the postgres mirror for the full rationale.
+func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		   SET last_heartbeat_at = ?,
 		       claimed_by = COALESCE(?, claimed_by)
 		 WHERE node_id = ?
+		   AND run_scope_id = ?
 		   AND phase IN ('pending','active','held','parked')`,
-		formatTime(at), nullableString(supervisorID), id.String(),
+		formatTime(at), nullableString(supervisorID), id.String(), runScopeID.String(),
 	)
 	return err
 }
@@ -489,12 +510,21 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, fr
 
 // ClearLastOutcome — post-stage-3: last_outcome lives on the in-flight
 // run row. The rimsky_nodes.updated_at bump preserves dashboard ordering.
-func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
+// The column is `NOT NULL DEFAULT 'fresh_unchanged'` (see
+// `foundation/persistence/sqlite/migrations/001-baseline.sql:163`);
+// the reset writes the default value so the row stays within the
+// column's CHECK constraint while clearing the stale `failed` flavor.
+//
+// `runID` (when non-nil) targets the specific in-flight row — required
+// for fan-out children to prevent the clear from landing on a sibling.
+// Nil `runID` preserves the legacy by-node-id update.
+func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	if _, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET last_outcome = NULL
+		`UPDATE rimsky_node_runs SET last_outcome = 'fresh_unchanged'
 		  WHERE node_id = ?
+		    AND run_scope_id = ?
 		    AND phase IN ('pending','active','held','parked')`,
-		id.String()); err != nil {
+		id.String(), runScopeID.String()); err != nil {
 		return err
 	}
 	_, err := s.q(tx).ExecContext(ctx,
@@ -503,15 +533,77 @@ func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UU
 	return err
 }
 
+// ResetFailedTerminalLastOutcome stamps last_outcome='fresh_unchanged'
+// on the most-recent failed-terminal run row in the supplied RunScope.
+// SQLite mirror of the postgres impl. Skips the rimsky_nodes
+// updated_at bump when no row was updated (driver-drift fix).
+func (s *nodesImpl) ResetFailedTerminalLastOutcome(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
+	var idStr string
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT id FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ? AND phase = 'failed'
+		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
+		  LIMIT 1`, id.String(), runScopeID.String(),
+	).Scan(&idStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("nodes.ResetFailedTerminalLastOutcome: %w", err)
+	}
+	if _, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs SET last_outcome = 'fresh_unchanged' WHERE id = ?`,
+		idStr,
+	); err != nil {
+		return fmt.Errorf("nodes.ResetFailedTerminalLastOutcome: %w", err)
+	}
+	// Bump rimsky_nodes.updated_at so dashboards re-sort.
+	_, err = s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_nodes SET updated_at = ? WHERE id = ?`,
+		nowUTC(), id.String())
+	return err
+}
+
+// GetFailedTerminalRunScopeID returns the run_scope_id of the
+// most-recent failed-terminal `rimsky_node_runs` row for the node.
+// Returns nil when no failed-terminal row exists.
+func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) (*foundationshared.UUID, error) {
+	var scopeStr string
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT run_scope_id FROM rimsky_node_runs
+		  WHERE node_id = ? AND phase = 'failed'
+		  ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
+		  LIMIT 1`, id.String(),
+	).Scan(&scopeStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("nodes.GetFailedTerminalRunScopeID: %w", err)
+	}
+	scope, err := uuid.Parse(scopeStr)
+	if err != nil {
+		return nil, fmt.Errorf("nodes.GetFailedTerminalRunScopeID: parse uuid: %w", err)
+	}
+	scopeUUID := foundationshared.UUID(scope)
+	return &scopeUUID, nil
+}
+
 // ClearSupervisorAssignment — post-stage-3: claimed_by + heartbeat live
 // on the in-flight run row.
-func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
+//
+// `runID` (when non-nil) targets the specific in-flight row — required
+// for fan-out children to prevent leaking the clear onto a sibling's
+// claimed_by. Nil `runID` preserves the legacy by-node-id update.
+func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		   SET claimed_by = NULL,
 		       last_heartbeat_at = NULL
 		 WHERE node_id = ?
-		   AND phase IN ('pending','active','held','parked')`, id.String())
+		   AND run_scope_id = ?
+		   AND phase IN ('pending','active','held','parked')`,
+		id.String(), runScopeID.String())
 	return err
 }
 
@@ -520,21 +612,61 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 	return err
 }
 
-// MarkStaleForCascade — post-stage-3 cutover (SQLite mirror). See
-// postgres impl for the eligibility rules. Only INSERT a pending stale
-// run row when no in-flight row exists; bind the node row's frame_id
-// only on that eligible branch.
+// MarkStaleForCascade — pure UPDATE keyed by run_id. SQLite mirror of
+// postgres impl. Allocation is the cascade walker's responsibility via
+// AffirmNodeRunRow.
 //
-// Populates required_stores from the template node-def via a JSON
-// lookup through rimsky_instances → rimsky_templates so the supervisor's
-// SelectCandidates pool-predicate routes the row correctly.
-func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
-	// SQLite has no array type; required_stores is a JSON text column.
-	// Compute it via a correlated subquery using json_group_array +
-	// json_extract.
+// @blessed-invariant: State-machine writes for a single run must be
+// tx-atomic.
+// @concept: cascade
+func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
+	res, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		   SET state = 'stale', frame_id = ?
+		 WHERE id = ?
+		   AND phase IN ('pending','active','held','parked')`,
+		frameID.String(), runID.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("nodesImpl.MarkStaleForCascade: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	// Bind node row frame_id so the dashboard reflects the cascade target.
+	if _, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ?
+		  WHERE id = (SELECT node_id FROM rimsky_node_runs WHERE id = ?)`,
+		frameID.String(), nowUTC(), runID.String(),
+	); err != nil {
+		return fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
+	}
+	return nil
+}
+
+// AffirmNodeRunRow ensures an in-flight run row exists for (nodeID,
+// runScopeID). No-op if one exists; INSERT pending+stale if not.
+// Errors with ErrRunScopeClosed when the RunScope is closed.
+//
+// Mirrors postgres AffirmNodeRunRow: the closed_at check is folded
+// into the INSERT's source-row JOIN so cross-backend symmetry holds —
+// even though SQLite's BEGIN IMMEDIATE write-serialisation already
+// prevents the TOCTOU between SELECT-then-INSERT, future refactors
+// reading just this file see the same invariant enforced at INSERT
+// time. When the INSERT affects zero rows we re-resolve the cause:
+// row already in-flight (silent success), scope closed
+// (ErrRunScopeClosed), or scope absent (error).
+//
+// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+// @concept: run-scope
+func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
-		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id)
+		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
 		 SELECT ?, n.id, n.executor,
 		        COALESCE((
 		          SELECT json_group_array(json_extract(store.value, '$.name'))
@@ -545,50 +677,117 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, id foundationshared
 		           WHERE i.id = n.instance_id
 		             AND json_extract(nd.value, '$.type') = n.node_type
 		        ), '[]'),
-		        ?, 'pending', 'stale', ?
+		        ?, 'pending', 'stale', ?, rs.id
 		   FROM rimsky_nodes n
+		   JOIN rimsky_run_scopes rs ON rs.id = ? AND rs.closed_at IS NULL
 		  WHERE n.id = ?
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_node_runs r
 		       WHERE r.node_id = ?
+		         AND r.run_scope_id = ?
 		         AND r.phase IN ('pending','active','held','parked')
 		    )`,
-		uuid.New().String(), nowUTC(), frameID.String(), id.String(), id.String(),
+		uuid.New().String(), nowUTC(), frameID.String(),
+		runScopeID.String(),
+		nodeID.String(), nodeID.String(), runScopeID.String(),
 	)
 	if err != nil {
-		return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: insert run row: %w", err)
+		return fmt.Errorf("AffirmNodeRunRow: %w", err)
 	}
-	n, err := res.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return fmt.Errorf("AffirmNodeRunRow: rows affected: %w", err)
 	}
-	inserted := n == 1
-	if inserted {
-		if _, err := s.q(tx).ExecContext(ctx,
-			`UPDATE rimsky_nodes SET frame_id = ?, updated_at = ? WHERE id = ?`,
-			frameID.String(), nowUTC(), id.String(),
-		); err != nil {
-			return false, fmt.Errorf("nodesImpl.MarkStaleForCascade: bind frame: %w", err)
-		}
+	if affected > 0 {
+		return nil
 	}
-	return inserted, nil
+	// Zero rows: (a) row already in-flight (silent success), (b) scope
+	// closed (return ErrRunScopeClosed), or (c) scope absent (error).
+	// Re-resolve via separate SELECT.
+	var closedAt sql.NullString
+	err = s.q(tx).QueryRowContext(ctx,
+		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`, runScopeID.String(),
+	).Scan(&closedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("AffirmNodeRunRow: run scope %s not found", runScopeID)
+	}
+	if err != nil {
+		return fmt.Errorf("AffirmNodeRunRow: lookup run scope: %w", err)
+	}
+	if closedAt.Valid {
+		return persistence.ErrRunScopeClosed
+	}
+	// Row already in-flight; silent success.
+	return nil
+}
+
+// GetRunByDispatchIDForUpdate returns the run row for the given
+// dispatch_id (== rimsky_node_runs.id). SQLite holds the row lock
+// implicitly within BEGIN IMMEDIATE.
+//
+// @blessed-invariant: Callback determinism.
+func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
+	var (
+		r          persistence.NodeRunForCallback
+		idStr      string
+		nodeIDStr  string
+		scopeIDStr string
+		frameIDStr string
+		phase      string
+		stateStr   string
+	)
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, run_scope_id, frame_id, phase, state
+		   FROM rimsky_node_runs WHERE id = ?`, dispatchID.String(),
+	).Scan(&idStr, &nodeIDStr, &scopeIDStr, &frameIDStr, &phase, &stateStr)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetRunByDispatchIDForUpdate: %w", err)
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunByDispatchIDForUpdate: id: %w", err)
+	}
+	nodeID, err := uuid.Parse(nodeIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunByDispatchIDForUpdate: node_id: %w", err)
+	}
+	scopeID, err := uuid.Parse(scopeIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunByDispatchIDForUpdate: run_scope_id: %w", err)
+	}
+	frameID, err := uuid.Parse(frameIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("GetRunByDispatchIDForUpdate: frame_id: %w", err)
+	}
+	r.ID = id
+	r.NodeID = nodeID
+	r.RunScopeID = scopeID
+	r.FrameID = frameID
+	r.Phase = phase
+	r.State = cascade.NodeState(stateStr)
+	return &r, nil
 }
 
 func scanNode(sc scannable) (persistence.NodeRow, error) {
 	var (
-		r               persistence.NodeRow
-		idStr           string
-		instanceIDStr   string
-		executor        sql.NullString
-		stateStr        string
-		lastOutcomeStr  sql.NullString
-		currentErrClass sql.NullString
-		lastHB          sql.NullString
-		assignedSup     sql.NullString
-		frameIDStr      sql.NullString
-		tagsJSON        sql.NullString
-		createdAtStr    string
-		updatedAtStr    string
+		r                persistence.NodeRow
+		idStr            string
+		instanceIDStr    string
+		executor         sql.NullString
+		stateStr         string
+		lastOutcomeStr   sql.NullString
+		currentErrClass  sql.NullString
+		lastHB           sql.NullString
+		assignedSup      sql.NullString
+		frameIDStr       sql.NullString
+		tagsJSON         sql.NullString
+		createdAtStr     string
+		updatedAtStr     string
+		inFlightRunIDStr sql.NullString
+		inFlightScopeStr sql.NullString
 	)
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
@@ -597,6 +796,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		&lastHB, &assignedSup, &frameIDStr,
 		&tagsJSON,
 		&createdAtStr, &updatedAtStr,
+		&inFlightRunIDStr, &inFlightScopeStr,
 	); err != nil {
 		return persistence.NodeRow{}, err
 	}
@@ -644,6 +844,16 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		return persistence.NodeRow{}, err
 	}
 	r.Tags = tags
+	runID, err := scanNullableUUID(inFlightRunIDStr)
+	if err != nil {
+		return persistence.NodeRow{}, err
+	}
+	r.InFlightRunID = runID
+	runScope, err := scanNullableUUID(inFlightScopeStr)
+	if err != nil {
+		return persistence.NodeRow{}, err
+	}
+	r.RunScopeID = runScope
 	return r, nil
 }
 

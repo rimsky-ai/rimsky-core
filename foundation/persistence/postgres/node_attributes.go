@@ -55,19 +55,23 @@ func (s *nodeAttributesImpl) GetByRun(ctx context.Context, runID shared.UUID, tx
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetByRun")
 }
 
-// GetLatestByNode returns the most-recent run's attribute row for the
-// given node, used by forensic / observability paths (control-api,
-// lineage projections, agent dashboards). Returns (nil, nil) when the
-// node has no runs with an attribute row.
+// GetLatestByNode returns the most-recent attribute row for the
+// (node, run scope) pair. Returns (nil, nil) when no row exists.
 //
-// The (node_id, updated_at DESC) index makes this a single index seek.
-func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
+// Under RunScope-first (per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md),
+// the lookup is scoped: under fan-out, multiple concurrent runs of
+// the same node exist in different RunScopes; callers pick the
+// scope before querying.
+func (s *nodeAttributesImpl) GetLatestByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, tx persistence.Tx) (*persistence.NodeAttributesRow, error) {
 	row := s.q(tx).QueryRow(ctx,
-		`SELECT node_run_id, node_id, data, updated_at, value_handle, value_handle_backend
-		   FROM rimsky_node_attributes
-		  WHERE node_id = $1
-		  ORDER BY updated_at DESC
-		  LIMIT 1`, nodeID,
+		`SELECT a.node_run_id, a.node_id, a.data, a.updated_at, a.value_handle, a.value_handle_backend
+		   FROM rimsky_node_attributes a
+		   JOIN rimsky_node_runs r ON r.id = a.node_run_id
+		  WHERE a.node_id = $1
+		    AND r.run_scope_id = $2
+		  ORDER BY a.updated_at DESC
+		  LIMIT 1`, nodeID, runScopeID,
 	)
 	return scanAttributeRow(ctx, (*tablesImpl)(s).blob, row, "GetLatestByNode")
 }

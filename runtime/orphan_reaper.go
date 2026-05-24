@@ -145,7 +145,7 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 // lock_orphan_reaped event.
 //
 // Per blessed invariant 20, this payload MUST NOT include claim
-// content (scope_data, address). We surface only operator-relevant
+// content (claim_scope_data, address). We surface only operator-relevant
 // identifiers.
 func lockReapPayload(lh persistence.ClaimHandleRow) map[string]any {
 	supervisorID := ""

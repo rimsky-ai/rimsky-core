@@ -3,7 +3,10 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // SQLite impl of persistence.RunTreeTable — mirror of the postgres
-// impl. SQLite is dev-only; multi-host deployments must use postgres.
+// impl. Under RunScope-first (per spec
+// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md),
+// the tree shape lives on `rimsky_run_scopes`; ListChildren joins
+// across run_scope_id.
 
 package sqlite
 
@@ -31,10 +34,13 @@ func (s *tablesImpl) RunTree() persistence.RunTreeTable { return (*runTreeImpl)(
 func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
 const sqliteRunTreeCols = `
-  id, node_id, frame_id, parent_run_id, child_key,
+  id, node_id, frame_id, run_scope_id, phase,
   state, last_outcome, aggregation_policy`
 
 func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootRunInput) error {
+	if in.RunScopeID == (shared.UUID{}) {
+		return errors.New("sqlite.run_tree.CreateRootRun: run_scope_id required")
+	}
 	policy, err := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateRootRun: marshal policy: %w", err)
@@ -54,10 +60,11 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 	_, err = b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   parent_run_id, child_key, state, last_outcome, aggregation_policy
-		 ) VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, 'stale', 'fresh_unchanged', ?)
+		   run_scope_id, state, last_outcome, aggregation_policy
+		 ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, 'stale', 'fresh_unchanged', ?)
 		 ON CONFLICT(id) DO NOTHING`,
-		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores), formatTime(time.Now().UTC()), in.FrameID.String(), policyArg,
+		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
+		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(), policyArg,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateRootRun: %w", err)
@@ -66,22 +73,12 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 }
 
 func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in persistence.CreateChildRunInput) error {
-	if in.ChildKey == "" {
-		return errors.New("sqlite.run_tree.CreateChildRun: child_key required")
-	}
-	if in.ParentRunID == (shared.UUID{}) {
-		return errors.New("sqlite.run_tree.CreateChildRun: parent_run_id required")
+	if in.RunScopeID == (shared.UUID{}) {
+		return errors.New("sqlite.run_tree.CreateChildRun: run_scope_id required")
 	}
 	policy, err := persistence.MarshalAggregationPolicy(in.AggregationPolicy)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateChildRun: marshal policy: %w", err)
-	}
-	existing, err := b.GetByParentChildKey(ctx, tx, in.ParentRunID, in.ChildKey)
-	if err != nil {
-		return fmt.Errorf("sqlite.run_tree.CreateChildRun: idempotency lookup: %w", err)
-	}
-	if existing != nil {
-		return nil
 	}
 	stores := in.RequiredStores
 	if stores == nil {
@@ -95,13 +92,21 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
+	// Idempotency: NOT EXISTS keyed on (node_id, run_scope_id).
 	_, err = b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   parent_run_id, child_key, state, last_outcome, aggregation_policy
-		 ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, 'stale', 'fresh_unchanged', ?)`,
-		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores), formatTime(time.Now().UTC()), in.FrameID.String(),
-		in.ParentRunID.String(), in.ChildKey, policyArg,
+		   run_scope_id, state, last_outcome, aggregation_policy
+		 )
+		 SELECT ?, ?, ?, ?, ?, 'pending', ?, ?, 'stale', 'fresh_unchanged', ?
+		  WHERE NOT EXISTS (
+		    SELECT 1 FROM rimsky_node_runs
+		     WHERE node_id = ? AND run_scope_id = ?
+		       AND phase IN ('pending','active','held','parked')
+		  )`,
+		in.RunID.String(), in.NodeID.String(), executor, marshalStringArray(stores),
+		formatTime(time.Now().UTC()), in.FrameID.String(), in.RunScopeID.String(), policyArg,
+		in.NodeID.String(), in.RunScopeID.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite.run_tree.CreateChildRun: %w", err)
@@ -121,19 +126,6 @@ func (b *runTreeImpl) GetByID(ctx context.Context, tx persistence.Tx, runID shar
 	return row, nil
 }
 
-func (b *runTreeImpl) GetByParentChildKey(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID, childKey string) (*persistence.RunTreeRow, error) {
-	row, err := scanSqliteRunTreeRow(b.q(tx).QueryRowContext(ctx,
-		`SELECT `+sqliteRunTreeCols+` FROM rimsky_node_runs WHERE parent_run_id = ? AND child_key = ?`,
-		parentRunID.String(), childKey))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("sqlite.run_tree.GetByParentChildKey: %w", err)
-	}
-	return row, nil
-}
-
 // LockTreeForUpdate is a best-effort emulation under SQLite. SQLite does
 // not support row-level `SELECT ... FOR UPDATE`; the per-connection
 // write-lock that the open transaction holds is what guarantees
@@ -146,9 +138,16 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 	return b.GetByID(ctx, tx, runID)
 }
 
+// ListChildren returns all in-flight runs in RunScopes whose
+// parent_run_id equals parentRunID. Walks via rimsky_run_scopes JOIN.
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx,
-		`SELECT `+sqliteRunTreeCols+` FROM rimsky_node_runs WHERE parent_run_id = ? ORDER BY child_key`,
+		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id, nr.phase,
+		        nr.state, nr.last_outcome, nr.aggregation_policy
+		   FROM rimsky_node_runs nr
+		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
+		  WHERE rs.parent_run_id = ?
+		  ORDER BY rs.partition_key, nr.enqueued_at`,
 		parentRunID.String())
 	if err != nil {
 		return nil, fmt.Errorf("sqlite.run_tree.ListChildren: %w", err)
@@ -213,17 +212,17 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 // shared `scannable` interface (defined in backend.go).
 func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 	var (
-		idStr, nodeIDStr, frameIDStr string
-		parentRunIDStr               sql.NullString
-		childKey                     sql.NullString
-		state                        string
-		outcome                      sql.NullString
-		policyText                   sql.NullString
+		idStr, nodeIDStr, frameIDStr, runScopeIDStr string
+		phase                                       string
+		state                                       string
+		outcome                                     sql.NullString
+		policyText                                  sql.NullString
 	)
-	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &parentRunIDStr, &childKey, &state, &outcome, &policyText); err != nil {
+	if err := s.Scan(&idStr, &nodeIDStr, &frameIDStr, &runScopeIDStr, &phase, &state, &outcome, &policyText); err != nil {
 		return nil, err
 	}
 	out := &persistence.RunTreeRow{
+		Phase: phase,
 		State: cascade.NodeState(state),
 	}
 	id, err := uuid.Parse(idStr)
@@ -241,17 +240,11 @@ func scanSqliteRunTreeRow(s scannable) (*persistence.RunTreeRow, error) {
 		return nil, fmt.Errorf("parse frame_id: %w", err)
 	}
 	out.FrameID = shared.UUID(frameID)
-	if parentRunIDStr.Valid {
-		pid, err := uuid.Parse(parentRunIDStr.String)
-		if err != nil {
-			return nil, fmt.Errorf("parse parent_run_id: %w", err)
-		}
-		parent := shared.UUID(pid)
-		out.ParentRunID = &parent
+	runScopeID, err := uuid.Parse(runScopeIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse run_scope_id: %w", err)
 	}
-	if childKey.Valid {
-		out.ChildKey = childKey.String
-	}
+	out.RunScopeID = shared.UUID(runScopeID)
 	if outcome.Valid {
 		out.LastOutcome = cascade.LastOutcome(outcome.String)
 	}

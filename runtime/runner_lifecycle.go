@@ -88,7 +88,7 @@ func applyAcquirePass(
 	cand persistence.Candidate, h *node.OnAcquireUnavailableHandler,
 ) {
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := args.Persist.Nodes().UpdateState(ctx, cand.NodeID,
+		if err := args.Persist.Nodes().UpdateState(ctx, cand.NodeID, acq.RunScopeID,
 			cascade.NodeStateFresh, cascade.ReasonAcquirePass,
 			cascade.LastOutcomePassed, tx); err != nil {
 			return err
@@ -103,8 +103,10 @@ func applyAcquirePass(
 			return err
 		}
 		// Mark the node-run as handled so the queue doesn't
-		// re-pick it. Mirrors the post-terminal cleanup.
-		if err := args.Queue.RemoveForNodeInTx(ctx, cand.NodeID, args.SupervisorID, tx); err != nil {
+		// re-pick it. Mirrors the post-terminal cleanup. Thread
+		// `acq.RunScopeID` so fan-out children's retirement lands on
+		// this specific run.
+		if err := args.Queue.RemoveForNodeInTx(ctx, cand.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 			return err
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -152,6 +154,7 @@ func applyAcquireError(
 		Clock:        args.Clock,
 		Logger:       args.Logger,
 		NodeID:       cand.NodeID,
+		RunScopeID:   acq.RunScopeID,
 		InstanceID:   acq.InstanceID,
 		SupervisorID: args.SupervisorID,
 		ErrorClass:   h.ErrorClass,

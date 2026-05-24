@@ -18,7 +18,7 @@ references:
 
 `claim` is the protocol-layer noun returned by `ClaimProducer.Open`; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
 
-`rimsky_claim_handles` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, scope}`, `lock_name`, `scope_data`, `holder_supervisor_id` (nullable post-2026-05-17 — see `state` below), `expires_at`, `is_held`, `realized_write_semantics`, optional `node_run_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
+`rimsky_claim_handles` is the rimsky-side ledger row representing one acquired claim (or named-lock acquisition). Columns: `lock_kind ∈ {named, claim_scope}`, `lock_name`, `claim_scope_data`, `holder_supervisor_id` (nullable post-2026-05-17 — see `state` below), `expires_at`, `is_held`, `realized_write_semantics`, optional `node_run_id` (FK with `ON DELETE SET NULL`). Replaces the legacy `rimsky_lock_holders` table.
 
 Post-2026-05-15 the row also carries:
 
@@ -104,3 +104,4 @@ The legacy table name was `rimsky_lock_holders`; Phase-5 consolidation renamed i
 - Held-variant content folded in from former `concept:held-claim` per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #16).
 - State-column refactor per `spec:2026-05-17-post-data-platform-cleanup`: replaced `held_durable boolean` with `state TEXT` enum + `resolved_at TIMESTAMPTZ`; terminal Promote preserves rows past auto-terminal; new `SweepClaimHandleRetention` reaps non-durable terminal rows past `retention.claim_handles_trailing`.
 - [2026-05-18] Folded residue from former `docs/concepts/holding-subgraph.md` (now retired) — the no-rollback / not-a-transactional-unit / no-partial-commits antipatterns added as a "Held-variant antipatterns" subsection under the Held variant. The bulk of that doc's content was already absorbed into the Held variant subsection; only the antipattern framing was unique.
+- 2026-05-22 — Updated for ClaimScope rename per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: `lock_kind` enum value `scope` → `claim_scope`; column `scope_data` → `claim_scope_data`; index `idx_rimsky_claim_handles_scope` → `idx_rimsky_claim_handles_claim_scope`.

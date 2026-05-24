@@ -210,7 +210,7 @@ type RunArgs struct {
 	// auto-terminal Commit path can dispatch on producers that
 	// advertise the `data_processing` protocol in their
 	// `protocols:` block. Nil → the candidate-handle slot stays empty
-	// and the leaf executor falls back to scope_data + parent address
+	// and the leaf executor falls back to claim_scope_data + parent address
 	// alone (still correct for non-DataProcessing producers). Spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Protocol surfaces / DataProcessing.
@@ -475,8 +475,11 @@ func RunNode(
 	// Step 6 — terminal event handling. Pass the dispatch-time attribute
 	// view so the commit path's mergeAttributesDelta starts from the
 	// same map the executor saw (resumed runs include preserved
-	// executor-populated fields).
-	if err := applyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal); err != nil {
+	// executor-populated fields). runApplyTerminal wraps the call in
+	// the outer state-mutation tx that applyTerminal threads through
+	// every handler — same shape the async-callback path uses, so the
+	// determinism invariant holds at both sites.
+	if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 	}
 	return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
@@ -591,8 +594,29 @@ func applyAttributeFailure(
 	class, eventKind := classifyAttributeFailure(err)
 	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
 		eventKind, extractDirective(err), "attribute", "", err.Error())
-	return applyErrorPolicy(ctx, args, acq, class,
-		map[string]any{"error": err.Error()})
+	// applyErrorPolicy now expects to run inside an outer state-mutation
+	// tx (per @blessed-invariant: Callback determinism). Wrap it in a
+	// fresh tx here — this caller is the dispatch-time attribute
+	// resolution path, which has no outer tx of its own, so we open one
+	// and run the returned postCommit after commit. Same shape as
+	// runApplyTerminal but for the error-only (no terminal verdict)
+	// path.
+	var postCommit postCommitFn
+	if txErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		pc, perr := applyErrorPolicy(ctx, args, acq, class,
+			map[string]any{"error": err.Error()}, tx)
+		if perr != nil {
+			return perr
+		}
+		postCommit = pc
+		return nil
+	}); txErr != nil {
+		return txErr
+	}
+	if postCommit != nil {
+		postCommit(ctx)
+	}
+	return nil
 }
 
 // classifyAttributeFailure inspects the error chain and returns the

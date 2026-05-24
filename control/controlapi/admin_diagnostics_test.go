@@ -55,6 +55,7 @@ func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable     
 func (noopStore) Lineage() persistence.LineageTable                               { return nil }
 func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTable { return nil }
 func (noopStore) RunTree() persistence.RunTreeTable                               { return nil }
+func (noopStore) RunScopes() persistence.RunScopeTable                            { return nil }
 func (noopStore) APIKeys() persistence.APIKeyTable                                { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
@@ -103,25 +104,39 @@ func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persis
 func (noopNodes) CountByState(context.Context, persistence.Tx) (map[cascade.NodeState]int, error) {
 	return nil, nil
 }
-func (noopNodes) UpdateState(context.Context, shared.UUID, cascade.NodeState, cascade.TransitionReason, cascade.LastOutcome, persistence.Tx) error {
+func (noopNodes) UpdateState(context.Context, shared.UUID, shared.UUID, cascade.NodeState, cascade.TransitionReason, cascade.LastOutcome, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, time.Time, string, persistence.Tx) error {
+func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, shared.UUID, time.Time, string, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) SetFrameID(context.Context, shared.UUID, *shared.UUID, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) ClearLastOutcome(context.Context, shared.UUID, persistence.Tx) error { return nil }
-func (noopNodes) ClearSupervisorAssignment(context.Context, shared.UUID, persistence.Tx) error {
+func (noopNodes) ClearLastOutcome(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) ResetFailedTerminalLastOutcome(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
+	return nil, nil
+}
+func (noopNodes) ClearSupervisorAssignment(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
-func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
-	return false, nil
+func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) AffirmNodeRunRow(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error {
+	return nil
+}
+func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
+	return nil, nil
 }
 
 // fakeDiagnosticQueue implements persistence.Queue but only services
@@ -162,10 +177,10 @@ func (f *fakeDiagnosticQueue) ClaimDispatchRow(context.Context, persistence.Tx, 
 func (f *fakeDiagnosticQueue) Complete(context.Context, shared.UUID, string) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, string) error {
+func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, shared.UUID, string) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, string, persistence.Tx) error {
+func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context, time.Time) ([]persistence.DispatchRow, error) {
@@ -205,7 +220,7 @@ func (f *fakeDiagnosticQueue) ListParkedReadyForResume(context.Context, time.Tim
 func (f *fakeDiagnosticQueue) ListParkedOverdue(context.Context, time.Time, int) ([]persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID) (*persistence.ParkedRow, error) {
+func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
@@ -217,7 +232,7 @@ func (f *fakeDiagnosticQueue) RebindRunFrameInTx(context.Context, persistence.Tx
 func (f *fakeDiagnosticQueue) GetRetryNoProgress(context.Context, shared.UUID) (int, *int, error) {
 	return 0, nil, nil
 }
-func (f *fakeDiagnosticQueue) SetRetryNoProgressForNodeInTx(context.Context, persistence.Tx, shared.UUID, int) error {
+func (f *fakeDiagnosticQueue) SetRetryNoProgressForNodeInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID, int) error {
 	return nil
 }
 func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int, *int) error {
@@ -249,7 +264,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 			NodeID:     "22222222-2222-2222-2222-222222222222",
 			ParkedAt:   now,
 			ResumeAt:   now.Add(time.Hour),
-			Reason:     "retry_backoff",
+			Reason:     "snooze",
 			ReasonNote: "rate-limit; resume at +1h",
 			FrameID:    "33333333-3333-3333-3333-333333333333",
 		},
@@ -257,7 +272,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 			InstanceID: "11111111-1111-1111-1111-111111111111",
 			NodeID:     "44444444-4444-4444-4444-444444444444",
 			ParkedAt:   now,
-			Reason:     "awaiting_human",
+			Reason:     "await_callback",
 		},
 	}
 	deps := AppDeps{
@@ -286,10 +301,9 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		t.Fatalf("want 2 parked rows, got %d", len(got.ParkedNodes))
 	}
 
-	// With reason filter (post-2026-05-14 the enum projection
-	// validates: time_wait | signal_wait | awaiting_human |
-	// retry_backoff | unspecified).
-	resp2, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes?reason=retry_backoff")
+	// With reason filter (post-2026-05-22 ParkReason 7→2 collapse, the
+	// enum projection validates: await_callback | snooze).
+	resp2, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes?reason=snooze")
 	if err != nil {
 		t.Fatalf("GET parked-nodes filtered: %v", err)
 	}
@@ -301,7 +315,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	if len(got2.ParkedNodes) != 1 {
 		t.Fatalf("filter want 1, got %d", len(got2.ParkedNodes))
 	}
-	if got2.ParkedNodes[0].Reason != "retry_backoff" {
+	if got2.ParkedNodes[0].Reason != "snooze" {
 		t.Fatalf("filter mismatch: %+v", got2.ParkedNodes)
 	}
 }

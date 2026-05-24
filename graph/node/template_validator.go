@@ -619,9 +619,17 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 	// neither set is rejected. The "neither set" rejection is
 	// constrained to nodes that have neither claims nor holds —
 	// pure-cascade pseudo-nodes remain legal.
+	//
+	// Post-absorption skip: when canonicalizeGraphs has absorbed a
+	// sub-graph entry into this calling node, `Executor` is the
+	// entry's (canonicalizer-merged), not the author's. The
+	// mutual-exclusion check on the author's declaration moved to
+	// `absorbEntryIntoCaller`, where it sees the original caller +
+	// entry shapes before the merge collapses them. Skipping here
+	// avoids a false positive on every absorbed caller.
 	hasExecutor := n.Executor != ""
 	hasDelegate := n.Delegate != ""
-	if hasExecutor && hasDelegate {
+	if hasExecutor && hasDelegate && !n.IsSubgraphEntryAbsorbed {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fmt.Sprintf("%s.delegate", base),
 			Msg: fmt.Sprintf(

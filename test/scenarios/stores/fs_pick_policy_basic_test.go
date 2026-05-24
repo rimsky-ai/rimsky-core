@@ -74,7 +74,7 @@ func TestFsPickPolicy_BasicRingCycle(t *testing.T) {
 		}
 		picked = append(picked, p.Folder)
 		if _, err := client.Commit(context.Background(), &genv1.CommitRequest{
-			ClaimId: claimID, Scope: acq.Scope, Address: acq.Address,
+			ClaimId: claimID, ClaimScope: acq.ClaimScope, Address: acq.Address,
 		}); err != nil {
 			t.Fatalf("Commit[%d]: %v", i, err)
 		}

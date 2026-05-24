@@ -72,8 +72,10 @@ The model identifier passed to the Claude CLI's `--model` flag. The
 schema declares `default: "claude-sonnet-4-5"`; templates may override
 via L2 (`attributes.schema.properties.model.default: ...`), L1
 (`defaults.attributes.by_executor.claude-agent.model: ...`), or
-instance-time L3/L4 overrides
-(`attribute_overrides.{by_executor,by_node}.<...>.model: ...`).
+instance-time L3/L4/L5 overrides
+(`attribute_overrides.{by_executor,by_node}.<...>.model: ...`, or a
+matcher entry in `attribute_overrides.by_match` whose overlay sets
+`model`).
 
 ### `system_prompt`
 
@@ -206,7 +208,7 @@ attribute schema. Mechanical mapping:
 | `userdata.cli.user_prompt_template: "..."`  | `attributes.schema.properties.user_prompt.source: "..."` |
 | `{{userdata.X}}` in a prompt template       | `{{attributes.X}}` resolved at the rimsky layer; or use a `source:` directive at the attribute level |
 | `{{rimsky.resume_payload}}` placeholder     | Reads from the metadata footer at the end of the user prompt |
-| Instance `userdata_overrides`               | Instance `attribute_overrides` (same shape: `by_executor` + `by_node`) |
+| Instance `userdata_overrides`               | Instance `attribute_overrides` (same shape: `by_executor` + `by_node`, plus `by_match` matcher overlays — see `concept:attribute`'s "Matcher overlay (by_match)" section) |
 
 ## Worked example
 

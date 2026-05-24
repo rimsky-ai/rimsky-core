@@ -40,6 +40,33 @@ type DispatchRequest struct {
 	//
 	// @blessed-invariant 19: dispatch rows always carry a non-zero frame id.
 	FrameID shared.UUID
+	// RunScopeID is the RunScope this dispatch belongs to. Non-nullable:
+	// every dispatch occurs within a RunScope (main / sub-graph /
+	// fan-out partition). The EnqueueInTx NOT EXISTS guard keys on
+	// (node_id, run_scope_id) — unambiguous per the new unique index.
+	// Per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+	//
+	// @concept: run-scope
+	RunScopeID shared.UUID
+
+	// PriorDispatchID, when non-nil, is the rimsky_node_runs.id of the
+	// dispatch this one supersedes (heartbeat-stale recovery, retry,
+	// recalculate). Persisted on the new row's prior_dispatch_id column
+	// and surfaced to the executor on
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_id. Nil for
+	// initial dispatches.
+	//
+	// @concept: run-scope
+	PriorDispatchID *shared.UUID
+
+	// PriorDispatchDisposition classifies why PriorDispatchID is set
+	// (heartbeat-stale / retry-after-error / recalculate). Stored
+	// lower_snake_case on the new row. Empty string when
+	// PriorDispatchID is nil. Surfaces on
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_disposition.
+	//
+	// @concept: run-scope
+	PriorDispatchDisposition string
 }
 
 // SelectCandidatesRequest is the input to SelectCandidates (spec §7.3
@@ -76,6 +103,21 @@ type Candidate struct {
 	// blessed-invariant 19, this is non-zero for every claimable
 	// candidate.
 	FrameID shared.UUID
+
+	// PriorDispatchID, when non-nil, identifies the predecessor
+	// dispatch this row supersedes (recovery / retry / recalculate).
+	// Threaded onto the wire via
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_id.
+	//
+	// @concept: run-scope
+	PriorDispatchID *shared.UUID
+	// PriorDispatchDisposition is the lower_snake_case classifier
+	// stored alongside PriorDispatchID (e.g. "heartbeat_stale",
+	// "retry_after_error", "recalculate"). Empty when
+	// PriorDispatchID is nil.
+	//
+	// @concept: run-scope
+	PriorDispatchDisposition string
 }
 
 // ClaimOwnership is the return shape of GetClaimedBy. Kind is:
@@ -139,13 +181,18 @@ type Queue interface {
 	// the delete is guarded (no-op on mismatch).
 	Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
 
-	// RemoveForNode deletes any pending dispatch row for a given node.
-	// Used when a node is invalidated while queued (claim becomes moot).
-	RemoveForNode(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string) error
+	// RemoveForNode retires the in-flight dispatch row for a given
+	// (node, run scope). Used when a node is invalidated while queued
+	// (claim becomes moot). The (node_id, run_scope_id) keying is
+	// unambiguous under the new unique index — no separate
+	// disambiguator needed.
+	//
+	// @concept: run-scope
+	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error
 
 	// RemoveForNodeInTx is the tx-taking variant. The auto-commit
 	// RemoveForNode calls this internally with tx=nil.
-	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, expectedClaimedBy string, tx Tx) error
+	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
 	// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
 	// older than cutoff.
@@ -195,14 +242,16 @@ type Queue interface {
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
 	// GetInFlightRunForNode resolves the in-flight `rimsky_node_runs.id`
-	// for the (node, frame) pair. Used by the cascade walker and the
-	// co-holder dispatch-time INSERT into `rimsky_claim_holders` (post-
-	// stage-5 of the run-row lifecycle cutover, both `rimsky_wait_set`
-	// and `rimsky_claim_holders` key on run id rather than node id). A
-	// row is "in-flight" when its phase is one of pending / active /
-	// held / parked. Returns (zero, false, nil) when no in-flight row
-	// exists for that (node, frame).
-	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, frameID shared.UUID) (shared.UUID, bool, error)
+	// for the (node, run scope) pair. A row is "in-flight" when its
+	// phase is one of pending / active / held / parked. Returns
+	// (zero, false, nil) when no in-flight row exists.
+	//
+	// The (node_id, run_scope_id) keying is unambiguous per the
+	// uq_node_runs_in_flight_per_run_scope partial-unique index —
+	// no disambiguator needed.
+	//
+	// @concept: run-scope
+	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
 
 	// ParkActive transitions a node-run row from phase='active' to
 	// phase='parked' under the claimant's id. Persists the park metadata
@@ -232,11 +281,13 @@ type Queue interface {
 	// Limit caps the per-tick batch.
 	ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]ParkedRow, error)
 
-	// GetParkedByNode returns the parked node-run row for a node,
-	// or nil when the node is not parked. Used by the
+	// GetParkedByNode returns the parked node-run row for (node, run scope),
+	// or nil when no such parked row exists. Used by the
 	// admin-invalidate-against-parked path (G3) and by E4 resume dispatch
 	// to load the persisted park metadata.
-	GetParkedByNode(ctx context.Context, nodeID shared.UUID) (*ParkedRow, error)
+	//
+	// @concept: run-scope
+	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
 
 	// ResumeParkedInTx transitions a parked row back to phase='pending'
 	// (so any eligible supervisor can pick it up — the row's claimed_by is
@@ -281,13 +332,16 @@ type Queue interface {
 	GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (count int, override *int, err error)
 
 	// SetRetryNoProgressForNodeInTx writes the carry-forward counter
-	// onto the node-run row identified by node_id (not by
-	// dispatch_id). Used by the retry path: after the original
-	// dispatch row is removed and a new one is inserted, the supervisor
-	// re-stamps the carried-forward counter so the cap can accumulate
-	// across retries. NodeID is the lookup key because the new row's
-	// dispatch_id is the freshly-allocated UUID.
-	SetRetryNoProgressForNodeInTx(ctx context.Context, tx Tx, nodeID shared.UUID, count int) error
+	// onto the node-run row identified by (node_id, run_scope_id).
+	// Used by the retry path: after the original dispatch row is
+	// removed and a new one is inserted, the supervisor re-stamps the
+	// carried-forward counter so the cap can accumulate across retries.
+	//
+	// The UPDATE is scoped to `phase = 'pending'` so only the
+	// freshly-inserted pending row is touched within the given RunScope.
+	//
+	// @concept: run-scope
+	SetRetryNoProgressForNodeInTx(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error
 
 	// UpdateDispatchTuning sets the per-row max_park_duration_seconds and
 	// max_retries_without_progress denormalized columns at dispatch time
@@ -369,6 +423,11 @@ type ParkActiveInput struct {
 // diagnostics endpoints (G1 / G2). Trims the per-row fields to the
 // columns the endpoints actually surface.
 type ParkedDiagnosticRow struct {
+	// DispatchID is the rimsky_node_runs.id of this parked row. Used by
+	// downstream per-row probes (GetParkedByNode with a runID) to
+	// disambiguate fan-out children sharing a node_id — a SELECT by
+	// node_id alone could match any of the in-flight parked siblings.
+	DispatchID shared.UUID
 	InstanceID string
 	NodeID     string
 	FrameID    string

@@ -501,7 +501,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			s.ItemID, s.State, ct, ca)
 
 		// Per-item: every rimsky_claim_holders row whose lock-holder
-		// row points at this item via scope_data. Under v2 the
+		// row points at this item via claim_scope_data. Under v2 the
 		// claim-holders rows key on claim_handle_id (FK to
 		// rimsky_claim_handles); we join both so the dump shows the
 		// full ledger for items still held by some node's claim.
@@ -510,10 +510,10 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 		hrows, herr := stack.Pool.Query(ctx,
 			`SELECT ch.id, ch.claim_handle_id, ch.holder_run_id,
 			        ch.state, ch.completed_at,
-			        lh.producer_name, lh.scope_data
+			        lh.producer_name, lh.claim_scope_data
 			   FROM rimsky_claim_holders ch
 			   JOIN rimsky_claim_handles lh ON lh.id = ch.claim_handle_id
-			  WHERE lh.scope_data::text = $1
+			  WHERE lh.claim_scope_data::text = $1
 			  ORDER BY ch.id`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
@@ -555,7 +555,7 @@ func dumpStuckItemsDiagnostics(t *testing.T, ctx context.Context, stack *SmokeSt
 			   FROM rimsky_node_runs d
 			   JOIN rimsky_claim_holders ch ON ch.holder_run_id = d.id
 			   JOIN rimsky_claim_handles lh ON lh.id = ch.claim_handle_id
-			  WHERE lh.scope_data::text = $1`,
+			  WHERE lh.claim_scope_data::text = $1`,
 			fmt.Sprintf("%q", s.ItemID),
 		)
 		if derr != nil {

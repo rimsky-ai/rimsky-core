@@ -197,11 +197,11 @@ func TestSplitScopeDefaultDecoder(t *testing.T) {
 		var decoded struct {
 			PartitionKey string `json:"partition_key"`
 		}
-		if err := json.Unmarshal(sub.GetScopeData(), &decoded); err != nil {
-			t.Errorf("sub[%d].scope_data not JSON-decodable: %v", i, err)
+		if err := json.Unmarshal(sub.GetClaimScopeData(), &decoded); err != nil {
+			t.Errorf("sub[%d].claim_scope_data not JSON-decodable: %v", i, err)
 		}
 		if decoded.PartitionKey != wantKeys[i] {
-			t.Errorf("sub[%d].scope_data.partition_key: got %q want %q", i, decoded.PartitionKey, wantKeys[i])
+			t.Errorf("sub[%d].claim_scope_data.partition_key: got %q want %q", i, decoded.PartitionKey, wantKeys[i])
 		}
 	}
 }
@@ -223,7 +223,7 @@ func TestSplitScopeCustomFunc(t *testing.T) {
 	s := New().WithSplitScope(func(req *genv1.SplitScopeRequest) (*genv1.SplitScopeResponse, error) {
 		return &genv1.SplitScopeResponse{
 			SubScopes: []*genv1.SubScopeDescriptor{
-				{PartitionKey: "custom-1", ScopeData: []byte(`{"x":1}`)},
+				{PartitionKey: "custom-1", ClaimScopeData: []byte(`{"x":1}`)},
 			},
 		}, nil
 	})

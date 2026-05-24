@@ -41,6 +41,21 @@ func acquireFanOutIfDeclared(
 	if nodeDef == nil || nodeDef.FanOut == nil {
 		return nil
 	}
+	// Only the root run of a fan-out tree splits. Children re-use the
+	// parent's node_id (per `runtime/fanout_dispatch.go::PlanFanOutChildren`)
+	// and therefore inherit the same `nodeDef.FanOut` block; without this
+	// guard each child re-fires SplitScope and creates grand-children
+	// indefinitely. The "child" predicate is "this run's RunScope has a
+	// parent_run_id" — fan-out-partition / sub-graph RunScopes carry one,
+	// the main RunScope does not.
+	//
+	// @concept: fan-out
+	// @concept: run-scope
+	if scopes := args.Persist.RunScopes(); scopes != nil {
+		if rs, err := scopes.GetByID(ctx, tx, out.RunScopeID); err == nil && rs != nil && rs.ParentRunID != nil {
+			return nil
+		}
+	}
 	// Locate the acquiredLocks entry whose Alias matches the
 	// FanOut.Claim reference. The validator (D4) rejects fan_out blocks
 	// that reference an unknown alias, so this lookup is best-effort
@@ -73,7 +88,7 @@ func acquireFanOutIfDeclared(
 	// canonicalized partition_request flow through verbatim.
 	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,
-		ParentScope:         parent.ClaimResult.Scope,
+		ParentClaimScope:    parent.ClaimResult.ClaimScope,
 		ProducerName:        parentClaimSpec.ProducerName,
 		NodeRunID:           cand.DispatchID,
 		HolderNodeID:        cand.NodeID,

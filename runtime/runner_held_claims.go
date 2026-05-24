@@ -76,9 +76,9 @@ func markClaimHolderForRun(
 // holding-subgraph metadata. The acquirer's lock-holder row carries
 // `producer_name`; when an acquirer declares multiple aliases against
 // the same producer_name, we further disambiguate by matching the
-// lock-holder row's `scope_data` against the alias's substituted
+// lock-holder row's `claim_scope_data` against the alias's substituted
 // selector — falling back to the first matching alias if the row has
-// not yet had its store-chosen scope written.
+// not yet had its store-chosen claim-scope written.
 //
 // This is deterministic on a per-row basis (no cartesian product) and
 // agrees with the acquirer-side computation that drove the original
@@ -159,9 +159,9 @@ func findInheritedAliasesForRun(
 // row when the acquirer declares one or more aliases that name this
 // locks. Single-candidate case: return that alias. Multi-candidate
 // case: walk the acquirer's NodeDef and match each alias's substituted
-// selector to the row's `scope_data`; return the first match. Falls
+// selector to the row's `claim_scope_data`; return the first match. Falls
 // back to the first candidate when no selector matches (the row may
-// have been inserted before the store-chosen scope was written).
+// have been inserted before the store-chosen claim-scope was written).
 //
 // Reuses the caller's tx (option C / no-nil-tx). See findInheritedAliasesForNode.
 func pickAliasForClaimHandle(
@@ -190,8 +190,8 @@ func pickAliasForClaimHandle(
 			}
 			// Best-effort selector match — we don't re-substitute
 			// params/deps here; the acquirer already wrote the
-			// substituted selector into scope_data at acquire time.
-			if matchesScope(lh.ScopeData, sref.Selector) {
+			// substituted selector into claim_scope_data at acquire time.
+			if matchesClaimScope(lh.ClaimScopeData, sref.Selector) {
 				return p.alias
 			}
 		}
@@ -206,18 +206,18 @@ type aliasCandidate struct {
 	alias        string
 }
 
-// matchesScope reports whether the lock-holder row's scope_data
-// equals the JSON-encoded selector. Conservative: empty scope_data is
+// matchesClaimScope reports whether the lock-holder row's claim_scope_data
+// equals the JSON-encoded selector. Conservative: empty claim_scope_data is
 // non-matching; malformed bytes are non-matching.
-func matchesScope(scopeData []byte, selector string) bool {
-	if len(scopeData) == 0 {
+func matchesClaimScope(claimScopeData []byte, selector string) bool {
+	if len(claimScopeData) == 0 {
 		return false
 	}
 	encoded, err := json.Marshal(selector)
 	if err != nil {
 		return false
 	}
-	return string(scopeData) == string(encoded)
+	return string(claimScopeData) == string(encoded)
 }
 
 // inheritedAlias bundles the per-aliased-claim metadata an

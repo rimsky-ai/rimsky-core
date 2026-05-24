@@ -158,6 +158,11 @@ type Handle struct {
 	done          chan struct{}
 	addr          string
 	advertisedURL string
+	// callbackReg is the supervisor's CallbackRegistry. Exposed via
+	// CallbackRegistry() for test-only callers that need to register
+	// auxiliary ack_ids against an in-flight run (e.g. the F4 scenario
+	// pinning the callback-determinism rule).
+	callbackReg *CallbackRegistry
 	// wg tracks in-flight run goroutines spawned by tryClaim so Shutdown can
 	// wait on their completion without a polling loop.
 	wg sync.WaitGroup
@@ -182,6 +187,17 @@ func (h *Handle) Shutdown(ctx context.Context) error {
 
 // CallbackAddr returns the bound host:port of the callback server.
 func (h *Handle) CallbackAddr() string { return h.addr }
+
+// CallbackRegistry returns the supervisor's CallbackRegistry. Exposed for
+// test-only callers that need to register auxiliary ack_ids against an
+// in-flight run — e.g. the F4 callback-determinism scenario at
+// test/scenarios/fanout_callback_determinism_e2e_test.go pinning the
+// rejected_run_terminal ack_status branch of
+// runtime/callback.go::driveTerminal. Production callers should NOT
+// reach into the registry directly; the supervisor's own runner_dispatch
+// path registers the per-dispatch ack_id at the AwaitAsyncCallback
+// terminal.
+func (h *Handle) CallbackRegistry() *CallbackRegistry { return h.callbackReg }
 
 // Start launches the supervisor main loop. Returns once the callback server
 // is listening and the supervisor is registered; the claim/heartbeat loop
@@ -273,7 +289,7 @@ func Start(cfg Config) (*Handle, error) {
 
 	clientPool := executor.NewClientPool()
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
-	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised}
+	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg}
 	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, lockHolders)
 	return h, nil
 }
@@ -388,8 +404,12 @@ func runLoop(
 		now := cfg.Clock.Now()
 		for _, n := range running {
 			nodeID := n.ID
+			if n.RunScopeID == nil {
+				continue
+			}
+			runScopeID := *n.RunScopeID
 			if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, nodeID, now, cfg.SupervisorID, tx)
+				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, nodeID, runScopeID, now, cfg.SupervisorID, tx)
 			}); err != nil {
 				cfg.Logger.Warn("supervisor: node UpdateHeartbeat failed",
 					"node_id", nodeID.String(), "error", err.Error())

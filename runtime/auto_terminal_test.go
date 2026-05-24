@@ -39,6 +39,27 @@ func seedRunForNode(
 ) shared.UUID {
 	t.Helper()
 	var out shared.UUID
+	// Resolve the node's instance + main RunScope so the dispatch row
+	// satisfies the run_scope_id NOT NULL constraint.
+	var mainScopeID shared.UUID
+	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nd, err := sb.Nodes().Get(ctx, nodeID, tx)
+		if err != nil {
+			return err
+		}
+		if nd == nil {
+			t.Fatalf("seedRunForNode: node %s missing", nodeID)
+		}
+		inst, err := sb.Instances().Get(ctx, nd.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		if inst == nil {
+			t.Fatalf("seedRunForNode: instance %s missing", nd.InstanceID)
+		}
+		mainScopeID = inst.MainRunScopeID
+		return nil
+	}))
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         nodeID,
@@ -46,6 +67,7 @@ func seedRunForNode(
 			RequiredStores: []string{},
 			EnqueuedAt:     time.Now().Add(-1 * time.Second),
 			FrameID:        frameID,
+			RunScopeID:     mainScopeID,
 		}, tx); err != nil {
 			return err
 		}
@@ -87,6 +109,35 @@ func seedFrame(ctx context.Context, t *testing.T, sb persistence.Tables, instanc
 		return nil
 	}))
 	return frameID
+}
+
+// seedInstanceWithMainScope creates an instance with its required main
+// RunScope row in a single tx. Per the RunScope-first migration both
+// rimsky_instances.main_run_scope_id and rimsky_run_scopes.instance_id
+// are NOT NULL and FK each other (DEFERRABLE INITIALLY DEFERRED), so
+// the canonical seed path must land both rows in one tx.
+func seedInstanceWithMainScope(ctx context.Context, t *testing.T, sb persistence.Tables,
+	tx persistence.Tx, templateHash string, ck *string,
+) (persistence.InstanceRow, shared.UUID) {
+	t.Helper()
+	instID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
+	if err := sb.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+		ID:         mainScopeID,
+		GraphName:  "main",
+		InstanceID: instID,
+	}); err != nil {
+		t.Fatalf("seedInstanceWithMainScope: RunScopes.Create: %v", err)
+	}
+	row, err := sb.Instances().Create(ctx, persistence.InstanceCreateInput{
+		ID: instID, TemplateHash: templateHash, InstanceKey: ck,
+		Params:         map[string]any{},
+		MainRunScopeID: mainScopeID,
+	}, tx)
+	if err != nil {
+		t.Fatalf("seedInstanceWithMainScope: Instances.Create: %v", err)
+	}
+	return row, mainScopeID
 }
 
 // insertDeployedTemplate inserts a template row in 'deployed' state with a
@@ -131,12 +182,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode, inhNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
@@ -171,7 +217,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: lockHolderID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-A", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -260,12 +306,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
@@ -292,7 +333,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: claimHandleID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
+			ProducerName: &storeName, ClaimScopeData: []byte(`"durable"`), Address: []byte(`"durable-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-D", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -393,7 +434,7 @@ func seedFanOutParentAndSubclaims(
 			ID:                 parentID,
 			LockKind:           persistence.LockKindScope,
 			ProducerName:       &pName,
-			ScopeData:          []byte(`"parent-scope"`),
+			ClaimScopeData:     []byte(`"parent-scope"`),
 			Address:            []byte(`"parent-addr"`),
 			Intent:             &intent,
 			HolderSupervisorID: supervisorID,
@@ -411,7 +452,7 @@ func seedFanOutParentAndSubclaims(
 				ID:                  sid,
 				LockKind:            persistence.LockKindScope,
 				ProducerName:        &pName,
-				ScopeData:           []byte(`"sub-scope"`),
+				ClaimScopeData:      []byte(`"sub-scope"`),
 				Address:             []byte(`"sub-addr"`),
 				Intent:              &intent,
 				HolderSupervisorID:  supervisorID,
@@ -499,12 +540,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -563,12 +599,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -628,12 +659,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -692,12 +718,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	var inst persistence.InstanceRow
 	var parentNode, coNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -812,12 +833,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -929,12 +945,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	var inst persistence.InstanceRow
 	var acqNode, inhNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		a, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "acquirer", Executor: "stub",
@@ -967,7 +978,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: lockHolderID, LockKind: persistence.LockKindScope,
-			ProducerName: &storeName, ScopeData: []byte(`"r"`), Address: []byte(`"r"`),
+			ProducerName: &storeName, ClaimScopeData: []byte(`"r"`), Address: []byte(`"r"`),
 			Intent:             &intent,
 			HolderSupervisorID: "sup-G", HolderNodeID: acqNode.ID,
 			ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -1057,12 +1068,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -1150,12 +1156,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -1260,12 +1261,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -1420,12 +1416,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	var inst persistence.InstanceRow
 	var parentNode persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
-			ID: shared.UUID(uuid.New()), TemplateHash: tmpl.ID, InstanceKey: &ck, Params: map[string]any{},
-		}, tx)
-		if err != nil {
-			return err
-		}
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmpl.ID, &ck)
 		inst = i
 		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "parent", Executor: "stub",
@@ -1476,7 +1467,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 				ID:                  gid,
 				LockKind:            persistence.LockKindScope,
 				ProducerName:        &pName,
-				ScopeData:           []byte(`"grand-scope"`),
+				ClaimScopeData:      []byte(`"grand-scope"`),
 				Address:             []byte(`"grand-addr"`),
 				Intent:              &intent,
 				HolderSupervisorID:  "sup-CR",

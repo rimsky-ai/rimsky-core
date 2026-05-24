@@ -8,7 +8,7 @@
 // row + the `claim_resolution.*` event after a producer verb fires.
 //
 // Honors `@blessed-invariant 20` (claim content inert) and `@blessed-
-// invariant 21` (messages inert): payloads carry only the scope_data
+// invariant 21` (messages inert): payloads carry only the claim_scope_data
 // hash + rimsky-side identifiers — never the raw scope / address /
 // candidate-handle / version bytes.
 
@@ -46,7 +46,7 @@ func outcomeVerbName(o AggregateOutcome) string {
 // observability metadata, not control-plane state.
 //
 // Honors `@blessed-invariant 20` (claim content inert) and `@blessed-
-// invariant 21` (messages inert): payloads carry only the scope_data
+// invariant 21` (messages inert): payloads carry only the claim_scope_data
 // hash + rimsky-side identifiers (claim_handle_id, run_id, frame_id,
 // producer_name, version_id, outcome, cause). Raw scope / address /
 // candidate-handle / version bytes never appear in the projection.
@@ -103,7 +103,7 @@ func emitTerminalForensics(
 		SubClaimHandleIDs:   subIDs,
 		CommittedAt:         now.UTC().Format(time.RFC3339Nano),
 		ProducerName:        td.LineageHint.ProducerName,
-		ScopeDataHash:       HashBytes(td.Scope),
+		ClaimScopeDataHash:  HashBytes(td.Scope),
 		VersionID:           preferVersionID(versionID, td.LineageHint.VersionID),
 		Outcome:             outcome,
 	}
@@ -125,12 +125,12 @@ func emitTerminalForensics(
 	// commit vs abandon; the cause field carries the abandon-flavor.
 	kind := "claim_resolution.commit"
 	payload := map[string]any{
-		"claim_handle_id": td.ClaimHandleID.String(),
-		"run_id":          td.LineageHint.RunID.String(),
-		"frame_id":        td.LineageHint.FrameID.String(),
-		"producer_name":   td.LineageHint.ProducerName,
-		"scope_data_hash": rec.ScopeDataHash,
-		"version_id":      rec.VersionID,
+		"claim_handle_id":       td.ClaimHandleID.String(),
+		"run_id":                td.LineageHint.RunID.String(),
+		"frame_id":              td.LineageHint.FrameID.String(),
+		"producer_name":         td.LineageHint.ProducerName,
+		"claim_scope_data_hash": rec.ClaimScopeDataHash,
+		"version_id":            rec.VersionID,
 	}
 	if td.ParentClaimHandleID != nil {
 		payload["parent_claim_handle_id"] = td.ParentClaimHandleID.String()

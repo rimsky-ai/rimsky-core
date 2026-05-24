@@ -95,7 +95,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 
 	var cRow *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, tx)
+		r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
 		cRow = r
 		return err
 	}))
@@ -115,7 +115,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, tx)
+			r, err := h.Persist.NodeAttributes().GetLatestByNode(h.Ctx, cN.ID, h.GetMainRunScopeID(iid), tx)
 			cRow = r
 			return err
 		})

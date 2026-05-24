@@ -26,7 +26,7 @@ import (
 func TestConformancePostgres(t *testing.T) {
 	Suite(t, func(t *testing.T) persistence.Database {
 		return pgtest.OpenDriver(context.Background(), t)
-	}, postgresRawExec)
+	}, postgresRawExec, postgresRawQuery)
 }
 
 func TestConformanceSQLite(t *testing.T) {
@@ -45,7 +45,7 @@ func TestConformanceSQLite(t *testing.T) {
 			t.Fatalf("migrate: %v", err)
 		}
 		return d
-	}, sqliteRawExec)
+	}, sqliteRawExec, sqliteRawQuery)
 }
 
 // postgresRawExec runs raw SQL against the postgres driver's pool via
@@ -59,6 +59,13 @@ func postgresRawExec(t *testing.T, d persistence.Database, sql string, args ...a
 	pgtest.ExecForTest(context.Background(), t, d, pgSQL, args...)
 }
 
+// postgresRawQuery is the read-side companion to postgresRawExec.
+func postgresRawQuery(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow {
+	t.Helper()
+	pgSQL := translatePlaceholders(sql)
+	return pgtest.QueryRowsForTest(context.Background(), t, d, pgSQL, args...)
+}
+
 // sqliteRawExec runs raw SQL against the sqlite driver's *sql.DB. The
 // `?` placeholders pass through verbatim.
 func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any) {
@@ -67,6 +74,43 @@ func sqliteRawExec(t *testing.T, d persistence.Database, sql string, args ...any
 	if _, err := db.ExecContext(context.Background(), sql, args...); err != nil {
 		t.Fatalf("sqliteRawExec: %v\nsql: %s", err, sql)
 	}
+}
+
+// sqliteRawQuery is the read-side companion to sqliteRawExec. Returns
+// one map per row keyed by column name. Driver columns scan as
+// []byte / string / int64 / nil per modernc.org/sqlite's defaults.
+func sqliteRawQuery(t *testing.T, d persistence.Database, sql string, args ...any) []RawQueryRow {
+	t.Helper()
+	db := sqlitepersist.DBFromDatabase(d)
+	rows, err := db.QueryContext(context.Background(), sql, args...)
+	if err != nil {
+		t.Fatalf("sqliteRawQuery: %v\nsql: %s", err, sql)
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("sqliteRawQuery columns: %v", err)
+	}
+	var out []RawQueryRow
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatalf("sqliteRawQuery scan: %v", err)
+		}
+		row := make(RawQueryRow, len(cols))
+		for i, c := range cols {
+			row[c] = vals[i]
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("sqliteRawQuery rows.Err: %v", err)
+	}
+	return out
 }
 
 // translatePlaceholders rewrites `?` placeholders into `$1, $2, ...`
