@@ -156,7 +156,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			"frame_trigger_kind":   rec.FrameTriggerKind,
 			"trigger_message_id":   rec.TriggerMessageID,
 			"changed":              rec.Changed,
-			"last_outcome":         rec.LastOutcome,
+			"settling_signal_type": rec.SettlingSignalType,
 			"terminal_kind":        rec.TerminalKind,
 			"parent_run_id":        rec.ParentRunID,
 			"substitution_refs":    rec.SubstitutionRefs,

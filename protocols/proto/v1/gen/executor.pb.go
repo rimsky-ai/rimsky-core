@@ -839,10 +839,10 @@ type Park struct {
 	SessionToken string `protobuf:"bytes,4,opt,name=session_token,json=sessionToken,proto3" json:"session_token,omitempty"`
 	// Free-form human annotation. Inert in rimsky.
 	ReasonNote string `protobuf:"bytes,5,opt,name=reason_note,json=reasonNote,proto3" json:"reason_note,omitempty"`
-	// reason_label is a freeform tag that MUST be set when
-	// reason = PARK_REASON_OTHER (validated at the supervisor's
-	// terminal handler). For taxonomy-mapped reasons it is optional
-	// additional context. Persisted on
+	// reason_label is a freeform tag carrying optional additional
+	// context for the (closed) ParkReason set (PARK_REASON_AWAIT_CALLBACK
+	// | PARK_REASON_SNOOZE). It is always optional under the post-collapse
+	// enum — there is no "other" variant that mandates it. Persisted on
 	// col:rimsky_node_runs.parked_reason_label.
 	ReasonLabel   string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
 	unknownFields protoimpl.UnknownFields

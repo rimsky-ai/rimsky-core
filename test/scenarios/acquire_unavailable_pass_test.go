@@ -2,10 +2,11 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 26 — on_acquire_unavailable: { resolve: pass }. A node whose
-// claim-producer returns Unavailable on its required claim transitions
-// stale → fresh+passed; the executor is not invoked; no cascade-on-
-// commit fires.
+// Task 26 — error_types: { "acquire/unavailable": { policy: [pass] } }.
+// A node whose claim-producer returns Unavailable on its required claim
+// transitions stale → fresh and records settling_signal_type =
+// terminal/error/acquire/unavailable (pass-color per Resolution.Color);
+// the executor is not invoked; no cascade-on-commit fires.
 package scenarios
 
 import (
@@ -27,9 +28,10 @@ import (
 
 // TestAcquireUnavailablePass starts a stub claim-producer with an empty
 // pick-policy queue (selector "@queue"), so the producer's Open returns
-// Unavailable. The node has on_acquire_unavailable: { resolve: pass }
-// — the supervisor must transition the node to fresh+passed without
-// invoking the executor.
+// Unavailable. The node declares error_types: { "acquire/unavailable":
+// { policy: [pass] } } — the supervisor must transition the node to
+// fresh (with settling_signal_type = terminal/error/acquire/unavailable)
+// without invoking the executor.
 func TestAcquireUnavailablePass(t *testing.T) {
 	t.Parallel()
 
@@ -66,8 +68,10 @@ func TestAcquireUnavailablePass(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
-						Resolve: node.ResolvePass,
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"acquire/unavailable": {
+							Policy: []node.PolicyAction{{Action: "pass"}},
+						},
 					},
 				},
 				scenario.WithStores(scenario.WriteClaimRef("queue-store", "@queue")),
@@ -79,9 +83,9 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Node should record last_outcome=passed.
-	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"worker should record last_outcome=passed under on_acquire_unavailable: pass")
+	// Node should record settling_signal_type=terminal/error/acquire/unavailable.
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
+		"worker should record settling_signal_type=terminal/error/acquire/unavailable under error_types: { acquire/unavailable: [pass] }")
 
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -105,5 +109,5 @@ func TestAcquireUnavailablePass(t *testing.T) {
 
 	// Stub executor's observed-request log should be empty.
 	require.Empty(t, h.Stub.Observed(),
-		"executor must not be invoked when on_acquire_unavailable: pass fires")
+		"executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 }

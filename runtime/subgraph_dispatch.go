@@ -73,6 +73,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	"github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 )
@@ -368,9 +369,9 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 //     path on the parent's aggregation terminal (driven by the
 //     last internal child's terminal via PropagateFromChildState),
 //     carrying `terminal_kind: "complete"` + `state: "fresh"`. The row
-//     captures the post-aggregation outcome (last_outcome resolved
-//     from the children's aggregate, `changed` reflecting the final
-//     verdict).
+//     captures the post-aggregation outcome (settling_signal_type
+//     resolved from the children's aggregate, `changed` reflecting the
+//     final verdict).
 //
 // Downstream consumers can pair the two rows by `run_id` (both rows
 // reference the same calling-run UUID) and discriminate on
@@ -421,25 +422,15 @@ func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
-	// Resolve last_outcome the same way the standard handler does so
-	// downstream subscribers see the same firing-gate value.
-	resolve := node.ResolveByChanged
-	if acq.NodeDef != nil && acq.NodeDef.OnExecutorComplete != nil && acq.NodeDef.OnExecutorComplete.Resolve != "" {
-		resolve = acq.NodeDef.OnExecutorComplete.Resolve
-	}
-	var lastOutcome cascade.LastOutcome
-	switch resolve {
-	case node.ResolveAlwaysPropagate:
-		lastOutcome = cascade.LastOutcomeFreshChanged
-	case node.ResolveNeverPropagate:
-		lastOutcome = cascade.LastOutcomeFreshUnchanged
-	default:
-		if t.Changed {
-			lastOutcome = cascade.LastOutcomeFreshChanged
-		} else {
-			lastOutcome = cascade.LastOutcomeFreshUnchanged
-		}
-	}
+	// Resolve the settling signal type-path. Post-2026-05-23 the
+	// on_executor_complete handler's always_propagate /
+	// never_propagate / by_changed resolves retired with
+	// concept:lifecycle-handler — cascade-fire is subscriber-driven
+	// (per concept:signal). Selectivity on changed-vs-unchanged is now
+	// declared receiver-side via CEL `when: payload.changed`. Post-
+	// Pass 5 the run row carries settling_signal_type instead of the
+	// retired last_outcome enum.
+	settlingSig := "terminal/success"
 
 	// Validate the running → running parent transition under the
 	// subgraph_internal_cascade_fired reason is legal — the state
@@ -503,9 +494,9 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	// Record the transition reason on the run-tree row so the
 	// observability layer surfaces the cascade-fire. The run stays
-	// `running`; only the last_outcome moves.
+	// `running`; only the settling_signal_type moves.
 	if err := args.Persist.RunTree().UpdateStateAndOutcome(ctx, tx, acq.DispatchID,
-		cascade.NodeStateRunning, lastOutcome); err != nil {
+		cascade.NodeStateRunning, &settlingSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
 	// Sub-graph internal-cascade dispatch: for each non-entry internal
@@ -591,12 +582,12 @@ func applyTerminalCompleteSubgraphCaller(
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 		Kind: "subgraph_internal_cascade_fired",
 		Payload: map[string]any{
-			"delegate_graph":    acq.NodeDef.Delegate,
-			"calling_run_id":    acq.DispatchID.String(),
-			"last_outcome":      string(lastOutcome),
-			"changed":           t.Changed,
-			"transition_reason": cascade.ReasonSubGraphInternalCascadeFired.Kind,
-			"child_count":       len(internalNodes),
+			"delegate_graph":       acq.NodeDef.Delegate,
+			"calling_run_id":       acq.DispatchID.String(),
+			"settling_signal_type": settlingSig,
+			"changed":              t.Changed,
+			"transition_reason":    cascade.ReasonSubGraphInternalCascadeFired.Kind,
+			"child_count":          len(internalNodes),
 		},
 	}, tx); err != nil {
 		return nil, err
@@ -620,7 +611,7 @@ func applyTerminalCompleteSubgraphCaller(
 			"calling_run_id", acq.DispatchID.String(),
 			"node_type", acq.NodeType,
 			"delegate", acq.NodeDef.Delegate,
-			"last_outcome", string(lastOutcome))
+			"settling_signal_type", settlingSig)
 	}
 	// Post-commit: emit leaf-run lineage record for the sub-graph caller
 	// terminal. EmitLeafRunLineage opens its own tx so must run after
@@ -629,23 +620,23 @@ func applyTerminalCompleteSubgraphCaller(
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:       acq.InstanceID,
-			FrameID:          acq.FrameID,
-			RunID:            dispatchID,
-			NodeID:           acq.NodeID,
-			State:            string(cascade.NodeStateRunning),
-			LastOutcome:      string(lastOutcome),
-			Changed:          t.Changed,
-			TerminalKind:     "subgraph_call",
-			NodeAlias:        acq.NodeType,
-			ExecutorName:     acq.Executor,
-			TemplateHash:     acq.TemplateHash,
-			Params:           acq.InstanceParams,
-			AttributesMerged: acq.MergedAttributes,
-			HeldClaims:       HeldClaimsForLineage(acq),
-			ParentRunID:      scope.ParentRunID,
-			ChildKey:         scope.PartitionKey,
-			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			RunID:              dispatchID,
+			NodeID:             acq.NodeID,
+			State:              string(cascade.NodeStateRunning),
+			SettlingSignalType: settlingSig,
+			Changed:            t.Changed,
+			TerminalKind:       "subgraph_call",
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentRunID:        scope.ParentRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 	}
 	return post, nil
@@ -737,9 +728,22 @@ func applyTerminalCompleteSubgraphExit(
 		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load calling node: %w", err)
 	}
 	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
+		// Synthesize the calling-node's settlement signal so the
+		// subscriber-driven cascade walker can apply CEL predicates.
+		// The exit's writeback has just propagated to the parent, so
+		// the calling node is effectively terminal-success-changed
+		// from the perspective of its main-graph subscribers.
+		exitBridgeSig := signalpkg.Signal{
+			Type: signalpkg.TypePath("terminal/success"),
+			Payload: map[string]any{
+				"changed":          true,
+				"attributes_delta": orEmptyMap(merged),
+				"change_summary":   "subgraph_exit_carry",
+			},
+		}
 		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
 			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
-			acq.InstanceID, *callingNodeRow.FrameID); err != nil {
+			acq.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
 			return fmt.Errorf("applyTerminalCompleteSubgraphExit: cascade subscribers of calling node: %w", err)
 		}
 		// The wait-set rows the cascade walker just inserted are

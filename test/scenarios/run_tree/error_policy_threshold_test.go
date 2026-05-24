@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -19,12 +20,12 @@ import (
 func TestErrorPolicyThreshold_BelowMaxSucceeds(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 2})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("threshold should settle when all children terminal")
 	}
 	if res.ParentState != cascade.NodeStateFresh {
@@ -35,12 +36,12 @@ func TestErrorPolicyThreshold_BelowMaxSucceeds(t *testing.T) {
 func TestErrorPolicyThreshold_AtMaxFails(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 2})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("threshold should settle when all children terminal")
 	}
 	if res.ParentState != cascade.NodeStateFailed {
@@ -51,11 +52,11 @@ func TestErrorPolicyThreshold_AtMaxFails(t *testing.T) {
 func TestErrorPolicyThreshold_RunningChildStillBlocks(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 		{State: cascade.NodeStateRunning},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 5})
-	if res.IsTerminal {
+	if res.IsSettled {
 		t.Errorf("threshold must wait for all children to settle; got terminal=%s", res.ParentState)
 	}
 }

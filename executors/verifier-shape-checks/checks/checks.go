@@ -28,8 +28,10 @@ type Row = map[string]any
 
 // Result is the per-check outcome. The aggregator at the executor
 // boundary turns N results into a single StreamClose terminal: any
-// `Pass=false` → `Error{error_class: "verifier_failed"}`; otherwise
-// `Success{changed: false}` (verifiers do not mutate state).
+// `Pass=false` → `Error{error_class: "verifier/check_failed/<kind>"}`
+// (carrying the first failing check's `kind` suffix per
+// `concept:signal`); otherwise `Success{changed: false}` (verifiers do
+// not mutate state).
 type Result struct {
 	Kind    string
 	Pass    bool

@@ -22,7 +22,7 @@ import (
 //   - `from:` MUST name another node declared in the same template.
 //     Rejection class: holds_from_not_dependency (the upstream MUST
 //     be an upstream dependency of this node — declared via
-//     `subscribes:` with `on: state` from the same node).
+//     `subscribes:` with `type: terminal/*` from the same node).
 //   - The upstream node MUST declare the referenced claim alias in
 //     its `claims:` (NodeStoreRef) block. Rejection class:
 //     holds_unknown_claim_alias.

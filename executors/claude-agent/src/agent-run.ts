@@ -29,9 +29,11 @@ import { detectRateLimit } from "./rate-limit.js";
  *   the wire. `attributesDelta` is the terminal-final writeback (may be `null`
  *   when the executor used the incremental `attributes_set` callback path; the
  *   supervisor already has that data).
- * - `blocked`: maps to a StreamClose `Error{error_class:"executor_blocked"}`
+ * - `blocked`: maps to a StreamClose `Error{error_class:"agent/blocked"}`
  *   outcome on the wire (post-E.2 the pre-rename Blocked variant collapsed
- *   into Error with the reserved `executor_blocked` class).
+ *   into Error with the reserved `agent/blocked` class; 2026-05-23 the
+ *   class moved under the hierarchical `agent/*` prefix per the
+ *   signal-taxonomy spec).
  * - `errored`: maps to a StreamClose `Error{error_class}` outcome on the wire.
  *
  * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
@@ -116,7 +118,7 @@ export interface AgentRunOptions {
    * the executor reads `stores[<name>].handle.address` (which the
    * filesystem store fills with an absolute path) and uses it as the
    * spawned CLI's cwd. Validated as an existing directory before spawn;
-   * any mismatch errors as `invalid_cwd_from_store`.
+   * any mismatch errors as `agent/attribute_invalid`.
    */
   cwdFromStore?: string;
   /**
@@ -150,7 +152,7 @@ export interface AgentRunOptions {
      * validation failure. The executor returns "rejected" with the
      * validation errors to the agent's MCP call, the agent corrects
      * and retries; after this many failed retries the run terminates
-     * with a StreamClose `Error{error_class: "schema_validation_failed"}`
+     * with a StreamClose `Error{error_class: "agent/schema_violation"}`
      * outcome on the wire. Default 3.
      */
     maxSchemaCorrections?: number;
@@ -201,7 +203,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
     if (reason !== null) {
       return {
         kind: "errored",
-        errorClass: "invalid_attribute",
+        errorClass: "agent/attribute_invalid",
         payload: { reason },
       };
     }
@@ -243,7 +245,7 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
     if (typeof stubResponse !== "object" || stubResponse === null || Array.isArray(stubResponse)) {
       return {
         kind: "errored",
-        errorClass: "invalid_attribute",
+        errorClass: "agent/attribute_invalid",
         payload: { reason: `stub_response must be a JSON object, got ${typeof stubResponse}` },
       };
     }
@@ -306,7 +308,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   if (cwdResolution.kind === "error") {
     return {
       kind: "errored",
-      errorClass: "invalid_cwd_from_store",
+      errorClass: "agent/attribute_invalid",
       payload: { error: cwdResolution.message },
     };
   }
@@ -385,7 +387,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   if (schemaErrors.length > 0) {
     return {
       kind: "errored",
-      errorClass: "invalid_attributes_schema",
+      errorClass: "agent/attribute_invalid",
       payload: { errors: schemaErrors },
     };
   }
@@ -467,7 +469,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   // J8: track corrective `report_complete` retries. After more than
   // maxSchemaCorrections (default 3) consecutive validation failures,
   // the run terminates with a StreamClose `Error{error_class:
-  // "schema_validation_failed"}` outcome on the wire.
+  // "agent/schema_violation"}` outcome on the wire.
   const maxSchemaCorrections =
     typeof cliConfig?.maxSchemaCorrections === "number" && cliConfig.maxSchemaCorrections >= 0
       ? cliConfig.maxSchemaCorrections
@@ -495,7 +497,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         await teardownCli();
         safeResolve({
           kind: "errored",
-          errorClass: "schema_validation_failed",
+          errorClass: "agent/schema_violation",
           payload: {
             attempts: schemaCorrectionFailures,
             max: maxSchemaCorrections,
@@ -684,7 +686,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     void closeDispatchMcp();
     return {
       kind: "errored",
-      errorClass: "cli_spawn_failed",
+      errorClass: "agent/cli_spawn_failed",
       payload: { error: String(e) },
     };
   }
@@ -747,7 +749,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         teardownResolve();
         safeResolve({
           kind: "errored",
-          errorClass: "silence_timeout",
+          errorClass: "agent/timeout",
           payload: { silence_duration_ms: now - lastStdoutAt },
         });
         return;
@@ -898,7 +900,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         if (resolved) return; // retry's MCP callback fired — outcome already set
         safeResolve({
           kind: "errored",
-          errorClass: "subprocess_exit_before_complete",
+          errorClass: "agent/subprocess_exit/before_complete",
           payload: {
             exitCode: retryResult.exitCode,
             signal: retryResult.signal,
@@ -913,7 +915,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         );
         safeResolve({
           kind: "errored",
-          errorClass: "subprocess_exit_before_complete",
+          errorClass: "agent/subprocess_exit/before_complete",
           payload: { exitCode, signal, retry_failed: String(err) },
         });
         return;
@@ -922,7 +924,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
     safeResolve({
       kind: "errored",
-      errorClass: "subprocess_exit_before_complete",
+      errorClass: "agent/subprocess_exit/before_complete",
       payload: { exitCode, signal },
     });
   })();

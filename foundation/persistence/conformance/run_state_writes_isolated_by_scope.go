@@ -15,9 +15,9 @@
 // Methods covered:
 //   - Nodes().UpdateState
 //   - Nodes().UpdateHeartbeat
-//   - Nodes().ClearLastOutcome
+//   - Nodes().ClearSettlingSignalType
 //   - Nodes().ClearSupervisorAssignment
-//   - Nodes().ResetFailedTerminalLastOutcome
+//   - Nodes().ResetFailedTerminalSettlingSignalType
 //   - Queue().RemoveForNodeInTx
 //   - Queue().GetParkedByNode
 //   - Queue().SetRetryNoProgressForNodeInTx
@@ -115,13 +115,13 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 	return twoScopeFixture{fix: fix, scopeA: scopeA, scopeB: scopeB, runA: runA, runB: runB}
 }
 
-// readRunState reads the (state, last_outcome, phase, claimed_by) tuple
-// for a given run id via the RunTreeTable + Queue.GetByID. Used by the
-// per-method isolation assertions.
+// readRunState reads the (state, settling_signal_type, phase, claimed_by)
+// tuple for a given run id via the RunTreeTable + Queue.GetByID. Used
+// by the per-method isolation assertions.
 type runRowSnapshot struct {
-	State       cascade.NodeState
-	LastOutcome cascade.LastOutcome
-	ClaimedBy   string
+	State              cascade.NodeState
+	SettlingSignalType string
+	ClaimedBy          string
 }
 
 func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) runRowSnapshot {
@@ -136,7 +136,9 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 		}
 		if r != nil {
 			out.State = r.State
-			out.LastOutcome = r.LastOutcome
+			if r.SettlingSignalType != nil {
+				out.SettlingSignalType = *r.SettlingSignalType
+			}
 		}
 		return nil
 	}); err != nil {
@@ -162,7 +164,7 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateState(ctx, f.fix.NodeID, f.scopeA,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}); err != nil {
 		t.Fatalf("UpdateState(A): %v", err)
 	}
@@ -191,32 +193,35 @@ func testRunStateWritesIsolated_UpdateHeartbeat(t *testing.T, d persistence.Data
 	}
 }
 
-// testRunStateWritesIsolated_ClearLastOutcome: first seed both runs
-// with a last_outcome, then clear scope A's; assert scope B's untouched.
-func testRunStateWritesIsolated_ClearLastOutcome(t *testing.T, d persistence.Database) {
+// testRunStateWritesIsolated_ClearSettlingSignalType: first seed both
+// runs with a settling_signal_type, then clear scope A's; assert scope
+// B's untouched.
+func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 
-	// Seed both runs with a known last_outcome via RunTree.UpdateStateAndOutcome.
+	// Seed both runs with a known settling_signal_type via
+	// RunTree.UpdateStateAndOutcome.
+	successSig := "terminal/success"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged); err != nil {
+		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig); err != nil {
 			return err
 		}
-		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged)
+		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFresh, &successSig)
 	}); err != nil {
-		t.Fatalf("seed last_outcome: %v", err)
+		t.Fatalf("seed settling_signal_type: %v", err)
 	}
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().ClearLastOutcome(ctx, f.fix.NodeID, f.scopeA, tx)
+		return store.Nodes().ClearSettlingSignalType(ctx, f.fix.NodeID, f.scopeA, tx)
 	}); err != nil {
-		t.Fatalf("ClearLastOutcome(A): %v", err)
+		t.Fatalf("ClearSettlingSignalType(A): %v", err)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
-	if before.LastOutcome != after.LastOutcome {
-		t.Fatalf("ClearLastOutcome leaked across scope: B.LastOutcome before=%q after=%q",
-			before.LastOutcome, after.LastOutcome)
+	if before.SettlingSignalType != after.SettlingSignalType {
+		t.Fatalf("ClearSettlingSignalType leaked across scope: B.SettlingSignalType before=%q after=%q",
+			before.SettlingSignalType, after.SettlingSignalType)
 	}
 }
 
@@ -249,31 +254,32 @@ func testRunStateWritesIsolated_ClearSupervisorAssignment(t *testing.T, d persis
 	}
 }
 
-// testRunStateWritesIsolated_ResetFailedTerminalLastOutcome.
-func testRunStateWritesIsolated_ResetFailedTerminalLastOutcome(t *testing.T, d persistence.Database) {
+// testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType.
+func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 
-	// Seed both runs with a failed last_outcome.
+	// Seed both runs with a failed settling signal type-path.
+	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
+		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig); err != nil {
 			return err
 		}
-		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, cascade.LastOutcomeFailed)
+		return store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runB, cascade.NodeStateFailed, &failedSig)
 	}); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().ResetFailedTerminalLastOutcome(ctx, f.fix.NodeID, f.scopeA, tx)
+		return store.Nodes().ResetFailedTerminalSettlingSignalType(ctx, f.fix.NodeID, f.scopeA, tx)
 	}); err != nil {
-		t.Fatalf("ResetFailedTerminalLastOutcome(A): %v", err)
+		t.Fatalf("ResetFailedTerminalSettlingSignalType(A): %v", err)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
-	if before.LastOutcome != after.LastOutcome {
-		t.Fatalf("ResetFailedTerminalLastOutcome leaked across scope: B before=%q after=%q",
-			before.LastOutcome, after.LastOutcome)
+	if before.SettlingSignalType != after.SettlingSignalType {
+		t.Fatalf("ResetFailedTerminalSettlingSignalType leaked across scope: B before=%q after=%q",
+			before.SettlingSignalType, after.SettlingSignalType)
 	}
 }
 

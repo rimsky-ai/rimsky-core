@@ -53,10 +53,11 @@ type ClaimHolderTable interface {
 	CompleteByClaimHandleAndRun(ctx context.Context, claimHandleID, holderRunID shared.UUID, state ClaimHolderState, tx Tx) error
 	// FailAllActiveByClaimHandle marks every still-'active' row for the
 	// given claim_handle as 'failed'. Used by the held-claim
-	// acquirer-failure path (on_executor_errored: pass /
-	// on_acquire_unavailable: error) so auto-terminal can fire
-	// immediately rather than waiting for inheritors that will never
-	// reach a terminal — the acquirer's failure means the held subgraph
+	// acquirer-failure path (operator-declared `error_types:` chain
+	// resolving give_up for an executor Error or for synthetic
+	// `acquire/unavailable`) so auto-terminal can fire immediately
+	// rather than waiting for inheritors that will never reach a
+	// terminal — the acquirer's failure means the held subgraph
 	// aborts.
 	//
 	// Claimant-guarded per blessed-invariant 4: the UPDATE applies only

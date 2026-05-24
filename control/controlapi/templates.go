@@ -119,11 +119,15 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 	}
 	if deps.ExecutorCapabilities != nil {
 		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
-			events, _, ok := deps.ExecutorCapabilities(name)
+			events, _, _, ok := deps.ExecutorCapabilities(name)
 			return events, ok
 		}
+		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
+			_, classes, _, ok := deps.ExecutorCapabilities(name)
+			return classes, ok
+		}
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
-			_, schema, ok := deps.ExecutorCapabilities(name)
+			_, _, schema, ok := deps.ExecutorCapabilities(name)
 			return schema, ok
 		}
 	}
@@ -193,7 +197,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		var execSchemaLookup runtime.ExpectedAttributesSchemaLookup
 		if deps.ExecutorCapabilities != nil {
 			execSchemaLookup = func(executor string) ([]byte, bool) {
-				_, schema, ok := deps.ExecutorCapabilities(executor)
+				_, _, schema, ok := deps.ExecutorCapabilities(executor)
 				if !ok || len(schema) == 0 {
 					return nil, false
 				}

@@ -315,7 +315,7 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 			{Type: "b", Executor: "stub", Attributes: &nodepkg.NodeAttributesDef{Schema: mkSchema("b_value")}},
 			{
 				Type: "c", Executor: "stub",
-				Subscribes: []nodepkg.SubscriptionEntry{{Node: "a", On: "state"}},
+				Subscribes: []nodepkg.SubscriptionEntry{{Node: "a", Type: "terminal/*"}},
 				Attributes: &nodepkg.NodeAttributesDef{Schema: cSchema},
 			},
 		},

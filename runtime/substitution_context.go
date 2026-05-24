@@ -26,25 +26,44 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
 )
 
-// settledSuccessOutcomes is the set of last_outcome values that count
-// as "settled success" for substitution-context reads. Failed senders
-// (last_outcome='failed') are excluded; their attribute rows are not
-// consumed by downstream substitution. Parked senders are filtered by
-// the same check: parked terminals drain the wait-set (via
-// drainWaitSetOnSettled in runtime/runner_terminal.go, also called
-// from runtime/runner_terminal_park.go and runtime/runner_error_policy.go)
-// but leave last_outcome empty per the park-has-no-outcome convention,
-// so they fail this set-membership check. The filter is by outcome
-// only and works uniformly for failed and parked senders.
-var settledSuccessOutcomes = map[string]struct{}{
-	"fresh_changed":   {},
-	"fresh_unchanged": {},
-	"passed":          {},
-	"pure_cascade":    {},
+// isSettledForSubstitution reports whether the sender run is settled
+// fresh-color so its attribute rows are visible to downstream
+// substitution. Replaces the pre-Pass-5 settledSuccessOutcomes set
+// lookup over the retired LastOutcome enum.
+//
+// Per Pass 3 of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design
+// both `give_up` and `pass` settle with `settling_signal_type =
+// terminal/error/<class>`; they differ at settle-time by Color
+// (`give_up` lands failed, `pass` lands fresh). The state-machine state
+// is therefore the load-bearing discriminator — state == fresh accepts
+// the substitution regardless of the signal type-path's color
+// implication. Failed senders (state == failed) are excluded; their
+// attribute rows are not consumed by downstream substitution. Parked
+// senders (state == parked) are filtered by the same check. Runs that
+// have not yet settled (state == stale | running) are also excluded.
+//
+//	@concept: signal
+//	@concept: node-run
+func isSettledForSubstitution(senderRun *persistence.RunTreeRow) bool {
+	if senderRun == nil {
+		return false
+	}
+	if senderRun.State != cascade.NodeStateFresh {
+		return false
+	}
+	// Pre-Pass-5 the gate also required a non-empty settled-success
+	// LastOutcome to exclude the "freshly-created, never-dispatched"
+	// run row from being treated as settled. Under Pass 5, settled-
+	// fresh runs always carry a non-nil settling_signal_type (writes
+	// land via UpdateState / UpdateStateAndOutcome with a non-nil
+	// pointer). Nil pointer means "fresh from initial creation, never
+	// ran" — not a substitution source.
+	return senderRun.SettlingSignalType != nil
 }
 
 // BuildAttributeDeps assembles the substitution context's Deps map for
@@ -56,9 +75,9 @@ var settledSuccessOutcomes = map[string]struct{}{
 //     filtered to topic_kind='attribute', ordered by (drained_at,
 //     sender_run_id).
 //  2. For each contributing sender_run_id, check the sender's
-//     last_outcome (via RunTree().GetByID); skip non-settled-success
-//     senders. Fetch the attribute row via GetByRun. Map by sender's
-//     node-type.
+//     SettlingSignalType (via RunTree().GetByID); skip non-settled-
+//     success senders. Fetch the attribute row via GetByRun. Map by
+//     sender's node-type.
 //  3. Senders not in the drained set are absent — the substitution
 //     engine returns ErrMissingSource for them.
 //
@@ -108,7 +127,7 @@ func BuildAttributeDeps(
 			}
 			continue
 		}
-		if _, ok := settledSuccessOutcomes[string(senderRun.LastOutcome)]; !ok {
+		if !isSettledForSubstitution(senderRun) {
 			continue
 		}
 		// "Row missing" and "row present, empty data" are two distinct

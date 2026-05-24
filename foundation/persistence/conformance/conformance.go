@@ -93,9 +93,9 @@ func Suite(
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
 		t.Run("UpdateHeartbeat", func(t *testing.T) { testRunStateWritesIsolated_UpdateHeartbeat(t, factory(t)) })
-		t.Run("ClearLastOutcome", func(t *testing.T) { testRunStateWritesIsolated_ClearLastOutcome(t, factory(t)) })
+		t.Run("ClearSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ClearSettlingSignalType(t, factory(t)) })
 		t.Run("ClearSupervisorAssignment", func(t *testing.T) { testRunStateWritesIsolated_ClearSupervisorAssignment(t, factory(t)) })
-		t.Run("ResetFailedTerminalLastOutcome", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalLastOutcome(t, factory(t)) })
+		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
 		t.Run("GetParkedByNode", func(t *testing.T) { testRunStateWritesIsolated_GetParkedByNode(t, factory(t)) })
 		t.Run("SetRetryNoProgressForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t, factory(t)) })

@@ -29,26 +29,6 @@ const (
 	NodeStateParked  NodeState = "parked"
 )
 
-// LastOutcome is the resolution flavor recorded on rimsky_nodes for
-// terminal-for-this-frame transitions. Distinct from NodeState; the
-// node's state machine is unchanged. last_outcome lives on the
-// rimsky_nodes row alongside state and is written by the same
-// transition that lands the node in fresh or failed.
-//
-// Values are persisted as TEXT under both Postgres and SQLite. NULL
-// means "no outcome recorded yet" (legacy fresh nodes pre-migration).
-//
-// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §2.2.
-type LastOutcome string
-
-const (
-	LastOutcomeFreshChanged   LastOutcome = "fresh_changed"
-	LastOutcomeFreshUnchanged LastOutcome = "fresh_unchanged"
-	LastOutcomePassed         LastOutcome = "passed"
-	LastOutcomePureCascade    LastOutcome = "pure_cascade"
-	LastOutcomeFailed         LastOutcome = "failed"
-)
-
 // ErrIllegalTransition is the sentinel returned by NextState when a state
 // transition is not in the spec §4.1 transition table. blessed-invariant
 // (§17): NextState never silently accepts an illegal transition.
@@ -56,11 +36,11 @@ var ErrIllegalTransition = errors.New("illegal state transition")
 
 // @concept: transition-reason
 //
-// Audit-grade enum carried on every node-state transition. Sibling to
-// `last_outcome` (see `.ok-planner/design/concepts/transition-reason.md`
-// Relationship section for the pairing table). The cascade-fire predicate
-// reads `last_outcome`, not `transition_reason` — the two enums describe
-// different facets of the same transition.
+// Audit-grade enum carried on every node-state transition. Identifies
+// WHY a state transition was requested. The cascade-fire predicate is
+// purely subscriber-driven post-2026-05-23 (subscription-edge match +
+// CEL `when:` predicate over the emitted signal); `transition_reason`
+// is no longer consulted by cascade-fire and lives strictly as audit.
 //
 // TransitionReason identifies WHY a state transition was requested. Preserved
 // from TS v1's discriminated union plus the Go port's `pure_cascade` addition.
@@ -72,7 +52,11 @@ var (
 	ReasonInvalidateReceived = TransitionReason{Kind: "invalidate_received"}
 	ReasonDispatchClaimed    = TransitionReason{Kind: "dispatch_claimed"}
 	ReasonPolicyRetry        = TransitionReason{Kind: "policy_retry"}
-	ReasonPolicyInvalidate   = TransitionReason{Kind: "policy_invalidate"}
+	// ReasonPolicyInvalidate retired 2026-05-23 alongside the
+	// `invalidate` ErrorPolicy action (retired 2026-05-14). The 4-value
+	// ErrorPolicy vocabulary (pass | give_up | retry |
+	// discard_claims_then_retry) has no invalidate verb; receivers
+	// declare cascade coupling via SubscriptionEntry.
 	ReasonPolicyGiveUp       = TransitionReason{Kind: "policy_give_up"}
 	ReasonOperatorReset      = TransitionReason{Kind: "operator_reset"}
 	ReasonOperatorInvalidate = TransitionReason{Kind: "operator_invalidate"}
@@ -95,20 +79,27 @@ var (
 	// honestly.
 	ReasonDispatchImpossible = TransitionReason{Kind: "dispatch_impossible"}
 
-	// ReasonAcquirePass — stale → fresh, last_outcome=passed.
-	// on_acquire_unavailable handler resolved pass; the node transitions
-	// without invoking the executor and without firing the cascade.
+	// ReasonAcquirePass — stale → fresh, settling_signal_type
+	// carries the canonical `terminal/error/<class>` envelope.
+	// Fired when the operator's `error_types:` chain for the synthetic
+	// `acquire/unavailable` class resolves `pass` (pre-dispatch
+	// acquisition failure absolved by template policy); the node
+	// transitions without invoking the executor and without firing
+	// the cascade.
 	ReasonAcquirePass = TransitionReason{Kind: "acquire_pass"}
 
-	// ReasonHandlerComplete — running → fresh. Fired when the
-	// on_executor_complete handler resolves the terminal verdict.
+	// ReasonHandlerComplete — running → fresh. Fired by the runtime
+	// after the executor's Success terminal verdict has been applied
+	// (the pre-2026-05-23 lifecycle-handler slot retired; the
+	// transition is now driven directly by the terminal-handler in
+	// `runtime/runner_terminal.go::applyTerminalComplete`).
 	ReasonHandlerComplete = TransitionReason{Kind: "handler_complete"}
 
 	// ReasonHandlerError — RESERVED NEGATIVE. The state machine
 	// deliberately does NOT accept this reason as a direct transition
-	// trigger; the on_executor_errored handler must route through the
-	// error_types policy chain and emit one of policy_retry /
-	// policy_invalidate / policy_give_up.
+	// trigger; an executor Error terminal must route through the
+	// operator's `error_types:` policy chain and resolve to one of
+	// policy_retry / policy_give_up.
 	//
 	// The constant exists so this rejection is encoded in the
 	// transition-reason vocabulary and pinned by a negative test
@@ -122,9 +113,12 @@ var (
 	// to one of the existing accepted reasons, not to relax NextState.
 	ReasonHandlerError = TransitionReason{Kind: "handler_error"}
 
-	// ReasonHandlerPass — running → fresh, last_outcome=passed.
-	// on_executor_errored handler resolved pass (template explicitly
-	// opts to ignore the terminal).
+	// ReasonHandlerPass — running → fresh, settling_signal_type
+	// carries the canonical `terminal/error/<class>` envelope. Fired
+	// when the operator's `error_types:` chain for an executor Error
+	// resolves `pass` (template explicitly opts to ignore the
+	// terminal). The chain advances so a subsequent same-class error
+	// doesn't pass again.
 	ReasonHandlerPass = TransitionReason{Kind: "handler_pass"}
 
 	// ReasonHandlerPark — running → parked.
@@ -145,8 +139,9 @@ var (
 
 	// ReasonParkTimeout — parked → failed.
 	// The watchdog observed parked_at + max_park_duration ≤ now and
-	// transitioned the node to failed with last_outcome=failed and
-	// error_class="park_timeout".
+	// transitioned the node to failed with
+	// settling_signal_type=terminal/error/park_timeout (carrying
+	// error_class="park_timeout" in the payload).
 	ReasonParkTimeout = TransitionReason{Kind: "park_timeout"}
 
 	// ReasonChildTransitioned — parent-run-only. Fired by the
@@ -228,12 +223,12 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateParked, nil
 		}
 		// handler_error transitions follow the policy chain; expressed as
-		// policy_retry / policy_invalidate / policy_give_up at the call site
-		// after the policy chain resolves. ReasonHandlerError itself is
-		// NOT a direct NextState input — see its docstring for why it's
-		// reserved-negative.
+		// policy_retry / policy_give_up at the call site after the
+		// policy chain resolves. ReasonHandlerError itself is NOT a
+		// direct NextState input — see its docstring for why it's
+		// reserved-negative. The `policy_invalidate` reason retired
+		// 2026-05-23 alongside the `invalidate` ErrorPolicy action.
 		if reason.Kind == "policy_retry" ||
-			reason.Kind == "policy_invalidate" ||
 			reason.Kind == "heartbeat_lost" ||
 			reason.Kind == "infra_reenqueue" {
 			return NodeStateStale, nil

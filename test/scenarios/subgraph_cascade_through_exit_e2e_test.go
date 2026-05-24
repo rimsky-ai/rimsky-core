@@ -64,7 +64,7 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 					// exit carry-rule transitions the caller's state.
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "downstream", Executor: "stub",
-							Subscribes: []tmplspec.SubscriptionEntry{{Node: "caller", On: "state"}},
+							Subscribes: []tmplspec.SubscriptionEntry{{Node: "caller", Type: "terminal/*"}},
 						},
 						openAttrs,
 					),
@@ -81,7 +81,7 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 					),
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "inner-exit", Executor: "stub",
-							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", On: "state"}},
+							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*"}},
 						},
 						openAttrs,
 					),

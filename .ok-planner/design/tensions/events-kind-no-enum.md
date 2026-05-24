@@ -28,3 +28,6 @@ Observability blind spots accumulate silently. A future "kind catalog" tool can'
 
 - `_discover/2026-05-10-event-log-append-only-jsonb.md` Observations bullets 2-3.
 
+## Notes
+
+- 2026-05-23 — Partially addressed by spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design. Node-run-transition `kind` values are now standardized under the signal type-path taxonomy (`concept:signal`): `terminal/*`, `transient/*`, `attribute/*`, `event/*`, `message/*`, validated at registration. Non-signal audit kinds (`state_transition`, `lock_acquired`, `work_started`, `attributes_substituted`, `auth.*`, etc.) remain free-form `TEXT`; a separate spec would need to taxonomize them. Tension does not move to `_resolved/`.

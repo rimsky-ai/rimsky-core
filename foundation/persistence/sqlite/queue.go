@@ -329,8 +329,8 @@ func (q *queueImpl) ClaimDispatchRow(
 // Complete retires the in-flight run row identified by dispatchID. Post-
 // stage-1 lifecycle flip: flips phase to a terminal value rather than
 // deleting the row so frame-end / retention / run-tree aggregation can
-// read the terminal `state` / `last_outcome` after the active phase
-// closes. See the postgres impl for the full rationale.
+// read the terminal `state` / `settling_signal_type` after the active
+// phase closes. See the postgres impl for the full rationale.
 func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error {
 	now := nowUTC()
 	if expectedClaimedBy != "" {

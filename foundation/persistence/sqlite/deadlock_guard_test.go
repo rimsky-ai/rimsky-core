@@ -215,7 +215,7 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 			_, _ = store.Nodes().CountByState(ctx, nil)
 		}},
 		{"Nodes.UpdateState", func() {
-			_ = store.Nodes().UpdateState(ctx, someID, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, "", nil)
+			_ = store.Nodes().UpdateState(ctx, someID, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, nil, nil)
 		}},
 		{"Nodes.UpdateHeartbeat", func() {
 			_ = store.Nodes().UpdateHeartbeat(ctx, someID, someID, time.Now(), "sup", nil)
@@ -226,8 +226,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Nodes.ClearSupervisorAssignment", func() {
 			_ = store.Nodes().ClearSupervisorAssignment(ctx, someID, someID, nil)
 		}},
-		{"Nodes.ClearLastOutcome", func() {
-			_ = store.Nodes().ClearLastOutcome(ctx, someID, someID, nil)
+		{"Nodes.ClearSettlingSignalType", func() {
+			_ = store.Nodes().ClearSettlingSignalType(ctx, someID, someID, nil)
 		}},
 		{"Nodes.DeleteByInstance", func() {
 			_ = store.Nodes().DeleteByInstance(ctx, someID, nil)

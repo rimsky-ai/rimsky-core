@@ -47,7 +47,7 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 				Executor: "stub",
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "event", Name: "ready"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-on-event-stream", map[string]any{})
@@ -59,9 +59,12 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
-	// Wait for the named-event audit log on A.
-	require.True(t, h.WaitForEventKind(a.ID, "named_event_emitted", 10*time.Second),
-		"named_event_emitted audit row should exist for A")
+	// Wait for the named-event signal-shaped audit row on A. Per Pass 5
+	// of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design
+	// the legacy `named_event_emitted` fixed-string row retired in
+	// favor of the `event/<name>` signal type-path.
+	require.True(t, h.WaitForEventKind(a.ID, "event/ready", 10*time.Second),
+		"event/ready signal row should exist for A")
 
 	// Verify the rimsky_node_events ledger row exists and carries the
 	// payload bytes.

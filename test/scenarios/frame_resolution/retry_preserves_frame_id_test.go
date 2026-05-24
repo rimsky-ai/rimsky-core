@@ -95,7 +95,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 	// ReasonPolicyRetry) must preserve the node-row frame_id.
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		return h.Persist.Nodes().UpdateState(h.Ctx,
-			worker.ID, h.GetMainRunScopeID(iid), "stale", cascade.ReasonPolicyRetry, "", tx)
+			worker.ID, h.GetMainRunScopeID(iid), "stale", cascade.ReasonPolicyRetry, nil, tx)
 	}))
 
 	// Re-read frame_id; it must still be set.

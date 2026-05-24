@@ -52,7 +52,10 @@ func TestHappyPathExecutor(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// Verify a commit (or work_completed) event was appended.
+	// Verify a terminal/success signal event was appended. Per Pass 5
+	// the canonical audit row for a settled-fresh terminal is the
+	// signal type-path; the legacy `work_completed` fixed-string row
+	// retired.
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -63,12 +66,12 @@ func TestHappyPathExecutor(t *testing.T) {
 	}))
 	var sawCompleted bool
 	for _, e := range evs.Events {
-		if e.Kind == "work_completed" {
+		if e.Kind == "terminal/success" {
 			sawCompleted = true
 			break
 		}
 	}
-	require.True(t, sawCompleted, "expected work_completed event")
+	require.True(t, sawCompleted, "expected terminal/success signal event")
 
 	// Verify the executor's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for

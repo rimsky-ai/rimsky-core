@@ -212,7 +212,7 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
 					{Type: "orphan"}, // no subscriptions; unreachable
-					{Type: "z", Subscribes: []SubscriptionEntry{{Node: "a", On: "state"}}},
+					{Type: "z", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -237,8 +237,8 @@ func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 				Exit:  "c",
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
-					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", On: "state"}}},
-					{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", On: "state"}}},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*"}}},
+					{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -270,7 +270,7 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 				Exit:  "g1x",
 				Nodes: []TemplateNodeDef{
 					{Type: "g1n", Delegate: "g2"},
-					{Type: "g1x", Subscribes: []SubscriptionEntry{{Node: "g1n", On: "state"}}},
+					{Type: "g1x", Subscribes: []SubscriptionEntry{{Node: "g1n", Type: "terminal/*"}}},
 				},
 			},
 			{
@@ -279,7 +279,7 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 				Exit:  "g2x",
 				Nodes: []TemplateNodeDef{
 					{Type: "g2n", Delegate: "g1"}, // cycle: g1 -> g2 -> g1
-					{Type: "g2x", Subscribes: []SubscriptionEntry{{Node: "g2n", On: "state"}}},
+					{Type: "g2x", Subscribes: []SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -309,7 +309,7 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 				Exit:  "b",
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
-					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "outer", On: "state"}}},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "outer", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -332,7 +332,7 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 				Name:  "sub",
 				Entry: "shared", // collision
 				Exit:  "b",
-				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", On: "state"}}}},
+				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", Type: "terminal/*"}}}},
 			},
 		},
 	}
@@ -365,7 +365,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -414,7 +414,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -455,11 +455,11 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 		FrameResolutionMode: FrameResolutionCoalesce,
 		Nodes: []TemplateNodeDef{
 			{Type: "alpha", Executor: "stub"},
-			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", On: "state"}}},
+			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", Type: "terminal/*"}}},
 			// A node literally named "exit" — the marker is keyed on
 			// `graphs[i].Exit`, not on the type name, so even this node
 			// must stay unmarked under flat shape.
-			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", On: "state"}}},
+			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", Type: "terminal/*"}}},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
@@ -494,8 +494,8 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "transform", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "transform", On: "state"}}},
+					{Type: "transform", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -552,7 +552,7 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", On: "state"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 				},
 			},
 		},

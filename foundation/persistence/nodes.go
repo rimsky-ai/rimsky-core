@@ -22,18 +22,24 @@ import (
 // runtime/subscription_loaders.go::resolveSubscribedSenders); the
 // retired column is no longer surfaced on the row type.
 type NodeRow struct {
-	ID                   shared.UUID         `json:"id"`
-	InstanceID           shared.UUID         `json:"instance_id"`
-	NodeType             string              `json:"node_type"`
-	Executor             string              `json:"executor"`
-	State                cascade.NodeState   `json:"state"`
-	LastOutcome          cascade.LastOutcome `json:"last_outcome,omitempty"`
-	CurrentErrorClass    string              `json:"current_error_class,omitempty"`
-	RetryCounter         int                 `json:"retry_counter"`
-	ActionIndex          int                 `json:"action_index"`
-	LastHeartbeatAt      *time.Time          `json:"last_heartbeat_at,omitempty"`
-	AssignedSupervisorID string              `json:"assigned_supervisor_id,omitempty"`
-	FrameID              *shared.UUID        `json:"frame_id,omitempty"`
+	ID         shared.UUID       `json:"id"`
+	InstanceID shared.UUID       `json:"instance_id"`
+	NodeType   string            `json:"node_type"`
+	Executor   string            `json:"executor"`
+	State      cascade.NodeState `json:"state"`
+	// SettlingSignalType carries the canonical signal type-path
+	// (concept:signal) of the run's settling resolution
+	// (terminal/success, terminal/error/<class>, terminal/park/<reason>,
+	// terminal/infra/<reason>). Nil-pointer while the run is in-flight.
+	// Replaces the retired LastOutcome enum post-Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	SettlingSignalType   *string      `json:"settling_signal_type,omitempty"`
+	CurrentErrorClass    string       `json:"current_error_class,omitempty"`
+	RetryCounter         int          `json:"retry_counter"`
+	ActionIndex          int          `json:"action_index"`
+	LastHeartbeatAt      *time.Time   `json:"last_heartbeat_at,omitempty"`
+	AssignedSupervisorID string       `json:"assigned_supervisor_id,omitempty"`
+	FrameID              *shared.UUID `json:"frame_id,omitempty"`
 	// Tags is operator-facing metadata projected from the bound
 	// template's `TemplateNodeDef.Tags` at instance creation, after
 	// materialization-time `{{params.<key>}}` substitution. Per spec
@@ -110,12 +116,15 @@ type NodeTable interface {
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)
 	// UpdateState transitions the node to `state` under `reason`, validated
-	// against the cascade state machine. `lastOutcome` is the resolution
-	// flavor for terminal-for-this-frame transitions; the empty string
-	// "" means "do not write the column" (preserves the existing value).
-	// See graph/shared/types.go for LastOutcome values.
+	// against the cascade state machine. `settlingSignalType` is the
+	// canonical signal type-path (concept:signal) recorded on settling
+	// transitions; nil means "do not write the column" (preserves the
+	// existing value — used for non-settling transitions like
+	// stale→running). Settling transitions pass a non-nil pointer holding
+	// one of "terminal/success" | "terminal/error/<class>" |
+	// "terminal/park/<reason>" | "terminal/infra/<reason>".
 	//
-	// `runID` disambiguates which in-flight rimsky_node_runs row to
+	// `runScopeID` disambiguates which in-flight rimsky_node_runs row to
 	// transition. Fan-out children share a node_id with the parent and
 	// each sibling (per `runtime/fanout_dispatch.go::PlanFanOutChildren`
 	// and the split UNIQUE constraints in
@@ -123,15 +132,11 @@ type NodeTable interface {
 	// so a SELECT by node_id alone can return any of the in-flight rows
 	// while children race. Callers in the dispatch path
 	// (transitionToRunning, terminal handlers, error policy, parked
-	// sweep, parked wake) MUST pass the specific run's id — typically
-	// `acq.DispatchID` / `cand.DispatchID` / the parked row's
-	// `DispatchID` — so the state-machine update lands on the intended
-	// row. A nil `runID` preserves the legacy by-node lookup for
-	// operator paths and single-instance scenarios where no in-flight
-	// ambiguity exists. See spec
+	// sweep, parked wake) MUST pass the specific run's RunScope — so the
+	// state-machine update lands on the intended row. See spec
 	// .ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md
 	// for the bug that motivated this disambiguation.
-	UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, lastOutcome cascade.LastOutcome, tx Tx) error
+	UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx Tx) error
 	UpdateError(ctx context.Context, id shared.UUID, es spec.EvaluatorState, tx Tx) error
 	// UpdateHeartbeat refreshes the in-flight run row's last_heartbeat_at
 	// and (when supervisorID is non-empty) stamps claimed_by. `runID`
@@ -143,37 +148,33 @@ type NodeTable interface {
 	// don't face fan-out ambiguity.
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, runScopeID shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
-	// ClearLastOutcome resets last_outcome to the column default
-	// 'fresh_unchanged' on the in-flight rimsky_node_runs row. The
-	// column is `NOT NULL DEFAULT 'fresh_unchanged'`, so the reset is a
-	// stamp rather than a NULL — keeps the value within the CHECK
-	// constraint while still clearing the stale `failed` flavor that
-	// the dashboard would otherwise display through the
-	// stale → running → fresh transition. Used by the operator reset
-	// path.
+	// ClearSettlingSignalType clears settling_signal_type to NULL on the
+	// in-flight rimsky_node_runs row. Used by the operator reset path so
+	// the dashboard does not display a stale failed signal-type-path
+	// while the node transitions back through stale → running → fresh.
+	// No-op when no in-flight row exists.
 	//
-	// `runID` (when non-nil) narrows the UPDATE to that specific
-	// in-flight row — required for fan-out children that share a
-	// node_id with siblings, to prevent the clear from landing on an
-	// arbitrary sibling. Nil `runID` preserves the legacy by-node-id
-	// update for operator paths (e.g. handleResetNode on a failed node
-	// where no in-flight row exists). See the matching contract on
-	// UpdateState for the fan-out rationale.
-	ClearLastOutcome(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
-	// ResetFailedTerminalLastOutcome stamps last_outcome = 'fresh_unchanged'
-	// on the most-recent failed-terminal `rimsky_node_runs` row for the
-	// given node (predicate `phase = 'failed'`, ordered by
+	// `runScopeID` narrows the UPDATE to the specific in-flight row —
+	// required for fan-out children that share a node_id with siblings,
+	// to prevent the clear from landing on an arbitrary sibling.
+	//
+	// Replaces the retired ClearLastOutcome alongside Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	ClearSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
+	// ResetFailedTerminalSettlingSignalType clears settling_signal_type
+	// to NULL on the most-recent failed-terminal `rimsky_node_runs` row
+	// for the given node (predicate `phase = 'failed'`, ordered by
 	// `active_terminal_at DESC LIMIT 1`). Used by the operator reset
 	// path: handleResetNode is invoked when the node is in state='failed',
 	// which means the only state-bearing row is the failed-terminal row
-	// (no in-flight row exists); ClearLastOutcome's `phase IN
+	// (no in-flight row exists); ClearSettlingSignalType's `phase IN
 	// (pending,active,held,parked)` predicate would therefore be a no-op.
-	// This method targets the right row so the dashboard's
-	// nodeSelect-LATERAL projection (which surfaces the failed-terminal
-	// row's last_outcome when no in-flight row exists) reflects the reset.
 	//
 	// No-op when no failed-terminal row exists.
-	ResetFailedTerminalLastOutcome(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
+	//
+	// Replaces the retired ResetFailedTerminalLastOutcome alongside
+	// Pass 5 of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	ResetFailedTerminalSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 
 	// GetFailedTerminalRunScopeID returns the run_scope_id of the
 	// most-recent failed-terminal `rimsky_node_runs` row for the node
@@ -182,9 +183,10 @@ type NodeTable interface {
 	// Returns nil when no failed-terminal row exists.
 	//
 	// Used by the operator reset path so the failed-terminal
-	// last_outcome reset can key on the correct RunScope without
-	// requiring the caller to know it in advance — NodeRow.RunScopeID
-	// surfaces only the in-flight scope and is nil for a failed node.
+	// settling_signal_type reset can key on the correct RunScope
+	// without requiring the caller to know it in advance —
+	// NodeRow.RunScopeID surfaces only the in-flight scope and is
+	// nil for a failed node.
 	//
 	// @concept: run-scope
 	GetFailedTerminalRunScopeID(ctx context.Context, id shared.UUID, tx Tx) (*shared.UUID, error)
@@ -230,6 +232,16 @@ type NodeTable interface {
 	//
 	// @concept: run-scope
 	AffirmNodeRunRow(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, frameID shared.UUID, tx Tx) error
+
+	// HasRunForNodeInFrame reports whether ANY rimsky_node_runs row
+	// (regardless of phase) exists for `nodeID` with `frame_id =
+	// frameID`. Used by the cascade walker's once-per-frame guard so
+	// a receiver that has already dispatched + terminated within a
+	// frame is not re-affirmed by a later sender's cascade in the
+	// same frame.
+	//
+	// @concept: signal
+	HasRunForNodeInFrame(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (bool, error)
 
 	// GetRunByDispatchIDForUpdate returns the in-flight rimsky_node_runs
 	// row projection for the given dispatch_id, with SELECT ... FOR UPDATE

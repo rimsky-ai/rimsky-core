@@ -72,6 +72,11 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	}
 	if cfg.EnableExecutor {
 		genv1.RegisterExecutorServer(grpcSrv, NewExecutorServer(st))
+		// 2026-05-23 signal-taxonomy Pass 6: surface the verifier
+		// executor's hierarchical error vocabulary via the executor
+		// observability handshake so operator templates'
+		// `error_types:` keys can be range-checked at registration.
+		genv1.RegisterExecutorObservabilityServer(grpcSrv, NewExecutorObservabilityServer())
 	}
 	obsSrv := srv.RegisterObservability(grpcSrv)
 	obsSrv.SetHTTPBridgeURL(cfg.HTTPBridgeURL)

@@ -13,11 +13,13 @@ import (
 
 // allReasons enumerates every TransitionReason the state machine knows about.
 // The table-driven test uses this to check every (from, reason) pair.
+//
+// ReasonPolicyInvalidate retired 2026-05-23 alongside the `invalidate`
+// ErrorPolicy action; not in this list anymore.
 var allReasons = []TransitionReason{
 	ReasonInvalidateReceived,
 	ReasonDispatchClaimed,
 	ReasonPolicyRetry,
-	ReasonPolicyInvalidate,
 	ReasonPolicyGiveUp,
 	ReasonOperatorReset,
 	ReasonOperatorInvalidate,
@@ -64,15 +66,14 @@ func TestTransitionTable(t *testing.T) {
 			"policy_give_up": NodeStateFailed,
 		},
 		NodeStateRunning: {
-			"work_completed":    NodeStateFresh,
-			"handler_complete":  NodeStateFresh,
-			"handler_pass":      NodeStateFresh,
-			"policy_retry":      NodeStateStale,
-			"policy_invalidate": NodeStateStale,
-			"heartbeat_lost":    NodeStateStale,
-			"infra_reenqueue":   NodeStateStale,
-			"policy_give_up":    NodeStateFailed,
-			"handler_park":      NodeStateParked,
+			"work_completed":   NodeStateFresh,
+			"handler_complete": NodeStateFresh,
+			"handler_pass":     NodeStateFresh,
+			"policy_retry":     NodeStateStale,
+			"heartbeat_lost":   NodeStateStale,
+			"infra_reenqueue":  NodeStateStale,
+			"policy_give_up":   NodeStateFailed,
+			"handler_park":     NodeStateParked,
 		},
 		NodeStateFailed: {
 			"operator_reset":      NodeStateStale,
@@ -383,14 +384,4 @@ func TestNextState_ChildTransitionedIsIllegalForLeafRuns(t *testing.T) {
 			require.True(t, errors.Is(err, ErrIllegalTransition))
 		})
 	}
-}
-
-// TestLastOutcomeStringSerialization protects the column-value contract:
-// LastOutcome constants must serialize to the documented strings.
-func TestLastOutcomeStringSerialization(t *testing.T) {
-	require.Equal(t, "fresh_changed", string(LastOutcomeFreshChanged))
-	require.Equal(t, "fresh_unchanged", string(LastOutcomeFreshUnchanged))
-	require.Equal(t, "passed", string(LastOutcomePassed))
-	require.Equal(t, "pure_cascade", string(LastOutcomePureCascade))
-	require.Equal(t, "failed", string(LastOutcomeFailed))
 }

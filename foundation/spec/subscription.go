@@ -5,8 +5,13 @@
 package spec
 
 // SubscriptionEntry declares one impactee-side reactive coupling.
-// See .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
-// Piece 1 (subscription-cascade model resolution).
+//
+// Under the 2026-05-23 signal-taxonomy reshape, a subscription is
+// expressed as (sender-selector, signal-type-path, optional CEL
+// predicate, frame) — replacing the per-dimension structured filter set
+// (`on`/`when`/`outcome`/`error_class`/`reason`/`name`/`kind`/`sender`/
+// `sender_kind`/`target`) used pre-2026-05-23. See concept:signal for
+// the taxonomy and concept:node-subscription for the matching rules.
 //
 //	@concept: node-subscription
 type SubscriptionEntry struct {
@@ -15,69 +20,26 @@ type SubscriptionEntry struct {
 	Node string `yaml:"node,omitempty" json:"node,omitempty"`
 
 	// Instance=true makes this a cross-cutting subscription: fires on
-	// the topic match across every node in the instance. Mutually
+	// the type match across every node in the instance. Mutually
 	// exclusive with Node.
 	Instance bool `yaml:"instance,omitempty" json:"instance,omitempty"`
 
-	// On is the topic kind: "state" | "attribute" | "event" | "message".
-	// "message" subscribes to instance-scoped messages (the unified
-	// message layer) per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Unified message layer / Subscriptions.
-	On string `yaml:"on" json:"on"`
+	// Type is the canonical signal type-path the subscription matches
+	// (exact or trailing-`*` prefix per concept:signal). Required.
+	// Validated at registration via signal.ValidateSubscriptionType.
+	Type string `yaml:"type" json:"type"`
 
-	// When narrows a state subscription to a specific node-state
-	// ("fresh" | "stale" | "running" | "failed" | "parked"). Empty
-	// means "any state transition." Only meaningful when On == "state".
+	// When is an optional CEL expression evaluated against the matched
+	// signal's payload. Empty means "match any payload." Validated +
+	// compiled at registration via signal.CompileWhen, which parse-
+	// checks field references against the resolved payload schema for
+	// exact-type subscriptions and binds payload as dyn for prefix-type
+	// subscriptions.
 	When string `yaml:"when,omitempty" json:"when,omitempty"`
-
-	// Outcome narrows a state subscription further to a last_outcome
-	// value ("fresh_changed" | "fresh_unchanged" | "passed" |
-	// "pure_cascade" | "failed"). Only meaningful when On == "state"
-	// AND When != "".
-	Outcome string `yaml:"outcome,omitempty" json:"outcome,omitempty"`
-
-	// ErrorClass narrows a state subscription further to a specific
-	// error_class string. Only meaningful when On == "state" AND
-	// When == "failed".
-	ErrorClass string `yaml:"error_class,omitempty" json:"error_class,omitempty"`
-
-	// Reason narrows a state subscription further to a specific
-	// ParkReason. Lower-snake-case form (matching storage/CLI/Prometheus
-	// surface). Only meaningful when On == "state" AND When == "parked".
-	Reason string `yaml:"reason,omitempty" json:"reason,omitempty"`
-
-	// Name is required for On == "event" (the named-event name).
-	// Optional for On == "attribute" (specific attribute key; absent
-	// means "any attribute change"). Unused for On == "state".
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 
 	// Frame is "in" | "next". Empty defaults to "in" for per-node
 	// subscriptions and "next" for cross-cutting (Instance=true).
 	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
-
-	// Kind narrows an `on: message` subscription to messages with a
-	// matching envelope `kind` (e.g. "invalidate"). Empty means "any
-	// kind." Only meaningful when On == "message".
-	Kind string `yaml:"kind,omitempty" json:"kind,omitempty"`
-
-	// Sender narrows an `on: message` subscription to messages from a
-	// matching envelope `sender` value. Empty means "any sender." Only
-	// meaningful when On == "message".
-	Sender string `yaml:"sender,omitempty" json:"sender,omitempty"`
-
-	// SenderKind narrows an `on: message` subscription to messages
-	// whose envelope `sender_kind` matches ("operator" | "publisher" |
-	// "instance"). Empty means "any sender_kind." Only meaningful
-	// when On == "message".
-	SenderKind string `yaml:"sender_kind,omitempty" json:"sender_kind,omitempty"`
-
-	// Target narrows an `on: message` subscription to messages whose
-	// envelope `target` matches a specific node alias. Empty means
-	// "any target." The reserved value "self" resolves at
-	// canonicalization to the subscribing node's own alias. Only
-	// meaningful when On == "message".
-	Target string `yaml:"target,omitempty" json:"target,omitempty"`
 
 	// ResolvesViaCallingNode is set by the canonicalizer on
 	// subscription edges from non-entry internal sub-graph nodes that
@@ -91,18 +53,13 @@ type SubscriptionEntry struct {
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`
 }
 
-// Topic-kind constants for SubscriptionEntry.On.
-const (
-	TopicKindState     = "state"
-	TopicKindAttribute = "attribute"
-	TopicKindEvent     = "event"
-	TopicKindMessage   = "message"
-)
-
-// MessageSenderKind values for SubscriptionEntry.SenderKind and
-// rimsky_messages.sender_kind. Per spec
+// MessageSenderKind values for rimsky_messages.sender_kind. Per spec
 // .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
 // §Publisher protocol unification.
+//
+// Still consumed inside signal-message payloads and at the messages
+// endpoint surface; only the per-subscription structured filter
+// retired under the 2026-05-23 signal-taxonomy reshape.
 const (
 	MessageSenderKindOperator  = "operator"
 	MessageSenderKindPublisher = "publisher"
@@ -115,10 +72,10 @@ const (
 	SubscriptionScopeInstance = "instance"
 )
 
-// Node-state values valid as SubscriptionEntry.When for On=="state".
-// Mirrors the foundation/cascade state machine; redeclared here so the
-// template validator can range-check without importing cascade
-// (foundation-internal-isolation depguard).
+// Node-state values. Still referenced elsewhere (queue probes,
+// cascade walker, audit projections); redeclared here so callers can
+// avoid importing foundation/cascade across the depguard isolation
+// boundary.
 const (
 	NodeStateFresh   = "fresh"
 	NodeStateStale   = "stale"

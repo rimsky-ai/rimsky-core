@@ -35,10 +35,11 @@ The cascade walker consults two edge maps — the subscription-edge map (existin
 
 ## Invariants
 
-- Cascade fires iff `last_outcome == fresh_changed` (not the raw `Success.changed`).
-- Cascade does not propagate from `parked` or `failed`.
+- Cascade fires iff a subscription edge matches the emitted signal's type AND the subscriber's CEL `when:` predicate evaluates true.
 - Cascade always happens in a frame.
 - The walk + per-node behaviors are scheduler actions; they are NOT configurable via the per-emit `frame: in | next` discipline.
+
+> **Retracted 2026-05-23.** Under the subscriber-driven cascade-fire model introduced by spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`, propagation is determined by subscriber matches against the emitted signal, not by sender color. Settled-color is informational. The functional equivalent (downstream nodes not auto-firing on a failed sender) is now expressed receiver-side via subscribers' `when:` predicates or via not subscribing to `terminal/error/*` at all. The matching retraction lives on `concepts/parked-state.md`.
 
 ## Aliases and historical names
 
@@ -48,9 +49,9 @@ The phrase "reactive cascade" appears in sketches and human-facing onboarding do
 
 - **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map. The two share a name and nothing else.
 - Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
-- Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` (or the lifecycle-handler resolves `never_propagate`) if it wants to halt propagation at itself.
+- Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` if it wants downstream subscribers that filter on `payload.changed` to suppress.
 - Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; the scheduler decides which stale nodes are eligible for dispatch (wait-set empty for the current frame, claims and locks acquirable).
-- Treating `last_outcome` as a dispatch gate. It is observability metadata; the cascade-firing predicate consumes it, but dispatch eligibility is `state`-driven (see `concept:last-outcome`, `concept:node-state`).
+- Treating `terminal/error/*` subscribers as automatically downstream-firing. Under the subscriber-driven cascade model, a subscriber filtering on `terminal/error/*` fires only if it has declared the subscription; the sender's color does not fire downstream nodes by itself. A node that wants to halt propagation on errors simply omits the subscription; a node that wants to act on every error subscribes broadly.
 
 ## Notes
 
@@ -60,3 +61,4 @@ The phrase "reactive cascade" appears in sketches and human-facing onboarding do
 - [2026-05-18] Folded content from former `docs/concepts/cascade.md` (now retired) — common-pitfalls subsection (CSS-cascade disambiguation + recalculate/value-diff/dispatch-vs-cascade-reach pitfalls).
 - 2026-05-20 — Hard-dep edge map. The cascade walker now consults `BuildHardDepEdges` alongside `BuildSubscriptionEdges` at registration. At runtime, when invalidating a receiver R, the walker iterates R's hard-dep edges (computed from R's attribute schema fields with `hard_dep: true`); for each (R, X) hard-dep edge where X has no current-frame run, the walker proactively invalidates X via an inline stale-mark + recursive cascade walk in the same transaction, then inserts a wait-set blocker on R. See `.ok-planner/history/specs/2026-05-20-attribute-pull-resolution-design.md`.
 - 2026-05-22 — Reshape per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: cascade walker is RunScope-aware (per `concept:run-scope`). For each subscription edge the walker computes a target RunScope (same-RunScope is the common case; cross-RunScope at sub-graph entry-success and fan-out parent settlement), then calls `AffirmNodeRunRow(receiver_node_id, target_run_scope_id, frame_id)` to ensure the receiver's run row exists, reads its id via `GetInFlightRunForNode`, and inserts the wait-set row keyed by the resolved id. `MarkStaleForCascade` simplifies to a pure UPDATE keyed by `run_id` (no insert path; allocation is owned by `AffirmNodeRunRow`).
+- 2026-05-23 — Reshape per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`. Cascade-fire predicate becomes subscriber match (`concept:signal`); the sender-side `last_outcome == fresh_changed` gate retires. Filter evaluation moves to walk-time (CEL predicates against signal payload); the pessimistic-invalidate rule (insert wait-set rows regardless of filter) retires in favor of subscriber-driven matching. The "cascade does not propagate from parked or failed" invariant retracts — propagation is subscriber-driven, not sender-color-driven (the matching retraction lives on `concepts/parked-state.md`). Walker now fires once per emitted signal (terminal/success + one attribute/<key>/changed per merged attribute + one event/<name> per emitted named event); a once-per-frame guard (visited set within the per-terminal loop + `HasRunForNodeInFrame` probe across terminals) prevents multi-signal fan-out from re-affirming the same receiver. Common pitfalls refreshed to remove lifecycle-handler and last_outcome references.

@@ -176,7 +176,8 @@ type acquisition struct {
 	// Unavailable was encountered. Captured only when the acquisition
 	// path took the Unavailable branch (errAcquireUnavailable from
 	// tryAcquire); the outer caller uses these for Abandon cleanup
-	// under on_acquire_unavailable resolutions of pass / error.
+	// under the `error_types: { acquire/unavailable: ... }` chain's
+	// pass / give_up resolutions.
 	PartialLocks []AcquiredLock
 
 	// Resume is set when this acquisition resumed a parked node — the
@@ -238,11 +239,13 @@ type acquisition struct {
 //
 //	openResultAcquired   — the spec acquired successfully.
 //	openResultUnavailable — the producer returned Available=false.
-//	                        Routed through on_acquire_unavailable.
+//	                        Routed through the operator's
+//	                        `error_types: { acquire/unavailable: ... }`
+//	                        chain (synthetic class).
 //	openResultBail        — any other reason (eligibility, scope
 //	                        conflict, named-lock counter limit). The
 //	                        per-candidate tx rolls back without firing
-//	                        the unavailable handler.
+//	                        the acquire/unavailable chain.
 type openResult int
 
 const (
@@ -254,8 +257,8 @@ const (
 // errAcquireUnavailable is a sentinel returned from tryAcquire when
 // any required claim's Open returned Unavailable. Like
 // errTryAcquireRollback it's not a real error to surface — the outer
-// caller interprets it and dispatches the
-// on_acquire_unavailable handler.
+// caller interprets it and routes through the operator's
+// `error_types: { acquire/unavailable: ... }` chain.
 var errAcquireUnavailable = fmt.Errorf("supervisor: acquire bailed on Unavailable claim (sentinel)")
 
 // acquireCandidate runs the §7.3 flow against the live database.
@@ -360,9 +363,9 @@ func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]persistence.C
 // tryAcquireWithTx wraps tryAcquire in its own tx so a failed
 // candidate's partial mutations roll back rather than leak into the
 // next candidate. The errAcquireUnavailable sentinel propagates out so
-// the outer dispatch loop can run the on_acquire_unavailable handler;
-// the partial-acquired list is in acq.PartialLocks for Abandon
-// cleanup.
+// the outer dispatch loop can route through the operator's
+// `error_types: { acquire/unavailable: ... }` chain; the partial-
+// acquired list is in acq.PartialLocks for Abandon cleanup.
 func tryAcquireWithTx(
 	ctx context.Context, args RunArgs, cand persistence.Candidate,
 	heartbeatInterval time.Duration,
@@ -386,8 +389,8 @@ func tryAcquireWithTx(
 	})
 	if err == errAcquireUnavailable {
 		// Tx rolled back via the sentinel. acq carries PartialLocks /
-		// UnavailableSpec for the outer caller to dispatch the
-		// on_acquire_unavailable handler.
+		// UnavailableSpec for the outer caller to route through the
+		// `error_types: { acquire/unavailable: ... }` chain.
 		return acq, false, errAcquireUnavailable
 	}
 	if err != nil && err != errTryAcquireRollback {
@@ -494,8 +497,9 @@ func tryAcquire(
 			acquiredLocks = append(acquiredLocks, al)
 		case openResultUnavailable:
 			// Carry the partial-acquired list and the unavailable spec
-			// out across the rollback so the outer caller can dispatch
-			// the on_acquire_unavailable handler.
+			// out across the rollback so the outer caller can route
+			// through the operator's `error_types: { acquire/unavailable:
+			// ... }` chain.
 			unavailableSpec, _ := sp.(locks.ClaimSpec)
 			out := acquisition{
 				DispatchID:                cand.DispatchID,

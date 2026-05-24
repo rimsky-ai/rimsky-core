@@ -38,6 +38,7 @@ func main() {
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, NewServer(stubMode))
+	RegisterObservability(srv)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("grpc serve", "error", err.Error())

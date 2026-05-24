@@ -139,7 +139,7 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 		// Thread targetRunScopeID so fan-out children's parked → stale
 		// transition lands on this run row rather than a sibling.
 		if err := args.Persist.Nodes().UpdateState(ctx, target.ID, targetRunScopeID,
-			cascade.NodeStateStale, cascade.ReasonHandlerResume, "", tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
 			return err
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -266,7 +266,7 @@ func wakeParkedReceiverInTx(
 	// Thread receiverRunScopeID so the parked → stale transition
 	// disambiguates fan-out siblings.
 	if err := args.Persist.Nodes().UpdateState(ctx, receiver.ID, receiverRunScopeID,
-		cascade.NodeStateStale, cascade.ReasonHandlerResume, "", tx); err != nil {
+		cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)
 	}
 	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{

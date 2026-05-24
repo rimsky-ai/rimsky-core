@@ -124,9 +124,10 @@ type Config struct {
 	// BlobSpillThreshold is the spill cutoff in bytes. Zero disables spill.
 	BlobSpillThreshold int
 	// MaxRetriesWithoutProgressDefault is the deployment-level cap on
-	// consecutive retries with no last_outcome change. Threaded into both
-	// the synchronous RunArgs (built per tryClaim) and the async-callback
-	// CallbackServer so async-callback-driven retries observe the same cap.
+	// consecutive retries with no settling_signal_type change. Threaded
+	// into both the synchronous RunArgs (built per tryClaim) and the
+	// async-callback CallbackServer so async-callback-driven retries
+	// observe the same cap.
 	MaxRetriesWithoutProgressDefault int
 	// ExpectedAttributesSchemaFor returns the named executor's advertised
 	// expected_attributes_schema bytes. Threaded into RunArgs so the
@@ -493,13 +494,12 @@ func runLoop(
 			// Defensive idempotent re-completion. Post-2026-05-21
 			// lifecycle reorder, every apply* terminal function flips
 			// the dispatch row to a terminal phase inside its own tx
-			// (applyTerminalComplete + applyTerminalPass via
-			// RemoveForNodeInTx; applyErrorPolicy + applyTerminalInfraError
-			// the same; applyTerminalPark via ParkActiveInTx). This
-			// outer call is a WHERE-clause-guarded no-op on every
-			// known happy path; it survives as a belt-and-suspenders
-			// against any future terminal path that forgets to flip
-			// in-tx.
+			// (applyTerminalComplete via RemoveForNodeInTx;
+			// applyErrorPolicy + applyTerminalInfraError the same;
+			// applyTerminalPark via ParkActiveInTx). This outer call
+			// is a WHERE-clause-guarded no-op on every known happy
+			// path; it survives as a belt-and-suspenders against any
+			// future terminal path that forgets to flip in-tx.
 			if result.Ran && result.DispatchID != (shared.UUID{}) {
 				_ = cfg.Queue.Complete(context.Background(), result.DispatchID, cfg.SupervisorID)
 			}

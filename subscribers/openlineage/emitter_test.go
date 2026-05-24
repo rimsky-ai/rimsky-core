@@ -17,15 +17,15 @@ import (
 func TestMakeLeafRunEvent_ShapesRunIDFromInstanceAndChildKey(t *testing.T) {
 	t.Parallel()
 	rec := LeafRunRecord{
-		RunID:             "run-1",
-		NodeAlias:         "draft",
-		ChildKey:          "partition-7",
-		TemplateNodeAlias: "draft",
-		TemplateHash:      "sha256-aaa",
-		ExecutorName:      "claude-agent",
-		Changed:           true,
-		LastOutcome:       "fresh_changed",
-		TerminalKind:      "complete",
+		RunID:              "run-1",
+		NodeAlias:          "draft",
+		ChildKey:           "partition-7",
+		TemplateNodeAlias:  "draft",
+		TemplateHash:       "sha256-aaa",
+		ExecutorName:       "claude-agent",
+		Changed:            true,
+		SettlingSignalType: "terminal/success",
+		TerminalKind:       "complete",
 		HeldClaims: []HeldClaimRef{
 			{ClaimHandleID: "claim-1", Role: "acquire", ProducerName: "topics-ring", ScopeDataHash: "scope-hash-1"},
 		},

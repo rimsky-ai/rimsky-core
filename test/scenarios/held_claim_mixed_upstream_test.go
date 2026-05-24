@@ -5,9 +5,9 @@
 // Task 30 — held_claim_mixed_upstream.
 //
 // A three-node template: A acquires a held claim from a stub queue
-// (passes via on_acquire_unavailable: pass); C is an independent
-// upstream of B that commits Changed=true; B inherits the held claim
-// from A AND depends on C.
+// (passes via error_types: { "acquire/unavailable": [pass] }); C is
+// an independent upstream of B that commits Changed=true; B inherits
+// the held claim from A AND depends on C.
 //
 // Expected behavior:
 //   - C cascades to B; B dispatches.
@@ -71,8 +71,10 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "a",
 					Executor: "stub",
-					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
-						Resolve: node.ResolvePass,
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"acquire/unavailable": {
+							Policy: []node.PolicyAction{{Action: "pass"}},
+						},
 					},
 				},
 				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "@queue", "rw", "held")),
@@ -90,8 +92,8 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", On: "state"},
-					node.SubscriptionEntry{Node: "c", On: "state"},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
@@ -118,11 +120,12 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.NotNil(t, bNode)
 	require.NotNil(t, c)
 
-	// A passes (last_outcome=passed); C commits (last_outcome=fresh_changed).
-	require.True(t, waitForLastOutcome(t, h, a.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"a should record last_outcome=passed")
-	require.True(t, waitForLastOutcome(t, h, c.ID, cascade.LastOutcomeFreshChanged, 30*time.Second),
-		"c should record last_outcome=fresh_changed")
+	// A passes (settling_signal_type=terminal/error/<class>); C commits
+	// (settling_signal_type=terminal/success).
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, a.ID, "terminal/error/", 30*time.Second),
+		"a should record settling_signal_type=terminal/error/<class>")
+	require.True(t, waitForSettlingSignalType(t, h, c.ID, "terminal/success", 30*time.Second),
+		"c should record settling_signal_type=terminal/success")
 
 	// B should land in failed via template_resolution_failed → give_up.
 	require.True(t, h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed, 30*time.Second),
@@ -134,6 +137,8 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 		bRow = r
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFailed, bRow.LastOutcome,
-		"b's give_up should record last_outcome=failed")
+	require.NotNil(t, bRow.SettlingSignalType,
+		"b should have a settling_signal_type after give_up")
+	require.Contains(t, *bRow.SettlingSignalType, "terminal/error/",
+		"b's give_up should record a terminal/error/<class> settling_signal_type")
 }

@@ -185,8 +185,10 @@ func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *T
 
 // Error configures the scripted terminal as a StreamClose with an Error
 // outcome on the wire. The `class` argument becomes the wire-level
-// error_class. To script the executor-blocked path, pass
-// "executor_blocked" as the class.
+// error_class. Per `concept:signal` hierarchical convention, the stub
+// executor prefixes single-segment classes with `stub/` at emit time
+// (e.g. `boom` → `stub/boom`); classes already containing `/` pass
+// through unchanged.
 func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -369,7 +371,12 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		}
 		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: sc.errorClass, Payload: v,
+				// 2026-05-23 signal-taxonomy Pass 6: prefix unscoped
+				// classes with `stub/` so the stub executor follows the
+				// hierarchical-class convention. Classes already
+				// containing a `/` (operator-supplied hierarchical
+				// classes) pass through unchanged.
+				ErrorClass: prefixedStubClass(sc.errorClass), Payload: v,
 			}}},
 		}})
 	case termAsync:
@@ -422,6 +429,21 @@ func StubAttributesFor(nodeType string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// prefixedStubClass returns class unchanged if it already contains a
+// `/` (operator-supplied hierarchical class) or is empty; otherwise
+// it returns `stub/<class>`. Per `concept:signal` hierarchical
+// error_class rule, all bundled-executor error classes carry a
+// `<executor>/<leaf>` shape.
+func prefixedStubClass(class string) string {
+	if class == "" {
+		return class
+	}
+	if strings.Contains(class, "/") {
+		return class
+	}
+	return "stub/" + class
 }
 
 // toStruct converts an arbitrary input into a structpb.Struct for use as

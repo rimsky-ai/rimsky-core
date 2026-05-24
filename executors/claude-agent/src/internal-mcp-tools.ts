@@ -21,9 +21,10 @@ import {
  *     incremental-via-callback pattern). The legacy `result` field has
  *     been retired.
  *   - `report_blocked` — emits a StreamClose `Error{error_class:
- *     "executor_blocked"}` outcome on the wire (post-E.2 the pre-rename
+ *     "agent/blocked"}` outcome on the wire (post-E.2 the pre-rename
  *     Blocked variant collapsed into Error with the reserved
- *     `executor_blocked` class).
+ *     `agent/blocked` class; 2026-05-23 the class moved under the
+ *     hierarchical `agent/*` prefix per the signal-taxonomy spec).
  *   - `report_error`   — emits a StreamClose `Error{error_class}` outcome
  *     on the wire.
  *   - `attributes_read` / `attributes_set` — per spec §12.5; defined in

@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -155,7 +157,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	// in live mode. Spec §14.4 + conformance `malformed_attributes` scenario.
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return sendErrored(send, "invalid_attribute", "attributes.url required")
+		return sendErrored(send, "http/attribute_invalid", "attributes.url required")
 	}
 
 	if s.stubMode {
@@ -184,12 +186,12 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	// body. Empty attributes + no override → no body.
 	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", err.Error())
+		return sendErrored(send, "http/attribute_invalid", err.Error())
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", err.Error())
+		return sendErrored(send, "http/attribute_invalid", err.Error())
 	}
 	if hdrs, ok := ud["headers"].(map[string]any); ok {
 		for k, v := range hdrs {
@@ -207,7 +209,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return sendErrored(send, "http_request_failed", err.Error())
+		return sendErrored(send, classifyTransportErr(err), err.Error())
 	}
 	defer resp.Body.Close()
 
@@ -217,11 +219,11 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return sendErrored(send, "http_request_failed", "read body: "+err.Error())
+		return sendErrored(send, classifyTransportErr(err), "read body: "+err.Error())
 	}
 
 	if !statusOK(resp.StatusCode, expectStatus) {
-		return sendErrored(send, "http_unexpected_status", fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
+		return sendErrored(send, classifyUnexpectedStatus(resp.StatusCode, body), fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
 	}
 
 	// Response → attributes_delta. The target's response body must be a
@@ -232,7 +234,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	// keys.
 	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
-		return sendErrored(send, "http_response_parse_failed", err.Error())
+		return sendErrored(send, "http/response_unparseable", err.Error())
 	}
 
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
@@ -336,13 +338,13 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 	if sr, ok := ud["stub_response"]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
-			return sendErrored(send, "invalid_attribute", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
+			return sendErrored(send, "http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
 		}
 		delta = m
 	}
 	v, err := structpb.NewStruct(delta)
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", "stub_response not JSON-representable: "+err.Error())
+		return sendErrored(send, "http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
 	}
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
@@ -351,6 +353,46 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 			ChangeSummary:   "stub",
 		}}},
 	}})
+}
+
+// classifyTransportErr maps a transport-layer error to a hierarchical
+// error class per `concept:signal`. Distinguishes deadline-exceeded /
+// network-timeout errors (which operators typically want to retry with
+// backoff) from generic network errors.
+func classifyTransportErr(err error) string {
+	if err == nil {
+		return "http/network_error"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "http/timeout"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "http/timeout"
+	}
+	return "http/network_error"
+}
+
+// classifyUnexpectedStatus maps an unexpected HTTP status to a
+// hierarchical error class per `concept:signal`:
+//   - 5xx → `http/server_error/<status>` (upstream may recover; subscribers
+//     can pattern-match `http/server_error/*` for transient flavors).
+//   - 4xx with a JSON body containing `error_class` → `http/request_invalid/<body_class>`
+//     (the upstream named a specific request defect).
+//   - otherwise → `http/expectation_mismatch`.
+func classifyUnexpectedStatus(status int, body []byte) string {
+	if status >= 500 && status <= 599 {
+		return fmt.Sprintf("http/server_error/%d", status)
+	}
+	if status >= 400 && status <= 499 && len(body) > 0 {
+		var decoded map[string]any
+		if json.Unmarshal(body, &decoded) == nil {
+			if cls, ok := decoded["error_class"].(string); ok && cls != "" {
+				return "http/request_invalid/" + cls
+			}
+		}
+	}
+	return "http/expectation_mismatch"
 }
 
 func sendErrored(send sendFunc, class, msg string) error {

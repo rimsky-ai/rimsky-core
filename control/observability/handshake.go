@@ -84,6 +84,7 @@ func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCap
 		HTTPBridgeURL:                 r.GetHttpBridgeUrl(),
 		ExpectedAttributesSchema:      schema,
 		DeclaredEvents:                append([]string(nil), r.GetDeclaredEvents()...),
+		DeclaredErrorClasses:          append([]string(nil), r.GetDeclaredErrorClasses()...),
 	}
 }
 

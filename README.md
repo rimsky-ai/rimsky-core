@@ -177,14 +177,14 @@ for graph definitions and a mutable surface for execution.
 
 **Cascade.** When a node's outputs change, cascade decides which
 dependents become stale and recompute. The walk is driven by per-node
-subscriptions across four topic kinds — state, attribute, named event,
-message — and gated by a `last_outcome` column that distinguishes
-fresh-changed, fresh-unchanged, passed, pure-cascade, and failed
-resolutions. This is the killer primitive: it makes a graph reactive
-without making the executor responsible for routing. Reactivity to
-external change (sensors emitting messages) is the same machinery as
-reactivity to internal change. In service to the watching-external-state
-pattern.
+subscriptions declaring `type:` (a canonical signal type-path under
+`terminal/*`, `transient/*`, `attribute/*`, `event/*`, or `message/*`)
+and an optional CEL `when:` predicate over the signal payload. Subscriber
+match is itself the cascade-fire gate; senders emit signals, receivers
+decide. This is the killer primitive: it makes a graph reactive without
+making the executor responsible for routing. Reactivity to external
+change (sensors emitting messages) is the same machinery as reactivity
+to internal change. In service to the watching-external-state pattern.
 
 **Claims and locks.** A claim is a node's request to access a
 producer-managed resource, declared as a scope and resolved at runtime

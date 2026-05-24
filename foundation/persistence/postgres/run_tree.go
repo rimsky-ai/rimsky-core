@@ -37,7 +37,7 @@ func (b *runTreeImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(t
 
 const runTreeCols = `
   id, node_id, frame_id, run_scope_id, phase,
-  state, last_outcome, aggregation_policy
+  state, settling_signal_type, aggregation_policy
 `
 
 func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootRunInput) error {
@@ -56,10 +56,10 @@ func (b *runTreeImpl) CreateRootRun(ctx context.Context, tx persistence.Tx, in p
 	_, err = b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   run_scope_id, state, last_outcome, aggregation_policy
+		   run_scope_id, state, aggregation_policy
 		 ) VALUES (
 		   $1, $2, $3, $4, $5, 'pending', $6,
-		   $7, 'stale', 'fresh_unchanged', $8
+		   $7, 'stale', $8
 		 )
 		 ON CONFLICT (id) DO NOTHING`,
 		in.RunID, in.NodeID, executor, stores, time.Now().UTC(), in.FrameID, in.RunScopeID, nullableBytes(policy),
@@ -87,9 +87,9 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	_, err = b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,
-		   run_scope_id, state, last_outcome, aggregation_policy
+		   run_scope_id, state, aggregation_policy
 		 )
-		 SELECT $1, $2, $3, $4, $5, 'pending', $6, $7, 'stale', 'fresh_unchanged', $8
+		 SELECT $1, $2, $3, $4, $5, 'pending', $6, $7, 'stale', $8
 		  WHERE NOT EXISTS (
 		    SELECT 1 FROM rimsky_node_runs
 		     WHERE node_id = $2 AND run_scope_id = $7
@@ -138,7 +138,7 @@ func (b *runTreeImpl) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, 
 func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	rows, err := b.q(tx).Query(ctx,
 		`SELECT nr.id, nr.node_id, nr.frame_id, nr.run_scope_id, nr.phase,
-		        nr.state, nr.last_outcome, nr.aggregation_policy
+		        nr.state, nr.settling_signal_type, nr.aggregation_policy
 		   FROM rimsky_node_runs nr
 		   JOIN rimsky_run_scopes rs ON rs.id = nr.run_scope_id
 		  WHERE rs.parent_run_id = $1
@@ -164,9 +164,9 @@ func (b *runTreeImpl) ListChildren(ctx context.Context, tx persistence.Tx, paren
 
 func (b *runTreeImpl) UpdateStateAndOutcome(
 	ctx context.Context, tx persistence.Tx, runID shared.UUID,
-	state cascade.NodeState, lastOutcome cascade.LastOutcome,
+	state cascade.NodeState, settlingSignalType *string,
 ) error {
-	if lastOutcome == "" {
+	if settlingSignalType == nil {
 		_, err := b.q(tx).Exec(ctx,
 			`UPDATE rimsky_node_runs SET state = $2 WHERE id = $1`,
 			runID, string(state))
@@ -176,8 +176,8 @@ func (b *runTreeImpl) UpdateStateAndOutcome(
 		return nil
 	}
 	_, err := b.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs SET state = $2, last_outcome = $3 WHERE id = $1`,
-		runID, string(state), string(lastOutcome))
+		`UPDATE rimsky_node_runs SET state = $2, settling_signal_type = $3 WHERE id = $1`,
+		runID, string(state), *settlingSignalType)
 	if err != nil {
 		return fmt.Errorf("run_tree.UpdateStateAndOutcome: %w", err)
 	}
@@ -203,23 +203,21 @@ func (b *runTreeImpl) UpdateAggregationPolicy(
 // scanRunTreeRow scans a pgx.Row into a *RunTreeRow.
 func scanRunTreeRow(row pgx.Row) (*persistence.RunTreeRow, error) {
 	var (
-		out         persistence.RunTreeRow
-		phase       string
-		state       string
-		outcome     *string
-		policyBytes []byte
+		out            persistence.RunTreeRow
+		phase          string
+		state          string
+		settlingSignal *string
+		policyBytes    []byte
 	)
 	if err := row.Scan(
 		&out.RunID, &out.NodeID, &out.FrameID, &out.RunScopeID, &phase,
-		&state, &outcome, &policyBytes,
+		&state, &settlingSignal, &policyBytes,
 	); err != nil {
 		return nil, err
 	}
 	out.Phase = phase
 	out.State = cascade.NodeState(state)
-	if outcome != nil {
-		out.LastOutcome = cascade.LastOutcome(*outcome)
-	}
+	out.SettlingSignalType = settlingSignal
 	policy, err := persistence.UnmarshalAggregationPolicy(policyBytes)
 	if err != nil {
 		return nil, err
@@ -231,23 +229,21 @@ func scanRunTreeRow(row pgx.Row) (*persistence.RunTreeRow, error) {
 // scanRunTreeRowFromRows reuses the same scan against a pgx.Rows.
 func scanRunTreeRowFromRows(rows pgx.Rows) (*persistence.RunTreeRow, error) {
 	var (
-		out         persistence.RunTreeRow
-		phase       string
-		state       string
-		outcome     *string
-		policyBytes []byte
+		out            persistence.RunTreeRow
+		phase          string
+		state          string
+		settlingSignal *string
+		policyBytes    []byte
 	)
 	if err := rows.Scan(
 		&out.RunID, &out.NodeID, &out.FrameID, &out.RunScopeID, &phase,
-		&state, &outcome, &policyBytes,
+		&state, &settlingSignal, &policyBytes,
 	); err != nil {
 		return nil, err
 	}
 	out.Phase = phase
 	out.State = cascade.NodeState(state)
-	if outcome != nil {
-		out.LastOutcome = cascade.LastOutcome(*outcome)
-	}
+	out.SettlingSignalType = settlingSignal
 	policy, err := persistence.UnmarshalAggregationPolicy(policyBytes)
 	if err != nil {
 		return nil, err

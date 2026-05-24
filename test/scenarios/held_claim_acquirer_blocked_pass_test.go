@@ -3,16 +3,19 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Held-claim acquirer + executor returns an error with
-// error_class=executor_blocked + on_executor_errored: {resolve: pass}.
+// error_class=executor_blocked + error_types: { executor_blocked: { policy: [pass] } }
+// (post-2026-05-23 reshape; was on_executor_errored: {resolve: pass}).
 // Validates that auto-terminal fires immediately on the acquirer's
 // pass-resolution: the held subgraph aborts (acquirer failed to produce
 // work) and rimsky_claim_handles is released without waiting for
 // inheritors to reach a terminal they would never reach.
 //
-// Regression coverage for the leak where applyTerminalPass on a held
-// claim only marked the acquirer's claim_holders row, leaving
-// inheritors' rows in 'active' indefinitely and stranding the
-// rimsky_claim_handles row + remaining rimsky_claim_holders rows.
+// Regression coverage for the leak where the pass-resolution path on
+// a held claim (now `applyErrorPolicy::applyResolvedAction`'s
+// `DispositionEnd + ColorFresh` branch in `runner_error_policy.go`)
+// only marked the acquirer's claim_holders row, leaving inheritors'
+// rows in 'active' indefinitely and stranding the rimsky_claim_handles
+// row + remaining rimsky_claim_holders rows.
 package scenarios
 
 import (
@@ -66,10 +69,12 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 		},
 	})
 	// Acquirer's executor returns an executor-blocked error. Inheritor
-	// would succeed if it ran — it must not (the cascade-firing gate is
-	// fresh_changed; passed does not propagate, and on top of that the
-	// held-subgraph abort means inheritors are explicitly failed in the
-	// claim_holders table).
+	// would succeed if it ran — it must not. Under the 2026-05-23
+	// signal-taxonomy reshape the pass-resolution path on the acquirer
+	// settles fresh with settling_signal_type=terminal/error/<class>
+	// but does NOT fire cascadeSubscribersStaleInTx (only the retry
+	// branch does); on top of that the held-subgraph abort means
+	// inheritors are explicitly failed in the claim_holders table.
 	h.Stub.WhenType("acquirer").Error("executor_blocked", map[string]any{
 		"reason": "blocked_class",
 		"why":    "stub-blocked",
@@ -84,8 +89,10 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "acquirer",
 					Executor: "stub",
-					OnExecutorErrored: &node.OnExecutorTerminalHandler{
-						Resolve: node.ResolvePass,
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"stub/executor_blocked": {
+							Policy: []node.PolicyAction{{Action: "pass"}},
+						},
 					},
 				},
 				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "@queue", "rw", "held")),
@@ -96,7 +103,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},
 	})
@@ -107,9 +114,9 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	// Acquirer should land in fresh+passed.
-	require.True(t, waitForLastOutcome(t, h, acq.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"acquirer should record last_outcome=passed under on_executor_errored: pass")
+	// Acquirer should settle fresh under the pass branch.
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
+		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: { policy: [pass] } }")
 
 	// Auto-terminal must fire promptly because the acquirer-failure
 	// path now fails all inheritor claim_holders rows (the fix for the

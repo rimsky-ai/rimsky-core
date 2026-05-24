@@ -121,35 +121,29 @@ type TemplateNodeDef struct {
 	ErrorTypes map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
 	// Subscribes declares the node's reactive surface. Each entry names an
-	// upstream node (or instance: true for cross-cutting) plus a topic kind
-	// (state | attribute | event) with optional filters and a frame
-	// modifier. Plus implicit subscriptions inferred by the template
+	// upstream node (or instance: true for cross-cutting) plus a signal
+	// type-path (`type:`) and optional CEL `when:` predicate over the
+	// signal payload. Plus implicit subscriptions inferred by the template
 	// validator from substitution refs in Attributes (see
 	// graph/node/subscription_edges.go). Per spec
 	// .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
-	// Piece 1.
+	// Piece 1 and the 2026-05-23 signal-taxonomy reshape.
 	//
 	//	@concept: node-subscription
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
-	// Lifecycle handlers — declarative slots for the three supervisor
-	// terminal-event paths. Per the reactive-loops + lifecycle-handlers
-	// spec at .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §3
-	// and the 2026-05-12 nomenclature-resolution collapse of the
-	// `on_executor_blocked` slot. All three slots are optional; absent
-	// slots use today's hardcoded supervisor defaults (silent retry on
-	// Unavailable, by_changed on Complete, route through error_types on
-	// Errored). All non-Complete error variants flow through
-	// OnExecutorErrored; operator-declared `error_types` discriminates by
-	// `error_class`.
-	//
-	// Per the 2026-05-14 subscription-cascade resolution, the
-	// invalidate-emit slots on every handler retire; cascade coupling
-	// is declared receiver-side via Subscribes. Lifecycle handlers
-	// retain only their `resolve` and `error_class` fields.
-	OnAcquireUnavailable *OnAcquireUnavailableHandler `yaml:"on_acquire_unavailable,omitempty" json:"on_acquire_unavailable,omitempty"`
-	OnExecutorComplete   *OnExecutorCompleteHandler   `yaml:"on_executor_complete,omitempty"   json:"on_executor_complete,omitempty"`
-	OnExecutorErrored    *OnExecutorTerminalHandler   `yaml:"on_executor_errored,omitempty"    json:"on_executor_errored,omitempty"`
+	// Lifecycle-handler slots (`on_acquire_unavailable`,
+	// `on_executor_complete`, `on_executor_errored`) retired 2026-05-23
+	// per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-
+	// decoupling-design.md`. The three uses collapsed into:
+	//   - Acquisition failure → `error_types: { "acquire/unavailable":
+	//     ... }` via synthetic error class (routed through
+	//     `runtime/runner_lifecycle.go::handleAcquireUnavailable`).
+	//   - Complete cascade-gating → subscriber-side CEL `when:
+	//     payload.changed` (cascade-fire is purely subscriber-driven).
+	//   - Error pass/override → `error_types: { <class>: { policy:
+	//     [{action: pass}] } }`.
+	// See concept:lifecycle-handler (retired) for the migration.
 
 	// MaxParkDuration caps how long a parked node may stay parked before
 	// the SweepParkedNodes watchdog forces it to fail with
@@ -160,8 +154,9 @@ type TemplateNodeDef struct {
 	MaxParkDuration string `yaml:"max_park_duration,omitempty" json:"max_park_duration,omitempty"`
 
 	// MaxRetriesWithoutProgress caps the number of consecutive retry
-	// dispatches that produce no last_outcome change before the runner
-	// forces an Errored verdict with error_class=retry_loop_no_progress.
+	// dispatches that produce no settling_signal_type change before the
+	// runner forces an Errored verdict with
+	// error_class=retry_loop_no_progress.
 	// Pointer for tri-state semantics: nil = use deployment default
 	// (default 100); 0 = disable cap entirely (infinite retries
 	// permitted); N>0 = use N. Per plan F3.
@@ -222,48 +217,19 @@ type TemplateNodeDef struct {
 	IsSubgraphExit bool `yaml:"is_subgraph_exit,omitempty" json:"is_subgraph_exit,omitempty"`
 }
 
-// OnAcquireUnavailableHandler declares the supervisor's behavior when
-// any required claim's Open returns Unavailable. See spec §3.
-//
-// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
-// resolution; receivers declare cascade coupling via SubscriptionEntry
-// with `on: state, when: failed, error_class: <class>`.
-type OnAcquireUnavailableHandler struct {
-	Resolve    string `yaml:"resolve" json:"resolve"`                             // pass | retry | error
-	ErrorClass string `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
-}
+// Lifecycle-handler types (`OnAcquireUnavailableHandler`,
+// `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`) retired
+// 2026-05-23 per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-
+// policy-decoupling-design.md`. See `TemplateNodeDef`'s lifecycle-
+// handler comment block for the migration shapes.
 
-// OnExecutorCompleteHandler declares the supervisor's behavior on a
-// Complete terminal. See spec §3.
-//
-// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
-// resolution; receivers declare cascade coupling via SubscriptionEntry
-// with `on: state, when: fresh, outcome: fresh_changed`.
-type OnExecutorCompleteHandler struct {
-	Resolve string `yaml:"resolve" json:"resolve"` // by_changed | always_propagate | never_propagate
-}
-
-// OnExecutorTerminalHandler declares behavior on a Blocked or Errored
-// terminal. See spec §3.
-//
-// The invalidate-emit slot retired per the 2026-05-14 subscription-cascade
-// resolution; receivers declare cascade coupling via SubscriptionEntry
-// with `on: state, when: failed, error_class: <class>`.
-type OnExecutorTerminalHandler struct {
-	Resolve    string `yaml:"resolve" json:"resolve"`                             // error | pass
-	ErrorClass string `yaml:"error_class,omitempty" json:"error_class,omitempty"` // required when resolve=error
-}
-
-// Resolve constants per handler. The validator at template-deploy
-// rejects out-of-vocabulary combinations.
+// Frame + target constants for SubscriptionEntry. The lifecycle-handler
+// resolve vocabulary (`pass | retry | error | by_changed |
+// always_propagate | never_propagate`) retired with the handler types
+// 2026-05-23; ErrorPolicy's 4-value action vocabulary (`pass | give_up |
+// retry | discard_claims_then_retry`) is the replacement and lives on
+// `concept:error-policy`.
 const (
-	ResolvePass            = "pass"
-	ResolveRetry           = "retry"
-	ResolveError           = "error"
-	ResolveByChanged       = "by_changed"
-	ResolveAlwaysPropagate = "always_propagate"
-	ResolveNeverPropagate  = "never_propagate"
-
 	FrameIn   = "in"
 	FrameNext = "next"
 

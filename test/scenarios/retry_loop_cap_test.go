@@ -43,7 +43,7 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 				Executor:                  "stub",
 				MaxRetriesWithoutProgress: &maxRetries,
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 1000}}},
+					"stub/flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 1000}}},
 				},
 			}),
 		},
@@ -57,7 +57,8 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
 		"worker should land in failed once retry-loop cap is reached")
 
-	// Confirm the LastOutcome is failed (give_up's outcome).
+	// Confirm the settling_signal_type carries the canonical
+	// terminal/error/<class> envelope (give_up's settled disposition).
 	var row *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
@@ -65,8 +66,9 @@ func TestRetryLoopCapForcesGiveUp(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row)
-	require.Equal(t, cascade.LastOutcomeFailed, row.LastOutcome,
-		"give_up should record last_outcome=failed")
+	require.NotNil(t, row.SettlingSignalType)
+	require.Contains(t, *row.SettlingSignalType, "terminal/error/",
+		"give_up should record settling_signal_type=terminal/error/<class>")
 }
 
 // TestRetryLoopCapDisabledWithZero covers E6 retry case (c). A per-node
@@ -92,7 +94,7 @@ func TestRetryLoopCapDisabledWithZero(t *testing.T) {
 				Executor:                  "stub",
 				MaxRetriesWithoutProgress: &zero, // 0 = cap disabled
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 5}}},
+					"stub/flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 5}}},
 				},
 			}),
 		},
@@ -106,13 +108,20 @@ func TestRetryLoopCapDisabledWithZero(t *testing.T) {
 	// retry-budget exhaustion (Count: 5) — but not via the retry-loop cap.
 	time.Sleep(5 * time.Second)
 
-	// Verify: no retry_loop_no_progress event was emitted on this node.
-	require.False(t, h.WaitForEventKind(worker.ID, "retry_loop_no_progress", 1*time.Second),
-		"with cap=0, the runner must not emit retry_loop_no_progress")
-	// And no error event whose payload mentions retry_loop_no_progress.
+	// Verify: no terminal/error/retry_loop_no_progress signal was emitted
+	// on this node. Post-Pass-5 the canonical signal taxonomy replaces
+	// the legacy fixed-string `error` audit kind; the wildcard prefix
+	// `terminal/error/` covers both give_up and pass terminal envelopes
+	// for the audit-log scan below.
+	require.False(t, h.WaitForEventKind(worker.ID, "terminal/error/retry_loop_no_progress", 1*time.Second),
+		"with cap=0, the runner must not emit terminal/error/retry_loop_no_progress")
+	// And no terminal/error/* audit row whose payload mentions
+	// retry_loop_no_progress (covers the case where the class travels in
+	// the payload — e.g. via original_error_class on the rewritten cap
+	// envelope — rather than on the kind itself).
 	var rows []map[string]any
 	h.QuerySQL(
-		`SELECT payload::text FROM rimsky_events WHERE node_id = $1 AND kind = 'error'`,
+		`SELECT payload::text FROM rimsky_events WHERE node_id = $1 AND kind LIKE 'terminal/error/%'`,
 		[]any{worker.ID},
 		func(scan func(...any) error) error {
 			var raw []byte

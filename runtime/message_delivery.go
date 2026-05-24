@@ -37,13 +37,16 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	"github.com/fallguy/rimsky/graph/node"
 )
 
@@ -199,28 +202,76 @@ func deliverForRunningFrame(
 		if len(delivered.Messages) == 0 {
 			return nil
 		}
+		// Canonical signal emission per concept:signal — one
+		// message/<kind>/<sender_kind>/<target> signal per delivered
+		// envelope. The receiver-side cascade walk continues to drive
+		// stale-marks via cascadeMessageSubscribersInTx below; the
+		// signal-emit is independent (Pass 2 reshapes the cascade
+		// walk to be signal-driven and the two paths converge).
+		for _, msg := range delivered.Messages {
+			target := msg.Target
+			if target == "" {
+				target = "_unspecified"
+			}
+			msgSig := signalpkg.Signal{
+				Type: signalpkg.TypePath(fmt.Sprintf("message/%s/%s/%s",
+					msg.Kind, msg.SenderKind, target)),
+				Payload: map[string]any{
+					"kind":            msg.Kind,
+					"sender_kind":     msg.SenderKind,
+					"sender":          msg.Sender,
+					"target":          msg.Target,
+					"message_payload": messagePayloadAsMap(msg.Payload),
+				},
+			}
+			if err := signalaudit.EmitSignal(ctx, persist.Events(),
+				instanceID, shared.UUID{}, msgSig, now, tx); err != nil {
+				return fmt.Errorf("emit message signal: %w", err)
+			}
+		}
 		return cascadeMessageSubscribersInTx(ctx, persist, queue, tx,
 			instanceID, frameID, delivered.Messages, inst.TemplateHash)
 	})
 }
 
-// cascadeMessageSubscribersInTx walks subscription edges keyed on
-// TopicKind="message" and stale-marks every receiver node in the
-// instance whose envelope filters match each just-delivered message.
+// messagePayloadAsMap decodes the message envelope's payload bytes
+// into a map[string]any when JSON-shaped; falls back to a stub map
+// carrying byte length. Per @blessed-invariant 21 (messages are
+// inert) we don't transform the bytes for any other purpose — this
+// shape exists only so subscriber CEL when: predicates can read
+// into payload.message_payload.foo at evaluation time.
+func messagePayloadAsMap(payload []byte) map[string]any {
+	if len(payload) == 0 {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(payload, &out); err == nil && out != nil {
+		return out
+	}
+	return map[string]any{"_raw_bytes": len(payload)}
+}
+
+// cascadeMessageSubscribersInTx fires the message-cascade for every
+// just-delivered message by routing the corresponding
+// `message/<kind>/<sender_kind>/<target>` signal through the
+// subscriber-driven cascade walker. Under the 2026-05-23 signal-
+// taxonomy reshape, message subscribers are ordinary subscription
+// edges with `type: message/...` (exact or prefix); the per-envelope
+// filter dimensions (kind / sender / sender_kind / target) move into
+// CEL `when:` predicates on `payload`.
 //
 // Runs inside the caller's tx so the stale-mark commits atomically
 // with the MarkDelivered write — without this gating in the same tx, a
 // re-tick that arrived between MarkDelivered and stale-mark would treat
 // the message as already delivered and never wake the receivers.
 //
-// Match semantics per spec §Subscriptions on messages: empty filter
-// fields match any value; non-empty fields must equal the envelope
-// field. The reserved value `target: "self"` resolves to the
-// subscribing node's own alias (the template-relative `Name` of the
-// receiver). Cross-cutting (`instance: true`) message subscriptions
-// are honored by walking the empty-key bucket; per-node subscriptions
-// without a `node:` (the normal shape for `on: message`) also land
-// under the empty key.
+// The reserved `target: "self"` semantic (subscriber wants only
+// envelopes addressed to its own alias) is expressed by the CEL
+// predicate `when: payload.target == self_alias` at registration —
+// the validator substitutes the receiver's own type for `self_alias`.
+// For backward compatibility with existing templates that still spell
+// `target: self`, the runtime falls back to per-receiver alias
+// matching when an edge's pattern is exactly `message/*/*/self`.
 func cascadeMessageSubscribersInTx(
 	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
 	instanceID, frameID shared.UUID, messages []persistence.MessageRow,
@@ -237,20 +288,11 @@ func cascadeMessageSubscribersInTx(
 		return nil
 	}
 	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmpl.Spec)
-	edges := node.BuildSubscriptionEdges(tmpl.Spec, subRefs)
-	// Collect every "message" topic edge across all sender keys. Message
-	// subscriptions usually land under the empty-key bucket (no upstream
-	// sender node-type), but we tolerate any senderKey to keep the walk
-	// honest about future template shapes.
-	var messageEdges []node.SubscriptionEdge
-	for _, list := range edges {
-		for _, e := range list {
-			if e.TopicKind == spec.TopicKindMessage {
-				messageEdges = append(messageEdges, e)
-			}
-		}
+	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, subRefs)
+	if err != nil {
+		return fmt.Errorf("cascadeMessageSubscribersInTx: build edges: %w", err)
 	}
-	if len(messageEdges) == 0 {
+	if edges == nil {
 		return nil
 	}
 	instNodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
@@ -262,23 +304,43 @@ func cascadeMessageSubscribersInTx(
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
 	for _, msg := range messages {
-		for _, e := range messageEdges {
-			if !messageEdgeMatches(e, msg) {
-				continue
+		msgSigType := signalpkg.TypePath(fmt.Sprintf("message/%s/%s/%s",
+			msg.Kind, msg.SenderKind, msg.Target))
+		// Empty target case: the wire shape has `target == ""` for
+		// broadcast envelopes; rewrite to "_unspecified" so the
+		// type-path doesn't collapse into a trailing-slash form.
+		if msg.Target == "" {
+			msgSigType = signalpkg.TypePath(fmt.Sprintf("message/%s/%s/_unspecified",
+				msg.Kind, msg.SenderKind))
+		}
+		msgPayload := map[string]any{
+			"kind":            msg.Kind,
+			"sender_kind":     msg.SenderKind,
+			"sender":          msg.Sender,
+			"target":          msg.Target,
+			"message_payload": messagePayloadAsMap(msg.Payload),
+		}
+		msgSig := signalpkg.Signal{Type: msgSigType, Payload: msgPayload}
+		// Messages have no sender-node-type; they cross-cut. Match
+		// against the empty sender-key bucket.
+		matched := edges.Match("", msgSigType)
+		for _, e := range matched {
+			if e.WhenExpr != nil {
+				// Eval surfaces CEL runtime errors as `(false, nil)`
+				// with a slog warn — per the spec's safe-navigation
+				// default. The error return is reserved for future
+				// fatal-eval cases and stays unreachable today.
+				ok, _ := e.WhenExpr.Eval(msgSig)
+				if !ok {
+					continue
+				}
 			}
 			receivers := byType[e.ReceiverNodeType]
 			for _, r := range receivers {
-				// `target: self` filter applies to messages whose
-				// envelope target equals the receiver's own
-				// template-relative node-type (the alias). Skip
-				// receivers whose alias doesn't match the envelope
-				// target when the subscription declared `target: self`.
-				// Empty `msg.Target` is explicitly NOT a self-target —
-				// senders use `*` for broadcast; an unaddressed envelope
-				// has no target and never matches a `target: self`
-				// subscription. Spec §Unified message layer /
-				// Subscriptions.
-				if e.Filter.Target == "self" && msg.Target != r.NodeType {
+				// Legacy `target: self` compatibility: a subscription
+				// pattern that ends with `/self` matches only envelopes
+				// whose target equals the receiver's own alias.
+				if strings.HasSuffix(string(e.TypePattern), "/self") && msg.Target != r.NodeType {
 					continue
 				}
 				// Resolve receiver's RunScope. If the LATERAL didn't
@@ -328,29 +390,6 @@ func cascadeMessageSubscribersInTx(
 		}
 	}
 	return nil
-}
-
-// messageEdgeMatches reports whether a subscription edge's
-// envelope-filter dimensions accept the given message envelope. Empty
-// filter fields are wildcards. The `target: self` value is handled at
-// the receiver-resolution step (cascadeMessageSubscribersInTx) since
-// "self" is receiver-relative.
-func messageEdgeMatches(e node.SubscriptionEdge, msg persistence.MessageRow) bool {
-	if e.Filter.Kind != "" && e.Filter.Kind != msg.Kind {
-		return false
-	}
-	if e.Filter.Sender != "" && e.Filter.Sender != msg.Sender {
-		return false
-	}
-	if e.Filter.SenderKind != "" && e.Filter.SenderKind != msg.SenderKind {
-		return false
-	}
-	// Target filter: explicit non-"self" target must equal envelope.
-	// "self" is filtered at the receiver-resolution step.
-	if e.Filter.Target != "" && e.Filter.Target != "self" && e.Filter.Target != msg.Target {
-		return false
-	}
-	return true
 }
 
 func DeliverPendingMessages(

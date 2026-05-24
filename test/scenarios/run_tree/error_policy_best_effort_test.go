@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -20,12 +21,12 @@ import (
 func TestErrorPolicyBestEffort_FailuresDontBlock(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "best_effort"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("best_effort should settle when all children terminal")
 	}
 	if res.ParentState != cascade.NodeStateFresh {
@@ -36,11 +37,11 @@ func TestErrorPolicyBestEffort_FailuresDontBlock(t *testing.T) {
 func TestErrorPolicyBestEffort_AllFailedStillSucceeds(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "best_effort"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("best_effort should always settle when all children terminal")
 	}
 	// best_effort defaults to fresh_unchanged when no successful child
@@ -54,11 +55,11 @@ func TestErrorPolicyBestEffort_AllFailedStillSucceeds(t *testing.T) {
 func TestErrorPolicyBestEffort_RunningChildStillBlocks(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 		{State: cascade.NodeStateRunning},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "best_effort"})
-	if res.IsTerminal {
+	if res.IsSettled {
 		t.Errorf("best_effort must wait for all children to settle; got terminal=%s", res.ParentState)
 	}
 }

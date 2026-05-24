@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
+
+	"github.com/fallguy/rimsky/foundation/signal"
 )
 
 // ValidationError is a blocking problem with a template. Path locates
@@ -87,6 +89,21 @@ type RegistryHooks struct {
 	// names an event the executor does not declare. nil → skip the
 	// check (e.g. tests that don't wire an observability cache).
 	ExecutorDeclaredEvents func(name string) ([]string, bool)
+
+	// ExecutorDeclaredErrorClasses returns the set of error-class paths
+	// the named executor advertises via
+	// ObservabilityCapabilities.declared_error_classes. Mirrors
+	// ExecutorDeclaredEvents. Used by the validator's range-check of
+	// terminal/error/* subscriptions against the sender's executor.
+	// nil → skip the check.
+	//
+	// The proto field declared_error_classes is added in Pass 6 of
+	// the 2026-05-23 signal-taxonomy reshape; until then every wired
+	// instance of this hook returns ([], false) and the validator
+	// silent-skips.
+	//
+	//	@concept: signal
+	ExecutorDeclaredErrorClasses func(name string) ([]string, bool)
 
 	// ExecutorExpectedAttributesSchema returns the JSON Schema bytes the
 	// named executor advertises via
@@ -172,15 +189,19 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
 		validateSubscribes(n, base, declared, hooks, spec, &res)
-		validateErrorTypes(n, base, declared, &res)
+		validateErrorTypes(n, base, declared, hooks, &res)
 		validateExecutorCoherence(n, base, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
-		validateOnAcquireUnavailable(n, base, &res)
-		validateOnExecutorComplete(n, base, &res)
-		validateOnExecutorTerminal(n, n.OnExecutorErrored, base+".on_executor_errored", &res)
+		// 2026-05-23 (Pass 4): lifecycle-handler validators retired
+		// alongside the OnAcquireUnavailable / OnExecutorComplete /
+		// OnExecutorErrored handler types. The replacement surfaces
+		// (error_types: { "acquire/unavailable": ... } and per-error
+		// pass via error_types policy) are validated by
+		// validateErrorTypes above.
+		validateAcquireUnavailablePolicyAdvised(n, base, &res)
 		validateMaxParkDuration(n, base, &res)
 		// D3 + D4 — data-platform-extensions additions.
 		validateHolds(n, base, spec, declared, &res)
@@ -351,124 +372,150 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 	}
 }
 
-func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, res *ValidationResult) {
+// validateErrorTypes range-checks every policy action against the
+// canonical 4-value vocabulary (`pass | give_up | retry |
+// discard_claims_then_retry`). The pre-2026-05-23 vocabulary
+// (`invalidate`, `discard_then_retry`, `resume_then_retry`) all reject
+// through the generic check with the new error message. Per
+// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
+//
+// Also range-checks each error-class key against the node's executor's
+// declared_error_classes (when the executor advertises a non-empty
+// set). Reserved synthetic prefix `acquire/*` is always accepted (it
+// originates runtime-side, not executor-side). Silent-skip when the
+// hook is unwired or the executor is unreachable (returns ok=false).
+//
+//	@concept: error-policy
+//	@concept: signal
+func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks RegistryHooks, res *ValidationResult) {
+	validActions := map[string]bool{
+		"pass":                      true,
+		"give_up":                   true,
+		"retry":                     true,
+		"discard_claims_then_retry": true,
+	}
+	var declaredClasses []string
+	haveDeclared := false
+	if n.Executor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
+		if classes, ok := hooks.ExecutorDeclaredErrorClasses(n.Executor); ok {
+			declaredClasses = classes
+			haveDeclared = true
+		}
+	}
 	for className, policy := range n.ErrorTypes {
 		for ai, action := range policy.Policy {
-			if action.Action == "invalidate" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("%s.error_types[%s].policy[%d].action", base, className, ai),
-					Msg:  "`action: invalidate` retired; receivers declare cascade coupling via `subscribes: [{node: <sender>, on: state, when: failed, error_class: <class>}]`. See spec .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md Piece 1 migration table.",
-				})
+			if validActions[action.Action] {
 				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.error_types[%s].policy[%d].action", base, className, ai),
+				Msg:  fmt.Sprintf("unknown action %q; valid actions are: pass | give_up | retry | discard_claims_then_retry", action.Action),
+			})
+		}
+		if !haveDeclared {
+			continue
+		}
+		if isRuntimeSynthesizedErrorClass(className) {
+			continue
+		}
+		if !errorClassMatchesDeclared(className, declaredClasses) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.error_types[%s]", base, className),
+				Msg:  fmt.Sprintf("error class %q not declared by executor %q (declared: %v)", className, n.Executor, declaredClasses),
+			})
+		}
+	}
+}
+
+// isRuntimeSynthesizedErrorClass reports whether className is a
+// runtime-emitted (not executor-emitted) error class. Operators may
+// declare `error_types:` policies for these regardless of what the
+// node's executor advertises; the range-check skips them. Includes
+// the `acquire/*` synthetic prefix (pre-dispatch acquisition failure
+// per concept:error-policy) and the attribute-pipeline error classes
+// emitted by runtime/runner.go and runtime/runner_terminal.go.
+func isRuntimeSynthesizedErrorClass(className string) bool {
+	if strings.HasPrefix(className, "acquire/") {
+		return true
+	}
+	switch className {
+	case "template_resolution_failed",
+		"template_validation_failed",
+		"executor_schema_unavailable",
+		"attributes_schema_failed",
+		"retry_loop_no_progress",
+		"unresolved_executor":
+		return true
+	}
+	return false
+}
+
+// errorClassMatchesDeclared reports whether class matches any entry in
+// declared. An entry matches if it equals class exactly, or if it ends
+// with `*` and is a (slash-or-end-bounded) prefix of class. Per
+// `proto:executor_observability.proto::ObservabilityCapabilities.declared_error_classes`.
+//
+//	@concept: signal
+func errorClassMatchesDeclared(class string, declared []string) bool {
+	for _, d := range declared {
+		if d == class {
+			return true
+		}
+		if strings.HasSuffix(d, "/*") {
+			prefix := strings.TrimSuffix(d, "*")
+			if strings.HasPrefix(class, prefix) {
+				return true
 			}
 		}
 	}
+	return false
 }
 
-// validateOnAcquireUnavailable enforces the resolve vocabulary
-// (pass | retry | error) and the error_class requirement when
-// resolve=error. The invalidate-emit slot retired post-2026-05-14.
-func validateOnAcquireUnavailable(n TemplateNodeDef, base string, res *ValidationResult) {
-	h := n.OnAcquireUnavailable
-	if h == nil {
+// validateAcquireUnavailablePolicyAdvised emits an advisory warning
+// (not an error) when a node declares `stores:` but does NOT declare an
+// `error_types: { "acquire/unavailable": ... }` policy. Under the
+// 2026-05-23 signal-taxonomy reshape, pre-dispatch acquisition failure
+// routes through the operator's `error_types:` chain via synthetic
+// class `acquire/unavailable`; absent a declared policy the default is
+// fail-fast (give_up("unknown_error_class")) rather than the pre-Pass-4
+// implicit retry behavior. Operators that want retry on contention must
+// opt in explicitly.
+//
+//	@concept: error-policy
+func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res *ValidationResult) {
+	if len(n.Stores) == 0 {
 		return
 	}
-	hbase := base + ".on_acquire_unavailable"
-	if h.Resolve == "" {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase,
-			Msg:  "handler is empty (resolve is required)",
-		})
-		return
-	}
-	switch h.Resolve {
-	case ResolvePass, ResolveRetry:
-	case ResolveError:
-		if strings.TrimSpace(h.ErrorClass) == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".error_class",
-				Msg:  "error_class is required when resolve = error",
-			})
-		} else if _, declaredClass := n.ErrorTypes[h.ErrorClass]; !declaredClass && !isBuiltinErrorClass(h.ErrorClass) {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".error_class",
-				Msg:  fmt.Sprintf("error_class %q does not match any error_types[...] key on this node", h.ErrorClass),
-			})
+	// Skip the advisory when an entry matches `acquire/unavailable`
+	// exactly OR via a prefix wildcard (e.g. `acquire/*`).
+	for key := range n.ErrorTypes {
+		if key == "acquire/unavailable" {
+			return
 		}
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase + ".resolve",
-			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolvePass, ResolveRetry, ResolveError),
-		})
-	}
-}
-
-// validateOnExecutorComplete enforces the resolve vocabulary
-// (by_changed | always_propagate | never_propagate). The invalidate-
-// emit slot retired post-2026-05-14.
-func validateOnExecutorComplete(n TemplateNodeDef, base string, res *ValidationResult) {
-	h := n.OnExecutorComplete
-	if h == nil {
-		return
-	}
-	hbase := base + ".on_executor_complete"
-	if h.Resolve == "" {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase,
-			Msg:  "handler is empty (resolve is required)",
-		})
-		return
-	}
-	switch h.Resolve {
-	case ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate:
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase + ".resolve",
-			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q, %q)", h.Resolve, ResolveByChanged, ResolveAlwaysPropagate, ResolveNeverPropagate),
-		})
-	}
-}
-
-// validateOnExecutorTerminal enforces the resolve vocabulary
-// (error | pass) for on_executor_errored, plus the error_class
-// requirement when resolve=error. The invalidate-emit slot retired
-// post-2026-05-14.
-func validateOnExecutorTerminal(n TemplateNodeDef, h *OnExecutorTerminalHandler, hbase string, res *ValidationResult) {
-	if h == nil {
-		return
-	}
-	if h.Resolve == "" {
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase,
-			Msg:  "handler is empty (resolve is required)",
-		})
-		return
-	}
-	switch h.Resolve {
-	case ResolvePass:
-	case ResolveError:
-		if strings.TrimSpace(h.ErrorClass) == "" {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".error_class",
-				Msg:  "error_class is required when resolve = error",
-			})
-		} else if _, declaredClass := n.ErrorTypes[h.ErrorClass]; !declaredClass && !isBuiltinErrorClass(h.ErrorClass) {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: hbase + ".error_class",
-				Msg:  fmt.Sprintf("error_class %q does not match any error_types[...] key on this node", h.ErrorClass),
-			})
+		if strings.HasSuffix(key, "/*") {
+			prefix := strings.TrimSuffix(key, "*")
+			if strings.HasPrefix("acquire/unavailable", prefix) {
+				return
+			}
 		}
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: hbase + ".resolve",
-			Msg:  fmt.Sprintf("resolve = %q is not valid (one of: %q, %q)", h.Resolve, ResolveError, ResolvePass),
-		})
 	}
+	res.Warnings = append(res.Warnings, ValidationWarning{
+		Path: base + ".error_types",
+		Msg: "node uses claim-producers but declares no \"acquire/unavailable\" error_types entry; " +
+			"the default behavior is fail-fast, not implicit retry. " +
+			"See spec .ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md §ErrorPolicy.",
+	})
 }
 
-// validateSubscribes is T16: enforces SubscriptionEntry shape rules.
+// validateSubscribes enforces SubscriptionEntry shape rules under the
+// 2026-05-23 signal-taxonomy reshape: `type:` is a canonical signal
+// type-path (exact or trailing-`*` prefix); `when:` is an optional CEL
+// predicate over the signal payload. The pre-reshape structured filter
+// dimensions (on/when/outcome/error_class/reason/name/kind/sender/
+// sender_kind/target) are gone.
 //
 //	@concept: node-subscription
+//	@concept: signal
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
@@ -497,65 +544,20 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				continue
 			}
 		}
-		// `on:` is required and must be a known topic kind.
-		switch s.On {
-		case "state", "attribute", "event", "message":
-		default:
+		// `type:` is required and must match the canonical taxonomy.
+		if strings.TrimSpace(s.Type) == "" {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".on",
-				Msg:  fmt.Sprintf("`on:` must be one of \"state\" | \"attribute\" | \"event\" | \"message\", got %q", s.On),
+				Path: sbase + ".type",
+				Msg:  "`type:` is required",
 			})
 			continue
 		}
-		// On == "event" requires `name:`.
-		if s.On == "event" && s.Name == "" {
+		if err := signal.ValidateSubscriptionType(signal.TypePath(s.Type)); err != nil {
 			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".name",
-				Msg:  "`on: event` requires `name:`",
+				Path: sbase + ".type",
+				Msg:  err.Error(),
 			})
-		}
-		// On != "state" forbids state-only filters.
-		if s.On != "state" {
-			if s.When != "" || s.Outcome != "" || s.ErrorClass != "" || s.Reason != "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase,
-					Msg:  "state-only filters (when/outcome/error_class/reason) require `on: state`",
-				})
-			}
-		}
-		// `on: message` validations: SenderKind must be one of the
-		// three legal values when set; message-specific filters
-		// (kind/sender/sender_kind/target) are only meaningful for
-		// `on: message` subscriptions.
-		if s.On == "message" {
-			switch s.SenderKind {
-			case "", "operator", "publisher", "instance":
-			default:
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".sender_kind",
-					Msg: fmt.Sprintf(
-						"`sender_kind: %q` is not valid (one of: operator, publisher, instance)",
-						s.SenderKind),
-				})
-			}
-		} else {
-			if s.Kind != "" || s.Sender != "" || s.SenderKind != "" || s.Target != "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase,
-					Msg:  "message-only filters (kind/sender/sender_kind/target) require `on: message`",
-				})
-			}
-		}
-		// `when:` must be a valid node state.
-		if s.When != "" {
-			switch s.When {
-			case "fresh", "stale", "running", "failed", "parked":
-			default:
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".when",
-					Msg:  fmt.Sprintf("`when: %q` is not a valid node state", s.When),
-				})
-			}
+			continue
 		}
 		// `frame:` must be in | next | "".
 		switch s.Frame {
@@ -566,24 +568,67 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Msg:  fmt.Sprintf("`frame:` must be empty | %q | %q, got %q", FrameIn, FrameNext, s.Frame),
 			})
 		}
-		// Cross-check `on: event` `name:` against the sender's executor's
-		// declared_events (silent-skip when unreachable).
-		if s.Node != "" && s.On == "event" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil {
+		// `when:` must compile against the resolved payload schema.
+		if s.When != "" {
+			if _, err := signal.CompileWhen(signal.TypePath(s.Type), s.When); err != nil {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: sbase + ".when",
+					Msg:  err.Error(),
+				})
+			}
+		}
+		// Cross-check `terminal/error/<class>` exact-path subscriptions
+		// against the sender's executor declared_error_classes. Match
+		// rule: leaf matches a declared class iff (a) the class is
+		// exact and equals leaf, or (b) the class ends in `*` and is
+		// a prefix of leaf (e.g. `http/server_error/*` matches
+		// `http/server_error/500`). Silent-skip when the hook is
+		// unwired or the executor is unreachable (returns ok=false).
+		if s.Node != "" && hooks.ExecutorDeclaredErrorClasses != nil && tmpl != nil {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
-			if sender.Executor != "" {
+			if sender.Executor != "" && strings.HasPrefix(s.Type, "terminal/error/") &&
+				!strings.HasSuffix(s.Type, "*") {
+				leaf := strings.TrimPrefix(s.Type, "terminal/error/")
+				// Bypass for runtime-synthesized error classes
+				// (`acquire/*` and the attribute-pipeline classes).
+				// These are emitted by rimsky, not by any executor —
+				// no executor declares them — so the executor-range
+				// check would always reject. Mirrors the bypass in
+				// `validateErrorTypes` above.
+				if !isRuntimeSynthesizedErrorClass(leaf) {
+					if classes, ok := hooks.ExecutorDeclaredErrorClasses(sender.Executor); ok {
+						if !errorClassMatchesDeclared(leaf, classes) {
+							res.Errors = append(res.Errors, ValidationError{
+								Path: sbase + ".type",
+								Msg:  fmt.Sprintf("error class %q not declared by sender %q's executor %q", leaf, s.Node, sender.Executor),
+							})
+						}
+					}
+				}
+			}
+		}
+		// Cross-check `event/<name>` exact-path subscriptions against
+		// the sender's executor declared_events (carry-forward from the
+		// pre-reshape `on: event` check).
+		if s.Node != "" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil {
+			senderIdx := declared[s.Node]
+			sender := tmpl.Nodes[senderIdx]
+			if sender.Executor != "" && strings.HasPrefix(s.Type, "event/") &&
+				!strings.HasSuffix(s.Type, "*") {
+				name := strings.TrimPrefix(s.Type, "event/")
 				if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
 					found := false
-					for _, name := range names {
-						if name == s.Name {
+					for _, n := range names {
+						if n == name {
 							found = true
 							break
 						}
 					}
 					if !found {
 						res.Errors = append(res.Errors, ValidationError{
-							Path: sbase + ".name",
-							Msg:  fmt.Sprintf("event %q not declared by sender %q's executor %q", s.Name, s.Node, sender.Executor),
+							Path: sbase + ".type",
+							Msg:  fmt.Sprintf("event %q not declared by sender %q's executor %q", name, s.Node, sender.Executor),
 						})
 					}
 				}
@@ -592,25 +637,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	}
 }
 
-// isBuiltinErrorClass returns true for the error classes rimsky raises
-// itself (vs. those declared in the template). Used to permit
-// resolve=error to point at a built-in class like
-// "template_resolution_failed" without requiring it to be redeclared
-// in error_types: on the node.
-func isBuiltinErrorClass(name string) bool {
-	switch name {
-	case "template_resolution_failed",
-		"template_validation_failed",
-		"executor_schema_unavailable",
-		"attributes_schema_failed",
-		"executor_blocked",
-		"executor_errored",
-		"acquire_unavailable",
-		"verifier_failed":
-		return true
-	}
-	return false
-}
+// isBuiltinErrorClass retired 2026-05-23 alongside the lifecycle-handler
+// validators (the only callers). Built-in rimsky-raised error classes
+// flow through `error_types:` policy by name without a registration
+// validator check (the runtime evaluator treats unknown classes as
+// give_up("unknown_error_class")).
 
 func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationResult) {
 	// D2 — `delegate:` and `executor:` are mutually exclusive. Per

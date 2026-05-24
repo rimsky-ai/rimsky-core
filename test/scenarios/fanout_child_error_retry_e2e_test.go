@@ -91,7 +91,7 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 					// node eventually fails; F2 only needs the first
 					// retry-after-error dispatch to assert against.
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						"flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 2}}},
+						"stub/flaky": {Policy: []node.PolicyAction{{Action: "retry", Count: 2}}},
 					},
 				},
 				openAttrs,

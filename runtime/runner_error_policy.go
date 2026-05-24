@@ -9,13 +9,19 @@
 // that replaces the pre-rename Blocked variant). `applyErrorPolicy` +
 // `applyResolvedAction` cover the application-Error branch and
 // `applyTerminalInfraError` covers the infra-error branch, together
-// with their helpers (`lookupPolicyForNode`, `requiredStoresForAcq`,
-// `invalidateTargets`). Split out of runner_terminal.go to keep that
-// file under the cold-read 500-line guideline; the Success branch
-// stays there because it interleaves with attribute upsert + cascade
-// fan-out and reads better in one place.
+// with their helpers (`lookupPolicyForNode`, `requiredStoresForAcq`).
+// Split out of runner_terminal.go to keep that file under the
+// cold-read 500-line guideline; the Success branch stays there because
+// it interleaves with attribute upsert + cascade fan-out and reads
+// better in one place.
 //
 // Per spec §7.6 / §4.10 invariant 13.
+//
+// 2026-05-23 reshape: action vocabulary tightens to 4 values
+// (pass | give_up | retry | discard_claims_then_retry); the resolution
+// flows through a `spec.Resolution` 3-tuple carrying
+// (signal, dispatch_disposition, color). Per
+// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
 
 package runtime
 
@@ -27,6 +33,9 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
+	"github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 )
 
@@ -38,11 +47,10 @@ import (
 // variant.
 //
 // E5 retry-cap interaction: if the resolved action is a retry shape
-// (retry / discard_then_retry / resume_then_retry) AND the per-row
-// consecutive_retries_no_progress counter (after increment) exceeds
-// the effective max-retries-without-progress cap, the runner forces an
-// Error{error_class:"retry_loop_no_progress"} verdict instead of
-// retrying. Per plan E5.
+// AND the per-row consecutive_retries_no_progress counter (after
+// increment) exceeds the effective max-retries-without-progress cap,
+// the runner forces an Error{error_class:"retry_loop_no_progress"}
+// verdict instead of retrying. Per plan E5.
 func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
@@ -87,12 +95,6 @@ func applyErrorPolicy(
 		}
 	}
 	resolved := node.Evaluate(policy, state, errorClass, nil)
-	// E5 counter housekeeping: if the resolved action is a retry, bump
-	// the per-row counter; otherwise reset it. The next terminal that
-	// produces a different last_outcome change will reset via the
-	// applyTerminalComplete path's last-outcome-change detection (the
-	// counter only tracks consecutive retries with no last_outcome
-	// progress).
 	// E5 counter housekeeping: capture the prior dispatch row's
 	// counter so we can carry it forward across the retry round-trip.
 	// applyResolvedAction's retry branch removes the old row and
@@ -101,12 +103,16 @@ func applyErrorPolicy(
 	// trigger.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
 	var carryForwardCount int
-	switch resolved.Kind {
-	case "retry", "discard_then_retry", "resume_then_retry":
+	if isRetryKind(resolved.Kind) {
 		carryForwardCount = priorCount + 1
-	default:
+	} else {
 		carryForwardCount = 0
 	}
+
+	// Construct the canonical Resolution (signal + dispatch disposition
+	// + color) from the resolved action. Built once here so signal-emit
+	// + applyResolvedAction share the same instance.
+	resolution := buildResolution(resolved, errorClass, payload, carryForwardCount)
 
 	// Primary state-mutation work runs inline in the caller's outer tx.
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
@@ -115,70 +121,72 @@ func applyErrorPolicy(
 	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved); err != nil {
+	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved, resolution); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	// On retry, re-stamp the counter onto the freshly-inserted
 	// dispatch row so the next iteration's
 	// shouldForceRetryLoopGiveUp can see accumulated retries.
-	switch resolved.Kind {
-	case "retry", "discard_then_retry", "resume_then_retry":
+	if isRetryKind(resolved.Kind) {
 		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, carryForwardCount); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 		}
 	}
+	// Canonical signal emission per concept:signal — co-committed with
+	// the state transition that produced it. The audit row on
+	// rimsky_events and the rimsky_nodes state change land or roll back
+	// together — subscribers wildcard-matching `transient/retry/*` or
+	// `terminal/error/*` never see an audit row whose state column
+	// still contradicts the disposition. Matches the same-tx emit
+	// pattern in `code:runtime/on_error.go::OnError`. The pre-Pass-5
+	// fixed-string "error" audit-row retired alongside
+	// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
+	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
+		acq.InstanceID, acq.NodeID, resolution.Signal, args.Clock.Now(), tx); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: emit resolution signal: %w", err)
+	}
 
-	// Post-commit work: best-effort audit-log append, lineage emit (on
-	// give_up), run-tree propagation (on give_up).
+	// Post-commit work: lineage emit (on give_up) + run-tree
+	// propagation (on give_up). Both must run AFTER the state
+	// transition commits — PropagateIfChildAfterTerminal reads the
+	// just-written child row to drive parent aggregation, and the
+	// lineage emit is an observability append that's safe to lose on
+	// crash. The canonical signal-emit was hoisted into the outer tx
+	// above so it shares the state transition's tx-atomicity guarantee
+	// (per `code:runtime/on_error.go::OnError`).
 	dispatchID := acq.DispatchID
+	resSig := resolution.Signal
 	post := func(ctx context.Context) {
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "error",
-				Payload: map[string]any{
-					"error_class":  errorClass,
-					"details":      payload,
-					"action_taken": resolved.Kind,
-					"action_index": resolved.NewState.ActionIndex,
-					"delay_ms":     resolved.DelayMs,
-				},
-			}, tx)
-		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyErrorPolicy: append error event failed",
-				"node_id", acq.NodeID.String(),
-				"error_class", errorClass,
-				"action_taken", resolved.Kind,
-				"error", err.Error())
-		}
 		// Run-tree state propagation (E2): give_up is a terminal failure;
 		// the child's state has transitioned to NodeStateFailed and any
-		// parent must aggregate. Retry / discard_then_retry leave the node
-		// in a non-terminal state so propagation skips them.
+		// parent must aggregate. Retry / discard_claims_then_retry / pass
+		// leave the node in a non-failed terminal state so failure
+		// propagation skips them.
 		if resolved.Kind == "give_up" {
 			// E8: emit leaf-run lineage record for the failed terminal.
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-				InstanceID:       acq.InstanceID,
-				FrameID:          acq.FrameID,
-				RunID:            dispatchID,
-				NodeID:           acq.NodeID,
-				State:            string(cascade.NodeStateFailed),
-				LastOutcome:      string(cascade.LastOutcomeFailed),
-				ErrorClass:       errorClass,
-				TerminalKind:     "errored",
-				NodeAlias:        acq.NodeType,
-				ExecutorName:     acq.Executor,
-				TemplateHash:     acq.TemplateHash,
-				Params:           acq.InstanceParams,
-				AttributesMerged: acq.MergedAttributes,
-				HeldClaims:       HeldClaimsForLineage(acq),
-				ParentRunID:      scope.ParentRunID,
-				ChildKey:         scope.PartitionKey,
-				SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+				InstanceID:         acq.InstanceID,
+				FrameID:            acq.FrameID,
+				RunID:              dispatchID,
+				NodeID:             acq.NodeID,
+				State:              string(cascade.NodeStateFailed),
+				SettlingSignalType: string(resSig.Type),
+				ErrorClass:         errorClass,
+				TerminalKind:       "errored",
+				NodeAlias:          acq.NodeType,
+				ExecutorName:       acq.Executor,
+				TemplateHash:       acq.TemplateHash,
+				Params:             acq.InstanceParams,
+				AttributesMerged:   acq.MergedAttributes,
+				HeldClaims:         HeldClaimsForLineage(acq),
+				ParentRunID:        scope.ParentRunID,
+				ChildKey:           scope.PartitionKey,
+				SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 			})
+			settlingSig := string(resSig.Type)
 			if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
-				cascade.NodeStateFailed, cascade.LastOutcomeFailed); err != nil {
+				cascade.NodeStateFailed, &settlingSig); err != nil {
 				args.Logger.Warn("applyErrorPolicy: run-tree propagation failed",
 					"run_id", dispatchID.String(), "error", err.Error())
 			}
@@ -189,11 +197,18 @@ func applyErrorPolicy(
 	return post, nil
 }
 
+// isRetryKind returns true when the resolved action is a retry-flavored
+// disposition (retry | discard_claims_then_retry). Centralizing the
+// check keeps the per-flavor list in one place; if a future retry
+// flavor lands it only needs to be added here.
+func isRetryKind(kind string) bool {
+	return kind == "retry" || kind == "discard_claims_then_retry"
+}
+
 // applyResolvedAction wraps the per-policy action SQL (state update,
 // queue mutation) so applyErrorPolicy stays inside the cold-read
-// 100-line guideline. The `invalidate` action retired under the
-// 2026-05-14 subscription-cascade resolution (validator rejects it at
-// template-deploy time — `template_validator.go::validateErrorTypes`).
+// 100-line guideline. Consumes the canonical Resolution built by
+// applyErrorPolicy so the run-row color comes from a single source.
 //
 // @blessed-invariant: State-machine writes for a single run must be
 // tx-atomic. Any operation that reads a run's current state to decide
@@ -205,20 +220,24 @@ func applyErrorPolicy(
 func applyResolvedAction(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	acq *acquisition, prior *persistence.NodeRow, resolved node.ResolvedAction,
+	resolution spec.Resolution,
 ) error {
-	switch resolved.Kind {
-	case "retry", "discard_then_retry", "resume_then_retry":
+	switch resolution.DispatchDisposition {
+	case spec.DispositionRetry:
 		if prior != nil && prior.State == cascade.NodeStateRunning {
 			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-				cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
+				cascade.NodeStateStale, cascade.ReasonPolicyRetry, nil, tx); err != nil {
 				return err
 			}
 			// Pessimistic-invalidate: running → stale is the sender's
 			// invalidation in this frame. Gate downstream subscribers
-			// so they don't race the retry. acq.DispatchID is the
-			// sender's run id (post-stage-5 wait-set keys on run id).
+			// so they don't race the retry. The retry's emitted signal
+			// (transient/retry/<n>/<class>) drives subscriber CEL
+			// matching per concept:signal; subscribers without a
+			// transient/retry/* subscription don't fire.
 			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
+				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+				resolution.Signal); err != nil {
 				return err
 			}
 		}
@@ -238,7 +257,7 @@ func applyResolvedAction(
 			NodeID:                   acq.NodeID,
 			ExecutorName:             acq.Executor,
 			RequiredStores:           requiredStoresForAcq(acq),
-			EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+			EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolution.RetryDelayMs) * time.Millisecond),
 			FrameID:                  acq.FrameID,
 			RunScopeID:               acq.RunScopeID,
 			PriorDispatchID:          &priorID,
@@ -263,15 +282,34 @@ func applyResolvedAction(
 			return err
 		}
 		return nil
-	case "give_up":
+	case spec.DispositionEnd:
+		// End settles the run; color from Resolution determines the
+		// terminal state. give_up → failed; pass → fresh.
 		if prior != nil && prior.State == cascade.NodeStateRunning {
-			if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-				cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
-				return err
+			settlingSig := string(resolution.Signal.Type)
+			switch resolution.Color {
+			case spec.ColorFailed:
+				if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+					cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &settlingSig, tx); err != nil {
+					return err
+				}
+			case spec.ColorFresh:
+				// Pass settles the run fresh under ReasonHandlerPass.
+				// The settling_signal_type column carries the
+				// terminal/error/<class> signal-type-path so the
+				// substitution-visibility gate (which accepts
+				// fresh-color settled runs regardless of the signal
+				// type-path's color implication) sees the run as
+				// settled-success. The wait-set drain runs the same
+				// way as give_up because both are settling terminals.
+				if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
+					cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
+					return err
+				}
 			}
 		}
-		// Settled-state drain on failed: any wait-set rows gating
-		// receivers on this sender's run release.
+		// Settled-state drain: any wait-set rows gating receivers on
+		// this sender's run release.
 		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
@@ -313,7 +351,7 @@ func applyTerminalInfraError(
 	}
 	if prior != nil && prior.State == cascade.NodeStateRunning {
 		if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-			cascade.NodeStateStale, cascade.ReasonInfraReenqueue, "", tx); err != nil {
+			cascade.NodeStateStale, cascade.ReasonInfraReenqueue, nil, tx); err != nil {
 			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
 	}
@@ -358,17 +396,24 @@ func applyTerminalInfraError(
 	// Post-commit: best-effort audit-log append.
 	post := func(ctx context.Context) {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "error",
+			// Canonical signal emission per concept:signal.
+			// terminal/infra/<reason> carries the synthesized
+			// errorClass as the reason leaf.
+			infraSig := signalpkg.Signal{
+				Type: signalpkg.TypePath("terminal/infra/" + errorClass),
 				Payload: map[string]any{
-					"error_class":  errorClass,
-					"details":      payload,
-					"action_taken": "infra_reenqueue",
+					"reason":  errorClass,
+					"details": payload,
 				},
-			}, tx)
+			}
+			// terminal/infra/* signal above is the canonical audit row
+			// per concept:signal. The pre-Pass-5 fixed-string "error"
+			// audit-row retired alongside spec
+			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
+				acq.InstanceID, acq.NodeID, infraSig, args.Clock.Now(), tx)
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("applyTerminalInfraError: append error event failed",
+			args.Logger.Warn("applyTerminalInfraError: emit terminal/infra signal failed",
 				"node_id", acq.NodeID.String(),
 				"error_class", errorClass,
 				"error", err.Error())
@@ -400,6 +445,98 @@ func requiredStoresForAcq(acq *acquisition) []string {
 		return nil
 	}
 	return node.RequiredStores(*acq.NodeDef)
+}
+
+// buildResolution constructs the canonical `spec.Resolution` 3-tuple
+// from a `node.ResolvedAction` plus the originating error context.
+// Decouples the conflated `PolicyAction` / `ResolvedAction` pair into
+// three orthogonal axes: signal envelope, dispatch disposition, and
+// settled color. Per
+// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
+//
+// retriesSoFar is 1-indexed per the spec (the first retry emits
+// attempt=1); the caller should pass the post-increment counter for
+// retry resolutions and 0 otherwise.
+//
+//	@concept: error-policy
+//	@concept: signal
+func buildResolution(
+	resolved node.ResolvedAction,
+	errorClass string,
+	errorPayload map[string]any,
+	retriesSoFar int,
+) spec.Resolution {
+	sig := errorPolicySignal(errorClass, errorPayload, resolved.Kind, retriesSoFar, resolved.DelayMs)
+	switch resolved.Kind {
+	case "retry":
+		return spec.Resolution{
+			Signal:              sig,
+			DispatchDisposition: spec.DispositionRetry,
+			RetryDiscardClaims:  false,
+			RetryDelayMs:        resolved.DelayMs,
+		}
+	case "discard_claims_then_retry":
+		return spec.Resolution{
+			Signal:              sig,
+			DispatchDisposition: spec.DispositionRetry,
+			RetryDiscardClaims:  true,
+			RetryDelayMs:        resolved.DelayMs,
+		}
+	case "pass":
+		return spec.Resolution{
+			Signal:              sig,
+			DispatchDisposition: spec.DispositionEnd,
+			Color:               spec.ColorFresh,
+		}
+	default: // give_up + any unknown kind
+		return spec.Resolution{
+			Signal:              sig,
+			DispatchDisposition: spec.DispositionEnd,
+			Color:               spec.ColorFailed,
+		}
+	}
+}
+
+// errorPolicySignal constructs the canonical signal-envelope for a
+// resolved Error policy action.
+//
+//   - retry / discard_claims_then_retry → transient/retry/<attempt>/<class>
+//   - give_up / pass                    → terminal/error/<class>
+//
+// The retries-so-far counter is 1-indexed per the spec (the first retry
+// emits attempt=1). Pass and give_up emit the same signal shape; the
+// run-row color differentiation lives on the `Resolution.Color`
+// dimension, not the signal payload.
+//
+//	@concept: signal
+func errorPolicySignal(errorClass string, errorPayload map[string]any, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
+	switch resolvedKind {
+	case "retry", "discard_claims_then_retry":
+		typ := signalpkg.TypePath(fmt.Sprintf("transient/retry/%d/%s", retriesSoFar, errorClass))
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"attempt":          retriesSoFar,
+				"error_class":      errorClass,
+				"discarded_claims": resolvedKind == "discard_claims_then_retry",
+				"delay_ms":         delayMs,
+				"error_payload":    errorPayload,
+			},
+		}
+	default:
+		// give_up | pass — both settle as terminal/error/<class>;
+		// color is differentiated upstream via Resolution.Color.
+		typ := signalpkg.TypePath("terminal/error/" + errorClass)
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"error_class":    errorClass,
+				"error_payload":  errorPayload,
+				"attempt":        retriesSoFar,
+				"retries_so_far": retriesSoFar,
+			},
+		}
+	}
 }
 
 // shouldForceRetryLoopGiveUp returns true when the per-row

@@ -20,7 +20,7 @@ nodes:
   - type: verify-staging
     executor: verifier-shape-checks
     subscribes:
-      - { node: load-data, on: state, when: fresh }
+      - { node: load-data, type: terminal/success }
     holds:
       staging-data: { from: load-data }
     userdata: { ... }

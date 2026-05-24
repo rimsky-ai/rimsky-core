@@ -29,6 +29,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	"github.com/fallguy/rimsky/foundation/spec"
 )
 
@@ -54,11 +55,11 @@ type RunTreeNode struct {
 	ChildKey string
 	// FrameID is the frame this run belongs to. Required.
 	FrameID shared.UUID
-	// State is the run-tree state (mirrors NodeState / LastOutcome on
-	// rimsky_nodes today; the state-propagation cutover in E2 moves
-	// these onto rimsky_node_runs.state + last_outcome).
-	State       cascade.NodeState
-	LastOutcome cascade.LastOutcome
+	// State is the run-tree state (mirrors NodeState on rimsky_node_runs).
+	State cascade.NodeState
+	// SettlingSignalType is the canonical signal type-path the run
+	// settled with (concept:signal). Nil for non-settled runs.
+	SettlingSignalType *string
 	// AggregationPolicy is snapshotted from the template-node spec at
 	// run creation. NULL when the run has no children
 	// (leaf-style run). Persisted as JSONB on
@@ -74,15 +75,35 @@ func (r RunTreeNode) IsRoot() bool { return r.ParentRunID == (shared.UUID{}) }
 // ChildState is the per-child summary the aggregation engine consumes.
 // Persistence callers load this from the children rows; the
 // aggregation function treats it as opaque (it only cares about state +
-// last_outcome).
+// settling signal type-path + changed flag).
+//
+// SettlingSignalType carries the canonical signal type-path from
+// concept:signal: nil for non-settled children, otherwise one of
+// "terminal/success", "terminal/error/<class>", "terminal/park/<reason>",
+// "terminal/infra/<reason>". The aggregator distinguishes "settled
+// success" (state == fresh) from "settled failure" (state == failed)
+// via the State field; SettlingSignalType primarily carries the success
+// payload's `changed` projection forward to the parent.
+//
+// Changed projects the success-signal's payload.changed for parents
+// that aggregate fresh_changed-vs-fresh_unchanged provenance forward
+// (the old `fresh_changed` LastOutcome flavor). Only meaningful when
+// State == fresh and SettlingSignalType is "terminal/success".
 type ChildState struct {
-	State       cascade.NodeState
-	LastOutcome cascade.LastOutcome
+	State              cascade.NodeState
+	SettlingSignalType signalpkg.TypePath
+	Changed            bool
 }
 
-// IsTerminal reports whether the child has reached a settled state
-// (fresh, failed, parked). Running / stale are non-terminal.
-func (c ChildState) IsTerminal() bool {
+// IsSettled reports whether the child has reached a settled state
+// (fresh, failed, parked). Running / stale are non-settled.
+//
+// Renamed from IsTerminal in Pass 5 of spec
+// 2026-05-23-signal-taxonomy-and-policy-decoupling-design: "terminal"
+// in this codebase refers to the wire-protocol StreamClose envelope
+// (concept:terminal-resolution); the state-machine landing predicate
+// is "settled" — distinct vocabulary.
+func (c ChildState) IsSettled() bool {
 	switch c.State {
 	case cascade.NodeStateFresh, cascade.NodeStateFailed, cascade.NodeStateParked:
 		return true
@@ -90,15 +111,24 @@ func (c ChildState) IsTerminal() bool {
 	return false
 }
 
-// IsSuccess reports whether the child terminated successfully (any of
-// the fresh_* / passed / pure_cascade outcomes).
+// IsSuccess reports whether the child terminated successfully (settling
+// signal-type is terminal/success or this child's pass-color terminal).
+// Under the run-tree-aggregator's lens both apply.
 func (c ChildState) IsSuccess() bool {
 	if c.State != cascade.NodeStateFresh {
 		return false
 	}
-	switch c.LastOutcome {
-	case cascade.LastOutcomeFreshChanged, cascade.LastOutcomeFreshUnchanged,
-		cascade.LastOutcomePassed, cascade.LastOutcomePureCascade:
+	// terminal/success is the canonical fresh-success signal.
+	// terminal/error/* with state == fresh is a `pass`-colored settle
+	// (concept:error-policy `pass` action). pure_cascade is the
+	// scheduler's stale → fresh shortcut.
+	if c.SettlingSignalType == "" {
+		// Fresh without a signal-type recorded (pure_cascade /
+		// pre-Pass-5 legacy) counts as success.
+		return true
+	}
+	if c.SettlingSignalType.HasPrefix("terminal/success") ||
+		c.SettlingSignalType.HasPrefix("terminal/error") {
 		return true
 	}
 	return false
@@ -126,24 +156,36 @@ const (
 )
 
 // AggregateResult is the return shape of Aggregate. ParentState +
-// ParentOutcome are the new state the parent should adopt (or its
-// existing state when nothing settled yet — IsTerminal=false means
-// the parent stays in its current state). Action carries any
+// ParentSettlingSignalType are the new state the parent should adopt
+// (or its existing state when nothing settled yet — IsSettled=false
+// means the parent stays in its current state). Action carries any
 // follow-up cancellation the caller must perform.
 type AggregateResult struct {
-	// IsTerminal indicates whether the aggregation produced a final
+	// IsSettled indicates whether the aggregation produced a final
 	// state for the parent. When false, callers leave the parent in
 	// its current state (typically `running`).
-	IsTerminal bool
+	//
+	// Renamed from IsTerminal in Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design — see
+	// ChildState.IsSettled docstring for the vocabulary rationale.
+	IsSettled bool
 
-	// ParentState is the new state. Only meaningful when IsTerminal.
+	// ParentState is the new state. Only meaningful when IsSettled.
 	ParentState cascade.NodeState
 
-	// ParentOutcome is the new last_outcome. Only meaningful when
-	// IsTerminal.
-	ParentOutcome cascade.LastOutcome
+	// ParentSettlingSignalType is the canonical signal type-path the
+	// parent settles with (concept:signal). The aggregate/<policy>_failed
+	// classes (e.g., terminal/error/aggregate/strict_failed) join the
+	// canonical taxonomy as new error-class leaves under
+	// terminal/error/*. Only meaningful when IsSettled.
+	ParentSettlingSignalType signalpkg.TypePath
 
-	// Action is the optional follow-up. Only set when IsTerminal AND
+	// ParentChanged carries the aggregated `changed` projection
+	// forward to the parent for `terminal/success` settlements. Mirrors
+	// the legacy fresh_changed vs fresh_unchanged distinction.
+	ParentChanged bool
+
+	// Action is the optional follow-up. Only set when IsSettled AND
 	// the policy demanded a cancel of siblings.
 	Action AggregateAction
 }
@@ -157,17 +199,23 @@ type AggregateResult struct {
 //
 // Decision table:
 //
-//	strict:           any failure → failed (with strict.cancel_siblings → cancel running siblings)
-//	                  all success → success (last_outcome aggregated)
+//	strict:           any failure → failed under
+//	                  terminal/error/aggregate/strict_failed
+//	                  (with strict.cancel_siblings → cancel running siblings)
+//	                  all success → success under terminal/success
+//	                  (changed aggregated)
 //	threshold:        failures < max_failures → success once all settle
-//	                  failures ≥ max_failures → failed
-//	best_effort:      always success once all settle (aggregating non-failed outcomes)
+//	                  failures ≥ max_failures → failed under
+//	                  terminal/error/aggregate/threshold_failed
+//	best_effort:      always success once all settle
+//	                  (aggregating non-failed outcomes)
 //	first:            first success → parent success + cancel non-winners
-//	                  all failed   → failed
+//	                  all failed   → failed under
+//	                  terminal/error/aggregate/first_failed
 func Aggregate(children []ChildState, policy spec.AggregationPolicy) AggregateResult {
 	if len(children) == 0 {
 		// No children yet → parent stays in its current state.
-		return AggregateResult{IsTerminal: false}
+		return AggregateResult{IsSettled: false}
 	}
 	kind := policy.Kind
 	if kind == "" {
@@ -194,33 +242,34 @@ func aggregateStrict(children []ChildState, policy spec.AggregationPolicy) Aggre
 	for _, c := range children {
 		if c.IsFailure() {
 			res := AggregateResult{
-				IsTerminal:    true,
-				ParentState:   cascade.NodeStateFailed,
-				ParentOutcome: cascade.LastOutcomeFailed,
+				IsSettled:                true,
+				ParentState:              cascade.NodeStateFailed,
+				ParentSettlingSignalType: signalpkg.TypePath("terminal/error/aggregate/strict_failed"),
 			}
 			if policy.CancelSiblings {
 				res.Action = AggregateActionCancelSiblings
 			}
 			return res
 		}
-		if !c.IsTerminal() {
+		if !c.IsSettled() {
 			anyActive = true
 		}
 	}
 	if anyActive {
-		return AggregateResult{IsTerminal: false}
+		return AggregateResult{IsSettled: false}
 	}
 	// All children settled successfully.
 	return AggregateResult{
-		IsTerminal:    true,
-		ParentState:   cascade.NodeStateFresh,
-		ParentOutcome: aggregateSuccessOutcome(children),
+		IsSettled:                true,
+		ParentState:              cascade.NodeStateFresh,
+		ParentSettlingSignalType: signalpkg.TypePath("terminal/success"),
+		ParentChanged:            aggregateChanged(children),
 	}
 }
 
 // aggregateThreshold implements `threshold`: failures < max_failures →
 // success; failures ≥ max_failures → failed. Only settles when all
-// children are terminal.
+// children are settled.
 func aggregateThreshold(children []ChildState, policy spec.AggregationPolicy) AggregateResult {
 	failures := 0
 	anyActive := false
@@ -228,7 +277,7 @@ func aggregateThreshold(children []ChildState, policy spec.AggregationPolicy) Ag
 		if c.IsFailure() {
 			failures++
 		}
-		if !c.IsTerminal() {
+		if !c.IsSettled() {
 			anyActive = true
 		}
 	}
@@ -239,34 +288,36 @@ func aggregateThreshold(children []ChildState, policy spec.AggregationPolicy) Ag
 	}
 	if failures >= max {
 		return AggregateResult{
-			IsTerminal:    true,
-			ParentState:   cascade.NodeStateFailed,
-			ParentOutcome: cascade.LastOutcomeFailed,
+			IsSettled:                true,
+			ParentState:              cascade.NodeStateFailed,
+			ParentSettlingSignalType: signalpkg.TypePath("terminal/error/aggregate/threshold_failed"),
 		}
 	}
 	if anyActive {
-		return AggregateResult{IsTerminal: false}
+		return AggregateResult{IsSettled: false}
 	}
 	return AggregateResult{
-		IsTerminal:    true,
-		ParentState:   cascade.NodeStateFresh,
-		ParentOutcome: aggregateSuccessOutcome(children),
+		IsSettled:                true,
+		ParentState:              cascade.NodeStateFresh,
+		ParentSettlingSignalType: signalpkg.TypePath("terminal/success"),
+		ParentChanged:            aggregateChanged(children),
 	}
 }
 
 // aggregateBestEffort accepts any number of failures; only the
 // non-failed children's outcomes contribute. Settles when all children
-// are terminal.
+// are settled.
 func aggregateBestEffort(children []ChildState) AggregateResult {
 	for _, c := range children {
-		if !c.IsTerminal() {
-			return AggregateResult{IsTerminal: false}
+		if !c.IsSettled() {
+			return AggregateResult{IsSettled: false}
 		}
 	}
 	return AggregateResult{
-		IsTerminal:    true,
-		ParentState:   cascade.NodeStateFresh,
-		ParentOutcome: aggregateSuccessOutcome(children),
+		IsSettled:                true,
+		ParentState:              cascade.NodeStateFresh,
+		ParentSettlingSignalType: signalpkg.TypePath("terminal/success"),
+		ParentChanged:            aggregateChanged(children),
 	}
 }
 
@@ -276,11 +327,16 @@ func aggregateFirst(children []ChildState) AggregateResult {
 	allFailed := true
 	for _, c := range children {
 		if c.IsSuccess() {
+			sig := c.SettlingSignalType
+			if sig == "" {
+				sig = signalpkg.TypePath("terminal/success")
+			}
 			return AggregateResult{
-				IsTerminal:    true,
-				ParentState:   cascade.NodeStateFresh,
-				ParentOutcome: c.LastOutcome,
-				Action:        AggregateActionCancelNonWinners,
+				IsSettled:                true,
+				ParentState:              cascade.NodeStateFresh,
+				ParentSettlingSignalType: sig,
+				ParentChanged:            c.Changed,
+				Action:                   AggregateActionCancelNonWinners,
 			}
 		}
 		if !c.IsFailure() {
@@ -289,25 +345,27 @@ func aggregateFirst(children []ChildState) AggregateResult {
 	}
 	if allFailed {
 		return AggregateResult{
-			IsTerminal:    true,
-			ParentState:   cascade.NodeStateFailed,
-			ParentOutcome: cascade.LastOutcomeFailed,
+			IsSettled:                true,
+			ParentState:              cascade.NodeStateFailed,
+			ParentSettlingSignalType: signalpkg.TypePath("terminal/error/aggregate/first_failed"),
 		}
 	}
-	return AggregateResult{IsTerminal: false}
+	return AggregateResult{IsSettled: false}
 }
 
-// aggregateSuccessOutcome returns the last_outcome the parent adopts
-// when all children settled successfully. Per spec §Aggregation rules:
-// if any child reported fresh_changed, the parent reports fresh_changed
-// (the cascade-firing gate). Otherwise fresh_unchanged.
-func aggregateSuccessOutcome(children []ChildState) cascade.LastOutcome {
+// aggregateChanged returns true when any child's terminal/success
+// signal carried changed=true. Per spec §Aggregation rules: the parent
+// inherits the "changed" projection forward so a downstream
+// `when: payload.changed` subscriber sees a faithful aggregate. Pre-
+// Pass-5 this was the fresh_changed-vs-fresh_unchanged distinction;
+// now it lives on the signal payload.
+func aggregateChanged(children []ChildState) bool {
 	for _, c := range children {
-		if c.LastOutcome == cascade.LastOutcomeFreshChanged {
-			return cascade.LastOutcomeFreshChanged
+		if c.Changed {
+			return true
 		}
 	}
-	return cascade.LastOutcomeFreshUnchanged
+	return false
 }
 
 // CreateRootRun is the runtime-side wrapper around

@@ -51,6 +51,49 @@ func NewExecutorServer(st *pgsstore.Store) *ExecutorServer {
 	return &ExecutorServer{store: st}
 }
 
+// ExecutorObservabilityServer is the postgres-store verifier
+// executor's ExecutorObservability handshake surface. The store-side
+// observability surface (ClaimProducerObservability) is separate and
+// scoped to claim-producer activity; this surface advertises the
+// executor's hierarchical error-class vocabulary per `concept:signal`
+// so the operator's `error_types:` keys can be range-checked against
+// it at template registration.
+type ExecutorObservabilityServer struct {
+	genv1.UnimplementedExecutorObservabilityServer
+}
+
+// NewExecutorObservabilityServer constructs the handshake surface.
+func NewExecutorObservabilityServer() *ExecutorObservabilityServer {
+	return &ExecutorObservabilityServer{}
+}
+
+// declaredErrorClasses is the hierarchical error vocabulary the
+// verifier executor advertises. Entries ending in `*` are prefix
+// patterns; exact strings are fixed leaves. Per `concept:signal`
+// hierarchical error_class rule.
+func declaredErrorClasses() []string {
+	return []string{
+		"pg/attribute_invalid",
+		"pg/claim_unavailable",
+		"pg/connection_lost",
+		"pg/swap_failed",
+		"pg/verifier_check_failed/*",
+	}
+}
+
+// Capabilities reports the executor handshake. Trace get/stream are
+// not implemented by the verifier executor (it has no per-dispatch
+// trace ledger); the handshake exists primarily to surface the
+// hierarchical error-class vocabulary.
+func (o *ExecutorObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
+	return &genv1.ObservabilityCapabilities{
+		SupportsTraceGet:              false,
+		SupportsTraceStream:           false,
+		RetentionAfterTerminalSeconds: 0,
+		DeclaredErrorClasses:          declaredErrorClasses(),
+	}, nil
+}
+
 // Execute is the gRPC entrypoint. Adapts to the transport-neutral
 // executeCore (shared with future HTTP-bridge wiring).
 func (e *ExecutorServer) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
@@ -65,21 +108,28 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	ud := req.GetAttributes().AsMap()
 	schema, table, specs, err := parseVerifierAttributes(ud)
 	if err != nil {
-		return sendVerifierError(send, "invalid_attribute", err.Error(), nil)
+		return sendVerifierError(send, "pg/attribute_invalid", err.Error(), nil)
 	}
 	pool := e.store.Pool()
 	if pool == nil {
-		return sendVerifierError(send, "invalid_attribute", "postgres store has no live connection pool", nil)
+		// No live pool is a transient connection-state defect, not an
+		// attribute defect. Per concept:signal, this is `pg/connection_lost`.
+		return sendVerifierError(send, "pg/connection_lost", "postgres store has no live connection pool", nil)
 	}
 	conn := pgxPoolConn{pool: pool}
 	results, err := sqlchecks.Run(ctx, conn, schema, table, specs)
 	if err != nil {
-		return sendVerifierError(send, "invalid_attribute", err.Error(), nil)
+		return sendVerifierError(send, "pg/attribute_invalid", err.Error(), nil)
 	}
 	if anyFailed(results) {
+		failedKind := firstFailedCheckKind(results)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier_failed",
+				// 2026-05-23 signal-taxonomy Pass 6: per-check-kind leaf
+				// under the `pg/verifier_check_failed/*` prefix. Subscribers
+				// can pattern-match the prefix to react to any verifier
+				// failure, or pin to a specific check kind by leaf.
+				ErrorClass: "pg/verifier_check_failed/" + failedKind,
 				Payload:    buildVerifierFailurePayload(results),
 			}}},
 		}})
@@ -91,6 +141,19 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 			ChangeSummary:   fmt.Sprintf("postgres-store verifier: %d checks passed on %s.%s", len(results), schema, table),
 		}}},
 	}})
+}
+
+// firstFailedCheckKind returns the kind of the first failing check
+// result in scan order. Used to construct the per-check-kind error
+// class leaf for `pg/verifier_check_failed/<kind>`. Callers only
+// invoke this when at least one result is failing.
+func firstFailedCheckKind(results []sqlchecks.Result) string {
+	for _, r := range results {
+		if !r.Pass {
+			return r.Kind
+		}
+	}
+	return "unknown"
 }
 
 // parseVerifierAttributes extracts and validates the attribute fields.

@@ -20,7 +20,7 @@ A held claim outlives its acquirer; somebody has to decide when to release it. T
 
 ## Boundaries
 
-Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fire delete of the handle row. Does NOT own: how each holder reaches its terminal (see `lifecycle-handler`), the verb's producer-side effect (see `claim-producer`), the active-terminal (non-held) branch that also routes through `ResolveClaimHandleTerminal` (see `terminal-resolution` for the unified spine). Adjacent: `claim-handle` (including its `### Held variant` subsection — the dropped `held-claim` concept's content lives there), `claim-producer`, `parked-state` (continues to fire across park), `terminal-resolution`.
+Owns: the aggregate-outcome computation, the producer-verb dispatch, the post-fire delete of the handle row. Does NOT own: how each holder reaches its terminal (see `error-policy` for retry/pass/give_up and `runner_terminal.go::applyTerminalComplete` for successful executor terminals), the verb's producer-side effect (see `claim-producer`), the active-terminal (non-held) branch that also routes through `ResolveClaimHandleTerminal` (see `terminal-resolution` for the unified spine). Adjacent: `claim-handle` (including its `### Held variant` subsection — the dropped `held-claim` concept's content lives there), `claim-producer`, `parked-state` (continues to fire across park), `terminal-resolution`, `error-policy`.
 
 ## Invariants
 

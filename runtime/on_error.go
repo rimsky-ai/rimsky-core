@@ -4,8 +4,10 @@
 
 // Spec §4.2 (on_error) + §7.3 (policy chain). Consults the node's
 // error_types policy chain, evaluates an occurrence, persists the resolved
-// EvaluatorState, logs an `error` event, and applies the resolved action
-// (retry / invalidate / give_up).
+// EvaluatorState, emits the canonical `terminal/error/<class>` (or
+// `transient/retry/<n>/<class>`) signal via signalaudit.EmitSignal, and
+// applies the resolved action (pass | give_up | retry |
+// discard_claims_then_retry).
 //
 // Routes every error class through one path. The attribute-pipeline
 // classes (`template_resolution_failed`, `template_validation_failed`,
@@ -39,6 +41,7 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	"github.com/fallguy/rimsky/graph/node"
 )
 
@@ -66,10 +69,11 @@ type OnErrorArgs struct {
 	SupervisorID string
 	ErrorClass   string
 	Payload      map[string]any
-	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
-	// hook (plan I3). Threaded through to InvalidateNode call sites
-	// fired from the policy chain so `rimsky_invalidates_total` covers
-	// policy_invalidate fan-out. Nil → no-op.
+	// Metrics is the dispatch/terminal/claim instrumentation hook
+	// (plan I3). Retained for symmetry with the wider RunArgs/
+	// MetricsHook plumbing; the historical policy_invalidate fan-out
+	// it covered retired alongside the `invalidate` ErrorPolicy action.
+	// Nil → no-op.
 	Metrics MetricsHook
 }
 
@@ -81,12 +85,11 @@ type OnErrorArgs struct {
 //	(reason policy_retry), re-enqueue dispatch with future enqueued_at
 //	reflecting the backoff delay.
 //
-// invalidate → persist advanced EvaluatorState, transition running→stale
+// pass      → settle the run as fresh (reason acquire_pass when
 //
-//	(reason policy_invalidate), resolve each target node type to a node
-//	ID within the same instance, and route InvalidateNode to
-//	each resolved target. Unresolved targets are logged via the
-//	unresolved_invalidate_target event.
+//	transitioning from stale; reason handler_pass when transitioning
+//	from running). The chain advances so a subsequent same-class error
+//	doesn't pass again.
 //
 // give_up   → transition → failed (reason policy_give_up). This is also
 //
@@ -139,12 +142,26 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	// result here; pass into the closure via the captured variable.
 	requiredStores := requiredStoresForNode(ctx, sb, nd)
 
-	// Bundle the EvaluatorState read with the state mutation so they
-	// land in a single tx (state-machine tx atomicity invariant): the
-	// row's ActionIndex/RetryCounter/CurrentErrorClass that feed
+	// Bundle the EvaluatorState read with the policy-state advance so
+	// they land in a single tx (state-machine tx atomicity invariant):
+	// the row's ActionIndex/RetryCounter/CurrentErrorClass that feed
 	// node.Evaluate are re-read here from the same tx that writes the
 	// advanced state, closing the race window where another writer
 	// could have advanced the row between read and write.
+	//
+	// The canonical signal emission does NOT happen here. The signal
+	// describes the run-row's terminal disposition (retry / give-up /
+	// pass), which is committed in the per-branch tx below; emitting
+	// the signal in this tx would let a tx#1-commit / tx#2-fail window
+	// land a `terminal/error/<class>` audit row on `rimsky_events`
+	// while the rimsky_nodes row still reads `running`, contradicting
+	// the signal. The per-branch tx below co-commits the signal with
+	// the matching state transition so subscribers never observe an
+	// audit row whose state column contradicts the disposition. The
+	// `runner_error_policy.go::applyErrorPolicy` path uses the same
+	// pattern: signal-emit lives in the outer state-mutation tx, not
+	// in a post-commit closure. Per
+	// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
 	var resolved node.ResolvedAction
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
@@ -160,27 +177,26 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			CurrentErrorClass: cur.CurrentErrorClass,
 		}
 		resolved = node.Evaluate(policy, state, args.ErrorClass, nil)
-		if err := sb.Nodes().UpdateError(ctx, args.NodeID, resolved.NewState, tx); err != nil {
-			return err
-		}
-		return sb.Events().Append(ctx, persistence.EventAppendInput{
-			InstanceID: &args.InstanceID,
-			NodeID:     &args.NodeID,
-			Kind:       "error",
-			Payload: map[string]any{
-				"error_class":  args.ErrorClass,
-				"details":      args.Payload,
-				"action_taken": resolved.Kind,
-				"action_index": resolved.NewState.ActionIndex,
-				"delay_ms":     resolved.DelayMs,
-			},
-		}, tx)
+		return sb.Nodes().UpdateError(ctx, args.NodeID, resolved.NewState, tx)
 	}); err != nil {
 		return err
 	}
 
+	// Construct the canonical signal envelope via the shared
+	// `errorPolicySignal` helper so OnError's emit path matches the
+	// runtime's applyErrorPolicy path. `retriesSoFar` is best-effort
+	// here (the OnError path doesn't carry the consecutive-retries
+	// counter that applyErrorPolicy threads through buildResolution;
+	// resolved.NewState.RetryCounter is the chain-position counter,
+	// which is the closest available signal for the audit row's
+	// `attempt` field). The envelope is constructed once and emitted
+	// inside whichever per-branch tx commits the matching state
+	// transition.
+	resolutionSig := errorPolicySignal(args.ErrorClass, args.Payload, resolved.Kind,
+		resolved.NewState.RetryCounter, resolved.DelayMs)
+
 	switch resolved.Kind {
-	case "retry", "discard_then_retry", "resume_then_retry":
+	case "retry", "discard_claims_then_retry":
 		// Wrap remove + enqueue (and the optional running→stale
 		// transition + cascade walk) in one tx so a partial commit
 		// can't strand the node with no in-flight row and no
@@ -205,7 +221,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				return fmt.Errorf("OnError retry: node %s has nil frame_id", args.NodeID)
 			}
 			if cur.State == cascade.NodeStateRunning {
-				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, "", tx); err != nil {
+				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, nil, tx); err != nil {
 					return err
 				}
 				// Pessimistic-invalidate: running → stale is this
@@ -251,7 +267,14 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				}
 				return err
 			}
-			return nil
+			// Co-commit the canonical signal with the state transition
+			// that produced it. The audit row on `rimsky_events` and the
+			// rimsky_nodes state change land or roll back together —
+			// subscribers never see a `transient/retry/*` (or
+			// `terminal/error/*`) row while the run row still contradicts
+			// the disposition.
+			return signalaudit.EmitSignal(ctx, sb.Events(),
+				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
 		})
 
 	case "give_up":
@@ -269,7 +292,8 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			if cur == nil {
 				return nil
 			}
-			if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, cascade.LastOutcomeFailed, tx); err != nil {
+			giveUpSig := "terminal/error/" + args.ErrorClass
+			if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &giveUpSig, tx); err != nil {
 				return err
 			}
 			// Settled-state drain on failed: any wait-set rows gating
@@ -289,7 +313,97 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 					}
 				}
 			}
-			return args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx)
+			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
+				return err
+			}
+			// Co-commit the canonical signal with the give_up state
+			// transition. The `terminal/error/<class>` audit row and
+			// the rimsky_nodes failed transition land together —
+			// subscribers wildcard-matching `terminal/error/*` never
+			// fire on an audit row whose state column still reads
+			// running.
+			return signalaudit.EmitSignal(ctx, sb.Events(),
+				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
+		})
+
+	case "pass":
+		// Pass settles the run as fresh. From a stale state (e.g.
+		// pre-dispatch acquire/unavailable resolved as pass) this is
+		// the canonical acquire-pass transition, carrying the
+		// `terminal/error/<class>` envelope on settling_signal_type with
+		// Color=fresh. From a running state (executor errored, resolved
+		// pass via error_types) it also lands fresh with the same
+		// settling_signal_type (mirroring `applyResolvedAction`'s pass
+		// branch). Per
+		// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
+		//
+		//	@concept: error-policy
+		return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
+			if err != nil {
+				return err
+			}
+			if cur == nil {
+				return nil
+			}
+			// Pass settles fresh; settling_signal_type carries the
+			// terminal/error/<class> envelope (Color is fresh — see
+			// substitution-visibility gate). Per Pass 3 of spec
+			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+			//
+			// Only `stale` (pre-dispatch acquire/unavailable resolved
+			// pass) and `running` (executor errored, resolved pass via
+			// error_types) are reachable here — both prod call sites
+			// (`code:runtime/runner_lifecycle.go::handleAcquireUnavailable`
+			// for the stale path; the running path via
+			// `code:runtime/runner_error_policy.go::applyErrorPolicy`'s
+			// pass branch handles its own state and doesn't reach OnError)
+			// guarantee one of those two states. Any other state means
+			// the row was rotated under us by a sweep we didn't expect;
+			// fail loudly rather than emit a canonical signal that
+			// contradicts the actual run row.
+			passSig := "terminal/error/" + args.ErrorClass
+			switch cur.State {
+			case cascade.NodeStateStale:
+				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID,
+					cascade.NodeStateFresh, cascade.ReasonAcquirePass,
+					&passSig, tx); err != nil {
+					return err
+				}
+			case cascade.NodeStateRunning:
+				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID,
+					cascade.NodeStateFresh, cascade.ReasonHandlerPass,
+					&passSig, tx); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("OnError pass branch: unexpected node state %q for node %s (expected stale|running); a concurrent rotation moved the row out from under us between the policy-resolution tx and the action-apply tx",
+					cur.State, args.NodeID)
+			}
+			// Settled-state drain on fresh+pass: any wait-set rows
+			// gating receivers on this sender's run release.
+			if cur.FrameID != nil {
+				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID)
+				if err != nil {
+					return err
+				}
+				if ok {
+					if err := sb.WaitSet().MarkDrainedBySender(ctx, *cur.FrameID, runID, tx); err != nil {
+						return err
+					}
+				}
+			}
+			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
+				return err
+			}
+			// Co-commit the canonical signal with the pass state
+			// transition. The `terminal/error/<class>` audit row
+			// (Color=fresh per Resolution.Color, carried by the
+			// settling_signal_type column rather than the signal
+			// payload) lands together with the rimsky_nodes fresh
+			// transition.
+			return signalaudit.EmitSignal(ctx, sb.Events(),
+				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
 		})
 	}
 	// `invalidate` action retired under the 2026-05-14 subscription-

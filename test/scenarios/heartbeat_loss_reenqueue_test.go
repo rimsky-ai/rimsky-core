@@ -116,16 +116,17 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	}
 	require.True(t, sawStale, "node did not transition running→stale")
 
-	// Verify heartbeat_lost event.
+	// Verify transient/heartbeat_missed signal event (canonical audit
+	// row per concept:signal post-Pass-5).
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "heartbeat_lost"},
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "transient/heartbeat_missed"},
 			persistence.ListPagination{Limit: 10}, tx)
 		evs = r
 		return err
 	}))
-	require.NotEmpty(t, evs.Events, "expected heartbeat_lost event")
+	require.NotEmpty(t, evs.Events, "expected transient/heartbeat_missed signal event")
 
 	// A fresh dispatch row should exist (re-enqueued).
 	var dispatchID uuid.UUID

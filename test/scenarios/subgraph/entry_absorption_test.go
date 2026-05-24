@@ -48,9 +48,9 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "validator"},
 					{Type: "transform", Executor: "transformer",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 					{Type: "promote", Executor: "promoter",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -112,9 +112,9 @@ func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
 					{Type: "transform", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 					{Type: "promote", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
 				},
 			},
 		},

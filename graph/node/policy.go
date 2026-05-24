@@ -20,10 +20,15 @@ type (
 
 // Evaluate advances the policy chain by one step for a given error
 // occurrence. See spec §4.2 and §7.3.
+//
+// Action vocabulary (4 values; reshape per
+// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`):
 //   - policy == nil (unknown error class) → give_up("unknown_error_class")
 //   - different error class → reset counters
-//   - retry: if counter < count, increment + schedule backoff; else advance action_index and recurse
-//   - invalidate: return targets; action_index advances immediately so same-class recurrence moves on
+//   - retry / discard_claims_then_retry: if counter < count, increment +
+//     schedule backoff; else advance action_index and recurse
+//   - pass: settle as fresh; chain advances so a subsequent same-class
+//     error doesn't pass again
 //   - give_up: terminal
 func Evaluate(policy *ErrorTypePolicy, state EvaluatorState, errorClass string, rng func() float64) ResolvedAction {
 	if rng == nil {
@@ -57,7 +62,7 @@ func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng fun
 	}
 	action := chain[state.ActionIndex]
 	switch action.Action {
-	case "retry", "discard_then_retry", "resume_then_retry":
+	case "retry", "discard_claims_then_retry":
 		if state.RetryCounter < action.Count {
 			newCounter := state.RetryCounter + 1
 			delay := ComputeDelay(BackoffConfig{
@@ -77,11 +82,12 @@ func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng fun
 		return step(chain, EvaluatorState{
 			ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
 		}, errorClass, rng)
-	case "invalidate":
+	case "pass":
+		// Pass settles the run as fresh (color decided at runtime-side
+		// via Resolution.Color). The chain advances so a subsequent
+		// same-class error in the same dispatch wouldn't `pass` again.
 		return ResolvedAction{
-			Kind:    "invalidate",
-			Targets: action.Targets,
-			Frame:   action.Frame,
+			Kind: "pass",
 			NewState: EvaluatorState{
 				ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
 			},

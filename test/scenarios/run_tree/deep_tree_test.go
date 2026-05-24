@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -31,18 +32,21 @@ func TestDeepTree_SubgraphOfFanout(t *testing.T) {
 	// Two fan-out partitions; each partition's sub-graph terminated
 	// fresh_changed.
 	innerVerdicts := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	outer := runtime.Aggregate(innerVerdicts, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !outer.IsTerminal {
+	if !outer.IsSettled {
 		t.Fatal("outer fan-out should settle once each sub-graph terminated")
 	}
 	if outer.ParentState != cascade.NodeStateFresh {
 		t.Errorf("outer state: %s (want fresh)", outer.ParentState)
 	}
-	if outer.ParentOutcome != cascade.LastOutcomeFreshChanged {
-		t.Errorf("outer outcome: %s (want fresh_changed — cascade propagates)", outer.ParentOutcome)
+	if outer.ParentSettlingSignalType != signalpkg.TypePath("terminal/success") {
+		t.Errorf("outer outcome: %s (want terminal/success)", outer.ParentSettlingSignalType)
+	}
+	if !outer.ParentChanged {
+		t.Errorf("outer changed: false (want true — at least one child changed)")
 	}
 }
 
@@ -52,11 +56,11 @@ func TestDeepTree_SubgraphOfFanout(t *testing.T) {
 func TestDeepTree_SubgraphOfFanoutOneInnerFails(t *testing.T) {
 	t.Parallel()
 	innerVerdicts := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	outer := runtime.Aggregate(innerVerdicts, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !outer.IsTerminal {
+	if !outer.IsSettled {
 		t.Fatal("outer fan-out should settle when any inner reports failed")
 	}
 	if outer.ParentState != cascade.NodeStateFailed {
@@ -73,11 +77,11 @@ func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 	// Inner fan-out had a mixed outcome but `best_effort` policy
 	// produced a successful inner verdict.
 	innerChildren := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	innerVerdict := runtime.Aggregate(innerChildren, tmplspec.AggregationPolicy{Kind: "best_effort"})
-	if !innerVerdict.IsTerminal {
+	if !innerVerdict.IsSettled {
 		t.Fatal("inner fan-out should settle")
 	}
 	if innerVerdict.ParentState != cascade.NodeStateFresh {
@@ -86,9 +90,9 @@ func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 	// Outer sub-graph: a single ChildState carries the inner
 	// fan-out's settled verdict upward.
 	outer := runtime.Aggregate([]runtime.ChildState{
-		{State: innerVerdict.ParentState, LastOutcome: innerVerdict.ParentOutcome},
+		{State: innerVerdict.ParentState, SettlingSignalType: innerVerdict.ParentSettlingSignalType},
 	}, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !outer.IsTerminal {
+	if !outer.IsSettled {
 		t.Fatal("outer sub-graph should settle on inner verdict")
 	}
 	if outer.ParentState != cascade.NodeStateFresh {

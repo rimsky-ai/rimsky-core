@@ -199,13 +199,23 @@ type ObservabilityCapabilities struct {
 	// via the NamedEvent wire type on ExecuteEvent. Empty means
 	// "executor does not emit events."
 	//
-	// Rimsky validates that any on_event handlers in templates referencing
-	// this executor name an event in declared_events. Reserved lifecycle
-	// slots (on_executor_complete/errored, on_acquire_unavailable) are
-	// not subject to this validation.
+	// Rimsky validates that template subscriptions of the form
+	// `subscribes: [{node: <sender>, type: event/<name>}]` reference an
+	// event in declared_events.
 	DeclaredEvents []string `protobuf:"bytes,7,rep,name=declared_events,json=declaredEvents,proto3" json:"declared_events,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// declared_error_classes is the set of error-class paths this
+	// executor may emit on Error.error_class. Patterns ending in `*`
+	// indicate prefix-pattern leaves (e.g., `http/server_error/*`);
+	// exact strings indicate fixed leaves. The validator's range-check
+	// of operator `error_types:` keys accepts a key if it exactly
+	// matches a declared plain leaf OR matches a declared `<prefix>/*`
+	// pattern by prefix. Empty/absent means "executor does not declare;
+	// skip validator range-check for this executor".
+	//
+	// Per concept:signal hierarchical error_class rule.
+	DeclaredErrorClasses []string `protobuf:"bytes,8,rep,name=declared_error_classes,json=declaredErrorClasses,proto3" json:"declared_error_classes,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ObservabilityCapabilities) Reset() {
@@ -283,6 +293,13 @@ func (x *ObservabilityCapabilities) GetExpectedAttributesSchema() []byte {
 func (x *ObservabilityCapabilities) GetDeclaredEvents() []string {
 	if x != nil {
 		return x.DeclaredEvents
+	}
+	return nil
+}
+
+func (x *ObservabilityCapabilities) GetDeclaredErrorClasses() []string {
+	if x != nil {
+		return x.DeclaredErrorClasses
 	}
 	return nil
 }
@@ -600,7 +617,7 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
 	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x1d\n" +
-	"\x1bExecutorCapabilitiesRequest\"\x87\x03\n" +
+	"\x1bExecutorCapabilitiesRequest\"\xbd\x03\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
@@ -608,7 +625,8 @@ const file_executor_observability_proto_rawDesc = "" +
 	"\tcustom_ui\x18\x04 \x01(\v2\x13.rimsky.v1.CustomUIR\bcustomUi\x12&\n" +
 	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12<\n" +
 	"\x1aexpected_attributes_schema\x18\x06 \x01(\fR\x18expectedAttributesSchema\x12'\n" +
-	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\"\x8a\x01\n" +
+	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\x124\n" +
+	"\x16declared_error_classes\x18\b \x03(\tR\x14declaredErrorClasses\"\x8a\x01\n" +
 	"\bCustomUI\x12\x15\n" +
 	"\x06ui_url\x18\x01 \x01(\tR\x05uiUrl\x123\n" +
 	"\n" +

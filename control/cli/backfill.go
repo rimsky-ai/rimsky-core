@@ -208,10 +208,10 @@ func RunBackfillShow(ctx context.Context, args []string) int {
 		}
 		rows := make([][]string, 0, len(parts.Partitions))
 		for _, p := range parts.Partitions {
-			rows = append(rows, []string{p.RunID, p.NodeID, p.ChildKey, p.State, p.LastOutcome})
+			rows = append(rows, []string{p.RunID, p.NodeID, p.ChildKey, p.State, p.SettlingSignalType})
 		}
 		fmt.Println()
-		EmitTable(os.Stdout, []string{"RUN_ID", "NODE_ID", "CHILD_KEY", "STATE", "LAST_OUTCOME"}, rows)
+		EmitTable(os.Stdout, []string{"RUN_ID", "NODE_ID", "CHILD_KEY", "STATE", "SETTLING_SIGNAL_TYPE"}, rows)
 	}
 	return 0
 }

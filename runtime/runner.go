@@ -166,8 +166,9 @@ type RunArgs struct {
 	BlobSpillThreshold int
 
 	// MaxRetriesWithoutProgressDefault is the deployment-level cap on
-	// consecutive retries with no last_outcome change before the runner
-	// forces an Error{error_class: "retry_loop_no_progress"} terminal.
+	// consecutive retries with no settling_signal_type change before the
+	// runner forces an Error{error_class: "retry_loop_no_progress"}
+	// terminal.
 	// Zero means "use the built-in default of 100"; per-row override on
 	// rimsky_node_runs.max_retries_without_progress takes
 	// precedence (NULL on the row falls back to this default; 0 on the

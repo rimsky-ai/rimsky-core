@@ -43,9 +43,9 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "outer-entry", Executor: "stub"},
 					{Type: "outer-mid", Delegate: "inner",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-entry", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-entry", Type: "terminal/*"}}},
 					{Type: "outer-exit", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-mid", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-mid", Type: "terminal/*"}}},
 				},
 			},
 			{
@@ -55,7 +55,7 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "inner-entry", Executor: "stub"},
 					{Type: "inner-exit", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", On: "state"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -97,7 +97,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Exit:  "g1x",
 				Nodes: []node.TemplateNodeDef{
 					{Type: "g1n", Delegate: "g2"},
-					{Type: "g1x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g1n", On: "state"}}},
+					{Type: "g1x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g1n", Type: "terminal/*"}}},
 				},
 			},
 			{
@@ -106,7 +106,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Exit:  "g2x",
 				Nodes: []node.TemplateNodeDef{
 					{Type: "g2n", Delegate: "g1"}, // cycle: g1 → g2 → g1
-					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", On: "state"}}},
+					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
 				},
 			},
 		},

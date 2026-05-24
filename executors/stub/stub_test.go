@@ -86,7 +86,7 @@ func TestScriptedError(t *testing.T) {
 	require.NotNil(t, events[0].GetHeartbeat())
 	e := events[1].GetStreamClose().GetError()
 	require.NotNil(t, e)
-	require.Equal(t, "CONFIG", e.GetErrorClass())
+	require.Equal(t, "stub/CONFIG", e.GetErrorClass())
 	require.Equal(t, "bad", e.GetPayload().AsMap()["hint"])
 }
 
@@ -106,9 +106,10 @@ func TestScriptedBlocked(t *testing.T) {
 	require.NotNil(t, events[0].GetHeartbeat())
 	b := events[1].GetStreamClose().GetError()
 	require.NotNil(t, b)
-	// Executor-blocked path: Error with error_class="executor_blocked".
-	// Tests construct the payload inline (reason + any context).
-	require.Equal(t, "executor_blocked", b.GetErrorClass())
+	// Executor-blocked path: Error with the stub-prefixed class
+	// `stub/executor_blocked`. Tests construct the payload inline
+	// (reason + any context).
+	require.Equal(t, "stub/executor_blocked", b.GetErrorClass())
 	pl := b.GetPayload().AsMap()
 	require.Equal(t, "waiting for review", pl["reason"])
 	require.Equal(t, "Z-1", pl["ticket"])

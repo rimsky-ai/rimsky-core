@@ -6,13 +6,13 @@
 // Self-invalidate emits retire; receivers declare cascade coupling via
 // subscriptions. The "loop until queue drains" shape is now expressed
 // by the producer-side claim contract (Open returns Unavailable when
-// the queue is empty; on_acquire_unavailable resolves pass) without a
-// self-referential cascade edge.
+// the queue is empty; error_types: { "acquire/unavailable": [pass] }
+// settles the dispatch fresh) without a self-referential cascade edge.
 package scenarios
 
 import "testing"
 
 func TestReactiveLoopSelfInvalidateInFrame(t *testing.T) {
 	t.Skip("retired: self-invalidate emit retired; loop semantics shaped " +
-		"by producer-side Unavailable + on_acquire_unavailable in the new model")
+		"by producer-side Unavailable + error_types: { \"acquire/unavailable\": [pass] } in the new model")
 }

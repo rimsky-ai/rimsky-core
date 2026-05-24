@@ -270,11 +270,11 @@ func handleGetBackfill(deps AppDeps) http.HandlerFunc {
 // parent run, keyed by the partition / iteration value
 // (`col:rimsky_node_runs.child_key`).
 type backfillPartitionRow struct {
-	RunID       string `json:"run_id"`
-	NodeID      string `json:"node_id"`
-	ChildKey    string `json:"child_key,omitempty"`
-	State       string `json:"state"`
-	LastOutcome string `json:"last_outcome,omitempty"`
+	RunID              string `json:"run_id"`
+	NodeID             string `json:"node_id"`
+	ChildKey           string `json:"child_key,omitempty"`
+	State              string `json:"state"`
+	SettlingSignalType string `json:"settling_signal_type,omitempty"`
 }
 
 // handleBackfillPartitions returns per-child-run drill-down for the
@@ -334,12 +334,16 @@ func handleBackfillPartitions(deps AppDeps) http.HandlerFunc {
 				if scope, _ := deps.Persist.RunScopes().GetByID(ctx, tx, c.RunScopeID); scope != nil {
 					partitionKey = scope.PartitionKey
 				}
+				var settlingSig string
+				if c.SettlingSignalType != nil {
+					settlingSig = *c.SettlingSignalType
+				}
 				partitions = append(partitions, backfillPartitionRow{
-					RunID:       c.RunID.String(),
-					NodeID:      c.NodeID.String(),
-					ChildKey:    partitionKey,
-					State:       string(c.State),
-					LastOutcome: string(c.LastOutcome),
+					RunID:              c.RunID.String(),
+					NodeID:             c.NodeID.String(),
+					ChildKey:           partitionKey,
+					State:              string(c.State),
+					SettlingSignalType: settlingSig,
 				})
 			}
 			return nil

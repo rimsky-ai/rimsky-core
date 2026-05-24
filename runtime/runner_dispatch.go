@@ -19,6 +19,8 @@ import (
 	"github.com/fallguy/rimsky/foundation/locks"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/node"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
@@ -228,6 +230,30 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 
 	if asyncAck != "" {
 		registerAsyncIfSet(dctx, asyncAck)
+		// Canonical signal emission per concept:signal. transient/
+		// await_async fires when the executor returns
+		// AwaitAsyncCallback; the node stays in running state and
+		// the actual settling happens via the callback path. No
+		// fixed-string audit row existed for this transition
+		// pre-Pass-1, so the signal write stands alone.
+		if dctx.Args.Persist != nil {
+			awaitSig := signalpkg.Signal{
+				Type: "transient/await_async",
+				Payload: map[string]any{
+					"async_ack_id": asyncAck,
+					"callback_url": dctx.Args.CallbackURL,
+				},
+			}
+			if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
+					acq.InstanceID, acq.NodeID, awaitSig, dctx.Args.Clock.Now(), tx)
+			}); err != nil && dctx.Args.Logger != nil {
+				dctx.Args.Logger.Warn("runner_dispatch: emit transient/await_async signal failed",
+					"node_id", acq.NodeID.String(),
+					"async_ack_id", asyncAck,
+					"error", err.Error())
+			}
+		}
 		return terminalEvent{}, &RunnerResult{
 			Ran:        true,
 			Async:      true,

@@ -49,3 +49,5 @@ Operator-configurable. Default: retain as long as the corresponding artifact (ru
 ## Notes
 
 Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The "materialized projection" framing keeps the lineage surface decoupled from the live runtime; the openlineage subscriber polls the projection rather than subscribing to live events.
+
+2026-05-23 — Per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`: the projection's `last_outcome` field on `leaf_run` records is replaced by `settling_signal_type`, carrying the canonical signal type-path the run settled with (`concept:signal`). Subscribers that decoded `last_outcome` (e.g. `subscribers/openlineage/`) read `settling_signal_type` instead; the OpenLineage facet emits the signal type-path. Strictly more expressive than the retired enum.

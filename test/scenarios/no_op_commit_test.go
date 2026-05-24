@@ -61,7 +61,7 @@ func TestNoOpCommit(t *testing.T) {
 					Type:     "dependent",
 					Executor: "stub",
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "producer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "producer", Type: "terminal/*"}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -93,18 +93,22 @@ func TestNoOpCommit(t *testing.T) {
 	}))
 
 	// Swap the stub to changed=false and invalidate the producer; the
-	// supervisor should re-run it, emit `no_op_commit`, NOT emit
-	// `attributes_committed`, and NOT cascade.
+	// supervisor should re-run it, emit `terminal/success` with
+	// payload.changed=false, and NOT cascade. Per Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design the
+	// retired `no_op_commit` / `attributes_committed` fixed-string
+	// audit kinds collapse into one `terminal/success` signal-shaped
+	// row whose payload distinguishes changed/no-op via
+	// `payload.changed`.
 	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, false, "noop")
 
-	// Snapshot the producer's existing attributes_committed event count so a
-	// pre-existing committed event from the first run doesn't false-positive
-	// the assertion below.
+	// Snapshot the producer's existing terminal/success event count so
+	// the first run's row doesn't false-positive the assertion below.
 	pid := producer.ID
 	var priorCommitted persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+			persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
 			persistence.ListPagination{Limit: 200}, tx)
 		priorCommitted = r
 		return err
@@ -121,34 +125,41 @@ func TestNoOpCommit(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Wait for the no_op_commit event to be emitted by the second run.
-	// We can't WaitForNodeState(fresh) here because the node may already
-	// be fresh from the first run; the new run cycles fresh→stale→fresh.
-	require.True(t, h.WaitForEventKind(producer.ID, "no_op_commit", 60*time.Second),
-		"producer did not emit no_op_commit after changed=false run")
+	// Wait for a NEW terminal/success signal (count > priorCount).
+	require.Eventually(t,
+		func() bool {
+			var ev persistence.EventListResult
+			err := h.InTx(func(tx persistence.Tx) error {
+				r, lerr := h.Persist.Events().List(h.Ctx,
+					persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
+					persistence.ListPagination{Limit: 200}, tx)
+				ev = r
+				return lerr
+			})
+			return err == nil && len(ev.Events) > priorCount
+		},
+		60*time.Second, 100*time.Millisecond,
+		"producer did not emit a second terminal/success after changed=false run",
+	)
 
-	// `no_op_commit` event recorded for the producer.
-	var noOpEvs persistence.EventListResult
+	// Verify the second run's terminal/success row carries changed=false.
+	var allCommitted persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &pid, Kind: "no_op_commit"},
-			persistence.ListPagination{Limit: 10}, tx)
-		noOpEvs = r
-		return err
-	}))
-	require.NotEmpty(t, noOpEvs.Events, "expected no_op_commit event after changed=false run")
-
-	// No NEW `attributes_committed` event was emitted by the second run.
-	var postCommitted persistence.EventListResult
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx,
-			persistence.EventListFilter{NodeID: &pid, Kind: "attributes_committed"},
+			persistence.EventListFilter{NodeID: &pid, Kind: "terminal/success"},
 			persistence.ListPagination{Limit: 200}, tx)
-		postCommitted = r
+		allCommitted = r
 		return err
 	}))
-	require.Equal(t, priorCount, len(postCommitted.Events),
-		"no_op commit must NOT emit attributes_committed (changed=false)")
+	require.Greater(t, len(allCommitted.Events), priorCount,
+		"expected a new terminal/success after changed=false run")
+	// Events.List returns rows in (occurred_at DESC, id DESC) order, so
+	// the first element is the most recent terminal/success row — the
+	// second run's emission.
+	latest := allCommitted.Events[0]
+	changedVal, _ := latest.Payload["changed"].(bool)
+	require.False(t, changedVal,
+		"second run's terminal/success must carry payload.changed=false")
 
 	// Under the pessimistic-invalidate rule, the producer's
 	// invalidation cascades to mark the dependent stale; the

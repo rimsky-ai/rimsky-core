@@ -10,10 +10,10 @@
 // BlobBackend when it exceeds BlobSpillThreshold.
 //
 // Post-2026-05-14 the per-event invalidate-emit handler retires: the
-// receiver-side `subscribes: [{node, on: event, name}]` declaration
-// replaces the substitution-path and the cascade-fire path uniformly.
-// The cascade walk picks up the emission via the subscription-edge
-// match in cascadeSubscribersStaleInTx.
+// receiver-side `subscribes: [{node: <sender>, type: event/<name>}]`
+// declaration replaces the substitution-path and the cascade-fire path
+// uniformly. The cascade walk picks up the emission via the
+// subscription-edge match in cascadeSubscribersStaleInTx.
 //
 // Per @blessed-invariant 21 the payload bytes are never logged,
 // formatted, or transformed; only sizes and names appear in audit-log
@@ -23,9 +23,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/fallguy/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 )
 
 // processNamedEvents walks the captured event list, persists each via
@@ -50,9 +53,10 @@ func processNamedEvents(ctx context.Context, args RunArgs, acq *acquisition, eve
 				"event_name", evt.Name,
 				"error", err.Error())
 		}
-		// Receiver-side `subscribes: [{node, on: event, name}]` handles
-		// downstream cascade-fire via the subscription-edge match in
-		// cascadeSubscribersStaleInTx; no per-emit handler dispatch here.
+		// Receiver-side `subscribes: [{node: <sender>, type:
+		// event/<name>}]` handles downstream cascade-fire via the
+		// subscription-edge match in cascadeSubscribersStaleInTx;
+		// no per-emit handler dispatch here.
 	}
 }
 
@@ -103,15 +107,24 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 			return fmt.Errorf("NodeEvents.Insert(%s/%s/%s): %w",
 				acq.InstanceID, acq.NodeID, evt.Name, err)
 		}
-		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "named_event_emitted",
+		// Canonical signal emission per concept:signal — event/<name>.
+		// The payload's `event_payload` field carries the executor-
+		// provided bytes decoded to a map when JSON-shaped (so CEL
+		// when: predicates can reach into it); falls back to a
+		// raw-bytes wrapper otherwise.
+		eventSig := signalpkg.Signal{
+			Type: signalpkg.TypePath("event/" + evt.Name),
 			Payload: map[string]any{
-				"event_name":      evt.Name,
-				"payload_bytes":   len(evt.PayloadInline),
-				"spilled_to_blob": handle != "",
+				"name":          evt.Name,
+				"event_payload": eventPayloadAsMap(evt.PayloadInline),
 			},
-		}, tx)
+		}
+		// event/<name> signal above is the canonical audit row per
+		// concept:signal. The pre-Pass-5 fixed-string
+		// "named_event_emitted" audit-row retired alongside spec
+		// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+		return signalaudit.EmitSignal(ctx, args.Persist.Events(),
+			acq.InstanceID, acq.NodeID, eventSig, args.Clock.Now(), tx)
 	}); err != nil {
 		return err
 	}
@@ -122,5 +135,22 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 }
 
 // fireOnEventHandler retired by the 2026-05-14 subscription-cascade
-// resolution. Receiver-side `subscribes: [{node, on: event, name}]`
-// replaces the substitution path and the cascade-fire path uniformly.
+// resolution. Receiver-side `subscribes: [{node: <sender>, type:
+// event/<name>}]` replaces the substitution path and the cascade-fire
+// path uniformly.
+
+// eventPayloadAsMap decodes inline named-event bytes into a
+// map[string]any when the bytes are JSON-shaped; returns a stub map
+// containing the raw byte length when the bytes are non-JSON or
+// empty. The signal payload's event_payload field is exposed to CEL
+// when: predicates, so map shape is the cleanest binding.
+func eventPayloadAsMap(payload []byte) map[string]any {
+	if len(payload) == 0 {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(payload, &out); err == nil && out != nil {
+		return out
+	}
+	return map[string]any{"_raw_bytes": len(payload)}
+}

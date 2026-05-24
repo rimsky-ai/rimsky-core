@@ -261,17 +261,19 @@ func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
 	})
 	assert.Equal(t, cascade.NodeStateStale, after.State)
 
-	// heartbeat_lost event appended.
+	// transient/heartbeat_missed signal appended (canonical audit row
+	// per concept:signal post-Pass-5; the legacy "heartbeat_lost"
+	// fixed-string row retired).
 	var events persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		e, err := f.persist.Events().List(ctx,
-			persistence.EventListFilter{NodeID: &n.ID, Kind: "heartbeat_lost"},
+			persistence.EventListFilter{NodeID: &n.ID, Kind: "transient/heartbeat_missed"},
 			persistence.ListPagination{Limit: 10}, tx,
 		)
 		events = e
 		return err
 	})
-	require.NotEmpty(t, events.Events, "expected a heartbeat_lost event")
+	require.NotEmpty(t, events.Events, "expected a transient/heartbeat_missed signal event")
 
 	// Two dispatch rows: the retired zombie (phase='completed' after
 	// SweepStaleHeartbeats retired it) + the re-enqueued pending row.

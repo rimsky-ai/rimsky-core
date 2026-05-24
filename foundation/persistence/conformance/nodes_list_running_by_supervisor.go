@@ -99,7 +99,7 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 				}
 			}
 			if err := store.Nodes().UpdateState(ctx, id, fix.MainRunScopeID,
-				cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx); err != nil {
+				cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx); err != nil {
 				return err
 			}
 			return store.Nodes().UpdateHeartbeat(ctx, id, fix.MainRunScopeID, time.Now(), supervisorID, tx)

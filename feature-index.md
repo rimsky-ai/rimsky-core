@@ -12,7 +12,8 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | Feature | Path | Depends on | Purpose |
 | --- | --- | --- | --- |
 | auth | `foundation/auth/` | shared | API-key plaintext format (mint / hash / validate); grant entry parser + wildcard matcher + permission check; identity + audit payload types. Pure functions; no I/O. |
-| cascade | `foundation/cascade/` | shared | Node-state machine (`NodeState`, `LastOutcome`, `ErrIllegalTransition`); illegal-transition rejection. |
+| cascade | `foundation/cascade/` | shared | Node-state machine (`NodeState`, `TransitionReason`, `ErrIllegalTransition`); illegal-transition rejection. |
+| signal | `foundation/signal/` | shared | Canonical signal taxonomy (`TypePath`, payload schemas, `ValidateTypePath` / `ValidateSubscriptionType`) + CEL `when:` predicate compilation; thin audit subpackage (`foundation/signal/audit/`) writes one `rimsky_events` row per emitted signal. |
 | locks | `foundation/locks/` | shared | `ClaimProducer` protocol Go interface + claim/lock primitive types (`ClaimID`, `ClaimSpec`, `NamedLockSpec`, `ClaimResult`, `Registry`); in-Go `storetest` fake. |
 | persistence | `foundation/persistence/` | shared, spec, cascade, locks | Database / Tables / Tx interfaces plus the postgres + sqlite drivers; migration runner; advisory-lock primitives; blob backends. |
 | persistence/conformance | `foundation/persistence/conformance/` | persistence | Driver-agnostic conformance suite for `Tables` impls (postgres + sqlite). |

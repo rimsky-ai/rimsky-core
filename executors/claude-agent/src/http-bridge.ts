@@ -238,7 +238,7 @@ async function runAndCallback(
         {
           async_ack_id: ackId,
           type: "errored",
-          error_class: "executor_internal_error",
+          error_class: "agent/internal_error",
           payload: { error: String(e) },
         },
         logger,

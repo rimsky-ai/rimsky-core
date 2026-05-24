@@ -7,7 +7,7 @@
 // At every leaf-run terminal write the supervisor calls
 // runtime.WriteLeafRunLineage in the same transaction as the
 // terminal-state write. The record_kind="leaf_run" row carries the
-// run identity + state + last_outcome + per-bytes hashes.
+// run identity + state + settling_signal_type + per-bytes hashes.
 package lineage
 
 import (
@@ -30,12 +30,12 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	frameID := shared.UUID(uuid.New())
 	instanceID := shared.UUID(uuid.New())
 	rec := runtime.LeafRunRecord{
-		RunID:       shared.UUID(uuid.New()),
-		NodeID:      shared.UUID(uuid.New()),
-		FrameID:     frameID,
-		ChildKey:    "partition-7",
-		State:       "fresh",
-		LastOutcome: "fresh_changed",
+		RunID:              shared.UUID(uuid.New()),
+		NodeID:             shared.UUID(uuid.New()),
+		FrameID:            frameID,
+		ChildKey:           "partition-7",
+		State:              "fresh",
+		SettlingSignalType: "terminal/success",
 	}
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)

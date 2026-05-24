@@ -12,8 +12,9 @@
 // invalidates) so a single code path handles every parked-node wake.
 //
 // For overdue rows: emits an Error{error_class:"park_timeout"} verdict,
-// which routes through the standard terminal-handler chain
-// (applyErrorPolicy → on_executor_errored or default give_up policy).
+// which routes through the standard `error_types:` policy chain via
+// applyErrorPolicy (default give_up when the template declares no
+// `error_types: { park_timeout: ... }` override).
 
 package runtime
 
@@ -257,8 +258,9 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		return fmt.Errorf("failOverdueParkedRow: no run scope for parked run %s", row.DispatchID)
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		parkTimeoutSig := "terminal/error/park_timeout"
 		if err := args.Persist.Nodes().UpdateState(ctx, row.NodeID, runScopeID,
-			cascade.NodeStateFailed, cascade.ReasonParkTimeout, cascade.LastOutcomeFailed, tx); err != nil {
+			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
 			return err
 		}
 		// Settled-state drain on park-timeout failed: parked → failed

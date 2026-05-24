@@ -124,7 +124,7 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
     await cb.close();
   });
 
-  it("returns errored invalid_cwd_from_store before any spawn", async () => {
+  it("returns errored agent/attribute_invalid before any spawn", async () => {
     const outcome = await runAgent({
       runId: "run-1",
       nodeId: "n-1",
@@ -145,7 +145,7 @@ describe("runAgent in real mode short-circuits on invalid cwd_from_store", () =>
     });
     expect(outcome.kind).toBe("errored");
     if (outcome.kind === "errored") {
-      expect(outcome.errorClass).toBe("invalid_cwd_from_store");
+      expect(outcome.errorClass).toBe("agent/attribute_invalid");
     }
   });
 });
@@ -250,7 +250,7 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
     // Outcome should be errored, with retry_attempted: true in the payload.
     expect(outcome.kind).toBe("errored");
     if (outcome.kind === "errored") {
-      expect(outcome.errorClass).toBe("subprocess_exit_before_complete");
+      expect(outcome.errorClass).toBe("agent/subprocess_exit/before_complete");
       const payload = outcome.payload as { retry_attempted?: boolean };
       expect(payload.retry_attempted).toBe(true);
     }

@@ -89,7 +89,7 @@ graphs:
             selector: "@aggregate-findings:pass_id={{nodes.open-pass.attribute.pass_id}}"
             intent: r
         subscribes:
-          - { node: review-fan-out, on: state }
+          - { node: review-fan-out, type: "terminal/*" }
         attributes:
           schema:
             type: object
@@ -133,7 +133,7 @@ graphs:
             selector: "@class-split:pass_id={{nodes.open-pass.attribute.pass_id}}"
             intent: r
         subscribes:
-          - { node: dedup-fan-out, on: state }
+          - { node: dedup-fan-out, type: "terminal/*" }
         attributes:
           schema:
             type: object
@@ -147,7 +147,7 @@ graphs:
         holds:
           pass-state: { from: open-pass }
         subscribes:
-          - { node: class-split, on: state }
+          - { node: class-split, type: "terminal/*" }
 
       - type: fix-iter-2
         tags: [crimefinder, fix-cycle]
@@ -155,7 +155,7 @@ graphs:
         holds:
           pass-state: { from: open-pass }
         subscribes:
-          - { node: fix-iter-1, on: state }
+          - { node: fix-iter-1, type: "terminal/*" }
 
       - type: fix-iter-3
         tags: [crimefinder, fix-cycle]
@@ -163,7 +163,7 @@ graphs:
         holds:
           pass-state: { from: open-pass }
         subscribes:
-          - { node: fix-iter-2, on: state }
+          - { node: fix-iter-2, type: "terminal/*" }
 
       - type: class-5-finalize
         tags: [crimefinder, aggregate]
@@ -175,7 +175,7 @@ graphs:
             selector: "@class-5-finalize:pass_id={{nodes.open-pass.attribute.pass_id}}"
             intent: r
         subscribes:
-          - { node: fix-iter-3, on: state }
+          - { node: fix-iter-3, type: "terminal/*" }
         attributes:
           schema:
             type: object
@@ -195,7 +195,7 @@ graphs:
             selector: "@report:pass_id={{nodes.open-pass.attribute.pass_id}}"
             intent: rw
         subscribes:
-          - { node: class-5-finalize, on: state }
+          - { node: class-5-finalize, type: "terminal/*" }
         attributes:
           schema:
             type: object
@@ -234,7 +234,7 @@ graphs:
         tags: [crimefinder, fix-cycle, fan-out, fix]
         executor: crimefinder
         subscribes:
-          - { node: iter-guard, on: state }
+          - { node: iter-guard, type: "terminal/*" }
         # pass_id flows through `{{nodes.iter-guard.attribute.pass_id}}`
         # below (substituted into the partition_request + selectors);
         # the subgraph does not co-hold the outer pass-state claim.
@@ -288,7 +288,7 @@ graphs:
               system_prompt: { type: string, default: { source_file: prompts/re-review.system.md } }
               user_prompt_template: { type: string, default: { source_file: prompts/re-review.user.md } }
         subscribes:
-          - { node: fix-fan-out, on: state }
+          - { node: fix-fan-out, type: "terminal/*" }
         error_types:
           silence_timeout: { policy: [{ action: retry, count: 1 }, { action: pass }] }
           tool_error:      { policy: [{ action: retry, count: 2 }, { action: pass }] }
@@ -301,7 +301,7 @@ graphs:
             selector: "@iter-aggregate:pass_id={{nodes.iter-guard.attribute.pass_id}}&iter_num={{nodes.iter-guard.attribute.iter_num}}"
             intent: r
         subscribes:
-          - { node: re-review-affected, on: state }
+          - { node: re-review-affected, type: "terminal/*" }
         attributes:
           schema:
             type: object

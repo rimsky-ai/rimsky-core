@@ -47,6 +47,7 @@ The control-plane MCP and auth spec (`.ok-planner/specs/2026-05-15-control-plane
 ## Notes
 
 - [2026-05-15] `auth.*` event kinds added by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
+- 2026-05-23 — Per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`: the node-run-transition subset of `rimsky_events.kind` now carries canonical signal type-paths (e.g., `terminal/error/http/timeout`) rather than free-form strings; for those rows `payload` carries the signal payload per its type's schema (`concept:signal`). Other audit kinds (`state_transition`, `lock_*`, `work_*`, `auth.*`, etc.) continue to use free-form text — see `tension:events-kind-no-enum` partial-coverage note.
 
 ## Open within this concept
 

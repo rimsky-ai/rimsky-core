@@ -54,35 +54,35 @@ func TestRecursiveAncestorWalk_ChainsParentRunID(t *testing.T) {
 	// Seed: root has no parent.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       rootRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
+			RunID:              rootRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
 		}); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
 	// child's parent is root.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       childRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
-			ParentRunID: rootRunID.String(),
+			RunID:              childRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
+			ParentRunID:        rootRunID.String(),
 		}); err != nil {
 		t.Fatalf("seed child: %v", err)
 	}
 	// grandchild's parent is child.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       grandchildRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
-			ParentRunID: childRunID.String(),
+			RunID:              grandchildRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
+			ParentRunID:        childRunID.String(),
 		}); err != nil {
 		t.Fatalf("seed grandchild: %v", err)
 	}
@@ -217,22 +217,22 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 	// Seed: root has no substitution_refs.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       rootRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
+			RunID:              rootRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
 		}); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
 	// child cites root via substitution_refs.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       childRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
+			RunID:              childRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
 			SubstitutionRefs: []runtime.SubstitutionRef{
 				{SourceKind: "run", SourceNodeAlias: "root", SourceVersionOrID: rootRunID.String()},
 			},
@@ -242,11 +242,11 @@ func TestRecursiveAncestorWalk_ChainsSubstitutionRefs(t *testing.T) {
 	// grandchild cites child via substitution_refs.
 	if err := runtime.WriteLeafRunLineage(ctx, nil, lt, instanceID, frameID, time.Now().UTC(),
 		runtime.LeafRunRecord{
-			RunID:       grandchildRunID,
-			NodeID:      shared.UUID(uuid.New()),
-			FrameID:     frameID,
-			State:       "fresh",
-			LastOutcome: "fresh_changed",
+			RunID:              grandchildRunID,
+			NodeID:             shared.UUID(uuid.New()),
+			FrameID:            frameID,
+			State:              "fresh",
+			SettlingSignalType: "terminal/success",
 			SubstitutionRefs: []runtime.SubstitutionRef{
 				{SourceKind: "run", SourceNodeAlias: "child", SourceVersionOrID: childRunID.String()},
 			},

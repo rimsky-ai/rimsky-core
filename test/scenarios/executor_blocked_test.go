@@ -40,7 +40,7 @@ func TestExecutorBlocked(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "gated", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"executor_blocked": {
+					"stub/executor_blocked": {
 						Policy: []node.PolicyAction{
 							{Action: "give_up"},
 						},
@@ -97,21 +97,18 @@ func TestExecutorBlocked(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
 		"gated did not reach failed")
 
-	// Verify error event carries executor_blocked class.
+	// Verify the canonical terminal/error/stub/executor_blocked signal
+	// row (per Pass 5 of spec 2026-05-23-signal-taxonomy-and-policy-
+	// decoupling-design the legacy `error` fixed-string row retired in
+	// favor of the signal type-path; per Pass 6 the stub executor
+	// auto-prefixes flat classes with `stub/`).
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "error"},
+		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "terminal/error/stub/executor_blocked"},
 			persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
 	}))
-	var found bool
-	for _, e := range evs.Events {
-		if cls, _ := e.Payload["error_class"].(string); cls == "executor_blocked" {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "expected error event with error_class=executor_blocked")
+	require.NotEmpty(t, evs.Events, "expected terminal/error/stub/executor_blocked signal row")
 }

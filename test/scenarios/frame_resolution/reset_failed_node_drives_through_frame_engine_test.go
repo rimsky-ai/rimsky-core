@@ -90,20 +90,22 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	require.Nil(t, finalFrameID,
 		"fresh node must carry no frame_id after work_completed")
 
-	// Pin Issue 5 fix: the failed-terminal row's `last_outcome` must
-	// have been reset by ResetFailedTerminalLastOutcome (called from
-	// handleResetNode) so the dashboard's nodeSelect projection no
-	// longer surfaces the stale 'failed' resolution flavor. Before
-	// the fix, the prior ClearLastOutcome(runID=nil) was a no-op
-	// because its `phase IN ('pending','active','held','parked')`
-	// predicate excludes `phase='failed'`.
-	var failedRowLastOutcome string
+	// Pin Issue 5 fix: the failed-terminal row's `settling_signal_type`
+	// must have been reset by ResetFailedTerminalSettlingSignalType
+	// (called from handleResetNode) so the dashboard's nodeSelect
+	// projection no longer surfaces the stale failed signal type-path.
+	// Before the fix, the prior ClearSettlingSignalType(runID=nil) was
+	// a no-op because its `phase IN ('pending','active','held','parked')`
+	// predicate excludes `phase='failed'`. Post-Pass-5 the reset clears
+	// the column to NULL (the prior column-default-based reset retired
+	// alongside `last_outcome`).
+	var failedRowSettlingSig *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
-		`SELECT last_outcome FROM rimsky_node_runs
+		`SELECT settling_signal_type FROM rimsky_node_runs
 		   WHERE node_id = $1 AND phase = 'failed'
 		   ORDER BY COALESCE(active_terminal_at, enqueued_at) DESC
 		   LIMIT 1`,
-		uuid.UUID(worker.ID)).Scan(&failedRowLastOutcome))
-	require.Equal(t, "fresh_unchanged", failedRowLastOutcome,
-		"failed-terminal row's last_outcome must be reset to 'fresh_unchanged' by handleResetNode")
+		uuid.UUID(worker.ID)).Scan(&failedRowSettlingSig))
+	require.Nil(t, failedRowSettlingSig,
+		"failed-terminal row's settling_signal_type must be reset to NULL by handleResetNode")
 }

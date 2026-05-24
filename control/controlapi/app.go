@@ -66,12 +66,14 @@ type AppDeps struct {
 	Observability ObservabilityRouter
 
 	// ExecutorCapabilities optionally exposes the observability cache's
-	// per-executor capability fields (declared_events, expected_attributes_schema)
-	// without forcing controlapi to import the observability package.
-	// Wired by config.StartControlAPI when an observability handshake
-	// has run. Returns ok=false when no capability cache is loaded for
-	// the named executor (e.g. peer is unreachable). Plan F6 + F7.
-	ExecutorCapabilities func(executorName string) (declaredEvents []string, expectedAttributesSchema []byte, ok bool)
+	// per-executor capability fields (declared_events,
+	// declared_error_classes, expected_attributes_schema) without
+	// forcing controlapi to import the observability package. Wired by
+	// config.StartControlAPI when an observability handshake has run.
+	// Returns ok=false when no capability cache is loaded for the named
+	// executor (e.g. peer is unreachable). Plan F6 + F7 + 2026-05-23
+	// signal-taxonomy Pass 6.
+	ExecutorCapabilities func(executorName string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 
 	// InvalidateHandler is the operator-supplied unified invalidate
 	// dispatch. Used by POST /admin/instances/{i}/nodes/{n}/invalidate

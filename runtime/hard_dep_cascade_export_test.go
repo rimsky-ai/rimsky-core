@@ -14,15 +14,27 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	shared "github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 )
 
 // CascadeSubscribersStaleInTxForTest invokes the unexported
-// `cascadeSubscribersStaleInTx`. The signature mirrors the internal
-// helper one-to-one.
+// `cascadeSubscribersStaleInTx` with a synthetic terminal/success
+// signal (changed: true) so callers that don't care about CEL filter
+// details get the test-default "fire all matching subscribers"
+// behavior. Callers needing a specific signal shape should compose
+// their own envelope.
 func CascadeSubscribersStaleInTxForTest(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	senderID shared.UUID, senderNodeType string, senderRunID shared.UUID,
 	instanceID, senderFrameID shared.UUID,
 ) error {
-	return cascadeSubscribersStaleInTx(ctx, args, tx, senderID, senderNodeType, senderRunID, instanceID, senderFrameID)
+	sig := signalpkg.Signal{
+		Type: "terminal/success",
+		Payload: map[string]any{
+			"changed":          true,
+			"attributes_delta": map[string]any{},
+			"change_summary":   "cascade_test",
+		},
+	}
+	return cascadeSubscribersStaleInTx(ctx, args, tx, senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig)
 }

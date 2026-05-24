@@ -22,7 +22,7 @@ The supervisor is rimsky's worker side. It selects candidate work, performs the 
 
 ## Boundaries
 
-Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `lifecycle-handler`, `auto-terminal`.
+Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `error-policy`, `auto-terminal`.
 
 ## Invariants
 

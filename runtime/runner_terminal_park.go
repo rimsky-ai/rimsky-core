@@ -32,6 +32,8 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -151,9 +153,11 @@ func applyTerminalPark(
 	}
 	// Transition node state running → parked. Thread acq.RunScopeID
 	// so fan-out children's state-machine update lands on the
-	// correct sibling row.
+	// correct sibling row. settling_signal_type carries the
+	// terminal/park/<reason> envelope per concept:signal.
+	parkSigType := string(parkTerminalSignal(t).Type)
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-		cascade.NodeStateParked, cascade.ReasonHandlerPark, "", tx); err != nil {
+		cascade.NodeStateParked, cascade.ReasonHandlerPark, &parkSigType, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
 	// Settled-state drain on park: the sender reached a settled
@@ -162,22 +166,20 @@ func applyTerminalPark(
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
-	// Audit-log the park event.
-	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "park_requested",
-		Payload: map[string]any{
-			"reason":            parkReasonStorageForm(t.ParkReason),
-			"reason_note":       t.ParkReasonNote,
-			"reason_label":      t.ParkReasonLabel,
-			"resume_at":         resumeAtForLog(t.ParkResumeAt),
-			"has_session_token": t.ParkSessionToken != "",
-			"payload_bytes":     len(t.ParkPayload),
-			"spilled_to_blob":   payloadHandle != "",
-		},
-	}, tx); err != nil {
-		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	// Canonical signal emission per concept:signal. The two
+	// ParkReason values map to two leaves of the terminal/park
+	// subtree (closed two-value set; @blessed-invariant on
+	// proto:executor.proto::ParkReason). AwaitAsyncCallback is NOT
+	// a park (transient/await_async; emitted at runner_dispatch.go).
+	parkSig := parkTerminalSignal(t)
+	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
+		acq.InstanceID, acq.NodeID, parkSig, now, tx); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: emit signal: %w", err)
 	}
+	// terminal/park/* signal above is the canonical audit row per
+	// concept:signal. The pre-Pass-5 fixed-string "park_requested"
+	// audit-row retired alongside spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 
 	// Post-commit: lineage emit, run-tree propagation.
 	dispatchID := acq.DispatchID
@@ -185,27 +187,31 @@ func applyTerminalPark(
 		// E8: emit leaf-run lineage record for the park terminal.
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:       acq.InstanceID,
-			FrameID:          acq.FrameID,
-			RunID:            dispatchID,
-			NodeID:           acq.NodeID,
-			State:            string(cascade.NodeStateParked),
-			TerminalKind:     "park",
-			NodeAlias:        acq.NodeType,
-			ExecutorName:     acq.Executor,
-			TemplateHash:     acq.TemplateHash,
-			Params:           acq.InstanceParams,
-			AttributesMerged: acq.MergedAttributes,
-			HeldClaims:       HeldClaimsForLineage(acq),
-			ParentRunID:      scope.ParentRunID,
-			ChildKey:         scope.PartitionKey,
-			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			RunID:              dispatchID,
+			NodeID:             acq.NodeID,
+			State:              string(cascade.NodeStateParked),
+			SettlingSignalType: parkSigType,
+			TerminalKind:       "park",
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentRunID:        scope.ParentRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		// Run-tree state propagation (E2): a parked child still
-		// produces a settled per-child state for the aggregator. Empty
-		// LastOutcome because park has no fresh-vs-changed distinction.
+		// produces a settled per-child state for the aggregator. The
+		// settling_signal_type carries the terminal/park/<reason>
+		// envelope so the aggregator can match parked children
+		// uniformly with other settled outcomes.
+		propagateSig := parkSigType
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
-			cascade.NodeStateParked, ""); err != nil {
+			cascade.NodeStateParked, &propagateSig); err != nil {
 			args.Logger.Warn("applyTerminalPark: run-tree propagation failed",
 				"run_id", dispatchID.String(), "error", err.Error())
 		}
@@ -223,13 +229,43 @@ func shouldSpillBlob(args RunArgs, size int) bool {
 	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
 }
 
-// resumeAtForLog formats time.Time for slog. The zero value renders as
-// the empty string so the audit-log row is honest about "no deadline."
-func resumeAtForLog(t time.Time) string {
-	if t.IsZero() {
-		return ""
+// parkTerminalSignal constructs the canonical park-terminal signal
+// envelope. PARK_REASON_SNOOZE → terminal/park/snooze;
+// PARK_REASON_AWAIT_CALLBACK → terminal/park/await_callback. The
+// payload field names use the rimsky-side renaming convention
+// (park_payload, parked_reason_label, parked_reason_note) to avoid
+// the bare-`payload` collision per concept:signal.
+//
+//	@concept: signal
+func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
+	if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
+		return signalpkg.Signal{
+			Type: "terminal/park/snooze",
+			Payload: map[string]any{
+				"resume_at":           t.ParkResumeAt,
+				"session_token":       t.ParkSessionToken,
+				"park_payload":        t.ParkPayload,
+				"parked_reason_label": t.ParkReasonLabel,
+				"parked_reason_note":  t.ParkReasonNote,
+			},
+		}
 	}
-	return t.UTC().Format("2006-01-02T15:04:05.000000Z")
+	// AWAIT_CALLBACK — resume_at is *time.Time (nil when zero).
+	var resumeAt any
+	if !t.ParkResumeAt.IsZero() {
+		ra := t.ParkResumeAt
+		resumeAt = &ra
+	}
+	return signalpkg.Signal{
+		Type: "terminal/park/await_callback",
+		Payload: map[string]any{
+			"resume_at":           resumeAt,
+			"session_token":       t.ParkSessionToken,
+			"park_payload":        t.ParkPayload,
+			"parked_reason_label": t.ParkReasonLabel,
+			"parked_reason_note":  t.ParkReasonNote,
+		},
+	}
 }
 
 // resolveMaxRetriesCap returns the effective max-retries-without-progress

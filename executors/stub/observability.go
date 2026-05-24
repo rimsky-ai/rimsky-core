@@ -53,6 +53,14 @@ func (*ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCap
 			"progress",
 			"completed",
 		},
+		// 2026-05-23 signal-taxonomy Pass 6: the stub executor emits
+		// scripted error classes for tests. Since the scripted vocabulary
+		// is open-ended, advertise the `stub/*` prefix as a single
+		// wildcard so operator templates' `error_types:` keys under the
+		// `stub/` prefix (which the stub auto-prefixes at emit time per
+		// `prefixedStubClass`) are accepted by the range-check at
+		// registration.
+		DeclaredErrorClasses: []string{"stub/*"},
 	}, nil
 }
 

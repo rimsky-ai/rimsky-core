@@ -95,7 +95,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 func transitionToRunning(ctx context.Context, args RunArgs, acq acquisition) error {
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	})
 }
 

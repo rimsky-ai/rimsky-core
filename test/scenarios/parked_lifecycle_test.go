@@ -78,9 +78,31 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// Verify the audit-log entry with the park reason.
-	require.True(t, h.WaitForEventKind(worker.ID, "park_requested", 5*time.Second),
-		"park_requested audit event should be recorded")
+	// Verify the canonical terminal/park/* signal event was emitted
+	// (Pass 5 retired the legacy `park_requested` fixed-string row in
+	// favor of the signal type-path). The test uses the snooze flavor
+	// per its `resumeAt` deadline; the executor stub maps a Park with
+	// `resume_at` to ParkReason_SNOOZE.
+	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
+		"terminal/park/snooze signal event should be recorded")
+
+	// Lineage assertion: the leaf-run lineage row for the parked
+	// terminal MUST carry settling_signal_type=terminal/park/snooze.
+	// EmitLeafRunLineage in `runner_terminal_park.go::applyTerminalPark`
+	// threads `parkSigType` through; an empty field on a park terminal
+	// row indicates the writer is dropping the value (per Pass-5
+	// reshape — the lineage row's settling_signal_type replaces the
+	// retired LastOutcome projection).
+	var parkSettlingSignal string
+	h.QueryRowSQL(
+		`SELECT record->>'settling_signal_type' FROM rimsky_lineage
+		 WHERE record_kind = 'leaf_run' AND record->>'node_id' = $1
+		 ORDER BY observed_at DESC LIMIT 1`,
+		[]any{worker.ID.String()},
+		&parkSettlingSignal,
+	)
+	require.Equal(t, "terminal/park/snooze", parkSettlingSignal,
+		"park leaf-run lineage row should carry settling_signal_type=terminal/park/snooze")
 
 	// Reschedule the worker for the resume dispatch BEFORE the parked-
 	// state SQL probes run. `WhenType` replaces the entire script in the
@@ -251,7 +273,7 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 			// that the cascade walk can traverse later.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "b", On: "state", Frame: "next",
+					Node: "b", Type: "terminal/*", Frame: "next",
 				})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
 		},
@@ -403,7 +425,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},
 	})
@@ -545,7 +567,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},
 	})

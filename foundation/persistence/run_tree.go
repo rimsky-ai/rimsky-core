@@ -43,9 +43,15 @@ type RunTreeRow struct {
 	// Phase carries the rimsky_node_runs.phase value so callers don't
 	// need a separate dispatch-row fetch. Optional projection: empty
 	// string when the implementation did not project it.
-	Phase       string              `json:"phase,omitempty"`
-	State       cascade.NodeState   `json:"state"`
-	LastOutcome cascade.LastOutcome `json:"last_outcome,omitempty"`
+	Phase string            `json:"phase,omitempty"`
+	State cascade.NodeState `json:"state"`
+	// SettlingSignalType carries the canonical signal type-path
+	// (concept:signal) of the run's settling resolution
+	// (terminal/success, terminal/error/<class>, terminal/park/<reason>,
+	// terminal/infra/<reason>). Nil-pointer while the run is in-flight.
+	// Replaces the retired LastOutcome enum post-Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	SettlingSignalType *string `json:"settling_signal_type,omitempty"`
 	// AggregationPolicy is the parent's snapshot policy. Leaf runs have
 	// no policy (zero value). Persisted as JSONB on
 	// `col:rimsky_node_runs.aggregation_policy`.
@@ -131,12 +137,14 @@ type RunTreeTable interface {
 	// Used to evaluate aggregation rules over the parent's children.
 	ListChildren(ctx context.Context, tx Tx, parentRunID shared.UUID) ([]RunTreeRow, error)
 
-	// UpdateStateAndOutcome writes a new (state, last_outcome) pair on
-	// the run row. lastOutcome == "" means "do not write the column"
-	// (preserves existing value). Does NOT validate the transition —
-	// callers consult cascade.NextState / cascade.NextStateParent before
-	// invoking.
-	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, lastOutcome cascade.LastOutcome) error
+	// UpdateStateAndOutcome writes a new (state, settling_signal_type)
+	// pair on the run row. settlingSignalType nil means "do not write
+	// the column" (preserves existing value — used for non-settling
+	// transitions). Settling transitions pass a non-nil pointer holding
+	// the canonical signal type-path per concept:signal. Does NOT
+	// validate the transition — callers consult cascade.NextState /
+	// cascade.NextStateParent before invoking.
+	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error
 
 	// UpdateAggregationPolicy snapshots a new aggregation policy onto
 	// the run row. Used when canonicalization-time policy is overridden

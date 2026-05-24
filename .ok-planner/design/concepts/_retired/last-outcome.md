@@ -1,11 +1,16 @@
 ---
 concept: last-outcome
-status: as-is
+status: retired
 aliases: []
 references:
   - _discover/2026-05-10-cascade-fires-on-last-outcome.md
   - _discover/2026-05-10-state-machine-no-self-loop.md
+  - ../../specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md
 ---
+
+> **Retired 2026-05-23** per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`.
+>
+> The column retired alongside the cascade-fire-gate semantic (cascade-fire is now subscriber-driven via `concept:signal`). Signal-payload fields (`changed` on `terminal/success`, `discarded_claims` on `transient/retry`) carry the granularity that mattered. The lineage projection's `last_outcome` field was replaced with `settling_signal_type`. The replacement column on `rimsky_node_runs` is `settling_signal_type` (added by migration 013, dropped `last_outcome` by migration 014).
 
 # Last outcome
 

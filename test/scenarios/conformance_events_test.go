@@ -52,7 +52,7 @@ func TestConformanceEvents(t *testing.T) {
 				// The {{nodes.a.event.ready.value}} ref below auto-subscribes
 				// b to a's `event` topic with name="ready"; explicit
 				// subscription kept here for clarity.
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "event", Name: "ready"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready"}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

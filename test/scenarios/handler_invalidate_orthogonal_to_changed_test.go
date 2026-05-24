@@ -5,13 +5,13 @@
 // Task 42 — handler_invalidate_orthogonal_to_changed retired under the
 // 2026-05-14 subscription-cascade resolution: send-side
 // handler.invalidate emits retired. The orthogonal-to-changed shape is
-// expressed receiver-side: a receiver that subscribes WITHOUT a
-// `last_outcome` filter sees every fresh transition (changed or not);
-// a receiver that filters on `outcome: fresh_changed` sees only
-// content-bearing transitions. The cascade-firing gate is
-// `last_outcome == fresh_changed`, so without `always_propagate` on
-// the sender, fresh_unchanged transitions do not fire downstream by
-// default — the legacy "orthogonal" semantics retire.
+// expressed receiver-side: a receiver that subscribes to
+// `terminal/success` WITHOUT a `when:` predicate fires on every
+// terminal regardless of `payload.changed`; a receiver that adds
+// `when: payload.changed` fires only on content-bearing transitions.
+// Selectivity is purely subscriber-driven (CEL `when:` on the signal
+// envelope), so the legacy sender-side "orthogonal to changed"
+// semantics no longer have a natural shape.
 package scenarios
 
 import (

@@ -82,10 +82,10 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	insertLeafRun := func(t *testing.T, runID, parentRunID uuid.UUID, observedAt time.Time) {
 		t.Helper()
 		rec := map[string]any{
-			"run_id":       runID.String(),
-			"frame_id":     frameID.String(),
-			"state":        "fresh",
-			"last_outcome": "fresh_changed",
+			"run_id":               runID.String(),
+			"frame_id":             frameID.String(),
+			"state":                "fresh",
+			"settling_signal_type": "terminal/success",
 		}
 		if parentRunID != uuid.Nil {
 			rec["parent_run_id"] = parentRunID.String()
@@ -190,10 +190,10 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	insertLeafRun := func(t *testing.T, runID uuid.UUID, parentRunID uuid.UUID, observedAt time.Time) {
 		t.Helper()
 		rec := map[string]any{
-			"run_id":       runID.String(),
-			"frame_id":     frameID.String(),
-			"state":        "fresh",
-			"last_outcome": "fresh_changed",
+			"run_id":               runID.String(),
+			"frame_id":             frameID.String(),
+			"state":                "fresh",
+			"settling_signal_type": "terminal/success",
 		}
 		if parentRunID != uuid.Nil {
 			// Cite the upstream run as a substitution_ref so the

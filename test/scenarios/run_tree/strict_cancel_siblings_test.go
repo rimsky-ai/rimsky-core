@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -21,10 +22,10 @@ func TestStrictCancelSiblings_ActionFiresOnFailure(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("strict any-failed: parent should settle terminal")
 	}
 	if res.ParentState != cascade.NodeStateFailed {
@@ -39,7 +40,7 @@ func TestStrictCancelSiblings_NotFiredWhenFlagOff(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if res.Action != runtime.AggregateActionNone {
@@ -50,8 +51,8 @@ func TestStrictCancelSiblings_NotFiredWhenFlagOff(t *testing.T) {
 func TestStrictCancelSiblings_NotFiredOnAllSuccess(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
 	if res.Action != runtime.AggregateActionNone {

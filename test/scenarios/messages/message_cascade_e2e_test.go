@@ -67,9 +67,11 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 				Subscribes: []spec.SubscriptionEntry{
 					{
 						Instance: true,
-						On:       spec.TopicKindMessage,
-						Kind:     "invalidate",
-						Frame:    "in",
+						// Match any message envelope with kind=invalidate,
+						// regardless of sender_kind / target. Prefix-bind
+						// payload as dyn; CEL filter narrows by kind.
+						Type:  "message/invalidate/*",
+						Frame: "in",
 					},
 				},
 			},
@@ -79,15 +81,12 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 				Subscribes: []spec.SubscriptionEntry{
 					{
 						Instance: true,
-						On:       spec.TopicKindMessage,
-						Kind:     "invalidate",
-						// `target: self` means "only deliver if the
-						// envelope's target equals this receiver's
-						// own alias." An empty / broadcast envelope
-						// has no target and MUST NOT stale-mark a
-						// `target: self` subscriber.
-						Target: "self",
-						Frame:  "in",
+						// Match invalidate envelopes; CEL filter binds
+						// to receiver's own alias via payload.target.
+						// An empty broadcast envelope (payload.target ==
+						// "") never matches.
+						Type:  "message/invalidate/operator/self_receiver",
+						Frame: "in",
 					},
 				},
 			},

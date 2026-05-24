@@ -38,6 +38,7 @@ func main() {
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, NewServer(stubMode))
+	RegisterObservability(srv)
 	// Validation mix-in: verifier-shape-checks advertises role="executor"
 	// validation so rimsky's control-api can cross-check the resolved
 	// attribute schema at template registration. Per M / Section M2 in the

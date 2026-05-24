@@ -26,13 +26,13 @@ import (
 )
 
 // nodeCols / nodeSelect mirror the postgres impl: state +
-// last_outcome + last_heartbeat_at + claimed_by come from the in-flight
-// rimsky_node_runs row; identity + scheduling metadata come from
-// rimsky_nodes. The COALESCE(r.state, 'fresh') is the post-cutover
+// settling_signal_type + last_heartbeat_at + claimed_by come from the
+// in-flight rimsky_node_runs row; identity + scheduling metadata come
+// from rimsky_nodes. The COALESCE(r.state, 'fresh') is the post-cutover
 // rule: a node with no in-flight run row is implicitly 'fresh'.
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
-  COALESCE(r.state, 'fresh') AS state, r.last_outcome,
+  COALESCE(r.state, 'fresh') AS state, r.settling_signal_type,
   n.current_error_class, n.retry_counter, n.action_index,
   r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
   n.frame_id, n.tags, n.created_at, n.updated_at,
@@ -42,10 +42,10 @@ const nodeCols = `
 
 // nodeSelect — see postgres mirror. SQLite emulation uses ROW_NUMBER
 // over rimsky_node_runs to pick the most-relevant run row per node.
-// Includes all phases (completed terminals carry last_outcome).
+// Includes all phases (completed terminals carry settling_signal_type).
 const nodeSelect = `FROM rimsky_nodes n
 LEFT JOIN (
-    SELECT id, node_id, state, last_outcome, last_heartbeat_at, claimed_by, frame_id, phase, run_scope_id,
+    SELECT id, node_id, state, settling_signal_type, last_heartbeat_at, claimed_by, frame_id, phase, run_scope_id,
            ROW_NUMBER() OVER (
                PARTITION BY node_id
                ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
@@ -299,24 +299,24 @@ func (s *nodesImpl) CountByState(ctx context.Context, tx persistence.Tx) (map[ca
 // the postgres impl. SQLite has no SELECT FOR UPDATE; the surrounding
 // BEGIN IMMEDIATE writer-slot hold serialises the SELECT+UPDATE atomically.
 //
-// `lastOutcome` is the resolution flavor for terminal-for-this-frame
-// transitions; the empty string "" preserves the existing column value
-// via COALESCE.
+// `settlingSignalType` is the canonical signal type-path
+// (concept:signal) recorded on settling transitions; nil preserves the
+// existing column value via COALESCE.
 //
-// `runID` (when non-nil) disambiguates which in-flight rimsky_node_runs
-// row to address — required for fan-out children that share a node_id
-// with the parent and siblings. See the interface contract for the
-// fan-out rationale.
+// `runScopeID` disambiguates which in-flight rimsky_node_runs row to
+// address — required for fan-out children that share a node_id with
+// the parent and siblings. See the interface contract for the fan-out
+// rationale.
 func (s *nodesImpl) UpdateState(
 	ctx context.Context,
 	id foundationshared.UUID,
 	runScopeID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome cascade.LastOutcome,
+	settlingSignalType *string,
 	tx persistence.Tx,
 ) error {
-	return s.enforceAndUpdate(ctx, s.q(tx), id, runScopeID, state, reason, lastOutcome)
+	return s.enforceAndUpdate(ctx, s.q(tx), id, runScopeID, state, reason, settlingSignalType)
 }
 
 // enforceAndUpdate — sqlite mirror. See postgres impl for the cutover
@@ -333,7 +333,7 @@ func (s *nodesImpl) enforceAndUpdate(
 	runScopeID foundationshared.UUID,
 	state cascade.NodeState,
 	reason cascade.TransitionReason,
-	lastOutcome cascade.LastOutcome,
+	settlingSignalType *string,
 ) error {
 	current := cascade.NodeStateFresh
 	var (
@@ -397,11 +397,11 @@ func (s *nodesImpl) enforceAndUpdate(
 				"computed": expected, "reason": reason.Kind,
 			})
 	}
-	var outcomeArg any
-	if lastOutcome == "" {
-		outcomeArg = nil
+	var settlingArg any
+	if settlingSignalType == nil {
+		settlingArg = nil
 	} else {
-		outcomeArg = string(lastOutcome)
+		settlingArg = *settlingSignalType
 	}
 	// rimsky_nodes metadata update (state column gone post-cutover).
 	if _, err := ex.ExecContext(ctx,
@@ -418,9 +418,9 @@ func (s *nodesImpl) enforceAndUpdate(
 		if _, err := ex.ExecContext(ctx,
 			`UPDATE rimsky_node_runs
 			   SET state = ?,
-			       last_outcome = COALESCE(?, last_outcome)
+			       settling_signal_type = COALESCE(?, settling_signal_type)
 			 WHERE id = ?`,
-			string(state), outcomeArg, runIDStr.String,
+			string(state), settlingArg, runIDStr.String,
 		); err != nil {
 			return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 		}
@@ -430,7 +430,7 @@ func (s *nodesImpl) enforceAndUpdate(
 		if nodeFrameIDStr.Valid {
 			if _, err := ex.ExecContext(ctx,
 				`INSERT INTO rimsky_node_runs
-				   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, last_outcome, frame_id, run_scope_id)
+				   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, settling_signal_type, frame_id, run_scope_id)
 				 SELECT ?, n.id, n.executor, '[]', ?, 'pending', 'stale', ?, ?, ?
 				   FROM rimsky_nodes n
 				  WHERE n.id = ?
@@ -440,7 +440,7 @@ func (s *nodesImpl) enforceAndUpdate(
 				         AND r.run_scope_id = ?
 				         AND r.phase IN ('pending','active','held','parked')
 				    )`,
-				uuid.New().String(), nowUTC(), outcomeArg,
+				uuid.New().String(), nowUTC(), settlingArg,
 				nodeFrameIDStr.String, runScopeID.String(), id.String(), id.String(), runScopeID.String(),
 			); err != nil {
 				return fmt.Errorf("nodes.updateState: seed stale run-row: %w", err)
@@ -508,19 +508,18 @@ func (s *nodesImpl) SetFrameID(ctx context.Context, id foundationshared.UUID, fr
 	return err
 }
 
-// ClearLastOutcome — post-stage-3: last_outcome lives on the in-flight
-// run row. The rimsky_nodes.updated_at bump preserves dashboard ordering.
-// The column is `NOT NULL DEFAULT 'fresh_unchanged'` (see
-// `foundation/persistence/sqlite/migrations/001-baseline.sql:163`);
-// the reset writes the default value so the row stays within the
-// column's CHECK constraint while clearing the stale `failed` flavor.
+// ClearSettlingSignalType clears settling_signal_type to NULL on the
+// in-flight run row. The rimsky_nodes.updated_at bump preserves dashboard
+// ordering.
 //
-// `runID` (when non-nil) targets the specific in-flight row — required
-// for fan-out children to prevent the clear from landing on a sibling.
-// Nil `runID` preserves the legacy by-node-id update.
-func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
+// `runScopeID` targets the specific in-flight row — required for
+// fan-out children to prevent the clear from landing on a sibling.
+//
+// Replaces the retired ClearLastOutcome alongside Pass 5 of spec
+// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	if _, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET last_outcome = 'fresh_unchanged'
+		`UPDATE rimsky_node_runs SET settling_signal_type = NULL
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
 		    AND phase IN ('pending','active','held','parked')`,
@@ -533,11 +532,14 @@ func (s *nodesImpl) ClearLastOutcome(ctx context.Context, id foundationshared.UU
 	return err
 }
 
-// ResetFailedTerminalLastOutcome stamps last_outcome='fresh_unchanged'
-// on the most-recent failed-terminal run row in the supplied RunScope.
-// SQLite mirror of the postgres impl. Skips the rimsky_nodes
+// ResetFailedTerminalSettlingSignalType clears settling_signal_type to
+// NULL on the most-recent failed-terminal run row in the supplied
+// RunScope. SQLite mirror of the postgres impl. Skips the rimsky_nodes
 // updated_at bump when no row was updated (driver-drift fix).
-func (s *nodesImpl) ResetFailedTerminalLastOutcome(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
+//
+// Replaces the retired ResetFailedTerminalLastOutcome alongside Pass 5
+// of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	var idStr string
 	err := s.q(tx).QueryRowContext(ctx,
 		`SELECT id FROM rimsky_node_runs
@@ -549,13 +551,13 @@ func (s *nodesImpl) ResetFailedTerminalLastOutcome(ctx context.Context, id found
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("nodes.ResetFailedTerminalLastOutcome: %w", err)
+		return fmt.Errorf("nodes.ResetFailedTerminalSettlingSignalType: %w", err)
 	}
 	if _, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET last_outcome = 'fresh_unchanged' WHERE id = ?`,
+		`UPDATE rimsky_node_runs SET settling_signal_type = NULL WHERE id = ?`,
 		idStr,
 	); err != nil {
-		return fmt.Errorf("nodes.ResetFailedTerminalLastOutcome: %w", err)
+		return fmt.Errorf("nodes.ResetFailedTerminalSettlingSignalType: %w", err)
 	}
 	// Bump rimsky_nodes.updated_at so dashboards re-sort.
 	_, err = s.q(tx).ExecContext(ctx,
@@ -721,6 +723,22 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	return nil
 }
 
+// HasRunForNodeInFrame reports whether any rimsky_node_runs row
+// (any phase) exists for the given node in the given frame.
+//
+//	@concept: signal
+func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) (bool, error) {
+	var n int
+	err := s.q(tx).QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = ? AND frame_id = ?`,
+		nodeID.String(), frameID.String(),
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("HasRunForNodeInFrame: %w", err)
+	}
+	return n > 0, nil
+}
+
 // GetRunByDispatchIDForUpdate returns the run row for the given
 // dispatch_id (== rimsky_node_runs.id). SQLite holds the row lock
 // implicitly within BEGIN IMMEDIATE.
@@ -773,25 +791,25 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 
 func scanNode(sc scannable) (persistence.NodeRow, error) {
 	var (
-		r                persistence.NodeRow
-		idStr            string
-		instanceIDStr    string
-		executor         sql.NullString
-		stateStr         string
-		lastOutcomeStr   sql.NullString
-		currentErrClass  sql.NullString
-		lastHB           sql.NullString
-		assignedSup      sql.NullString
-		frameIDStr       sql.NullString
-		tagsJSON         sql.NullString
-		createdAtStr     string
-		updatedAtStr     string
-		inFlightRunIDStr sql.NullString
-		inFlightScopeStr sql.NullString
+		r                 persistence.NodeRow
+		idStr             string
+		instanceIDStr     string
+		executor          sql.NullString
+		stateStr          string
+		settlingSignalStr sql.NullString
+		currentErrClass   sql.NullString
+		lastHB            sql.NullString
+		assignedSup       sql.NullString
+		frameIDStr        sql.NullString
+		tagsJSON          sql.NullString
+		createdAtStr      string
+		updatedAtStr      string
+		inFlightRunIDStr  sql.NullString
+		inFlightScopeStr  sql.NullString
 	)
 	if err := sc.Scan(
 		&idStr, &instanceIDStr, &r.NodeType,
-		&executor, &stateStr, &lastOutcomeStr,
+		&executor, &stateStr, &settlingSignalStr,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
 		&lastHB, &assignedSup, &frameIDStr,
 		&tagsJSON,
@@ -799,6 +817,10 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		&inFlightRunIDStr, &inFlightScopeStr,
 	); err != nil {
 		return persistence.NodeRow{}, err
+	}
+	if settlingSignalStr.Valid {
+		v := settlingSignalStr.String
+		r.SettlingSignalType = &v
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -819,9 +841,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.ID = id
 	r.InstanceID = instanceID
 	r.State = cascade.NodeState(stateStr)
-	if lastOutcomeStr.Valid {
-		r.LastOutcome = cascade.LastOutcome(lastOutcomeStr.String)
-	}
 	r.Executor = executor.String
 	r.CurrentErrorClass = currentErrClass.String
 	r.AssignedSupervisorID = assignedSup.String

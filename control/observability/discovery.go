@@ -90,6 +90,16 @@ type ObservabilityCapabilities struct {
 	// an event in declared_events. Empty means "executor does not emit
 	// events." Plumbed from ObservabilityCapabilities.declared_events.
 	DeclaredEvents []string `json:"declared_events,omitempty"`
+
+	// DeclaredErrorClasses is the set of error-class paths this executor
+	// may emit on Error.error_class. Patterns ending in `*` indicate
+	// prefix-pattern leaves (e.g., `http/server_error/*`); exact strings
+	// indicate fixed leaves. Empty/absent means "executor does not
+	// declare; skip validator range-check for this executor." Plumbed
+	// from ObservabilityCapabilities.declared_error_classes.
+	//
+	//	@concept: signal
+	DeclaredErrorClasses []string `json:"declared_error_classes,omitempty"`
 }
 
 // PeerEntry is the cached result of one observability handshake.

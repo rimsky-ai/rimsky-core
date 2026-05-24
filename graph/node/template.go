@@ -36,17 +36,19 @@ import "github.com/fallguy/rimsky/foundation/spec"
 // Row-type aliases — the canonical definitions live in
 // foundation/spec. These aliases keep `node.TemplateSpec` etc. working
 // for existing call sites without rewriting every importer.
+//
+// Lifecycle-handler types (`OnAcquireUnavailableHandler`,
+// `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`) retired
+// 2026-05-23 per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-
+// policy-decoupling-design.md`.
 type (
-	TemplateSpec                = spec.TemplateSpec
-	TemplateNodeDef             = spec.TemplateNodeDef
-	NodeStoreRef                = spec.NodeStoreRef
-	NodeLockRef                 = spec.NodeLockRef
-	NodeAttributesDef           = spec.NodeAttributesDef
-	InheritEntry                = spec.InheritEntry
-	SubscriptionEntry           = spec.SubscriptionEntry
-	OnAcquireUnavailableHandler = spec.OnAcquireUnavailableHandler
-	OnExecutorCompleteHandler   = spec.OnExecutorCompleteHandler
-	OnExecutorTerminalHandler   = spec.OnExecutorTerminalHandler
+	TemplateSpec      = spec.TemplateSpec
+	TemplateNodeDef   = spec.TemplateNodeDef
+	NodeStoreRef      = spec.NodeStoreRef
+	NodeLockRef       = spec.NodeLockRef
+	NodeAttributesDef = spec.NodeAttributesDef
+	InheritEntry      = spec.InheritEntry
+	SubscriptionEntry = spec.SubscriptionEntry
 
 	// 2026-05-15 data-platform extensions row-types re-exported here
 	// so existing call sites do not need to import foundation/spec
@@ -77,16 +79,12 @@ const (
 	MainGraphName = spec.MainGraphName
 )
 
-// Resolve constants per handler. The validator at template-deploy
-// rejects out-of-vocabulary combinations.
+// Frame + target constants. The lifecycle-handler resolve vocabulary
+// retired 2026-05-23 alongside the handler types; ErrorPolicy's 4-value
+// action vocabulary (`pass | give_up | retry |
+// discard_claims_then_retry`) is the operator-facing replacement and
+// lives on `concept:error-policy`.
 const (
-	ResolvePass            = spec.ResolvePass
-	ResolveRetry           = spec.ResolveRetry
-	ResolveError           = spec.ResolveError
-	ResolveByChanged       = spec.ResolveByChanged
-	ResolveAlwaysPropagate = spec.ResolveAlwaysPropagate
-	ResolveNeverPropagate  = spec.ResolveNeverPropagate
-
 	FrameIn   = spec.FrameIn
 	FrameNext = spec.FrameNext
 

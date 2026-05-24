@@ -53,11 +53,22 @@ message ObservabilityCapabilities {
   // via the NamedEvent wire type on ExecuteEvent. Empty means
   // "executor does not emit events."
   //
-  // Rimsky validates that any on_event handlers in templates referencing
-  // this executor name an event in declared_events. Reserved lifecycle
-  // slots (on_executor_complete/errored, on_acquire_unavailable) are
-  // not subject to this validation.
+  // Rimsky validates that template subscriptions of the form
+  // `subscribes: [{node: <sender>, type: event/<name>}]` reference an
+  // event in declared_events.
   repeated string declared_events = 7;
+
+  // declared_error_classes is the set of error-class paths this
+  // executor may emit on Error.error_class. Patterns ending in `*`
+  // indicate prefix-pattern leaves (e.g., `http/server_error/*`);
+  // exact strings indicate fixed leaves. The validator's range-check
+  // of operator `error_types:` keys accepts a key if it exactly
+  // matches a declared plain leaf OR matches a declared `<prefix>/*`
+  // pattern by prefix. Empty/absent means "executor does not declare;
+  // skip validator range-check for this executor".
+  //
+  // Per concept:signal hierarchical error_class rule.
+  repeated string declared_error_classes = 8;
 }
 
 message CustomUI {

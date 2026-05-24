@@ -107,8 +107,9 @@ func acquireClaim(
 	// Producer has nothing to give right now (e.g. drained items-table
 	// queue). The producer signals this via OpenOutcome.Available=false.
 	// Distinguished from openResultBail so the outer caller can route
-	// through the on_acquire_unavailable handler (default = silent
-	// retry preserving today's behavior).
+	// through the operator's `error_types: { acquire/unavailable:
+	// ... }` chain (default = give_up("unknown_error_class") absent
+	// an operator-declared policy).
 	if !outcome.Available {
 		// Producer signalled unavailable — count as a resolved
 		// acquisition outcome with intent="unavailable".

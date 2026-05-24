@@ -40,7 +40,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 					"type":       "child",
 					"executor":   "worker",
 					"tags":       []string{"recurring"},
-					"subscribes": []map[string]any{{"node": "root", "on": "state"}},
+					"subscribes": []map[string]any{{"node": "root", "type": "terminal/*"}},
 				},
 			},
 		},

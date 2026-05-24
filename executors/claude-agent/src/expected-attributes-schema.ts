@@ -97,6 +97,26 @@ export const expectedAttributesSchema = {
 export const declaredEvents: string[] = [];
 
 /**
+ * Hierarchical error-class vocabulary claude-agent advertises via
+ * `Capabilities.declared_error_classes`. Operator templates' `error_types:`
+ * keys range-check against this list; entries ending in `*` are prefix
+ * patterns. Per concept:signal (rimsky spec 2026-05-23).
+ */
+export const declaredErrorClasses: string[] = [
+  "agent/blocked",
+  "agent/internal_error",
+  "agent/attribute_invalid",
+  "agent/schema_violation",
+  "agent/cli_spawn_failed",
+  "agent/timeout",
+  "agent/subprocess_exit/*",
+  "agent/rate_limited",
+  "agent/context_exceeded",
+  "agent/tool_use_failed/*",
+  "agent/refused",
+];
+
+/**
  * Serialize the schema to bytes for the Capabilities response.
  */
 export function expectedAttributesSchemaBytes(): Uint8Array {

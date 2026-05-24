@@ -116,8 +116,11 @@ func TestUnresolvedExecutor(t *testing.T) {
 	}))
 	require.Equal(t, cascade.NodeStateFailed, got.State)
 
-	// Verify event trail: unresolved_executor followed by an `error`
-	// event with error_class=unresolved_executor and action_taken=give_up.
+	// Verify event trail: unresolved_executor followed by the canonical
+	// terminal/error/unresolved_executor signal row (per Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design the legacy
+	// `error` fixed-string audit row retired in favor of the signal
+	// type-path).
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -127,22 +130,18 @@ func TestUnresolvedExecutor(t *testing.T) {
 		return err
 	}))
 	var (
-		sawUnresolved  bool
-		sawErrorGiveUp bool
+		sawUnresolved          bool
+		sawTerminalErrorSignal bool
 	)
 	for _, e := range evs.Events {
 		switch e.Kind {
 		case "unresolved_executor":
 			sawUnresolved = true
-		case "error":
-			cls, _ := e.Payload["error_class"].(string)
-			act, _ := e.Payload["action_taken"].(string)
-			if cls == "unresolved_executor" && act == "give_up" {
-				sawErrorGiveUp = true
-			}
+		case "terminal/error/unresolved_executor":
+			sawTerminalErrorSignal = true
 		}
 	}
 	require.True(t, sawUnresolved, "expected unresolved_executor event")
-	require.True(t, sawErrorGiveUp,
-		"expected error event with error_class=unresolved_executor + action_taken=give_up")
+	require.True(t, sawTerminalErrorSignal,
+		"expected terminal/error/unresolved_executor signal row")
 }

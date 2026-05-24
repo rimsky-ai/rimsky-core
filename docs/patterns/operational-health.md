@@ -94,16 +94,19 @@ stack.
 
 The `max_retries_without_progress` cap (default 100; 0 disables;
 configurable per-node) forces `error_class: "retry_loop_no_progress"`
-when the same `last_outcome` is observed N times in a row. Combined
-with the `rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
+when the same `settling_signal_type` is observed N times in a row.
+Combined with the
+`rimsky_terminal_verdicts_total{error_class="retry_loop_no_progress"}`
 metric, retry loops surface in alerts before they exhaust budget.
 
 ### Graceful degradation
 
 A graph that depends on an external service can wrap the dependency in
-a node with `on_executor_errored` set to `pass` and an invalidate
-emit to a "degraded mode" downstream. The graph keeps moving; the
-operator sees degraded-mode telemetry and can intervene.
+a node whose `error_types:` chain resolves the relevant error class
+to `pass` — the run settles fresh and downstream subscribers wired to
+`type: terminal/error/*` for that node can react (e.g., dispatch a
+"degraded mode" sibling). The graph keeps moving; the operator sees
+degraded-mode telemetry and can intervene.
 
 ## What rimsky does not provide
 

@@ -286,19 +286,24 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Metrics:      cfg.Metrics,
 			},
 		},
-		// Plan F6 / F7: ExecutorCapabilities exposes the observability
-		// discovery cache's per-executor (declared_events, expected_attributes_schema)
-		// to the controlapi templates registration validator. The cache is
-		// already populated by RunHandshake at startup and refreshed by
-		// the RefreshLoop goroutine started above; this hook is a thin
-		// read-only adapter so templates.go can validate at registration
-		// without taking a direct observability import dependency.
-		ExecutorCapabilities: func(executorName string) ([]string, []byte, bool) {
+		// Plan F6 / F7 + 2026-05-23 signal-taxonomy Pass 6:
+		// ExecutorCapabilities exposes the observability discovery cache's
+		// per-executor (declared_events, declared_error_classes,
+		// expected_attributes_schema) to the controlapi templates
+		// registration validator. The cache is already populated by
+		// RunHandshake at startup and refreshed by the RefreshLoop
+		// goroutine started above; this hook is a thin read-only adapter
+		// so templates.go can validate at registration without taking a
+		// direct observability import dependency.
+		ExecutorCapabilities: func(executorName string) ([]string, []string, []byte, bool) {
 			peer, ok := disc.GetExecutor(executorName)
 			if !ok || peer.Capabilities == nil {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
-			return peer.Capabilities.DeclaredEvents, peer.Capabilities.ExpectedAttributesSchema, true
+			return peer.Capabilities.DeclaredEvents,
+				peer.Capabilities.DeclaredErrorClasses,
+				peer.Capabilities.ExpectedAttributesSchema,
+				true
 		},
 		Observability: func(r chi.Router) {
 			observability.Routes(r, observability.Deps{

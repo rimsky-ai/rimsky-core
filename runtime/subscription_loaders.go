@@ -54,16 +54,16 @@ import (
 // would observe the originally-cached edges. If that scenario lands,
 // add a per-test reset hook or key the cache on
 // `(template_hash, validator_revision)`.
-var templateSubscriptionEdges sync.Map // map[string]node.SubscriptionEdgeMap
+var templateSubscriptionEdges sync.Map // map[string]*node.SubscriptionEdgeMap
 
 // subscriptionEdgesForTemplate returns the cached or freshly-built
 // inverse-edge map for the given template_hash. The persistence handle
 // + tx are passed so we can fetch the template spec on cache miss.
 func subscriptionEdgesForTemplate(
 	ctx context.Context, args RunArgs, templateHash string, tx persistence.Tx,
-) (node.SubscriptionEdgeMap, error) {
+) (*node.SubscriptionEdgeMap, error) {
 	if v, ok := templateSubscriptionEdges.Load(templateHash); ok {
-		return v.(node.SubscriptionEdgeMap), nil
+		return v.(*node.SubscriptionEdgeMap), nil
 	}
 	row, err := args.Persist.Templates().GetByHash(ctx, templateHash, tx)
 	if err != nil {
@@ -73,11 +73,14 @@ func subscriptionEdgesForTemplate(
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: template %s not found", templateHash)
 	}
 	subs := node.ExtractSubstitutionRefsFromTemplate(row.Spec)
-	edges := node.BuildSubscriptionEdges(row.Spec, subs)
+	edges, err := node.BuildSubscriptionEdges(row.Spec, subs)
+	if err != nil {
+		return nil, fmt.Errorf("subscriptionEdgesForTemplate: build edges for %s: %w", templateHash, err)
+	}
 	// LoadOrStore wins races: if two goroutines compute concurrently,
 	// both maps are content-equal; we keep the first.
 	actual, _ := templateSubscriptionEdges.LoadOrStore(templateHash, edges)
-	return actual.(node.SubscriptionEdgeMap), nil
+	return actual.(*node.SubscriptionEdgeMap), nil
 }
 
 // templateHardDepEdges caches the per-template hard-dep edge map

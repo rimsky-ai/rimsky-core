@@ -5,17 +5,19 @@
 package node
 
 import (
-	"reflect"
-	"sort"
 	"testing"
 
+	"github.com/fallguy/rimsky/foundation/signal"
 	"github.com/fallguy/rimsky/foundation/spec"
 )
 
 func TestBuildSubscriptionEdges_Empty(t *testing.T) {
-	out := BuildSubscriptionEdges(spec.TemplateSpec{}, nil)
-	if len(out) != 0 {
-		t.Fatalf("empty template should produce empty map; got %d keys", len(out))
+	out, err := BuildSubscriptionEdges(spec.TemplateSpec{}, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	if len(out.Senders()) != 0 {
+		t.Fatalf("empty template should produce empty map; got %d sender keys", len(out.Senders()))
 	}
 }
 
@@ -24,27 +26,26 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", On: "state", When: "fresh"},
+				{Node: "sender", Type: "terminal/success"},
 			},
 		},
 	}}
-	out := BuildSubscriptionEdges(tmpl, nil)
-	edges, ok := out["sender"]
-	if !ok {
-		t.Fatalf("expected key 'sender' in map")
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	if len(edges) != 1 {
-		t.Fatalf("want 1 edge, got %d", len(edges))
+	matched := out.Match("sender", signal.TypePath("terminal/success"))
+	if len(matched) != 1 {
+		t.Fatalf("want 1 matched edge, got %d", len(matched))
 	}
-	want := SubscriptionEdge{
-		ReceiverNodeType:  "receiver",
-		TopicKind:         "state",
-		SubscriptionScope: "direct",
-		Filter:            SubscriptionFilter{When: "fresh"},
-		Frame:             "in",
+	if matched[0].ReceiverNodeType != "receiver" {
+		t.Errorf("ReceiverNodeType: got %q want receiver", matched[0].ReceiverNodeType)
 	}
-	if edges[0] != want {
-		t.Fatalf("edge mismatch: got %+v want %+v", edges[0], want)
+	if matched[0].TypePattern != signal.TypePath("terminal/success") {
+		t.Errorf("TypePattern: got %q want terminal/success", matched[0].TypePattern)
+	}
+	if matched[0].Frame != "in" {
+		t.Errorf("Frame: got %q want in", matched[0].Frame)
 	}
 }
 
@@ -52,23 +53,29 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "cleanup", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, On: "state", When: "failed", ErrorClass: "rate_limited"},
+				{Instance: true, Type: "terminal/error/*"},
 			},
 		},
 	}}
-	out := BuildSubscriptionEdges(tmpl, nil)
-	edges, ok := out[""]
-	if !ok {
-		t.Fatalf("expected cross-cutting key '' in map; got keys %v", keys(out))
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	if len(edges) != 1 {
-		t.Fatalf("want 1 edge, got %d", len(edges))
+	cross := out.CrossCuttingEdges()
+	if len(cross) != 1 {
+		t.Fatalf("want 1 cross-cutting edge, got %d", len(cross))
 	}
-	if edges[0].SubscriptionScope != "instance" {
-		t.Fatalf("want scope=instance, got %q", edges[0].SubscriptionScope)
+	if cross[0].SubscriptionScope != "instance" {
+		t.Errorf("want scope=instance, got %q", cross[0].SubscriptionScope)
 	}
-	if edges[0].Frame != "next" {
-		t.Fatalf("want default Frame=next for cross-cutting, got %q", edges[0].Frame)
+	if cross[0].Frame != "next" {
+		t.Errorf("want default Frame=next for cross-cutting, got %q", cross[0].Frame)
+	}
+	// Cross-cutting edge fires for any sender via the empty-key match
+	// path.
+	matched := out.Match("any-sender", signal.TypePath("terminal/error/rate_limited"))
+	if len(matched) != 1 {
+		t.Fatalf("cross-cutting prefix match: want 1, got %d", len(matched))
 	}
 }
 
@@ -96,16 +103,19 @@ func TestBuildSubscriptionEdges_ImplicitFromSubstitutionRefs(t *testing.T) {
 			}}},
 	}}
 	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out := BuildSubscriptionEdges(tmpl, refs)
-	edges, ok := out["stage"]
-	if !ok {
-		t.Fatalf("expected implicit subscription on 'stage'")
+	out, err := BuildSubscriptionEdges(tmpl, refs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	if len(edges) != 1 {
-		t.Fatalf("want 1 implicit edge, got %d", len(edges))
+	matched := out.Match("stage", signal.TypePath("attribute/out/changed"))
+	if len(matched) != 1 {
+		t.Fatalf("implicit attribute-edge match: want 1, got %d", len(matched))
 	}
-	if edges[0].TopicKind != "attribute" || edges[0].Filter.Name != "out" {
-		t.Fatalf("implicit edge mismatch: %+v", edges[0])
+	if matched[0].ReceiverNodeType != "verify" {
+		t.Errorf("implicit receiver: got %q want verify", matched[0].ReceiverNodeType)
+	}
+	if matched[0].TypePattern != signal.TypePath("attribute/out/changed") {
+		t.Errorf("implicit pattern: got %q", matched[0].TypePattern)
 	}
 }
 
@@ -114,9 +124,9 @@ func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", On: "attribute", Name: "out"},
+				{Node: "sender", Type: "attribute/out/changed"},
 				// Duplicate of the implicit ref below.
-				{Node: "sender", On: "attribute", Name: "out"},
+				{Node: "sender", Type: "attribute/out/changed"},
 			},
 			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
 				"type": "object",
@@ -129,10 +139,17 @@ func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
 			}}},
 	}}
 	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out := BuildSubscriptionEdges(tmpl, refs)
-	edges := out["sender"]
-	if len(edges) != 1 {
-		t.Fatalf("expected dedup → 1 edge, got %d", len(edges))
+	out, err := BuildSubscriptionEdges(tmpl, refs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("sender", signal.TypePath("attribute/out/changed"))
+	// Dedup happens at insert time: the explicit-dup of the same
+	// (sender, type, when=nil, scope, frame) tuple collapses to one
+	// entry; the implicit ref produces the same tuple and is also
+	// deduped. Result: a single matched edge.
+	if len(matched) != 1 {
+		t.Fatalf("expected dedup → 1 matched edge, got %d", len(matched))
 	}
 }
 
@@ -140,51 +157,41 @@ func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "x", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "y", On: "state"},                               // per-node default → "in"
-				{Instance: true, On: "state"},                          // cross-cutting default → "next"
-				{Node: "y", On: "state", When: "fresh", Frame: "next"}, // explicit override
+				{Node: "y", Type: "terminal/success"},                // per-node default → "in"
+				{Instance: true, Type: "terminal/success"},           // cross-cutting default → "next"
+				{Node: "y", Type: "terminal/success", Frame: "next"}, // explicit override
 			},
 		},
 		{Type: "y", Executor: "stub"},
 	}}
-	out := BuildSubscriptionEdges(tmpl, nil)
-	yEdges := out["y"]
-	if len(yEdges) != 2 {
-		t.Fatalf("want 2 edges keyed under sender 'y', got %d", len(yEdges))
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	frames := []string{}
-	for _, e := range yEdges {
-		frames = append(frames, e.Frame)
+	yMatches := out.Match("y", signal.TypePath("terminal/success"))
+	// Two y-keyed edges (in + next) + the cross-cutting one (next) =
+	// three matches total.
+	if len(yMatches) != 3 {
+		t.Fatalf("want 3 edges for sender y (including cross-cutting), got %d", len(yMatches))
 	}
-	sort.Strings(frames)
-	if !reflect.DeepEqual(frames, []string{"in", "next"}) {
-		t.Fatalf("frame defaults mismatch: %v", frames)
+	frames := map[string]int{}
+	for _, e := range yMatches {
+		frames[e.Frame]++
 	}
-	crossEdges := out[""]
-	if len(crossEdges) != 1 {
-		t.Fatalf("want 1 cross-cutting edge, got %d", len(crossEdges))
+	if frames["in"] != 1 {
+		t.Errorf("want exactly 1 frame=in edge, got %d", frames["in"])
 	}
-	if crossEdges[0].Frame != "next" {
-		t.Fatalf("cross-cutting default frame should be next, got %q", crossEdges[0].Frame)
+	if frames["next"] != 2 {
+		t.Errorf("want exactly 2 frame=next edges (explicit + cross-cutting), got %d", frames["next"])
 	}
-}
-
-func keys(m map[string][]SubscriptionEdge) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // TestBuildSubscriptionEdges_BareAttributePull — spec 2026-05-19 §Item 3
 // "Empty trailing path". A receiver with `source: "{{nodes.stage.attribute}}"`
 // (no field path) pulls the whole upstream attribute object. The
-// inverse-edge map must still emit an auto-subscribe entry for the
-// receiver so the cascade walk fires when `stage` invalidates. The Name
-// filter is empty for the bare form (the cascade walk does not filter on
-// attribute name; the filter is informational).
+// inverse-edge map emits a prefix-wildcard auto-subscribe entry
+// (`attribute/*`) so the cascade walk fires on any attribute change on
+// the sender.
 func TestBuildSubscriptionEdges_BareAttributePull(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "stage", Executor: "stub",
@@ -206,31 +213,28 @@ func TestBuildSubscriptionEdges_BareAttributePull(t *testing.T) {
 			}}},
 	}}
 	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out := BuildSubscriptionEdges(tmpl, refs)
-	edges, ok := out["stage"]
-	if !ok {
-		t.Fatalf("expected implicit subscription on 'stage'; got keys %v", keys(out))
+	out, err := BuildSubscriptionEdges(tmpl, refs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	if len(edges) != 1 {
-		t.Fatalf("want 1 implicit edge, got %d", len(edges))
+	// Bare-attribute auto-subscribe expands to attribute/*/changed
+	// so the implicit subscription scopes to delta signals only.
+	matched := out.Match("stage", signal.TypePath("attribute/anykey/changed"))
+	if len(matched) != 1 {
+		t.Fatalf("bare-attr prefix match: want 1, got %d", len(matched))
 	}
-	if edges[0].ReceiverNodeType != "verify" {
-		t.Errorf("ReceiverNodeType: got %q want verify", edges[0].ReceiverNodeType)
+	if matched[0].ReceiverNodeType != "verify" {
+		t.Errorf("ReceiverNodeType: got %q want verify", matched[0].ReceiverNodeType)
 	}
-	if edges[0].TopicKind != "attribute" {
-		t.Errorf("TopicKind: got %q want attribute", edges[0].TopicKind)
-	}
-	if edges[0].Filter.Name != "" {
-		t.Errorf("Filter.Name on bare-attribute pull: got %q want empty", edges[0].Filter.Name)
+	if matched[0].TypePattern != signal.TypePath("attribute/*/changed") {
+		t.Errorf("TypePattern: got %q want attribute/*/changed", matched[0].TypePattern)
 	}
 }
 
 // TestBuildSubscriptionEdges_BareEventPullRejected — bare-form event
 // pulls still require the event name. A `{{nodes.X.event}}` directive
 // (no event name) is malformed; parseSubstitutionDirective returns
-// ok=false and no inverse-edge is emitted. (The validator separately
-// rejects the directive at registration; this test pins the lower-level
-// parser's behaviour for safety.)
+// ok=false and no inverse-edge is emitted.
 func TestBuildSubscriptionEdges_BareEventPullRejected(t *testing.T) {
 	got, ok := parseSubstitutionDirective("nodes.emit.event")
 	if ok {
@@ -249,5 +253,38 @@ func TestBuildSubscriptionEdges_BareEventWithNamePull(t *testing.T) {
 	}
 	if ref.TopicKind != "event" || ref.Name != "progress" {
 		t.Errorf("ref mismatch: %+v", ref)
+	}
+}
+
+// TestSubscriptionEdgeMap_PrefixWildcardMatch confirms that a
+// trailing-`*` edge inserted at one depth fires for any deeper-or-equal
+// signal path.
+func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "sender", Executor: "stub"},
+		{Type: "receiver", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "sender", Type: "terminal/error/*"},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	// Fires for any terminal/error/* leaf.
+	for _, leaf := range []string{
+		"terminal/error/foo",
+		"terminal/error/http/timeout",
+		"terminal/error/agent/rate_limited",
+	} {
+		matched := out.Match("sender", signal.TypePath(leaf))
+		if len(matched) != 1 {
+			t.Errorf("Match(%q): want 1, got %d", leaf, len(matched))
+		}
+	}
+	// Does NOT fire for terminal/success.
+	if got := out.Match("sender", signal.TypePath("terminal/success")); len(got) != 0 {
+		t.Errorf("Match(terminal/success): want 0, got %d", len(got))
 	}
 }

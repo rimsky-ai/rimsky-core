@@ -2,11 +2,13 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 27 — default behavior under Unavailable: silent retry. Without
-// any on_acquire_unavailable handler, an Unavailable response from the
-// producer must NOT transition the node — the next scheduler tick
-// retries. Verified by seeding an item into the empty queue mid-run
-// and confirming the node ultimately reaches fresh.
+// Task 27 — opt-in retry under acquire/unavailable. Post-2026-05-23
+// the default behavior changed from implicit silent-retry to fail-fast
+// (give_up("unknown_error_class")). Operators that want retry now
+// declare it explicitly via `error_types: { "acquire/unavailable":
+// { policy: [retry] } }`. Verified by seeding an item into the empty
+// queue mid-run and confirming the node ultimately reaches fresh under
+// the explicitly-declared retry chain.
 package scenarios
 
 import (
@@ -27,11 +29,13 @@ import (
 	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
 )
 
-// TestAcquireUnavailableRetryDefault verifies the today-behavior default:
-// no on_acquire_unavailable handler → silent retry. The stub starts
-// with an empty queue (Open returns Unavailable). After observing at
-// least one Open against the empty queue, we seed an item and confirm
-// the node eventually reaches fresh on a subsequent retry.
+// TestAcquireUnavailableRetryDefault verifies the post-2026-05-23
+// behavior: an explicit `error_types: { "acquire/unavailable": {
+// policy: [retry] } }` declaration drives the node to retry on
+// Unavailable. The stub starts with an empty queue (Open returns
+// Unavailable). After observing at least one Open against the empty
+// queue, we seed an item and confirm the node eventually reaches fresh
+// on a subsequent retry.
 func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	t.Parallel()
 
@@ -58,13 +62,29 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": 1}, true, "ran")
 
-	// Template has no on_acquire_unavailable handler — silent-retry default.
+	// Post-2026-05-23: explicit retry opt-in via error_types: {
+	// "acquire/unavailable": { policy: [retry × N] } }. Without this
+	// the default is fail-fast.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-default", Version: "1",
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				node.TemplateNodeDef{
+					Type:     "worker",
+					Executor: "stub",
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"acquire/unavailable": {
+							Policy: []node.PolicyAction{
+								// Allow many retries so the test has
+								// time to seed the queue before a chain
+								// exhaustion would land in failed.
+								{Action: "retry", Count: 1000, BaseDelayMs: 100},
+								{Action: "give_up"},
+							},
+						},
+					},
+				},
 				scenario.WithStores(scenario.WriteClaimRef("queue-store", "@queue")),
 			),
 		},
@@ -93,8 +113,9 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	}
 	require.True(t, sawFirstOpen, "stub producer should have seen at least one Open against the empty queue")
 
-	// Confirm the node has NOT transitioned to fresh — silent retry should
-	// keep it stale (no last_outcome should be set yet).
+	// Confirm the node has NOT transitioned to fresh — the explicit
+	// retry chain should keep it stale (no settling_signal_type should
+	// be set yet; the retry hasn't terminated).
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)

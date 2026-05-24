@@ -120,7 +120,6 @@ func (f *fakeRunTreeTable) CreateRootRun(_ context.Context, _ persistence.Tx, in
 		FrameID:           in.FrameID,
 		RunScopeID:        in.RunScopeID,
 		State:             cascade.NodeStateStale,
-		LastOutcome:       cascade.LastOutcomeFreshUnchanged,
 		AggregationPolicy: in.AggregationPolicy,
 	}
 	return nil
@@ -133,7 +132,6 @@ func (f *fakeRunTreeTable) CreateChildRun(_ context.Context, _ persistence.Tx, i
 		FrameID:           in.FrameID,
 		RunScopeID:        in.RunScopeID,
 		State:             cascade.NodeStateStale,
-		LastOutcome:       cascade.LastOutcomeFreshUnchanged,
 		AggregationPolicy: in.AggregationPolicy,
 	}
 	return nil
@@ -156,7 +154,6 @@ func (f *fakeRunTreeTable) LockTreeForUpdate(ctx context.Context, tx persistence
 // equals parentRunID — the new shape after the inline parent_run_id /
 // child_key columns moved onto rimsky_run_scopes.
 func (f *fakeRunTreeTable) ListChildren(_ context.Context, _ persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
-	// Find every RunScope whose parent_run_id == parentRunID.
 	matchingScopes := make(map[shared.UUID]struct{})
 	for _, s := range f.scopes.rows {
 		if s.ParentRunID != nil && *s.ParentRunID == parentRunID {
@@ -172,14 +169,15 @@ func (f *fakeRunTreeTable) ListChildren(_ context.Context, _ persistence.Tx, par
 	return out, nil
 }
 
-func (f *fakeRunTreeTable) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, runID shared.UUID, state cascade.NodeState, lastOutcome cascade.LastOutcome) error {
+func (f *fakeRunTreeTable) UpdateStateAndOutcome(_ context.Context, _ persistence.Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error {
 	row, ok := f.rows[runID]
 	if !ok {
 		return nil
 	}
 	row.State = state
-	if lastOutcome != "" {
-		row.LastOutcome = lastOutcome
+	if settlingSignalType != nil {
+		v := *settlingSignalType
+		row.SettlingSignalType = &v
 	}
 	return nil
 }
@@ -222,8 +220,11 @@ func (f *fakeRunScopeTable) makeRootScope(graphName string, instanceID shared.UU
 	return id
 }
 
+// strPtr returns a *string pointing to v.
+func strPtr(v string) *string { return &v }
+
 // TestPropagateFromChildState_LeafRoot — single-level fan-out, two children
-// success → parent fresh + fresh_unchanged.
+// success → parent fresh + terminal/success.
 func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	rt, scopes := newFakes()
 	frame := newUUID()
@@ -256,11 +257,11 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	}
 
 	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
+	successSig := strPtr("terminal/success")
 
-	// First child terminates → parent still running (other child active).
-	// Caller writes the child's state, then the walker rolls up.
-	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged)
-	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged); err != nil {
+	// First child terminates → parent still stale (other child active).
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig)
+	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
 	}
 	rootRow, _ := rt.GetByID(ctx, nil, root)
@@ -268,9 +269,9 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 		t.Fatalf("expected root still stale after one child, got %s", rootRow.State)
 	}
 
-	// Second child terminates → parent fresh + fresh_changed (the any-changed gate).
-	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, cascade.LastOutcomeFreshUnchanged)
-	actions, _, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, cascade.LastOutcomeFreshUnchanged)
+	// Second child terminates → parent fresh + terminal/success.
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig)
+	actions, _, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -278,8 +279,8 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	if rootRow.State != cascade.NodeStateFresh {
 		t.Fatalf("expected root fresh, got %s", rootRow.State)
 	}
-	if rootRow.LastOutcome != cascade.LastOutcomeFreshChanged {
-		t.Fatalf("expected root fresh_changed (any-changed propagates), got %s", rootRow.LastOutcome)
+	if rootRow.SettlingSignalType == nil || *rootRow.SettlingSignalType != "terminal/success" {
+		t.Fatalf("expected root settling_signal_type=terminal/success; got %v", rootRow.SettlingSignalType)
 	}
 	if len(actions) != 0 {
 		t.Fatalf("expected no cancel actions, got %d", len(actions))
@@ -312,13 +313,13 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 		RunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
 	})
 	// c1 still running.
-	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateRunning, "")
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateRunning, nil)
 
 	// c2 fails → parent failed + cancel-siblings action.
-	// Caller writes the child terminal state, then the walker rolls up.
-	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, cascade.LastOutcomeFailed)
+	failedSig := strPtr("terminal/error/test_failure")
+	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig)
 	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{RunTree: rt, RunScopes: scopes}, nil,
-		c2, cascade.NodeStateFailed, cascade.LastOutcomeFailed)
+		c2, cascade.NodeStateFailed, failedSig)
 	if err != nil {
 		t.Fatalf("PropagateFromChildState c2: %v", err)
 	}
@@ -368,24 +369,21 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	})
 
 	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
+	successSig := strPtr("terminal/success")
 
-	// Caller writes the leaf's terminal state, then the walker rolls up.
-	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf1,
-		cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged)
+	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf1, cascade.NodeStateFresh, successSig)
 	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf1,
-		cascade.NodeStateFresh, cascade.LastOutcomeFreshChanged); err != nil {
+		cascade.NodeStateFresh, successSig); err != nil {
 		t.Fatalf("propagate leaf1: %v", err)
 	}
-	// mid still stale (leaf2 active).
 	midRow, _ := rt.GetByID(ctx, nil, mid)
 	if midRow.State != cascade.NodeStateStale {
 		t.Fatalf("expected mid stale, got %s", midRow.State)
 	}
 
-	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf2,
-		cascade.NodeStateFresh, cascade.LastOutcomeFreshUnchanged)
+	_ = rt.UpdateStateAndOutcome(ctx, nil, leaf2, cascade.NodeStateFresh, successSig)
 	if _, _, err := PropagateFromChildState(ctx, args, nil, leaf2,
-		cascade.NodeStateFresh, cascade.LastOutcomeFreshUnchanged); err != nil {
+		cascade.NodeStateFresh, successSig); err != nil {
 		t.Fatalf("propagate leaf2: %v", err)
 	}
 	midRow, _ = rt.GetByID(ctx, nil, mid)
@@ -396,7 +394,7 @@ func TestPropagateFromChildState_NestedTree(t *testing.T) {
 	if rootRow.State != cascade.NodeStateFresh {
 		t.Fatalf("expected root fresh, got %s", rootRow.State)
 	}
-	if rootRow.LastOutcome != cascade.LastOutcomeFreshChanged {
-		t.Fatalf("expected root fresh_changed (propagated from mid), got %s", rootRow.LastOutcome)
+	if rootRow.SettlingSignalType == nil || *rootRow.SettlingSignalType != "terminal/success" {
+		t.Fatalf("expected root settling_signal_type=terminal/success; got %v", rootRow.SettlingSignalType)
 	}
 }

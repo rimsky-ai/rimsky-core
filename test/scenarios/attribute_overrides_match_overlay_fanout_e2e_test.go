@@ -252,8 +252,8 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 			  FROM rimsky_events
 			 WHERE instance_id = $1
 			   AND kind IN ('fan_out_dispatched','fanout.children_created','attributes_substituted',
-			                'attribute_overrides_match_count_incremented','work_completed',
-			                'no_op_commit','pure_cascade_commit','dispatch_failed')
+			                'attribute_overrides_match_count_incremented','terminal/success',
+			                'dispatch_failed')
 			 ORDER BY id
 		`, []any{iid}, func(scan func(...any) error) error {
 			var kind, payload string

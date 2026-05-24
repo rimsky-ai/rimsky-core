@@ -294,9 +294,10 @@ func (q *queueImpl) ClaimDispatchRow(
 // Complete retires the in-flight run row identified by dispatchID. Post-
 // stage-1 lifecycle flip: flips phase to a terminal value rather than
 // deleting the row so frame-end / retention / run-tree aggregation can
-// read the terminal `state` / `last_outcome` after the active phase
-// closes. The terminal phase is derived from the row's state column —
-// `state='failed'` ⇒ phase='failed', everything else ⇒ phase='completed'.
+// read the terminal `state` / `settling_signal_type` after the active
+// phase closes. The terminal phase is derived from the row's state
+// column — `state='failed'` ⇒ phase='failed', everything else ⇒
+// phase='completed'.
 //
 // expectedClaimedBy is the claimant-guard (blessed-invariant 4); when
 // non-empty, the flip only fires for rows claimed by the expected
@@ -336,8 +337,8 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runSc
 // RemoveForNodeInTx retires the in-flight run row for a node by flipping
 // phase to a terminal value (the new run-row lifecycle: rows survive
 // past active terminal so frame-end / retention / run-tree aggregation
-// can read state + last_outcome). Determines the terminal phase from
-// the row's `state` column — `state='failed'` ⇒ phase='failed',
+// can read state + settling_signal_type). Determines the terminal phase
+// from the row's `state` column — `state='failed'` ⇒ phase='failed',
 // everything else ⇒ phase='completed'. Clears claimed_by /
 // last_heartbeat_at and stamps active_terminal_at so the orphan-claim
 // reaper and the in-flight predicate both stop treating the row as

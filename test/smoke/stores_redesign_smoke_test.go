@@ -245,16 +245,22 @@ func fireOnceAndWait(
 // cascadeAtSteadyState reports whether the four §10 steady-state checks
 // are simultaneously true:
 //
-//  1. count(rimsky_events kind='work_completed' payload->>'node_type'='review') >= 100
+//  1. count(rimsky_events kind='terminal/success' for node_type='review') >= 100
 //  2. count(rimsky_node_runs claimed_by IS NOT NULL) = 0
 //  3. count(rimsky_claim_handles) = 0
 //  4. count(rimsky_claim_holders state='active') = 0
+//
+// Per Pass 5 of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design
+// the legacy `work_completed` fixed-string audit row retired in favor of
+// the canonical `terminal/success` signal row. The node_type filter
+// moves from the audit row's payload to a join through rimsky_nodes.
 func cascadeAtSteadyState(t *testing.T, ctx context.Context, stack *SmokeStack) bool {
 	t.Helper()
 	var reviewCount int
 	if err := stack.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM rimsky_events
-		   WHERE kind = 'work_completed' AND payload->>'node_type' = 'review'`,
+		`SELECT count(*) FROM rimsky_events e
+		   JOIN rimsky_nodes n ON n.id = e.node_id
+		  WHERE e.kind = 'terminal/success' AND n.node_type = 'review'`,
 	).Scan(&reviewCount); err != nil {
 		t.Fatalf("cascadeAtSteadyState: review count: %v", err)
 	}
@@ -350,10 +356,11 @@ func dumpDiagnostics(t *testing.T, ctx context.Context, stack *SmokeStack) {
 	}
 
 	rows, err = stack.Pool.Query(ctx,
-		`SELECT payload->>'node_type' AS nt, count(*) FROM rimsky_events
-		   WHERE kind = 'work_completed' GROUP BY 1 ORDER BY 1`)
+		`SELECT n.node_type AS nt, count(*) FROM rimsky_events e
+		   JOIN rimsky_nodes n ON n.id = e.node_id
+		  WHERE e.kind = 'terminal/success' GROUP BY 1 ORDER BY 1`)
 	if err == nil {
-		t.Logf("work_completed by node_type:")
+		t.Logf("terminal/success by node_type:")
 		for rows.Next() {
 			var nt string
 			var c int
@@ -689,7 +696,7 @@ func scopeNode() map[string]any {
 		"error_types": map[string]any{
 			"review_rejected": map[string]any{
 				"policy": []map[string]any{
-					{"action": "discard_then_retry", "count": 2},
+					{"action": "discard_claims_then_retry", "count": 2},
 					{"action": "give_up"},
 				},
 			},
@@ -751,9 +758,9 @@ func reviewNode() map[string]any {
 		"type":     "review",
 		"executor": "claude-agent",
 		"subscribes": []map[string]any{
-			{"node": "claim-topic", "on": "state"},
-			{"node": "scope", "on": "state"},
-			{"node": "draft", "on": "state"},
+			{"node": "claim-topic", "type": "terminal/*"},
+			{"node": "scope", "type": "terminal/*"},
+			{"node": "draft", "type": "terminal/*"},
 		},
 		"attributes": map[string]any{
 			"schema": map[string]any{

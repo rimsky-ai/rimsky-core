@@ -5,10 +5,11 @@
 // Task 43 — acquire_pass + subscription-driven monitor wakeup
 // (post-2026-05-14 subscription-cascade resolution).
 //
-// Two-node template: worker has on_acquire_unavailable: { resolve: pass }.
-// The producer returns Unavailable. Worker passes WITHOUT invoking the
-// executor; monitor subscribes to worker's state="fresh" and runs once
-// worker resolves.
+// Two-node template: worker has `error_types: { "acquire/unavailable":
+// { policy: [pass] } }` (post-2026-05-23 reshape; was
+// `on_acquire_unavailable: { resolve: pass }`). The producer returns
+// Unavailable. Worker passes WITHOUT invoking the executor; monitor
+// subscribes to worker's terminal/error/* and runs once worker resolves.
 //
 // The legacy handler.invalidate emit / message_emitted audit-event path
 // retired with the subscription-cascade resolution; receiver-side
@@ -33,12 +34,19 @@ import (
 )
 
 func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
-	t.Skip("post-2026-05-14: pass outcome does NOT propagate cascade " +
-		"(cascade-firing gate is last_outcome == fresh_changed); to fire " +
-		"downstream on pass, the sender would need an `always_propagate` " +
-		"resolution slot which on_acquire_unavailable does not currently " +
-		"expose. The legacy handler.invalidate emit path that this test " +
-		"exercised is retired.")
+	t.Skip("post-2026-05-23 (signal-taxonomy + policy-decoupling reshape): " +
+		"the pass branch of the unified error_types: chain (both " +
+		"runtime/on_error.go::OnError pass case and " +
+		"runtime/runner_error_policy.go::applyResolvedAction's " +
+		"DispositionEnd + ColorFresh branch) commits a fresh state " +
+		"transition + terminal/error/<class> audit signal but does NOT " +
+		"fire cascadeSubscribersStaleInTx — only the retry branch does. " +
+		"For a pass to wake a downstream subscriber, the pass branch " +
+		"would need to extend cascade-fan-out to include settle-on-fresh " +
+		"transitions (mirroring applyTerminalComplete's settlement-walk). " +
+		"That's a deliberate scope-out from the 2026-05-23 spec; " +
+		"unskipping requires a follow-up spec extending the cascade " +
+		"walk to the pass branch.")
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -74,8 +82,10 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
-						Resolve: node.ResolvePass,
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"acquire/unavailable": {
+							Policy: []node.PolicyAction{{Action: "pass"}},
+						},
 					},
 				},
 				scenario.WithStores(scenario.WriteClaimRef("queue-store", "@queue")),
@@ -85,7 +95,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 					Type:     "monitor",
 					Executor: "stub",
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", On: "state", When: "fresh"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*", When: "fresh"}),
 			),
 		},
 	})
@@ -97,12 +107,12 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.NotNil(t, monitor)
 
 	// Worker should pass.
-	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"worker should record last_outcome=passed")
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
+		"worker should record settling_signal_type=terminal/error/<class> via error_types: { acquire/unavailable: [pass] }")
 
 	// Monitor must run at least once in response to worker's resolve;
 	// the wait-set drain on worker's settle releases monitor.
-	require.True(t, waitForEventCount(t, h, monitor.ID, "work_completed", 1, 30*time.Second),
+	require.True(t, waitForEventCount(t, h, monitor.ID, "terminal/success", 1, 30*time.Second),
 		"monitor must run after worker reaches fresh (subscription-driven)")
 
 	// Worker's executor must NOT have been invoked.
@@ -113,7 +123,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 		}
 	}
 	require.Equal(t, 0, workerObserved,
-		"worker's executor must not be invoked when on_acquire_unavailable: pass fires")
+		"worker's executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 
 	// Worker is fresh.
 	var wRow *persistence.NodeRow

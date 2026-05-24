@@ -101,7 +101,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 			// when partition children settle.
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "downstream", Executor: "stub",
-					Subscribes: []tmplspec.SubscriptionEntry{{Node: "fan-parent", On: "state"}},
+					Subscribes: []tmplspec.SubscriptionEntry{{Node: "fan-parent", Type: "terminal/*"}},
 				},
 				openAttrs,
 			),

@@ -110,14 +110,14 @@ func TestSubscriber_PollsAndEmits(t *testing.T) {
 	}
 
 	leafRec := LeafRunRecord{
-		RunID:             "run-1",
-		NodeAlias:         "draft",
-		TemplateNodeAlias: "draft",
-		TemplateHash:      templateHash,
-		ExecutorName:      "claude-agent",
-		Changed:           true,
-		LastOutcome:       "fresh_changed",
-		TerminalKind:      "complete",
+		RunID:              "run-1",
+		NodeAlias:          "draft",
+		TemplateNodeAlias:  "draft",
+		TemplateHash:       templateHash,
+		ExecutorName:       "claude-agent",
+		Changed:            true,
+		SettlingSignalType: "terminal/success",
+		TerminalKind:       "complete",
 	}
 	leafJSON, _ := json.Marshal(leafRec)
 	_, err = pool.Exec(ctx,
@@ -570,7 +570,7 @@ func TestLeafRunRecord_WireContract(t *testing.T) {
 	  "attributes_hash": "sha256-ccc",
 	  "scope_data_hash": "sha256-ddd",
 	  "state": "fresh",
-	  "last_outcome": "fresh_changed",
+	  "settling_signal_type": "terminal/success",
 	  "changed": true,
 	  "terminal_kind": "complete",
 	  "error_class": "",
@@ -729,7 +729,7 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"AttributesHash", "attributes_hash", true},
 		{"ScopeDataHash", "scope_data_hash", true},
 		{"State", "state", false},
-		{"LastOutcome", "last_outcome", false},
+		{"SettlingSignalType", "settling_signal_type", false},
 		{"Changed", "changed", true},
 		{"TerminalKind", "terminal_kind", true},
 		{"ErrorClass", "error_class", true},

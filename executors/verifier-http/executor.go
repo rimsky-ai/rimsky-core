@@ -24,8 +24,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -65,7 +67,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return sendErrored(send, "invalid_attribute", "attributes.url required")
+		return sendErrored(send, "verifier/attribute_invalid", "attributes.url required")
 	}
 	if s.stubMode {
 		return send(stubSuccess())
@@ -87,7 +89,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	if body, ok := ud["body"]; ok && body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return sendErrored(send, "invalid_attribute", "body not JSON-serialisable: "+err.Error())
+			return sendErrored(send, "verifier/attribute_invalid", "body not JSON-serialisable: "+err.Error())
 		}
 		bodyReader = bytes.NewReader(raw)
 	}
@@ -96,7 +98,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	defer cancel()
 	httpReq, err := http.NewRequestWithContext(dispatchCtx, http.MethodPost, urlStr, bodyReader)
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", err.Error())
+		return sendErrored(send, "verifier/attribute_invalid", err.Error())
 	}
 	if bodyReader != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -105,7 +107,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return sendErrored(send, "http_request_failed", err.Error())
+		return sendErrored(send, classifyTransportErr(err), err.Error())
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -118,7 +120,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		})
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier_failed",
+				ErrorClass: "verifier/check_failed",
 				Payload:    payload,
 			}}},
 		}})
@@ -179,6 +181,26 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-1] + "…"
+}
+
+// classifyTransportErr maps a transport-layer error to a hierarchical
+// error class per `concept:signal`. Distinguishes deadline-exceeded /
+// network-timeout errors (which operators typically want to retry with
+// backoff) from generic network errors.
+//
+//	@source: executors/http-node/server.go::classifyTransportErr
+func classifyTransportErr(err error) string {
+	if err == nil {
+		return "verifier/network_error"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "verifier/timeout"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "verifier/timeout"
+	}
+	return "verifier/network_error"
 }
 
 func sendErrored(send sendFunc, class, msg string) error {

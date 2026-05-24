@@ -16,8 +16,26 @@ import (
 
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	"github.com/fallguy/rimsky/graph/frame"
 )
+
+// invalidationCascadeSignal is the synthetic signal cascade-from-
+// invalidation walks emit when they don't have a real terminal signal
+// in hand (e.g. operator-issued invalidate, in-frame invalidate,
+// hard-dep upstream pull). Modeled as a terminal/success with
+// changed: true so existing subscriber CEL predicates that gate on
+// `payload.changed` (the common case) match; subscribers that want
+// finer-grained filtering should subscribe to specific signal shapes
+// instead.
+var invalidationCascadeSignal = signalpkg.Signal{
+	Type: "terminal/success",
+	Payload: map[string]any{
+		"changed":          true,
+		"attributes_delta": map[string]any{},
+		"change_summary":   "invalidation_cascade",
+	},
+}
 
 // InvalidateArgs is the payload for InvalidateNode.
 type InvalidateArgs struct {
@@ -41,21 +59,19 @@ type InvalidateArgs struct {
 	// Empty string is treated as FrameNext for backwards compatibility
 	// with all existing call sites (operator invalidate, scheduler
 	// cron-fire, cascade-from-commit).
-	//
-	// See .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md §5.
 	Frame string
 	// SourceFrameID, when non-nil, overrides the frame_id read from the
 	// source node row in invalidateInFrame. Used by post-Success-outcome
-	// handler.invalidate emits where the running-tx has already cleared
-	// the source's frame_id (per the defensive guard in
-	// nodes.UpdateState on transitions to 'fresh'). Without the
-	// override, in-frame self-invalidate from on_executor_complete
-	// would always fall back to next-frame, defeating the spec's
-	// "single frame for the entire drain" property.
+	// cascade walks where the running-tx has already cleared the
+	// source's frame_id (per the defensive guard in nodes.UpdateState
+	// on transitions to 'fresh'). Without the override, an in-frame
+	// self-invalidate from a post-success cascade walk would always
+	// fall back to next-frame, defeating the spec's "single frame for
+	// the entire drain" property.
 	SourceFrameID *shared.UUID
 	// Metrics is the per-invalidate instrumentation hook (plan I3).
 	// Optional. Threaded through so invalidate sources can be classified
-	// by reason (admin vs scheduler vs handler vs policy).
+	// by reason (admin vs scheduler vs cascade).
 	Metrics MetricsHook
 }
 
@@ -208,8 +224,6 @@ func invalidateNextFrame(ctx context.Context, args InvalidateArgs, target *persi
 //   - the resolved frame_id is nil (e.g., the source is itself stale
 //     and the cascade hasn't established a frame for this propagation).
 //
-// Per the reactive-loops + lifecycle-handlers spec §5.
-//
 // @blessed-invariant: State-machine writes for a single run must be
 // tx-atomic. Any operation that reads a run's current state to
 // decide what state to write must perform the read and the write
@@ -260,9 +274,9 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		// between resolve and mutate), abort cleanly — the calling
 		// cascade walker reissues with a fresh resolve. We skip the
 		// re-read when SourceFrameID was supplied by the caller
-		// (handler.invalidate from on_executor_complete already
-		// cleared the source's frame_id; the caller's value is the
-		// only correct one for that path).
+		// (a post-success cascade walk where the running-tx
+		// already cleared the source's frame_id; the caller's value
+		// is the only correct one for that path).
 		if args.SourceFrameID == nil && args.SourceNodeID != nil {
 			src, err := args.Persist.Nodes().Get(ctx, *args.SourceNodeID, tx)
 			if err != nil {
@@ -359,7 +373,8 @@ func walkCascadeForInvalidatedNode(
 		return nil
 	}
 	return cascadeSubscribersStaleInTx(ctx, args, tx,
-		senderNodeID, n.NodeType, senderRunID, instanceID, frameID)
+		senderNodeID, n.NodeType, senderRunID, instanceID, frameID,
+		invalidationCascadeSignal)
 }
 
 // resolveInFlightRunForTarget resolves the in-flight rimsky_node_runs
@@ -440,17 +455,20 @@ func stalemarkAndEnqueueInFrame(
 }
 
 // invalidateSourceBucket classifies the Reason string into a small
-// fixed set of metric labels (admin / scheduler / handler / cascade /
-// other) so the Prometheus invalidate counter has bounded cardinality.
+// fixed set of metric labels (admin / scheduler / cascade / other) so
+// the Prometheus invalidate counter has bounded cardinality. The
+// retired `policy_invalidate` and `handler_invalidate` reasons (per
+// the 2026-05-14 / 2026-05-23 retirement of the `invalidate`
+// ErrorPolicy action and the lifecycle-handler `on_event` slot) are
+// no longer emitted; they fall through to "other" if any stray site
+// ever resurfaces them.
 //
 // The case list MUST stay in lockstep with the Reason values fired by
 // the integration layer. Today those are:
 //
-//   - "admin_invalidate"            (runner_lifecycle.go admin path,
-//     wake_parked.go::InvalidateNode)
+//   - "admin_invalidate"            (admin path, wake_parked.go::
+//     InvalidateNode)
 //   - "schedule_fired"              (graph/scheduler/schedule_ticker.go)
-//   - "policy_invalidate"           (on_error.go, runner_terminal_errors.go)
-//   - "handler_invalidate"          (runner_lifecycle.go on_event handler)
 //   - "cascade"                     (cascade_invalidate.go)
 //   - "parked_resume_deadline_elapsed" (sweep_parked.go)
 //
@@ -462,8 +480,6 @@ func invalidateSourceBucket(reason string) string {
 		return "admin"
 	case "schedule_fired", "parked_resume_deadline_elapsed":
 		return "scheduler"
-	case "policy_invalidate", "handler_invalidate":
-		return "handler"
 	case "cascade":
 		return "cascade"
 	}

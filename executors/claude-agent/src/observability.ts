@@ -26,7 +26,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { expectedAttributesSchemaBytes, declaredEvents } from "./expected-attributes-schema.js";
+import { expectedAttributesSchemaBytes, declaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
 
 export type Severity = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -227,6 +227,8 @@ export function capabilitiesPayload(httpBridgeUrl = "") {
     // Plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared events.
     expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()).toString("base64"),
     declared_events: declaredEvents,
+    // 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
+    declared_error_classes: declaredErrorClasses,
   };
 }
 

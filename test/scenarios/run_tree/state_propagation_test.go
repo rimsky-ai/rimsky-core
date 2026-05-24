@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -26,12 +27,12 @@ import (
 func TestStatePropagation_NonTerminalChildHoldsParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 		{State: cascade.NodeStateRunning},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if res.IsTerminal {
+	if res.IsSettled {
 		t.Errorf("parent must stay non-terminal while a child is running; got terminal=%s", res.ParentState)
 	}
 }
@@ -45,7 +46,7 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 		{State: cascade.NodeStateStale},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if res.IsTerminal {
+	if res.IsSettled {
 		t.Errorf("all-stale children: parent must stay non-terminal; got %s", res.ParentState)
 	}
 }
@@ -56,7 +57,7 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 // parked, but the run-tree aggregation engine specifically TREATS
 // parked as a terminal state — distinct concerns).
 //
-// Per the runtime helper: `ChildState.IsTerminal()` returns true on
+// Per the runtime helper: `ChildState.IsSettled()` returns true on
 // parked. The aggregation engine therefore settles the parent when
 // all children are parked + fresh. The N1 contract is that the
 // state-propagation engine doesn't crash or stall on parked
@@ -64,11 +65,11 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 		{State: cascade.NodeStateParked},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Errorf("parked child should be treated as terminal by Aggregate; got non-terminal")
 	}
 }
@@ -79,15 +80,15 @@ func TestStatePropagation_ParkedChildAggregatesAsTerminal(t *testing.T) {
 func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("all-fresh children should settle the parent")
 	}
-	if res.ParentOutcome != cascade.LastOutcomeFreshUnchanged {
-		t.Errorf("all-unchanged children: parent outcome %s (want fresh_unchanged)", res.ParentOutcome)
+	if res.ParentChanged {
+		t.Errorf("all-unchanged children: parent outcome %s (want fresh_unchanged)", res.ParentSettlingSignalType)
 	}
 }
 
@@ -97,15 +98,15 @@ func TestStatePropagation_FreshUnchangedAggregatesToParent(t *testing.T) {
 func TestStatePropagation_FreshChangedDominatesUnchanged(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatal("all-fresh children should settle the parent")
 	}
-	if res.ParentOutcome != cascade.LastOutcomeFreshChanged {
-		t.Errorf("any-changed child: parent outcome %s (want fresh_changed)", res.ParentOutcome)
+	if !res.ParentChanged {
+		t.Errorf("any-changed child: parent outcome %s (want fresh_changed)", res.ParentSettlingSignalType)
 	}
 }

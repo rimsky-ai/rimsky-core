@@ -54,7 +54,7 @@ func (f *fakeRunTreeForExit) LockTreeForUpdate(ctx context.Context, tx persisten
 func (f *fakeRunTreeForExit) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
 	return nil, nil
 }
-func (f *fakeRunTreeForExit) UpdateStateAndOutcome(ctx context.Context, tx persistence.Tx, runID shared.UUID, state cascade.NodeState, lastOutcome cascade.LastOutcome) error {
+func (f *fakeRunTreeForExit) UpdateStateAndOutcome(ctx context.Context, tx persistence.Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error {
 	return nil
 }
 func (f *fakeRunTreeForExit) UpdateAggregationPolicy(ctx context.Context, tx persistence.Tx, runID shared.UUID, policy tmplspec.AggregationPolicy) error {

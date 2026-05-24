@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -30,8 +31,8 @@ import (
 func TestAggregatorSet_RecognizedKindsAccepted(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	for _, kind := range []string{"strict", "threshold", "best_effort", "first"} {
 		t.Run(kind, func(t *testing.T) {
@@ -40,7 +41,7 @@ func TestAggregatorSet_RecognizedKindsAccepted(t *testing.T) {
 				policy.MaxFailures = 1
 			}
 			res := runtime.Aggregate(children, policy)
-			if !res.IsTerminal {
+			if !res.IsSettled {
 				t.Errorf("policy %s on all-success children should settle terminal", kind)
 			}
 			if res.ParentState != cascade.NodeStateFresh {
@@ -53,12 +54,12 @@ func TestAggregatorSet_RecognizedKindsAccepted(t *testing.T) {
 func TestAggregatorSet_UnknownKindFallsBackToStrict(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	// Unknown kind → strict semantics (any failure → failed).
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "bogus-unknown"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("unknown kind should default-fall through to strict (which settles on failure)")
 	}
 	if res.ParentState != cascade.NodeStateFailed {
@@ -69,8 +70,8 @@ func TestAggregatorSet_UnknownKindFallsBackToStrict(t *testing.T) {
 func TestAggregatorSet_EmptyKindDefaultsToStrict(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: ""})
 	if res.ParentState != cascade.NodeStateFailed {

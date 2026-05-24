@@ -44,10 +44,10 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	insertLeaf := func(t *testing.T, runID, parentID shared.UUID, observedAt time.Time) shared.UUID {
 		t.Helper()
 		rec := map[string]any{
-			"run_id":       runID.String(),
-			"frame_id":     fix.FrameID.String(),
-			"state":        "fresh",
-			"last_outcome": "fresh_changed",
+			"run_id":               runID.String(),
+			"frame_id":             fix.FrameID.String(),
+			"state":                "fresh",
+			"settling_signal_type": "terminal/success",
 		}
 		if parentID != (shared.UUID{}) {
 			rec["parent_run_id"] = parentID.String()

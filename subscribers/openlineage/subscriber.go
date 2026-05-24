@@ -57,29 +57,33 @@ type LineageRow struct {
 // order (writer-side is canonical).
 //
 // Required (no `omitempty`) on both sides: `run_id`, `node_id`,
-// `frame_id`, `state`, `last_outcome` — every leaf-run lineage row
-// must carry the run/node/frame identity plus the state-machine
-// verdict, otherwise the row is meaningless for the OpenLineage
-// emitter and the ancestor walker.
+// `frame_id`, `state`, `settling_signal_type` — every leaf-run
+// lineage row must carry the run/node/frame identity plus the
+// state-machine verdict, otherwise the row is meaningless for the
+// OpenLineage emitter and the ancestor walker.
 type LeafRunRecord struct {
-	RunID              string            `json:"run_id"`
-	NodeID             string            `json:"node_id"`
-	FrameID            string            `json:"frame_id"`
-	ChildKey           string            `json:"child_key,omitempty"`
-	NodeAlias          string            `json:"node_alias,omitempty"`
-	ParentRunID        string            `json:"parent_run_id,omitempty"`
-	FrameTriggerKind   string            `json:"frame_trigger_kind,omitempty"`
-	TriggerMessageID   string            `json:"trigger_message_id,omitempty"`
-	HeldClaims         []HeldClaimRef    `json:"held_claims,omitempty"`
-	ExecutorName       string            `json:"executor_name,omitempty"`
-	ExecutorVersion    string            `json:"executor_version,omitempty"`
-	TemplateHash       string            `json:"template_hash,omitempty"`
-	TemplateNodeAlias  string            `json:"template_node_alias,omitempty"`
-	ParamsSnapshotHash string            `json:"params_snapshot_hash,omitempty"`
-	AttributesHash     string            `json:"attributes_hash,omitempty"`
-	ScopeDataHash      string            `json:"scope_data_hash,omitempty"`
-	State              string            `json:"state"`
-	LastOutcome        string            `json:"last_outcome"`
+	RunID              string         `json:"run_id"`
+	NodeID             string         `json:"node_id"`
+	FrameID            string         `json:"frame_id"`
+	ChildKey           string         `json:"child_key,omitempty"`
+	NodeAlias          string         `json:"node_alias,omitempty"`
+	ParentRunID        string         `json:"parent_run_id,omitempty"`
+	FrameTriggerKind   string         `json:"frame_trigger_kind,omitempty"`
+	TriggerMessageID   string         `json:"trigger_message_id,omitempty"`
+	HeldClaims         []HeldClaimRef `json:"held_claims,omitempty"`
+	ExecutorName       string         `json:"executor_name,omitempty"`
+	ExecutorVersion    string         `json:"executor_version,omitempty"`
+	TemplateHash       string         `json:"template_hash,omitempty"`
+	TemplateNodeAlias  string         `json:"template_node_alias,omitempty"`
+	ParamsSnapshotHash string         `json:"params_snapshot_hash,omitempty"`
+	AttributesHash     string         `json:"attributes_hash,omitempty"`
+	ScopeDataHash      string         `json:"scope_data_hash,omitempty"`
+	State              string         `json:"state"`
+	// SettlingSignalType is the canonical signal type-path the run
+	// settled with (concept:signal). Replaces the retired LastOutcome
+	// projection per Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	SettlingSignalType string            `json:"settling_signal_type"`
 	Changed            bool              `json:"changed,omitempty"`
 	TerminalKind       string            `json:"terminal_kind,omitempty"`
 	ErrorClass         string            `json:"error_class,omitempty"`

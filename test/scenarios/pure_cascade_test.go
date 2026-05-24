@@ -59,7 +59,10 @@ func TestPureCascadeNode(t *testing.T) {
 	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
 		"hub did not return to fresh after invalidate")
 
-	// Verify pure_cascade_commit event was emitted at some point.
+	// Verify a terminal/success signal event was emitted (per Pass 5
+	// the pure_cascade_commit fixed-string row retired; pure-cascade
+	// transitions emit terminal/success with payload.change_summary
+	// = "pure_cascade" per concept:signal).
 	nid := hub.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -70,10 +73,10 @@ func TestPureCascadeNode(t *testing.T) {
 	}))
 	var sawCommit bool
 	for _, e := range evs.Events {
-		if e.Kind == "pure_cascade_commit" {
+		if e.Kind == "terminal/success" {
 			sawCommit = true
 			break
 		}
 	}
-	require.True(t, sawCommit, "expected pure_cascade_commit event")
+	require.True(t, sawCommit, "expected terminal/success signal event for pure-cascade transition")
 }

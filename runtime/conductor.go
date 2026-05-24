@@ -44,6 +44,8 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 )
 
 // ConductorArgs bundles the dependencies for the foundation sweeps.
@@ -83,18 +85,37 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 	for _, n := range stale {
 		nodeID := n.ID
 		instanceID := n.InstanceID
-		payload := map[string]any{
-			"supervisor_id":     n.AssignedSupervisorID,
-			"last_heartbeat_at": n.LastHeartbeatAt,
+		// Resolve the dispatch id for the transient/heartbeat_missed
+		// signal payload. InFlightRunID may be nil if the row has
+		// already been retired between the outer scan and this loop;
+		// fall back to a zero UUID in that case.
+		var dispatchID shared.UUID
+		if n.InFlightRunID != nil {
+			dispatchID = *n.InFlightRunID
+		}
+		thresholdMs := int(args.HeartbeatTimeout / time.Millisecond)
+		lastHeartbeat := n.LastHeartbeatAt
+		if lastHeartbeat == nil {
+			t := time.Time{}
+			lastHeartbeat = &t
+		}
+		heartbeatSig := signalpkg.Signal{
+			Type: "transient/heartbeat_missed",
+			Payload: map[string]any{
+				"last_heartbeat_at": *lastHeartbeat,
+				"dispatch_id":       dispatchID,
+				"threshold_ms":      thresholdMs,
+			},
 		}
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &nodeID, InstanceID: &instanceID,
-				Kind:    "heartbeat_lost",
-				Payload: payload,
-			}, tx)
+			// transient/heartbeat_missed signal is the canonical audit
+			// row for this transition per concept:signal. The pre-Pass-5
+			// fixed-string "heartbeat_lost" audit-row retired alongside
+			// spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
+				instanceID, nodeID, heartbeatSig, args.Clock.Now(), tx)
 		}); err != nil {
-			log.Warn("tick: append heartbeat_lost failed",
+			log.Warn("tick: append heartbeat_missed signal failed",
 				"node_id", n.ID.String(), "error", err.Error())
 		}
 		// running → stale (also clears assigned_supervisor_id + heartbeat
@@ -148,7 +169,7 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 			// stale transition addresses this specific run row even when
 			// fan-out siblings share the same node_id.
 			if err := args.Persist.Nodes().UpdateState(ctx, cur.ID, curScopeID,
-				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, "", tx); err != nil {
+				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, nil, tx); err != nil {
 				return err
 			}
 			// Capture the predecessor dispatch id BEFORE retiring the

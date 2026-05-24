@@ -45,9 +45,9 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", On: "state"},
-					node.SubscriptionEntry{Node: "b", On: "state"},
-					node.SubscriptionEntry{Node: "c", On: "state"},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "b", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
 				),
 			),
 		},
@@ -95,9 +95,9 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", On: "state"},
-					node.SubscriptionEntry{Node: "b", On: "state"},
-					node.SubscriptionEntry{Node: "c", On: "state"},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "b", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
 				),
 			),
 		},
@@ -174,17 +174,15 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 				Type:     "worker",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"rate_limited": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/rate_limited": {Policy: []node.PolicyAction{{Action: "give_up"}}},
 				},
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "monitor", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance:   true,
-					On:         "state",
-					When:       "failed",
-					ErrorClass: "rate_limited",
-					Frame:      "next",
+					Instance: true,
+					Type:     "terminal/error/stub/rate_limited",
+					Frame:    "next",
 				}),
 			),
 		},
@@ -301,7 +299,7 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
 			),
 		},
 	})
@@ -365,7 +363,7 @@ func TestSubscriptionCascade_FrameNextLoopConverges(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "a", On: "state", Frame: "next",
+					Node: "a", Type: "terminal/*", Frame: "next",
 				}),
 			),
 		},
@@ -384,19 +382,20 @@ func TestSubscriptionCascade_FrameNextLoopConverges(t *testing.T) {
 		"r should reach fresh in the deferred next frame")
 }
 
-// TestSubscriptionCascade_SelfCycleAdvances covers the post-2026-05-14
+// TestSubscriptionCascade_SelfCycleAdvances covers the post-2026-05-23
 // "drain my own queue" idiom: a node with
-// `subscribes: { node: <self-type>, on: state, when: fresh, outcome:
-// fresh_changed, frame: next }` re-fires after every fresh_changed
-// commit. This is the receiver-side replacement for the retired
-// send-side `on_executor_complete: { invalidate: { targets: [self] } }`.
+// `subscribes: { node: <self-type>, type: terminal/success,
+// when: payload.changed, frame: next }` re-fires after every
+// fresh_changed-equivalent commit. This is the receiver-side
+// replacement for the retired send-side
+// `on_executor_complete: { invalidate: { targets: [self] } }`.
 //
 // Asserts:
 //   - the node is dispatched at least twice (initial + at least one
 //     self-cycle iteration);
 //   - the cycle terminates cleanly when the stub flips to
-//     changed=false (the `outcome: fresh_changed` filter prevents
-//     fresh_unchanged commits from re-firing the self-edge).
+//     changed=false (the receiver-side CEL `when: payload.changed`
+//     filter prevents unchanged commits from re-firing the self-edge).
 func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -409,8 +408,9 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "drain", On: "state", When: "fresh",
-					Outcome: "fresh_changed", Frame: "next",
+					Node: "drain", Type: "terminal/success",
+					When:  "payload.changed",
+					Frame: "next",
 				}),
 			),
 		},
@@ -426,17 +426,17 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	}, 10*time.Second, 25*time.Millisecond,
 		"self-subscription with frame:next must re-fire the node after a fresh_changed commit")
 
-	// Flip the stub: subsequent commits report changed=false →
-	// last_outcome = fresh_unchanged → cascade walker's
-	// outcome:fresh_changed filter rejects the self-edge → loop
-	// terminates.
+	// Flip the stub: subsequent commits report changed=false → the
+	// receiver-side CEL `when: payload.changed` predicate evaluates
+	// false against the `terminal/success` envelope's payload →
+	// subscriber doesn't fire → loop terminates.
 	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"node should settle at fresh once the stub stops reporting changed=true")
 
 	// Confirm termination: once the stub flips to changed=false the
 	// dispatch count must stabilize. A few in-flight dispatches may
-	// have been queued from prior fresh_changed commits before the
+	// have been queued from prior changed=true commits before the
 	// flip propagated, so use Eventually to wait for the count to
 	// stop growing across consecutive observations.
 	var prev int
@@ -447,7 +447,7 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 		return stable
 	}, 5*time.Second, 200*time.Millisecond,
 		"dispatch count should stabilize after the changed=false flip; "+
-			"continued growth would mean the outcome:fresh_changed filter is broken")
+			"continued growth would mean the receiver-side `when: payload.changed` filter is broken")
 }
 
 // TestSubscriptionCascade_SelfCycleAdvances_FrameIn is the FrameIn
@@ -471,8 +471,9 @@ func TestSubscriptionCascade_SelfCycleAdvances_FrameIn(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "drain", On: "state", When: "fresh",
-					Outcome: "fresh_changed", Frame: "in",
+					Node: "drain", Type: "terminal/success",
+					When:  "payload.changed",
+					Frame: "in",
 				}),
 			),
 		},
@@ -487,10 +488,11 @@ func TestSubscriptionCascade_SelfCycleAdvances_FrameIn(t *testing.T) {
 	}, 10*time.Second, 25*time.Millisecond,
 		"self-subscription with frame:in must re-fire the node after a fresh_changed commit")
 
-	// Flip the stub: subsequent commits report changed=false →
-	// last_outcome=fresh_unchanged → cascadeSubscribersStaleInTx is not
-	// called (gated on fresh_changed in applyTerminalComplete) → no
-	// new pending self-run → frame ends, node settles at fresh.
+	// Flip the stub: subsequent commits report changed=false → the
+	// receiver-side CEL `when: payload.changed` predicate evaluates
+	// false against the `terminal/success` envelope → the self-
+	// subscription doesn't fire → no new pending self-run → frame
+	// ends, node settles at fresh.
 	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"node should settle at fresh once the stub stops reporting changed=true")

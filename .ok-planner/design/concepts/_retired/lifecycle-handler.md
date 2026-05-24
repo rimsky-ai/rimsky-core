@@ -1,13 +1,24 @@
 ---
 concept: lifecycle-handler
-status: as-is
+status: retired
 aliases:
   - reactive handler
 references:
   - _discover/reactive-loops-and-lifecycle-handlers.md
   - _discover/2026-05-10-cascade-fires-on-last-outcome.md
   - _discover/error-policy-retry-loop-cap.md
+  - ../../specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md
 ---
+
+> **Retired 2026-05-23** per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`.
+>
+> The three slots (`on_executor_complete`, `on_executor_errored`, `on_acquire_unavailable`) collapsed into the unified `concept:error-policy` (acquisition failure as synthetic-class `acquire/*`) and direct signal emission (executor `Success` / `Park` / `AwaitAsyncCallback` emit fixed signals with no operator-policy chain). The `by_changed | always_propagate | never_propagate` resolves retired (cascade-fire is now subscriber-driven; the sender cannot suppress downstream firing — receivers gate themselves via `concept:node-subscription` CEL `when:` predicates). The `pass` resolve at lifecycle-handler level retired (redundant with `error_types: { <class>: { policy: [{ action: pass }] } }`).
+>
+> Concrete deletions:
+> - Fields on `TemplateNodeDef`: `OnExecutorComplete`, `OnExecutorErrored`, `OnAcquireUnavailable`.
+> - Types: `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`, `OnAcquireUnavailableHandler`.
+> - Validators: `validateOnExecutorComplete`, `validateOnExecutorTerminal`, `validateOnAcquireUnavailable`.
+> - Runtime: `applyTerminalPass` shortcut; `handleAcquireUnavailable` switch on `h.Resolve` (rewired through `OnError` / `applyErrorPolicy` via synthetic class `acquire/unavailable`).
 
 # Lifecycle handler
 

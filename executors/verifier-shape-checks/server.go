@@ -69,28 +69,40 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 	}
 	specs, err := parseChecks(ud)
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", err.Error())
+		return sendErrored(send, "verifier/attribute_invalid", err.Error())
 	}
 	rows, err := parseRows(ud)
 	if err != nil {
-		return sendErrored(send, "invalid_attribute", err.Error())
+		return sendErrored(send, "verifier/attribute_invalid", err.Error())
 	}
 	results := make([]checks.Result, 0, len(specs))
 	failed := 0
+	firstFailedKind := ""
 	for _, spec := range specs {
 		r := checks.Run(spec, rows)
 		results = append(results, r)
 		if !r.Pass {
 			failed++
+			if firstFailedKind == "" {
+				// Prefer the spec's declared kind; fall back to the
+				// runner-reported kind (which is what the "unknown"
+				// dispatcher sets when spec.Kind isn't a registered
+				// check name).
+				firstFailedKind = spec.Kind
+				if firstFailedKind == "" {
+					firstFailedKind = r.Kind
+				}
+			}
 		}
 	}
 	if failed > 0 {
 		// Aggregate failure messages in a Struct payload; the
-		// rimsky-side error_class policy fires on `verifier_failed`.
+		// rimsky-side error_class policy fires on the hierarchical
+		// `verifier/check_failed/<kind>` leaf per `concept:signal`.
 		payload := buildErrorPayload(results)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier_failed",
+				ErrorClass: "verifier/check_failed/" + firstFailedKind,
 				Payload:    payload,
 			}}},
 		}})

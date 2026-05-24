@@ -4,6 +4,12 @@
 
 package spec
 
+import (
+	"time"
+
+	"github.com/fallguy/rimsky/foundation/signal"
+)
+
 // ErrorTypePolicy and PolicyAction describe the per-error-class repair
 // chains declared in a node's error_types template block.
 //
@@ -15,38 +21,29 @@ type ErrorTypePolicy struct {
 
 // PolicyAction is one entry in a node's per-error-class repair chain.
 //
-// Action vocabulary (carried forward through the 2026-04-30 stores
-// cleanup; the rimsky-side store verb is the success/failure
-// binary — success → Commit, failure → Abandon — and the store
-// decides what those mean for its own state per its own configuration):
-//   - "retry"              — generic retry; the runner releases the
-//     claim by firing Abandon on the store before re-enqueue.
-//   - "discard_then_retry" — explicitly request `Abandon` (staged
-//     stores) or release-by-Abandon (pick-policy stores) before
-//     re-enqueue. The v3 standard filesystem store is `direct`-only;
-//     for direct stores Abandon is degenerate (writes cannot be
-//     undone), so discard_then_retry is effectively keep-then-retry
-//     on those stores.
-//   - "resume_then_retry"  — historical action vocabulary preserved
-//     for backwards-compatible policy declarations. Behaviorally an
-//     alias for `discard_then_retry`: the runner releases each claim
-//     by firing `Abandon` on the store before re-enqueue. Explicit
-//     Release-routing for read-side state is not in scope for the
-//     2026-04-30 stores cleanup; if a future cycle reintroduces it,
-//     update both this comment and `applyResolvedAction` together.
-//   - "give_up"            — terminal failure; per-claim release
-//     fires Abandon on the store.
-//   - "pass"               — terminal: route to fresh+passed (no
-//     cascade-fire). Per the 2026-05-14 subscription-cascade
-//     resolution this slot is available in addition to give_up;
-//     emitting failed-state cascade lives receiver-side via
-//     SubscriptionEntry.
+// Action vocabulary (4-value set; reshape per
+// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`):
+//   - "pass"                       — settle the run as fresh; the chain
+//     advances so a subsequent same-class error doesn't pass again.
+//   - "retry"                      — re-enqueue; held claims are
+//     preserved (the runner does NOT fire Abandon on the store).
+//   - "discard_claims_then_retry"  — re-enqueue; the runner fires
+//     Abandon on each held claim before re-enqueue (staged stores
+//     undo write-side state; direct stores degenerate to keep-then-
+//     retry because direct writes cannot be undone).
+//   - "give_up"                    — settle the run as failed; per-
+//     claim release fires Abandon on the store.
 //
-// The historical `"invalidate"` action retired per the 2026-05-14
-// subscription-cascade resolution; receivers declare cascade coupling
-// via SubscriptionEntry with `on: state, when: failed, error_class:
-// <class>`. The template validator rejects `action: invalidate` with
-// a migration message.
+// Historical vocabulary retired by the 2026-05-23 reshape:
+//   - `invalidate(targets)`     — retired 2026-05-14; receivers declare
+//     cascade coupling via `subscribes: [{node: <sender>, type:
+//     terminal/error/<class>}]`.
+//   - `discard_then_retry`      — renamed to `discard_claims_then_retry`
+//     for clarity (the verb is on the claim handles, not on the node
+//     row).
+//   - `resume_then_retry`       — deleted; behaviorally identical to
+//     `discard_claims_then_retry` under the post-E.2 wire shape, so
+//     the duplicate slot retires.
 type PolicyAction struct {
 	Action         string      `yaml:"action" json:"action"`
 	Count          int         `yaml:"count,omitempty" json:"count,omitempty"`
@@ -54,12 +51,7 @@ type PolicyAction struct {
 	Jitter         JitterKind  `yaml:"jitter,omitempty" json:"jitter,omitempty"`
 	BaseDelayMs    int         `yaml:"base_delay_ms,omitempty" json:"base_delay_ms,omitempty"`
 	MaxDelayMs     int         `yaml:"max_delay_ms,omitempty" json:"max_delay_ms,omitempty"`
-	Targets        []string    `yaml:"targets,omitempty" json:"targets,omitempty"`
 	ReasonTemplate string      `yaml:"reason_template,omitempty" json:"reason_template,omitempty"`
-	// Frame is retired post-2026-05-14 (invalidate-emit retired on
-	// PolicyAction). Field retained for parse-compatibility through
-	// the retirement window; ignored by the runtime.
-	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
 }
 
 // EvaluatorState is the persisted per-node, per-error-class policy chain
@@ -74,24 +66,86 @@ type EvaluatorState struct {
 // ResolvedAction is the outcome of one Evaluate call. Kind carries the
 // runtime intent the runner branches on:
 //
-//   - "retry"              — generic retry; runner fires Abandon on
-//     the store before re-enqueue.
-//   - "discard_then_retry" — retry with explicit Abandon (or Release
-//     for stores with read-side state at Open).
-//   - "resume_then_retry"  — alias for `discard_then_retry`; the
-//     runner fires `Abandon` on each claim before re-enqueue. Kept as
-//     a distinct kind so policy authors can express intent in
-//     declarations; the runtime routing is identical to retry today.
-//   - "invalidate"         — targets returned in Targets.
-//   - "give_up"            — terminal.
+//   - "pass"                       — terminal: settle the run as fresh.
+//     The chain advances so a subsequent same-class error doesn't pass.
+//   - "retry"                      — re-enqueue; held claims preserved.
+//   - "discard_claims_then_retry"  — re-enqueue; runner fires Abandon
+//     on each held claim before re-enqueue.
+//   - "give_up"                    — terminal: settle the run as failed.
 type ResolvedAction struct {
-	Kind    string
-	DelayMs int
-	Targets []string
-	// Frame is propagated from PolicyAction.Frame for invalidate
-	// actions; the runner forwards this through to InvalidateNode's
-	// Frame field. Empty defaults to FrameNext at the call site.
-	Frame    string
+	Kind     string
+	DelayMs  int
 	Reason   string
 	NewState EvaluatorState
+}
+
+// DispatchDisposition is what becomes of the current dispatch after a
+// policy resolution. Carried on `Resolution.DispatchDisposition`.
+//
+//	@concept: error-policy
+type DispatchDisposition string
+
+const (
+	// DispositionEnd settles the dispatch (give_up | pass). The run row's
+	// color is taken from `Resolution.Color`.
+	DispositionEnd DispatchDisposition = "end"
+	// DispositionRetry re-enqueues a fresh dispatch row with the
+	// configured backoff. The retry preserves held claims unless
+	// `Resolution.RetryDiscardClaims` is set.
+	DispositionRetry DispatchDisposition = "retry"
+	// DispositionParkAsync acknowledges an executor-issued async park.
+	// The run row settles parked; the dispatch terminates without a
+	// re-enqueue (the eventual callback drives the next dispatch).
+	DispositionParkAsync DispatchDisposition = "park_async"
+	// DispositionParkScheduled parks the dispatch with a wake at
+	// `Resolution.WakeAt`. The scheduler unparks at that time.
+	DispositionParkScheduled DispatchDisposition = "park_scheduled"
+)
+
+// SettledColor is the run-row's settled color; only meaningful when
+// `Resolution.DispatchDisposition` is End or Park*.
+//
+//	@concept: error-policy
+type SettledColor string
+
+const (
+	// ColorFresh — the run settled successfully (Success terminal, or
+	// a `pass` resolution that absolved an Error).
+	ColorFresh SettledColor = "fresh"
+	// ColorFailed — the run settled with an Error that ran out of
+	// retries (give_up or chain exhaustion).
+	ColorFailed SettledColor = "failed"
+	// ColorParked — the run is parked awaiting wake or callback.
+	ColorParked SettledColor = "parked"
+)
+
+// Resolution is the unified output of one policy-resolution decision.
+// Decouples the conflated `PolicyAction` / `ResolvedAction` pair into
+// three orthogonal axes:
+//
+//   - Signal: the signal envelope emitted to the cascade walker and the
+//     audit log (per `concept:signal`).
+//   - DispatchDisposition: what becomes of this dispatch (end | retry |
+//     park_async | park_scheduled).
+//   - Color: the run-row's settled state (fresh | failed | parked);
+//     only meaningful when the disposition is End or Park*.
+//
+// Built by the runtime's error-policy resolver from a `ResolvedAction`
+// plus the originating error class, attempt counter, and payload (see
+// `runtime/runner_error_policy.go::buildResolution`).
+//
+//	@concept: error-policy
+//	@concept: signal
+type Resolution struct {
+	Signal              signal.Signal
+	DispatchDisposition DispatchDisposition
+	Color               SettledColor
+	// RetryDiscardClaims is set when the resolution is a retry that
+	// should release held claims before re-enqueue (i.e.
+	// `discard_claims_then_retry`).
+	RetryDiscardClaims bool
+	// RetryDelayMs is the configured backoff for a retry disposition.
+	RetryDelayMs int
+	// WakeAt is the scheduled wake time for a park_scheduled disposition.
+	WakeAt time.Time
 }

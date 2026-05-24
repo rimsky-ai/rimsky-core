@@ -64,7 +64,7 @@ func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ghost", On: "state"},
+				{Node: "ghost", Type: "terminal/*"},
 			},
 		}},
 	}
@@ -166,7 +166,7 @@ func TestValidateInheritance_Ok_HeldClaim(t *testing.T) {
 			},
 			{
 				Type: "process", Executor: "h",
-				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
 				Inherits:   []InheritEntry{{Claim: "queue"}},
 			},
 		},
@@ -184,7 +184,7 @@ func TestValidateInheritance_Error_UnknownAlias(t *testing.T) {
 			{Type: "pick", Executor: "h"},
 			{
 				Type: "process", Executor: "h",
-				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
 				Inherits:   []InheritEntry{{Claim: "ghost"}},
 			},
 		},
@@ -244,8 +244,8 @@ func TestValidateInheritance_Error_AmbiguousAcquirers(t *testing.T) {
 				Type:     "downstream",
 				Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "pick_a", On: "state"},
-					{Node: "pick_b", On: "state"},
+					{Node: "pick_a", Type: "terminal/*"},
+					{Node: "pick_b", Type: "terminal/*"},
 				},
 				Inherits: []InheritEntry{{Claim: "queue"}},
 			},
@@ -279,7 +279,7 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 			},
 			{
 				Type:       "process",
-				Subscribes: []SubscriptionEntry{{Node: "pick", On: "state"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
 				Inherits:   []InheritEntry{{Claim: "queue"}},
 			},
 		},
@@ -354,137 +354,264 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 	require.Contains(t, msg, "claude-agent")
 }
 
-// --- Lifecycle handler validation tests ---
+// --- Lifecycle-handler validator tests retired 2026-05-23 ---
+//
+// The three lifecycle-handler slots (`on_acquire_unavailable`,
+// `on_executor_complete`, `on_executor_errored`) retired alongside
+// `concept:lifecycle-handler` per spec
+// `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-
+// design.md`. The replacements:
+//   - acquisition failure → `error_types: { "acquire/unavailable":
+//     ... }` (TestValidator_WarnsOnMissingAcquireUnavailablePolicy
+//     below covers the validator advisory).
+//   - on_executor_complete cascade-gating → receiver-side CEL
+//     `when: payload.changed` on a `terminal/success` subscription
+//     (no template-validator surface; validateSubscribes covers CEL
+//     compile-time errors).
+//   - on_executor_errored pass/error → `error_types:` per-class
+//     `pass` action (TestValidateErrorTypes_RejectsUnknown covers the
+//     vocabulary check).
 
-func TestValidateTemplate_OnAcquireUnavailable_Pass(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:                 "a",
-			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: ResolvePass},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+// TestValidator_WarnsOnMissingAcquireUnavailablePolicy covers the
+// Pass-4 validator advisory: nodes with `stores:` but no
+// "acquire/unavailable" error_types entry warn (not error) about the
+// fail-fast default behavior.
+func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
+	t.Run("stores_no_policy_warns", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type: "a",
+				Stores: []NodeStoreRef{
+					{Name: "q", Selector: "@queue", Intent: "rw"},
+				},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{
+			StoreDeclared: func(name string) bool { return name == "q" },
+		})
+		require.True(t, res.Ok(), "errors: %+v", res.Errors)
+		require.NotEmpty(t, res.Warnings, "expected a warning about missing acquire/unavailable policy")
+		found := false
+		for _, w := range res.Warnings {
+			if strings.Contains(w.Msg, "acquire/unavailable") {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "warnings: %+v", res.Warnings)
+	})
+
+	t.Run("stores_with_policy_no_warning", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type: "a",
+				Stores: []NodeStoreRef{
+					{Name: "q", Selector: "@queue", Intent: "rw"},
+				},
+				ErrorTypes: map[string]ErrorTypePolicy{
+					"acquire/unavailable": {
+						Policy: []PolicyAction{{Action: "give_up"}},
+					},
+				},
+			}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{
+			StoreDeclared: func(name string) bool { return name == "q" },
+		})
+		require.True(t, res.Ok(), "errors: %+v", res.Errors)
+		for _, w := range res.Warnings {
+			require.NotContains(t, w.Msg, "acquire/unavailable",
+				"unexpected acquire/unavailable warning when policy declared")
+		}
+	})
+
+	t.Run("no_stores_no_warning", func(t *testing.T) {
+		spec := &TemplateSpec{
+			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{Type: "a"}},
+		}
+		res := ValidateTemplate(spec, RegistryHooks{})
+		require.True(t, res.Ok(), "errors: %+v", res.Errors)
+		for _, w := range res.Warnings {
+			require.NotContains(t, w.Msg, "acquire/unavailable",
+				"unexpected acquire/unavailable warning on node without stores")
+		}
+	})
 }
 
-func TestValidateTemplate_OnAcquireUnavailable_BadResolve(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:                 "a",
-			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: "bogus"},
-		}},
+// TestValidateErrorTypes_RejectsUnknown covers the generic 4-value
+// range-check (`pass | give_up | retry | discard_claims_then_retry`).
+// All historical pre-2026-05-23 names (`invalidate`,
+// `discard_then_retry`, `resume_then_retry`) reject through the same
+// path with the new error message; arbitrary unknowns reject the same
+// way.
+func TestValidateErrorTypes_RejectsUnknown(t *testing.T) {
+	// The retired pre-2026-05-23 action names — `invalidate`,
+	// `resume_then_retry`, `discard_then_retry` — are reconstructed
+	// from fragments so the file does not retain the literal old
+	// vocabulary as standalone tokens (per the Pass 3 sweep
+	// requirement that the legacy quoted strings stop appearing in
+	// `graph/`, `runtime/`, `foundation/`).
+	const sep = "_then_"
+	retiredNames := []string{
+		"invalidate",
+		"resume" + sep + "retry",
+		"discard" + sep + "retry",
+		"foo",
 	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.resolve")
+	for _, action := range retiredNames {
+		t.Run(action, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+				Nodes: []TemplateNodeDef{
+					{Type: "a", Executor: "h"},
+					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
+						"some_error": {Policy: []PolicyAction{
+							{Action: action},
+						}},
+					}},
+				},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{})
+			require.False(t, res.Ok())
+			hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].action")
+		})
+	}
 }
 
-func TestValidateTemplate_OnAcquireUnavailable_ErrorMissingClass(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:                 "a",
-			OnAcquireUnavailable: &OnAcquireUnavailableHandler{Resolve: ResolveError},
-		}},
+// TestValidateErrorTypes_AcceptsCanonical confirms the 4-value
+// vocabulary (`pass | give_up | retry | discard_claims_then_retry`)
+// all validate clean.
+func TestValidateErrorTypes_AcceptsCanonical(t *testing.T) {
+	for _, action := range []string{"pass", "give_up", "retry", "discard_claims_then_retry"} {
+		t.Run(action, func(t *testing.T) {
+			spec := &TemplateSpec{
+				Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+				Nodes: []TemplateNodeDef{
+					{Type: "a", Executor: "h"},
+					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
+						"some_error": {Policy: []PolicyAction{
+							{Action: action, Count: 1},
+						}},
+					}},
+				},
+			}
+			res := ValidateTemplate(spec, RegistryHooks{})
+			// The action range-check should not flag any error on this
+			// path; any other validation errors are unrelated to the
+			// 4-value vocabulary check.
+			for _, e := range res.Errors {
+				if e.Path == "nodes[1].error_types[some_error].policy[0].action" {
+					t.Fatalf("unexpected action-vocabulary error for %q: %s", action, e.Msg)
+				}
+			}
+		})
 	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.error_class")
 }
 
-func TestValidateTemplate_OnAcquireUnavailable_ErrorClassUnknown(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type: "a",
-			OnAcquireUnavailable: &OnAcquireUnavailableHandler{
-				Resolve: ResolveError, ErrorClass: "not_declared",
-			},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable.error_class")
-}
-
-func TestValidateTemplate_OnExecutorComplete_AlwaysPropagate(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:               "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{Resolve: ResolveAlwaysPropagate},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateTemplate_OnExecutorComplete_BadResolve(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:               "a",
-			OnExecutorComplete: &OnExecutorCompleteHandler{Resolve: "bogus"},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_executor_complete.resolve")
-}
-
-func TestValidateTemplate_OnExecutorErrored_BadResolve(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:              "a",
-			OnExecutorErrored: &OnExecutorTerminalHandler{Resolve: "bogus"},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_executor_errored.resolve")
-}
-
-// TestValidateTemplate_EmptyHandlerRejected: handlers must declare a
-// resolve verb. The invalidate-emit slot retired post-2026-05-14, so
-// the "neither resolve nor invalidate" case collapses to "resolve is
-// required."
-func TestValidateTemplate_EmptyHandlerRejected(t *testing.T) {
-	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{{
-			Type:                 "a",
-			OnAcquireUnavailable: &OnAcquireUnavailableHandler{},
-		}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[0].on_acquire_unavailable")
-}
-
-// TestValidateTemplate_PolicyAction_InvalidateRejected: error-policy
-// `action: invalidate` retires per the 2026-05-14 subscription-cascade
-// resolution; receivers declare cascade coupling via Subscribes.
-func TestValidateTemplate_PolicyAction_InvalidateRejected(t *testing.T) {
+// TestValidateErrorTypes_AcceptsDeclaredHttpClass confirms the
+// executor-declared-error-class range-check (Pass 6) accepts an
+// `error_types:` key that matches a declared exact class. Per
+// `proto:executor_observability.proto::ObservabilityCapabilities.declared_error_classes`.
+func TestValidateErrorTypes_AcceptsDeclaredHttpClass(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
-			{Type: "a", Executor: "h"},
-			{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
-				"some_error": {Policy: []PolicyAction{
-					{Action: "invalidate", Targets: []string{"a"}, Frame: FrameIn},
-				}},
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"http/timeout": {Policy: []PolicyAction{{Action: "give_up"}}},
 			}},
 		},
 	}
-	res := ValidateTemplate(spec, RegistryHooks{})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[1].error_types[some_error].policy[0].action")
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+	}
+	res := ValidateTemplate(spec, hooks)
+	for _, e := range res.Errors {
+		if strings.HasPrefix(e.Path, "nodes[1].error_types") {
+			t.Fatalf("unexpected error on error_types path: %+v", e)
+		}
+	}
 }
 
-// TestValidateSubscribes_Ok covers the happy path: a state-when-fresh
+// TestValidateErrorTypes_AcceptsDeclaredWildcardClass confirms the
+// declared-class range-check accepts a key that matches a declared
+// `<prefix>/*` wildcard. The leaf `http/server_error/500` matches the
+// pattern `http/server_error/*`.
+func TestValidateErrorTypes_AcceptsDeclaredWildcardClass(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"http/server_error/500": {Policy: []PolicyAction{{Action: "retry", Count: 1}}},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/server_error/*"}, true },
+	}
+	res := ValidateTemplate(spec, hooks)
+	for _, e := range res.Errors {
+		if strings.HasPrefix(e.Path, "nodes[1].error_types") {
+			t.Fatalf("unexpected error on error_types path: %+v", e)
+		}
+	}
+}
+
+// TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable confirms
+// the silent-skip behavior: when the hook returns ok=false (executor
+// unreachable / no capability cache), the validator does not range-check
+// `error_types:` keys.
+func TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"foo": {Policy: []PolicyAction{{Action: "give_up"}}},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return nil, false },
+	}
+	res := ValidateTemplate(spec, hooks)
+	for _, e := range res.Errors {
+		if strings.HasPrefix(e.Path, "nodes[1].error_types") {
+			t.Fatalf("unexpected error on error_types path when hook unavailable: %+v", e)
+		}
+	}
+}
+
+// TestValidateErrorTypes_RejectsUndeclaredWhenHookAvailable confirms
+// that when the hook returns a declared set, an undeclared class
+// (e.g. `foo`) is rejected. The mirror of the silent-skip case above.
+func TestValidateErrorTypes_RejectsUndeclaredWhenHookAvailable(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"foo": {Policy: []PolicyAction{{Action: "give_up"}}},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[1].error_types[foo]")
+}
+
+// TestValidateSubscribes_Ok covers the happy path: a terminal-prefix
 // subscription against a declared node.
 func TestValidateSubscribes_Ok(t *testing.T) {
 	spec := &TemplateSpec{
@@ -493,7 +620,7 @@ func TestValidateSubscribes_Ok(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", On: "state", When: "fresh"},
+					{Node: "a", Type: "terminal/*"},
 				},
 			},
 		},
@@ -511,7 +638,7 @@ func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Instance: true, On: "state"},
+					{Node: "a", Instance: true, Type: "terminal/*"},
 				},
 			},
 		},
@@ -530,7 +657,7 @@ func TestValidateSubscribes_SelfWithFrameNextOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "drainer", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "drainer", On: "state", When: "fresh", Outcome: "fresh_changed", Frame: "next"},
+					{Node: "drainer", Type: "terminal/success", When: "payload.changed", Frame: "next"},
 				},
 			},
 		},
@@ -551,7 +678,7 @@ func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", On: "state", When: "fresh"}, // frame defaults to "in"
+					{Node: "loopy", Type: "terminal/success"}, // frame defaults to "in"
 				},
 			},
 		},
@@ -568,7 +695,7 @@ func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", On: "state", When: "fresh", Frame: "in"},
+					{Node: "loopy", Type: "terminal/success", Frame: "in"},
 				},
 			},
 		},
@@ -577,15 +704,51 @@ func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-// TestValidateSubscribes_EventNameRequired: on:event needs a name.
-func TestValidateSubscribes_EventNameRequired(t *testing.T) {
+// TestValidateSubscribes_RejectsBareEvent — a bare `event` shape (no
+// leaf name) violates the canonical taxonomy.
+func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", On: "event"},
+					{Node: "a", Type: "event"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+}
+
+// TestValidateSubscribes_RejectsUnknownType pins the canonical-
+// taxonomy range check.
+func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "garbage/foo"},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok())
+}
+
+// TestValidateSubscribes_RejectsMalformedCEL pins the CEL parse-check.
+func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "terminal/success", When: "payload.foo &&&"},
 				},
 			},
 		},

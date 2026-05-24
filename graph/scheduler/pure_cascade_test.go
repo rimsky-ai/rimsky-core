@@ -353,11 +353,11 @@ func TestProcessPureCascade_SingleReady_TransitionsToFreshAndLogsCommit(t *testi
 	require.NotNil(t, got)
 	assert.Equal(t, cascade.NodeStateFresh, got.State)
 
-	// pure_cascade_commit event logged with correct node + instance.
+	// terminal/success signal logged with correct node + instance (per Pass 5).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &pure.ID, Kind: "pure_cascade_commit",
+			NodeID: &pure.ID, Kind: "terminal/success",
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -399,7 +399,7 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &execNode.ID, Kind: "pure_cascade_commit",
+			NodeID: &execNode.ID, Kind: "terminal/success",
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -415,7 +415,7 @@ func TestProcessPureCascade_WithExecutorNodeIsSkipped(t *testing.T) {
 // least one store with claim=true is treated as native claim-only — the
 // scheduler enqueues it onto the dispatch queue with the template's
 // RequiredStores, leaves the node stale, and does NOT log
-// pure_cascade_commit. The supervisor's omnibus runner takes it from
+// terminal/success signal. The supervisor's omnibus runner takes it from
 // there.
 func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	t.Parallel()
@@ -463,11 +463,11 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	assert.Equal(t, "", enq[0].ExecutorName)
 	assert.ElementsMatch(t, []string{"alpha", "beta"}, enq[0].RequiredStores)
 
-	// No pure_cascade_commit event for native claim-only nodes.
+	// No terminal/success signal for native claim-only nodes (they enqueue, not transition fresh in the sweep).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			NodeID: &claimNode.ID, Kind: "pure_cascade_commit",
+			NodeID: &claimNode.ID, Kind: "terminal/success",
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err
@@ -491,7 +491,7 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 		Nodes: []nodepkg.TemplateNodeDef{
 			{Type: "pure-a"},
 			{Type: "worker-b", Executor: "worker",
-				Subscribes: []nodepkg.SubscriptionEntry{{Node: "pure-a", On: "state"}}},
+				Subscribes: []nodepkg.SubscriptionEntry{{Node: "pure-a", Type: "terminal/*"}}},
 		},
 	})
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")
@@ -526,11 +526,11 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	assert.Equal(t, execB.ID, enq[0].NodeID)
 	assert.Equal(t, "worker", enq[0].ExecutorName)
 
-	// pure_cascade_commit logged for A only.
+	// terminal/success logged for A only (B was enqueued, not transitioned).
 	var evs persistence.EventListResult
 	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{
-			Kind: "pure_cascade_commit",
+			Kind: "terminal/success",
 		}, persistence.ListPagination{Limit: 100}, tx)
 		evs = r
 		return err

@@ -2,10 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Task 28 — on_acquire_unavailable: { resolve: error, error_class: my_drained }
-// with error_types[my_drained].policy = [{give_up}]. The stub producer
-// returns Unavailable; the error_types policy fires and drives the node
-// into the failed state.
+// Task 28 — error_types: { "acquire/unavailable": { policy: [give_up] } }.
+// The stub producer returns Unavailable; the error_types policy fires
+// against the synthetic class and drives the node into the failed
+// state.
 package scenarios
 
 import (
@@ -63,12 +63,13 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
-						Resolve:    node.ResolveError,
-						ErrorClass: "my_drained",
-					},
+					// Post-2026-05-23: on_acquire_unavailable retires;
+					// acquisition failure routes via synthetic class
+					// "acquire/unavailable" in error_types:. give_up
+					// drives the node into failed (matching the prior
+					// behavior of resolve=error pointing at give_up).
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						"my_drained": {
+						"acquire/unavailable": {
 							Policy: []node.PolicyAction{{Action: "give_up"}},
 						},
 					},
@@ -84,7 +85,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 
 	// give_up should drive the node to failed.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
-		"worker should land in failed via on_acquire_unavailable: error → give_up")
+		"worker should land in failed via error_types: { acquire/unavailable: [give_up] }")
 
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -92,10 +93,11 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 		wRow = r
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFailed, wRow.LastOutcome,
-		"give_up should record last_outcome=failed")
+	require.NotNil(t, wRow.SettlingSignalType)
+	require.Contains(t, *wRow.SettlingSignalType, "terminal/error/",
+		"give_up should record settling_signal_type=terminal/error/<class>")
 
 	// Executor must not have been invoked.
 	require.Empty(t, h.Stub.Observed(),
-		"executor must not be invoked when on_acquire_unavailable: error fires")
+		"executor must not be invoked when error_types: { acquire/unavailable: [give_up] } fires")
 }

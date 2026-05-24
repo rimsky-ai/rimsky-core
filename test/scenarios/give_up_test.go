@@ -37,7 +37,7 @@ func TestGiveUp(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "flaky", Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"my_err": {
+					"stub/my_err": {
 						Policy: []node.PolicyAction{
 							{Action: "retry", Count: 2, Backoff: shared.BackoffExponential, BaseDelayMs: 50, MaxDelayMs: 200},
 							{Action: "give_up"},

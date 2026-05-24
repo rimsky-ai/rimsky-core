@@ -14,10 +14,11 @@
 //      branch. Runs inside a caller-provided tx and is followed by a
 //      claimant-guarded ClaimHandles.Delete.
 //
-//   2. The pre-dispatch on_acquire_unavailable carve-out
-//      (abandonPartialLocks in runner_lifecycle.go). Runs post-rollback;
-//      the rimsky_claim_handles rows have already been removed by the
-//      acquisition tx rollback, so no delete is needed.
+//   2. The pre-dispatch acquire/unavailable carve-out
+//      (abandonPartialLocks in runner_lifecycle.go). Runs post-rollback
+//      from the operator's `error_types: { acquire/unavailable: ... }`
+//      chain; the rimsky_claim_handles rows have already been removed
+//      by the acquisition tx rollback, so no delete is needed.
 //
 //   3. The post-commit verify-before-run race-detection bail path
 //      (handleOrphanedClaim in runner_acquire.go). The acquisition tx

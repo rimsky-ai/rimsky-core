@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -24,12 +25,12 @@ import (
 func TestFanoutAggregation_PolicyTable(t *testing.T) {
 	t.Parallel()
 	allFresh := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	mixed := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	cases := []struct {
 		name      string
@@ -50,10 +51,10 @@ func TestFanoutAggregation_PolicyTable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			res := runtime.Aggregate(tc.children, tc.policy)
-			if res.IsTerminal != tc.wantTerm {
-				t.Fatalf("%s: terminal got %v want %v", tc.name, res.IsTerminal, tc.wantTerm)
+			if res.IsSettled != tc.wantTerm {
+				t.Fatalf("%s: terminal got %v want %v", tc.name, res.IsSettled, tc.wantTerm)
 			}
-			if res.IsTerminal && res.ParentState != tc.wantState {
+			if res.IsSettled && res.ParentState != tc.wantState {
 				t.Errorf("%s: parent state %s want %s", tc.name, res.ParentState, tc.wantState)
 			}
 		})
@@ -61,12 +62,12 @@ func TestFanoutAggregation_PolicyTable(t *testing.T) {
 }
 
 // TestFanoutAggregation_EmptyChildrenStaysRunning pins the "no
-// children yet" case: the engine returns IsTerminal=false so the
+// children yet" case: the engine returns IsSettled=false so the
 // parent stays in its current state (typically running).
 func TestFanoutAggregation_EmptyChildrenStaysRunning(t *testing.T) {
 	t.Parallel()
 	res := runtime.Aggregate(nil, tmplspec.AggregationPolicy{Kind: "strict"})
-	if res.IsTerminal {
+	if res.IsSettled {
 		t.Errorf("empty children: parent must stay non-terminal; got %s", res.ParentState)
 	}
 }
@@ -76,8 +77,8 @@ func TestFanoutAggregation_EmptyChildrenStaysRunning(t *testing.T) {
 func TestFanoutAggregation_UnknownPolicyFallsBackToStrict(t *testing.T) {
 	t.Parallel()
 	mixed := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(mixed, tmplspec.AggregationPolicy{Kind: "some-future-policy"})
 	if res.ParentState != cascade.NodeStateFailed {

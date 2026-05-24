@@ -111,12 +111,16 @@ type LeafRunRecord struct {
 	AttributesHash     string             `json:"attributes_hash,omitempty"`
 	ClaimScopeDataHash string             `json:"claim_scope_data_hash,omitempty"`
 	State              string             `json:"state"`
-	LastOutcome        string             `json:"last_outcome"`
-	Changed            bool               `json:"changed,omitempty"`
-	TerminalKind       string             `json:"terminal_kind,omitempty"`
-	ErrorClass         string             `json:"error_class,omitempty"`
-	SubstitutionRefs   []SubstitutionRef  `json:"substitution_refs,omitempty"`
-	Extra              map[string]any     `json:"extra,omitempty"`
+	// SettlingSignalType is the canonical signal type-path the run
+	// settled with (concept:signal). Replaces the retired LastOutcome
+	// projection per Pass 5 of spec
+	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+	SettlingSignalType string            `json:"settling_signal_type"`
+	Changed            bool              `json:"changed,omitempty"`
+	TerminalKind       string            `json:"terminal_kind,omitempty"`
+	ErrorClass         string            `json:"error_class,omitempty"`
+	SubstitutionRefs   []SubstitutionRef `json:"substitution_refs,omitempty"`
+	Extra              map[string]any    `json:"extra,omitempty"`
 }
 
 // ClaimTerminalRecord is the JSON payload of a "claim_terminal" lineage
@@ -281,17 +285,17 @@ type LeafRunEmitInput struct {
 	// lineage-record wire compatibility (the JSON tag stays
 	// `child_key`); callers source it from `resolveAcqScope(...).
 	// PartitionKey` under the RunScope-first reshape.
-	ChildKey         string
-	State            string
-	LastOutcome      string
-	ErrorClass       string
-	Changed          bool
-	TerminalKind     string
-	NodeAlias        string
-	ExecutorName     string
-	Params           map[string]any
-	AttributesMerged map[string]any
-	HeldClaims       []LeafRunHeldClaim
+	ChildKey           string
+	State              string
+	SettlingSignalType string
+	ErrorClass         string
+	Changed            bool
+	TerminalKind       string
+	NodeAlias          string
+	ExecutorName       string
+	Params             map[string]any
+	AttributesMerged   map[string]any
+	HeldClaims         []LeafRunHeldClaim
 	// ParentRunID is sourced from `rimsky_node_runs.parent_run_id` at
 	// acquisition time (threaded through `acquisition.ParentRunID`).
 	// Nil for root runs (top-level template dispatches); the lineage
@@ -381,7 +385,7 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 		ParamsSnapshotHash: paramsHash,
 		AttributesHash:     attributesHash,
 		State:              in.State,
-		LastOutcome:        in.LastOutcome,
+		SettlingSignalType: in.SettlingSignalType,
 		ErrorClass:         in.ErrorClass,
 		Changed:            in.Changed,
 		TerminalKind:       in.TerminalKind,

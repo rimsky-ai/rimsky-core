@@ -14,7 +14,7 @@
 //   (c) Schema-correction cap. The fake CLI calls report_complete with an
 //       attributes_delta that fails the schema; the executor returns
 //       rejected up to maxSchemaCorrections=3 times, then commits errored
-//       with error_class="schema_validation_failed".
+//       with error_class="agent/schema_violation".
 //
 // Mocks the CliRunner so the test runs in CI without spawning the real
 // claude binary or making any model calls.
@@ -167,7 +167,7 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
         resumeRequests.push(req);
         // Simulate a quiet exit so runAgent falls through to the no-
         // report recovery path; exitCode 0 + no terminal callback ends
-        // up returning subprocess_exit_before_complete.
+        // up returning agent/subprocess_exit/before_complete.
         return makeFakeHandle({ exitCode: 0, exitDelayMs: 5 });
       },
     };
@@ -231,7 +231,7 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
     await cb.close();
   });
 
-  it("commits errored with schema_validation_failed after max corrections", async () => {
+  it("commits errored with agent/schema_violation after max corrections", async () => {
     // Drive 4 corrective failures (= 3 rejects + 1 final commit-as-error).
     // We capture the registered onComplete callback and invoke it
     // directly so we bypass the MCP transport but still exercise the

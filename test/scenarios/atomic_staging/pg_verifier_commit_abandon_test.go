@@ -290,11 +290,11 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	if errOutcome == nil {
 		t.Fatalf("expected Error outcome, got %+v", sc.GetOutcome())
 	}
-	if got := errOutcome.GetErrorClass(); got != "verifier_failed" {
-		t.Errorf("error_class: got %q want verifier_failed", got)
+	if got := errOutcome.GetErrorClass(); got != "pg/verifier_check_failed/row_count_absolute" {
+		t.Errorf("error_class: got %q want pg/verifier_check_failed/row_count_absolute", got)
 	}
 
-	// Supervisor's terminal-routing contract: Error{verifier_failed} →
+	// Supervisor's terminal-routing contract: Error{pg/verifier_check_failed/*} →
 	// Abandon on the parent claim.
 	abandonCtx, abandonCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer abandonCancel()

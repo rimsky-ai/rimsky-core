@@ -13,7 +13,7 @@ import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
-import { expectedAttributesSchemaBytes, declaredEvents } from "./expected-attributes-schema.js";
+import { expectedAttributesSchemaBytes, declaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
 
 /**
  * gRPC Executor implementation. Always responds with the async-handoff
@@ -172,6 +172,8 @@ export async function startGrpcServer(
         http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
         expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()),
         declared_events: declaredEvents,
+        // 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
+        declared_error_classes: declaredErrorClasses,
       });
     },
     GetTrace: (
@@ -463,7 +465,7 @@ async function runAndCallback(
         buildCallbackUrl(req.callback_url, ackId),
         {
           error: {
-            error_class: "executor_internal_error",
+            error_class: "agent/internal_error",
             payload: { error: String(e) },
           },
         },
@@ -509,10 +511,12 @@ function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "blocked") {
-    // Post-E.2 collapse: `Blocked` maps to `Error{error_class: "executor_blocked"}`.
+    // Post-E.2 collapse: `Blocked` maps to
+    // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
+    // signal-taxonomy spec, hierarchical-class convention).
     return {
       error: {
-        error_class: "executor_blocked",
+        error_class: "agent/blocked",
         payload: { reason: outcome.reason, context: outcome.context },
       },
     };

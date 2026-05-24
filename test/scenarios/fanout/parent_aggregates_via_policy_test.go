@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/fallguy/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 	tmplspec "github.com/fallguy/rimsky/foundation/spec"
 	"github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/runtime"
@@ -30,12 +31,12 @@ import (
 func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict", CancelSiblings: true})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("strict aggregation should settle on any-failed; got non-terminal")
 	}
 	if res.ParentState != cascade.NodeStateFailed {
@@ -52,31 +53,31 @@ func TestParentAggregatesViaPolicy_StrictAllSuccessYieldsFreshChanged(t *testing
 	// inherits fresh_changed if any child reported it (cascade-firing
 	// gate).
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshUnchanged},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("strict aggregation should settle when every child is terminal")
 	}
 	if res.ParentState != cascade.NodeStateFresh {
 		t.Errorf("strict parent state: %s (want fresh)", res.ParentState)
 	}
-	if res.ParentOutcome != cascade.LastOutcomeFreshChanged {
-		t.Errorf("strict parent outcome: %s (want fresh_changed when any child reported it)", res.ParentOutcome)
+	if !res.ParentChanged {
+		t.Errorf("strict parent outcome: %s (want fresh_changed when any child reported it)", res.ParentSettlingSignalType)
 	}
 }
 
 func TestParentAggregatesViaPolicy_ThresholdTolerates(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 2})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("threshold should settle once all children are terminal")
 	}
 	if res.ParentState != cascade.NodeStateFresh {
@@ -87,12 +88,12 @@ func TestParentAggregatesViaPolicy_ThresholdTolerates(t *testing.T) {
 func TestParentAggregatesViaPolicy_BestEffortIgnoresFailures(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateFailed, LastOutcome: cascade.LastOutcomeFailed},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "best_effort"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("best_effort should settle once all children terminate")
 	}
 	if res.ParentState != cascade.NodeStateFresh {
@@ -103,12 +104,12 @@ func TestParentAggregatesViaPolicy_BestEffortIgnoresFailures(t *testing.T) {
 func TestParentAggregatesViaPolicy_FirstCancelsNonWinners(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateRunning, LastOutcome: ""},
-		{State: cascade.NodeStateFresh, LastOutcome: cascade.LastOutcomeFreshChanged},
-		{State: cascade.NodeStateRunning, LastOutcome: ""},
+		{State: cascade.NodeStateRunning},
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
+		{State: cascade.NodeStateRunning},
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "first"})
-	if !res.IsTerminal {
+	if !res.IsSettled {
 		t.Fatalf("first should settle on the first success")
 	}
 	if res.Action != runtime.AggregateActionCancelNonWinners {

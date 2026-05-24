@@ -11,12 +11,14 @@
 //                                 fire per-claim release path (held vs.
 //                                 non-held branches per §7.6),
 //                                 persist final attributes, state→fresh,
-//                                 emit `attributes_committed`,
+//                                 emit `terminal/success` signal,
 //                                 cascade message-pass on dependents.
-//   - Success{changed: false}  → as above; emit `no_op_commit`; no
-//                                 cascade.
-//   - Error{error_class}        → policy chain: discard_then_retry |
-//                                 give_up | invalidate(targets). All
+//   - Success{changed: false}  → as above; `terminal/success` payload
+//                                 carries `changed: false`; no cascade
+//                                 (receiver-side CEL gate).
+//   - Error{error_class}        → policy chain (4-value action
+//                                 vocabulary: pass | give_up | retry |
+//                                 discard_claims_then_retry). All
 //                                 release through the failure branch
 //                                 (Abandon for non-held; mark
 //                                 'failed' + auto-terminal for held).
@@ -36,6 +38,8 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	attributes "github.com/fallguy/rimsky/graph/attribute"
 	"github.com/fallguy/rimsky/graph/frame"
 	"github.com/fallguy/rimsky/graph/node"
@@ -170,9 +174,11 @@ func terminalClassFor(k terminalKind) string {
 	return "unknown"
 }
 
-// applyTerminalError / applyTerminalPass live in
-// runner_terminal_handlers.go (split out for cold-read 500-line file
-// guideline compliance).
+// applyTerminalError lives in runner_terminal_handlers.go (split out
+// for cold-read 500-line file guideline compliance). Post-2026-05-23
+// it is a thin shim into applyErrorPolicy — the per-handler `resolve:
+// pass` branch retired with concept:lifecycle-handler; per-class
+// `pass` in `error_types:` is the replacement.
 
 // @concept: last-outcome
 //
@@ -257,36 +263,17 @@ func applyTerminalComplete(
 	// failures surface as `executor_errored` with
 	// `error_class: "verifier_failed"`.
 
-	// Resolve the on_executor_complete handler. Default = by_changed
-	// (today's behavior).
-	resolve := node.ResolveByChanged
-	var completeHandler *node.OnExecutorCompleteHandler
-	if acq.NodeDef != nil && acq.NodeDef.OnExecutorComplete != nil {
-		completeHandler = acq.NodeDef.OnExecutorComplete
-		if completeHandler.Resolve != "" {
-			resolve = completeHandler.Resolve
-		}
-	}
-	var lastOutcome cascade.LastOutcome
-	switch resolve {
-	case node.ResolveByChanged:
-		if t.Changed {
-			lastOutcome = cascade.LastOutcomeFreshChanged
-		} else {
-			lastOutcome = cascade.LastOutcomeFreshUnchanged
-		}
-	case node.ResolveAlwaysPropagate:
-		lastOutcome = cascade.LastOutcomeFreshChanged
-	case node.ResolveNeverPropagate:
-		lastOutcome = cascade.LastOutcomeFreshUnchanged
-	default:
-		// Validator should have caught this, but defensive fallback.
-		if t.Changed {
-			lastOutcome = cascade.LastOutcomeFreshChanged
-		} else {
-			lastOutcome = cascade.LastOutcomeFreshUnchanged
-		}
-	}
+	// Compute the settling signal type-path. Post-2026-05-23 the
+	// on_executor_complete handler's always_propagate / never_propagate
+	// / by_changed resolves retired with concept:lifecycle-handler —
+	// cascade-fire is purely subscriber-driven (signal-type-path match
+	// + CEL `when:` predicate). The per-fire-on-changed selectivity
+	// that always_propagate / never_propagate expressed is now
+	// declared receiver-side via `when: payload.changed` on a
+	// `terminal/success` subscription. Post-Pass 5 the run row carries
+	// settling_signal_type instead of the retired last_outcome enum.
+	successType := string(signalpkg.TypePath("terminal/success"))
+	settlingSignalType := &successType
 
 	// Primary state-mutation work runs inline in the caller's outer tx.
 	// Per @blessed-invariant: Callback determinism — phase-check read
@@ -307,11 +294,13 @@ func applyTerminalComplete(
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
 	}
-	// running → fresh via the on_executor_complete handler.
+	// running → fresh under ReasonHandlerComplete (the pre-2026-05-23
+	// on_executor_complete lifecycle-handler slot retired; this
+	// transition is now driven directly by the terminal-handler).
 	// Thread acq.RunScopeID so fan-out children's state-machine
 	// update lands on the correct sibling row.
 	if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
-		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, lastOutcome, tx); err != nil {
+		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
 	// Flip the just-completed run row to a terminal phase BEFORE the
@@ -323,8 +312,7 @@ func applyTerminalComplete(
 	// the walk — `frame: in` self-subscriptions can't insert their
 	// new pending run because runOld is still active. Mirrors the
 	// in-tx phase flip every other terminal already does
-	// (`applyTerminalPass` at runner_terminal_handlers.go:109;
-	// `applyErrorPolicy` / `applyTerminalInfraError` at
+	// (`applyErrorPolicy` / `applyTerminalInfraError` at
 	// runner_error_policy.go:217/239/283; `applyTerminalPark` via
 	// `ParkActiveInTx`). Outer `Queue.Complete` calls in
 	// `supervisor.go` and `callback.go` become idempotent no-ops on
@@ -336,32 +324,64 @@ func applyTerminalComplete(
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: remove for node: %w", err)
 	}
-	// Cascade-on-fresh_changed propagation: when this sender settles
-	// fresh_changed, the recursive subscription walk marks
-	// downstream subscribers stale-with-frame_id and gates the
-	// downstream subgraph (R=C, S=B; etc.). The same tx then drains
-	// rows where this sender is the gating sender (R=B, S=A) so
-	// direct subscribers can advance — the immediate inserts at
-	// the first-level (R=B, S=A) are intentionally transient
-	// (insert-then-drain in same tx is benign; the deeper levels
-	// gate properly). Cascade fires iff last_outcome == fresh_changed
-	// per `concept:cascade`'s firing gate invariant; diverges under
-	// always_propagate / never_propagate (lifecycle-handler.go).
+	// Cascade walk on settlement. Under the 2026-05-23 signal-taxonomy
+	// reshape, the cascade-fire gate is purely subscriber-driven: a
+	// subscription edge fires iff its TypePattern matches the emitted
+	// signal AND its CEL when: predicate evaluates true. The
+	// pre-reshape `last_outcome == fresh_changed` sender-side gate
+	// retired with this spec; settled-color is informational, not a
+	// fire condition. Subscribers that want to react only to
+	// `payload.changed` set `when: payload.changed` on their
+	// terminal/success subscription.
 	//
 	// This walk is complementary to the cascade-on-invalidation
-	// walks at invalidateInFrame / applyResolvedAction / etc. The
-	// invalidation-side walks gate receivers across multiple
-	// in-flight senders (multi-invalidator); the settlement-side
-	// walk gates the initial-instance case (non-root subscribers
-	// that never went through an explicit invalidation transition
-	// from a settled state but still need frame_id stamping +
-	// wait-set rows seeded under the recursive deeper levels).
+	// walks at invalidateInFrame / applyResolvedAction / etc.: the
+	// invalidation-side walks gate receivers across multiple in-flight
+	// senders (multi-invalidator); the settlement-side walk gates the
+	// initial-instance case + the deeper-level pessimistic seed.
 	//
 	//	@concept: cascade
+	//	@concept: signal
 	//	@concept: wait-set
-	if lastOutcome == cascade.LastOutcomeFreshChanged {
-		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID); err != nil {
+	// Consolidate every signal this terminal emits — the success
+	// envelope, one attribute/<key>/changed per merged attribute, and
+	// one event/<name> per named event — into a single cascade walk.
+	// One walk visits each (receiver, frame) at most once across the
+	// full signal set, preserving the once-per-frame dispatch
+	// invariant. Per concept:signal each signal matches against the
+	// subscriber edge map independently; a shared visited set across
+	// the per-signal loop ensures receivers seeded by an earlier
+	// signal don't get re-seeded by a later one.
+	signals := []signalpkg.Signal{{
+		Type: "terminal/success",
+		Payload: map[string]any{
+			"changed":          t.Changed,
+			"attributes_delta": orEmptyMap(t.AttributesDel),
+			"change_summary":   t.ChangeSummary,
+		},
+	}}
+	for key, value := range merged {
+		signals = append(signals, signalpkg.Signal{
+			Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
+			Payload: map[string]any{
+				"key":   key,
+				"value": value,
+			},
+		})
+	}
+	for _, evt := range t.NamedEvents {
+		signals = append(signals, signalpkg.Signal{
+			Type: signalpkg.TypePath("event/" + evt.Name),
+			Payload: map[string]any{
+				"name":          evt.Name,
+				"event_payload": eventPayloadAsMap(evt.PayloadInline),
+			},
+		})
+	}
+	visited := map[foundationshared.UUID]struct{}{}
+	for _, sig := range signals {
+		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig, visited); err != nil {
 			return nil, err
 		}
 	}
@@ -374,13 +394,7 @@ func applyTerminalComplete(
 		return nil, err
 	}
 
-	commitKind := "attributes_committed"
-	if !t.Changed {
-		commitKind = "no_op_commit"
-	}
-	_ = completeHandler
-
-	// Post-commit work: best-effort audit-log appends, lineage emit,
+	// Post-commit work: signal-emit (canonical audit row), lineage emit,
 	// fan-out recalculate, run-tree propagation. Each opens its own tx
 	// (or runs further out-of-tx work like PropagateIfChildAfterTerminal
 	// which walks the run-tree under its own transactions); they MUST
@@ -389,63 +403,96 @@ func applyTerminalComplete(
 	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: commitKind,
-				Payload: map[string]any{
-					"changed":        t.Changed,
-					"updated_fields": fieldNames(t.AttributesDel),
-					"change_summary": t.ChangeSummary,
-					"last_outcome":   string(lastOutcome),
-				},
-			}, tx); err != nil {
-				return err
+			// Canonical signal-shaped audit row per concept:signal.
+			// The pre-Pass-5 fixed-string audit-rows ("attributes_committed"
+			// / "no_op_commit" / "work_completed") retired alongside spec
+			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design;
+			// terminal/success is the canonical audit row. Named-event
+			// audit emission lives in `persistOneNamedEvent`
+			// (runner_named_events.go); only `terminal/success` and the
+			// per-key `attribute/<key>/changed` signals are emitted in
+			// this post-commit closure.
+			attrDelta := t.AttributesDel
+			if attrDelta == nil {
+				attrDelta = map[string]any{}
 			}
-			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "work_completed",
+			successSig := signalpkg.Signal{
+				Type: "terminal/success",
 				Payload: map[string]any{
-					"outcome":        outcomeForChanged(t.Changed),
-					"change_summary": t.ChangeSummary,
-					"node_type":      acq.NodeType,
-					"last_outcome":   string(lastOutcome),
+					"changed":          t.Changed,
+					"attributes_delta": attrDelta,
+					"change_summary":   t.ChangeSummary,
 				},
-			}, tx)
+			}
+			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
+				acq.InstanceID, acq.NodeID, successSig, args.Clock.Now(), tx)
 		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("runner_terminal: append commit/work_completed events failed",
+			args.Logger.Warn("runner_terminal: emit terminal/success signal failed",
 				"node_id", acq.NodeID.String(),
-				"commit_kind", commitKind,
+				"changed", t.Changed,
 				"error", err.Error())
 		}
-		if lastOutcome == cascade.LastOutcomeFreshChanged {
-			fanoutRecalculate(ctx, args, acq)
+		// Per-key attribute/<key>/changed signals (Task 12). Emitted
+		// best-effort after the terminal/success audit row above so
+		// subscribers on attribute deltas can observe the change.
+		// Old-value lookup is not available at this point; payload
+		// OldValue stays nil per the spec's "optional, when known"
+		// note.
+		if len(t.AttributesDel) > 0 {
+			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				for key, value := range t.AttributesDel {
+					attrSig := signalpkg.Signal{
+						Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
+						Payload: map[string]any{
+							"key":   key,
+							"value": value,
+						},
+					}
+					if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
+						acq.InstanceID, acq.NodeID, attrSig, args.Clock.Now(), tx); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil && args.Logger != nil {
+				args.Logger.Warn("runner_terminal: append attribute signal rows failed",
+					"node_id", acq.NodeID.String(),
+					"error", err.Error())
+			}
 		}
+		// Post-commit fan-out: route a RecalculateNode hint to every
+		// subscriber of this sender's node-type. Under the subscriber-
+		// driven cascade-fire model the sender-side `fresh_changed`
+		// gate retired; the receiver's own subscriptions (with their
+		// CEL when: predicates) determine whether the recalc actually
+		// produces a dispatch.
+		fanoutRecalculate(ctx, args, acq)
 		// E8: emit leaf-run lineage record. Spec §Content lineage.
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:       acq.InstanceID,
-			FrameID:          acq.FrameID,
-			RunID:            dispatchID,
-			NodeID:           acq.NodeID,
-			State:            string(cascade.NodeStateFresh),
-			LastOutcome:      string(lastOutcome),
-			Changed:          t.Changed,
-			TerminalKind:     "complete",
-			NodeAlias:        acq.NodeType,
-			ExecutorName:     acq.Executor,
-			TemplateHash:     acq.TemplateHash,
-			Params:           acq.InstanceParams,
-			AttributesMerged: acq.MergedAttributes,
-			HeldClaims:       HeldClaimsForLineage(acq),
-			ParentRunID:      scope.ParentRunID,
-			ChildKey:         scope.PartitionKey,
-			SubstitutionRefs: CollectSubstitutionRefsForEmit(ctx, args, acq),
+			InstanceID:         acq.InstanceID,
+			FrameID:            acq.FrameID,
+			RunID:              dispatchID,
+			NodeID:             acq.NodeID,
+			State:              string(cascade.NodeStateFresh),
+			SettlingSignalType: *settlingSignalType,
+			Changed:            t.Changed,
+			TerminalKind:       "complete",
+			NodeAlias:          acq.NodeType,
+			ExecutorName:       acq.Executor,
+			TemplateHash:       acq.TemplateHash,
+			Params:             acq.InstanceParams,
+			AttributesMerged:   acq.MergedAttributes,
+			HeldClaims:         HeldClaimsForLineage(acq),
+			ParentRunID:        scope.ParentRunID,
+			ChildKey:           scope.PartitionKey,
+			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
 		// Run-tree state propagation (E2): if this run is a child
 		// (fan-out or sub-graph internal), aggregate up to the parent.
 		// No-op on root runs.
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
-			cascade.NodeStateFresh, lastOutcome); err != nil {
+			cascade.NodeStateFresh, settlingSignalType); err != nil {
 			args.Logger.Warn("applyTerminalComplete: run-tree propagation failed",
 				"run_id", dispatchID.String(), "error", err.Error())
 		}
@@ -454,22 +501,21 @@ func applyTerminalComplete(
 }
 
 // cascadeSubscribersStaleInTx marks subscriber nodes stale + frame_id
-// and inserts wait-set rows in the same tx as the sender's INVALIDATION
-// transition (settled → stale/running). Per the pessimistic-invalidate
-// rule (spec Piece 1), the walk fires at sender invalidation; receivers
-// are gated by their wait-set until every upstream sender resolves and
-// the settled-state drain releases the rows. The walk also fires at
-// the sender's fresh_changed settlement to cover the initial-instance
-// case (non-root subscribers that never went through an explicit
-// invalidation transition); the BFS recursion creates wait-set rows at
-// deeper levels (R=C, S=B) that DON'T immediately drain when only the
-// first-level sender's drain (sender=A) fires.
+// and inserts wait-set rows in the same tx as the sender's transition
+// emit. Under the 2026-05-23 signal-taxonomy reshape, the cascade-fire
+// gate is purely subscriber-driven: an edge fires iff its TypePattern
+// matches the emitted signal's TypePath AND its compiled CEL when:
+// predicate evaluates true against the signal payload. Sender-side
+// `last_outcome` gates are gone; settled-color is informational.
 //
 // The walk is recursive over the subscription graph within the
 // instance: each receiver R that is newly marked stale is itself an
 // invalidation site, so the walk processes R's subscribers in turn
 // (BFS over the inverse-edge map). A per-call visited set guards
-// against subscription cycles.
+// against subscription cycles. Receivers walk under their own self-
+// emitted signal (a synthesized `terminal/*` shape) so deeper-level
+// edges with CEL predicates over downstream payloads still get a
+// chance to match.
 //
 // Receivers are resolved from the cached per-template subscription-edge
 // inverse map. Edges with frame:in are processed in-tx (stale-mark +
@@ -479,17 +525,15 @@ func applyTerminalComplete(
 // MarkSourceNodeStale at frame-open. No wait-set row is inserted for
 // frame:next at insertion time — by the time the new frame opens the
 // sender has already settled, so a gate keyed on the current sender
-// would never drain. The new frame's own cascade walks cover deeper
-// gating on the receiver's own subscribers.
+// would never drain.
 //
 // The settled-state drain (drainWaitSetOnSettled) marks the rows
 // (sets drained_at) when the sender reaches any settled state
 // (fresh/failed/parked); drained rows stay queryable for the
-// substitution-context builder. The pessimistic-invalidate rule
-// inserts a wait-set row for every subscription edge regardless of
-// filter compatibility; idempotent re-fire handles filter mismatch.
+// substitution-context builder.
 //
 //	@concept: cascade
+//	@concept: signal
 //	@concept: wait-set
 func cascadeSubscribersStaleInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -498,6 +542,27 @@ func cascadeSubscribersStaleInTx(
 	senderRunID foundationshared.UUID,
 	instanceID foundationshared.UUID,
 	senderFrameID foundationshared.UUID,
+	sig signalpkg.Signal,
+) error {
+	return cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
+		senderID, senderNodeType, senderRunID, instanceID, senderFrameID, sig,
+		map[foundationshared.UUID]struct{}{})
+}
+
+// cascadeSubscribersStaleInTxWithVisited is the multi-signal variant
+// shared across the per-signal loop at applyTerminalComplete. The
+// `visited` set is shared across the loop's calls so receivers seeded
+// by one signal don't get re-seeded (and re-dispatched) by a later
+// signal in the same terminal's emission set.
+func cascadeSubscribersStaleInTxWithVisited(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	senderID foundationshared.UUID,
+	senderNodeType string,
+	senderRunID foundationshared.UUID,
+	instanceID foundationshared.UUID,
+	senderFrameID foundationshared.UUID,
+	sig signalpkg.Signal,
+	visitedReceivers map[foundationshared.UUID]struct{},
 ) error {
 	inst, err := args.Persist.Instances().Get(ctx, instanceID, tx)
 	if err != nil {
@@ -510,7 +575,7 @@ func cascadeSubscribersStaleInTx(
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: edges: %w", err)
 	}
-	if len(edges) == 0 {
+	if edges == nil {
 		return nil
 	}
 	// Resolve receiver node-types → node-IDs within the instance once.
@@ -569,27 +634,40 @@ func cascadeSubscribersStaleInTx(
 		return nil
 	}
 	senderScopeIsMain := senderRunScope.ParentRunID == nil
-	// BFS over the subscription graph rooted at the sender. Each
-	// receiver newly marked stale joins the queue so its own subscribers
-	// are processed in turn (cycle-guarded by visited). `runID` carries
-	// the in-flight run id for each node visited so wait-set INSERTs
-	// (post-stage-5 keyed by run id) bind to the right run.
+	// Subscriber-driven gate (concept:signal): an edge fires iff its
+	// TypePattern matches the emitted signal AND its CEL when:
+	// predicate evaluates true. No deeper BFS — each receiver's own
+	// terminal eventually fires its own cascade walk with the
+	// receiver's real signal, propagating gates one level at a time.
+	candidateEdges := edges.Match(senderNodeType, sig.Type)
+	if len(candidateEdges) == 0 {
+		return nil
+	}
 	type walkItem struct {
 		nodeID   foundationshared.UUID
 		nodeType string
 		runID    foundationshared.UUID
 	}
-	queue := []walkItem{{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}}
+	cur := walkItem{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}
+	// `visited` is retained for the hard-dep walk's cycle guard. Under
+	// the 2026-05-23 signal-taxonomy reshape the BFS-recursion over
+	// subscription edges is gone — each receiver's own terminal fires
+	// its own cascadeSubscribersStaleInTx — but the hard-dep walk
+	// still recurses synchronously and needs the visited set to bound
+	// pathological soft+hard topologies.
 	visited := map[foundationshared.UUID]struct{}{senderID: {}}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		candidateEdges := append([]node.SubscriptionEdge{}, edges[cur.nodeType]...)
-		candidateEdges = append(candidateEdges, edges[""]...)
-		if len(candidateEdges) == 0 {
-			continue
-		}
+	{
 		for _, edge := range candidateEdges {
+			if edge.WhenExpr != nil {
+				// Eval surfaces CEL runtime errors as `(false, nil)`
+				// with a slog warn — per the spec's safe-navigation
+				// default. The error return is reserved for future
+				// fatal-eval cases and stays unreachable today.
+				ok, _ := edge.WhenExpr.Eval(sig)
+				if !ok {
+					continue
+				}
+			}
 			receivers := byType[edge.ReceiverNodeType]
 			for _, r := range receivers {
 				switch edge.Frame {
@@ -693,6 +771,51 @@ func cascadeSubscribersStaleInTx(
 						}
 						_ = existingID
 					}
+					// Once-per-frame affirm-guard. Two layers:
+					//
+					// (1) intra-terminal: `visitedReceivers` is shared
+					// across the per-signal loop within one terminal's
+					// applyTerminalComplete tx so multi-signal emissions
+					// don't re-affirm the same receiver. We DO continue
+					// inserting wait-set rows below — each matching
+					// signal still gates the receiver on the sender's
+					// run, so BuildAttributeDeps sees rows under the
+					// expected topic_kind.
+					//
+					// (2) cross-terminal: when an upstream node further
+					// up the chain already terminated and seeded this
+					// receiver in this frame (in-flight pending row that
+					// the receiver then drained and dispatched and
+					// terminated), the receiver has no in-flight row
+					// but has a terminated row in this frame.
+					// Re-affirming would create a fresh pending run row
+					// missing prior wait-set gates; HasRunForNodeInFrame
+					// catches this. Wait-set inserts still happen on
+					// the just-terminated row so receiver's
+					// substitution context picks up the late-arriving
+					// upstream attributes.
+					skipAffirm := false
+					if _, seen := visitedReceivers[r.ID]; seen {
+						skipAffirm = true
+					} else {
+						visitedReceivers[r.ID] = struct{}{}
+						// Skip the cross-terminal guard for self-
+						// edges. A node subscribing to itself is the
+						// canonical "drain my own queue" idiom; the
+						// HasRunForNodeInFrame check would always
+						// match (the sender IS the receiver, with a
+						// row in this frame) and incorrectly suppress
+						// the self-re-fire.
+						if r.ID != senderID {
+							settled, err := args.Persist.Nodes().HasRunForNodeInFrame(ctx, r.ID, senderFrameID, tx)
+							if err != nil {
+								return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver frame %s: %w", r.ID, err)
+							}
+							if settled {
+								skipAffirm = true
+							}
+						}
+					}
 					// Affirm-then-read: under RunScope-first, the
 					// cascade walker is the lazy-allocation primitive
 					// for the receiver's in-flight row. AffirmNodeRunRow
@@ -700,51 +823,73 @@ func cascadeSubscribersStaleInTx(
 					// (receiver_node_id, sender_run_scope_id) when
 					// none exists; no-op if one already does. The
 					// subsequent GetInFlightRunForNode read returns
-					// the row id under the same tx. Per
-					// concept:run-scope §"Persistence primitives /
-					// AffirmNodeRunRow" — every cascade match within
-					// the same RunScope produces an in-flight row.
+					// the row id under the same tx. When `skipAffirm`
+					// is true (already affirmed this terminal or an
+					// upstream cascade in this frame), we read the
+					// existing row's id rather than creating a fresh
+					// one. The wait-set insert below still runs so
+					// the receiver accumulates a row per matching
+					// signal, populating BuildAttributeDeps for
+					// attribute-topic edges.
 					//
 					// @concept: run-scope
 					// @blessed-invariant: AffirmNodeRunRow
 					// no-return-value-dependency.
-					if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverRunScopeID, senderFrameID, tx); err != nil {
-						// Defensive: a closed RunScope means the
-						// receiver's scope rendezvous has fired and
-						// is no longer accepting new in-flight rows.
-						// The cascade walker MUST NOT cross into
-						// closed RunScopes per concept:run-scope;
-						// skip this receiver and continue the walk.
-						if errors.Is(err, persistence.ErrRunScopeClosed) {
+					var receiverRunID foundationshared.UUID
+					if skipAffirm {
+						existingID, hasInFlight, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
+						if err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run (skip-affirm) %s: %w", r.ID, err)
+						}
+						if !hasInFlight {
+							// Receiver settled this frame and no
+							// in-flight row to gate on. Skip the
+							// wait-set insert — there's no receiver
+							// to gate.
 							continue
 						}
-						return fmt.Errorf("cascadeSubscribersStaleInTx: affirm receiver run %s: %w", r.ID, err)
-					}
-					receiverRunID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
-					if err != nil {
-						return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
-					}
-					if !ok {
-						// Race-with-terminal: the receiver's row
-						// just terminated between affirm and read.
-						// Safe to skip — its terminal handler will
-						// drive its own cascade walk.
-						continue
-					}
-					if r.State == cascade.NodeStateParked {
-						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
-							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
-						}
+						receiverRunID = existingID
 					} else {
-						if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiverRunID, senderFrameID, tx); err != nil {
-							return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
+						if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverRunScopeID, senderFrameID, tx); err != nil {
+							// Defensive: a closed RunScope means the
+							// receiver's scope rendezvous has fired
+							// and is no longer accepting new in-
+							// flight rows. The cascade walker MUST
+							// NOT cross into closed RunScopes per
+							// concept:run-scope; skip this receiver
+							// and continue the walk.
+							if errors.Is(err, persistence.ErrRunScopeClosed) {
+								continue
+							}
+							return fmt.Errorf("cascadeSubscribersStaleInTx: affirm receiver run %s: %w", r.ID, err)
+						}
+						resolvedID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
+						if err != nil {
+							return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
+						}
+						if !ok {
+							// Race-with-terminal: the receiver's row
+							// just terminated between affirm and read.
+							// Safe to skip — its terminal handler
+							// will drive its own cascade walk.
+							continue
+						}
+						receiverRunID = resolvedID
+						if r.State == cascade.NodeStateParked {
+							if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
+								return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked %s: %w", r.ID, err)
+							}
+						} else {
+							if err := args.Persist.Nodes().MarkStaleForCascade(ctx, receiverRunID, senderFrameID, tx); err != nil {
+								return fmt.Errorf("cascadeSubscribersStaleInTx: mark stale %s: %w", r.ID, err)
+							}
 						}
 					}
 					if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 						FrameID:           senderFrameID,
 						ReceiverRunID:     receiverRunID,
 						SenderRunID:       cur.runID,
-						TopicKind:         edge.TopicKind,
+						TopicKind:         waitSetTopicKindFor(edge.TypePattern),
 						SubscriptionScope: edge.SubscriptionScope,
 					}, tx); err != nil {
 						return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
@@ -762,14 +907,13 @@ func cascadeSubscribersStaleInTx(
 					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
 						return err
 					}
-					// Recurse via BFS: the receiver R is itself newly
-					// invalidated, so its subscribers must also be
-					// marked stale + gated. The visited set guards
-					// subscription cycles.
-					if _, seen := visited[r.ID]; !seen {
-						visited[r.ID] = struct{}{}
-						queue = append(queue, walkItem{nodeID: r.ID, nodeType: r.NodeType, runID: receiverRunID})
-					}
+					// Under the 2026-05-23 signal-taxonomy reshape the
+					// deeper-BFS recursion retired: cascade fires only
+					// for receivers matched by the emitted signal at
+					// this level. Each receiver's own terminal will
+					// fire its own cascadeSubscribersStaleInTx with
+					// its real signal, gating its downstream
+					// subscribers one signal at a time.
 				}
 			}
 		}
@@ -957,18 +1101,20 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 			return err
 		}
 		edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
-		if err != nil || len(edges) == 0 {
+		if err != nil || edges == nil {
 			return err
 		}
-		candidate := append([]node.SubscriptionEdge{}, edges[acq.NodeType]...)
-		candidate = append(candidate, edges[""]...)
-		if len(candidate) == 0 {
+		// Fanout-recalc is a post-commit hint — it routes a
+		// RecalculateNode event to every receiver subscribed to this
+		// sender's node-type (without per-edge CEL filtering, since
+		// recalculation re-evaluates from drained wait-set state).
+		receiverTypeList := edges.ReceiverNodeTypesForSender(acq.NodeType)
+		if len(receiverTypeList) == 0 {
 			return nil
 		}
-		// Resolve receiver node-types → node IDs.
-		receiverTypes := make(map[string]struct{}, len(candidate))
-		for _, e := range candidate {
-			receiverTypes[e.ReceiverNodeType] = struct{}{}
+		receiverTypes := make(map[string]struct{}, len(receiverTypeList))
+		for _, t := range receiverTypeList {
+			receiverTypes[t] = struct{}{}
 		}
 		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
 		if err != nil {
@@ -1048,9 +1194,36 @@ func mergeAttributesDelta(base, delta map[string]any) map[string]any {
 	return out
 }
 
-func outcomeForChanged(changed bool) string {
-	if changed {
-		return "committed"
+// orEmptyMap returns m, or an empty map if m is nil. Used by signal
+// payload construction sites where the schema requires a present (but
+// possibly empty) map.
+func orEmptyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return map[string]any{}
 	}
-	return "no_op"
+	return m
+}
+
+// waitSetTopicKindFor maps a signal.TypePath to the legacy
+// rimsky_wait_set.topic_kind enum (state | attribute | event). The DB
+// CHECK constraint pre-dates the 2026-05-23 signal-taxonomy reshape;
+// until a follow-up migration broadens the enum to include
+// "transient" and "message", we collapse the new signal top-level
+// kinds onto the legacy buckets:
+//
+//   - attribute/<key>/changed → "attribute"
+//   - event/<name>            → "event"
+//   - everything else         → "state"
+//
+// The mapping is a runtime detail for the wait-set ledger only; the
+// audit-log `kind` field stays the full canonical signal path.
+func waitSetTopicKindFor(pattern signalpkg.TypePath) string {
+	switch pattern.TopLevel() {
+	case signalpkg.KindAttribute:
+		return "attribute"
+	case signalpkg.KindEvent:
+		return "event"
+	default:
+		return "state"
+	}
 }

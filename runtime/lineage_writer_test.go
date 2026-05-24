@@ -57,7 +57,7 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 		NodeID:             shared.UUID(uuid.New()),
 		FrameID:            frame,
 		State:              "fresh",
-		LastOutcome:        "fresh_changed",
+		SettlingSignalType: "terminal/success",
 		ParamsSnapshotHash: HashBytes([]byte(`{"key":"value"}`)),
 	}
 	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, now, rec); err != nil {
@@ -77,8 +77,8 @@ func TestWriteLeafRunLineage_PayloadRoundtrip(t *testing.T) {
 	if decoded.RunID != run {
 		t.Fatalf("run_id roundtrip failed")
 	}
-	if decoded.LastOutcome != "fresh_changed" {
-		t.Fatalf("last_outcome roundtrip failed")
+	if decoded.SettlingSignalType != "terminal/success" {
+		t.Fatalf("settling_signal_type roundtrip failed")
 	}
 }
 
@@ -204,12 +204,12 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	parent := shared.UUID(uuid.New())
 	child := shared.UUID(uuid.New())
 	rec := LeafRunRecord{
-		RunID:       child,
-		NodeID:      shared.UUID(uuid.New()),
-		FrameID:     frame,
-		State:       "fresh",
-		LastOutcome: "fresh_changed",
-		ParentRunID: parent.String(),
+		RunID:              child,
+		NodeID:             shared.UUID(uuid.New()),
+		FrameID:            frame,
+		State:              "fresh",
+		SettlingSignalType: "terminal/success",
+		ParentRunID:        parent.String(),
 	}
 	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
@@ -331,13 +331,13 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 			Clock:   shared.SystemClock{},
 		}
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:  inst,
-			FrameID:     frame,
-			RunID:       shared.UUID(uuid.New()),
-			NodeID:      shared.UUID(uuid.New()),
-			State:       string(cascade.NodeStateFresh),
-			LastOutcome: "fresh_changed",
-			ParentRunID: nil, // root run
+			InstanceID:         inst,
+			FrameID:            frame,
+			RunID:              shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			State:              string(cascade.NodeStateFresh),
+			SettlingSignalType: "terminal/success",
+			ParentRunID:        nil, // root run
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
@@ -371,13 +371,13 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		}
 		parent := shared.UUID(uuid.New())
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
-			InstanceID:  inst,
-			FrameID:     frame,
-			RunID:       shared.UUID(uuid.New()),
-			NodeID:      shared.UUID(uuid.New()),
-			State:       string(cascade.NodeStateFresh),
-			LastOutcome: "fresh_changed",
-			ParentRunID: &parent,
+			InstanceID:         inst,
+			FrameID:            frame,
+			RunID:              shared.UUID(uuid.New()),
+			NodeID:             shared.UUID(uuid.New()),
+			State:              string(cascade.NodeStateFresh),
+			SettlingSignalType: "terminal/success",
+			ParentRunID:        &parent,
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
@@ -437,7 +437,7 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"AttributesHash", "attributes_hash", true},
 		{"ClaimScopeDataHash", "claim_scope_data_hash", true},
 		{"State", "state", false},
-		{"LastOutcome", "last_outcome", false},
+		{"SettlingSignalType", "settling_signal_type", false},
 		{"Changed", "changed", true},
 		{"TerminalKind", "terminal_kind", true},
 		{"ErrorClass", "error_class", true},

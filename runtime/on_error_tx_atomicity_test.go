@@ -71,12 +71,12 @@ type txTrackingNodes struct {
 	updateStateArgs []cascade.NodeState
 }
 
-func (n *txTrackingNodes) UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, lastOutcome cascade.LastOutcome, tx persistence.Tx) error {
+func (n *txTrackingNodes) UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx persistence.Tx) error {
 	n.mu.Lock()
 	n.updateStateTxs = append(n.updateStateTxs, tx)
 	n.updateStateArgs = append(n.updateStateArgs, state)
 	n.mu.Unlock()
-	return n.NodeTable.UpdateState(ctx, id, runScopeID, state, reason, lastOutcome, tx)
+	return n.NodeTable.UpdateState(ctx, id, runScopeID, state, reason, settlingSignalType, tx)
 }
 
 // nodeTrackingTables wraps persistence.Tables to route Nodes() through
@@ -249,7 +249,7 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 			return err
 		}
 		return store.Nodes().UpdateState(ctx, nodeID, mainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, "", tx)
+			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

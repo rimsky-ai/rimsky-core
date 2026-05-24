@@ -163,8 +163,8 @@ func TestExecutor_RowCountFails(t *testing.T) {
 	if errOutcome == nil {
 		t.Fatalf("expected Error, got %+v", sc.GetOutcome())
 	}
-	if errOutcome.GetErrorClass() != "verifier_failed" {
-		t.Errorf("error_class: %q want verifier_failed", errOutcome.GetErrorClass())
+	if errOutcome.GetErrorClass() != "pg/verifier_check_failed/row_count_absolute" {
+		t.Errorf("error_class: %q want pg/verifier_check_failed/row_count_absolute", errOutcome.GetErrorClass())
 	}
 }
 
@@ -242,8 +242,8 @@ func TestExecutor_InvalidAttributes(t *testing.T) {
 			if errOutcome == nil {
 				t.Fatalf("expected Error")
 			}
-			if errOutcome.GetErrorClass() != "invalid_attribute" {
-				t.Errorf("error_class: %q want invalid_attribute", errOutcome.GetErrorClass())
+			if errOutcome.GetErrorClass() != "pg/attribute_invalid" {
+				t.Errorf("error_class: %q want pg/attribute_invalid", errOutcome.GetErrorClass())
 			}
 		})
 	}

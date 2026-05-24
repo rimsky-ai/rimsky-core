@@ -235,15 +235,15 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// Clear error bookkeeping + defensively clear stale frame_id +
-		// reset the failed-terminal row's last_outcome in one tx.
-		// Resetting last_outcome on the failed-terminal row means the
-		// dashboard's `nodeSelect` projection (which surfaces the
-		// failed-terminal row's last_outcome when no in-flight row
-		// exists) no longer shows the stale `failed` resolution flavor.
-		// Without this, the prior `ClearLastOutcome(runID=nil)` was a
-		// no-op against the failed-terminal row (its predicate
-		// `phase IN ('pending','active','held','parked')` excludes
-		// `phase='failed'`).
+		// reset the failed-terminal row's settling_signal_type in one tx.
+		// Resetting settling_signal_type on the failed-terminal row
+		// means the dashboard's `nodeSelect` projection (which surfaces
+		// the failed-terminal row's signal type when no in-flight row
+		// exists) no longer shows the stale failed resolution flavor.
+		// Without this, the prior ClearSettlingSignalType(runID=nil)
+		// would be a no-op against the failed-terminal row (its
+		// predicate `phase IN ('pending','active','held','parked')`
+		// excludes `phase='failed'`).
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
 				return err
@@ -257,7 +257,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			if scopeID != nil {
-				if err := deps.Persist.Nodes().ResetFailedTerminalLastOutcome(ctx, id, *scopeID, tx); err != nil {
+				if err := deps.Persist.Nodes().ResetFailedTerminalSettlingSignalType(ctx, id, *scopeID, tx); err != nil {
 					return err
 				}
 			}

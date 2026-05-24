@@ -34,7 +34,59 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
 )
+
+// parentSettlementSignal maps a propagated parent's new aggregated
+// state + settling signal type-path to a synthetic terminal signal that
+// the cascade walker can match subscribers against. Used by the
+// run-tree propagation bridge when a child terminal forces a parent to
+// settle. The aggregator computes the canonical type-path
+// (terminal/error/aggregate/<policy>_failed for failures, terminal/success
+// for success); this helper assembles the matching payload so receiver
+// CEL predicates have well-shaped data to evaluate.
+func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath, changed bool) signalpkg.Signal {
+	switch state {
+	case cascade.NodeStateFailed:
+		typ := sigType
+		if typ == "" {
+			typ = signalpkg.TypePath("terminal/error/aggregate/strict_failed")
+		}
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"error_class":    string(typ)[len("terminal/error/"):],
+				"error_payload":  map[string]any{},
+				"attempt":        0,
+				"retries_so_far": 0,
+			},
+		}
+	case cascade.NodeStateParked:
+		typ := sigType
+		if typ == "" {
+			typ = signalpkg.TypePath("terminal/park/snooze")
+		}
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"parked_reason_label": "aggregated_park",
+			},
+		}
+	default: // NodeStateFresh + safe fallback
+		typ := sigType
+		if typ == "" {
+			typ = signalpkg.TypePath("terminal/success")
+		}
+		return signalpkg.Signal{
+			Type: typ,
+			Payload: map[string]any{
+				"changed":          changed,
+				"attributes_delta": map[string]any{},
+				"change_summary":   "aggregated_settlement",
+			},
+		}
+	}
+}
 
 // PropagationArgs is the in-context dependencies the propagation
 // transaction needs. RunTree handles the lock/read/write on
@@ -51,22 +103,24 @@ type PropagationArgs struct {
 }
 
 // PropagateFromChildState is the entry-point: a child run has just
-// reached (newState, newOutcome) — the child-row write is the CALLER's
-// responsibility (the terminal handler chain writes the row through
-// `Queue.RemoveForNodeInTx` / `Queue.ParkActiveInTx` / `Nodes().UpdateState`
-// before invoking this helper). This walker walks the run-tree upward,
-// recomputing each ancestor's aggregated state, until reaching a
-// non-terminal ancestor or the root. Operates inside the caller's tx so
-// the propagation commits atomically with whatever else the caller is
-// writing.
+// reached (newState, settlingSignalType) — the child-row write is the
+// CALLER's responsibility (the terminal handler chain writes the row
+// through `Queue.RemoveForNodeInTx` / `Queue.ParkActiveInTx` /
+// `Nodes().UpdateState` before invoking this helper). This walker walks
+// the run-tree upward, recomputing each ancestor's aggregated state,
+// until reaching a non-terminal ancestor or the root. Operates inside
+// the caller's tx so the propagation commits atomically with whatever
+// else the caller is writing.
 //
-// The (newState, newOutcome) arguments are advisory — the walker reads
-// the canonical state from the just-written rimsky_node_runs row via
-// `ListChildren` on the parent. They're kept on the signature so the
-// caller's terminal handler can stay structurally similar to the
-// pre-rename PropagateChildState call site (and so callers that don't
-// pre-write the row in the same tx can still drive the walker; tests
-// that need that affordance must do their own write first).
+// The (newState, settlingSignalType) arguments are advisory — the
+// walker reads the canonical state from the just-written
+// rimsky_node_runs row via `ListChildren` on the parent. They're kept
+// on the signature so the caller's terminal handler can stay
+// structurally similar to the pre-rename PropagateChildState call site
+// (and so callers that don't pre-write the row in the same tx can
+// still drive the walker; tests that need that affordance must do
+// their own write first). `settlingSignalType` may be nil for
+// non-settling transitions.
 //
 // Returns:
 //
@@ -82,14 +136,14 @@ type PropagationArgs struct {
 //     aggregation walks leave their main-scope subscribers ungated.
 func PropagateFromChildState(
 	ctx context.Context, args PropagationArgs, tx persistence.Tx,
-	childRunID shared.UUID, newState cascade.NodeState, newOutcome cascade.LastOutcome,
+	childRunID shared.UUID, newState cascade.NodeState, settlingSignalType *string,
 ) ([]CancelAction, []ParentSettlement, error) {
 	if args.RunTree == nil {
 		return nil, nil, fmt.Errorf("PropagateFromChildState: RunTree is required")
 	}
 	// Reference the args/state values so callers' intent shows up at the
 	// type level even though the walker re-reads canonical rows below.
-	_, _ = newState, newOutcome
+	_, _ = newState, settlingSignalType
 
 	childRow, err := args.RunTree.GetByID(ctx, tx, childRunID)
 	if err != nil {
@@ -143,18 +197,38 @@ func walkUpwards(
 			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
 		// Translate children rows into the pure aggregation function's
-		// input.
+		// input. Each child's settling signal type + payload.changed is
+		// projected forward to the parent aggregator per concept:signal.
 		inputs := make([]ChildState, len(children))
 		for i, c := range children {
-			inputs[i] = ChildState{State: c.State, LastOutcome: c.LastOutcome}
+			var sigType signalpkg.TypePath
+			if c.SettlingSignalType != nil {
+				sigType = signalpkg.TypePath(*c.SettlingSignalType)
+			}
+			inputs[i] = ChildState{
+				State:              c.State,
+				SettlingSignalType: sigType,
+				// `changed` is not projected from the persistence row
+				// today (the signal payload lives only in rimsky_events).
+				// Defaulting to true preserves the pre-Pass-5 behavior
+				// where settled-success children invariably propagated
+				// fresh_changed upward; downstream subscribers that
+				// genuinely care about `changed` can subscribe to the
+				// child's own `terminal/success` signal directly.
+				Changed: true,
+			}
 		}
 		result := Aggregate(inputs, parent.AggregationPolicy)
-		if !result.IsTerminal {
+		if !result.IsSettled {
 			// Parent stays in its current state. Nothing more to do
 			// upward.
 			return actions, settlements, nil
 		}
-		if parent.State == result.ParentState && parent.LastOutcome == result.ParentOutcome {
+		var parentSig string
+		if parent.SettlingSignalType != nil {
+			parentSig = *parent.SettlingSignalType
+		}
+		if parent.State == result.ParentState && parentSig == string(result.ParentSettlingSignalType) {
 			// State unchanged — propagation halts.
 			return actions, settlements, nil
 		}
@@ -168,7 +242,12 @@ func walkUpwards(
 					current, parent.State, result.ParentState, err)
 			}
 		}
-		if err := args.RunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, result.ParentOutcome); err != nil {
+		newSig := string(result.ParentSettlingSignalType)
+		var newSigArg *string
+		if newSig != "" {
+			newSigArg = &newSig
+		}
+		if err := args.RunTree.UpdateStateAndOutcome(ctx, tx, current, result.ParentState, newSigArg); err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: update parent %s: %w", current, err)
 		}
 		// Record any follow-up action.
@@ -184,17 +263,18 @@ func walkUpwards(
 		// subscribers. NodeID + FrameID + RunScopeID come from the
 		// parent's just-locked row; the caller resolves NodeType from
 		// the node row before invoking the cascade walker.
-		if isTerminal(result.ParentState) {
+		if isSettled(result.ParentState) {
 			settlements = append(settlements, ParentSettlement{
-				ParentRunID:    current,
-				ParentNodeID:   parent.NodeID,
-				ParentRunScope: parent.RunScopeID,
-				FrameID:        parent.FrameID,
-				NewState:       result.ParentState,
-				NewOutcome:     result.ParentOutcome,
+				ParentRunID:           current,
+				ParentNodeID:          parent.NodeID,
+				ParentRunScope:        parent.RunScopeID,
+				FrameID:               parent.FrameID,
+				NewState:              result.ParentState,
+				NewSettlingSignalType: result.ParentSettlingSignalType,
+				NewChanged:            result.ParentChanged,
 			})
 		}
-		if !isTerminal(result.ParentState) {
+		if !isSettled(result.ParentState) {
 			// Parent still active (e.g. policy left it running with
 			// stale children) — no further propagation.
 			return actions, settlements, nil
@@ -216,7 +296,7 @@ func walkUpwards(
 }
 
 // ParentSettlement describes a parent run that transitioned to a
-// terminal state during a propagation walk. The caller (post-terminal
+// settled state during a propagation walk. The caller (post-terminal
 // handler) uses this to fire cascadeSubscribersStaleInTx for the
 // parent's own downstream subscribers — the cross-scope cascade bridge
 // from fan-out / sub-graph parent settlement into the main-graph
@@ -225,12 +305,13 @@ func walkUpwards(
 // @concept: cascade
 // @concept: run-scope
 type ParentSettlement struct {
-	ParentRunID    shared.UUID
-	ParentNodeID   shared.UUID
-	ParentRunScope shared.UUID
-	FrameID        shared.UUID
-	NewState       cascade.NodeState
-	NewOutcome     cascade.LastOutcome
+	ParentRunID           shared.UUID
+	ParentNodeID          shared.UUID
+	ParentRunScope        shared.UUID
+	FrameID               shared.UUID
+	NewState              cascade.NodeState
+	NewSettlingSignalType signalpkg.TypePath
+	NewChanged            bool
 }
 
 // CancelAction describes a follow-up cancellation the propagation
@@ -250,9 +331,15 @@ type CancelAction struct {
 	Children    []persistence.RunTreeRow
 }
 
-// isTerminal reports whether a NodeState is a settled terminal state
-// (fresh, failed, parked).
-func isTerminal(state cascade.NodeState) bool {
+// isSettled reports whether a NodeState is a settled state (fresh,
+// failed, parked).
+//
+// Renamed from isTerminal in Pass 5 of spec
+// 2026-05-23-signal-taxonomy-and-policy-decoupling-design: "terminal"
+// in this codebase refers to the wire-protocol StreamClose envelope
+// (concept:terminal-resolution); the state-machine landing predicate
+// is "settled" — distinct vocabulary.
+func isSettled(state cascade.NodeState) bool {
 	switch state {
 	case cascade.NodeStateFresh, cascade.NodeStateFailed, cascade.NodeStateParked:
 		return true
@@ -276,6 +363,10 @@ func isTerminal(state cascade.NodeState) bool {
 // each ancestor, and writes parent-side state changes per the
 // aggregation policy.
 //
+// `settlingSignalType` is the canonical signal type-path the child run
+// settled with (concept:signal); nil for non-settling transitions
+// (advisory only — walker re-reads canonical rows).
+//
 // Returned CancelActions are surfaced for the caller to apply
 // (sibling cancellation walks). At the V1 wiring posture the runner
 // logs them but does not yet drive the per-sibling Abandon — see the
@@ -283,7 +374,7 @@ func isTerminal(state cascade.NodeState) bool {
 // extensions-design.md §State propagation transaction`.
 func PropagateIfChildAfterTerminal(
 	ctx context.Context, args RunArgs,
-	runID shared.UUID, newState cascade.NodeState, newOutcome cascade.LastOutcome,
+	runID shared.UUID, newState cascade.NodeState, settlingSignalType *string,
 ) ([]CancelAction, error) {
 	if args.Persist == nil {
 		return nil, nil
@@ -326,7 +417,7 @@ func PropagateIfChildAfterTerminal(
 			RunScopes:    scopes,
 			ClaimHandles: args.ClaimHandles,
 			Logger:       args.Logger,
-		}, tx, runID, newState, newOutcome)
+		}, tx, runID, newState, settlingSignalType)
 		actions = outActions
 		settlements = outSettlements
 		if err != nil {
@@ -358,7 +449,7 @@ func PropagateIfChildAfterTerminal(
 						"parent_run_id", s.ParentRunID.String(),
 						"parent_node_id", s.ParentNodeID.String(),
 						"new_state", string(s.NewState),
-						"new_outcome", string(s.NewOutcome))
+						"settling_signal_type", string(s.NewSettlingSignalType))
 				}
 				continue
 			}
@@ -369,6 +460,12 @@ func PropagateIfChildAfterTerminal(
 			if nodeRow == nil {
 				continue
 			}
+			// Synthesize a parent-settlement signal so the cascade
+			// walker can apply subscriber CEL predicates per
+			// concept:signal. The parent's settling signal-type from the
+			// aggregator drives the envelope; payload.changed comes from
+			// the aggregator's projected ParentChanged.
+			parentSig := parentSettlementSignal(s.NewState, s.NewSettlingSignalType, s.NewChanged)
 			if err := cascadeSubscribersStaleInTx(
 				ctx, args, tx,
 				s.ParentNodeID,
@@ -376,6 +473,7 @@ func PropagateIfChildAfterTerminal(
 				s.ParentRunID,
 				nodeRow.InstanceID,
 				s.FrameID,
+				parentSig,
 			); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
 			}

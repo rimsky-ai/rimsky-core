@@ -75,7 +75,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "inheritor", Executor: "stub"},
 				scenario.WithInherits(scenario.Inherit("held")),
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},
 	})

@@ -136,8 +136,8 @@ func TestExecute_404_ReturnsHTTPUnexpectedStatus(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "http_unexpected_status" {
-		t.Errorf("error_class=%q, want http_unexpected_status", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/expectation_mismatch" {
+		t.Errorf("error_class=%q, want http/expectation_mismatch", errd.GetErrorClass())
 	}
 }
 
@@ -152,8 +152,8 @@ func TestExecute_NetworkError_ReturnsHTTPRequestFailed(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "http_request_failed" {
-		t.Errorf("error_class=%q, want http_request_failed", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/network_error" {
+		t.Errorf("error_class=%q, want http/network_error", errd.GetErrorClass())
 	}
 }
 
@@ -167,8 +167,8 @@ func TestExecute_MalformedAttributes_MissingURL(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_attribute" {
-		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/attribute_invalid" {
+		t.Errorf("error_class=%q, want http/attribute_invalid", errd.GetErrorClass())
 	}
 }
 
@@ -211,8 +211,8 @@ func TestStubMode_RejectsMalformedAttributes(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_attribute" {
-		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/attribute_invalid" {
+		t.Errorf("error_class=%q, want http/attribute_invalid", errd.GetErrorClass())
 	}
 }
 
@@ -347,7 +347,7 @@ func TestExecute_NonJSONResponse_Base64(t *testing.T) {
 }
 
 // TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed covers the
-// http_response_parse_failed error class.
+// http/response_unparseable error class.
 func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -363,8 +363,8 @@ func TestExecute_JSONContentType_InvalidBody_ReturnsParseFailed(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "http_response_parse_failed" {
-		t.Errorf("error_class=%q, want http_response_parse_failed", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/response_unparseable" {
+		t.Errorf("error_class=%q, want http/response_unparseable", errd.GetErrorClass())
 	}
 }
 
@@ -479,14 +479,14 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "http_response_parse_failed" {
-		t.Errorf("error_class=%q, want http_response_parse_failed", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/response_unparseable" {
+		t.Errorf("error_class=%q, want http/response_unparseable", errd.GetErrorClass())
 	}
 }
 
 // TestStubMode_RejectsNonObjectStubResponse covers the new spec §12.2
 // constraint that attributes_delta is a JSON object — non-object
-// stub_response values must be rejected as invalid_attribute.
+// stub_response values must be rejected as http/attribute_invalid.
 func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	s := testServer(t, true)
 	c := &collector{}
@@ -501,7 +501,7 @@ func TestStubMode_RejectsNonObjectStubResponse(t *testing.T) {
 	if errd == nil {
 		t.Fatalf("expected Error, got %+v", c.terminal().GetEvent())
 	}
-	if errd.GetErrorClass() != "invalid_attribute" {
-		t.Errorf("error_class=%q, want invalid_attribute", errd.GetErrorClass())
+	if errd.GetErrorClass() != "http/attribute_invalid" {
+		t.Errorf("error_class=%q, want http/attribute_invalid", errd.GetErrorClass())
 	}
 }

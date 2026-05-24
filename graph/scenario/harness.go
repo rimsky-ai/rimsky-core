@@ -454,9 +454,13 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, 
 
 func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	var count int
+	// Pass 5 retired the fixed-string audit kinds; the canonical
+	// signal-shaped audit row for a settled-fresh terminal is
+	// `terminal/success` per concept:signal. Pure-cascade transitions
+	// also emit `terminal/success` (see graph/scheduler/pure_cascade.go).
 	err := h.Pool.QueryRow(h.Ctx, `
         SELECT count(*) FROM rimsky_events
-        WHERE node_id = $1 AND kind IN ('work_completed','pure_cascade_commit','no_op_commit')
+        WHERE node_id = $1 AND kind = 'terminal/success'
     `, nodeID).Scan(&count)
 	return err == nil && count > 0
 }
@@ -678,7 +682,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if len(n.Subscribes) > 0 {
 		subs := make([]map[string]any, 0, len(n.Subscribes))
 		for _, s := range n.Subscribes {
-			item := map[string]any{"on": s.On}
+			item := map[string]any{"type": s.Type}
 			if s.Node != "" {
 				item["node"] = s.Node
 			}
@@ -687,18 +691,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			}
 			if s.When != "" {
 				item["when"] = s.When
-			}
-			if s.Outcome != "" {
-				item["outcome"] = s.Outcome
-			}
-			if s.ErrorClass != "" {
-				item["error_class"] = s.ErrorClass
-			}
-			if s.Reason != "" {
-				item["reason"] = s.Reason
-			}
-			if s.Name != "" {
-				item["name"] = s.Name
 			}
 			if s.Frame != "" {
 				item["frame"] = s.Frame
@@ -752,14 +744,8 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 				if a.MaxDelayMs != 0 {
 					act["max_delay_ms"] = a.MaxDelayMs
 				}
-				if len(a.Targets) > 0 {
-					act["targets"] = a.Targets
-				}
 				if a.ReasonTemplate != "" {
 					act["reason_template"] = a.ReasonTemplate
-				}
-				if a.Frame != "" {
-					act["frame"] = a.Frame
 				}
 				actions = append(actions, act)
 			}
@@ -767,15 +753,12 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["error_types"] = ets
 	}
-	if n.OnAcquireUnavailable != nil {
-		nd["on_acquire_unavailable"] = handlerToJSON(n.OnAcquireUnavailable.Resolve, n.OnAcquireUnavailable.ErrorClass)
-	}
-	if n.OnExecutorComplete != nil {
-		nd["on_executor_complete"] = handlerToJSON(n.OnExecutorComplete.Resolve, "")
-	}
-	if n.OnExecutorErrored != nil {
-		nd["on_executor_errored"] = handlerToJSON(n.OnExecutorErrored.Resolve, n.OnExecutorErrored.ErrorClass)
-	}
+	// Lifecycle-handler slots (on_acquire_unavailable,
+	// on_executor_complete, on_executor_errored) retired 2026-05-23
+	// per .ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-
+	// decoupling-design.md. Their behaviors fold into error_types:
+	// (acquisition failure / pass-on-error) and into receiver-side
+	// CEL when: predicates (cascade selectivity on payload.changed).
 	if n.MaxParkDuration != "" {
 		nd["max_park_duration"] = n.MaxParkDuration
 	}
@@ -825,21 +808,6 @@ func fanOutSpecToJSON(fo *node.FanOutSpec) map[string]any {
 	}
 	out["error_policy"] = policy
 	return out
-}
-
-// handlerToJSON serializes a lifecycle handler block.
-//
-// Post-2026-05-14: the invalidate-emit slot retired; only resolve +
-// error_class remain.
-func handlerToJSON(resolve, errorClass string) map[string]any {
-	h := map[string]any{}
-	if resolve != "" {
-		h["resolve"] = resolve
-	}
-	if errorClass != "" {
-		h["error_class"] = errorClass
-	}
-	return h
 }
 
 func storeRefToJSON(s node.NodeStoreRef) map[string]any {

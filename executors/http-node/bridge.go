@@ -62,7 +62,7 @@ func mountBridge(mux *http.ServeMux, s *Server) {
 			// otherwise ignored.
 			b, _ := protojson.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 				StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-					ErrorClass: "internal_server_error",
+					ErrorClass: "http/internal_error",
 				}}},
 			}})
 			_, _ = w.Write(append(b, '\n'))

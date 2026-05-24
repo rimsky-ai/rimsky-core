@@ -874,11 +874,11 @@ type ListBackfillsResponse struct {
 
 // BackfillPartitionRow is one element of GET /backfills/{op}/partitions.
 type BackfillPartitionRow struct {
-	RunID       string `json:"run_id"`
-	NodeID      string `json:"node_id"`
-	ChildKey    string `json:"child_key,omitempty"`
-	State       string `json:"state"`
-	LastOutcome string `json:"last_outcome,omitempty"`
+	RunID              string `json:"run_id"`
+	NodeID             string `json:"node_id"`
+	ChildKey           string `json:"child_key,omitempty"`
+	State              string `json:"state"`
+	SettlingSignalType string `json:"settling_signal_type,omitempty"`
 }
 
 // BackfillPartitionsResponse is the GET /backfills/{op}/partitions body.

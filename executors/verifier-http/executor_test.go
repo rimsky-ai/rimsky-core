@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/fallguy/rimsky/executors/verifier-http/errorclasses"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -91,8 +93,65 @@ func TestExecuteCore_StatusMismatch(t *testing.T) {
 	if errOut == nil {
 		t.Fatalf("expected Error, got: %+v", term)
 	}
-	if errOut.GetErrorClass() != "verifier_failed" {
+	if errOut.GetErrorClass() != "verifier/check_failed" {
 		t.Errorf("error_class: %s", errOut.GetErrorClass())
+	}
+}
+
+// TestExecuteCore_TimeoutClassifiesAsTimeout drives a deliberately-slow
+// upstream past the configured timeout and asserts the emission
+// carries the hierarchical `verifier/timeout` class (not the broader
+// `verifier/network_error`). Mirrors http-node's classifyTransportErr
+// discipline.
+func TestExecuteCore_TimeoutClassifiesAsTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	executor := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"url":        srv.URL,
+		"timeout_ms": float64(20),
+	})
+	fs := &fakeStream{}
+	if err := executor.executeCore(context.Background(), req, fs.send); err != nil {
+		t.Fatal(err)
+	}
+	term := fs.terminal()
+	if term == nil {
+		t.Fatal("no terminal")
+	}
+	errOut := term.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got: %+v", term)
+	}
+	if errOut.GetErrorClass() != "verifier/timeout" {
+		t.Errorf("error_class: got %q, want verifier/timeout", errOut.GetErrorClass())
+	}
+}
+
+// TestCapabilities_AdvertisesHierarchicalErrorClasses confirms the
+// observability surface advertises the canonical verifier/* leaves
+// imported from `pkg:executors/verifier-http/errorclasses`.
+func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
+	obs := NewObservabilityServer()
+	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	declared := caps.GetDeclaredErrorClasses()
+	want := errorclasses.Declared()
+	if len(declared) != len(want) {
+		t.Fatalf("declared_error_classes: got %v, want %v", declared, want)
+	}
+	for i, c := range declared {
+		if c != want[i] {
+			t.Errorf("declared[%d]: got %q, want %q", i, c, want[i])
+		}
+		if c == "" {
+			t.Errorf("declared[%d]: empty string", i)
+		}
 	}
 }
 
@@ -107,7 +166,7 @@ func TestExecuteCore_MissingURL(t *testing.T) {
 	if term == nil {
 		t.Fatal("no terminal")
 	}
-	if term.GetError().GetErrorClass() != "invalid_attribute" {
+	if term.GetError().GetErrorClass() != "verifier/attribute_invalid" {
 		t.Errorf("error_class: %s", term.GetError().GetErrorClass())
 	}
 }

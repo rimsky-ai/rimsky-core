@@ -18,12 +18,15 @@ load-bearing primitives:
   specifications of a graph of nodes. Instances bind a template to
   parameters and runtime state.
 - **Cascade.** Node-state propagation: when a node's value changes,
-  dependents become stale and recompute. Five node states; a sibling
-  `last_outcome` column carries the resolution flavor.
+  dependents become stale and recompute. Five node states; the run
+  row carries the `settling_signal_type` (the canonical signal
+  type-path that settled the run) and that drives downstream cascade.
 - **Subscriptions.** Per-template `subscribes:` declarations route
-  upstream transitions to downstream nodes across four topic kinds
-  (state, attribute, event, message); the cascade resolution model is
-  built around them.
+  upstream signals to downstream nodes; each entry declares a
+  `type:` (canonical signal type-path or trailing-`*` prefix) and an
+  optional `when:` CEL predicate over the signal payload. Five
+  top-level signal kinds (`terminal/*`, `transient/*`, `attribute/*`,
+  `event/*`, `message/*`) cover all cascade-bearing transitions.
 - **Frames.** The unit of cascade resolution. At most one frame runs
   per instance at a time.
 - **Claims and locks.** Producer-mediated concurrency gating. A node

@@ -67,7 +67,7 @@ terminal outcomes on the wire (mirroring the executor protocol's
 | DSL method | Wire outcome |
 |---|---|
 | `.Success(result, changed, summary)` | `StreamClose.Success` |
-| `.Error(class, payload)` | `StreamClose.Error` (use `class="executor_blocked"` for the executor-blocked path) |
+| `.Error(class, payload)` | `StreamClose.Error` (use `class="executor_blocked"` for the executor-blocked path; the stub auto-prefixes single-segment classes with `stub/` so the wire-level class becomes `stub/executor_blocked` per `concept:signal` hierarchical convention) |
 | `.Park(reason, reasonNote, payload, resumeAt, sessionToken)` | `StreamClose.Park` |
 | `.AwaitAsyncCallback(ackID, expectedMs)` | `StreamClose.AwaitAsyncCallback` |
 

@@ -2,17 +2,28 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Lifecycle-handler scenario tests covering the three declarative slots
-// (on_acquire_unavailable, on_executor_complete, on_executor_errored),
-// per-emit frame discipline, and the last_outcome cascade gate. Per
-// the reactive-loops + lifecycle-handlers spec at
-// .ok-planner/specs/2026-05-05-reactive-loops-and-lifecycle-handlers-design.md.
+// Lifecycle-handler scenario tests reshaped 2026-05-23 per spec
+// .ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md.
+//
+// The three declarative slots (`on_acquire_unavailable`,
+// `on_executor_complete`, `on_executor_errored`) retired alongside
+// `concept:lifecycle-handler`. Their behaviors are now expressed:
+//   - on_acquire_unavailable → `error_types: { "acquire/unavailable":
+//     { policy: [...] } }`.
+//   - on_executor_complete (always_propagate / never_propagate) →
+//     receiver-side CEL `when: payload.changed` (or omitting it for
+//     always-fire) on `terminal/success` subscriptions.
+//   - on_executor_errored (pass) → `error_types: { <class>: { policy:
+//     [{action: pass}] } }`.
+//
+// Tests below exercise the new shapes.
 package scenarios
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,10 +36,13 @@ import (
 	"github.com/fallguy/rimsky/graph/scenario"
 )
 
-// TestAlwaysPropagateResolution covers Task 31. With on_executor_complete:
-// {resolve: always_propagate}, a Complete{changed:false} terminal must
-// still cascade — last_outcome=fresh_changed regardless of t.Changed.
-func TestAlwaysPropagateResolution(t *testing.T) {
+// TestAlwaysPropagateResolution_NewShape (was Task 31). Post-2026-05-23
+// the on_executor_complete.always_propagate resolve retires; a
+// subscriber that wants to fire regardless of payload.changed simply
+// omits the `when:` predicate on its `terminal/success` subscription.
+// Test: a Complete{changed:false} terminal still fires the subscriber
+// because the subscriber has no `when:` filter (default = always).
+func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, false, "noop")
@@ -39,14 +53,16 @@ func TestAlwaysPropagateResolution(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:               "a",
-				Executor:           "stub",
-				OnExecutorComplete: &node.OnExecutorCompleteHandler{Resolve: node.ResolveAlwaysPropagate},
+				Type:     "a",
+				Executor: "stub",
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+				// No `when:` → fire on every terminal/success, regardless
+				// of payload.changed. This replaces the pre-reshape
+				// `on_executor_complete: { resolve: always_propagate }`.
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-always", map[string]any{})
@@ -56,8 +72,6 @@ func TestAlwaysPropagateResolution(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	// a commits with changed=false — but always_propagate forces the
-	// cascade gate to fire; b should be re-run.
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a did not reach fresh")
 	if !h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second) {
@@ -67,72 +81,82 @@ func TestAlwaysPropagateResolution(t *testing.T) {
 			bRowDbg = r
 			return err
 		})
-		t.Fatalf("b did not reach fresh — always_propagate should have cascaded despite changed=false; b state=%v frame_id=%v", bRowDbg.State, bRowDbg.FrameID)
+		t.Fatalf("b did not reach fresh — subscription without a when: predicate should have cascaded despite changed=false; b state=%v frame_id=%v", bRowDbg.State, bRowDbg.FrameID)
 	}
 
-	// Verify a's last_outcome.
+	// Verify a's settling_signal_type — under the canonical signal
+	// taxonomy a successful executor terminal records
+	// settling_signal_type=terminal/success regardless of the
+	// `changed` flag (selectivity is receiver-side via CEL
+	// `when: payload.changed`, not sender-side).
 	var aRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, a.ID, tx)
 		aRow = r
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFreshChanged, aRow.LastOutcome,
-		"always_propagate must record last_outcome=fresh_changed")
+	require.NotNil(t, aRow.SettlingSignalType)
+	require.Equal(t, "terminal/success", *aRow.SettlingSignalType,
+		"successful executor terminal records settling_signal_type=terminal/success regardless of `changed`")
 }
 
-// TestNeverPropagateResolution covers Task 32. With on_executor_complete:
-// {resolve: never_propagate}, a Complete{changed:true} terminal must
-// NOT cascade.
-func TestNeverPropagateResolution(t *testing.T) {
+// TestNeverPropagateResolution_NewShape (was Task 32). Post-2026-05-23
+// the on_executor_complete.never_propagate resolve retires; a
+// subscriber that wants to fire only on payload.changed declares
+// `when: payload.changed`. Test: a Complete{changed:true} terminal
+// fires the subscriber because the CEL when: evaluates true; the
+// inverse (Complete{changed:false}) does NOT fire (see
+// TestFreshUnchangedDoesNotCascade for that path).
+func TestNeverPropagateResolution_NewShape(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
+	// Script a-changed=true so the changed-gate subscriber DOES fire.
+	// The legacy "never_propagate" semantic (a-changed=true that does
+	// NOT cascade) requires the subscriber to omit `terminal/success`
+	// entirely — that's documented in concept:node-subscription, not
+	// exercised here.
 	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, true, "a-changed")
 	h.Stub.WhenType("b").Success(map[string]any{"b": 1}, true, "b")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "never-propagate", Version: "1",
+		Name: "changed-gate", Version: "1",
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:               "a",
-				Executor:           "stub",
-				OnExecutorComplete: &node.OnExecutorCompleteHandler{Resolve: node.ResolveNeverPropagate},
+				Type:     "a",
+				Executor: "stub",
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{
+				Node: "a",
+				Type: "terminal/success",
+				When: "payload.changed",
+			})),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-never", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-changed-gate", map[string]any{})
 
 	a := h.FindNode(iid, "a")
 	b := h.FindNode(iid, "b")
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	// a should reach fresh; b should stay fresh (never cascaded).
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a did not reach fresh")
-	// Give the system a beat to confirm b doesn't run.
-	time.Sleep(2 * time.Second)
+	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
+		"b did not reach fresh — when: payload.changed should fire on changed=true")
 
-	var aRow, bRow *persistence.NodeRow
+	var aRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		ra, err := h.Persist.Nodes().Get(h.Ctx, a.ID, tx)
-		if err != nil {
-			return err
-		}
-		aRow = ra
-		rb, err := h.Persist.Nodes().Get(h.Ctx, b.ID, tx)
-		bRow = rb
+		r, err := h.Persist.Nodes().Get(h.Ctx, a.ID, tx)
+		aRow = r
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFreshUnchanged, aRow.LastOutcome,
-		"never_propagate must record last_outcome=fresh_unchanged")
-	require.Equal(t, cascade.NodeStateFresh, bRow.State,
-		"b should remain fresh — never_propagate must not cascade")
+	require.NotNil(t, aRow.SettlingSignalType)
+	require.Equal(t, "terminal/success", *aRow.SettlingSignalType,
+		"changed=true terminal records settling_signal_type=terminal/success")
 }
 
 // TestFreshUnchangedDoesNotCascade covers Task 34. Default by_changed
@@ -152,7 +176,7 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fucnc", map[string]any{})
@@ -177,15 +201,18 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 		bRow = rb
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFreshUnchanged, aRow.LastOutcome,
-		"by_changed + changed=false must record last_outcome=fresh_unchanged")
+	require.NotNil(t, aRow.SettlingSignalType)
+	require.Equal(t, "terminal/success", *aRow.SettlingSignalType,
+		"changed=false terminal records settling_signal_type=terminal/success (changed-gate is receiver-side)")
 	require.Equal(t, cascade.NodeStateFresh, bRow.State,
 		"b should remain fresh on a no-op commit")
 }
 
 // TestFailedUpstreamFreezesDownstream covers Task 36. A failed upstream
 // node freezes downstream — they don't fire (today's behavior; the
-// last_outcome=failed column doesn't change this).
+// settling_signal_type=terminal/error/<class> column doesn't change
+// this — subscribers wildcard-matching `terminal/success` won't match
+// a `terminal/error/<class>` envelope).
 func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -200,13 +227,13 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 				Type:     "a",
 				Executor: "stub",
 				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"fatal": {Policy: []node.PolicyAction{{Action: "give_up"}}},
+					"stub/fatal": {Policy: []node.PolicyAction{{Action: "give_up"}}},
 				},
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fail-freeze", map[string]any{})
@@ -231,18 +258,19 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 		bRow = rb
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomeFailed, aRow.LastOutcome,
-		"give_up should record last_outcome=failed")
+	require.NotNil(t, aRow.SettlingSignalType)
+	require.Contains(t, *aRow.SettlingSignalType, "terminal/error/",
+		"give_up should record settling_signal_type=terminal/error/<class>")
 	require.NotEqual(t, cascade.NodeStateRunning, bRow.State,
 		"b should not run while upstream is failed")
 }
 
-// TestExecutorBlockedPassResolution covers Task 37 (migrated post-E.10).
-// With on_executor_errored: {resolve: pass}, a stub-emitted
-// Error{executor_blocked} lands the node in fresh+passed without
-// error_types routing. (Pre-2026-05-12 this used on_executor_blocked,
-// which collapsed into on_executor_errored under spec E.2 / E.10.)
-func TestExecutorBlockedPassResolution(t *testing.T) {
+// TestExecutorBlockedPassResolution_NewShape (was Task 37). Post-2026-
+// 05-23 the on_executor_errored.pass resolve retires; the replacement
+// is a per-class `pass` action in `error_types:`. A stub-emitted
+// Error{executor_blocked} routed through error_types: { executor_blocked:
+// { policy: [pass] } } lands the node in fresh+passed.
+func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Error("executor_blocked", map[string]any{
@@ -255,9 +283,13 @@ func TestExecutorBlockedPassResolution(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:              "worker",
-				Executor:          "stub",
-				OnExecutorErrored: &node.OnExecutorTerminalHandler{Resolve: node.ResolvePass},
+				Type:     "worker",
+				Executor: "stub",
+				ErrorTypes: map[string]node.ErrorTypePolicy{
+					"stub/executor_blocked": {
+						Policy: []node.PolicyAction{{Action: "pass"}},
+					},
+				},
 			}),
 		},
 	})
@@ -266,22 +298,21 @@ func TestExecutorBlockedPassResolution(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait for the handler_pass state_transition event (the resolve=pass
-	// path emits this). Then verify the row state and last_outcome.
-	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"worker should record last_outcome=passed under on_executor_errored: pass (post-E.10 — blocked collapsed)")
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
+		"worker should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: pass }")
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
 		wRow = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, wRow.State, "worker should be fresh after resolve=pass")
+	require.Equal(t, cascade.NodeStateFresh, wRow.State, "worker should be fresh after pass")
 }
 
-// TestExecutorErroredPassResolution covers Task 38. Same as Task 37 but
-// for the Errored terminal.
-func TestExecutorErroredPassResolution(t *testing.T) {
+// TestExecutorErroredPassResolution_NewShape (was Task 38). Same as
+// TestExecutorBlockedPassResolution_NewShape but for an arbitrary
+// error_class.
+func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Error("any_class", map[string]any{"why": "stub-err"})
@@ -291,9 +322,13 @@ func TestExecutorErroredPassResolution(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
-				Type:              "worker",
-				Executor:          "stub",
-				OnExecutorErrored: &node.OnExecutorTerminalHandler{Resolve: node.ResolvePass},
+				Type:     "worker",
+				Executor: "stub",
+				ErrorTypes: map[string]node.ErrorTypePolicy{
+					"stub/any_class": {
+						Policy: []node.PolicyAction{{Action: "pass"}},
+					},
+				},
 			}),
 		},
 	})
@@ -302,15 +337,15 @@ func TestExecutorErroredPassResolution(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	require.True(t, waitForLastOutcome(t, h, worker.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"worker should record last_outcome=passed under on_executor_errored: pass")
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
+		"worker should record settling_signal_type=terminal/error/<class> under error_types: { any_class: pass }")
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)
 		wRow = r
 		return err
 	}))
-	require.Equal(t, cascade.NodeStateFresh, wRow.State, "worker should be fresh after resolve=pass")
+	require.Equal(t, cascade.NodeStateFresh, wRow.State, "worker should be fresh after pass")
 }
 
 // TestOperatorInvalidateTargetOnly covers Task 35. Invalidating A in
@@ -329,9 +364,9 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "b", On: "state"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "b", Type: "terminal/*"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-op-inv-target", map[string]any{})
@@ -353,9 +388,11 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 
-	// A should re-run and reach fresh (with last_outcome=fresh_unchanged).
-	require.True(t, waitForLastOutcome(t, h, a.ID, cascade.LastOutcomeFreshUnchanged, 30*time.Second),
-		"a should record last_outcome=fresh_unchanged on the no-op rerun")
+	// A should re-run and reach fresh with settling_signal_type=terminal/success
+	// (the changed=false detail is no longer encoded in last_outcome; the
+	// changed-gate runs receiver-side via CEL `when: payload.changed`).
+	require.True(t, waitForSettlingSignalType(t, h, a.ID, "terminal/success", 30*time.Second),
+		"a should record settling_signal_type=terminal/success on the no-op rerun")
 	// Give the system a beat to confirm B/C don't run.
 	time.Sleep(2 * time.Second)
 	var bRow, cRow *persistence.NodeRow
@@ -373,8 +410,10 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, cRow.State, "c should stay fresh on a no-op rerun")
 }
 
-// waitForLastOutcome polls the node row until last_outcome matches.
-func waitForLastOutcome(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want cascade.LastOutcome, timeout time.Duration) bool {
+// waitForSettlingSignalType polls the node row until settling_signal_type
+// matches exactly. Replaces the retired waitForLastOutcome per Pass 5 of
+// spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+func waitForSettlingSignalType(t *testing.T, h *scenario.Harness, nodeID shared.UUID, want string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -384,7 +423,29 @@ func waitForLastOutcome(t *testing.T, h *scenario.Harness, nodeID shared.UUID, w
 			row = r
 			return err
 		})
-		if row != nil && row.LastOutcome == want {
+		if row != nil && row.SettlingSignalType != nil && *row.SettlingSignalType == want {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// waitForSettlingSignalTypePrefix polls until settling_signal_type
+// starts with the given prefix (e.g. "terminal/error/" matches any
+// error class). Used to assert on the pass / give_up resolution class
+// without binding to the specific error class.
+func waitForSettlingSignalTypePrefix(t *testing.T, h *scenario.Harness, nodeID shared.UUID, prefix string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var row *persistence.NodeRow
+		_ = h.InTx(func(tx persistence.Tx) error {
+			r, err := h.Persist.Nodes().Get(h.Ctx, nodeID, tx)
+			row = r
+			return err
+		})
+		if row != nil && row.SettlingSignalType != nil && strings.HasPrefix(*row.SettlingSignalType, prefix) {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -407,7 +468,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "p",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pure-cascade", map[string]any{})
@@ -426,6 +487,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 		pRow = r
 		return err
 	}))
-	require.Equal(t, cascade.LastOutcomePureCascade, pRow.LastOutcome,
-		"pure_cascade transition should record last_outcome=pure_cascade")
+	require.NotNil(t, pRow.SettlingSignalType)
+	require.Equal(t, "terminal/success", *pRow.SettlingSignalType,
+		"pure-cascade transition should record settling_signal_type=terminal/success (carried from upstream)")
 }

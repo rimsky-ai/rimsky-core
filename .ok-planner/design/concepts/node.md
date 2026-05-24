@@ -13,7 +13,7 @@ references:
 
 ## What it is
 
-A node is one declarative unit of work in a template's graph. Each node has a name, a type (template-author chosen string used as the dispatch routing key), zero-or-more `subscribes:` entries declaring its reactive surface, zero-or-more required claims/locks, zero-or-more `holds:` declarations for co-held upstream claims, optional attributes JSON schema, optional userdata, optional lifecycle-handler block, optional operator-facing `tags`, and (for non-claim-only nodes) a target executor. At runtime, a node materializes as a row in `rimsky_nodes` (keyed by `(instance_id, node_type)`) carrying `state`, `last_outcome`, `frame_id`, `tags`, and per-node bookkeeping.
+A node is one declarative unit of work in a template's graph. Each node has a name, a type (template-author chosen string used as the dispatch routing key), zero-or-more `subscribes:` entries declaring its reactive surface, zero-or-more required claims/locks, zero-or-more `holds:` declarations for co-held upstream claims, optional attributes JSON schema, optional operator-facing `tags`, optional `error_types:` per-error-class policy chains, and (for non-claim-only nodes) a target executor. At runtime, a node materializes as a row in `rimsky_nodes` (keyed by `(instance_id, node_type)`) carrying `state`, `frame_id`, `tags`, and per-node bookkeeping; per-run terminal disposition lives on `rimsky_node_runs.settling_signal_type`.
 
 ## Purpose
 
@@ -21,12 +21,12 @@ The node is the smallest reactive cell rimsky orchestrates. Cascade resolution p
 
 ## Boundaries
 
-The node owns: its dispatch / terminal lifecycle, its claim spec list, its handler resolutions, its attribute writeback, its operator-facing tags. The node does **not** own: cascade scheduling (see `frame`), claim conflict resolution (see `claim-handle`), event-log shape (see `event-log`). Adjacent: `last-outcome`, `frame`, `cascade`, `attribute`, `lifecycle-handler`, `claim`, `named-lock`, `node-subscription`, `node-run`.
+The node owns: its dispatch / terminal lifecycle, its claim spec list, its `error_types:` policy chains, its attribute writeback, its operator-facing tags. The node does **not** own: cascade scheduling (see `frame`), claim conflict resolution (see `claim-handle`), event-log shape (see `event-log`). Adjacent: `signal`, `error-policy`, `frame`, `cascade`, `attribute`, `claim`, `named-lock`, `node-subscription`, `node-run`.
 
 ## Invariants
 
 - The set of legal `state` values is exactly `{fresh, stale, running, failed, parked}`; transitions follow `foundation/cascade/state.go::NextState`. Same-state transitions are rejected under `dispatch_claimed` (`@blessed-invariant 1`, also numbered §17).
-- Eligibility for dispatch reads only `state`. Cascade propagation downstream reads only `last_outcome` (`@blessed-invariant`-adjacent rule, `docs/concepts/cascade.md`).
+- Eligibility for dispatch reads only `state`. Cascade propagation is subscriber-driven via `concept:signal`: a subscription edge fires iff its TypePattern matches the emitted signal AND its compiled CEL `when:` predicate evaluates true against the signal payload (the pre-2026-05-23 sender-side `last_outcome` gate retired with the canonical signal taxonomy).
 - A non-fresh `rimsky_nodes` row always carries a `frame_id`.
 - Tag values admit `{{params.<key>}}` substitution at materialization time (instance creation); no other substitution source kinds are available at that phase. Tag substitution failures are fatal at instance creation, matching the dispatch-time discipline for required-attribute substitution. Tags do not gate dispatch, cascade, or validation — they are operator-facing metadata.
 

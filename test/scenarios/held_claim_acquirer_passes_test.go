@@ -6,12 +6,15 @@
 //
 // A two-node template where A acquires a held claim from a stub queue
 // producer and B inherits the claim. The producer returns Unavailable
-// (queue is drained); A has on_acquire_unavailable: { resolve: pass }.
+// (queue is drained); A declares error_types: { "acquire/unavailable":
+// { policy: [pass] } }.
 //
 // Asserts:
-//   - A passes (fresh+passed) without invoking the executor.
-//   - B is not woken — the cascade-firing gate is last_outcome ==
-//     fresh_changed; passed does not propagate.
+//   - A passes (settles fresh with settling_signal_type=terminal/error/<class>)
+//     without invoking the executor.
+//   - B is not woken — the pass branch of the unified error_types: chain
+//     commits the state transition + signal but does NOT fire
+//     cascadeSubscribersStaleInTx; only the retry branch does.
 //   - No rimsky_claim_handles rows exist for the never-acquired claim.
 //   - No rimsky_claim_holders rows — the held subgraph never registered.
 package scenarios
@@ -70,8 +73,10 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "acquirer",
 					Executor: "stub",
-					OnAcquireUnavailable: &node.OnAcquireUnavailableHandler{
-						Resolve: node.ResolvePass,
+					ErrorTypes: map[string]node.ErrorTypePolicy{
+						"acquire/unavailable": {
+							Policy: []node.PolicyAction{{Action: "pass"}},
+						},
 					},
 				},
 				scenario.WithStores(scenario.AliasedClaimRef("queue-store", "@queue", "rw", "held")),
@@ -82,7 +87,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 					Executor: "stub",
 				},
 				scenario.WithInherits(scenario.Inherit("held")),
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},
 	})
@@ -93,12 +98,14 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	// Acquirer should land in fresh+passed.
-	require.True(t, waitForLastOutcome(t, h, acq.ID, cascade.LastOutcomePassed, 30*time.Second),
-		"acquirer should record last_outcome=passed under on_acquire_unavailable: pass")
+	// Acquirer should settle fresh with settling_signal_type carrying
+	// the canonical terminal/error/<class> envelope.
+	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
+		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { acquire/unavailable: [pass] }")
 
-	// Inheritor must NOT run — pass does not cascade (last_outcome=passed
-	// doesn't satisfy the fresh_changed gate). Give the system a beat.
+	// Inheritor must NOT run — the pass branch of the unified error_types:
+	// chain does not fire cascadeSubscribersStaleInTx; only the retry
+	// branch does. Give the system a beat.
 	time.Sleep(2 * time.Second)
 
 	var acqRow, inhRow *persistence.NodeRow

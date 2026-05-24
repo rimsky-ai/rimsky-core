@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/fallguy/rimsky/executors/http-node/errorclasses"
 	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
 )
 
@@ -145,6 +146,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		RetentionAfterTerminalSeconds: retentionSeconds,
 		HttpBridgeUrl:                 url,
 		ExpectedAttributesSchema:      []byte(`{"type":"object"}`),
+		DeclaredErrorClasses:          errorclasses.Declared(),
 	}, nil
 }
 

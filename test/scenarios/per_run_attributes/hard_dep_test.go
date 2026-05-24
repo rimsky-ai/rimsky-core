@@ -62,7 +62,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", On: "state"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

@@ -104,7 +104,7 @@ func (noopNodes) ListPureCascadeReady(context.Context, persistence.Tx) ([]persis
 func (noopNodes) CountByState(context.Context, persistence.Tx) (map[cascade.NodeState]int, error) {
 	return nil, nil
 }
-func (noopNodes) UpdateState(context.Context, shared.UUID, shared.UUID, cascade.NodeState, cascade.TransitionReason, cascade.LastOutcome, persistence.Tx) error {
+func (noopNodes) UpdateState(context.Context, shared.UUID, shared.UUID, cascade.NodeState, cascade.TransitionReason, *string, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) UpdateError(context.Context, shared.UUID, spec.EvaluatorState, persistence.Tx) error {
@@ -116,10 +116,10 @@ func (noopNodes) UpdateHeartbeat(context.Context, shared.UUID, shared.UUID, time
 func (noopNodes) SetFrameID(context.Context, shared.UUID, *shared.UUID, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) ClearLastOutcome(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+func (noopNodes) ClearSettlingSignalType(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
-func (noopNodes) ResetFailedTerminalLastOutcome(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
+func (noopNodes) ResetFailedTerminalSettlingSignalType(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
 }
 func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
@@ -134,6 +134,9 @@ func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, 
 }
 func (noopNodes) AffirmNodeRunRow(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
+}
+func (noopNodes) HasRunForNodeInFrame(context.Context, shared.UUID, shared.UUID, persistence.Tx) (bool, error) {
+	return false, nil
 }
 func (noopNodes) GetRunByDispatchIDForUpdate(context.Context, shared.UUID, persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	return nil, nil

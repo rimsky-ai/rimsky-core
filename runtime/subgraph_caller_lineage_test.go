@@ -65,9 +65,9 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
 					{Type: "transform", Executor: "stub",
-						Subscribes: []spec.SubscriptionEntry{{Node: "validate", On: "state"}}},
+						Subscribes: []spec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
 					{Type: "promote", Executor: "stub",
-						Subscribes: []spec.SubscriptionEntry{{Node: "transform", On: "state"}}},
+						Subscribes: []spec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
 				},
 			},
 		},
@@ -178,7 +178,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		// running → running under the subgraph_internal_cascade_fired
 		// reason is legal.
 		return backend.RunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
-			cascade.NodeStateRunning, "")
+			cascade.NodeStateRunning, nil)
 	}))
 
 	// Build the acquisition matching the caller node. lookupNodeDef

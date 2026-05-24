@@ -35,6 +35,8 @@ import (
 	"github.com/fallguy/rimsky/foundation/cascade"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
+	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
 	nodepkg "github.com/fallguy/rimsky/graph/node"
 	"github.com/fallguy/rimsky/runtime"
 )
@@ -126,7 +128,13 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if n.RunScopeID == nil {
 			return nil
 		}
-		return sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, cascade.LastOutcomePureCascade, tx)
+		// Pure-cascade settles fresh; settling_signal_type carries the
+		// terminal/success envelope (per concept:signal). Subscribers
+		// that need to distinguish a pure-cascade settle from an
+		// executor-Success terminal can match on the audit-event
+		// payload (no separate signal-type leaf for pure-cascade pre-v1).
+		pureCascadeSig := "terminal/success"
+		return sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
 			"node_id", n.ID.String(), "error", err.Error())
@@ -134,15 +142,25 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	}
 	nodeID := n.ID
 	instanceID := n.InstanceID
+	// Canonical terminal/success signal per concept:signal. Pure-
+	// cascade transitions are signal-bearing (settled-fresh state);
+	// the pre-Pass-5 fixed-string "pure_cascade_commit" audit row
+	// retired alongside spec 2026-05-23-signal-taxonomy-and-policy-
+	// decoupling-design. Subscribers that need to distinguish
+	// pure-cascade from executor-Success can match on the signal
+	// payload's `change_summary` ("pure_cascade").
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return sb.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID:     &nodeID,
-			InstanceID: &instanceID,
-			Kind:       "pure_cascade_commit",
-			Payload:    map[string]any{},
-		}, tx)
+		successSig := signalpkg.Signal{
+			Type: signalpkg.TypePath("terminal/success"),
+			Payload: map[string]any{
+				"changed":          false,
+				"attributes_delta": map[string]any{},
+				"change_summary":   "pure_cascade",
+			},
+		}
+		return signalaudit.EmitSignal(ctx, sb.Events(), instanceID, nodeID, successSig, args.Clock.Now(), tx)
 	}); err != nil {
-		log.Warn("ProcessPureCascade: append pure_cascade_commit failed",
+		log.Warn("ProcessPureCascade: emit terminal/success signal failed",
 			"node_id", n.ID.String(), "error", err.Error())
 		// Not fatal — the state transition already succeeded.
 	}
@@ -160,18 +178,20 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			return err
 		}
 		subs := nodepkg.ExtractSubstitutionRefsFromTemplate(row.Spec)
-		edges := nodepkg.BuildSubscriptionEdges(row.Spec, subs)
-		if len(edges) == 0 {
+		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec, subs)
+		if err != nil {
+			return err
+		}
+		if edges == nil {
 			return nil
 		}
-		candidate := append([]nodepkg.SubscriptionEdge{}, edges[n.NodeType]...)
-		candidate = append(candidate, edges[""]...)
-		if len(candidate) == 0 {
+		receiverTypeList := edges.ReceiverNodeTypesForSender(n.NodeType)
+		if len(receiverTypeList) == 0 {
 			return nil
 		}
-		want := make(map[string]struct{}, len(candidate))
-		for _, e := range candidate {
-			want[e.ReceiverNodeType] = struct{}{}
+		want := make(map[string]struct{}, len(receiverTypeList))
+		for _, t := range receiverTypeList {
+			want[t] = struct{}{}
 		}
 		instNodes, err := sb.Nodes().ListByInstance(ctx, n.InstanceID, tx)
 		if err != nil {

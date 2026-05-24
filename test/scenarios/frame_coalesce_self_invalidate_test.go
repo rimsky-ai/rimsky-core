@@ -7,7 +7,7 @@
 // Single-node template with a self-subscription:
 //
 //	subscribes:
-//	  - { node: self-type, on: state, when: fresh, outcome: fresh_changed, frame: next }
+//	  - { node: self-type, type: terminal/success, when: payload.changed, frame: next }
 //
 // and frame_resolution_mode: coalesce. The self-cycle is the
 // post-2026-05-14 replacement for the retired
@@ -55,8 +55,9 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "drainer", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "drainer", On: "state", When: "fresh",
-					Outcome: "fresh_changed", Frame: "next",
+					Node: "drainer", Type: "terminal/success",
+					When:  "payload.changed",
+					Frame: "next",
 				}),
 			),
 		},
