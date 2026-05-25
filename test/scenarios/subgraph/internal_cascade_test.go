@@ -21,10 +21,10 @@ package subgraph
 import (
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {

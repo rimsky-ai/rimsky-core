@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func TestMainGraphWithEntryRejected(t *testing.T) {

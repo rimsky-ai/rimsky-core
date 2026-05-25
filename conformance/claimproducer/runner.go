@@ -23,8 +23,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // CheckResult is one row of conformance output. Err is nil on success.

@@ -31,12 +31,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/controlapi"
-	"github.com/fallguy/rimsky/foundation/auth"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/control/controlapi"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 type authFixture struct {

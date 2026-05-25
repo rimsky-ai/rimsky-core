@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/spec"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func TestValidateAttributeOverrides(t *testing.T) {

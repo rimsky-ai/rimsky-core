@@ -28,7 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // PgLargeObjectBackend stores blobs in the Postgres pg_largeobject

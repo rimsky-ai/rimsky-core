@@ -13,7 +13,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli"
 )
 
 // TagWithTemplate pairs a tag with its currently-bound template hash.

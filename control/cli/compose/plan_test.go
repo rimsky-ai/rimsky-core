@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/compose"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/compose"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // specToMap round-trips a typed spec through json into the map shape

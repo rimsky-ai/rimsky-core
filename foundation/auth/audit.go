@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Event kinds for rimsky_events.kind. See spec section "Audit" for

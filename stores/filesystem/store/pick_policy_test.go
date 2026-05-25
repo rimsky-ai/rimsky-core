@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 func TestParseFromRight(t *testing.T) {

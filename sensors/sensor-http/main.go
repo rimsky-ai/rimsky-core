@@ -22,7 +22,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 type slogAdapter struct{ l *slog.Logger }

@@ -2,7 +2,7 @@
 
 **Goal:** Reshape Rimsky into four crisply-layered concerns (foundation, modeling, service protocols, bundled services + examples) by producing three durable contract documents, splitting the Go module structure (foundation, protocols, root), settling vocabulary (region→scope; protocol-level "store"→"ClaimProducer"; foundation subsystem names), consolidating worker-request bookkeeping, unifying parallel-but-distinct internal mechanisms, and rewriting the user-facing documentation against the new structure.
 
-**Architecture:** Three Go modules — `github.com/fallguy/rimsky/foundation` (cascade engine + lock manager + integration + persistence contract), `github.com/fallguy/rimsky/protocols` (ClaimProducer/Executor/LifecycleSubscriber Go interfaces and protobuf bindings, stdlib-only deps), and the root module `github.com/fallguy/rimsky` (modeling layer, cmd binaries, bundled service reference impls). Coordinated by `go.work`. `rimsky_dispatch` and `rimsky_lock_holders` collapse to `rimsky_worker_request` + `rimsky_claim_handle` with an `is_held` flag and a `phase` column expressing the active+held lifecycle.
+**Architecture:** Three Go modules — `github.com/fallguyconsulting/rimsky/foundation` (cascade engine + lock manager + integration + persistence contract), `github.com/fallguyconsulting/rimsky/protocols` (ClaimProducer/Executor/LifecycleSubscriber Go interfaces and protobuf bindings, stdlib-only deps), and the root module `github.com/fallguyconsulting/rimsky` (modeling layer, cmd binaries, bundled service reference impls). Coordinated by `go.work`. `rimsky_dispatch` and `rimsky_lock_holders` collapse to `rimsky_worker_request` + `rimsky_claim_handle` with an `is_held` flag and a `phase` column expressing the active+held lifecycle.
 
 **Tech Stack:** Go 1.25 (multi-module via go.work), Postgres (via pgx/v5; production driver) and SQLite (via modernc.org/sqlite; dev-only driver), gRPC + protobuf for service protocols, chi for HTTP, robfig/cron/v3 for cron parsing, golangci-lint with depguard. TypeScript / npm for `executors/claude-agent`. TypeScript / Vite / React for `dashboards/rimsky-dashboard` (untouched by this plan except for path-related references).
 
@@ -104,9 +104,9 @@ Each task lists the files it touches, numbered steps with embedded code, and a f
 
    d. **Write-semantics location settled** — update §4.3 with: "The conflict predicate is evaluated against the (producer, scope-bytes) pair using the `realized_write_semantics` value carried on each claim handle. Per the byte-equal-scope uniformity invariant, all claim handles with the same (producer, scope-bytes) MUST have identical `realized_write_semantics`. The producer-declared envelope from `Capabilities()` constrains which `realized_write_semantics` values may be returned." Update §11.1 to mark resolved.
 
-   e. **Module split settled** — update §11.5 to: "Foundation is its own Go module at `github.com/fallguy/rimsky/foundation`. Rationale and implementation details in spec `2026-05-04-layer-crystallization-design.md` §4.2."
+   e. **Module split settled** — update §11.5 to: "Foundation is its own Go module at `github.com/fallguyconsulting/rimsky/foundation`. Rationale and implementation details in spec `2026-05-04-layer-crystallization-design.md` §4.2."
 
-   f. **Implementation-status section retired** — replace §10 (the current-code-locations dump) with a single short paragraph: "The code in `github.com/fallguy/rimsky/foundation` matches this contract. Cross-references from foundation packages to specific files are not maintained in this contract; see `@blessed-invariant N` annotations in source for current code locations."
+   f. **Implementation-status section retired** — replace §10 (the current-code-locations dump) with a single short paragraph: "The code in `github.com/fallguyconsulting/rimsky/foundation` matches this contract. Cross-references from foundation packages to specific files are not maintained in this contract; see `@blessed-invariant N` annotations in source for current code locations."
 
    g. **Cross-references updated** — search the document for any `docs/specs/2026-04-2*.md` or `docs/specs/2026-05-01*.md` or `docs/specs/2026-05-02-persistence*.md` or `docs/specs/2026-05-02-rimsky-cli*.md` or `docs/specs/2026-05-03-fs-store*.md` — these have all moved to `docs/history/`. Update paths accordingly.
 
@@ -329,7 +329,7 @@ The loop should print nothing.
    **Status:** Authoritative until v1, 2026-05-04.
    **Scope:** Three Rimsky service protocols — `ClaimProducer`, `Executor`, `LifecycleSubscriber`. Wire shapes, Go interfaces, capability handshakes, conformance requirements.
    **Authority:** Single source of truth for the service protocol surface. Supersedes the archived stores-redesign-v3 spec (`docs/history/2026-04-27-stores-redesign-v3-design.md`), the cleanup overlay (`docs/history/2026-04-30-stores-protocol-cleanup-design.md`), and the control-plane-and-store-lifecycle spec's service-protocol content (`docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`).
-   **Layer position:** The protocols module (`github.com/fallguy/rimsky/protocols`) carries Go interfaces and protobuf bindings; foundation calls a subset (claim verbs, executor dispatch); modeling calls a subset (lifecycle hooks).
+   **Layer position:** The protocols module (`github.com/fallguyconsulting/rimsky/protocols`) carries Go interfaces and protobuf bindings; foundation calls a subset (claim verbs, executor dispatch); modeling calls a subset (lifecycle hooks).
    ```
 
 2. Add `## 1. Overview` section explaining the three protocols, the cross-cutting layer position, and the principle that any binary may implement zero, one, or multiple protocols (declared per peer in `rimsky.yml` per modeling-layer contract §10).
@@ -464,7 +464,7 @@ grep -q 'Layer crystallization Phase 1' CHANGELOG.md
 
 1. Create `foundation/go.mod`:
    ```
-   module github.com/fallguy/rimsky/foundation
+   module github.com/fallguyconsulting/rimsky/foundation
 
    go 1.25
 
@@ -507,7 +507,7 @@ test -d foundation/shared && test -d foundation/internal
 
 1. Create `protocols/go.mod` with stdlib + grpc + protobuf only:
    ```
-   module github.com/fallguy/rimsky/protocols
+   module github.com/fallguyconsulting/rimsky/protocols
 
    go 1.25
 
@@ -605,10 +605,10 @@ go work sync && echo "go.work valid"
 
 3. Update package declarations: every moved file's `package persistence` / `package postgres` / `package sqlite` declaration is correct as-is (the package names match the directory). Do NOT rename `package` lines unless the directory name changes.
 
-4. Update import paths inside the moved files. Every file that previously imported `github.com/fallguy/rimsky/core/persistence/...` now needs to import `github.com/fallguy/rimsky/foundation/persistence/...`. Use:
+4. Update import paths inside the moved files. Every file that previously imported `github.com/fallguyconsulting/rimsky/core/persistence/...` now needs to import `github.com/fallguyconsulting/rimsky/foundation/persistence/...`. Use:
    ```sh
-   grep -rln 'github.com/fallguy/rimsky/core/persistence' foundation/ | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/core/persistence|github.com/fallguy/rimsky/foundation/persistence|g' "$f"
+   grep -rln 'github.com/fallguyconsulting/rimsky/core/persistence' foundation/ | while read f; do
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/persistence|github.com/fallguyconsulting/rimsky/foundation/persistence|g' "$f"
    done
    ```
 
@@ -633,7 +633,7 @@ ls foundation/persistence/sqlite/
 # foundation/persistence should now contain: driver.go, queue.go, lock_holders.go, types.go, migrations.go, open.go, open_test.go (and the empty .gitkeep)
 test -f foundation/persistence/driver.go
 test -f foundation/persistence/postgres/advisory_locker.go && echo "renamed"
-! grep -rn 'github.com/fallguy/rimsky/core/persistence' foundation/  # should print nothing
+! grep -rn 'github.com/fallguyconsulting/rimsky/core/persistence' foundation/  # should print nothing
 ```
 
 **Build state after this task: BROKEN.** This is expected and intentional — modeling and bundled-services callers still reference the old `core/persistence/...` paths; the build will not compile until Task 12 ("Restore buildable state") completes the import-path updates and rename cascade. Do NOT run `go build` and treat its failure as a Task 9 failure. Move on to Task 10.
@@ -683,8 +683,8 @@ test -f foundation/integration/orphan_reaper.go
 test -f foundation/locks/conflict.go
 test -f foundation/locks/types.go
 ls foundation/integration/remote/  # should have files
-! grep -rn 'github.com/fallguy/rimsky/core/store' foundation/  # foundation should not reference core/store paths
-! grep -rn 'github.com/fallguy/rimsky/core/persistence' foundation/  # already verified in Task 9
+! grep -rn 'github.com/fallguyconsulting/rimsky/core/store' foundation/  # foundation should not reference core/store paths
+! grep -rn 'github.com/fallguyconsulting/rimsky/core/persistence' foundation/  # already verified in Task 9
 ```
 
 **Build state after this task: BROKEN.** Same expectation as Task 9. Do NOT run `go build`. Task 12 is the buildable gate.
@@ -715,8 +715,8 @@ ls foundation/integration/remote/  # should have files
 
 2. Update the `option go_package` line in each `.proto` file to reflect the new module path. Example for `executor.proto`:
    ```diff
-   - option go_package = "github.com/fallguy/rimsky/proto/v1/gen;rimsky_v1";
-   + option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;rimsky_v1";
+   - option go_package = "github.com/fallguyconsulting/rimsky/proto/v1/gen;rimsky_v1";
+   + option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;rimsky_v1";
    ```
    Apply to all five `.proto` files.
 
@@ -730,10 +730,10 @@ ls foundation/integration/remote/  # should have files
 
 5. Update import paths in all Go files that previously imported the proto bindings:
    ```sh
-   grep -rln 'github.com/fallguy/rimsky/proto/v1/gen' . \
+   grep -rln 'github.com/fallguyconsulting/rimsky/proto/v1/gen' . \
      --include='*.go' | grep -v 'protocols/proto/' | grep -v 'docs/history/' \
      | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/proto/v1/gen|github.com/fallguy/rimsky/protocols/proto/v1/gen|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/proto/v1/gen|github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen|g' "$f"
    done
    ```
 
@@ -746,7 +746,7 @@ test -f protocols/proto/v1/executor.proto
 test -f protocols/proto/v1/claim_producer.proto
 test ! -d proto  # old dir gone
 make proto-gen  # regenerates without error
-! grep -rn 'github.com/fallguy/rimsky/proto/v1' . \
+! grep -rn 'github.com/fallguyconsulting/rimsky/proto/v1' . \
   --include='*.go' --exclude-dir=docs/history --exclude-dir=protocols
 ```
 
@@ -765,27 +765,27 @@ make proto-gen  # regenerates without error
 1. Globally rewrite the four import paths the foundation move broke:
    ```sh
    # 1a. core/persistence → foundation/persistence
-   grep -rln 'github.com/fallguy/rimsky/core/persistence' core/ stores/ executors/ test/ \
+   grep -rln 'github.com/fallguyconsulting/rimsky/core/persistence' core/ stores/ executors/ test/ \
      --include='*.go' | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/core/persistence|github.com/fallguy/rimsky/foundation/persistence|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/persistence|github.com/fallguyconsulting/rimsky/foundation/persistence|g' "$f"
    done
 
    # 1b. core/store types/conflict → foundation/locks
-   grep -rln '"github.com/fallguy/rimsky/core/store"' core/ stores/ executors/ test/ \
+   grep -rln '"github.com/fallguyconsulting/rimsky/core/store"' core/ stores/ executors/ test/ \
      --include='*.go' | while read f; do
-     sed -i '' 's|"github.com/fallguy/rimsky/core/store"|"github.com/fallguy/rimsky/foundation/locks"|g' "$f"
+     sed -i '' 's|"github.com/fallguyconsulting/rimsky/core/store"|"github.com/fallguyconsulting/rimsky/foundation/locks"|g' "$f"
    done
 
    # 1c. core/store/remote → foundation/integration/remote
-   grep -rln 'github.com/fallguy/rimsky/core/store/remote' core/ stores/ executors/ test/ \
+   grep -rln 'github.com/fallguyconsulting/rimsky/core/store/remote' core/ stores/ executors/ test/ \
      --include='*.go' | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/core/store/remote|github.com/fallguy/rimsky/foundation/integration/remote|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/store/remote|github.com/fallguyconsulting/rimsky/foundation/integration/remote|g' "$f"
    done
 
    # 1d. core/store/storetest → foundation/locks/storetest (if Task 10 moved it there)
-   grep -rln 'github.com/fallguy/rimsky/core/store/storetest' . \
+   grep -rln 'github.com/fallguyconsulting/rimsky/core/store/storetest' . \
      --include='*.go' --exclude-dir=docs/history | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/core/store/storetest|github.com/fallguy/rimsky/foundation/locks/storetest|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/store/storetest|github.com/fallguyconsulting/rimsky/foundation/locks/storetest|g' "$f"
    done
    ```
 
@@ -818,7 +818,7 @@ make proto-gen  # regenerates without error
    go build ./...
    ```
    Expected residual error classes after step 3:
-   - `core/store` package missing — already moved away. Any leftover `import "github.com/fallguy/rimsky/core/store"` in code outside `core/store/` is a missed substitution; re-run the step-1 sed against the affected files.
+   - `core/store` package missing — already moved away. Any leftover `import "github.com/fallguyconsulting/rimsky/core/store"` in code outside `core/store/` is a missed substitution; re-run the step-1 sed against the affected files.
    - Generated code referencing old paths — `make proto-gen` to regenerate.
    - Test fixtures referencing `core/internal/pgtest`. If pgtest moved, update the import path; if not yet moved, leave for Task 13.
 
@@ -1050,22 +1050,22 @@ ls cmd/  # should list the binary directories
 
 1. Update import paths globally:
    ```sh
-   grep -rln 'github.com/fallguy/rimsky/core/' . \
+   grep -rln 'github.com/fallguyconsulting/rimsky/core/' . \
      --include='*.go' --exclude-dir=docs --exclude-dir=foundation --exclude-dir=protocols \
      | while read f; do
-     sed -i '' 's|github.com/fallguy/rimsky/core/cmd|github.com/fallguy/rimsky/cmd|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/attributes|github.com/fallguy/rimsky/modeling/attribute|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/canonical|github.com/fallguy/rimsky/modeling/template/canonical|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/controlapi|github.com/fallguy/rimsky/modeling/controlapi|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/frame|github.com/fallguy/rimsky/modeling/frame|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/observability|github.com/fallguy/rimsky/modeling/observability|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/qualityrule|github.com/fallguy/rimsky/modeling/qualityrule|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/executor|github.com/fallguy/rimsky/modeling/executor|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/cli|github.com/fallguy/rimsky/modeling/cli|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/config|github.com/fallguy/rimsky/modeling/config|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/scheduler|github.com/fallguy/rimsky/modeling/scheduler|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/shared|github.com/fallguy/rimsky/modeling/shared|g' "$f"
-     sed -i '' 's|github.com/fallguy/rimsky/core/internal|github.com/fallguy/rimsky/modeling/internal|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/cmd|github.com/fallguyconsulting/rimsky/cmd|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/attributes|github.com/fallguyconsulting/rimsky/modeling/attribute|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/canonical|github.com/fallguyconsulting/rimsky/modeling/template/canonical|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/controlapi|github.com/fallguyconsulting/rimsky/modeling/controlapi|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/frame|github.com/fallguyconsulting/rimsky/modeling/frame|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/observability|github.com/fallguyconsulting/rimsky/modeling/observability|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/qualityrule|github.com/fallguyconsulting/rimsky/modeling/qualityrule|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/executor|github.com/fallguyconsulting/rimsky/modeling/executor|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/cli|github.com/fallguyconsulting/rimsky/modeling/cli|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/config|github.com/fallguyconsulting/rimsky/modeling/config|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/scheduler|github.com/fallguyconsulting/rimsky/modeling/scheduler|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/shared|github.com/fallguyconsulting/rimsky/modeling/shared|g' "$f"
+     sed -i '' 's|github.com/fallguyconsulting/rimsky/core/internal|github.com/fallguyconsulting/rimsky/modeling/internal|g' "$f"
    done
    ```
 
@@ -1097,7 +1097,7 @@ ls cmd/  # should list the binary directories
 go build ./...   # exit 0
 go test ./... -count=1   # exit 0
 make lint   # exit 0
-! grep -rn 'github.com/fallguy/rimsky/core/' . \
+! grep -rn 'github.com/fallguyconsulting/rimsky/core/' . \
   --include='*.go' --exclude-dir=docs --exclude-dir=foundation --exclude-dir=protocols
 test ! -d core
 ```
@@ -1162,7 +1162,7 @@ All five checks must pass.
          - "$all"
          - "!**/foundation/**"
        deny:
-         - pkg: "github.com/fallguy/rimsky/foundation/internal"
+         - pkg: "github.com/fallguyconsulting/rimsky/foundation/internal"
            desc: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
      ```
 
@@ -1185,8 +1185,8 @@ make proto-gen
    - "What this repo is" — describe the three-module layout.
    - "Package import rules" section — completely rewrite. The new rules:
      ```markdown
-     - `foundation/` — own Go module (`github.com/fallguy/rimsky/foundation`). Cascade engine + lock manager + integration + foundation persistence. Depends on `protocols` + stdlib.
-     - `protocols/` — own Go module (`github.com/fallguy/rimsky/protocols`). ClaimProducer / Executor / LifecycleSubscriber Go interfaces + protobuf bindings. Stdlib + grpc + protobuf only.
+     - `foundation/` — own Go module (`github.com/fallguyconsulting/rimsky/foundation`). Cascade engine + lock manager + integration + foundation persistence. Depends on `protocols` + stdlib.
+     - `protocols/` — own Go module (`github.com/fallguyconsulting/rimsky/protocols`). ClaimProducer / Executor / LifecycleSubscriber Go interfaces + protobuf bindings. Stdlib + grpc + protobuf only.
      - Root module — modeling layer + cmd binaries + bundled service reference impls. Depends on foundation + protocols.
      - foundation/internal/ — private to foundation; modeling and bundled services CANNOT import.
      - depguard enforces pgx isolation and foundation-internal isolation; see .golangci.yml.
@@ -1203,8 +1203,8 @@ make proto-gen
    ```markdown
    ### Refactor — Layer crystallization Phase 2: module split (γ)
 
-   - **Three Go modules established.** `github.com/fallguy/rimsky/foundation`,
-     `github.com/fallguy/rimsky/protocols`, and the root `github.com/fallguy/rimsky`.
+   - **Three Go modules established.** `github.com/fallguyconsulting/rimsky/foundation`,
+     `github.com/fallguyconsulting/rimsky/protocols`, and the root `github.com/fallguyconsulting/rimsky`.
      Coordinated by `go.work`. The `foundation` module owns cascade + locks +
      integration + foundation persistence; the `protocols` module owns the
      three service-protocol Go interfaces and protobuf bindings (stdlib +
@@ -1520,7 +1520,7 @@ grep -q 'write_semantics_envelope' protocols/proto/v1/claim_producer.proto
    ```protobuf
    syntax = "proto3";
    package rimsky.v1;
-   option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;rimsky_v1";
+   option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;rimsky_v1";
 
    service LifecycleSubscriber {
      rpc OnTemplateRegistered(OnTemplateRegisteredRequest) returns (LifecycleAck);
@@ -1674,7 +1674,7 @@ go build ./protocols/...
 
 **Steps:**
 
-1. Update foundation/integration/ to import `github.com/fallguy/rimsky/protocols/claimproducer` instead of the old `core/store` interface.
+1. Update foundation/integration/ to import `github.com/fallguyconsulting/rimsky/protocols/claimproducer` instead of the old `core/store` interface.
 
 2. Rename Go-level uses: `Store` → `ClaimProducer`, `store.Store` → `claimproducer.ClaimProducer`, etc.
 
@@ -2289,8 +2289,8 @@ go test ./foundation/... ./test/scenarios/... -count=1
        "context"
 
        "github.com/google/uuid"
-       "github.com/fallguy/rimsky/foundation/persistence"
-       "github.com/fallguy/rimsky/protocols/claimproducer"
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
    )
 
    // Engine resolves worker-request terminals. One method covers both
@@ -2544,7 +2544,7 @@ grep -q '2026-05-04-service-protocol-contract' docs/protocol.md
 
 **Steps:**
 
-1. Update for the new module layout: external authors import `github.com/fallguy/rimsky/protocols/executor` only.
+1. Update for the new module layout: external authors import `github.com/fallguyconsulting/rimsky/protocols/executor` only.
 
 2. Reference the service-protocol contract.
 
@@ -2570,7 +2570,7 @@ grep -q 'protocols/executor' docs/executor-author-guide.md
 2. Rewrite the body:
    - Title: "Writing a Claim Producer"
    - Reference: `docs/specs/2026-05-04-service-protocol-contract.md`
-   - Import path: `github.com/fallguy/rimsky/protocols/claimproducer` (and `protocols/lifecycle` if implementing both).
+   - Import path: `github.com/fallguyconsulting/rimsky/protocols/claimproducer` (and `protocols/lifecycle` if implementing both).
    - YAML config: `claim_producers:` block; `protocols:` field; `write_semantics_envelope:`.
    - Conformance: run `rimsky-claim-producer-conformance --endpoint <yourservice>:7000`.
    - Note: "store" is the colloquial term for data-backed producers (filesystem, postgres, etc.); the protocol-level term is "claim producer."

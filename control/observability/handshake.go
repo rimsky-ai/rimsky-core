@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // handshakeTimeout bounds each per-peer probe at startup. Per spec §4

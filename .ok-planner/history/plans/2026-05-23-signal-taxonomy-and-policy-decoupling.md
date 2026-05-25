@@ -154,7 +154,7 @@ The plan honors all constraints by sequencing passes in numeric order; the execu
        MessagePayload map[string]any `json:"message_payload,omitempty"`
    }
    ```
-   Import `time` and `foundationshared "github.com/fallguy/rimsky/foundation/shared"`.
+   Import `time` and `foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"`.
 2. Add a helper `func PayloadSchemaForType(t TypePath) (reflect.Type, bool)` returning the Go reflect.Type of the payload schema matching the exact-type, or the second-return `false` for prefix types (which bind `dyn` per the spec). Map exact types to their structs:
    - `terminal/success` → `TerminalSuccessPayload`
    - exact `terminal/error/<class>` (any leaf) → `TerminalErrorPayload`
@@ -218,8 +218,8 @@ The plan honors all constraints by sequencing passes in numeric order; the execu
        "context"
        "time"
 
-       "github.com/fallguy/rimsky/foundation/persistence"
-       shared "github.com/fallguy/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       shared "github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    func EmitSignal(
@@ -252,7 +252,7 @@ The plan honors all constraints by sequencing passes in numeric order; the execu
 1. Find `applyTerminalComplete` (currently in `runtime/runner_terminal_handlers.go` or `runtime/runner_terminal.go` — use `rg "func applyTerminalComplete"`). At the audit-write site (where today an event row with `kind="state_transition"` or similar gets written), replace with a call to `signal.EmitSignal(ctx, args.Persist.Events(), instanceID, nodeID, signal.Signal{Type: "terminal/success", Payload: ...}, args.Clock.Now(), tx)`.
 2. Construct the `TerminalSuccessPayload` from the terminal event data: `Changed: t.Changed`, `AttributesDelta: t.AttributesDel`, `ChangeSummary: t.ChangeSummary`. Convert to `map[string]any` via a small `payloadToMap(any) map[string]any` helper or via JSON-round-trip.
 3. **Do not delete** the existing fixed-string audit write (`kind=state_transition`, `kind=work_completed`, etc., depending on the site) yet. The new signal write is additive at this stage — both rows write for now, with different `kind` values. Pass 5 Task 52 retires the additive fixed-string write. Add a comment `// TODO(signal-taxonomy Pass 5): retire this fixed-string audit write — the kind=terminal/success signal-emit above is the canonical audit row.`
-4. Add the import `signalpkg "github.com/fallguy/rimsky/foundation/signal"`. (Use the `signalpkg` alias to avoid a collision with any local `signal` symbol.)
+4. Add the import `signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"`. (Use the `signalpkg` alias to avoid a collision with any local `signal` symbol.)
 
 **Verification:** Run any existing `applyTerminalComplete` test (find via `rg "applyTerminalComplete" --include='*_test.go'`); confirm it still passes. Then run `rg "kind.*terminal/success" runtime/` and confirm one new write site exists.
 
@@ -451,7 +451,7 @@ The plan honors all constraints by sequencing passes in numeric order; the execu
        Frame             string                    // "in" | "next"
    }
    ```
-   Import `signal "github.com/fallguy/rimsky/foundation/signal"`.
+   Import `signal "github.com/fallguyconsulting/rimsky/foundation/signal"`.
 2. Delete the `SubscriptionFilter` struct entirely.
 3. Replace `SubscriptionEdgeMap` with a per-sender prefix-trie:
    ```go
@@ -762,7 +762,7 @@ The plan honors all constraints by sequencing passes in numeric order; the execu
        WakeAt              time.Time           // only when DispatchDisposition == ParkScheduled
    }
    ```
-   Import `signal "github.com/fallguy/rimsky/foundation/signal"`.
+   Import `signal "github.com/fallguyconsulting/rimsky/foundation/signal"`.
 
 **Verification:** `go build ./foundation/spec/...` exits 0.
 

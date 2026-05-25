@@ -49,10 +49,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	stubdp "github.com/fallguy/rimsky/stores/stub/dataprocessing"
-	"github.com/fallguy/rimsky/stores/stub/server"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	stubdp "github.com/fallguyconsulting/rimsky/stores/stub/dataprocessing"
+	"github.com/fallguyconsulting/rimsky/stores/stub/server"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )
 
 // TestDataPlatformSmoke_StubStoreDataProcessing boots the stub-store
@@ -376,7 +376,7 @@ func TestDataPlatformSmoke_OpenLineageEmission(t *testing.T) {
 	event := map[string]any{
 		"eventType": "COMPLETE",
 		"eventTime": time.Now().UTC().Format(time.RFC3339Nano),
-		"producer":  "https://github.com/fallguy/rimsky/subscribers/openlineage",
+		"producer":  "https://github.com/fallguyconsulting/rimsky/subscribers/openlineage",
 		"schemaURL": "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
 		"run":       map[string]any{"runId": "11111111-1111-1111-1111-111111111111"},
 		"job":       map[string]any{"namespace": "rimsky.smoke", "name": "leaf-run"},

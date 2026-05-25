@@ -34,14 +34,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/locks"
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
 
 func TestFanOutChildErrorRetryE2E(t *testing.T) {

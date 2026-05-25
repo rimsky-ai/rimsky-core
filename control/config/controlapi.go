@@ -17,12 +17,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fallguy/rimsky/control/controlapi"
-	"github.com/fallguy/rimsky/control/observability"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/control/controlapi"
+	"github.com/fallguyconsulting/rimsky/control/observability"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // controlapiInvalidateAdapter wraps the runtime

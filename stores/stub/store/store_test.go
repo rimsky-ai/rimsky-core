@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp action.Action) *Store {

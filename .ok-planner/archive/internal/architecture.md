@@ -52,11 +52,11 @@ The four layers are realized as three Go modules tied together by `go.work`:
 
 | Module | Path | Layer | Depends on |
 |---|---|---|---|
-| `github.com/fallguy/rimsky/foundation` | `foundation/` | Layer 1 | stdlib + `protocols` + minimal third-party (`pgx`, `uuid`, `modernc.org/sqlite`) |
-| `github.com/fallguy/rimsky/protocols` | `protocols/` | Layer 3 | stdlib + grpc + protobuf only |
-| `github.com/fallguy/rimsky` (root) | `.` | Layers 2 + 4 | `foundation` + `protocols` + stdlib |
+| `github.com/fallguyconsulting/rimsky/foundation` | `foundation/` | Layer 1 | stdlib + `protocols` + minimal third-party (`pgx`, `uuid`, `modernc.org/sqlite`) |
+| `github.com/fallguyconsulting/rimsky/protocols` | `protocols/` | Layer 3 | stdlib + grpc + protobuf only |
+| `github.com/fallguyconsulting/rimsky` (root) | `.` | Layers 2 + 4 | `foundation` + `protocols` + stdlib |
 
-External service authors who write a custom claim-producer or executor in Go import `github.com/fallguy/rimsky/protocols` only — no transitive dependency on rimsky's persistence drivers, gRPC server scaffolding, or modeling code.
+External service authors who write a custom claim-producer or executor in Go import `github.com/fallguyconsulting/rimsky/protocols` only — no transitive dependency on rimsky's persistence drivers, gRPC server scaffolding, or modeling code.
 
 `go.work` at the repo root coordinates the three modules so `go test ./...`-style operations work across the workspace during development. CI publishes each module independently.
 
@@ -66,7 +66,7 @@ External service authors who write a custom claim-producer or executor in Go imp
 
 ```
 rimsky/                              # repo root
-├── foundation/                      # Layer 1 — Go module github.com/fallguy/rimsky/foundation
+├── foundation/                      # Layer 1 — Go module github.com/fallguyconsulting/rimsky/foundation
 │   ├── go.mod
 │   ├── cascade/                     # node-state machine + cascade signal
 │   ├── locks/                       # ClaimProducer interface, ClaimSpec/NamedLockSpec/ClaimResult,
@@ -81,7 +81,7 @@ rimsky/                              # repo root
 │   │   └── conformance/             # Cross-driver conformance tests.
 │   └── internal/                    # foundation-private helpers; depguard forbids modeling import.
 │
-├── protocols/                       # Layer 3 — Go module github.com/fallguy/rimsky/protocols
+├── protocols/                       # Layer 3 — Go module github.com/fallguyconsulting/rimsky/protocols
 │   ├── go.mod
 │   ├── claimproducer/               # ClaimProducer Go interface + types
 │   ├── lifecycle/                   # LifecycleSubscriber Go interface + types
@@ -92,7 +92,7 @@ rimsky/                              # repo root
 │       ├── executor.proto
 │       └── events.proto
 │
-├── modeling/                        # Layer 2 — root Go module github.com/fallguy/rimsky
+├── modeling/                        # Layer 2 — root Go module github.com/fallguyconsulting/rimsky
 │   ├── attribute/                   # Substitution engine, JSON Schema validation.
 │   ├── controlapi/                  # HTTP+JSON routes, lifecycle fan-out, instance terminator.
 │   ├── frame/                       # Frame engine (coalesce / serial_queue resolution).
@@ -135,7 +135,7 @@ rimsky/                              # repo root
 ├── test/                            # Cross-layer scenario tests + smoke fixture.
 ├── docs/                            # Architecture docs, contracts, glossary, history.
 ├── go.work                          # Workspace tying foundation + protocols + root modules.
-└── go.mod                           # Root module github.com/fallguy/rimsky
+└── go.mod                           # Root module github.com/fallguyconsulting/rimsky
 ```
 
 The repo's three Go modules are tied together by `go.work`. The pre-Phase-2 `core/` directory is gone; everything that used to live under it has migrated to `foundation/`, `modeling/`, `stores/`, `executors/`, `cmd/`, or `protocols/proto/v1/`.
@@ -328,9 +328,9 @@ The supervisor's callback endpoint runs alongside its main loop (`foundation/int
 
 Three Go modules are independently importable:
 
-- `github.com/fallguy/rimsky/foundation` — minimal embedding for custom orchestrator integrations.
-- `github.com/fallguy/rimsky/protocols` — minimal dependency for external service authors.
-- `github.com/fallguy/rimsky` — full repo, including bundled services and cmd binaries.
+- `github.com/fallguyconsulting/rimsky/foundation` — minimal embedding for custom orchestrator integrations.
+- `github.com/fallguyconsulting/rimsky/protocols` — minimal dependency for external service authors.
+- `github.com/fallguyconsulting/rimsky` — full repo, including bundled services and cmd binaries.
 
 ### 10.2 Docker images
 

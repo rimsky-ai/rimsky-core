@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/compose"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/compose"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
 )
 
 func writeFullManifest(t *testing.T) string {

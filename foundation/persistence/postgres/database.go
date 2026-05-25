@@ -19,8 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // database is the persistence.Database impl wrapping a *pgxpool.Pool plus the

@@ -7,8 +7,8 @@ package node
 import (
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/signal"
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 func TestBuildSubscriptionEdges_Empty(t *testing.T) {

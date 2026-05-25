@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/controlapi/mcp"
-	"github.com/fallguy/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // fakeCatalog implements mcp.ToolCatalog for the smoke test.

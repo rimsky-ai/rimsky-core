@@ -7,7 +7,7 @@ package node
 import (
 	"testing"
 
-	"github.com/fallguy/rimsky/graph/shared"
+	"github.com/fallguyconsulting/rimsky/graph/shared"
 	"github.com/stretchr/testify/require"
 )
 

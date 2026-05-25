@@ -19,9 +19,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // ObservabilityServer is the filesystem store's ClaimProducerObservability

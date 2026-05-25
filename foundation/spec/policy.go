@@ -7,7 +7,7 @@ package spec
 import (
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // ErrorTypePolicy and PolicyAction describe the per-error-class repair

@@ -15,7 +15,7 @@ package sqlite
 import (
 	"database/sql"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // DBFromDatabase returns the underlying *sql.DB for a sqlite-backed

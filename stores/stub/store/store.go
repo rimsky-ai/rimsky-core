@@ -14,8 +14,8 @@ import (
 	"sort"
 	"sync"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // Store is the in-memory store implementation. Two operating modes: scoped-direct

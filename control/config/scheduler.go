@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/scheduler"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/scheduler"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // SchedulerConfig wires a scheduler process. Defaults apply when

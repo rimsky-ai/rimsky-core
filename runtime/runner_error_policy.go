@@ -31,12 +31,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
-	"github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // applyErrorPolicy routes an application Error{error_class} terminal

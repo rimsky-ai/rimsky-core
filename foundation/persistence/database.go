@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Database is the umbrella over the rimsky persistence layer. One Database

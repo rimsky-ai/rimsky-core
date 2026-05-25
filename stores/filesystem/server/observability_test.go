@@ -10,9 +10,9 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 func TestObservability_Capabilities(t *testing.T) {

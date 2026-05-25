@@ -13,8 +13,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguy/rimsky/executors/stub"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/executors/stub"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Listen starts a gRPC server on an OS-assigned port and registers s as

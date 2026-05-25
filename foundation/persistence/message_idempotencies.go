@@ -19,7 +19,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // MessageIdempotencyRow is the persisted dedup tuple.

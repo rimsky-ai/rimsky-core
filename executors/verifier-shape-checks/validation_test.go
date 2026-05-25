@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // schemaWithChecks builds an attributes_schema JSON-Schema fragment

@@ -670,7 +670,7 @@ const file_executor_observability_proto_rawDesc = "" +
 	"\x15ExecutorObservability\x12\\\n" +
 	"\fCapabilities\x12&.rimsky.v1.ExecutorCapabilitiesRequest\x1a$.rimsky.v1.ObservabilityCapabilities\x128\n" +
 	"\bGetTrace\x12\x1a.rimsky.v1.GetTraceRequest\x1a\x10.rimsky.v1.Trace\x12E\n" +
-	"\vStreamTrace\x12\x1d.rimsky.v1.StreamTraceRequest\x1a\x15.rimsky.v1.TraceEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\vStreamTrace\x12\x1d.rimsky.v1.StreamTraceRequest\x1a\x15.rimsky.v1.TraceEvent0\x01BBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_executor_observability_proto_rawDescOnce sync.Once

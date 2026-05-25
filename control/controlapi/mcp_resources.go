@@ -29,10 +29,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/control/controlapi/mcp"
-	"github.com/fallguy/rimsky/foundation/auth"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Resource-read pagination bounds per spec §6.2 / §6.4.

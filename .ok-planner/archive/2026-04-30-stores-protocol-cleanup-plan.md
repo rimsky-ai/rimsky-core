@@ -4,7 +4,7 @@
 
 **Architecture:** Four coordinated changes to a Go monorepo: a proto change drives Go interface changes, which drive substrate-impl + rimsky-side + test cascades. The wire protocol shrinks from 5+1 to 4+1 verbs. After this cycle, substrate disposition is governed entirely by per-substrate config; rimsky carries only the success/failure binary.
 
-**Tech Stack:** Go (root module `github.com/fallguy/rimsky`, go.mod at repo root), Protobuf 3 + grpc-go, jackc/pgx/v5, testcontainers-go, golangci-lint. Spec: `docs/specs/2026-04-30-stores-protocol-cleanup-design.md`.
+**Tech Stack:** Go (root module `github.com/fallguyconsulting/rimsky`, go.mod at repo root), Protobuf 3 + grpc-go, jackc/pgx/v5, testcontainers-go, golangci-lint. Spec: `docs/specs/2026-04-30-stores-protocol-cleanup-design.md`.
 
 **Sequencing rationale:** Proto first — every Go interface change depends on regenerated bindings. Then `core/store/` types (Store interface, OpenOutcome). Then the gRPC client adapter and substrate impls (these compile in isolation against the new types, but rimsky-side callers are still broken until the supervisor edits land). Then rimsky-side callers. Then template-grammar removal. Then tests, scenario fixtures, smoke. Then docs. Then full verification.
 

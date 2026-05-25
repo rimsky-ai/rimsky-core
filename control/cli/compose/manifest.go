@@ -20,7 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli"
 )
 
 // Manifest is the on-disk shape of rimsky-compose.yml.

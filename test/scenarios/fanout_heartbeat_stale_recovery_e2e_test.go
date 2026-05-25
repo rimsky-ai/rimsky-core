@@ -37,12 +37,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 var _ = genv1.PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE // package-import witness

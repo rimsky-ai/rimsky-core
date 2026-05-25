@@ -23,14 +23,14 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	httpnodeerrclasses "github.com/fallguy/rimsky/executors/http-node/errorclasses"
-	verifierhttperrclasses "github.com/fallguy/rimsky/executors/verifier-http/errorclasses"
-	verifiershapeerrclasses "github.com/fallguy/rimsky/executors/verifier-shape-checks/errorclasses"
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/internal/pgtest"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	pgstoreserver "github.com/fallguy/rimsky/stores/postgres/server"
-	pgstore "github.com/fallguy/rimsky/stores/postgres/store"
+	httpnodeerrclasses "github.com/fallguyconsulting/rimsky/executors/http-node/errorclasses"
+	verifierhttperrclasses "github.com/fallguyconsulting/rimsky/executors/verifier-http/errorclasses"
+	verifiershapeerrclasses "github.com/fallguyconsulting/rimsky/executors/verifier-shape-checks/errorclasses"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	pgstoreserver "github.com/fallguyconsulting/rimsky/stores/postgres/server"
+	pgstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 )
 
 // TestHttpNode_EmitsHierarchicalErrorClasses drives the in-process

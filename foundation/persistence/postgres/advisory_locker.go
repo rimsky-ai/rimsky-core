@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // Constants moved here from graph/scheduler/scheduler.go and

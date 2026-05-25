@@ -40,8 +40,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/sensors/internal/post"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/sensors/internal/post"
 )
 
 // ObjectMeta is the per-object snapshot the lister returns. Inert in
@@ -405,7 +405,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 
 // postMessage sends one message envelope to rimsky's generic messages
 // endpoint with sender_kind="publisher". Retry-with-backoff is
-// handled by `pkg:github.com/fallguy/rimsky/sensors/internal/post`.
+// handled by `pkg:github.com/fallguyconsulting/rimsky/sensors/internal/post`.
 func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[string]any, idempotencyKey string) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {

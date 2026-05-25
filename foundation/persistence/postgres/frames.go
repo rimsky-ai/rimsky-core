@@ -19,8 +19,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // ListRunningFramesNoPendingNodes returns running frames whose nodes in

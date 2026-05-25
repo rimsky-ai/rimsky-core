@@ -22,9 +22,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguy/rimsky/protocols/claimproducer"
-	"github.com/fallguy/rimsky/runtime"
-	"github.com/fallguy/rimsky/runtime/remote"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
 )
 
 // publisherRegistryImpl satisfies runtime.PublisherRegistry over a

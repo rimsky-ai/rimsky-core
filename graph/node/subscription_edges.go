@@ -27,8 +27,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/signal"
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // SubscriptionEdge is one entry in the inverse map: a (receiver,

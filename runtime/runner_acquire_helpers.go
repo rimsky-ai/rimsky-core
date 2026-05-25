@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // acquireFanOutIfDeclared performs the E4 atomic sub-claim acquisition

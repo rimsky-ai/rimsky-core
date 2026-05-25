@@ -118,7 +118,7 @@ By default the state lives in a Docker named volume. Override with `RIMSKY_STATE
 The `./rimsky` wrapper invokes the CLI inside the rimsky container — convenient (zero install) but pays a `docker compose exec` overhead per command (~500ms-1s). For native-speed CLI:
 
 ```sh
-go install github.com/fallguy/rimsky/cmd/rimsky@latest
+go install github.com/fallguyconsulting/rimsky/cmd/rimsky@latest
 export RIMSKY_CONTROL_API=http://localhost:8080
 rimsky health
 ```

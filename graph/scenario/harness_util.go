@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // bytesReader wraps a byte slice as an io.Reader for http.Post bodies.

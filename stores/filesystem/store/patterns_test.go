@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // TestPattern_RingMode_LiveDiscovery — `recycle + on_open`. Cycles

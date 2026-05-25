@@ -52,11 +52,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/frame"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/frame"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // Config bundles everything the scheduler loop needs.

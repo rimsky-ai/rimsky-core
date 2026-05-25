@@ -30,11 +30,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // openMigratedSQLite returns a 1-conn SQLite-backed driver with

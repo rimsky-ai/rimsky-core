@@ -31,10 +31,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguy/rimsky/foundation/internal/pgtest"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // expectedTables is the post-consolidation table set. Every rimsky_*

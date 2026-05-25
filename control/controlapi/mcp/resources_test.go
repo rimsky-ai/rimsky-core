@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/controlapi/mcp"
+	"github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
 )
 
 // fakeResources is a stub ResourceCatalog that lets tests assert

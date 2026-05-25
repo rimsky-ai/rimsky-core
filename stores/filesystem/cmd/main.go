@@ -38,9 +38,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguy/rimsky/stores/common/action"
-	"github.com/fallguy/rimsky/stores/filesystem/server"
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/filesystem/server"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
 )
 
 const defaultConfigEnv = "STORE_FILESYSTEM_CONFIG"

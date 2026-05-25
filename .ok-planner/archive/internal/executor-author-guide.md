@@ -4,17 +4,17 @@ This guide is for developers who want to implement a new Rimsky executor — in 
 
 If you are operating an existing deployment, see `operator-guide.md`. The authoritative wire contract is `docs/specs/2026-05-04-service-protocol-contract.md` (see §4 for Executor specifically); this guide is the practical companion. For the conceptual model — nodes, attributes, claims, named locks — see `node-graph-design.md`. Vocabulary lives in `docs/glossary.md`.
 
-External Go authors import only `github.com/fallguy/rimsky/protocols`:
+External Go authors import only `github.com/fallguyconsulting/rimsky/protocols`:
 
 ```go
 import (
-    executorpb "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    executorpb "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
     // or the higher-level Go interface:
-    "github.com/fallguy/rimsky/protocols/executor"
+    "github.com/fallguyconsulting/rimsky/protocols/executor"
 )
 ```
 
-The `protocols/` Go module has stdlib + grpc + protobuf dependencies only. You don't need to pull in `github.com/fallguy/rimsky/foundation` or the root `github.com/fallguy/rimsky` module.
+The `protocols/` Go module has stdlib + grpc + protobuf dependencies only. You don't need to pull in `github.com/fallguyconsulting/rimsky/foundation` or the root `github.com/fallguyconsulting/rimsky` module.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes at the producer side before handing them to Rimsky if you need protection. Service-to-service auth between processes is operator-configured at the deployment layer (mTLS, IAM).
 
@@ -147,7 +147,7 @@ See `executors/http-node/` for the reference implementation. The interesting pie
 
 ```go
 import (
-    genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 type sendFunc func(*genv1.ExecuteEvent) error
@@ -643,7 +643,7 @@ The simplest implementation declares no observability and rejects the RPCs:
 
 ```go
 import (
-    genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
     "google.golang.org/grpc/codes"
     "google.golang.org/grpc/status"
 )

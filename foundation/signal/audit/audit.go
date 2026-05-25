@@ -19,9 +19,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	shared "github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	shared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // EmitSignal writes one rimsky_events row per emitted signal. The

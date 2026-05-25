@@ -229,7 +229,7 @@ Distribution channels:
 - **GitHub Releases.** Per-platform tarballs (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64).
 - **Install script.** `curl -sSL https://rimsky.io/install.sh | sh` (URL placeholder; publication is operator concern).
 - **Homebrew tap.** `brew install fallguy/rimsky/rimsky` once the tap is published.
-- **`go install`.** `go install github.com/fallguy/rimsky/cmd/rimsky-cli@latest`.
+- **`go install`.** `go install github.com/fallguyconsulting/rimsky/cmd/rimsky-cli@latest`.
 - **Docker image.** `rimsky/cli:<version>` and `rimsky/cli:latest`, distroless-based; for CI use.
 
 `rimsky-cli version` prints the build-stamped version.

@@ -21,7 +21,7 @@ Module boundaries declared by `go.mod` only protect against importing a package'
 
 The denial message: "pgx is allowed only in [allow-list]. Use the persistence interfaces."
 
-**`foundation-internal-isolation`** (`.golangci.yml:35-50`) denies any non-`foundation/` package from importing `github.com/fallguy/rimsky/foundation/internal`. The denial message: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
+**`foundation-internal-isolation`** (`.golangci.yml:35-50`) denies any non-`foundation/` package from importing `github.com/fallguyconsulting/rimsky/foundation/internal`. The denial message: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
 
 Both rules ship in the lint set `make lint` runs. CLAUDE.md's "Package import rules" section calls them out as "non-negotiable" and lists the allow-lists explicitly.
 

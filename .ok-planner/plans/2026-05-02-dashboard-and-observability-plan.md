@@ -176,7 +176,7 @@ syntax = "proto3";
 
 package rimsky.v1;
 
-option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
+option go_package = "github.com/fallguyconsulting/rimsky/proto/v1/gen;genv1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
@@ -266,7 +266,7 @@ syntax = "proto3";
 
 package rimsky.v1;
 
-option go_package = "github.com/fallguy/rimsky/proto/v1/gen;genv1";
+option go_package = "github.com/fallguyconsulting/rimsky/proto/v1/gen;genv1";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";

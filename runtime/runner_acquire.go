@@ -29,11 +29,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // lookupGraphName returns the GraphSpec.Name whose Nodes contains

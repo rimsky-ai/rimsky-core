@@ -7,7 +7,7 @@ package persistence
 import (
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // DispatchRow is the claimable unit of work (see spec §9.6 / §11.1).

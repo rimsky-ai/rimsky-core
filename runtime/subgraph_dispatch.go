@@ -70,12 +70,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	"github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // SubgraphInternalCascadeArgs is the dispatch input for the entry-success

@@ -11,7 +11,7 @@ import (
 
 	jsoncanonicalizer "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func minimalSpec() node.TemplateSpec {

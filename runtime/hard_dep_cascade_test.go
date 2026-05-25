@@ -17,11 +17,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	shared "github.com/fallguy/rimsky/foundation/shared"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/internal/pgtest"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	shared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // TestPullHardDepUpstreams_WakesParkedUpstream verifies the

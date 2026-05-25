@@ -21,8 +21,8 @@ import (
 	"github.com/google/uuid"
 	sqlite3 "modernc.org/sqlite"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // sqliteConstraintUnique mirrors `SQLITE_CONSTRAINT_UNIQUE` from

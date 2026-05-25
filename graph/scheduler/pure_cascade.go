@@ -32,13 +32,13 @@ import (
 	"context"
 	"errors"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // PureCascadeArgs bundles the dependencies ProcessPureCascade needs.

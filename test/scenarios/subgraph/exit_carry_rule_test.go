@@ -24,11 +24,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	persistence "github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	persistence "github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // fakeRunTreeForExit is the minimal RunTreeTable stand-in

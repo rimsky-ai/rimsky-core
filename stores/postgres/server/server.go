@@ -16,12 +16,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/internal/bridge"
-	"github.com/fallguy/rimsky/stores/postgres/lifecycle"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/internal/bridge"
+	"github.com/fallguyconsulting/rimsky/stores/postgres/lifecycle"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight

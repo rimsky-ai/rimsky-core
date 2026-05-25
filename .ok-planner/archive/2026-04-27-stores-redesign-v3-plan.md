@@ -10,7 +10,7 @@
 
 **Architecture:** Rimsky processes (`rimsky-supervisor`, `rimsky-scheduler`, `rimsky-control-api`) talk to stores exclusively via the 5-verb gRPC protocol. Standard store impls become separate binaries under a new `stores/` directory mirroring `executors/`. The substrate's state is decoupled from rimsky's bookkeeping tx; substrate handles its own atomicity and crash recovery. `Factory` / `Registry.BuildAll` / `StoresConfig` are removed from rimsky.
 
-**Tech Stack:** Go 1.21+ (root module `github.com/fallguy/rimsky`; `go.mod` is at the repo root, NOT under `core/`), pgx/v5, postgres 15, testcontainers-go (real postgres for scenario tests), stdlib `log/slog`, go-chi/chi, robfig/cron/v3, JSON Schema (santhosh-tekuri/jsonschema/v5), gRPC + protobuf (existing for executors; same toolchain reused for stores).
+**Tech Stack:** Go 1.21+ (root module `github.com/fallguyconsulting/rimsky`; `go.mod` is at the repo root, NOT under `core/`), pgx/v5, postgres 15, testcontainers-go (real postgres for scenario tests), stdlib `log/slog`, go-chi/chi, robfig/cron/v3, JSON Schema (santhosh-tekuri/jsonschema/v5), gRPC + protobuf (existing for executors; same toolchain reused for stores).
 
 **Build commands** (referenced throughout):
 - `go build ./...` — full-tree build

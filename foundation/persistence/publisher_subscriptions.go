@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // PublisherSubscriptionState values for col:rimsky_publisher_subscriptions.state.

@@ -22,9 +22,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 )
 
 // bootExecutor stands up a fresh Postgres + pgsstore.Store + ExecutorServer,

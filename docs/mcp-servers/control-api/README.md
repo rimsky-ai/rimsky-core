@@ -32,7 +32,7 @@ Run:
 ```sh
 CONTROL_API_URL=http://rimsky-control-api:8080 \
 CONTROL_API_TOKEN="$RIMSKY_TOKEN" \
-go run github.com/fallguy/rimsky/mcp-servers/control-api/cmd/rimsky-mcp-control-api
+go run github.com/fallguyconsulting/rimsky/mcp-servers/control-api/cmd/rimsky-mcp-control-api
 ```
 
 ## Wire protocol

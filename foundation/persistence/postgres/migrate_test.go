@@ -10,10 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/internal/pgtest"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // TestMigrateAgainstTestcontainers exercises persistence.Migrate end-to-

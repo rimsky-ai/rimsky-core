@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 type messageIdempotenciesImpl tablesImpl

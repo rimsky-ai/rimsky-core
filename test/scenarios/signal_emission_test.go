@@ -17,12 +17,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // TestSignalEmission_TerminalSuccess asserts that a successful run

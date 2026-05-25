@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 func TestParkTerminalSignal_Snooze(t *testing.T) {

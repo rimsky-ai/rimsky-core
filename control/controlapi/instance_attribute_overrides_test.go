@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T) {

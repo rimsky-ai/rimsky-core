@@ -10,7 +10,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // APIKey is one row of rimsky_api_keys. See spec

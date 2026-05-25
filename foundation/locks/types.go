@@ -18,7 +18,7 @@
 //
 // Per the layer-crystallization design (2026-05-04), the canonical Go
 // surface for the ClaimProducer protocol lives in
-// github.com/fallguy/rimsky/protocols/claimproducer. The types declared
+// github.com/fallguyconsulting/rimsky/protocols/claimproducer. The types declared
 // here are Go type aliases (not duplicate declarations) so a value
 // satisfying protocols/claimproducer.X is interchangeable with
 // foundation/locks.X. External authors should import
@@ -32,7 +32,7 @@
 package locks
 
 import (
-	"github.com/fallguy/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // ClaimID is the rimsky-generated UUID (textual form) that identifies a

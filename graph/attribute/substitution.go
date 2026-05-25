@@ -47,7 +47,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
 )
 
 // ResolveContext carries the three substitution source kinds plus the

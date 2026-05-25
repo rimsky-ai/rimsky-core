@@ -8,7 +8,7 @@ package rimsky.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
 
 // Executor is the protocol rimsky supervisors use to dispatch work to
 // external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12

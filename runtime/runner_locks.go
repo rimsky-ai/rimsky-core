@@ -20,11 +20,11 @@ import (
 	"encoding/json"
 	"sort"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	attributes "github.com/fallguy/rimsky/graph/attribute"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // sortLockSpecs orders specs by (kind, sort_key) per blessed-invariant

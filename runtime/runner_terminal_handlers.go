@@ -16,7 +16,7 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // applyTerminalError routes an executor Error{error_class} terminal

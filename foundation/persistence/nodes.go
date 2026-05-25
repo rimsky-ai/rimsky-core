@@ -8,9 +8,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // NodeRow mirrors a row of rimsky_nodes — the per-instance node-state

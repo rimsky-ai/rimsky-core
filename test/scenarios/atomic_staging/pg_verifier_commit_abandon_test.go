@@ -47,12 +47,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/internal/pgtest"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	pgtestfixture "github.com/fallguy/rimsky/stores/postgres/testfixture"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	pgtestfixture "github.com/fallguyconsulting/rimsky/stores/postgres/testfixture"
 )
 
 // fusedHarness boots a real Postgres + the fused stores/postgres/

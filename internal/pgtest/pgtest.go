@@ -19,9 +19,9 @@ import (
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // portMappingMaxAttempts caps the retry loop in resolveConnectionString.

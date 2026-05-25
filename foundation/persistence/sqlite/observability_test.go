@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // openSQLite opens an in-process SQLite driver, runs migrations, and

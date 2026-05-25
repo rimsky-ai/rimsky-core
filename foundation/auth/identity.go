@@ -4,7 +4,7 @@
 
 package auth
 
-import "github.com/fallguy/rimsky/foundation/shared"
+import "github.com/fallguyconsulting/rimsky/foundation/shared"
 
 // IdentityKind tags audit records.
 type IdentityKind string

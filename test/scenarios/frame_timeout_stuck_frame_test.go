@@ -25,9 +25,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/graph/frame"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/graph/frame"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
 )
 
 func TestFrameTimeoutStuckFrame(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/conformance"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/conformance"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 func main() {

@@ -22,10 +22,10 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	sqlitepersist "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	sqlitepersist "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 func openSQLiteDriver(t *testing.T) persistence.Database {

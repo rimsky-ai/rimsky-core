@@ -31,10 +31,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // parentSettlementSignal maps a propagated parent's new aggregated

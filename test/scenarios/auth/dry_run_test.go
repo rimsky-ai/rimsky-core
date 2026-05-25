@@ -19,8 +19,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/auth"
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 func TestDryRun_AuthCreateIsNotDryRunnable(t *testing.T) {

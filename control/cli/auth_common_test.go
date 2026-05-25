@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 func TestLoadRole_Bundled(t *testing.T) {

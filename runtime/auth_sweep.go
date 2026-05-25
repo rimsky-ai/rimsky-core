@@ -15,9 +15,9 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/fallguy/rimsky/foundation/auth"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // SweepRotationGrace revokes API keys whose rotation-grace window has

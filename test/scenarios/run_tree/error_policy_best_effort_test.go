@@ -12,10 +12,10 @@ package runtree
 import (
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 func TestErrorPolicyBestEffort_FailuresDontBlock(t *testing.T) {

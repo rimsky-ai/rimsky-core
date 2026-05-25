@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 const storeLifecycleCols = `store_registration_name, scope_kind, scope_id, state, last_event_at`

@@ -166,7 +166,7 @@ import (
     "encoding/json"
     "time"
 
-    "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // APIKey is one row of rimsky_api_keys.
@@ -282,7 +282,7 @@ var (
 
 **Steps:**
 
-1. Create `foundation/persistence/postgres/api_keys.go` with package header and imports (`pgx/v5`, `context`, `encoding/json`, `time`, `github.com/fallguy/rimsky/foundation/persistence`, `github.com/fallguy/rimsky/foundation/shared`).
+1. Create `foundation/persistence/postgres/api_keys.go` with package header and imports (`pgx/v5`, `context`, `encoding/json`, `time`, `github.com/fallguyconsulting/rimsky/foundation/persistence`, `github.com/fallguyconsulting/rimsky/foundation/shared`).
 2. Implement a `pgAPIKeys` struct that holds the `*pgxpool.Pool` (or whatever the existing accessors use — copy the pattern from `foundation/persistence/postgres/claim_handles.go`).
 3. Implement each method on the interface. Specifically:
    - `Insert` — `INSERT INTO rimsky_api_keys (id, key_hash, name, permissions, created_at, created_by_key_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`. On unique-violation error (`pgerrcode.UniqueViolation`), inspect the constraint name:
@@ -738,7 +738,7 @@ func ValidateGrant(grant Grant) error {
 ```go
 package auth
 
-import "github.com/fallguy/rimsky/foundation/shared"
+import "github.com/fallguyconsulting/rimsky/foundation/shared"
 
 // IdentityKind tags audit records.
 type IdentityKind string
@@ -793,7 +793,7 @@ import (
     "encoding/json"
     "time"
 
-    "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Event kinds for rimsky_events.kind. See spec section "Audit" for
@@ -918,7 +918,7 @@ import (
     "strings"
     "sync"
 
-    "github.com/fallguy/rimsky/foundation/auth"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // ActionEntry is one row in the canonical action registry.
@@ -1224,7 +1224,7 @@ import (
     "context"
     "net/http"
 
-    "github.com/fallguy/rimsky/foundation/auth"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // ctxKeyIdentity is the context key for the resolved Identity.
@@ -1296,9 +1296,9 @@ import (
     "sync/atomic"
     "time"
 
-    "github.com/fallguy/rimsky/foundation/auth"
-    "github.com/fallguy/rimsky/foundation/persistence"
-    foundationshared "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
+    "github.com/fallguyconsulting/rimsky/foundation/persistence"
+    foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // AuthState is the per-process auth-middleware state. Built once at
@@ -1826,9 +1826,9 @@ import (
     "net/http"
     "time"
 
-    "github.com/fallguy/rimsky/foundation/auth"
-    "github.com/fallguy/rimsky/foundation/persistence"
-    "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
+    "github.com/fallguyconsulting/rimsky/foundation/persistence"
+    "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // emitAttempted writes one auth.access_attempted event.
@@ -2401,9 +2401,9 @@ import (
     "context"
     "time"
 
-    "github.com/fallguy/rimsky/foundation/auth"
-    "github.com/fallguy/rimsky/foundation/persistence"
-    foundationshared "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
+    "github.com/fallguyconsulting/rimsky/foundation/persistence"
+    foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // SweepRotationGrace revokes keys whose rotation-grace window has
@@ -2710,8 +2710,8 @@ import (
     "encoding/json"
     "net/http"
 
-    "github.com/fallguy/rimsky/foundation/auth"
-    controlapi "github.com/fallguy/rimsky/control/controlapi"
+    "github.com/fallguyconsulting/rimsky/foundation/auth"
+    controlapi "github.com/fallguyconsulting/rimsky/control/controlapi"
 )
 
 // Catalog implements ToolCatalog by consulting the action registry
@@ -2795,7 +2795,7 @@ package controlapi
 
 import (
     "github.com/go-chi/chi/v5"
-    "github.com/fallguy/rimsky/control/controlapi/mcp"
+    "github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
 )
 
 func registerMCPRoute(r chi.Router, deps AppDeps) {

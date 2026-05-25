@@ -20,8 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/fallguy/rimsky/executors/verifier-shape-checks/checks"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/executors/verifier-shape-checks/checks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // ValidationServer implements genv1.ValidationServer.

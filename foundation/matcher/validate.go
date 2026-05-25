@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // ValidationRefs supplies the reference name-sets and policy flags

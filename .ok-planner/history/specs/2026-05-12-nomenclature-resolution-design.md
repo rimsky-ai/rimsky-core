@@ -424,7 +424,7 @@ Adopt a three-word vocabulary inside the `concept:cascade` umbrella:
 **Import-path renames** sweep the root module. Touches:
 
 - Every Go file under `modeling/` (rename via directory move).
-- Every import statement across `cmd/`, `stores/`, `executors/`, `test/`, `mcp-servers/` referencing `github.com/fallguy/rimsky/modeling/...`.
+- Every import statement across `cmd/`, `stores/`, `executors/`, `test/`, `mcp-servers/` referencing `github.com/fallguyconsulting/rimsky/modeling/...`.
 - `file:go.work` (no change — single root module covers both).
 - `file:.golangci.yml` depguard rules.
 - `file:CLAUDE.md` "Package import rules" section.
@@ -432,7 +432,7 @@ Adopt a three-word vocabulary inside the `concept:cascade` umbrella:
 
 **Concept-doc layer organization** in `file:.ok-planner/design/concepts.md` (auto-generated TOC) and any layer-grouped reference docs: regenerate post-rename.
 
-**Net structural change:** the three-Go-module architecture is preserved (`foundation/`, `protocols/`, root `github.com/fallguy/rimsky`). What changes is the root module's internal directory organization. Concept count stays at 46.
+**Net structural change:** the three-Go-module architecture is preserved (`foundation/`, `protocols/`, root `github.com/fallguyconsulting/rimsky`). What changes is the root module's internal directory organization. Concept count stays at 46.
 
 ---
 

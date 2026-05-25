@@ -30,10 +30,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	graphnode "github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	graphnode "github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // LeafRunHeldClaim is the per-held-claim entry of LeafRunRecord.HeldClaims.

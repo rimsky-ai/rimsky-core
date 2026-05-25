@@ -14,7 +14,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
-	"github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // ValidationError is a blocking problem with a template. Path locates

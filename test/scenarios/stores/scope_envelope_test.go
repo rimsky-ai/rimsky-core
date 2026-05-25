@@ -21,16 +21,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/locks/storetest"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	"github.com/fallguy/rimsky/runtime"
-	"github.com/fallguy/rimsky/runtime/executor"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
 
 // TestOpenScopeEnvelopeReachesStore deploys a one-node template,

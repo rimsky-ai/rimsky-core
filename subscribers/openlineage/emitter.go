@@ -165,7 +165,7 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 	return Event{
 		EventType:   "COMPLETE",
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
-		ProducerURI: "https://github.com/fallguy/rimsky/subscribers/openlineage",
+		ProducerURI: "https://github.com/fallguyconsulting/rimsky/subscribers/openlineage",
 		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
 		Run:         RunRef{RunID: runID},
 		Job:         JobRef{Namespace: namespace, Name: jobName},
@@ -206,7 +206,7 @@ func MakeClaimTerminalEvent(rec ClaimTerminalRecord, observedAt time.Time, names
 	return Event{
 		EventType:   eventType,
 		EventTime:   observedAt.UTC().Format(time.RFC3339Nano),
-		ProducerURI: "https://github.com/fallguy/rimsky/subscribers/openlineage",
+		ProducerURI: "https://github.com/fallguyconsulting/rimsky/subscribers/openlineage",
 		SchemaURL:   "https://openlineage.io/spec/1-0-5/OpenLineage.json#/$defs/RunEvent",
 		Run:         RunRef{RunID: runID},
 		Job:         JobRef{Namespace: namespace, Name: rec.ProducerName + jobSuffix},

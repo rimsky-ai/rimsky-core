@@ -37,10 +37,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
-	"github.com/fallguy/rimsky/stores/postgres/server"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/postgres/server"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 )
 
 // itemsTableIdentRe is the shared strict SQL identifier shape (see

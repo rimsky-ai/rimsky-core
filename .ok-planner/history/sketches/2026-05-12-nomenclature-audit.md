@@ -25,7 +25,7 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 ## Layer 1: `foundation/`
 
-(Module: `pkg:github.com/fallguy/rimsky/foundation`. Owns: cascade engine, claim/lock primitives + persistence ledgers, integration runner + sweeps, foundation persistence drivers.)
+(Module: `pkg:github.com/fallguyconsulting/rimsky/foundation`. Owns: cascade engine, claim/lock primitives + persistence ledgers, integration runner + sweeps, foundation persistence drivers.)
 
 ### `concept:cascade` — Engine that propagates "this node changed" downstream via stale-marking walks and pure-cascade fresh-rolls.
 
@@ -313,7 +313,7 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 ## Layer 2: `protocols/`
 
-(Module: `pkg:github.com/fallguy/rimsky/protocols`. Owns: gRPC service protocol Go interfaces + .proto sources + generated bindings. Stdlib + grpc + protobuf only.)
+(Module: `pkg:github.com/fallguyconsulting/rimsky/protocols`. Owns: gRPC service protocol Go interfaces + .proto sources + generated bindings. Stdlib + grpc + protobuf only.)
 
 ### `concept:executor` — Out-of-process peer service that implements `NodeExecutor.Execute` + optional ExecutorObservability.
 
@@ -398,7 +398,7 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 ## Layer 3: `modeling/` (root module)
 
-(Module: `pkg:github.com/fallguy/rimsky`. Owns: templates, instances, frames, scheduling, control-api, attributes, quality rules.)
+(Module: `pkg:github.com/fallguyconsulting/rimsky`. Owns: templates, instances, frames, scheduling, control-api, attributes, quality rules.)
 
 ### `concept:template` — Static artifact a consumer registers, keyed by `sha256-<hex>` over the JCS-canonicalized spec bytes.
 
@@ -713,7 +713,7 @@ Concepts are placed under the layer that **owns** the canonical implementation (
 
 | Surface | Citation |
 |---|---|
-| Module | `` `pkg:github.com/fallguy/rimsky/mcp-servers/control-api` `` |
+| Module | `` `pkg:github.com/fallguyconsulting/rimsky/mcp-servers/control-api` `` |
 | Concept | folded into `concept:control-api` |
 
 **Drift call:** aligned

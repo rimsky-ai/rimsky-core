@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // TestAction_Pop_FolderStays — pop drains the queue entry but keeps

@@ -43,14 +43,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
-	attributes "github.com/fallguy/rimsky/graph/attribute"
-	"github.com/fallguy/rimsky/graph/frame"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
+	"github.com/fallguyconsulting/rimsky/graph/frame"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 // resolveNodeTags resolves a node's tag strings against the instance's

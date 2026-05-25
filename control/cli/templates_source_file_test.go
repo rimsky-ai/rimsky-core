@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func TestResolveSourceFileRefs_SimpleInline(t *testing.T) {

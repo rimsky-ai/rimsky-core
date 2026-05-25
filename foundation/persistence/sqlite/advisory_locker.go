@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"sync"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // advisoryLockerImpl is the SQLite AdvisoryLocker. Cross-process locks reduce

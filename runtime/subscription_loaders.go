@@ -35,8 +35,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // templateSubscriptionEdges caches the per-template inverse

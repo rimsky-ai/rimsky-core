@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"io"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime/executor"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 // AwaitTerminal reads from the gRPC stream until it sees the terminal

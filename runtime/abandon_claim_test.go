@@ -9,7 +9,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/google/uuid"
 )
 

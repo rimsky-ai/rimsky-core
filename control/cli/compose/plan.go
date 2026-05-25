@@ -24,8 +24,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // Action is the verb a plan step performs against the control-api.

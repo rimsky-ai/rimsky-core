@@ -112,7 +112,7 @@
 
    	jsoncanonicalizer "webpki.org/jsoncanonicalizer"
 
-   	"github.com/fallguy/rimsky/core/node"
+   	"github.com/fallguyconsulting/rimsky/core/node"
    )
 
    // CanonicalSpecHash returns the rimsky-side content hash of a TemplateSpec

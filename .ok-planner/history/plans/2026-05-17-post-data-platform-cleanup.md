@@ -835,7 +835,7 @@ go test ./control/...
        "fmt"
        "time"
 
-       "github.com/fallguy/rimsky/foundation/persistence"
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
    )
 
    // SweepClaimHandleRetention deletes terminal claim_handle rows that have
@@ -882,7 +882,7 @@ go test ./control/...
        "testing"
        "time"
 
-       "github.com/fallguy/rimsky/internal/pgtest"
+       "github.com/fallguyconsulting/rimsky/internal/pgtest"
        …
    )
 
@@ -1607,7 +1607,7 @@ Plan-notes file contains a one-line summary of the advisory-lock site and the wa
        "testing"
        "time"
 
-       "github.com/fallguy/rimsky/internal/pgtest"
+       "github.com/fallguyconsulting/rimsky/internal/pgtest"
        …
    )
 

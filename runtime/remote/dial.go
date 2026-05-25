@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Dial connects to a remote producer-service over gRPC, performs the

@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // TestApplyAttributeOverrides covers the L3 + L4 runtime merge layers.

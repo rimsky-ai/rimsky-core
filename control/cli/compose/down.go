@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli"
 )
 
 // ComputeDownPlan produces the §3.7 sequence: instance deletes → template

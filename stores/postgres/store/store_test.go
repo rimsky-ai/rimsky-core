@@ -7,7 +7,7 @@ package store
 import (
 	"testing"
 
-	"github.com/fallguy/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // TestValidIdent covers the construction-time validation of operator-

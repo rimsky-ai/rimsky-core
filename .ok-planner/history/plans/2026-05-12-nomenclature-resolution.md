@@ -3,7 +3,7 @@
 **Spec:** `.ok-planner/specs/2026-05-12-nomenclature-resolution-design.md`
 **Goal:** Apply all 19 cross-layer nomenclature decisions plus per-concept ride-along renames from the 2026-05-12 audit walkthrough. End-state: one canonical name per concept across code, schema, proto, YAML, binaries, concept docs; migration chain collapsed to one baseline; root module split from `modeling/` into `graph/` + `control/`.
 **Architecture:** Spec organizes changes into 9 implementation groups (A-I). This plan executes those groups in dependency order: migration baseline first, then YAML+vocabulary code renames, then schema-residue code sweeps, then proto restructure, then comment/doc sweeps, then ride-alongs, then layer reorganization, then concept-doc mutations, then tension-file moves, then full-stack verification.
-**Tech Stack:** Go (3 modules: `foundation/`, `protocols/`, root `github.com/fallguy/rimsky`; plus `mcp-servers/` module), TypeScript (`executors/claude-agent/`), Protobuf v3, PostgreSQL 14+ + SQLite (modernc.org/sqlite, pure-Go), YAML config (`rimsky.yml`).
+**Tech Stack:** Go (3 modules: `foundation/`, `protocols/`, root `github.com/fallguyconsulting/rimsky`; plus `mcp-servers/` module), TypeScript (`executors/claude-agent/`), Protobuf v3, PostgreSQL 14+ + SQLite (modernc.org/sqlite, pure-Go), YAML config (`rimsky.yml`).
 
 ---
 
@@ -1043,18 +1043,18 @@ Covers #19. Largest structural pass. Lands after all preceding sections so impor
 
 **Steps:**
 
-1. Run `grep -rln '"github.com/fallguy/rimsky/modeling/' foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/` to capture every importing file.
-2. For each subdirectory mapping in the table (Task H.1), apply a corresponding import-path replacement via `sed -i '' -e 's|github.com/fallguy/rimsky/modeling/template|github.com/fallguy/rimsky/graph/template|g'` (and so on for each new path). Apply across all importing files. Use a small shell loop:
+1. Run `grep -rln '"github.com/fallguyconsulting/rimsky/modeling/' foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/` to capture every importing file.
+2. For each subdirectory mapping in the table (Task H.1), apply a corresponding import-path replacement via `sed -i '' -e 's|github.com/fallguyconsulting/rimsky/modeling/template|github.com/fallguyconsulting/rimsky/graph/template|g'` (and so on for each new path). Apply across all importing files. Use a small shell loop:
    ```bash
    for pair in "modeling/template:graph/template" "modeling/node:graph/node" "modeling/instance:graph/instance" "modeling/frame:graph/frame" "modeling/scheduler:graph/scheduler" "modeling/attribute:graph/attribute" "modeling/qualityrule:graph/qualityrule" "modeling/shared:graph/shared" "modeling/scenario:graph/scenario" "modeling/internal/pgtest:graph/internal/pgtest" "modeling/controlapi:control/controlapi" "modeling/cli:control/cli" "modeling/observability:control/observability" "modeling/config:control/config"; do
      old="${pair%%:*}"; new="${pair##*:}"
-     grep -rln "github.com/fallguy/rimsky/${old}" foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/ | xargs sed -i '' -e "s|github.com/fallguy/rimsky/${old}|github.com/fallguy/rimsky/${new}|g"
+     grep -rln "github.com/fallguyconsulting/rimsky/${old}" foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/ | xargs sed -i '' -e "s|github.com/fallguyconsulting/rimsky/${old}|github.com/fallguyconsulting/rimsky/${new}|g"
    done
    ```
    (Adjust path globs based on the actual file set; mcp-servers/ is its own module.)
 3. Run `go mod tidy` in each module that was touched: `cd foundation && go mod tidy`; same for `protocols/`, root, and `mcp-servers/`.
 
-**Verification:** `grep -rn '"github.com/fallguy/rimsky/modeling/' foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/` returns no matches. `cmd:make build-all` passes.
+**Verification:** `grep -rn '"github.com/fallguyconsulting/rimsky/modeling/' foundation/ protocols/ graph/ control/ cmd/ test/ stores/ executors/ mcp-servers/` returns no matches. `cmd:make build-all` passes.
 
 ### Task H.3 — Update `package modeling*` declarations to match new paths
 
@@ -1086,7 +1086,7 @@ Covers #19. Largest structural pass. Lands after all preceding sections so impor
        - "$all"
        - "!**/*_test.go"
      deny:
-       - pkg: github.com/fallguy/rimsky/control
+       - pkg: github.com/fallguyconsulting/rimsky/control
          desc: 'graph/ must not import control/ (one-way: control reads graph; graph never reads control)'
      ignore-file-rules:
        - "control/**/*.go"

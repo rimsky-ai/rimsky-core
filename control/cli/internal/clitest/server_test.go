@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func minimalSpecTyped() node.TemplateSpec {

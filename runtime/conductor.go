@@ -41,11 +41,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
 )
 
 // ConductorArgs bundles the dependencies for the foundation sweeps.

@@ -22,8 +22,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // TestPGMigration_OldFieldNames pins that an operator config using the

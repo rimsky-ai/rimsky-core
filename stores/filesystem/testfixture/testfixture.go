@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/stores/filesystem/server"
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
+	"github.com/fallguyconsulting/rimsky/stores/filesystem/server"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
 )
 
 // Config configures the loopback store-service. Only Root is required;

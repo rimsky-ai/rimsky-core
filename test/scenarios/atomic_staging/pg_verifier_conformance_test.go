@@ -38,13 +38,13 @@ import (
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/fallguy/rimsky/conformance"
-	cpconf "github.com/fallguy/rimsky/conformance/claimproducer"
-	_ "github.com/fallguy/rimsky/conformance/scenarios" // init() registration
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/runtime/executor"
-	"github.com/fallguy/rimsky/runtime/remote"
-	pgtestfixture "github.com/fallguy/rimsky/stores/postgres/testfixture"
+	"github.com/fallguyconsulting/rimsky/conformance"
+	cpconf "github.com/fallguyconsulting/rimsky/conformance/claimproducer"
+	_ "github.com/fallguyconsulting/rimsky/conformance/scenarios" // init() registration
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	pgtestfixture "github.com/fallguyconsulting/rimsky/stores/postgres/testfixture"
 )
 
 // startFusedStoreForConformance boots a real Postgres + the fused

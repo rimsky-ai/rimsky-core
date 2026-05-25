@@ -30,11 +30,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // parkReasonStorageForm converts the proto ParkReason enum to the

@@ -13,11 +13,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/internal/pgtest"
-	"github.com/fallguy/rimsky/runtime"
-	"github.com/fallguy/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 // TestRunNode_NoCandidate verifies the runner returns Ran=false with

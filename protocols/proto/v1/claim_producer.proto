@@ -24,7 +24,7 @@ syntax = "proto3";
 
 package rimsky.v1;
 
-option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
 
 // ClaimProducer is the wire-form rimsky↔producer contract. Every
 // standard claim-producer binary implements this interface; rimsky's

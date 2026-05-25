@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime/executor"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 type fakeStream struct {

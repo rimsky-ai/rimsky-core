@@ -31,9 +31,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
-	sqlchecks "github.com/fallguy/rimsky/stores/shared/sql-checks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
+	sqlchecks "github.com/fallguyconsulting/rimsky/stores/shared/sql-checks"
 )
 
 // ExecutorServer implements proto:executor.proto::Executor for the

@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // TestCapabilities pins the stub's advertised capability set: one

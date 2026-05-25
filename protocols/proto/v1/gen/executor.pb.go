@@ -1316,7 +1316,7 @@ const file_executor_proto_rawDesc = "" +
 	"\x1aPARK_REASON_AWAIT_CALLBACK\x10\x00\x12\x16\n" +
 	"\x12PARK_REASON_SNOOZE\x10\x022K\n" +
 	"\bExecutor\x12?\n" +
-	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x17.rimsky.v1.ExecuteEvent0\x01B8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\aExecute\x12\x19.rimsky.v1.ExecuteRequest\x1a\x17.rimsky.v1.ExecuteEvent0\x01BBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_executor_proto_rawDescOnce sync.Once

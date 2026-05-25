@@ -235,7 +235,7 @@ Cold-read review of `core/node/template.go` caught two issues from the resource-
 Verified `gofmt -l` is clean on template.go. The package as a whole still fails to build because `template_validator.go` references the old `OwnsResources`/`ConcurrencyTags` fields — that is Task 18 territory.
 
 ## Task 19 — state.go ReasonRestoreVersion
-**Deviation:** Task 19's brief states two verification checks: `go test ./core/node/... -count=1` passes (it does — `ok github.com/fallguy/rimsky/core/node 0.340s`) and `grep -r ReasonRestoreVersion core/` returns nothing. The grep still finds two remaining references after Task 19 lands: `core/scheduler/invalidate.go:204` (cleaned up by Task 21) and `core/supervisor/on_error_test.go:72` (not explicitly enumerated by Task 25, but lives in the supervisor package which Tasks 26–29 rewrite + Task 25's catch-all `grep -rn 'RestoreVersion\|restore_version'` sweep). The `core/node` package's own state-machine surface and tests no longer reference `ReasonRestoreVersion`.
+**Deviation:** Task 19's brief states two verification checks: `go test ./core/node/... -count=1` passes (it does — `ok github.com/fallguyconsulting/rimsky/core/node 0.340s`) and `grep -r ReasonRestoreVersion core/` returns nothing. The grep still finds two remaining references after Task 19 lands: `core/scheduler/invalidate.go:204` (cleaned up by Task 21) and `core/supervisor/on_error_test.go:72` (not explicitly enumerated by Task 25, but lives in the supervisor package which Tasks 26–29 rewrite + Task 25's catch-all `grep -rn 'RestoreVersion\|restore_version'` sweep). The `core/node` package's own state-machine surface and tests no longer reference `ReasonRestoreVersion`.
 **Reason:** Task 19's grep verification is written as if directly satisfiable, but the plan sequences cleanup of `ReasonRestoreVersion` callers across Tasks 21 and 25/26+. Same "defer to Task X's verification" pattern as Tasks 10/15/17/18 — `go test ./core/node/...` is the actually-satisfiable check at this point.
 **Surfaced for:** Task 21 must remove the `node.ReasonRestoreVersion` reference in `core/scheduler/invalidate.go:204`. Task 25 (or whichever of 26–29 rewrites `core/supervisor/on_error_test.go`) must remove the `nodepkg.ReasonRestoreVersion` reference there. Until those land, `go build ./...` fails on the unresolved `ReasonRestoreVersion` symbol — expected per the plan's broader sequencing.
 
@@ -364,7 +364,7 @@ Per Task 27's "Surfaced for" note ("the old `ApplyTerminalOutcome` / `Commit` / 
 **Build state:** repo-wide `go build ./...` remains red as expected — `terminal_outcome.go::ApplyTerminalOutcome` still references the now-deleted `Commit`, and `commit_test.go` still references `supervisor.Commit` / `supervisor.CommitArgs`. Task 29 (terminal_outcome.go rewrite) and Task 31 (test rewrite) close those out.
 
 **Verification:**
-- `grep -rn '"github.com/fallguy/rimsky/core/resource' core/supervisor/commit.go` returns nothing (file no longer exists). Task brief verification step satisfied.
+- `grep -rn '"github.com/fallguyconsulting/rimsky/core/resource' core/supervisor/commit.go` returns nothing (file no longer exists). Task brief verification step satisfied.
 
 ## Task 29 — terminal_outcome.go
 

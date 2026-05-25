@@ -96,9 +96,9 @@ Higher layers depend on lower layers. Service protocols are cross-cutting: found
 
 Three Go modules:
 
-- **`github.com/fallguy/rimsky/foundation`** — cascade engine, lock manager, integration, foundation persistence contract. Depends on stdlib + `protocols`.
-- **`github.com/fallguy/rimsky/protocols`** — `ClaimProducer`, `Executor`, `LifecycleSubscriber` Go interface types and protobuf-generated bindings. Depends on stdlib only. External service authors import this module to write a custom service implementation without pulling rimsky's transitive deps.
-- **`github.com/fallguy/rimsky`** (root) — modeling layer (templates, instances, frames, schedules, attributes, control-plane API), cmd binaries, bundled service reference implementations (`stores/*`, `executors/*`). Depends on `foundation` + `protocols`.
+- **`github.com/fallguyconsulting/rimsky/foundation`** — cascade engine, lock manager, integration, foundation persistence contract. Depends on stdlib + `protocols`.
+- **`github.com/fallguyconsulting/rimsky/protocols`** — `ClaimProducer`, `Executor`, `LifecycleSubscriber` Go interface types and protobuf-generated bindings. Depends on stdlib only. External service authors import this module to write a custom service implementation without pulling rimsky's transitive deps.
+- **`github.com/fallguyconsulting/rimsky`** (root) — modeling layer (templates, instances, frames, schedules, attributes, control-plane API), cmd binaries, bundled service reference implementations (`stores/*`, `executors/*`). Depends on `foundation` + `protocols`.
 
 `go.work` at the repo root coordinates the three modules so `go test ./...` style operations work across the workspace during development.
 

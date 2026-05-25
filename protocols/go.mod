@@ -1,4 +1,4 @@
-module github.com/fallguy/rimsky/protocols
+module github.com/fallguyconsulting/rimsky/protocols
 
 go 1.25.0
 

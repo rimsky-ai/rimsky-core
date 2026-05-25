@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli"
 )
 
 // stubServer wraps httptest.NewServer with a routes map so each test

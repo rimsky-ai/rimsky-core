@@ -1196,7 +1196,7 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\aRelease\x12\x19.rimsky.v1.ReleaseRequest\x1a\x1a.rimsky.v1.ReleaseResponse\x12I\n" +
 	"\n" +
 	"SplitScope\x12\x1c.rimsky.v1.SplitScopeRequest\x1a\x1d.rimsky.v1.SplitScopeResponse\x12Z\n" +
-	"\x0eScopesConflict\x12%.rimsky.v1.ClaimScopesConflictRequest\x1a!.rimsky.v1.ScopesConflictResponseB8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x0eScopesConflict\x12%.rimsky.v1.ClaimScopesConflictRequest\x1a!.rimsky.v1.ScopesConflictResponseBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_claim_producer_proto_rawDescOnce sync.Once

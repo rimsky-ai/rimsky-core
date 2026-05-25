@@ -7,9 +7,9 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/foundation/matcher"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/matcher"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // applyAttributeOverrides composes the post-resolution attribute bag

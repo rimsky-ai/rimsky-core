@@ -10,10 +10,10 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/fallguy/rimsky/foundation/matcher"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/spec"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/matcher"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // errAttributeOverridesInvalid is the sentinel returned by

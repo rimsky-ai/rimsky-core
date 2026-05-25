@@ -13,7 +13,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 func TestObservability_Capabilities(t *testing.T) {

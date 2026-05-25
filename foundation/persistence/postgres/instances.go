@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // errInstanceIDRequired is returned by Create when in.ID is the zero UUID.

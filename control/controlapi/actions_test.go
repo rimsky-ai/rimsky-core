@@ -16,10 +16,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fallguy/rimsky/foundation/auth"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 func TestActionRegistry_RegisterAndLookup(t *testing.T) {

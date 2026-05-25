@@ -37,10 +37,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/protocols/claimproducer"
-	"github.com/fallguy/rimsky/runtime/remote"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
 )
 
 // capabilitiesHandshakeTimeout bounds the per-producer Capabilities() RPC

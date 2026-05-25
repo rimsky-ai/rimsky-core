@@ -1,11 +1,11 @@
-module github.com/fallguy/rimsky
+module github.com/fallguyconsulting/rimsky
 
 go 1.25.0
 
 require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
-	github.com/fallguy/rimsky/foundation v0.0.0
-	github.com/fallguy/rimsky/protocols v0.0.0
+	github.com/fallguyconsulting/rimsky/foundation v0.0.0
+	github.com/fallguyconsulting/rimsky/protocols v0.0.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -92,6 +92,6 @@ require (
 )
 
 replace (
-	github.com/fallguy/rimsky/foundation => ./foundation
-	github.com/fallguy/rimsky/protocols => ./protocols
+	github.com/fallguyconsulting/rimsky/foundation => ./foundation
+	github.com/fallguyconsulting/rimsky/protocols => ./protocols
 )

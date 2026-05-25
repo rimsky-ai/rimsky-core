@@ -19,8 +19,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguy/rimsky/executors/verifier-http/errorclasses"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/executors/verifier-http/errorclasses"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // ObservabilityServer is the verifier-http observability handler. No

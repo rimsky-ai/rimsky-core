@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/locks/storetest"
-	"github.com/fallguy/rimsky/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
 )
 
 // templateBodyWithTag wraps validTemplateBody and attaches a tag.

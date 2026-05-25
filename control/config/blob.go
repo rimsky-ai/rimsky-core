@@ -7,8 +7,8 @@ package config
 import (
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
 )
 
 // OpenBlobBackend constructs the BlobBackend selected by cfg.Backend

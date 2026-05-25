@@ -811,7 +811,7 @@ const file_data_processing_proto_rawDesc = "" +
 	"\x10AbandonCandidate\x12\".rimsky.v1.AbandonCandidateRequest\x1a\x16.google.protobuf.Empty\x12O\n" +
 	"\fListVersions\x12\x1e.rimsky.v1.ListVersionsRequest\x1a\x1f.rimsky.v1.ListVersionsResponse\x12U\n" +
 	"\x0eListPartitions\x12 .rimsky.v1.ListPartitionsRequest\x1a!.rimsky.v1.ListPartitionsResponse\x12[\n" +
-	"\x10GetVersionSchema\x12\".rimsky.v1.GetVersionSchemaRequest\x1a#.rimsky.v1.GetVersionSchemaResponseB8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x10GetVersionSchema\x12\".rimsky.v1.GetVersionSchemaRequest\x1a#.rimsky.v1.GetVersionSchemaResponseBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_data_processing_proto_rawDescOnce sync.Once

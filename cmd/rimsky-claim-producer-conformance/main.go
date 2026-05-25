@@ -30,9 +30,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/fallguy/rimsky/conformance/claimproducer"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/runtime/remote"
+	"github.com/fallguyconsulting/rimsky/conformance/claimproducer"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
 )
 
 func main() {

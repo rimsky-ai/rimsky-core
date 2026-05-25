@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // outcomeVerbName maps AggregateOutcome to the producer-verb name for

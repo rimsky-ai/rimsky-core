@@ -21,7 +21,7 @@
 
 package runtime
 
-import "github.com/fallguy/rimsky/runtime/clientiface"
+import "github.com/fallguyconsulting/rimsky/runtime/clientiface"
 
 // DataProcessingClient is the rimsky-side wrapper around a producer's
 // DataProcessing gRPC client. See `clientiface.DataProcessingClient`

@@ -12,9 +12,9 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	shared "github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	shared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // CascadeSubscribersStaleInTxForTest invokes the unexported

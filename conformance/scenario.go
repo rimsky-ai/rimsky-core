@@ -10,7 +10,7 @@ package conformance
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 // Env is the per-run environment a Scenario receives. It bundles the dialed

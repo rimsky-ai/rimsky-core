@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime/executor"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 // Result is the outcome of running a single Scenario.

@@ -17,14 +17,14 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
-	attributes "github.com/fallguy/rimsky/graph/attribute"
-	"github.com/fallguy/rimsky/graph/node"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
+	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // attributeValidationError wraps non-resolution attribute failures

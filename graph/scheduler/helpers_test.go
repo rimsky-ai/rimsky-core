@@ -16,8 +16,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	nodepkg "github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // insertDeployedTemplate inserts a template row in 'deployed' state with

@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 const templateTagCols = `tag, template_id, updated_at`

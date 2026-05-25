@@ -9,7 +9,7 @@
 
 **Architecture:** The rimsky platform has three architectural collections (orchestrator, stores, executors). This work touches the orchestrator's interaction with stores: `core/store/` (rewritten interface + types + registry + schema helpers), in-process store implementations (`filesystem`, postgres-rename, `stub`), `core/attributes/` (substitution paths), `core/supervisor/` (atomic acquisition + auto-terminal), `core/scheduler/`, `core/queue/`, `core/node/` (template parser), `core/migrations/`, plus operator config schema, scenario tests, and docs.
 
-**Tech Stack:** Go 1.21+ (root module `github.com/fallguy/rimsky`; `go.mod` is at the repo root, NOT under `core/`), pgx/v5, postgres 15, testcontainers-go (real postgres for scenario tests), stdlib `log/slog` (no Zap/Zerolog — see lint rules), go-chi/chi, robfig/cron/v3, JSON Schema (santhosh-tekuri/jsonschema/v5).
+**Tech Stack:** Go 1.21+ (root module `github.com/fallguyconsulting/rimsky`; `go.mod` is at the repo root, NOT under `core/`), pgx/v5, postgres 15, testcontainers-go (real postgres for scenario tests), stdlib `log/slog` (no Zap/Zerolog — see lint rules), go-chi/chi, robfig/cron/v3, JSON Schema (santhosh-tekuri/jsonschema/v5).
 
 **Build commands** (referenced throughout):
 - `go build ./...` — full-tree build

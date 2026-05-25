@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // hardDepSchema is a tiny helper for assembling an attributes schema

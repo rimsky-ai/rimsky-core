@@ -36,7 +36,7 @@ func TestVerifyImportsApacheImportingAGPLFails(t *testing.T) {
 	src := `package x
 
 import (
-	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
 )
 
 var _ = cascade.Sentinel
@@ -53,7 +53,7 @@ func TestVerifyImportsAGPLImportingApacheOK(t *testing.T) {
 	dir := t.TempDir()
 	src := `package x
 
-import "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+import "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 
 var _ = gen.Sentinel
 `
@@ -68,7 +68,7 @@ func TestVerifyImportsApacheImportingApacheOK(t *testing.T) {
 	dir := t.TempDir()
 	src := `package x
 
-import "github.com/fallguy/rimsky/foundation/locks"
+import "github.com/fallguyconsulting/rimsky/foundation/locks"
 
 var _ = locks.Sentinel
 `
@@ -87,8 +87,8 @@ import (
 	"context"
 
 	// some comment
-	"github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/foundation/cascade" // trailing comment
+	"github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade" // trailing comment
 )
 
 var _ = context.Background
@@ -108,11 +108,11 @@ func TestImportToRepoPath(t *testing.T) {
 		in, want string
 		ok       bool
 	}{
-		{"github.com/fallguy/rimsky/foundation", "foundation", true},
-		{"github.com/fallguy/rimsky/foundation/cascade", "foundation/cascade", true},
-		{"github.com/fallguy/rimsky/protocols/proto/v1/gen", "protocols/proto/v1/gen", true},
-		{"github.com/fallguy/rimsky/cmd/rimsky", "cmd/rimsky", true},
-		{"github.com/fallguy/rimsky", "", true},
+		{"github.com/fallguyconsulting/rimsky/foundation", "foundation", true},
+		{"github.com/fallguyconsulting/rimsky/foundation/cascade", "foundation/cascade", true},
+		{"github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen", "protocols/proto/v1/gen", true},
+		{"github.com/fallguyconsulting/rimsky/cmd/rimsky", "cmd/rimsky", true},
+		{"github.com/fallguyconsulting/rimsky", "", true},
 		{"github.com/other/proj", "", false},
 	}
 	for _, tc := range cases {

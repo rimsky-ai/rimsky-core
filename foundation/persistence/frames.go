@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // FrameTable is the persistence surface the frame engine (graph/frame)

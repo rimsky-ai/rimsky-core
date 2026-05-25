@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // BlobOrphans returns the sqlite BlobOrphanTable impl.

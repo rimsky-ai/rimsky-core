@@ -26,10 +26,10 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/server"
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/store"
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/sweep"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/server"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/store"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/sweep"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // emptyHandleSet is the default for `Live`. Production wiring should

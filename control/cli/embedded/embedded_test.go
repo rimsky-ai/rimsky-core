@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 func TestEmbeddedFiles_Present(t *testing.T) {

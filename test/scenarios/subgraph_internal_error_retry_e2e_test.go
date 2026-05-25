@@ -25,10 +25,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	tmplspec "github.com/fallguy/rimsky/foundation/spec"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 func TestSubgraphInternalErrorRetryE2E(t *testing.T) {

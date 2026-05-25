@@ -18,12 +18,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguy/rimsky/stores/internal/bridge"
-	dataprocessing "github.com/fallguy/rimsky/stores/stub/dataprocessing"
-	"github.com/fallguy/rimsky/stores/stub/lifecycle"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	"github.com/fallguyconsulting/rimsky/stores/internal/bridge"
+	dataprocessing "github.com/fallguyconsulting/rimsky/stores/stub/dataprocessing"
+	"github.com/fallguyconsulting/rimsky/stores/stub/lifecycle"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // gracefulStopBudget bounds grpcSrv.GracefulStop() so a hung in-flight

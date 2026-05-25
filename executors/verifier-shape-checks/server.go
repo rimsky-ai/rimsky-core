@@ -35,8 +35,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/executors/verifier-shape-checks/checks"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/executors/verifier-shape-checks/checks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Server implements genv1.ExecutorServer. Stateless; no per-server

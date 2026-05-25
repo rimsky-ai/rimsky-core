@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
 )
 
 func deployedTemplate(t *testing.T, srv *clitest.Server, tag string) string {

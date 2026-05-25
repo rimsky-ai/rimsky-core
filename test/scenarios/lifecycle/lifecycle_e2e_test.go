@@ -32,14 +32,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	"github.com/fallguy/rimsky/protocols/claimproducer"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
 
 // TestLifecycleE2E_FullSequence walks the full template/instance

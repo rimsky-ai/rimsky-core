@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli"
 )
 
 func TestRunRun_Keep(t *testing.T) {

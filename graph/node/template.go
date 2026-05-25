@@ -31,7 +31,7 @@
 
 package node
 
-import "github.com/fallguy/rimsky/foundation/spec"
+import "github.com/fallguyconsulting/rimsky/foundation/spec"
 
 // Row-type aliases — the canonical definitions live in
 // foundation/spec. These aliases keep `node.TemplateSpec` etc. working

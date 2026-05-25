@@ -427,7 +427,7 @@ const file_lifecycle_proto_rawDesc = "" +
 	"\x14OnTemplateUndeployed\x12&.rimsky.v1.OnTemplateUndeployedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12[\n" +
 	"\x16OnTemplateDeregistered\x12(.rimsky.v1.OnTemplateDeregisteredRequest\x1a\x17.rimsky.v1.LifecycleAck\x12Q\n" +
 	"\x11OnInstanceCreated\x12#.rimsky.v1.OnInstanceCreatedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12W\n" +
-	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a\x17.rimsky.v1.LifecycleAckB8Z6github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a\x17.rimsky.v1.LifecycleAckBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_lifecycle_proto_rawDescOnce sync.Once

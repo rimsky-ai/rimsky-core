@@ -14,10 +14,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	"github.com/fallguy/rimsky/graph/frame"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/graph/frame"
 )
 
 // invalidationCascadeSignal is the synthetic signal cascade-from-

@@ -17,7 +17,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/fallguy/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // authModeDryRun re-exports auth.ModeDryRun as a file-scope alias so

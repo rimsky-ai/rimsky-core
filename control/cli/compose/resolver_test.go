@@ -11,8 +11,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/template/canonical"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/template/canonical"
 )
 
 const exampleSpec = `name: example

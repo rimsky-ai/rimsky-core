@@ -29,17 +29,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/foundation/shared"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/runtime/executor"
-	"github.com/fallguy/rimsky/stores/common/action"
-	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
-	pgsfixture "github.com/fallguy/rimsky/stores/postgres/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
+	pgsfixture "github.com/fallguyconsulting/rimsky/stores/postgres/testfixture"
 )
 
 // SmokeStack bundles the live, fully-wired stack.

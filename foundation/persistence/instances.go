@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // InstanceRow mirrors a row of rimsky_instances. An instance binds to a

@@ -141,7 +141,7 @@ Entry format (one per task that warranted a note):
 
 ## Task H.4 — root + foundation go.mod updates for `make tidy` cleanliness
 
-**Deviation:** The pre-existing `make tidy` was broken because the root `go.mod` didn't declare its dependency on `github.com/fallguy/rimsky/foundation` and `github.com/fallguy/rimsky/protocols` (it relied entirely on `go.work`). After H, `tidy` was still broken. Added explicit `require + replace` blocks to root `go.mod` (require + replace foundation and protocols). The matching root require+replace was NOT initially added to `foundation/go.mod`; that gap landed in cleanup cycle 2 (see Issue #6 below).
+**Deviation:** The pre-existing `make tidy` was broken because the root `go.mod` didn't declare its dependency on `github.com/fallguyconsulting/rimsky/foundation` and `github.com/fallguyconsulting/rimsky/protocols` (it relied entirely on `go.work`). After H, `tidy` was still broken. Added explicit `require + replace` blocks to root `go.mod` (require + replace foundation and protocols). The matching root require+replace was NOT initially added to `foundation/go.mod`; that gap landed in cleanup cycle 2 (see Issue #6 below).
 
 **Reason:** `make tidy` is part of the L.1 verification path. The pre-existing breakage was hidden because no one ran it. Pre-v1; the require+replace shape is idiomatic for a workspace where modules have circular dependencies.
 
@@ -363,8 +363,8 @@ path reference → `graph/executor/`).
 `foundation/integration/` imports `graph/...`; the cleanup-cycle-1
 notes claimed both root + protocols had been added to
 `foundation/go.mod` but only protocols was on disk. Added
-`require github.com/fallguy/rimsky v0.0.0` and the matching
-`replace github.com/fallguy/rimsky => ..`. `cmd:cd foundation && go mod tidy`
+`require github.com/fallguyconsulting/rimsky v0.0.0` and the matching
+`replace github.com/fallguyconsulting/rimsky => ..`. `cmd:cd foundation && go mod tidy`
 expands the require block to include the transitive deps cleanly.
 
 ## Issue 7 — `file:CLAUDE.md` foundation-imports-graph claim corrected
@@ -1420,7 +1420,7 @@ Per stage:
     runner_named_events, runner_terminal*, sweep_parked,
     userdata_overrides, wake_parked, and `remote/`).
   - `foundation/go.mod` no longer carries
-    `replace github.com/fallguy/rimsky => ..` — foundation is now
+    `replace github.com/fallguyconsulting/rimsky => ..` — foundation is now
     self-contained except for the documented `foundation/persistence` →
     `graph/node` row-type residual (allowed via per-file depguard
     exemption).
@@ -1513,7 +1513,7 @@ that hit this (`auto_terminal_test.go`, `cascade_invalidate_test.go`,
 - `go build ./...` from root — clean.
 - `make docs-roots` — clean (llms*.txt mirrors refreshed).
 - `cd foundation && go mod tidy` — **fails standalone** with
-  "cannot find module providing package github.com/fallguy/rimsky/graph/node",
+  "cannot find module providing package github.com/fallguyconsulting/rimsky/graph/node",
   which is the expected failure mode of the documented
   `foundation/persistence` → `graph/node` residual. Foundation resolves
   this dependency via `go.work` during normal builds; tidying foundation
@@ -1742,7 +1742,7 @@ to point readers at `foundation/spec/` instead.
   conformance, shared, locks).
 - `make build-all` — clean (foundation, protocols, root).
 - `make lint` — clean. Verified `foundation-purity` still fires by
-  temporarily adding an `import _ "github.com/fallguy/rimsky/graph/node"`
+  temporarily adding an `import _ "github.com/fallguyconsulting/rimsky/graph/node"`
   to `foundation/shared/test_violation.go` and re-running lint —
   produced the expected `is not allowed from list 'foundation-purity'`
   error.

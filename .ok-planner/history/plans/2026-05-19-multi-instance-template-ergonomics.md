@@ -1041,10 +1041,10 @@ go build ./stores/postgres/...
 
        "google.golang.org/protobuf/types/known/structpb"
 
-       sqlchecks "github.com/fallguy/rimsky/stores/shared/sql-checks"
-       pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+       sqlchecks "github.com/fallguyconsulting/rimsky/stores/shared/sql-checks"
+       pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 
-       genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+       genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
    )
 
    // ExecutorServer implements proto:executor.proto::Executor for the

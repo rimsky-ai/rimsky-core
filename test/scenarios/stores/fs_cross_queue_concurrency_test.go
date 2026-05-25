@@ -18,14 +18,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/cascade"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	"github.com/fallguy/rimsky/stores/common/action"
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
-	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
+	fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
 )
 
 func TestFsCrossQueueConcurrency(t *testing.T) {

@@ -21,7 +21,7 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // handleAcquireUnavailable routes pre-dispatch acquisition failure

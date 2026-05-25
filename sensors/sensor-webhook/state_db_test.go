@@ -11,7 +11,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
 )
 
 // TestSubscribe_RestartReplay_PreloadsLastIdempotency drives the path

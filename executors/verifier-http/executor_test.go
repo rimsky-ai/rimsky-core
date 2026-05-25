@@ -13,8 +13,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguy/rimsky/executors/verifier-http/errorclasses"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/executors/verifier-http/errorclasses"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 type fakeStream struct{ events []*genv1.ExecuteEvent }

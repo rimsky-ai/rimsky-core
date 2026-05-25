@@ -26,9 +26,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	signalpkg "github.com/fallguy/rimsky/foundation/signal"
-	signalaudit "github.com/fallguy/rimsky/foundation/signal/audit"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
 )
 
 // processNamedEvents walks the captured event list, persists each via

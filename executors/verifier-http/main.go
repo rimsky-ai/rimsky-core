@@ -16,7 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Bundled verifier-http executor — POSTs payload to a URL and checks

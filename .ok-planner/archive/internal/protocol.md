@@ -2,7 +2,7 @@
 
 > **This document is a pointer.** The authoritative source for the three Rimsky service protocols is `docs/specs/2026-05-04-service-protocol-contract.md`. That contract supersedes everything that previously lived here.
 
-The Rimsky service-protocol surface is three protocols carried in the `protocols/` Go module (`github.com/fallguy/rimsky/protocols`):
+The Rimsky service-protocol surface is three protocols carried in the `protocols/` Go module (`github.com/fallguyconsulting/rimsky/protocols`):
 
 - **`ClaimProducer`** — five methods (`Open` / `Commit` / `Abandon` / `Release` + `Capabilities()`). Foundation calls this at acquisition (`Open`), at executor terminal (`Commit` / `Abandon` / `Release` on non-held claims), and at auto-terminal (`Commit` / `Abandon` on held claims). Proto: `protocols/proto/v1/claim_producer.proto`. Go interface: `protocols/claimproducer/`.
 - **`LifecycleSubscriber`** — six methods (`OnTemplateRegistered/Deployed/Undeployed/Deregistered`, `OnInstanceCreated/Terminated`). Modeling (control-api) calls this on template/instance state transitions. Proto: `protocols/proto/v1/lifecycle.proto`. Go interface: `protocols/lifecycle/`.

@@ -33,7 +33,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Server implements genv1.ExecutorServer.

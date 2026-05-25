@@ -39,16 +39,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
-	"github.com/fallguy/rimsky/runtime"
-	"github.com/fallguy/rimsky/runtime/executor"
-	"github.com/fallguy/rimsky/runtime/remote"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
 
 // TestClaimScopeClaimRace_OneAcquirerWins exercises the single-writer-per-

@@ -7,7 +7,7 @@ package shared
 import (
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // Severity / BackoffKind / JitterKind are aliased from foundation/spec

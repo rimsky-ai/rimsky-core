@@ -14,12 +14,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguy/rimsky/foundation/persistence/postgres"
-	"github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/internal/pgtest"
-	"github.com/fallguy/rimsky/runtime"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
 func seedIdempotencyRow(ctx context.Context, t *testing.T, d persistence.Database, instanceID shared.UUID, createdAt time.Time) shared.UUID {

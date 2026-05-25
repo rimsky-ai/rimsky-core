@@ -17,9 +17,9 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	"github.com/fallguy/rimsky/foundation/shared"
-	attributes "github.com/fallguy/rimsky/graph/attribute"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
 )
 
 // ResumeResult reports whether the resume call was the first one for

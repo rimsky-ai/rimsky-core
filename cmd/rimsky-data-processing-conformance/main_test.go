@@ -15,10 +15,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguy/rimsky/stores/stub/testfixture"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
 
 // TestDataProcessingConformance_StubStore confirms the

@@ -6,19 +6,19 @@ This guide is for developers who want to implement a new Rimsky claim producer �
 
 The authoritative wire contract is `docs/specs/2026-05-04-service-protocol-contract.md` (see §2 for ClaimProducer specifically); this guide is the practical companion. For operator context, see `operator-guide.md`. For the conceptual model — claims, named locks, scope conflict — see `node-graph-design.md`. Vocabulary lives in `docs/glossary.md`.
 
-External Go authors import only `github.com/fallguy/rimsky/protocols`:
+External Go authors import only `github.com/fallguyconsulting/rimsky/protocols`:
 
 ```go
 import (
-    "github.com/fallguy/rimsky/protocols/claimproducer"
+    "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
     // and if you also implement LifecycleSubscriber:
-    "github.com/fallguy/rimsky/protocols/lifecycle"
+    "github.com/fallguyconsulting/rimsky/protocols/lifecycle"
     // proto bindings:
-    genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 ```
 
-The `protocols/` Go module has stdlib + grpc + protobuf dependencies only. You don't need to pull in `github.com/fallguy/rimsky/foundation` or the root `github.com/fallguy/rimsky` module.
+The `protocols/` Go module has stdlib + grpc + protobuf dependencies only. You don't need to pull in `github.com/fallguyconsulting/rimsky/foundation` or the root `github.com/fallguyconsulting/rimsky` module.
 
 > **Auth-blind advisory.** Rimsky has no machinery for credentials, encryption, or access control. Encrypt sensitive bytes before handing them to Rimsky if you need protection. Service-to-service auth is operator-configured at the deployment layer (mTLS, IAM).
 
@@ -176,7 +176,7 @@ The skeleton:
 // stores/<kind>/store/server.go
 
 import (
-    genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
     "github.com/google/uuid"
     "google.golang.org/grpc"
 )
@@ -313,8 +313,8 @@ If your producer needs to react to control-plane lifecycle events (e.g. bootstra
 
 ```go
 import (
-    "github.com/fallguy/rimsky/protocols/lifecycle"
-    genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+    "github.com/fallguyconsulting/rimsky/protocols/lifecycle"
+    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 type LifecycleServer struct {

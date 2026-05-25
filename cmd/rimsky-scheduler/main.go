@@ -37,12 +37,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fallguy/rimsky/control/config"
-	"github.com/fallguy/rimsky/control/observability"
-	"github.com/fallguy/rimsky/foundation/persistence"
-	_ "github.com/fallguy/rimsky/foundation/persistence/postgres" // register driver
-	_ "github.com/fallguy/rimsky/foundation/persistence/sqlite"   // register driver
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/control/observability"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres" // register driver
+	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"   // register driver
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.

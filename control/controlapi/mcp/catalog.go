@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/fallguy/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // ctxKeyIdentity matches controlapi.ctxKeyIdentity by value (an empty

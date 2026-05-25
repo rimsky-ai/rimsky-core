@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // canonicalizeGraphs normalizes a TemplateSpec that declares `graphs:`

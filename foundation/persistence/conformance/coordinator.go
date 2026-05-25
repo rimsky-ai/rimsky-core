@@ -16,7 +16,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 func testCoordinatorSchedulerTick(t *testing.T, d persistence.Database) {

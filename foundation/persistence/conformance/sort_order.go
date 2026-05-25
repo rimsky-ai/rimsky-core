@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 func testSortOrderCoordination(t *testing.T, d persistence.Database) {

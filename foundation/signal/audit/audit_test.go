@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	shared "github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	shared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/signal"
 )
 
 // fakeEvents is an in-memory persistence.EventTable used to assert

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/postgres/server"
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/postgres/server"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 )
 
 // Config is the per-test store config (a thin re-export of

@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fallguy/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Migrator runs *.sql files in filename-sorted order under the

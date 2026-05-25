@@ -30,9 +30,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fallguy/rimsky/conformance"
-	_ "github.com/fallguy/rimsky/conformance/scenarios" // init() registration
-	"github.com/fallguy/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/conformance"
+	_ "github.com/fallguyconsulting/rimsky/conformance/scenarios" // init() registration
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
 func main() {

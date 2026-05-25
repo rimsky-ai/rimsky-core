@@ -27,10 +27,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguy/rimsky/foundation/cascade"
-	foundationshared "github.com/fallguy/rimsky/foundation/shared"
-	"github.com/fallguy/rimsky/graph/node"
-	"github.com/fallguy/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/graph/scenario"
 )
 
 func TestSoftInstancePause(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/fallguy/rimsky/foundation/persistence"
-	pgsqlite "github.com/fallguy/rimsky/foundation/persistence/sqlite"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	pgsqlite "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
 )
 
 // TestSQLiteForeignKeysEnabled confirms the FK-enforcement PRAGMA is

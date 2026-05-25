@@ -19,9 +19,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pgsstore "github.com/fallguy/rimsky/stores/postgres/store"
+	pgsstore "github.com/fallguyconsulting/rimsky/stores/postgres/store"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // itemsTableIdentRe is the shared strict SQL-identifier regex

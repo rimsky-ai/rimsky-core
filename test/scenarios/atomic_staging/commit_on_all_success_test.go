@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/store"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/store"
 )
 
 func TestCommitOnAllSuccess(t *testing.T) {

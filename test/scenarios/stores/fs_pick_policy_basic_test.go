@@ -20,10 +20,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/stores/common/action"
-	fsstore "github.com/fallguy/rimsky/stores/filesystem/store"
-	fsfixture "github.com/fallguy/rimsky/stores/filesystem/testfixture"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
+	fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
 )
 
 // TestFsPickPolicy_BasicRingCycle verifies a full ring cycle through

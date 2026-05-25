@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	foundationshared "github.com/fallguy/rimsky/foundation/shared"
+	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // Field-naming convention: the signal envelope's outer field is

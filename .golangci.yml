@@ -42,7 +42,7 @@ linters-settings:
           - "$all"
           - "!**/foundation/**"
         deny:
-          - pkg: "github.com/fallguy/rimsky/foundation/internal"
+          - pkg: "github.com/fallguyconsulting/rimsky/foundation/internal"
             desc: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
       # foundation-purity: foundation/ depends only on protocols/ + stdlib + minimal third-party.
       # Applies unconditionally — the persistable row-type primitives that
@@ -53,19 +53,19 @@ linters-settings:
         files:
           - "**/foundation/**"
         deny:
-          - pkg: "github.com/fallguy/rimsky/graph"
+          - pkg: "github.com/fallguyconsulting/rimsky/graph"
             desc: "foundation/ may not import graph/ (four-layer ordering: foundation < graph < runtime < control). Persistable row-type primitives live in foundation/spec/."
-          - pkg: "github.com/fallguy/rimsky/runtime"
+          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
             desc: "foundation/ may not import runtime/ (four-layer ordering)."
-          - pkg: "github.com/fallguy/rimsky/control"
+          - pkg: "github.com/fallguyconsulting/rimsky/control"
             desc: "foundation/ may not import control/ (four-layer ordering)."
-          - pkg: "github.com/fallguy/rimsky/cmd"
+          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
             desc: "foundation/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguy/rimsky/stores"
+          - pkg: "github.com/fallguyconsulting/rimsky/stores"
             desc: "foundation/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguy/rimsky/executors"
+          - pkg: "github.com/fallguyconsulting/rimsky/executors"
             desc: "foundation/ may not import executors/ (executors are consumption-side binaries)."
-          - pkg: "github.com/fallguy/rimsky/dashboards"
+          - pkg: "github.com/fallguyconsulting/rimsky/dashboards"
             desc: "foundation/ may not import dashboards/ (dashboards are consumption-side binaries)."
       # graph-purity: graph/ depends only on foundation/ + protocols/ + stdlib + third-party.
       # Documented residual: graph/scheduler imports runtime for ConductorArgs + sweep fns +
@@ -81,17 +81,17 @@ linters-settings:
           - "!**/graph/scheduler/scheduler.go"
           - "!**/graph/scheduler/pure_cascade.go"
         deny:
-          - pkg: "github.com/fallguy/rimsky/runtime"
+          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
             desc: "graph/ may not import runtime/ (four-layer ordering: foundation < graph < runtime < control). Exception: graph/scheduler/{scheduler.go,pure_cascade.go} imports runtime for sweep entry points — documented residual flagged for separate follow-up. graph/scenario/ is exempt because it boots the full stack for scenario tests."
-          - pkg: "github.com/fallguy/rimsky/control"
+          - pkg: "github.com/fallguyconsulting/rimsky/control"
             desc: "graph/ may not import control/ (four-layer ordering)."
-          - pkg: "github.com/fallguy/rimsky/cmd"
+          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
             desc: "graph/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguy/rimsky/stores"
+          - pkg: "github.com/fallguyconsulting/rimsky/stores"
             desc: "graph/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguy/rimsky/executors"
+          - pkg: "github.com/fallguyconsulting/rimsky/executors"
             desc: "graph/ may not import executors/ (executors are consumption-side binaries). Exception: graph/scenario/ boots reference executors for scenario tests."
-          - pkg: "github.com/fallguy/rimsky/dashboards"
+          - pkg: "github.com/fallguyconsulting/rimsky/dashboards"
             desc: "graph/ may not import dashboards/ (dashboards are consumption-side binaries)."
       # runtime-purity: runtime/ depends only on foundation/ + graph/ + protocols/ + stdlib + third-party.
       # runtime is the bridge layer; it freely consumes foundation primitives and graph types.
@@ -100,13 +100,13 @@ linters-settings:
         files:
           - "**/runtime/**"
         deny:
-          - pkg: "github.com/fallguy/rimsky/control"
+          - pkg: "github.com/fallguyconsulting/rimsky/control"
             desc: "runtime/ may not import control/ (four-layer ordering: foundation < graph < runtime < control)."
-          - pkg: "github.com/fallguy/rimsky/cmd"
+          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
             desc: "runtime/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguy/rimsky/stores"
+          - pkg: "github.com/fallguyconsulting/rimsky/stores"
             desc: "runtime/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguy/rimsky/executors"
+          - pkg: "github.com/fallguyconsulting/rimsky/executors"
             desc: "runtime/ may not import executors/ (executors are consumption-side binaries)."
-          - pkg: "github.com/fallguy/rimsky/dashboards"
+          - pkg: "github.com/fallguyconsulting/rimsky/dashboards"
             desc: "runtime/ may not import dashboards/ (dashboards are consumption-side binaries)."

@@ -13,7 +13,7 @@ package verifier
 import (
 	"testing"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 func TestCrossTableVerifier_ClaimAliasesPassThroughExecutorContext(t *testing.T) {

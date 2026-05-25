@@ -21,10 +21,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
-	"github.com/fallguy/rimsky/stores/stub/server"
-	stubstore "github.com/fallguy/rimsky/stores/stub/store"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/stub/server"
+	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )
 
 const defaultConfigEnv = "STORE_STUB_CONFIG"

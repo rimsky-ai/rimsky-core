@@ -19,9 +19,9 @@ The implementer should read these once before starting:
 - **The spec** at `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md` is the authoritative source of truth for what this plan implements. Re-read sections of the spec as the corresponding plan task is reached; the plan does not re-derive the design decisions.
 
 The repo has three Go modules tied by `go.work`:
-- **`foundation/`** — `github.com/fallguy/rimsky/foundation` — cascade, persistence (Postgres + SQLite), claim/lock primitives, persistable row-type primitives (`foundation/spec/`).
-- **`protocols/`** — `github.com/fallguy/rimsky/protocols` — gRPC interfaces + `.proto` sources + generated bindings.
-- **Root module** `github.com/fallguy/rimsky` — `graph/`, `runtime/`, `control/`, `cmd/`, `stores/`, `executors/`, `dashboards/`.
+- **`foundation/`** — `github.com/fallguyconsulting/rimsky/foundation` — cascade, persistence (Postgres + SQLite), claim/lock primitives, persistable row-type primitives (`foundation/spec/`).
+- **`protocols/`** — `github.com/fallguyconsulting/rimsky/protocols` — gRPC interfaces + `.proto` sources + generated bindings.
+- **Root module** `github.com/fallguyconsulting/rimsky` — `graph/`, `runtime/`, `control/`, `cmd/`, `stores/`, `executors/`, `dashboards/`.
 
 Pre-v1 rule: no migration shims, no backwards-compat aliases. Break freely. When the migration shape would be cleaner without a shim, take the clean path.
 
@@ -282,7 +282,7 @@ Resolved tensions to land under `.ok-planner/design/tensions/_resolved/`:
    	"context"
    	"encoding/json"
 
-   	"github.com/fallguy/rimsky/foundation/shared"
+   	"github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    // WaitSetRow is one row of rimsky_wait_set.
@@ -353,8 +353,8 @@ Resolved tensions to land under `.ok-planner/design/tensions/_resolved/`:
    	"encoding/json"
    	"fmt"
 
-   	"github.com/fallguy/rimsky/foundation/persistence"
-   	"github.com/fallguy/rimsky/foundation/shared"
+   	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+   	"github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    type waitSetImpl struct {
@@ -561,7 +561,7 @@ Resolved tensions to land under `.ok-planner/design/tensions/_resolved/`:
    package node
 
    import (
-   	"github.com/fallguy/rimsky/foundation/spec"
+   	"github.com/fallguyconsulting/rimsky/foundation/spec"
    )
 
    // SubscriptionEdge is one entry in the inverse map: from a sender's
@@ -1118,7 +1118,7 @@ Resolved tensions to land under `.ok-planner/design/tensions/_resolved/`:
 
 1. In `runtime/runner_terminal_park.go`, locate the type / struct carrying park terminal data (`ParkReason` field; see line 42 + 100). The struct field type was previously `string`; the Go proto generates `ParkReason` as a typed enum (an alias over `int32`). Update the local Go type to be the proto's `ParkReason`, and translate at the persistence boundary to `lower_snake_case` text:
    ```go
-   import genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+   import genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 
    // parkReasonStorageForm converts the proto enum to the snake_case
    // text stored in col:rimsky_node_runs.parked_reason.
@@ -1260,7 +1260,7 @@ Resolved tensions to land under `.ok-planner/design/tensions/_resolved/`:
    	"net/http"
 
    	"github.com/google/uuid"
-   	"github.com/fallguy/rimsky/foundation/persistence"
+   	"github.com/fallguyconsulting/rimsky/foundation/persistence"
    )
 
    // WaitSetEntry is one wait-set row surfaced via /admin/diagnostics/wait-sets.

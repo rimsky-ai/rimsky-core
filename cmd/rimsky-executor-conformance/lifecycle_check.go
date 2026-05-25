@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/runtime/remote"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/runtime/remote"
 )
 
 // Synthetic IDs used by every check. The 64-char-`a` template hash is

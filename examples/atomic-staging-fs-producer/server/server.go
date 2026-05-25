@@ -11,8 +11,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/store"
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/store"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
 // Server implements the gRPC ClaimProducerServer.

@@ -3,7 +3,7 @@
 **Status:** Authoritative until v1, 2026-05-04.
 **Scope:** Three Rimsky service protocols — `ClaimProducer`, `Executor`, `LifecycleSubscriber`. Wire shapes, Go interfaces, capability handshakes, conformance requirements.
 **Authority:** Single source of truth for the service protocol surface. Supersedes the archived stores-redesign-v3 spec (`docs/history/2026-04-27-stores-redesign-v3-design.md`), the cleanup overlay (`docs/history/2026-04-30-stores-protocol-cleanup-design.md`), and the control-plane-and-store-lifecycle spec's service-protocol content (`docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md`).
-**Layer position:** The protocols module (`github.com/fallguy/rimsky/protocols`) carries Go interfaces and protobuf bindings; foundation calls a subset (claim verbs, executor dispatch); modeling calls a subset (lifecycle hooks).
+**Layer position:** The protocols module (`github.com/fallguyconsulting/rimsky/protocols`) carries Go interfaces and protobuf bindings; foundation calls a subset (claim verbs, executor dispatch); modeling calls a subset (lifecycle hooks).
 
 ---
 

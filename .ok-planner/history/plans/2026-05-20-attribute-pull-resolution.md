@@ -1242,8 +1242,8 @@ import (
     "context"
     "encoding/json"
 
-    "github.com/fallguy/rimsky/foundation/persistence"
-    "github.com/fallguy/rimsky/foundation/shared"
+    "github.com/fallguyconsulting/rimsky/foundation/persistence"
+    "github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // settledSuccessOutcomes is the set of last_outcome values that count
@@ -1511,7 +1511,7 @@ import (
     "fmt"
     "strings"
 
-    "github.com/fallguy/rimsky/foundation/spec"
+    "github.com/fallguyconsulting/rimsky/foundation/spec"
 )
 
 // HardDepEdgeMap is keyed by receiver node-type. The value is the

@@ -192,7 +192,7 @@
        "context"
        "time"
 
-       "github.com/fallguy/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    // Typed-string enums for the breakpoint vocabulary. The SQL schema
@@ -320,8 +320,8 @@
        "errors"
        "time"
 
-       "github.com/fallguy/rimsky/foundation/persistence"
-       "github.com/fallguy/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    // breakpointsImpl is the per-row-type aspect of *tablesImpl, exposing
@@ -398,7 +398,7 @@
        "errors"
        "strings"
 
-       "github.com/fallguy/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    // ErrInvalid is the package-local sentinel returned by Validate for any
@@ -598,7 +598,7 @@
        "fmt"
        "strings"
 
-       "github.com/fallguy/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
    )
 
    // ValidationRefs supplies the reference name-sets and policy flags
@@ -775,7 +775,7 @@
 **Files:** `runtime/attribute_overrides.go` (modify)
 
 **Steps:**
-1. Add `"github.com/fallguy/rimsky/foundation/matcher"` to the imports.
+1. Add `"github.com/fallguyconsulting/rimsky/foundation/matcher"` to the imports.
 2. Replace the body of `evaluateMatcher` with a delegation:
    ```go
    func evaluateMatcher(
@@ -804,7 +804,7 @@
 **Files:** `control/controlapi/attribute_overrides.go` (modify)
 
 **Steps:**
-1. Add `"github.com/fallguy/rimsky/foundation/matcher"` to the imports.
+1. Add `"github.com/fallguyconsulting/rimsky/foundation/matcher"` to the imports.
 2. The existing `validateMatcherKeys` signature is:
    ```go
    func validateMatcherKeys(
@@ -1096,9 +1096,9 @@
        "context"
        "errors"
 
-       "github.com/fallguy/rimsky/foundation/persistence"
-       "github.com/fallguy/rimsky/foundation/shared"
-       "github.com/fallguy/rimsky/graph/attribute" // for Validate / effective-schema helpers
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
+       "github.com/fallguyconsulting/rimsky/graph/attribute" // for Validate / effective-schema helpers
    )
 
    // ResumeResult reports whether the resume call was the first one
@@ -1255,10 +1255,10 @@
        "context"
        "time"
 
-       "github.com/fallguy/rimsky/foundation/matcher"
-       "github.com/fallguy/rimsky/foundation/persistence"
-       "github.com/fallguy/rimsky/foundation/shared"
-       signalpkg "github.com/fallguy/rimsky/foundation/signal"
+       "github.com/fallguyconsulting/rimsky/foundation/matcher"
+       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       "github.com/fallguyconsulting/rimsky/foundation/shared"
+       signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
    )
 
    const breakpointQueueCap = 100
@@ -1560,7 +1560,7 @@ The breakpoint after_terminal checkpoint sits at each call site, immediately aft
    package runtime
 
    import (
-       signalpkg "github.com/fallguy/rimsky/foundation/signal"
+       signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
    )
 
    // signalForTerminal returns the signal.Signal envelope that

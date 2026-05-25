@@ -9,7 +9,7 @@
 #   ./rimsky template register example-template.yml
 #
 # For native-speed CLI on your laptop instead, install with:
-#   go install github.com/fallguy/rimsky/cmd/rimsky@latest
+#   go install github.com/fallguyconsulting/rimsky/cmd/rimsky@latest
 # then `export RIMSKY_CONTROL_API=http://localhost:8080` (the host port
 # the quickstart compose publishes) and call `rimsky` directly.
 

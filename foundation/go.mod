@@ -1,9 +1,9 @@
-module github.com/fallguy/rimsky/foundation
+module github.com/fallguyconsulting/rimsky/foundation
 
 go 1.25.0
 
 require (
-	github.com/fallguy/rimsky/protocols v0.0.0
+	github.com/fallguyconsulting/rimsky/protocols v0.0.0
 	github.com/google/cel-go v0.28.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
@@ -85,4 +85,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/fallguy/rimsky/protocols => ../protocols
+replace github.com/fallguyconsulting/rimsky/protocols => ../protocols

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/examples/atomic-staging-fs-producer/store"
+	"github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/store"
 )
 
 type liveSet struct{ set map[string]struct{} }

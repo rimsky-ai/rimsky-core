@@ -17,8 +17,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fallguy/rimsky/control/cli/roles"
-	"github.com/fallguy/rimsky/foundation/auth"
+	"github.com/fallguyconsulting/rimsky/control/cli/roles"
+	"github.com/fallguyconsulting/rimsky/foundation/auth"
 )
 
 // resolveAuthEndpointAndKey returns the control-api endpoint URL and

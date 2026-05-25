@@ -22,8 +22,8 @@ import (
 	"syscall"
 	"time"
 
-	corestore "github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/stores/common/action"
+	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // PickPolicy is one configured pick policy. Store-internal.

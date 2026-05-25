@@ -8,7 +8,7 @@ package rimsky.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/fallguy/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
 
 // Event is one row of the rimsky_events log with a typed payload. Consumers
 // who want type-checked event streams may use this shape; rimsky's own

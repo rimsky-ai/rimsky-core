@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
-	genv1 "github.com/fallguy/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguy/rimsky/stores/stub/dataprocessing"
+	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/stores/stub/dataprocessing"
 )
 
 func TestDurableLifetimeAcrossRunCompletion(t *testing.T) {

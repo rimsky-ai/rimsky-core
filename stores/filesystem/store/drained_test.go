@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/stores/common/action"
 )
 
 // drainedPath is the absolute path to the per-policy drained sentinel.

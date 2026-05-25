@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fallguy/rimsky/foundation/locks"
-	"github.com/fallguy/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 )
 
 // tickBudget bounds a single terminator iteration so a wedged store

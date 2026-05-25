@@ -8,8 +8,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
 )
 
 // (TestRunAdminForceFire retired by the 2026-05-15 plan B10 / D7 / E16

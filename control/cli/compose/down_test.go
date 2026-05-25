@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguy/rimsky/control/cli/compose"
+	"github.com/fallguyconsulting/rimsky/control/cli/compose"
 )
 
 func TestRunComposeDown_Terminal(t *testing.T) {

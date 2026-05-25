@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/cli/compose"
+	"github.com/fallguyconsulting/rimsky/control/cli/compose"
 )
 
 func TestMaterializeRimskyConfig_Inline(t *testing.T) {

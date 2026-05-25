@@ -17,7 +17,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/fallguy/rimsky/control/cli/embedded"
+	"github.com/fallguyconsulting/rimsky/control/cli/embedded"
 )
 
 // projectNamePattern is the spec §2.2 project-name regex.

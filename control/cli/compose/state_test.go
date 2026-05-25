@@ -8,9 +8,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguy/rimsky/control/cli"
-	"github.com/fallguy/rimsky/control/cli/compose"
-	"github.com/fallguy/rimsky/control/cli/internal/clitest"
+	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/fallguyconsulting/rimsky/control/cli/compose"
+	"github.com/fallguyconsulting/rimsky/control/cli/internal/clitest"
 )
 
 func TestQueryState_FiltersByPrefix(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
 )
 
 func mustJSON(t *testing.T, v any) json.RawMessage {
