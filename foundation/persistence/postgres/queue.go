@@ -205,13 +205,20 @@ func (q *queueImpl) SelectCandidates(
 	// executor, non-empty stores). The supervisor's native-claim path
 	// remains reachable for those rows; pure-cascade rows are
 	// excluded here via the non-empty required_stores guard.
+	// Join rimsky_instances via rimsky_nodes (rimsky_node_runs has no
+	// instance_id of its own) and filter out paused instances. Per
+	// concept:breakpoint §5.2 soft-pause semantics: the supervisor stops
+	// claiming new dispatches for paused instances while in-flight work
+	// runs to terminal naturally.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
+		   JOIN rimsky_instances i ON i.id = n.instance_id
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
+		    AND i.paused = false
 		    AND d.required_stores <@ $1::text[]
 		    AND (
 		      d.executor_name = ANY($2::text[])
@@ -225,7 +232,7 @@ func (q *queueImpl) SelectCandidates(
 		    )
 		  ORDER BY d.enqueued_at
 		  LIMIT $3
-		  FOR UPDATE SKIP LOCKED`,
+		  FOR UPDATE OF d SKIP LOCKED`,
 		acceptedStores, acceptedExecutors, limit,
 	)
 	if err != nil {

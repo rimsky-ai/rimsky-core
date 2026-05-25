@@ -20,6 +20,18 @@ var (
 	ErrNodeApplication     = errors.New("node application error")
 	ErrRollbackUnsupported = errors.New("rollback unsupported by resource implementation")
 	ErrExecutorNotFound    = errors.New("executor not found in supervisor config")
+
+	// Breakpoint sentinels — introduced by concept:breakpoint (spec
+	// .ok-planner/specs/2026-05-24-instance-debugger-design.md). Each
+	// is translated to its HTTP status code by
+	// control/controlapi/app.go::writeError. Note: ErrMatcherInvalid
+	// is NOT here — it lives as matcher.ErrInvalid in
+	// foundation/matcher/ and the controlapi layer wraps it directly.
+	ErrBreakpointNotFound    = errors.New("breakpoint not found")
+	ErrBreakpointHitNotFound = errors.New("breakpoint hit not found")
+	ErrResumeOverlayInvalid  = errors.New("resume overlay invalid")
+	ErrInstanceNotPaused     = errors.New("instance not paused")
+	ErrInstanceAlreadyPaused = errors.New("instance already paused")
 )
 
 // RimskyError wraps a sentinel with context fields for structured logging.

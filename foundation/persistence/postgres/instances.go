@@ -26,7 +26,7 @@ import (
 // identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused`
 
 // Create inserts a new rimsky_instances row. The caller supplies a
 // pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
@@ -67,10 +67,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		deliveryMode = in.FrameDeliveryMode
 	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, attribute_overrides_match_counts, main_run_scope_id)
-		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'), $7, $8)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, attribute_overrides_match_counts, main_run_scope_id, paused)
+		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'), $7, $8, $9)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode, matchCountsBytes, in.MainRunScopeID,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode, matchCountsBytes, in.MainRunScopeID, in.Paused,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -376,6 +376,51 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	return nil
 }
 
+// SetPaused toggles rimsky_instances.paused and returns the prior column
+// value. The SELECT acquires a row lock via FOR UPDATE before the
+// UPDATE runs, so two concurrent SetPaused(true) calls serialize and
+// the second observes prior=true (driving the caller's 409 path).
+// Returns foundationshared.ErrInstanceNotFound when no row matches.
+// Per concept:breakpoint — the control-API handler distinguishes
+// "no-op, already at requested state" (409) from "toggled" (200) by
+// comparing priorValue to the requested value.
+//
+// Earlier revision used a single-statement CTE (`WITH prev AS (SELECT
+// ...), upd AS (UPDATE ...) SELECT prev.paused FROM prev, upd`) which
+// bound `prev` to the statement-level snapshot — both racers saw the
+// pre-update value and both reported prior=false, hiding the 409.
+// The two-step SELECT FOR UPDATE + UPDATE under the caller's tx is
+// the standard pattern for "read the row, decide based on it, write".
+//
+// @concept: breakpoint
+func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshared.UUID, paused bool, tx persistence.Tx) (bool, error) {
+	ex := s.q(tx)
+	var prior bool
+	if err := ex.QueryRow(ctx,
+		`SELECT paused FROM rimsky_instances WHERE id = $1 FOR UPDATE`,
+		instanceID,
+	).Scan(&prior); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, foundationshared.ErrInstanceNotFound
+		}
+		return false, fmt.Errorf("instances.setPaused.select: %w", err)
+	}
+	// Skip the UPDATE when the row is already at the requested value: the
+	// caller-facing semantic is "report the prior value so the handler can
+	// translate no-op toggles to 409". Writing the same value back acquires
+	// the row write lock + produces WAL traffic for no behavioral change.
+	if prior == paused {
+		return prior, nil
+	}
+	if _, err := ex.Exec(ctx,
+		`UPDATE rimsky_instances SET paused = $2 WHERE id = $1`,
+		instanceID, paused,
+	); err != nil {
+		return false, fmt.Errorf("instances.setPaused.update: %w", err)
+	}
+	return prior, nil
+}
+
 // CountByActive returns (active, terminated) instance counts.
 func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (int, int, error) {
 	ex := s.q(tx)
@@ -447,8 +492,9 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		terminatedAt   *time.Time
 		matchCounts    []byte
 		mainRunScopeID foundationshared.UUID
+		paused         bool
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -480,6 +526,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		MainRunScopeID:                mainRunScopeID,
 		CreatedAt:                     createdAt,
 		TerminatedAt:                  terminatedAt,
+		Paused:                        paused,
 	}, nil
 }
 

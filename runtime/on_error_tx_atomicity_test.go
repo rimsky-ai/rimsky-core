@@ -121,6 +121,12 @@ func (w *nodeTrackingTables) PublisherSubscriptions() persistence.PublisherSubsc
 func (w *nodeTrackingTables) RunTree() persistence.RunTreeTable    { return w.inner.RunTree() }
 func (w *nodeTrackingTables) RunScopes() persistence.RunScopeTable { return w.inner.RunScopes() }
 func (w *nodeTrackingTables) APIKeys() persistence.APIKeyTable     { return w.inner.APIKeys() }
+func (w *nodeTrackingTables) Breakpoints() persistence.BreakpointTable {
+	return w.inner.Breakpoints()
+}
+func (w *nodeTrackingTables) BreakpointHits() persistence.BreakpointHitTable {
+	return w.inner.BreakpointHits()
+}
 
 func (w *nodeTrackingTables) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return w.inner.Transaction(ctx, fn)

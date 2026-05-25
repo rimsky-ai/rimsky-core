@@ -1,0 +1,98 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// Scenario — pins spec §10.2 "Resume-with-invalid-overlay":
+//
+//   1. Install a pause-mode breakpoint on a node whose attributes schema
+//      forbids a particular value shape (here, `tag` must be a string).
+//   2. Resume with an overlay that injects `tag: 42` (number, not string).
+//   3. The control-api's ValidateAndPersistResume should return
+//      400 ErrResumeOverlayInvalid; the hit row must remain unresumed.
+//   4. A second resume with a valid overlay then succeeds, and the
+//      dispatch proceeds to terminal with the valid overlay applied.
+//
+// This pins both halves of the spec §4.7 validation discipline: the
+// pre-merge schema check rejects bad overlays, and rejection is
+// truly non-destructive (the hit stays in place for a retry).
+//
+// @concept: breakpoint
+
+package breakpoints
+
+import (
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/fallguy/rimsky/foundation/cascade"
+	"github.com/fallguy/rimsky/graph/node"
+	"github.com/fallguy/rimsky/graph/scenario"
+)
+
+func TestResumeInvalidOverlay(t *testing.T) {
+	t.Parallel()
+	h := scenario.Start(t, scenario.HarnessOpts{})
+	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "valid-after-retry")
+
+	tid := h.DeployTemplate(node.TemplateSpec{
+		Name: "bp-resume-invalid-overlay", Version: "1",
+		Nodes: []node.TemplateNodeDef{
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithAttributes(map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tag": map[string]any{"type": "string"},
+						"ok":  map[string]any{"type": "boolean", "readOnly": true},
+					},
+				}),
+			),
+		},
+	})
+
+	iid := createInstanceWithPause(t, h, tid, "ck-resume-invalid-overlay", map[string]any{})
+	bpID := breakpointCreate(t, h, iid, map[string]any{
+		"checkpoint": "before_dispatch",
+		"matcher":    map[string]any{"node_type": "worker"},
+	})
+	status, _ := instanceResume(t, h, iid)
+	require.Equal(t, http.StatusOK, status)
+
+	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
+
+	// Step 1: resume with type-violating overlay. Expect 400.
+	badStatus, badOut := breakpointResume(t, h, iid, bpID, map[string]any{
+		"hit_id":  hit.ID.String(),
+		"overlay": map[string]any{"tag": 42},
+	})
+	require.Equal(t, http.StatusBadRequest, badStatus,
+		"invalid overlay should yield 400 ErrResumeOverlayInvalid; got body=%v", badOut)
+
+	// The hit row must NOT carry resumed_at — the rejection is
+	// non-destructive so the operator can retry with a valid overlay.
+	row := getHitRow(t, h, hit.ID)
+	require.NotNil(t, row)
+	require.Nil(t, row.ResumedAt,
+		"hit must stay unresumed after a rejected overlay (rejection is non-destructive)")
+	require.Equal(t, 0, stubObservedCount(h, "worker"),
+		"executor must not be called while the hit is still paused")
+
+	// Step 2: retry with a valid overlay; should resume and dispatch.
+	goodStatus, goodOut := breakpointResume(t, h, iid, bpID, map[string]any{
+		"hit_id":  hit.ID.String(),
+		"overlay": map[string]any{"tag": "good"},
+	})
+	require.Equal(t, http.StatusOK, goodStatus, "valid retry should succeed: %v", goodOut)
+	require.Equal(t, true, goodOut["first_resume"],
+		"the second resume IS the first successful one — prior failure didn't write resumed_at")
+
+	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
+		"stub should observe dispatch after the successful retry")
+	n := h.FindNode(iid, "worker")
+	require.NotNil(t, n)
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
+		"worker should reach Fresh once dispatch lands")
+}

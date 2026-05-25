@@ -48,5 +48,10 @@ type Tables interface {
 	// and auth spec.
 	APIKeys() APIKeyTable
 
+	// Breakpoints accessors introduced by spec
+	// .ok-planner/specs/2026-05-24-instance-debugger-design.md (concept:breakpoint).
+	Breakpoints() BreakpointTable
+	BreakpointHits() BreakpointHitTable
+
 	Transaction(ctx context.Context, fn func(ctx context.Context, tx Tx) error) error
 }

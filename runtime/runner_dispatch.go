@@ -10,6 +10,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -458,6 +459,60 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	resolved = merged
 	acq.MergedAttributes = resolved
 	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
+
+	// Breakpoint checkpoint: before_dispatch. Runs OUTSIDE any
+	// acquisition / dispatch tx (incrementMatchCountersAfterMerge
+	// committed its own short tx above; the acquisition tx committed
+	// earlier per concept:supervisor invariants). EvaluateBreakpoints
+	// opens its own short txns; pause-mode hits block on waitForResume
+	// which polls on short txns. May return a different `resolved` map
+	// if a one-shot L6 overlay was supplied at resume time — both
+	// subsequent validation passes (dispatch-schema check below + the
+	// executor-raw-schema defense-in-depth) see the overlay-mutated bag,
+	// so an invalid overlay surfaces via the existing
+	// `template_validation_failed` route per concept:error-policy.
+	//
+	// Infrastructure failures (DB blip during ListForInstance / Create /
+	// poll, or context cancellation during the overflow-block / resume-poll
+	// wait; wrapped as *BreakpointInfraError) are Warn-logged and
+	// swallowed here. A debugger-side persistence failure must NOT
+	// route through the attribute-failure policy chain — that would
+	// surface as `template_resolution_failed` to operators, which is
+	// the wrong diagnostic class. The dispatch proceeds with the
+	// pre-breakpoint resolved bag.
+	bpResolved, bpErr := EvaluateBreakpoints(ctx, args, CheckpointContext{
+		InstanceID:       acq.InstanceID,
+		DispatchID:       acq.DispatchID,
+		FrameID:          acq.FrameID,
+		Executor:         acq.Executor,
+		NodeType:         acq.NodeType,
+		Graph:            acq.GraphName,
+		ChildKey:         scope.PartitionKey,
+		MergedAttributes: resolved,
+		Checkpoint:       persistence.CheckpointBeforeDispatch,
+		EffectiveSchema:  schema,
+		NodeRunSnapshot:  nodeRunSnapshotForBreakpoint(acq),
+		HeldClaims:       heldClaimsSummaryForBreakpoint(acq),
+		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
+	})
+	if bpErr != nil {
+		var infraErr *BreakpointInfraError
+		if errors.As(bpErr, &infraErr) {
+			if args.Logger != nil {
+				args.Logger.Warn("runner_dispatch: breakpoint infra failure; dispatching with pre-breakpoint bag",
+					"node_id", acq.NodeID.String(),
+					"dispatch_id", acq.DispatchID.String(),
+					"phase", infraErr.Phase,
+					"error", bpErr.Error())
+			}
+		} else {
+			return nil, schema, bpErr
+		}
+	} else {
+		resolved = bpResolved
+		acq.MergedAttributes = resolved
+	}
+
 	dispatchSchema := relaxRequiredToSourceDriven(schema)
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}

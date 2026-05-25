@@ -405,5 +405,105 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 	assert.False(t, claimedBy.Valid, "run row should not be claimed under advisory-lock contention")
 }
 
+// TestScheduler_BreakpointSweeps pins the Pass-7 wiring: a single tick
+// must (a) delete TTL-expired `rimsky_instance_breakpoints` rows and
+// (b) auto-resume unresumed `rimsky_breakpoint_hits` rows that have
+// outlived their breakpoint's `hit_ttl_seconds` and whose breakpoint
+// uses overflow_policy = 'auto_resume_after_ttl'. Per spec
+// .ok-planner/specs/2026-05-24-instance-debugger-design.md §7.4.
+func TestScheduler_BreakpointSweeps(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newSchedFixture(t)
+
+	// Expired breakpoint (drop_oldest, short ttl) — should be deleted by
+	// the SweepExpired branch.
+	expiredTTL := 60
+	expired := persistence.BreakpointRow{
+		InstanceID:     f.instance.ID,
+		Matcher:        map[string]any{"label": "expired"},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowDropOldest,
+		HitTTLSeconds:  300,
+		TTLSeconds:     &expiredTTL,
+		CreatedByKey:   "test-key",
+	}
+
+	// Auto-resume breakpoint (hit_ttl=1s) with one unresumed hit —
+	// AutoResumeStale should flip resumed_at + resumed_by_key='sweeper'.
+	autoBP := persistence.BreakpointRow{
+		InstanceID:     f.instance.ID,
+		Matcher:        map[string]any{"label": "auto"},
+		Checkpoint:     persistence.CheckpointBeforeDispatch,
+		Mode:           persistence.BreakpointModePause,
+		OverflowPolicy: persistence.OverflowAutoResumeAfterTTL,
+		HitTTLSeconds:  1,
+		CreatedByKey:   "test-key",
+	}
+
+	var expiredID, autoID, hitID shared.UUID
+	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		expiredID, err = f.persist.Breakpoints().Create(ctx, expired, tx)
+		if err != nil {
+			return err
+		}
+		autoID, err = f.persist.Breakpoints().Create(ctx, autoBP, tx)
+		if err != nil {
+			return err
+		}
+		id, _, err := f.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
+			BreakpointID: autoID,
+			InstanceID:   f.instance.ID,
+			Checkpoint:   persistence.CheckpointBeforeDispatch,
+			Mode:         persistence.BreakpointModePause,
+			Snapshot:     map[string]any{"label": "stale"},
+		}, tx)
+		if err != nil {
+			return err
+		}
+		hitID = id
+		return nil
+	}))
+
+	// Force the expired breakpoint's expires_at into the past, and
+	// backdate the hit's hit_at so it's older than hit_ttl_seconds.
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_instance_breakpoints SET expires_at = NOW() - interval '1 hour' WHERE id = $1`,
+		expiredID)
+	pgtest.ExecForTest(ctx, t, f.driver,
+		`UPDATE rimsky_breakpoint_hits SET hit_at = NOW() - interval '1 hour' WHERE id = $1`,
+		hitID)
+
+	require.NoError(t, tick(ctx, f.schedConfig(), nil))
+
+	// Expired breakpoint deleted; auto breakpoint survives.
+	var (
+		gotExpired, gotAuto *persistence.BreakpointRow
+		gotHit              *persistence.BreakpointHitRow
+	)
+	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
+		var err error
+		gotExpired, err = f.persist.Breakpoints().Get(ctx, expiredID, tx)
+		if err != nil {
+			return err
+		}
+		gotAuto, err = f.persist.Breakpoints().Get(ctx, autoID, tx)
+		if err != nil {
+			return err
+		}
+		gotHit, err = f.persist.BreakpointHits().Get(ctx, hitID, tx)
+		return err
+	})
+	assert.Nil(t, gotExpired, "expected expired breakpoint to be swept")
+	require.NotNil(t, gotAuto, "auto_resume breakpoint should survive sweep")
+	require.NotNil(t, gotHit, "hit row should still exist after AutoResumeStale")
+	require.NotNil(t, gotHit.ResumedAt, "stale hit should have resumed_at set")
+	require.NotNil(t, gotHit.ResumedByKey, "stale hit should have resumed_by_key set")
+	assert.Equal(t, "sweeper", *gotHit.ResumedByKey,
+		"AutoResumeStale must stamp resumed_by_key='sweeper'")
+}
+
 // Suppress unused-variable warning from `sync` if the file gets trimmed.
 var _ = sync.Mutex{}

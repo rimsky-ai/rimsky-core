@@ -59,6 +59,7 @@ func Suite(
 	t.Run("HeldClaimAutoTerminalSerialization", func(t *testing.T) { testHeldClaimAutoTerminalSerialization(t, factory(t)) })
 	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
+	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })
 	t.Run("QueueRebindRunFrameInTx", func(t *testing.T) { testQueueRebindRunFrameInTx(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
 	// NodesMarkStaleForCascade conformance retired by spec

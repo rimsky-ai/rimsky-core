@@ -18,6 +18,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/fallguy/rimsky/foundation/locks"
+	"github.com/fallguy/rimsky/foundation/matcher"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	foundationshared "github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/runtime"
@@ -203,6 +204,7 @@ func NewApp(deps AppDeps) http.Handler {
 			registerTemplatesRoutes(rrr, deps)
 			registerTagsRoutes(rrr, deps)
 			registerInstancesRoutes(rrr, deps)
+			registerBreakpointsRoutes(rrr, deps)
 			registerNodesRoutes(rrr, deps)
 			registerEventsRoutes(rrr, deps)
 			registerClaimsRoutes(rrr, deps)
@@ -281,19 +283,28 @@ func jsonMarshalStrict(v any) ([]byte, error) {
 
 // writeError translates rimsky sentinels to status codes, returning a JSON
 // {"error": "<msg>"} body. Sentinels: ErrTemplateNotFound/ErrInstanceNotFound/
-// ErrNodeNotFound → 404; ErrInstanceKeyConflict/ErrTemplateInUse → 409;
-// ErrTemplateValidation → 400; everything else → 500.
+// ErrNodeNotFound/ErrBreakpointNotFound/ErrBreakpointHitNotFound → 404;
+// ErrInstanceKeyConflict/ErrTemplateInUse/ErrInstanceNotPaused/
+// ErrInstanceAlreadyPaused → 409;
+// ErrTemplateValidation/ErrResumeOverlayInvalid/matcher.ErrInvalid → 400;
+// everything else → 500.
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
 	case errorsIs(err, foundationshared.ErrTemplateNotFound),
 		errorsIs(err, foundationshared.ErrInstanceNotFound),
-		errorsIs(err, foundationshared.ErrNodeNotFound):
+		errorsIs(err, foundationshared.ErrNodeNotFound),
+		errorsIs(err, foundationshared.ErrBreakpointNotFound),
+		errorsIs(err, foundationshared.ErrBreakpointHitNotFound):
 		status = http.StatusNotFound
 	case errorsIs(err, foundationshared.ErrInstanceKeyConflict),
-		errorsIs(err, foundationshared.ErrTemplateInUse):
+		errorsIs(err, foundationshared.ErrTemplateInUse),
+		errorsIs(err, foundationshared.ErrInstanceNotPaused),
+		errorsIs(err, foundationshared.ErrInstanceAlreadyPaused):
 		status = http.StatusConflict
-	case errorsIs(err, foundationshared.ErrTemplateValidation):
+	case errorsIs(err, foundationshared.ErrTemplateValidation),
+		errorsIs(err, foundationshared.ErrResumeOverlayInvalid),
+		errorsIs(err, matcher.ErrInvalid):
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, map[string]any{"error": err.Error()})

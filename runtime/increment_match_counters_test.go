@@ -100,6 +100,9 @@ func (f *fakeInstancesTable) ListTerminatedWithLifecycleRows(context.Context, in
 func (f *fakeInstancesTable) CountByActive(context.Context, persistence.Tx) (int, int, error) {
 	panic("fakeInstancesTable.CountByActive: unexpected call")
 }
+func (f *fakeInstancesTable) SetPaused(context.Context, shared.UUID, bool, persistence.Tx) (bool, error) {
+	panic("fakeInstancesTable.SetPaused: unexpected call")
+}
 
 // TestIncrementMatchCountersAfterMerge pins the supervisor →
 // IncrementAttributeOverrideMatchCounts integration in isolation.

@@ -130,7 +130,22 @@ func TestV1Registry(t *testing.T) {
 		}
 	}
 	sort.Strings(surplus)
-	allowed := map[string]bool{"observability:read": true, "mcp:read": true}
+	// Actions sanctioned by specs beyond the original control-plane spec
+	// table are listed here so the cross-check stays loud about
+	// truly-unsanctioned additions while admitting the instance-debugger
+	// surface added by spec
+	// .ok-planner/specs/2026-05-24-instance-debugger-design.md.
+	allowed := map[string]bool{
+		"observability:read": true,
+		"mcp:read":           true,
+		// Instance-debugger surface (concept:breakpoint).
+		"instance:pause":    true,
+		"instance:resume":   true,
+		"breakpoint:read":   true,
+		"breakpoint:create": true,
+		"breakpoint:resume": true,
+		"breakpoint:delete": true,
+	}
 	for _, a := range surplus {
 		if !allowed[a] {
 			t.Errorf("V1 registry has surplus action %q not in spec and not in the allowed-supplement list", a)
@@ -175,6 +190,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 	registerTemplatesRoutes(r, deps)
 	registerTagsRoutes(r, deps)
 	registerInstancesRoutes(r, deps)
+	registerBreakpointsRoutes(r, deps)
 	registerNodesRoutes(r, deps)
 	registerEventsRoutes(r, deps)
 	registerClaimsRoutes(r, deps)
@@ -326,6 +342,35 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		sort.Strings(ungated)
 		t.Fatalf("routes returned non-401 with no Authorization header (would bypass gate / audit):\n  %s\nverify each route's registration wraps the handler in gate(deps, action, ...) rather than passing the bare handler.",
 			strings.Join(ungated, "\n  "))
+	}
+}
+
+// TestV1Registry_ExposesDebuggerTools verifies the 6 debugger-surface
+// actions added by spec
+// .ok-planner/specs/2026-05-24-instance-debugger-design.md auto-expose
+// as MCP tools through the existing action-registry → tools/list
+// pipeline. Belt-and-braces with TestV1Registry's surplus check —
+// that test asserts the action strings exist; this test asserts they
+// flow through to the MCP tool catalog so the polling agent can
+// discover them.
+func TestV1Registry_ExposesDebuggerTools(t *testing.T) {
+	r := BuildV1Registry()
+	wantTools := []string{
+		"instance_pause",
+		"instance_resume",
+		"breakpoint_list",
+		"breakpoint_create",
+		"breakpoint_resume_hit",
+		"breakpoint_delete",
+	}
+	allTools := map[string]bool{}
+	for _, name := range r.AllTools() {
+		allTools[name] = true
+	}
+	for _, want := range wantTools {
+		if !allTools[want] {
+			t.Errorf("tool catalog missing %q (action registry didn't auto-expose the debugger surface)", want)
+		}
 	}
 }
 

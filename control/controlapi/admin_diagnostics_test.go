@@ -57,6 +57,8 @@ func (noopStore) PublisherSubscriptions() persistence.PublisherSubscriptionsTabl
 func (noopStore) RunTree() persistence.RunTreeTable                               { return nil }
 func (noopStore) RunScopes() persistence.RunScopeTable                            { return nil }
 func (noopStore) APIKeys() persistence.APIKeyTable                                { return nil }
+func (noopStore) Breakpoints() persistence.BreakpointTable                        { return nil }
+func (noopStore) BreakpointHits() persistence.BreakpointHitTable                  { return nil }
 
 func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, &noopTx{})

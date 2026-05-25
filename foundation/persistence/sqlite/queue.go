@@ -183,13 +183,18 @@ func (q *queueImpl) SelectCandidates(
 	// claimed_by=NULL but must transition through wakeParkedNode rather
 	// than being directly claimed). Per the 2026-05-08 platform-extensions
 	// plan E2/E3.
+	// Join rimsky_instances via rimsky_nodes (rimsky_node_runs has no
+	// instance_id of its own) and filter out paused instances. Per
+	// concept:breakpoint §5.2 soft-pause semantics.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
 		   FROM rimsky_node_runs d
 		   JOIN rimsky_nodes n ON n.id = d.node_id
+		   JOIN rimsky_instances i ON i.id = n.instance_id
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
+		    AND i.paused = 0
 		    AND d.enqueued_at <= ?
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_wait_set w

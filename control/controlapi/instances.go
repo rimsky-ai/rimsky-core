@@ -112,6 +112,14 @@ type createInstanceRequest struct {
 	// pending) or "coalesce" (deliver all pending). Optional — when
 	// omitted the column's default ("coalesce") is used.
 	FrameDeliveryMode *string `json:"frame_delivery_mode,omitempty"`
+	// Paused is the create-time hold flag. When true, the instance is
+	// created with rimsky_instances.paused = true; the supervisor's
+	// candidate-selection skips it until POST /instances/{id}/resume
+	// releases the hold. Per concept:breakpoint. Idempotent re-create
+	// (same template_hash + instance_key) ignores the flag — the
+	// existing row's paused value is unchanged. Operators wanting to
+	// pause an existing instance call POST /instances/{id}/pause.
+	Paused bool `json:"paused,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -129,6 +137,7 @@ type instanceItem struct {
 	AttributeOverrides            map[string]any `json:"attribute_overrides,omitempty"`
 	AttributeOverridesMatchCounts []int64        `json:"attribute_overrides_match_counts,omitempty"`
 	FrameDeliveryMode             string         `json:"frame_delivery_mode"`
+	Paused                        bool           `json:"paused"`
 	CreatedAt                     time.Time      `json:"created_at"`
 	TerminatedAt                  *time.Time     `json:"terminated_at,omitempty"`
 }
@@ -140,6 +149,7 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 		InstanceKey:       r.InstanceKey,
 		Params:            ApplyParamsRedact(r.Params, redact),
 		FrameDeliveryMode: r.FrameDeliveryMode,
+		Paused:            r.Paused,
 		CreatedAt:         r.CreatedAt,
 		TerminatedAt:      r.TerminatedAt,
 	}
@@ -158,6 +168,71 @@ func registerInstancesRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/instances", gate(deps, "instance:read", handleListInstances(deps)))
 	r.Get("/instances/{idOrKey}", gate(deps, "instance:read", handleGetInstance(deps)))
 	r.Delete("/instances/{idOrKey}", gate(deps, "instance:terminate", handleDeleteInstance(deps)))
+	r.Post("/instances/{idOrKey}/pause", gate(deps, "instance:pause", handlePauseInstance(deps)))
+	r.Post("/instances/{idOrKey}/resume", gate(deps, "instance:resume", handleResumeInstance(deps)))
+}
+
+// handlePauseInstance toggles rimsky_instances.paused to TRUE. Per
+// concept:breakpoint and spec §5.1. Returns 409 ErrInstanceAlreadyPaused
+// when the row is already paused (idempotency surface — the operator's
+// reconcile loop sees a stable error rather than a silent no-op).
+func handlePauseInstance(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		var prior bool
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			var err error
+			prior, err = deps.Persist.Instances().SetPaused(ctx, inst.ID, true, tx)
+			return err
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		if prior {
+			writeError(w, foundationshared.ErrInstanceAlreadyPaused)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"paused": true})
+	}
+}
+
+// handleResumeInstance toggles rimsky_instances.paused to FALSE. Per
+// concept:breakpoint and spec §5.1. Returns 409 ErrInstanceNotPaused when
+// the row is already unpaused.
+func handleResumeInstance(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		var prior bool
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			var err error
+			prior, err = deps.Persist.Instances().SetPaused(ctx, inst.ID, false, tx)
+			return err
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		if !prior {
+			writeError(w, foundationshared.ErrInstanceNotPaused)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"resumed": true})
+	}
 }
 
 func handleCreateInstance(deps AppDeps) http.HandlerFunc {
@@ -291,6 +366,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				AttributeOverrides:            body.AttributeOverrides,
 				AttributeOverridesMatchCounts: initialMatchCounts,
 				FrameDeliveryMode:             deliveryMode,
+				Paused:                        body.Paused,
 			})
 			if err != nil {
 				return err
@@ -696,6 +772,9 @@ type provisionArgs struct {
 	// FrameDeliveryMode is one of "serial_queue" / "coalesce". Empty
 	// string falls through to the column DEFAULT 'coalesce'.
 	FrameDeliveryMode string
+	// Paused is the create-time hold flag. Threaded through to the
+	// persistence layer's InstanceCreateInput.Paused. Per concept:breakpoint.
+	Paused bool
 }
 
 // provisionInstanceTx is the instance-factory routine. Runs the create
@@ -753,6 +832,7 @@ func provisionInstanceTx(
 		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
 		FrameDeliveryMode:             args.FrameDeliveryMode,
 		MainRunScopeID:                mainRunScopeID,
+		Paused:                        args.Paused,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

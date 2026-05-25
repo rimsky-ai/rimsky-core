@@ -72,7 +72,17 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		Description: descriptionForTool,
 		Schemas:     builtinSchemas(),
 	}
-	server := &mcp.Server{Tools: catalog}
+	// Resources skin: a parallel-shaped catalog for the breakpoint-hits
+	// URI family. Per spec
+	// .ok-planner/specs/2026-05-24-instance-debugger-design.md §6 the
+	// only resource family v1 exposes is `rimsky://instances/{id}/
+	// breakpoint-hits` and `rimsky://breakpoints/{bp_id}/hits`; the URI
+	// scheme parsing lives in mcp_resources.go::parseBreakpointHitsURI
+	// so this file stays a wiring layer.
+	server := &mcp.Server{
+		Tools:     catalog,
+		Resources: newBreakpointResourceCatalog(deps),
+	}
 	// Gate /mcp itself with the `mcp:read` umbrella so initialize /
 	// tools/list calls produce audit rows (per spec section "Audit
 	// and dry-run" — every authenticated request lands in the event
@@ -100,6 +110,14 @@ func builtinSchemas() map[string][]byte {
 		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"},"frame_delivery_mode":{"type":"string","enum":["serial_queue","coalesce"]}},"required":["template"]}`),
 		"instance_terminate": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_pause":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+
+		// Breakpoints (concept:breakpoint — instance-debugger surface; spec §4).
+		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"breakpoint_create":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"checkpoint":{"type":"string","enum":["before_dispatch","after_terminal"]},"matcher":{"type":"object"},"signal_type":{"type":"string","description":"only valid on after_terminal checkpoints"},"mode":{"type":"string","enum":["pause","notify_only"]},"overflow_policy":{"type":"string","enum":["drop_oldest","block_dispatch","auto_resume_after_ttl"]},"hit_ttl_seconds":{"type":"integer"},"ttl_seconds":{"type":"integer"}},"required":["idOrKey","checkpoint"]}`),
+		"breakpoint_delete":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"}},"required":["idOrKey","breakpoint_id"]}`),
+		"breakpoint_resume_hit": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"},"hit_id":{"type":"string","description":"breakpoint hit UUID"},"overlay":{"type":"object","description":"optional one-shot attribute overlay"}},"required":["idOrKey","breakpoint_id","hit_id"]}`),
 
 		// Templates.
 		"template_list":       obj,

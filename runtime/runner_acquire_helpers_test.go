@@ -51,9 +51,13 @@ func (p *scopeOnlyPersist) Lineage() persistence.LineageTable                   
 func (p *scopeOnlyPersist) PublisherSubscriptions() persistence.PublisherSubscriptionsTable {
 	return nil
 }
-func (p *scopeOnlyPersist) RunTree() persistence.RunTreeTable    { return nil }
-func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable { return p.scopes }
-func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable     { return nil }
+func (p *scopeOnlyPersist) RunTree() persistence.RunTreeTable        { return nil }
+func (p *scopeOnlyPersist) RunScopes() persistence.RunScopeTable     { return p.scopes }
+func (p *scopeOnlyPersist) APIKeys() persistence.APIKeyTable         { return nil }
+func (p *scopeOnlyPersist) Breakpoints() persistence.BreakpointTable { return nil }
+func (p *scopeOnlyPersist) BreakpointHits() persistence.BreakpointHitTable {
+	return nil
+}
 
 func (p *scopeOnlyPersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
 	return fn(ctx, nil)

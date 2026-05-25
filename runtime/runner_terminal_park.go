@@ -250,21 +250,23 @@ func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
 			},
 		}
 	}
-	// AWAIT_CALLBACK — resume_at is *time.Time (nil when zero).
-	var resumeAt any
+	// AWAIT_CALLBACK — resume_at may be zero; omit the key in that
+	// case so the payload stays value-based (matches the SNOOZE branch
+	// above, which always carries a `time.Time` value). A missing-key
+	// lookup returns nil to consumers, matching the prior pointer-nil
+	// observable.
+	payload := map[string]any{
+		"session_token":       t.ParkSessionToken,
+		"park_payload":        t.ParkPayload,
+		"parked_reason_label": t.ParkReasonLabel,
+		"parked_reason_note":  t.ParkReasonNote,
+	}
 	if !t.ParkResumeAt.IsZero() {
-		ra := t.ParkResumeAt
-		resumeAt = &ra
+		payload["resume_at"] = t.ParkResumeAt
 	}
 	return signalpkg.Signal{
-		Type: "terminal/park/await_callback",
-		Payload: map[string]any{
-			"resume_at":           resumeAt,
-			"session_token":       t.ParkSessionToken,
-			"park_payload":        t.ParkPayload,
-			"parked_reason_label": t.ParkReasonLabel,
-			"parked_reason_note":  t.ParkReasonNote,
-		},
+		Type:    "terminal/park/await_callback",
+		Payload: payload,
 	}
 }
 

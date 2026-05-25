@@ -53,6 +53,14 @@ type InstanceRow struct {
 	MainRunScopeID shared.UUID `json:"main_run_scope_id"`
 	CreatedAt      time.Time   `json:"created_at"`
 	TerminatedAt   *time.Time  `json:"terminated_at"` // nullable; set at terminal-state detection
+	// Paused projects rimsky_instances.paused — the soft-pause flag
+	// toggled by the debugger control-API surface (POST /instances/{id}/pause
+	// and /resume), or set at create-time via the `paused: true` request
+	// flag. When true, the supervisor's candidate-selection skips this
+	// instance until POST /instances/{id}/resume clears the flag.
+	//
+	// @concept: breakpoint
+	Paused bool `json:"paused"`
 }
 
 // InstanceTable is the rimsky_instances accessor.
@@ -91,6 +99,15 @@ type InstanceTable interface {
 	// .ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md
 	// §"Persistence API".
 	IncrementAttributeOverrideMatchCounts(ctx context.Context, instanceID shared.UUID, indices []int, tx Tx) error
+	// SetPaused toggles rimsky_instances.paused on the given instance.
+	// Returns the prior value of the column (read in the same tx as the
+	// UPDATE) so the control-API handler can distinguish "no-op, already
+	// at requested state" (return 409 with ErrInstanceAlreadyPaused or
+	// ErrInstanceNotPaused) from "toggled" (return 200). Returns
+	// shared.ErrInstanceNotFound when no row matches.
+	//
+	// @concept: breakpoint
+	SetPaused(ctx context.Context, instanceID shared.UUID, paused bool, tx Tx) (priorValue bool, err error)
 }
 
 // InstanceCreateInput is the per-row input for Create.
@@ -123,6 +140,13 @@ type InstanceCreateInput struct {
 	//
 	// @concept: run-scope
 	MainRunScopeID shared.UUID
+	// Paused is the create-time hold flag. When true, the row is
+	// inserted with rimsky_instances.paused = true; the supervisor's
+	// candidate-selection skips it until POST /instances/{id}/resume
+	// releases the hold. Defaults to false. Per concept:breakpoint.
+	//
+	// @concept: breakpoint
+	Paused bool
 }
 
 // InstanceListFilter is the observability/list filter for instances.

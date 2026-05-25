@@ -597,6 +597,42 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		// leave a stale rejected entry in the ack-outcome map.
 		return err
 	}
+
+	// Breakpoint checkpoint: after_terminal. Runs AFTER runApplyTerminal
+	// returns (its tx is committed) and BEFORE the callback handler
+	// records the ack outcome. EvaluateBreakpoints opens its own short
+	// txns; pause-mode hits block on waitForResume (per-iteration short
+	// txns; no tx held across the wait). Return value is discarded —
+	// after-terminal overlays don't mutate further dispatch because the
+	// dispatch is already complete. Notify-only breakpoints just
+	// observe. Failures are best-effort: Warn-log and continue so
+	// debugger problems don't fail the callback. AsyncContext does NOT
+	// carry GraphName / scope.PartitionKey (the callback path skips L5
+	// attribute overrides per the comment at acq construction), so the
+	// matcher's graph / child_key keys evaluate against empty strings —
+	// callers writing breakpoints intended to fire on async-callback
+	// terminals should leave those keys absent (wildcard) per spec §4.4.
+	scope := resolveAcqScope(ctx, args, acq)
+	terminalSig := signalForTerminal(t)
+	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
+		InstanceID:       acq.InstanceID,
+		DispatchID:       acq.DispatchID,
+		FrameID:          acq.FrameID,
+		Executor:         acq.Executor,
+		NodeType:         acq.NodeType,
+		Graph:            acq.GraphName,
+		ChildKey:         scope.PartitionKey,
+		MergedAttributes: ac.ResolvedAttributes,
+		Checkpoint:       persistence.CheckpointAfterTerminal,
+		TerminalSignal:   &terminalSig,
+		NodeRunSnapshot:  nodeRunSnapshotForBreakpoint(acq),
+		HeldClaims:       heldClaimsSummaryForBreakpoint(acq),
+		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
+	}); err != nil && c.Logger != nil {
+		c.Logger.Warn("breakpoint: after_terminal eval failed; continuing",
+			"dispatch_id", acq.DispatchID.String(),
+			"error", err.Error())
+	}
 	// Attach the structured ack-body fields to the AsyncContext so the
 	// HTTP handler can serialize the response after driveTerminal
 	// returns. The handler reads these via the per-call ackOutcome map

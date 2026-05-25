@@ -20,7 +20,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -56,11 +56,15 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if in.FrameDeliveryMode != "" {
 		deliveryMode = in.FrameDeliveryMode
 	}
+	pausedArg := 0
+	if in.Paused {
+		pausedArg = 1
+	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id)
-		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id, paused)
+		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(),
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -339,6 +343,47 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	return nil
 }
 
+// SetPaused reads the current paused value, then UPDATEs it. Both
+// statements run inside the caller-supplied tx (BEGIN IMMEDIATE
+// serialises sqlite writers, so the SELECT-then-UPDATE pair is atomic
+// relative to other writers). Returns shared.ErrInstanceNotFound when
+// no row matches.
+//
+// @concept: breakpoint
+func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshared.UUID, paused bool, tx persistence.Tx) (bool, error) {
+	q := s.q(tx)
+	var prior int64
+	if err := q.QueryRowContext(ctx,
+		`SELECT paused FROM rimsky_instances WHERE id = ?`,
+		instanceID.String(),
+	).Scan(&prior); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, foundationshared.ErrInstanceNotFound
+		}
+		return false, fmt.Errorf("instances.setPaused.select: %w", err)
+	}
+	priorBool := prior != 0
+	// Skip the UPDATE when already at the requested value — same
+	// no-op-avoidance rationale as the postgres mirror. SQLite writes
+	// hold the database-level writer lock under BEGIN IMMEDIATE; the
+	// redundant UPDATE would serialise unrelated writers for no behavioral
+	// change.
+	if priorBool == paused {
+		return priorBool, nil
+	}
+	pausedArg := 0
+	if paused {
+		pausedArg = 1
+	}
+	if _, err := q.ExecContext(ctx,
+		`UPDATE rimsky_instances SET paused = ? WHERE id = ?`,
+		pausedArg, instanceID.String(),
+	); err != nil {
+		return false, fmt.Errorf("instances.setPaused.update: %w", err)
+	}
+	return priorBool, nil
+}
+
 // CountByActive returns (active, terminated) instance counts.
 func (s *instancesImpl) CountByActive(ctx context.Context, tx persistence.Tx) (int, int, error) {
 	var active, terminated int
@@ -398,8 +443,9 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		terminatedAtStr   sql.NullString
 		matchCountsStr    string
 		mainRunScopeIDStr string
+		pausedInt         int64
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr, &pausedInt); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -445,6 +491,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		FrameDeliveryMode:             deliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		CreatedAt:                     createdAt,
+		Paused:                        pausedInt != 0,
 	}
 	if instanceKey.Valid {
 		k := instanceKey.String

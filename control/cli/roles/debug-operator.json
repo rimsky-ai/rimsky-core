@@ -1,0 +1,12 @@
+{
+  "name": "debug-operator",
+  "description": "Permission bundle for live-instance debugging: pause/resume instances and install/inspect/resume/delete runtime breakpoints. High-risk in production — grant only to operators or agent keys that need to halt or mutate live dispatches.",
+  "permissions": [
+    { "action": "*:read" },
+    { "action": "instance:pause" },
+    { "action": "instance:resume" },
+    { "action": "breakpoint:create" },
+    { "action": "breakpoint:resume" },
+    { "action": "breakpoint:delete" }
+  ]
+}

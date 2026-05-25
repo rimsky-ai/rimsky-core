@@ -87,7 +87,9 @@ func TestMCPToolsCall(t *testing.T) {
 
 func TestMCPUnsupportedMethod(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
-	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"resources/list"}`)
+	// `prompts/list` is not implemented in v1; both tools/* and
+	// resources/* are.
+	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"prompts/list"}`)
 	if resp.Error == nil || resp.Error.Code != mcp.CodeMethodNotFound {
 		t.Fatalf("expected method-not-found; got %+v", resp.Error)
 	}

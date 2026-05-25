@@ -38,6 +38,14 @@
 //     are all fresh get enqueued for the next claim cycle.
 //  7. frame.RunTick — frame-end detection, queue advancement,
 //     stuck-frame warning (advisory only), orphan-frame-dispatch reap.
+//  8. Breakpoint sweeps — delete TTL-expired
+//     `rimsky_instance_breakpoints` rows, auto-resume stale
+//     `rimsky_breakpoint_hits` rows on `auto_resume_after_ttl`
+//     breakpoints, and reap orphaned-unresumed hit rows abandoned
+//     mid-block (block_dispatch / unknown-policy waits whose
+//     supervisor crashed or context-canceled before resume). Per
+//     spec
+//     `.ok-planner/specs/2026-05-24-instance-debugger-design.md` §7.4.
 package scheduler
 
 import (
@@ -405,6 +413,54 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	if cfg.Persist != nil && cfg.Clock != nil {
 		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, cfg.Queue, log, cfg.Clock.Now()); err != nil {
 			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
+		}
+	}
+
+	// 12. Breakpoint sweeps — delete TTL-expired breakpoints,
+	// auto-resume stale hits on auto_resume_after_ttl breakpoints, and
+	// reap unresumed hits abandoned mid-block by a supervisor crash /
+	// context cancel. Per spec
+	// .ok-planner/specs/2026-05-24-instance-debugger-design.md §7.4.
+	// Errors are logged at Warn and swallowed (matching the
+	// SweepClaimHandleRetention / SweepMessageIdempotencies discipline).
+	if cfg.Persist != nil {
+		bpNow := time.Now()
+		if cfg.Clock != nil {
+			bpNow = cfg.Clock.Now()
+		}
+		// Orphaned-unresumed cutoff: how stale an unresumed hit must
+		// get before the reaper deletes it. 5 minutes is generous
+		// enough that legitimately-paused dispatches under operator
+		// inspection don't get yanked out from under their waiters,
+		// while still bounding the table size after supervisor
+		// restarts under steady load.
+		orphanedHitCutoff := bpNow.Add(-5 * time.Minute)
+		if err := cfg.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			deleted, err := cfg.Persist.Breakpoints().SweepExpired(ctx, bpNow, tx)
+			if err != nil {
+				return err
+			}
+			if deleted > 0 {
+				log.Info("tick: SweepExpired breakpoints", "deleted", deleted)
+			}
+			resumed, err := cfg.Persist.BreakpointHits().AutoResumeStale(ctx, bpNow, tx)
+			if err != nil {
+				return err
+			}
+			if resumed > 0 {
+				log.Info("tick: AutoResumeStale breakpoint hits", "resumed", resumed)
+			}
+			orphaned, err := cfg.Persist.BreakpointHits().SweepOrphanedUnresumed(ctx, orphanedHitCutoff, tx)
+			if err != nil {
+				return err
+			}
+			if orphaned > 0 {
+				log.Info("tick: SweepOrphanedUnresumed breakpoint hits",
+					"reaped", orphaned, "cutoff", orphanedHitCutoff.Format(time.RFC3339))
+			}
+			return nil
+		}); err != nil {
+			log.Warn("tick: breakpoint sweeps failed", "error", err.Error())
 		}
 	}
 	return nil

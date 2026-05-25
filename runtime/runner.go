@@ -483,6 +483,39 @@ func RunNode(
 	if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 	}
+
+	// Breakpoint checkpoint: after_terminal. Runs AFTER runApplyTerminal
+	// returns (its tx is committed) and BEFORE the next runner tick can
+	// fire any downstream cascade work. EvaluateBreakpoints opens its own
+	// short txns; pause-mode hits block on waitForResume (per-iteration
+	// short txns; no tx held across the wait). The return value is
+	// discarded — after-terminal overlays don't mutate further dispatch
+	// because the dispatch is already complete. Pause-mode breakpoints at
+	// after_terminal block the runner before it returns control to the
+	// supervisor loop; that's the value. Notify-only breakpoints just
+	// observe. Failures are best-effort: Warn-log and continue so
+	// debugger problems don't fail the run.
+	scope := resolveAcqScope(ctx, args, &acq)
+	terminalSig := signalForTerminal(terminal)
+	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
+		InstanceID:       acq.InstanceID,
+		DispatchID:       acq.DispatchID,
+		FrameID:          acq.FrameID,
+		Executor:         acq.Executor,
+		NodeType:         acq.NodeType,
+		Graph:            acq.GraphName,
+		ChildKey:         scope.PartitionKey,
+		MergedAttributes: acq.MergedAttributes,
+		Checkpoint:       persistence.CheckpointAfterTerminal,
+		TerminalSignal:   &terminalSig,
+		NodeRunSnapshot:  nodeRunSnapshotForBreakpoint(&acq),
+		HeldClaims:       heldClaimsSummaryForBreakpoint(&acq),
+		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, &acq),
+	}); err != nil && log != nil {
+		log.Warn("breakpoint: after_terminal eval failed; continuing",
+			"dispatch_id", acq.DispatchID.String(),
+			"error", err.Error())
+	}
 	return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 }
 

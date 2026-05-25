@@ -5,12 +5,13 @@
 package controlapi
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 
+	"github.com/fallguy/rimsky/foundation/matcher"
+	"github.com/fallguy/rimsky/foundation/shared"
 	"github.com/fallguy/rimsky/foundation/spec"
 	nodepkg "github.com/fallguy/rimsky/graph/node"
 )
@@ -192,101 +193,44 @@ func validateMatchEntries(
 
 // validateMatcherKeys enforces the matcher grammar's key set,
 // per-key cross-checks, and ordinal-shaped-key rejection.
+//
+// Delegates to foundation/matcher.Validate. The control-api layer
+// owns the projection from its locally-typed ExecutorEntry map to the
+// matcher package's generic set, and re-wraps the matcher's
+// ErrInvalid sentinel into errAttributeOverridesInvalid so existing
+// HTTP-400 translation and error-assertion tests continue to work
+// unchanged.
 func validateMatcherKeys(
 	entryIdx int,
-	matcher map[string]any,
+	matcherMap map[string]any,
 	nodeNames, usedExecutors map[string]struct{},
 	executors map[string]ExecutorEntry,
 	graphNames map[string]struct{},
 	legacyFlat bool,
 ) error {
-	allowed := map[string]struct{}{
-		"node_type": {}, "executor": {}, "graph": {}, "child_key": {}, "attrs": {},
+	// Project the locally-typed ExecutorEntry map down to the generic
+	// name set the matcher package consumes. The matcher package can't
+	// import controlapi.ExecutorEntry (back-cycle).
+	execNames := make(map[string]struct{}, len(executors))
+	for name := range executors {
+		execNames[name] = struct{}{}
 	}
-	// Loud rejection vocabulary — ordinal-shaped keys the spec forbids.
-	ordinalRejects := map[string]string{
-		"dispatch_index":  "use child_key or attrs.<path> as the matcher anchor; ordinal addressing is not supported",
-		"nth_child":       "use child_key or attrs.<path>; ordinal addressing is not supported",
-		"partition_index": "use child_key directly; partition_index is not exposed in the matcher grammar",
-		"seq":             "use child_key or attrs.<path>; sequence addressing is not supported",
-	}
-	for k, v := range matcher {
-		if msg, isOrdinal := ordinalRejects[k]; isOrdinal {
-			return wrapInvalidf("attribute_overrides.by_match[%d].matcher: %s (offending key %q)", entryIdx, msg, k)
-		}
-		if _, ok := allowed[k]; !ok {
-			return wrapInvalidf("attribute_overrides.by_match[%d].matcher: unknown matcher key %q (allowed: node_type, executor, graph, child_key, attrs)", entryIdx, k)
-		}
-		switch k {
-		case "node_type":
-			s, ok := v.(string)
-			if !ok {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.node_type must be a string", entryIdx)
-			}
-			if _, found := nodeNames[s]; !found {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.node_type: unknown node %q", entryIdx, s)
-			}
-		case "executor":
-			s, ok := v.(string)
-			if !ok {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.executor must be a string", entryIdx)
-			}
-			if _, declared := executors[s]; !declared {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.executor: unknown executor name %q", entryIdx, s)
-			}
-			if _, used := usedExecutors[s]; !used {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.executor: executor not referenced by any template node: %q", entryIdx, s)
-			}
-		case "graph":
-			s, ok := v.(string)
-			if !ok {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.graph must be a string", entryIdx)
-			}
-			if legacyFlat {
-				if s != spec.MainGraphName {
-					return wrapInvalidf("attribute_overrides.by_match[%d].matcher.graph: template has no declared sub-graphs; only \"main\" is valid (got %q)", entryIdx, s)
-				}
-			} else if _, ok := graphNames[s]; !ok {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.graph: unknown graph %q (must be \"main\" or a declared sub-graph name)", entryIdx, s)
-			}
-		case "child_key":
-			s, ok := v.(string)
-			if !ok || s == "" {
-				// Empty string is the non-fan-out sentinel (runtime
-				// dispatches without a partition key carry
-				// `childKey == ""`). Per the matcher-overlay spec
-				// (.ok-planner/specs/2026-05-21-attribute-overrides-
-				// matcher-overlay-design.md §"Matcher key semantics"),
-				// matchers specifying `child_key` MUST NOT apply to
-				// non-fan-out dispatches — accepting `child_key: ""`
-				// here would silently invert that contract by firing
-				// on every non-fan-out dispatch. Reject loudly.
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.child_key must be a non-empty string (empty string is the non-fan-out sentinel, not a matcher target)", entryIdx)
-			}
-			// No cross-check beyond non-emptiness — opaque per concept:fan-out.
-		case "attrs":
-			attrs, ok := v.(map[string]any)
-			if !ok {
-				return wrapInvalidf("attribute_overrides.by_match[%d].matcher.attrs must be an object", entryIdx)
-			}
-			for path, primValue := range attrs {
-				if !isPrimitive(primValue) {
-					return wrapInvalidf("attribute_overrides.by_match[%d].matcher.attrs[%q]: must be a primitive (string / number / bool); composites use a dotted path instead", entryIdx, path)
-				}
-			}
-		}
+	err := matcher.Validate(matcher.Matcher(matcherMap), matcher.ValidationRefs{
+		NodeTypes:     nodeNames,
+		ExecutorNames: execNames,
+		UsedExecutors: usedExecutors,
+		GraphNames:    graphNames,
+		LegacyFlat:    legacyFlat,
+	}, entryIdx)
+	if err != nil {
+		// Re-wrap to preserve the existing errAttributeOverridesInvalid
+		// sentinel so by_match's existing test assertions and
+		// HTTP-status translation continue to work unchanged. The
+		// breakpoint code path (Pass 4) calls matcher.Validate directly
+		// and translates matcher.ErrInvalid at its own boundary.
+		return shared.Wrap(errAttributeOverridesInvalid, err.Error(), nil)
 	}
 	return nil
-}
-
-func isPrimitive(v any) bool {
-	switch v.(type) {
-	case string, bool, float64, int, int64, json.Number:
-		return true
-	case nil:
-		return false // explicit null is not a useful matcher predicate
-	}
-	return false
 }
 
 // wrapInvalid annotates msg with the errAttributeOverridesInvalid

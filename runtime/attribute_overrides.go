@@ -6,9 +6,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 
+	"github.com/fallguy/rimsky/foundation/matcher"
 	"github.com/fallguy/rimsky/foundation/persistence"
 	"github.com/fallguy/rimsky/foundation/shared"
 )
@@ -112,9 +111,9 @@ func applyAttributeOverrides(
 				// entry is fully invisible to the counter path.
 				continue
 			}
-			matcher, _ := entry["matcher"].(map[string]any)
+			matcherMap, _ := entry["matcher"].(map[string]any)
 			overlay, _ := entry["overlay"].(map[string]any)
-			if !evaluateMatcher(matcher, executor, nodeName, graph, childKey, matcherCtx, logger, i) {
+			if !evaluateMatcher(matcherMap, executor, nodeName, graph, childKey, matcherCtx, logger, i) {
 				continue
 			}
 			if overlay != nil {
@@ -208,107 +207,32 @@ func lookupMatchList(overrides map[string]any, logger shared.Logger) ([]map[stri
 	return out, true
 }
 
-// matcherAllowedKeys is the closed set of recognised matcher keys.
-// The validator at instance-create rejects unknown keys, so the
-// runtime should only ever see this set; the check inside
-// evaluateMatcher is defensive against out-of-band persistence
-// corruption (matching the same shape of degradation lookupMatchList
-// uses for malformed per-entry shapes).
-var matcherAllowedKeys = map[string]struct{}{
-	"node_type": {},
-	"executor":  {},
-	"graph":     {},
-	"child_key": {},
-	"attrs":     {},
-}
-
-// evaluateMatcher returns true if matcher's predicate matches the
-// dispatch context. AND across all present matcher keys. Missing
-// matcher keys are wildcards. Empty matcher ({}) matches every
-// dispatch.
+// evaluateMatcher delegates to foundation/matcher.Evaluate, projecting
+// the runtime's positional dispatch-identity arguments into
+// matcher.Context. The matcher package owns the closed key set, the
+// defensive unknown-key guard, the attribute-path walk, and the
+// primitive-equality coercion (preserved verbatim from this file's
+// previous home; concept:inertness sanctioned read site moved with the
+// attrs branch).
 //
-// The `node_type`, `executor`, `graph`, and `child_key` branches read
-// dispatch-identity strings (NOT attribute values), so they are not
-// covered by concept:inertness. The narrow inertness-sanctioned read
-// site is the `attrs` branch — see the in-function annotation.
-//
-// `entryIndex` is the matcher's position in the instance's
-// `by_match` list; threaded through for the unknown-key warn log so
-// operators can find the malformed slot. `logger` may be nil — the
-// helper degrades to silent skip in that case.
+// `entryIndex` is the matcher's position in the instance's `by_match`
+// list; threaded through for the matcher package's unknown-key warn
+// log so operators can find the malformed slot. `logger` may be nil —
+// the helper degrades to silent skip in that case.
 func evaluateMatcher(
-	matcher map[string]any,
+	m map[string]any,
 	executor, nodeName, graph, childKey string,
 	bag map[string]any,
 	logger shared.Logger,
 	entryIndex int,
 ) bool {
-	// Defensive guard: if the matcher carries any key outside the
-	// closed allowed set, treat the entry as malformed and skip it.
-	// Without this check a matcher of the form
-	// `{"bogus_key": "x"}` (with `len(matcher) > 0` and no recognised
-	// keys) would skip every branch's check and return true, firing
-	// on every dispatch. The validator rejects unknown keys at
-	// instance-create; this runtime guard catches out-of-band
-	// persistence corruption (mirrors lookupMatchList's per-entry
-	// shape degradation discipline).
-	for k := range matcher {
-		if _, ok := matcherAllowedKeys[k]; !ok {
-			if logger != nil {
-				logger.Warn("applyAttributeOverrides: matcher contains unknown key; skipping entry",
-					"entry_index", entryIndex,
-					"unknown_key", k)
-			}
-			return false
-		}
-	}
-	if len(matcher) == 0 {
-		return true // empty matcher matches every dispatch
-	}
-	if v, ok := matcher["node_type"]; ok {
-		s, _ := v.(string)
-		if s != nodeName {
-			return false
-		}
-	}
-	if v, ok := matcher["executor"]; ok {
-		s, _ := v.(string)
-		if s != executor {
-			return false
-		}
-	}
-	if v, ok := matcher["graph"]; ok {
-		s, _ := v.(string)
-		if s != graph {
-			return false
-		}
-	}
-	if v, ok := matcher["child_key"]; ok {
-		s, _ := v.(string)
-		if s != childKey {
-			return false
-		}
-	}
-	if v, ok := matcher["attrs"]; ok {
-		// Sanctioned attribute-value read site per concept:inertness:
-		// rimsky reads the resolved post-L4 attribute bag here for
-		// primitive-equality matching only. No traversal beyond the
-		// named dotted path; values are never logged, formatted, or
-		// included in error messages.
-		//
-		// @concept: inertness (sanctioned attribute-value read site)
-		attrsMatcher, _ := v.(map[string]any)
-		for path, want := range attrsMatcher {
-			got, found := walkAttrPath(bag, path)
-			if !found {
-				return false
-			}
-			if !primitiveEqual(got, want) {
-				return false
-			}
-		}
-	}
-	return true
+	return matcher.Evaluate(matcher.Matcher(m), matcher.Context{
+		Executor:     executor,
+		NodeType:     nodeName,
+		Graph:        graph,
+		ChildKey:     childKey,
+		AttributeBag: bag,
+	}, logger, entryIndex)
 }
 
 // matchCounterPersist is the minimal slice of persistence.Tables that
@@ -363,92 +287,4 @@ func incrementMatchCountersAfterMerge(
 			"matched_indices", matched,
 			"error", err.Error())
 	}
-}
-
-// walkAttrPath walks a dotted path through bag and returns the leaf
-// value plus whether the path resolved. Returns (nil, false) for any
-// non-map intermediate (the matcher only addresses primitive leaves
-// under composites).
-func walkAttrPath(bag map[string]any, path string) (any, bool) {
-	cur := any(bag)
-	parts := strings.Split(path, ".")
-	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		v, exists := m[p]
-		if !exists {
-			return nil, false
-		}
-		cur = v
-	}
-	return cur, true
-}
-
-// primitiveEqual compares two values for equality, returning false
-// when either side is non-primitive. Type-coerces JSON numbers
-// (float64 vs int vs json.Number) because matcher values can arrive
-// through several decoders:
-//   - default json.Unmarshal → float64
-//   - json.Decoder with UseNumber() → json.Number
-//   - direct Go construction (tests, in-process callers) → int / int64
-//
-// The validator (control/controlapi/attribute_overrides.go::isPrimitive)
-// accepts json.Number on the matcher side; the runtime MUST recognise
-// it on either side of the equality, otherwise validator-accepted
-// shapes silently fail to match here.
-func primitiveEqual(a, b any) bool {
-	// Reduce json.Number on either side to its float64 representation
-	// for the numeric branches below. Bool / string fall through to
-	// the type-specific cases unchanged.
-	if n, ok := a.(json.Number); ok {
-		if f, err := n.Float64(); err == nil {
-			a = f
-		}
-	}
-	if n, ok := b.(json.Number); ok {
-		if f, err := n.Float64(); err == nil {
-			b = f
-		}
-	}
-	switch av := a.(type) {
-	case string:
-		bv, ok := b.(string)
-		return ok && av == bv
-	case bool:
-		bv, ok := b.(bool)
-		return ok && av == bv
-	case float64:
-		switch bv := b.(type) {
-		case float64:
-			return av == bv
-		case int:
-			return av == float64(bv)
-		case int64:
-			return av == float64(bv)
-		}
-		return false
-	case int:
-		switch bv := b.(type) {
-		case float64:
-			return float64(av) == bv
-		case int:
-			return av == bv
-		case int64:
-			return int64(av) == bv
-		}
-		return false
-	case int64:
-		switch bv := b.(type) {
-		case float64:
-			return float64(av) == bv
-		case int:
-			return av == int64(bv)
-		case int64:
-			return av == bv
-		}
-		return false
-	}
-	return false
 }
