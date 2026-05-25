@@ -11,13 +11,14 @@ references:
 
 ## What it is
 
-A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time. The five V1-bundled templates live at `code:cmd/rimsky/roles/`:
+A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time. The six V1-bundled templates live at `code:cmd/rimsky/roles/`:
 
 - `admin.json` — full access (`[{ "action": "*" }]`)
 - `operator.json` — operational verbs across the platform; can read auth state but cannot mutate keys
 - `read-only.json` — `[{ "action": "*:read" }]`
 - `agent-supervisor.json` — read across the platform + `node:invalidate`, `node:reset`, `message:send` — the writes a supervisor agent realistically needs
 - `publisher-service.json` — `[{ "action": "message:send" }]`; minimal grant for bundled publisher services
+- `debug-operator.json` — `*:read` + `instance:pause`, `instance:resume`, `breakpoint:create`, `breakpoint:resume`, `breakpoint:delete` — debugger authority for pausing instances and managing runtime breakpoints
 
 Loaded via `code:cmd/rimsky/roles/embed.go::Load`. Operators can drop additional JSON files into a config directory (`~/.rimsky/roles/`) or pass `--role-file=<path>`; the CLI loads them the same way.
 
@@ -38,3 +39,4 @@ Owns: the bundled JSON files, the CLI expansion logic (`code:cmd/rimsky/auth_cre
 ## Notes
 
 - [2026-05-15] Concept introduced by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` ("Bundled role templates (CLI-side)").
+- 2026-05-24 — Adds debug-operator role-template per spec 2026-05-24-instance-debugger-design. Bundles *:read, instance:pause, instance:resume, breakpoint:create, breakpoint:resume, breakpoint:delete. High-risk in production; grant explicitly. agent-supervisor unchanged.

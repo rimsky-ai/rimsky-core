@@ -55,3 +55,4 @@ No infix wildcards; no regex. `auth:*` matches `auth:create` but NOT `authority:
 ## Notes
 
 - [2026-05-15] Concept introduced by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` ("Permissions model").
+- 2026-05-24 — Adds breakpoint:* and instance:pause / instance:resume action verbs to the canonical registry per spec 2026-05-24-instance-debugger-design. breakpoint:read covered by *:read wildcard; the four writes (create, resume, delete, instance:pause, instance:resume) require explicit grant via the new debug-operator role-template.

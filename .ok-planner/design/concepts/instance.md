@@ -20,13 +20,14 @@ Templates declare the graph shape; instances are the live runtimes. Instances ar
 
 ## Boundaries
 
-Owns: the per-deployment runtime state, params, attribute_overrides (including `by_match` matcher overlays and the per-entry match-counter column), the binding to a template hash. Does NOT own: the template spec (see `template`), live node rows (those have their own `instance_id` FK), claim conflict (those scope to the supervisor). Adjacent: `template`, `tag`, `frame`, `node`.
+Owns: the per-deployment runtime state, params, attribute_overrides (including `by_match` matcher overlays and the per-entry match-counter column), the paused state column, the binding to a template hash. Does NOT own: the template spec (see `template`), live node rows (those have their own `instance_id` FK), claim conflict (those scope to the supervisor). Adjacent: `template`, `tag`, `frame`, `node`.
 
 ## Invariants
 
 - FK column is `template_hash TEXT`, bound at creation.
 - `instance_key` (formerly `consumer_key`) is nullable; canonical identity is the UUID.
 - `attribute_overrides` validation inspects only routing keys (`by_executor` / `by_node` plus executor/node names; for `by_match`, matcher key names + cross-checked values for `node_type` / `executor` / `graph`); overlay fragment values are never inspected (preserves structural-inertness for attribute values). Matcher attribute paths (`attrs.<path>`) are shape-validated (primitive equality) but not schema-cross-checked — unused matchers surface via `col:rimsky_instances.attribute_overrides_match_counts`.
+- Candidate selection by the supervisor skips paused instances (the candidate query filter includes `AND paused = false`).
 
 ## Aliases and historical names
 
@@ -41,3 +42,5 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 2026-05-21 — `userdata_overrides` → `attribute_overrides`. Same merge shape (`by_executor` + `by_node`), applied to attribute values rather than userdata bytes. Persisted as `col:rimsky_instances.attribute_overrides`. See `.ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md`.
 
 2026-05-21 — Matcher overlay (`by_match`) added to `attribute_overrides` per `.ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md`. New column `col:rimsky_instances.attribute_overrides_match_counts` (JSONB array of int64, indexed by `by_match` entry position). Incremented synchronously by the supervisor at match time; readable via `GET /instances/{id}`.
+
+2026-05-24 — Adds rimsky_instances.paused BOOLEAN column and the corresponding pause / resume / paused-on-create surface per spec 2026-05-24-instance-debugger-design. Soft-pause semantics: in-flight dispatches run to terminal; new claims are held until resume.

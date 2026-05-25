@@ -22,7 +22,7 @@ The supervisor is rimsky's worker side. It selects candidate work, performs the 
 
 ## Boundaries
 
-Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `error-policy`, `auto-terminal`.
+Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating, breakpoint checkpoint evaluation at before_dispatch and after_terminal, blocked-runner polling for resume. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `error-policy`, `auto-terminal`.
 
 ## Invariants
 
@@ -32,6 +32,7 @@ Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callba
 - `Open` fires inside the rimsky-side acquisition transaction (`@blessed-invariant 15`).
 - `accepted_executors` / `accepted_stores` filter candidate selection: `required_stores <@ :accepted_stores` (Postgres array-contained-in).
 - Two distinct callback hostnames: binds on `0.0.0.0`; advertises via `callback.advertise_host`.
+- Candidate selection skips paused instances and dispatches matching pause-mode breakpoints with unresumed hits.
 
 ## Aliases and historical names
 
@@ -40,4 +41,8 @@ The supervisor's role was once split differently pre-phase-5; the unified runner
 ## Open within this concept
 
 (no live tensions distinct from `claim-handle`, `node-run`, and the verify-before-run / acquisition-tx invariants)
+
+## Notes
+
+- 2026-05-24 — Adds breakpoint checkpoint cooperation per spec 2026-05-24-instance-debugger-design. Pause-mode breakpoints block the runner until resume; notify_only breakpoints emit a hit row and continue. Pause-mode block uses polling (250ms) on rimsky_breakpoint_hits.resumed_at; no cross-process IPC bus.
 

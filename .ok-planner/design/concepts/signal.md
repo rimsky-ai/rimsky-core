@@ -122,3 +122,5 @@ Adjacent: `concept:node-subscription`, `concept:error-policy`, `concept:cascade`
 - **`terminal/park/*` leaves are the closed two-value set determined by `ParkReason`.** Extending the set requires a proto-level change to `ParkReason` + a storage CHECK update + a spec change first; the signal taxonomy is downstream. `AwaitAsyncCallback` is a transient (`transient/await_async`), not a park — the node stays in `running` state during the callback wait.
 
 ## Notes
+
+- 2026-05-24 — concept:breakpoint consumes signal type-paths via the signal_type filter on after_terminal breakpoints (prefix-only, trailing-* wildcards, validated via foundation/signal/taxonomy.go::ValidateTypePath). No taxonomy change; concept:signal is read-only consumer.

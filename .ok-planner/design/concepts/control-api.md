@@ -15,8 +15,8 @@ references:
 
 The operator interface exposed by `cmd/rimsky-control-api` (binary). Implementation lives under `control/controlapi/`. Serves two protocol skins on the same TCP port and the same operation set:
 
-- **HTTP+JSON** — `go-chi/chi`-routed at bare paths (no `/v1/` prefix): `/templates`, `/instances`, `/auth/*`, `/observability/*`, `/admin/diagnostics/*`, `/admin/scheduled-nodes/{id}/force-fire`, etc.
-- **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at `POST /mcp`, served by `control/controlapi/mcp/`. Tools-only V1 (no resources, prompts, subscriptions). The tool catalog is computed from the canonical action registry at `code:control/controlapi/actions.go::v1Actions`; `tools/list` filters by the requesting key's permission grant.
+- **HTTP+JSON** — `go-chi/chi`-routed at bare paths (no `/v1/` prefix): `/templates`, `/instances`, `/instances/{id}/pause`, `/instances/{id}/resume`, `/instances/{id}/breakpoints`, `/instances/{id}/breakpoints/{breakpoint_id}`, `/instances/{id}/breakpoints/{breakpoint_id}/resume`, `/auth/*`, `/observability/*`, `/admin/diagnostics/*`, `/admin/scheduled-nodes/{id}/force-fire`, etc.
+- **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at `POST /mcp`, served by `control/controlapi/mcp/`. Tools-only V1, plus read-only resources (`resources/list` and `resources/read`) added by spec 2026-05-24-instance-debugger-design. No `resources/subscribe` and no server-pushed notifications in V1 — those await a transport upgrade. The tool catalog is computed from the canonical action registry at `code:control/controlapi/actions.go::v1Actions`; `tools/list` filters by the requesting key's permission grant.
 
 Both skins pass through the same auth + permission middleware. Fires `LifecycleSubscriber` events at state transitions (synchronously).
 
@@ -56,4 +56,5 @@ None live.
 ## Notes
 
 - [2026-05-15] Spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` adds the auth surface, makes MCP a first-class protocol skin hosted in-process at `POST /mcp`, and retires the standalone `mcp-servers/control-api/` framing.
+- 2026-05-24 — MCP capability extends from tools-only to tools + read-only resources per spec 2026-05-24-instance-debugger-design. resources/list and resources/read added to the dispatch switch; push (resources/subscribe + notifications/resources/updated) deferred to a future transport-upgrade spec. New /instances/{id}/pause and /resume routes added. New /instances/{id}/breakpoints/* routes added.
 
