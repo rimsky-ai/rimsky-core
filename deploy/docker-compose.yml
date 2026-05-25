@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: rimsky
       POSTGRES_DB: rimsky
     ports:
-      - "5544:5432"
+      - "${POSTGRES_HOST_PORT:-5544}:5432"
     volumes:
       - rimsky-pg:/var/lib/postgresql/data
     healthcheck:
@@ -87,7 +87,7 @@ services:
       - "9111"
       - "9121"
     ports:
-      - "9121:9121"  # admin port exposed for items seeding
+      - "${STORE_POSTGRES_ADMIN_HOST_PORT:-9121}:9121"  # admin port exposed for items seeding
 
   # ----- Rimsky processes -----
 
@@ -145,7 +145,7 @@ services:
     volumes:
       - ./rimsky.yml:/etc/rimsky/rimsky.yml:ro
     ports:
-      - "8080:8080"
+      - "${CONTROL_API_HOST_PORT:-8080}:8080"
 
   # ----- Executors -----
 
@@ -160,8 +160,8 @@ services:
     volumes:
       - rimsky-content:/workspace/content
     ports:
-      - "9091:9091"
-      - "9092:9092"
+      - "${HTTP_NODE_GRPC_HOST_PORT:-9091}:9091"
+      - "${HTTP_NODE_HTTP_HOST_PORT:-9092}:9092"
 
   claude-agent:
     image: rimsky/executor-claude-agent:latest
@@ -174,8 +174,8 @@ services:
     volumes:
       - rimsky-content:/workspace/content
     ports:
-      - "9090:9090"
-      - "9190:9190"
+      - "${CLAUDE_AGENT_GRPC_HOST_PORT:-9090}:9090"
+      - "${CLAUDE_AGENT_HTTP_HOST_PORT:-9190}:9190"
 
   # ----- Reference dashboard -----
 
@@ -188,7 +188,7 @@ services:
       RIMSKY_CONTROL_API_URL: "http://control-api:8080"
       PORT: "8090"
     ports:
-      - "8090:8090"
+      - "${DASHBOARD_HOST_PORT:-8090}:8090"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "http://localhost:8090/healthz"]
       interval: 10s
@@ -210,7 +210,7 @@ services:
       RIMSKY_SENSOR_CRON_HOST: "0.0.0.0"
       RIMSKY_SENSOR_CRON_PORT: "9081"
     ports:
-      - "9081:9081"
+      - "${SENSOR_CRON_HOST_PORT:-9081}:9081"
 
   sensor-http:
     image: rimsky/sensor-http:latest
@@ -223,7 +223,7 @@ services:
       RIMSKY_SENSOR_HTTP_PORT: "9082"
       RIMSKY_SENSOR_HTTP_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
     ports:
-      - "9082:9082"
+      - "${SENSOR_HTTP_HOST_PORT:-9082}:9082"
 
   sensor-object-store:
     image: rimsky/sensor-object-store:latest
@@ -236,7 +236,7 @@ services:
       RIMSKY_SENSOR_OBJECT_STORE_PORT: "9083"
       RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
     ports:
-      - "9083:9083"
+      - "${SENSOR_OBJECT_STORE_HOST_PORT:-9083}:9083"
 
   sensor-webhook:
     image: rimsky/sensor-webhook:latest
@@ -250,8 +250,8 @@ services:
       RIMSKY_SENSOR_WEBHOOK_HTTP_PORT: "9184"
       RIMSKY_SENSOR_WEBHOOK_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
     ports:
-      - "9084:9084"
-      - "9184:9184"
+      - "${SENSOR_WEBHOOK_GRPC_HOST_PORT:-9084}:9084"
+      - "${SENSOR_WEBHOOK_HTTP_HOST_PORT:-9184}:9184"
 
 volumes:
   rimsky-pg: {}

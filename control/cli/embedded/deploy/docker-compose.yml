@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: rimsky
       POSTGRES_DB: rimsky
     ports:
-      - "5544:5432"
+      - "${POSTGRES_HOST_PORT:-5544}:5432"
     volumes:
       - rimsky-pg:/var/lib/postgresql/data
     healthcheck:
@@ -84,7 +84,7 @@ services:
     volumes:
       - ../.rimsky/rimsky.yml:/etc/rimsky/rimsky.yml:ro
     ports:
-      - "8080:8080"
+      - "${CONTROL_API_HOST_PORT:-8080}:8080"
 
   # ----- Executors -----
 
@@ -94,17 +94,91 @@ services:
       RIMSKY_EXECUTOR_HTTP_NODE_HOST: "0.0.0.0"
       RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
       RIMSKY_EXECUTOR_HTTP_NODE_HTTP_PORT: "9092"
+      RIMSKY_EXECUTOR_HTTP_NODE_HTTP_BRIDGE_URL: "http://http-node:9092"
       RIMSKY_EXECUTOR_STUB_MODE: "1"
     volumes:
       - rimsky-content:/workspace/content
     ports:
-      - "9091:9091"
-      - "9092:9092"
+      - "${HTTP_NODE_GRPC_HOST_PORT:-9091}:9091"
+      - "${HTTP_NODE_HTTP_HOST_PORT:-9092}:9092"
+
+  rimsky-dashboard:
+    build: ../dashboards/rimsky-dashboard
+    image: rimsky/rimsky-dashboard:latest
+    depends_on:
+      - control-api
+    environment:
+      RIMSKY_CONTROL_API_URL: "http://control-api:8080"
+      PORT: "8090"
+    ports:
+      - "${DASHBOARD_HOST_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ----- Bundled sensors (Publisher protocol) -----
+  # Each sensor implements the Publisher protocol and POSTs message
+  # envelopes to control-api's generic /instances/{id}/messages
+  # endpoint with sender_kind="publisher". Per concept:replica, the
+  # v1 contract is single-replica per sensor binary.
+
+  sensor-cron:
+    image: rimsky/sensor-cron:latest
+    depends_on:
+      - control-api
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_CRON_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_CRON_PORT: "9081"
+    ports:
+      - "${SENSOR_CRON_HOST_PORT:-9081}:9081"
+
+  sensor-http:
+    image: rimsky/sensor-http:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_HTTP_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_HTTP_PORT: "9082"
+      RIMSKY_SENSOR_HTTP_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "${SENSOR_HTTP_HOST_PORT:-9082}:9082"
+
+  sensor-object-store:
+    image: rimsky/sensor-object-store:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_OBJECT_STORE_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_OBJECT_STORE_PORT: "9083"
+      RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "${SENSOR_OBJECT_STORE_HOST_PORT:-9083}:9083"
+
+  sensor-webhook:
+    image: rimsky/sensor-webhook:latest
+    depends_on:
+      - control-api
+      - postgres
+    environment:
+      RIMSKY_ENDPOINT: "http://control-api:8080"
+      RIMSKY_SENSOR_WEBHOOK_HOST: "0.0.0.0"
+      RIMSKY_SENSOR_WEBHOOK_PORT: "9084"
+      RIMSKY_SENSOR_WEBHOOK_HTTP_PORT: "9184"
+      RIMSKY_SENSOR_WEBHOOK_STATE_DSN: "postgres://rimsky:rimsky@postgres:5432/rimsky?sslmode=disable"
+    ports:
+      - "${SENSOR_WEBHOOK_GRPC_HOST_PORT:-9084}:9084"
+      - "${SENSOR_WEBHOOK_HTTP_HOST_PORT:-9184}:9184"
 
 volumes:
   rimsky-pg: {}
   # Shared filesystem-store root mounted on the filesystem store-service
-  # (which serves it via the ClaimProducer protocol) and on the executors
-  # (which read/write the addresses handed to them by the supervisor at
-  # claim acquisition).
+  # (which serves it via the 4-verb protocol) and on both executors
+  # (which read/write region paths handed to them by the supervisor).
   rimsky-content: {}
