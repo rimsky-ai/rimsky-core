@@ -27,6 +27,7 @@ apache:
   - foundation/locks/
   - foundation/shared/
   - foundation/spec/
+  - foundation/signal/  # event/audit taxonomy + CEL matching; imported by Apache spec/node, imports only foundation/shared (signal/audit/ is carved out AGPL below)
   - runtime/peer/
   - runtime/executor/
   - runtime/clientiface/
@@ -36,6 +37,7 @@ apache:
   - graph/shared/
   - graph/template/canonical/
   - conformance/
+  - sdk/go/  # adopter-facing SDK (build-your-own executor/producer/publisher); imports only Apache-tier packages
   - stores/  # rimsky-internal test-infra carve-outs: stub + per-driver testfixture
   - executors/stub/  # rimsky-internal test-infra carve-out
   # sensors/, subscribers/, executors/{claude-agent,http-node,verifier-*}/
@@ -61,6 +63,7 @@ apache:
   # docs/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/docs
   # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cold-read/
+  - scripts/  # build/release tooling (e.g. release.sh), same tier as Makefile/deploy/
   # Top-level files and dotfiles default to Apache (build config, README,
   # CHANGELOG, Makefile, .golangci.yml, etc.). Non-source files (LICENSE.*,
   # COPYRIGHT, NOTICE, TRADEMARKS.md, CLA.md, CONTRIBUTING.md, licensing.yml,
@@ -70,6 +73,8 @@ agpl:
   - foundation/cascade/
   - foundation/persistence/
   - foundation/internal/
+  - foundation/matcher/  # internal matching machinery
+  - foundation/signal/audit/  # audit-log writer; imports persistence (AGPL). Root foundation/signal/ is Apache (above)
   - graph/attribute/
   - control/config/
   - control/controlapi/

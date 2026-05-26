@@ -1,3 +1,7 @@
+-- Copyright © 2026 Fall Guy Consulting.
+-- Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+-- license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
 -- Rimsky consolidated schema baseline.
 -- Created 2026-05-24 by spec .ok-planner/specs/2026-05-24-instance-debugger-design.md.
 -- Replaces the prior 14-migration sequence (001-baseline through 014-drop-last-outcome).
