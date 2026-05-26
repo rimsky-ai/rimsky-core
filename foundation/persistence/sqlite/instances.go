@@ -20,7 +20,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, service_bindings, created_by_api_key_id`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -60,11 +60,22 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if in.Paused {
 		pausedArg = 1
 	}
+	// Empty json.RawMessage → NULL service_bindings; nil *UUID → NULL
+	// created_by_api_key_id. JSONB and UUID both map to TEXT in the
+	// SQLite schema (caller marshals JSON / formats the UUID string).
+	var serviceBindingsArg any
+	if len(in.ServiceBindings) > 0 {
+		serviceBindingsArg = string(in.ServiceBindings)
+	}
+	var createdByAPIKeyArg any
+	if in.CreatedByAPIKeyID != nil {
+		createdByAPIKeyArg = in.CreatedByAPIKeyID.String()
+	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id, paused)
-		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id, paused, service_bindings, created_by_api_key_id)
+		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg,
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg, serviceBindingsArg, createdByAPIKeyArg,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -433,19 +444,21 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		idStr             string
-		templateHash      string
-		instanceKey       sql.NullString
-		paramsStr         string
-		overridesStr      string
-		deliveryMode      string
-		createdAtStr      string
-		terminatedAtStr   sql.NullString
-		matchCountsStr    string
-		mainRunScopeIDStr string
-		pausedInt         int64
+		idStr                string
+		templateHash         string
+		instanceKey          sql.NullString
+		paramsStr            string
+		overridesStr         string
+		deliveryMode         string
+		createdAtStr         string
+		terminatedAtStr      sql.NullString
+		matchCountsStr       string
+		mainRunScopeIDStr    string
+		pausedInt            int64
+		serviceBindingsStr   sql.NullString
+		createdByAPIKeyIDStr sql.NullString
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr, &pausedInt); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr, &pausedInt, &serviceBindingsStr, &createdByAPIKeyIDStr); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -503,6 +516,16 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 			return persistence.InstanceRow{}, err
 		}
 		out.TerminatedAt = &t
+	}
+	if serviceBindingsStr.Valid && serviceBindingsStr.String != "" {
+		out.ServiceBindings = json.RawMessage(serviceBindingsStr.String)
+	}
+	if createdByAPIKeyIDStr.Valid && createdByAPIKeyIDStr.String != "" {
+		parsed, err := uuid.Parse(createdByAPIKeyIDStr.String)
+		if err != nil {
+			return persistence.InstanceRow{}, fmt.Errorf("scanInstance: bad created_by_api_key_id %q: %w", createdByAPIKeyIDStr.String, err)
+		}
+		out.CreatedByAPIKeyID = &parsed
 	}
 	return out, nil
 }

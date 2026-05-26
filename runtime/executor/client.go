@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // Client wraps a generated gRPC ExecutorClient for rimsky's supervisor.
@@ -46,7 +47,14 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.NewClient(endpoint.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint.URL,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Stamp x-rimsky-service-name from the per-call context so a
+		// host-agent-proxy fronting the executor protocol can route by
+		// service name. No-op when the dispatch site set no name.
+		grpc.WithUnaryInterceptor(peer.ServiceNameUnaryInterceptor),
+		grpc.WithStreamInterceptor(peer.ServiceNameStreamInterceptor),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}

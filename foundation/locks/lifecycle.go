@@ -55,6 +55,11 @@ type OnInstanceCreatedRequest = lifecycle.OnInstanceCreatedRequest
 // terminated state (rimsky_instances.terminated_at is set).
 type OnInstanceTerminatedRequest = lifecycle.OnInstanceTerminatedRequest
 
+// OnRunScopeTerminalRequest fires when a run-scope reaches terminal state
+// (fired from control-api for main scopes; the supervisor for sub-graph
+// and fanout-partition scopes).
+type OnRunScopeTerminalRequest = lifecycle.OnRunScopeTerminalRequest
+
 // LifecycleSubscriber is the universal interface every lifecycle
 // subscriber implementation satisfies.
 type LifecycleSubscriber = lifecycle.LifecycleSubscriber

@@ -418,6 +418,22 @@ type CreateInstanceRequest struct {
 	Template    string         `json:"template"`
 	InstanceKey *string        `json:"instance_key,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
+	// ServiceBindings is the per-instance late-bound service catalog,
+	// shape {<name>: {"path": "<binary-path>"}}. Opaque to the control-api
+	// (stored verbatim as JSONB); consumed by the host-agent-proxy at
+	// dispatch time. Omitted from the body when no --service flags are
+	// supplied. Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	ServiceBindings map[string]bindingSpec `json:"service_bindings,omitempty"`
+}
+
+// bindingSpec is the CLI's view of one service binding: the path the agent
+// exec()s. Other fields (args, env, cwd) are additive and unknown JSON
+// fields are ignored on the proxy side. Mirrors the proxy's binding shape
+// without coupling to its package (the proxy is package main).
+//
+// @source: cmd/rimsky-host-agent-proxy/state.go::bindingSpec
+type bindingSpec struct {
+	Path string `json:"path"`
 }
 
 // Instance is the unified shape of POST /instances, GET /instances row,

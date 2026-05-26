@@ -49,8 +49,12 @@ type AcquireSubClaimsInput struct {
 	NodeRunID           shared.UUID
 	HolderNodeID        shared.UUID
 	HolderSupervisorID  string
-	FrameID             *shared.UUID
-	HeartbeatInterval   time.Duration
+	// InstanceID is sourced from the parent NodeRunRow's InstanceID,
+	// threaded through tryAcquire → acquireFanOutIfDeclared. Used by
+	// Registry.GetWithContext for late-bound claim-producer resolution.
+	InstanceID        shared.UUID
+	FrameID           *shared.UUID
+	HeartbeatInterval time.Duration
 	// PartitionRequest is the producer-interpreted bytes that drive
 	// SplitScope. Caller is responsible for substitution; rimsky passes
 	// the bytes verbatim per `@blessed-invariant 20` (claim content is
@@ -126,7 +130,10 @@ type SubClaim struct {
 func AcquireSubClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in AcquireSubClaimsInput,
 ) ([]SubClaim, error) {
-	producer, ok := args.StoreRegistry.Get(in.ProducerName)
+	// Late-bind-aware resolution: a per-instance service binding routes
+	// to the configured proxy; falls through to bare Get when no instance
+	// context / no late-bind config (zero UUID → identical to Get).
+	producer, ok := args.StoreRegistry.GetWithContext(ctx, in.ProducerName, in.InstanceID.String())
 	if !ok {
 		return nil, fmt.Errorf("AcquireSubClaims: unknown producer %q", in.ProducerName)
 	}

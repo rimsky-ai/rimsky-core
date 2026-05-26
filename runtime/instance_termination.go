@@ -26,6 +26,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // HeldDurableReleaseReport summarizes the outcome of the
@@ -73,7 +74,11 @@ func ReleaseHeldDurableClaims(
 		if r.ProducerName != nil {
 			producerName = *r.ProducerName
 		}
-		producer, ok := args.StoreRegistry.Get(producerName)
+		// Instance-scoped release of a durable asset: resolve late-bind-
+		// aware so a producer that was bound to a per-instance proxy at
+		// acquire time is released through the same proxy. Falls through
+		// to bare Get when no late-bind config (identical to today).
+		producer, ok := args.StoreRegistry.GetWithContext(ctx, producerName, instanceID.String())
 		if !ok {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName,
@@ -82,7 +87,10 @@ func ReleaseHeldDurableClaims(
 			continue
 		}
 		claimID := locks.ClaimID(r.ID.String())
-		if err := producer.Release(ctx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
+		// Stamp the producer name so a host-agent-proxy fronting the
+		// claim-producer protocol can route this Release by service name.
+		relCtx := peer.WithServiceName(ctx, producerName)
+		if err := producer.Release(relCtx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
 				ClaimHandleID: r.ID, ProducerName: producerName, Err: err,
 			})

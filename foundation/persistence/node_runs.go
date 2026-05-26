@@ -87,6 +87,17 @@ type SelectCandidatesRequest struct {
 	// Implementations should pick a reasonable default (e.g. 100) when
 	// Limit==0 to bound the working set on large backlogs.
 	Limit int
+
+	// LateBindExecutorProxy is the rimsky.yml-configured proxy peer name
+	// for the executor protocol (late_bind_service_proxies.executor).
+	// Empty string when no late-bind proxy is configured. Used by the
+	// admit-list extension to claim rows whose executor_name appears
+	// only in the instance's service_bindings.
+	LateBindExecutorProxy string
+
+	// LateBindClaimProducerProxy is the rimsky.yml-configured proxy peer
+	// name for the claim_producer protocol. Empty string when none.
+	LateBindClaimProducerProxy string
 }
 
 // Candidate is a single dispatch row returned from SelectCandidates. The

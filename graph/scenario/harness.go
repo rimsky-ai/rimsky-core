@@ -28,6 +28,7 @@ import (
 	"log/slog"
 
 	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/control/controlapi"
 	stubexec "github.com/fallguyconsulting/rimsky/executors/stub"
 	stubtest "github.com/fallguyconsulting/rimsky/executors/stub/stubtest"
 	"github.com/fallguyconsulting/rimsky/foundation/cascade"
@@ -105,6 +106,23 @@ type HarnessOpts struct {
 	// because the always-on validator hook treats every name as
 	// undeclared.
 	NamedLocks locks.NamedLocksConfig
+
+	// LateBindServiceProxies maps protocol name → proxy service name
+	// (rimsky.yml late_bind_service_proxies). When non-empty the harness
+	// wraps the executor resolver in a LateBindResolver (so late-bound
+	// executor names route through the named proxy), threads the map into
+	// the supervisor's SelectCandidates admit-list extension, and wires
+	// the late-bind-aware LifecyclePeersForSpec on both supervisor and
+	// control-api. Empty → the late-bind machinery is inert (today's
+	// behavior). Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	LateBindServiceProxies map[string]string
+
+	// ExecutorProtocols overrides the `protocols:` list for the named
+	// executor entry (default: just "executor"). Used to mark the
+	// host-agent-proxy as a lifecycle_subscriber so the control-api and
+	// supervisor dial it for OnInstanceCreated / OnRunScopeTerminal
+	// fan-out. Keys must also appear in ExtraExecutors.
+	ExecutorProtocols map[string][]string
 }
 
 // Start spins up a full-stack harness against a fresh Postgres
@@ -150,7 +168,37 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	for k, v := range opts.ExtraExecutors {
 		executors[k] = v
 	}
-	resolver := executor.NewStaticResolver(executors)
+	staticResolver := executor.NewStaticResolver(executors)
+	var resolver executor.Resolver = staticResolver
+	if len(opts.LateBindServiceProxies) > 0 {
+		// Wrap the static resolver so late-bound executor names (absent
+		// from the static map but present in an instance's service_bindings)
+		// route through the configured proxy. The lookup reads the bindings
+		// JSONB straight off the instance row.
+		lookupBindings := func(lookupCtx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
+			id, parseErr := parseUUIDStr(instanceID)
+			if parseErr != nil {
+				return nil, false, parseErr
+			}
+			var row *persistence.InstanceRow
+			if txErr := persistStore.Transaction(lookupCtx, func(ctx context.Context, tx persistence.Tx) error {
+				r, err := persistStore.Instances().Get(ctx, id, tx)
+				row = r
+				return err
+			}); txErr != nil {
+				return nil, false, txErr
+			}
+			if row == nil || len(row.ServiceBindings) == 0 {
+				return nil, false, nil
+			}
+			var bindings map[string]json.RawMessage
+			if err := json.Unmarshal(row.ServiceBindings, &bindings); err != nil {
+				return nil, false, err
+			}
+			return bindings, true, nil
+		}
+		resolver = executor.NewLateBindResolver(staticResolver, lookupBindings, opts.LateBindServiceProxies)
+	}
 
 	h := &Harness{
 		T:        t,
@@ -207,6 +255,39 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		return []byte(`{"type":"object"}`), true
 	}
 
+	// Build the executors config (shared by supervisor + control-api). The
+	// per-executor protocols list defaults to ["executor"]; ExecutorProtocols
+	// overrides it (e.g. to mark the host-agent-proxy as a
+	// lifecycle_subscriber so it's dialed for OnInstanceCreated /
+	// OnRunScopeTerminal fan-out).
+	executorsCfg := config.ExecutorsConfig{Executors: map[string]config.ExecutorEntry{}}
+	for name, ep := range executors {
+		protocols := []string{"executor"}
+		if override, ok := opts.ExecutorProtocols[name]; ok {
+			protocols = override
+		}
+		executorsCfg.Executors[name] = config.ExecutorEntry{
+			Transport: ep.Transport,
+			Endpoint:  ep.URL,
+			TLS:       ep.TLS,
+			Protocols: protocols,
+		}
+	}
+
+	// Late-bind-aware lifecycle peer set: adds the proxy peer for templates
+	// declaring late_bind_services. Shared by supervisor (OnRunScopeTerminal)
+	// and control-api (OnInstanceCreated). Inert when no proxy is configured.
+	var peersForSpec func(node.TemplateSpec) []string
+	if len(opts.LateBindServiceProxies) > 0 {
+		lateBindProxies := opts.LateBindServiceProxies
+		peersForSpec = func(tplSpec node.TemplateSpec) []string {
+			return controlapi.LifecyclePeersForSpec(
+				controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
+				tplSpec,
+			)
+		}
+	}
+
 	if !opts.NoSupervisor {
 		// Diagnostic: surface supervisor logs when SCENARIO_DEBUG=1 is set
 		// so a failing scenario can investigate why a row isn't claimed.
@@ -228,6 +309,9 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			CallbackHost:                "127.0.0.1",
 			CallbackPort:                0,
 			ExpectedAttributesSchemaFor: expectedSchemaFor,
+			Executors:                   executorsCfg,
+			LateBindServiceProxies:      opts.LateBindServiceProxies,
+			LifecyclePeersForSpec:       peersForSpec,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start supervisor: %v", err)
@@ -240,23 +324,16 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		h.Supervisor = sv
 	}
 
-	executorsCfg := config.ExecutorsConfig{Executors: map[string]config.ExecutorEntry{}}
-	for name, ep := range executors {
-		executorsCfg.Executors[name] = config.ExecutorEntry{
-			Transport: ep.Transport,
-			Endpoint:  ep.URL,
-			TLS:       ep.TLS,
-		}
-	}
 	ca, err := config.StartControlAPI(config.ControlAPIConfig{
-		Driver:     driver,
-		Clock:      clock,
-		Logger:     shared.SilentLogger{},
-		Host:       "127.0.0.1",
-		Port:       0,
-		Stores:     opts.Stores,
-		NamedLocks: opts.NamedLocks,
-		Executors:  executorsCfg,
+		Driver:                 driver,
+		Clock:                  clock,
+		Logger:                 shared.SilentLogger{},
+		Host:                   "127.0.0.1",
+		Port:                   0,
+		Stores:                 opts.Stores,
+		NamedLocks:             opts.NamedLocks,
+		Executors:              executorsCfg,
+		LateBindServiceProxies: opts.LateBindServiceProxies,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)
@@ -321,6 +398,65 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	return out.TemplateID
 }
 
+// DeployTemplateSpecMap registers + deploys a template from a raw spec map
+// (so callers can include fields the typed node.TemplateSpec doesn't model,
+// e.g. late_bind_services) under an optional bearer key. Returns the
+// template content hash. Used by the host-agent scenario tests, which need
+// the late_bind_services field and run against an authenticated control-api.
+func (h *Harness) DeployTemplateSpecMap(specMap map[string]any, bearerKey string) string {
+	h.T.Helper()
+	if _, ok := specMap["frame_resolution_mode"]; !ok {
+		specMap["frame_resolution_mode"] = string(node.FrameResolutionSerialQueue)
+	}
+	body, err := json.Marshal(map[string]any{"spec": specMap})
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	regResp := h.authedPost("/templates", bearerKey, body)
+	defer regResp.Body.Close()
+	if regResp.StatusCode != http.StatusCreated && regResp.StatusCode != http.StatusOK {
+		buf := make([]byte, 4096)
+		n, _ := regResp.Body.Read(buf)
+		h.T.Fatalf("DeployTemplateSpecMap: register status %d: %s", regResp.StatusCode, string(buf[:n]))
+	}
+	var out struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.NewDecoder(regResp.Body).Decode(&out); err != nil {
+		h.T.Fatalf("DeployTemplateSpecMap: decode: %v", err)
+	}
+	if out.TemplateID == "" {
+		h.T.Fatalf("DeployTemplateSpecMap: empty template_id")
+	}
+	deployResp := h.authedPost("/templates/"+out.TemplateID+"/deploy", bearerKey, []byte("{}"))
+	defer deployResp.Body.Close()
+	if deployResp.StatusCode != http.StatusOK {
+		buf := make([]byte, 4096)
+		n, _ := deployResp.Body.Read(buf)
+		h.T.Fatalf("DeployTemplateSpecMap: deploy status %d: %s", deployResp.StatusCode, string(buf[:n]))
+	}
+	return out.TemplateID
+}
+
+// authedPost issues a POST with an optional Bearer key. Helper for the
+// authenticated-mode scenario flows.
+func (h *Harness) authedPost(path, bearerKey string, body []byte) *http.Response {
+	h.T.Helper()
+	req, err := http.NewRequest(http.MethodPost, h.ControlBase+path, bytesReader(body))
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearerKey != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	return resp
+}
+
 // CreateInstance POSTs to /instances; returns instance_id. An empty
 // consumerKey is omitted from the body so the row's instance_key column
 // stays NULL (the unique-index sentinel), rather than being persisted as
@@ -377,6 +513,100 @@ func (h *Harness) CreateInstanceWithOverrides(
 	}
 	h.waitForRootDispatch(id, 5*time.Second)
 	return id
+}
+
+// CreateInstanceWithServiceBindings POSTs an instance carrying a
+// service_bindings catalog under an authenticated api-key. The bearer key
+// is required so the row's created_by_api_key_id (the proxy's agent-routing
+// key) is non-null; pass the plaintext minted via MintAdminKey. Returns the
+// instance id. Does NOT wait for root dispatch (late-bound dispatch may
+// legitimately stall when no agent is connected — the caller asserts the
+// terminal/dispatch outcome it expects). Per spec
+// 2026-05-24-host-agent-and-proxy-design.md.
+func (h *Harness) CreateInstanceWithServiceBindings(
+	templateHash, consumerKey, bearerKey string,
+	params map[string]any,
+	serviceBindings map[string]any,
+) shared.UUID {
+	h.T.Helper()
+	bodyMap := map[string]any{
+		"template": templateHash,
+		"params":   params,
+	}
+	if consumerKey != "" {
+		bodyMap["instance_key"] = consumerKey
+	}
+	if len(serviceBindings) > 0 {
+		bodyMap["service_bindings"] = serviceBindings
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, h.ControlBase+"/instances", bytesReader(body))
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearerKey != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		h.T.Fatalf("CreateInstanceWithServiceBindings: status %d: %s", resp.StatusCode, string(buf[:n]))
+	}
+	var out struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		h.T.Fatalf("CreateInstanceWithServiceBindings: decode: %v", err)
+	}
+	id, err := parseUUIDStr(out.InstanceID)
+	if err != nil {
+		h.T.Fatalf("CreateInstanceWithServiceBindings: bad instance_id %q: %v", out.InstanceID, err)
+	}
+	return id
+}
+
+// MintAdminKey mints a full-access admin api-key via the anonymous-mode
+// bootstrap path (POST /auth/keys with no bearer). Returns (plaintext,
+// keyID). The keyID is the UUID stamped on created_by_api_key_id; the
+// host-agent registers with the keyID as its routing key so the proxy can
+// match dispatches to the connected agent. Per spec
+// 2026-05-24-host-agent-and-proxy-design.md.
+func (h *Harness) MintAdminKey(name string) (plaintext, keyID string) {
+	h.T.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"name":        name,
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	resp, err := http.Post(h.ControlBase+"/auth/keys", "application/json", bytesReader(body))
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		h.T.Fatalf("MintAdminKey: status %d: %s", resp.StatusCode, string(buf[:n]))
+	}
+	var out struct {
+		ID        string `json:"id"`
+		Plaintext string `json:"plaintext"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		h.T.Fatalf("MintAdminKey: decode: %v", err)
+	}
+	if out.Plaintext == "" || out.ID == "" {
+		h.T.Fatalf("MintAdminKey: missing id/plaintext in response")
+	}
+	return out.Plaintext, out.ID
 }
 
 func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Duration) {

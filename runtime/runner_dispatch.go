@@ -25,6 +25,8 @@ import (
 	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // attributeValidationError wraps non-resolution attribute failures
@@ -169,7 +171,14 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: summary}, nil, nil
 	}
 
-	ep, ok := args.Resolver.Resolve(acq.Executor)
+	// Real per-dispatch instance/run-scope context for late-bind
+	// resolution. A LateBindResolver consults service_bindings on the
+	// instance; a StaticResolver ignores these fields.
+	ep, ok := args.Resolver.Resolve(acq.Executor, executor.DispatchContext{
+		Ctx:        ctx,
+		InstanceID: acq.InstanceID.String(),
+		RunScopeID: acq.RunScopeID.String(),
+	})
 	if !ok {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -203,6 +212,11 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
+	// Stamp the executor name so a host-agent-proxy fronting the
+	// executor protocol can route this Execute by service name. The
+	// stream interceptor reads it off the context; a directly-dialed
+	// hosted executor ignores the header.
+	ctx = peer.WithServiceName(ctx, acq.Executor)
 	stream, err := client.Execute(ctx, req)
 	if err != nil {
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",

@@ -50,6 +50,7 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        "ds-store",
 		HolderSupervisorID:  "sup-U",
+		InstanceID:          shared.UUID{},
 		HeartbeatInterval:   30 * time.Second,
 	})
 	require.Error(t, err)
@@ -73,6 +74,7 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 		ParentClaimHandleID: shared.UUID(uuid.New()),
 		ProducerName:        "missing-store",
 		HolderSupervisorID:  "sup-X",
+		InstanceID:          shared.UUID{},
 		HeartbeatInterval:   30 * time.Second,
 	})
 	require.Error(t, err)
@@ -305,6 +307,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			NodeRunID:           parentRunID,
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-FAN",
+			InstanceID:          shared.UUID{},
 			HeartbeatInterval:   30 * time.Second,
 			ParentIsHeld:        false,
 		})

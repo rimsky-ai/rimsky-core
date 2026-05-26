@@ -40,11 +40,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/fallguyconsulting/rimsky/control/config"
+	"github.com/fallguyconsulting/rimsky/control/controlapi"
 	"github.com/fallguyconsulting/rimsky/control/observability"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres" // register driver
 	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"   // register driver
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
@@ -198,6 +200,20 @@ func main() {
 	// below only when RIMSKY_METRICS_PORT > 0.
 	mreg := observability.NewMetricsRegistry()
 
+	// Closure that invokes controlapi.LifecyclePeersForSpec with the
+	// rimsky.yml late_bind_service_proxies baked in. Lives here (control/
+	// layer) so the supervisor's runtime/ never imports control/ — the
+	// late-bind-aware peer set crosses the layer boundary as a function
+	// pointer (denied otherwise by .golangci.yml's runtime-purity rule).
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	lateBindProxies := rimskyCfg.LateBindServiceProxies
+	peersForSpec := func(tplSpec node.TemplateSpec) []string {
+		return controlapi.LifecyclePeersForSpec(
+			controlapi.AppDeps{LateBindServiceProxies: lateBindProxies},
+			tplSpec,
+		)
+	}
+
 	h, err := config.StartSupervisor(config.SupervisorConfig{
 		SupervisorID:                supID,
 		Driver:                      driver,
@@ -217,6 +233,9 @@ func main() {
 		BlobSpillThreshold:          rimskyCfg.Blob.SpillThresholdBytes,
 		ExpectedAttributesSchemaFor: observability.NewExpectedAttributesSchemaResolver(disc),
 		Metrics:                     observability.MetricsHookOf(mreg),
+		Executors:                   rimskyCfg.Executors,
+		LifecyclePeersForSpec:       peersForSpec,
+		LateBindServiceProxies:      lateBindProxies,
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())

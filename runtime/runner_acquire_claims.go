@@ -11,6 +11,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,7 +19,9 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // acquireClaim runs the claim-acquisition steps per spec §7.3 step 4.
@@ -38,7 +41,7 @@ import (
 // list-then-INSERT pair is atomic against any concurrent acquirer
 // targeting the same (producer, claim-scope) pair.
 func acquireClaim(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	spec locks.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
@@ -47,7 +50,10 @@ func acquireClaim(
 	// pre-Open advisory-lock + scope-conflict check; observe only on
 	// resolved outcomes (acquired / unavailable).
 	acquireStart := args.Clock.Now()
-	s, ok := args.StoreRegistry.Get(spec.ProducerName)
+	// Dispatch-time claim-producer resolution: late-bind-aware so a
+	// per-instance service binding routes to the configured proxy. Falls
+	// through to a bare Get when no instance context / no late-bind config.
+	s, ok := args.StoreRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
 	if !ok {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: unknown store %q", spec.ProducerName)
 	}
@@ -100,8 +106,21 @@ func acquireClaim(
 	}
 
 	claimID := locks.ClaimID(rowID.String())
-	outcome, err := s.Open(ctx, claimID, spec)
+	// Stamp the producer name so a host-agent-proxy fronting the
+	// claim-producer protocol can route this Open by service name.
+	openCtx := peer.WithServiceName(ctx, spec.ProducerName)
+	outcome, err := s.Open(openCtx, claimID, spec)
 	if err != nil {
+		// A producer-side wire fault (the gRPC Open call returned an
+		// error) carries a translated error_class on *peer.ProducerCallError.
+		// Surface it as openResultErrored so tryAcquire routes the class
+		// through the operator's `error_types:` chain rather than aborting
+		// the tick (openResultBail). Errors that are not producer-call
+		// faults (none today on this line, defense-in-depth) still abort.
+		var pcErr *peer.ProducerCallError
+		if errors.As(err, &pcErr) {
+			return AcquiredLock{}, openResultErrored, pcErr
+		}
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Open(%s): %w", spec.ProducerName, err)
 	}
 	// Producer has nothing to give right now (e.g. drained items-table

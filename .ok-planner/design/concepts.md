@@ -36,10 +36,12 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `fan-out` — Fan-out is a node-level decision to partition a held claim into sub-claims and dispatch one work unit per sub-claim.
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
 - `graph` — A graph is rimsky's unit of node connectivity.
+- `host-agent` — Long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary, that authenticates outbound to a host-agent-proxy and serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
+- `host-agent-proxy` — Rimsky-stack `concept:service` implementing the multi-protocol composition pattern; presents the executor, claim-producer, and lifecycle-subscriber protocols on the supervisor-facing side and maintains agent connections on the dev-facing side via a long-lived bidi-stream protocol.
 - `inertness` (aliases: opacity (legacy), inert bytes) — A uniform discipline applied across two overlapping lists of carrier byte streams.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
 - `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
-- `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — six event callbacks for template and instance lifecycle.
+- `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — seven event callbacks for template, instance, and run-scope lifecycle.
 - `lineage` — A persisted projection of computational + data-promotion records.
 - `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`), in two kinds.
 - `message` — A boundary-crossing dispatch unit.

@@ -17,6 +17,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
@@ -41,7 +42,7 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 // acquisitions may report Unavailable when the producer's Open returns
 // Available=false.
 func acquireOneLock(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
 	sp any, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
@@ -56,7 +57,7 @@ func acquireOneLock(
 		}
 		return al, openResultAcquired, nil
 	case locks.ClaimSpec:
-		return acquireClaim(ctx, args, tx, spec, cand, heartbeatInterval, heldSubgraphs)
+		return acquireClaim(ctx, args, tx, instanceID, spec, cand, heartbeatInterval, heldSubgraphs)
 	}
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }

@@ -111,6 +111,8 @@ func main() {
 		NamedLocks: rimskyCfg.NamedLocks,
 		Executors:  rimskyCfg.Executors,
 		Metrics:    observability.MetricsHookOf(mreg),
+
+		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

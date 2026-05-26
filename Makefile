@@ -7,7 +7,7 @@ proto-gen:
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  executor.proto events.proto claim_producer.proto lifecycle.proto \
 	  executor_observability.proto claim_producer_observability.proto \
-	  data_processing.proto validation.proto publisher.proto
+	  data_processing.proto validation.proto publisher.proto host_agent.proto
 
 test:
 	go test ./...

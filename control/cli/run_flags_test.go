@@ -1,0 +1,150 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
+// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+
+// run_flags_test.go — unit tests for the additive `rimsky run` flag
+// parsing helpers (--param merge, --service binding resolution) and the
+// mutually-exclusive --template/<file> check. Package-internal so the
+// unexported helpers are reachable.
+package cli
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+func TestMergeParams_JSONOnly(t *testing.T) {
+	got, err := mergeParams(`{"a":1,"b":"x"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// JSON numbers decode to float64.
+	if got["a"].(float64) != 1 || got["b"] != "x" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestMergeParams_KVOnly(t *testing.T) {
+	got, err := mergeParams("", repeatedFlag{"count=3", "enabled=true", "name=foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"count": int64(3), "enabled": true, "name": "foo"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+func TestMergeParams_KVOverridesJSON(t *testing.T) {
+	// --param applies after --params; later wins.
+	got, err := mergeParams(`{"a":1,"b":2}`, repeatedFlag{"b=99"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["a"].(float64) != 1 {
+		t.Fatalf("a clobbered: %+v", got)
+	}
+	if got["b"].(int64) != 99 {
+		t.Fatalf("b not overridden by --param: %+v", got)
+	}
+}
+
+func TestMergeParams_BadKV(t *testing.T) {
+	if _, err := mergeParams("", repeatedFlag{"missing-eq"}); err == nil {
+		t.Fatal("want error for k=v without '='")
+	}
+	if _, err := mergeParams("", repeatedFlag{"=novalue"}); err == nil {
+		t.Fatal("want error for empty key")
+	}
+}
+
+func TestResolveServiceBindings_Explicit(t *testing.T) {
+	got, err := resolveServiceBindings(repeatedFlag{"codegen=/usr/bin/cg", "fs=/bin/fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bindingSpec{
+		"codegen": {Path: "/usr/bin/cg"},
+		"fs":      {Path: "/bin/fs"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+func TestResolveServiceBindings_BareWithAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeAliasFile(t, filepath.Join(home, ".rimsky", "aliases.yml"), "aliases:\n  codegen: /opt/codegen\n")
+	// Run from a directory with no project-local alias file.
+	chdir(t, t.TempDir())
+
+	got, err := resolveServiceBindings(repeatedFlag{"codegen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["codegen"].Path != "/opt/codegen" {
+		t.Fatalf("bare name did not resolve via alias: %+v", got)
+	}
+}
+
+func TestResolveServiceBindings_BareWithoutAlias(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	chdir(t, t.TempDir())
+	if _, err := resolveServiceBindings(repeatedFlag{"nope"}); err == nil {
+		t.Fatal("want error for bare name with no alias")
+	}
+}
+
+func TestResolveServiceBindings_Empty(t *testing.T) {
+	got, err := resolveServiceBindings(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil for no --service flags, got %+v", got)
+	}
+}
+
+// TestRunRun_TemplateAndFileMutuallyExclusive asserts the additive shape's
+// guard: passing both --template and a positional <file> is exit-code 2.
+func TestRunRun_TemplateAndFileMutuallyExclusive(t *testing.T) {
+	t.Setenv("RIMSKY_CONTROL_API", "http://127.0.0.1:0")
+	t.Setenv("RIMSKY_CONTEXT", "")
+	t.Setenv("HOME", t.TempDir())
+	specPath := filepath.Join(t.TempDir(), "spec.yml")
+	if err := os.WriteFile(specPath, []byte("name: x\nversion: \"1\"\nnodes: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RunRun(context.Background(), []string{"--template", "foo", specPath}); got != 2 {
+		t.Fatalf("exit %d, want 2", got)
+	}
+}
+
+// writeAliasFile writes content to path, creating parent dirs.
+func writeAliasFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// chdir changes into dir for the duration of the test, restoring the prior
+// working directory on cleanup.
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+}

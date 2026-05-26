@@ -42,6 +42,7 @@ const (
 	LifecycleSubscriber_OnTemplateDeregistered_FullMethodName = "/rimsky.v1.LifecycleSubscriber/OnTemplateDeregistered"
 	LifecycleSubscriber_OnInstanceCreated_FullMethodName      = "/rimsky.v1.LifecycleSubscriber/OnInstanceCreated"
 	LifecycleSubscriber_OnInstanceTerminated_FullMethodName   = "/rimsky.v1.LifecycleSubscriber/OnInstanceTerminated"
+	LifecycleSubscriber_OnRunScopeTerminal_FullMethodName     = "/rimsky.v1.LifecycleSubscriber/OnRunScopeTerminal"
 )
 
 // LifecycleSubscriberClient is the client API for LifecycleSubscriber service.
@@ -54,6 +55,14 @@ type LifecycleSubscriberClient interface {
 	OnTemplateDeregistered(ctx context.Context, in *OnTemplateDeregisteredRequest, opts ...grpc.CallOption) (*LifecycleAck, error)
 	OnInstanceCreated(ctx context.Context, in *OnInstanceCreatedRequest, opts ...grpc.CallOption) (*LifecycleAck, error)
 	OnInstanceTerminated(ctx context.Context, in *OnInstanceTerminatedRequest, opts ...grpc.CallOption) (*LifecycleAck, error)
+	// OnRunScopeTerminal fires when a run-scope reaches terminal state.
+	// Fired from the rimsky-side process that owns the state transition:
+	// control-api for main scopes (polling-driven via instance_terminator.tick);
+	// the supervisor for sub-graph and fanout-partition scopes (synchronous,
+	// in-tx). DB-tracked idempotency via rimsky_lifecycle_idempotencies
+	// (scope_kind="run_scope", state="run_scope_terminal") is preserved across
+	// both firing sites.
+	OnRunScopeTerminal(ctx context.Context, in *OnRunScopeTerminalRequest, opts ...grpc.CallOption) (*LifecycleAck, error)
 }
 
 type lifecycleSubscriberClient struct {
@@ -124,6 +133,16 @@ func (c *lifecycleSubscriberClient) OnInstanceTerminated(ctx context.Context, in
 	return out, nil
 }
 
+func (c *lifecycleSubscriberClient) OnRunScopeTerminal(ctx context.Context, in *OnRunScopeTerminalRequest, opts ...grpc.CallOption) (*LifecycleAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LifecycleAck)
+	err := c.cc.Invoke(ctx, LifecycleSubscriber_OnRunScopeTerminal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LifecycleSubscriberServer is the server API for LifecycleSubscriber service.
 // All implementations must embed UnimplementedLifecycleSubscriberServer
 // for forward compatibility.
@@ -134,6 +153,14 @@ type LifecycleSubscriberServer interface {
 	OnTemplateDeregistered(context.Context, *OnTemplateDeregisteredRequest) (*LifecycleAck, error)
 	OnInstanceCreated(context.Context, *OnInstanceCreatedRequest) (*LifecycleAck, error)
 	OnInstanceTerminated(context.Context, *OnInstanceTerminatedRequest) (*LifecycleAck, error)
+	// OnRunScopeTerminal fires when a run-scope reaches terminal state.
+	// Fired from the rimsky-side process that owns the state transition:
+	// control-api for main scopes (polling-driven via instance_terminator.tick);
+	// the supervisor for sub-graph and fanout-partition scopes (synchronous,
+	// in-tx). DB-tracked idempotency via rimsky_lifecycle_idempotencies
+	// (scope_kind="run_scope", state="run_scope_terminal") is preserved across
+	// both firing sites.
+	OnRunScopeTerminal(context.Context, *OnRunScopeTerminalRequest) (*LifecycleAck, error)
 	mustEmbedUnimplementedLifecycleSubscriberServer()
 }
 
@@ -161,6 +188,9 @@ func (UnimplementedLifecycleSubscriberServer) OnInstanceCreated(context.Context,
 }
 func (UnimplementedLifecycleSubscriberServer) OnInstanceTerminated(context.Context, *OnInstanceTerminatedRequest) (*LifecycleAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method OnInstanceTerminated not implemented")
+}
+func (UnimplementedLifecycleSubscriberServer) OnRunScopeTerminal(context.Context, *OnRunScopeTerminalRequest) (*LifecycleAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnRunScopeTerminal not implemented")
 }
 func (UnimplementedLifecycleSubscriberServer) mustEmbedUnimplementedLifecycleSubscriberServer() {}
 func (UnimplementedLifecycleSubscriberServer) testEmbeddedByValue()                             {}
@@ -291,6 +321,24 @@ func _LifecycleSubscriber_OnInstanceTerminated_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LifecycleSubscriber_OnRunScopeTerminal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnRunScopeTerminalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LifecycleSubscriberServer).OnRunScopeTerminal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LifecycleSubscriber_OnRunScopeTerminal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LifecycleSubscriberServer).OnRunScopeTerminal(ctx, req.(*OnRunScopeTerminalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LifecycleSubscriber_ServiceDesc is the grpc.ServiceDesc for LifecycleSubscriber service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -321,6 +369,10 @@ var LifecycleSubscriber_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OnInstanceTerminated",
 			Handler:    _LifecycleSubscriber_OnInstanceTerminated_Handler,
+		},
+		{
+			MethodName: "OnRunScopeTerminal",
+			Handler:    _LifecycleSubscriber_OnRunScopeTerminal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

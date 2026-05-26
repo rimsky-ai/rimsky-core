@@ -18,6 +18,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 )
 
 // tickBudget bounds a single terminator iteration so a wedged store
@@ -160,6 +161,25 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		var terminatedAtMs int64
 		if inst.TerminatedAt != nil {
 			terminatedAtMs = inst.TerminatedAt.UnixMilli()
+		}
+		// Close the instance's main run-scope and fire OnRunScopeTerminal
+		// before OnInstanceTerminated, so the host-agent-proxy can reap any
+		// spawned processes scoped to this main run-scope. Sub-tick lag (vs
+		// the row's terminal mark in graph/frame/engine.go) is acceptable
+		// for v1. tpl is the template already loaded above — reuse it; no
+		// second Templates().GetByHash call.
+		if inst.MainRunScopeID != (shared.UUID{}) {
+			if err := t.deps.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
+				return t.deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID)
+			}); err != nil {
+				t.logger.Warn("instance_terminator.close_main_run_scope_failed",
+					"instance_id", inst.ID,
+					"main_run_scope_id", inst.MainRunScopeID,
+					"error", err.Error())
+			} else {
+				_, _, _ = FanOutRunScopeEvent(tickCtx, t.deps, tpl.Spec,
+					inst.MainRunScopeID, inst.ID, "instance_terminated", nil)
+			}
 		}
 		_, perStoreErr, err := FanOutInstanceEvent(tickCtx, t.deps,
 			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,

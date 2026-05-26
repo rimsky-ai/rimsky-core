@@ -82,6 +82,76 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 	}
 }
 
+// producerAcquireErrorFallbackClass is the synthetic error_class used
+// when a faulted claim-producer Open RPC attached no
+// google.rpc.ErrorInfo detail (so the translator recovered ""). Absent
+// an operator-declared policy for this class, OnError resolves to
+// give_up("unknown_error_class") — the same fail-fast default as
+// "acquire/unavailable". A host-agent-proxy fronting the claim-producer
+// protocol stamps concrete classes (spawn_failed, host_agent_disconnected,
+// binding_not_found, ...) via ErrorInfo.Reason, so this fallback only
+// fires for direct-dial producers that fault with a bare gRPC status.
+const producerAcquireErrorFallbackClass = "acquire/producer_error"
+
+// handleAcquireProducerError routes a pre-dispatch claim-producer Open
+// fault through the operator's error_types: chain via the producer's
+// translated error_class (the gRPC ErrorInfo.Reason carried on
+// acq.ProducerErrorClass), falling back to the synthetic
+// producerAcquireErrorFallbackClass when the producer attached no
+// ErrorInfo. This is the claim-producer analogue of
+// handleAcquireUnavailable — the same chain executor Error{error_class}
+// terminals use, with no new policy mechanism.
+//
+// Tx handling mirrors handleAcquireUnavailable: the per-candidate
+// acquisition tx already rolled back via errAcquireProducerErrored; this
+// function opens fresh transactions internally (the OnError dispatch
+// path does its own tx work, and the partial-lock Abandon cleanup runs
+// outside any rimsky-side tx).
+//
+//	@concept: error-policy
+func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
+	// Defense-in-depth nil check: the tryAcquire path that returns
+	// errAcquireProducerErrored always populates NodeDef (a producer
+	// fault requires a ClaimSpec, which requires a template lookup).
+	if acq.NodeDef == nil {
+		return
+	}
+	// Abandon any claims that successfully Open'd before the fault was
+	// hit. The tx-side rollback already removed the lock-holder rows;
+	// the store-side Abandon undoes any producer-side state.
+	abandonPartialLocks(ctx, args, acq.PartialLocks)
+
+	errorClass := acq.ProducerErrorClass
+	if errorClass == "" {
+		errorClass = producerAcquireErrorFallbackClass
+	}
+	if err := OnError(ctx, OnErrorArgs{
+		Persist:      args.Persist,
+		Queue:        args.Queue,
+		Clock:        args.Clock,
+		Logger:       args.Logger,
+		NodeID:       cand.NodeID,
+		RunScopeID:   acq.RunScopeID,
+		InstanceID:   acq.InstanceID,
+		SupervisorID: args.SupervisorID,
+		ErrorClass:   errorClass,
+		Payload: map[string]any{
+			"source":        "acquire_producer_error",
+			"producer":      producerNameForSpec(acq.ErroredSpec),
+			"partial_locks": len(acq.PartialLocks),
+			"dispatch_id":   cand.DispatchID.String(),
+			"node_id":       cand.NodeID.String(),
+			"node_type":     acq.NodeType,
+		},
+		Metrics: args.Metrics,
+	}); err != nil {
+		args.Logger.Warn("handleAcquireProducerError: OnError failed",
+			"node_id", cand.NodeID.String(),
+			"dispatch_id", cand.DispatchID.String(),
+			"error", err.Error())
+	}
+}
+
 // abandonPartialLocks calls Abandon on every already-Open'd ClaimSpec
 // in the partial-acquired list. Mirrors handleOrphanedClaim's release
 // branch (the tx-side rollback already removed the lock-holder rows).

@@ -31,6 +31,13 @@ type Config struct {
 // Context is one named entry in Config.Contexts.
 type Context struct {
 	Endpoint string `yaml:"endpoint"`
+	// APIKey is the Bearer token the CLI presents on authenticated
+	// requests, populated by `rimsky auth login` and consumed by the
+	// host-agent for outbound authentication to the host-agent-proxy.
+	// Existing configs without this key continue to load — YAML tolerates
+	// the missing field; omitempty keeps it out of serialized output when
+	// unset. Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	APIKey string `yaml:"api_key,omitempty"`
 }
 
 // contextNamePattern is the spec §2.3 / §4.2 context-name regex.

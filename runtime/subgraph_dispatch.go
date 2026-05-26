@@ -260,6 +260,24 @@ func CarryExitWriteback(
 	if err := args.RunScopes.Close(ctx, tx, exit.RunScopeID); err != nil {
 		return fmt.Errorf("CarryExitWriteback: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
+	// Fire OnRunScopeTerminal to lifecycle subscribers for this sub-graph
+	// RunScope, atomically with the close above. Resolve the template
+	// spec via the two-step instance → template lookup. No-op when the
+	// supervisor wasn't wired with lifecycle outbound (nil Persist /
+	// LifecycleSubs / LifecyclePeersForSpec) or when the lookups fail —
+	// the close is the load-bearing write and must not roll back on a
+	// fan-out resolution miss. Per spec
+	// 2026-05-24-host-agent-and-proxy-design.md §"Firing sites for
+	// OnRunScopeTerminal".
+	if args.Persist != nil {
+		if inst, err := args.Persist.Instances().Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
+			if tpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
+				FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
+					args.LifecyclePeersForSpec, tpl.Spec, exit.RunScopeID,
+					exitScope.InstanceID, "subgraph_exit", tx)
+			}
+		}
+	}
 	return nil
 }
 
@@ -670,10 +688,13 @@ func applyTerminalCompleteSubgraphExit(
 		return fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
 	}
 	if err := CarryExitWriteback(ctx, PropagationArgs{
-		RunTree:      args.Persist.RunTree(),
-		RunScopes:    args.Persist.RunScopes(),
-		ClaimHandles: args.ClaimHandles,
-		Logger:       args.Logger,
+		RunTree:               args.Persist.RunTree(),
+		RunScopes:             args.Persist.RunScopes(),
+		ClaimHandles:          args.ClaimHandles,
+		Logger:                args.Logger,
+		Persist:               args.Persist,
+		LifecycleSubs:         args.LifecycleSubs,
+		LifecyclePeersForSpec: args.LifecyclePeersForSpec,
 	}, tx, acq.DispatchID, wb); err != nil {
 		return err
 	}

@@ -123,6 +123,12 @@ type AppDeps struct {
 	// per-service RPC failure: `strict` rejects; `permissive_warn`
 	// (default) surfaces a warning. Plan F9 step 4.
 	UnreachableValidatorPolicy runtime.UnreachableValidatorPolicy
+
+	// LateBindServiceProxies maps protocol → proxy service name. Populated
+	// from rimsky.yml's late_bind_service_proxies by StartControlAPI.
+	// Consumed by LifecyclePeersForSpec to know which proxy peer to add
+	// to the fan-out when a template declares late_bind_services.
+	LateBindServiceProxies map[string]string
 }
 
 // ObservabilityRouter is the seam controlapi uses to mount the

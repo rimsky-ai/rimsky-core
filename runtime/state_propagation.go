@@ -32,9 +32,11 @@ import (
 	"fmt"
 
 	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // parentSettlementSignal maps a propagated parent's new aggregated
@@ -100,6 +102,17 @@ type PropagationArgs struct {
 	RunScopes    persistence.RunScopeTable
 	ClaimHandles persistence.ClaimHandleTable
 	Logger       shared.Logger
+
+	// Persist, LifecycleSubs, and LifecyclePeersForSpec carry the
+	// run-scope lifecycle fan-out wiring down to the sub-graph close site
+	// in CarryExitWriteback. They are populated from the surrounding
+	// RunArgs / runtime.Config at each PropagationArgs construction site;
+	// nil values make FanOutRunScopeEvent a no-op (the unit-test path).
+	//
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	Persist               persistence.Tables
+	LifecycleSubs         *locks.LifecycleRegistry
+	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
 }
 
 // PropagateFromChildState is the entry-point: a child run has just
@@ -413,10 +426,13 @@ func PropagateIfChildAfterTerminal(
 	var settlements []ParentSettlement
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
-			RunTree:      rt,
-			RunScopes:    scopes,
-			ClaimHandles: args.ClaimHandles,
-			Logger:       args.Logger,
+			RunTree:               rt,
+			RunScopes:             scopes,
+			ClaimHandles:          args.ClaimHandles,
+			Logger:                args.Logger,
+			Persist:               args.Persist,
+			LifecycleSubs:         args.LifecycleSubs,
+			LifecyclePeersForSpec: args.LifecyclePeersForSpec,
 		}, tx, runID, newState, settlingSignalType)
 		actions = outActions
 		settlements = outSettlements

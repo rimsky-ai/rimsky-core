@@ -21,4 +21,8 @@ type LifecycleSubscriber interface {
 	OnTemplateDeregistered(ctx context.Context, req OnTemplateDeregisteredRequest) error
 	OnInstanceCreated(ctx context.Context, req OnInstanceCreatedRequest) error
 	OnInstanceTerminated(ctx context.Context, req OnInstanceTerminatedRequest) error
+
+	// OnRunScopeTerminal is fired when a run-scope reaches terminal state.
+	// See OnRunScopeTerminalRequest documentation for firing semantics.
+	OnRunScopeTerminal(ctx context.Context, req OnRunScopeTerminalRequest) error
 }

@@ -40,9 +40,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	rimskyattrs "github.com/fallguyconsulting/rimsky/graph/attribute"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
 // callbackAckBody is the structured response the supervisor writes for
@@ -162,8 +164,16 @@ type CallbackServer struct {
 	// `rimsky_terminal_verdicts_total` / `rimsky_invalidates_total`
 	// counters as the sync path. Optional; nil → no-op everywhere.
 	Metrics MetricsHook
-	addr    string
-	srv     *http.Server
+	// LifecycleSubs and LifecyclePeersForSpec are threaded into RunArgs at
+	// driveTerminal time so an async-callback-driven sub-graph / fanout-
+	// partition terminal fires OnRunScopeTerminal at the close site, same
+	// as the synchronous RunNode path. Nil → run-scope fan-out is a no-op.
+	//
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	LifecycleSubs         *locks.LifecycleRegistry
+	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	addr                  string
+	srv                   *http.Server
 	// ackOutcomes records the per-dispatch ack status produced by
 	// driveTerminal's phase-check tx so handleCallback can write the
 	// structured response body. Keyed by dispatch_id; entries are
@@ -520,6 +530,8 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
 		ExpectedAttributesSchemaFor:      c.ExpectedAttributesSchemaFor,
 		Metrics:                          c.Metrics,
+		LifecycleSubs:                    c.LifecycleSubs,
+		LifecyclePeersForSpec:            c.LifecyclePeersForSpec,
 	}
 	acq := &acquisition{
 		DispatchID: ac.DispatchID,

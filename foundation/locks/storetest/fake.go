@@ -78,6 +78,12 @@ type FakeCall struct {
 	Address    []byte
 	TemplateID string // populated for lifecycle calls and Open
 	InstanceID string // populated for instance-scope lifecycle and Open
+	RunScopeID string // populated for on_run_scope_terminal
+	// ServiceBindings and OwnerAPIKeyID are populated for
+	// on_instance_created so tests can assert the late-bound service
+	// catalog and owning api-key reached the subscriber.
+	ServiceBindings []byte
+	OwnerAPIKeyID   string
 	// Sequence is a process-global monotonic counter assigned at the
 	// moment the call was recorded. Use it to assert ordering across
 	// multiple Fake instances (e.g., that fan-out called alpha before
@@ -268,11 +274,24 @@ func (f *Fake) OnTemplateDeregistered(_ context.Context, req locks.OnTemplateDer
 }
 
 func (f *Fake) OnInstanceCreated(_ context.Context, req locks.OnInstanceCreatedRequest) error {
-	return f.recordLifecycle("on_instance_created", req.TemplateHash, req.InstanceID)
+	return f.recordLifecycleCall(FakeCall{
+		Verb:            "on_instance_created",
+		TemplateID:      req.TemplateHash,
+		InstanceID:      req.InstanceID,
+		ServiceBindings: cloneBytes(req.ServiceBindings),
+		OwnerAPIKeyID:   req.OwnerAPIKeyID,
+	})
 }
 
 func (f *Fake) OnInstanceTerminated(_ context.Context, req locks.OnInstanceTerminatedRequest) error {
 	return f.recordLifecycle("on_instance_terminated", req.TemplateHash, req.InstanceID)
+}
+
+func (f *Fake) OnRunScopeTerminal(_ context.Context, req locks.OnRunScopeTerminalRequest) error {
+	return f.recordLifecycleCall(FakeCall{
+		Verb:       "on_run_scope_terminal",
+		RunScopeID: req.RunScopeID,
+	})
 }
 
 // SplitScope records the call and delegates to SplitClaimScopeFunc. When
@@ -310,18 +329,25 @@ func (f *Fake) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
 }
 
 func (f *Fake) recordLifecycle(verb, templateID, instanceID string) error {
-	f.mu.Lock()
-	f.calls = append(f.calls, FakeCall{
+	return f.recordLifecycleCall(FakeCall{
 		Verb:       verb,
 		TemplateID: templateID,
 		InstanceID: instanceID,
-		Sequence:   nextFakeSequence(),
 	})
+}
+
+// recordLifecycleCall appends a fully-populated lifecycle FakeCall (the
+// caller leaves Sequence zero; it is assigned here) and applies any
+// configured ErrorFunc for the verb.
+func (f *Fake) recordLifecycleCall(call FakeCall) error {
+	f.mu.Lock()
+	call.Sequence = nextFakeSequence()
+	f.calls = append(f.calls, call)
 	errFn := f.ErrorFunc
 	f.mu.Unlock()
 
 	if errFn != nil {
-		if err := errFn(verb, ""); err != nil {
+		if err := errFn(call.Verb, ""); err != nil {
 			return err
 		}
 	}

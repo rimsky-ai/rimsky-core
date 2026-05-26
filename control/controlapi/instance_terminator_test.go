@@ -133,11 +133,27 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 	term := NewInstanceTerminator(f.deps, time.Hour) // poll long; we drive tick directly.
 	term.tick(context.Background())
 
+	// The terminator closes the main run-scope and fires
+	// OnRunScopeTerminal before OnInstanceTerminated, so the happy path
+	// records both lifecycle calls against the store.
 	calls := f.alpha.Calls()
-	require.Len(t, calls, 1)
-	require.Equal(t, "on_instance_terminated", calls[0].Verb)
-	require.Equal(t, hash, calls[0].TemplateID)
-	require.Equal(t, inst.String(), calls[0].InstanceID)
+	require.Len(t, calls, 2)
+	var runScopeCall, terminatedCall *storetest.FakeCall
+	for i := range calls {
+		switch calls[i].Verb {
+		case "on_run_scope_terminal":
+			runScopeCall = &calls[i]
+		case "on_instance_terminated":
+			terminatedCall = &calls[i]
+		}
+	}
+	require.NotNil(t, runScopeCall, "OnRunScopeTerminal must fire for the main run-scope")
+	require.NotEmpty(t, runScopeCall.RunScopeID)
+	require.NotNil(t, terminatedCall, "OnInstanceTerminated must fire")
+	require.Equal(t, hash, terminatedCall.TemplateID)
+	require.Equal(t, inst.String(), terminatedCall.InstanceID)
+	require.Less(t, runScopeCall.Sequence, terminatedCall.Sequence,
+		"OnRunScopeTerminal must fire before OnInstanceTerminated")
 
 	var row *persistence.LifecycleIdempotencyRow
 	require.NoError(t, f.deps.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

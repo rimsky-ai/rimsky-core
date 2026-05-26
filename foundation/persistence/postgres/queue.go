@@ -210,6 +210,14 @@ func (q *queueImpl) SelectCandidates(
 	// concept:breakpoint §5.2 soft-pause semantics: the supervisor stops
 	// claiming new dispatches for paused instances while in-flight work
 	// runs to terminal naturally.
+	// Late-bind admit-list extension (concept:host-agent / spec
+	// 2026-05-24-host-agent-and-proxy-design.md): when a proxy peer is
+	// configured for a protocol, dispatch rows whose executor_name (or
+	// required_stores) are NOT in the supervisor's static accept-lists
+	// may still be claimable if the proxy name IS in the accept-list AND
+	// the instance's service_bindings JSONB carries the named binding.
+	// The `<> ''` guards keep the new OR-branches inert when no proxy is
+	// configured ($4/$5 empty), so existing call sites behave identically.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
@@ -219,10 +227,22 @@ func (q *queueImpl) SelectCandidates(
 		  WHERE d.claimed_by IS NULL
 		    AND d.phase = 'pending'
 		    AND i.paused = false
-		    AND d.required_stores <@ $1::text[]
+		    AND (
+		      d.required_stores <@ $1::text[]
+		      OR (
+		        $5 <> ''
+		        AND $5 = ANY($1::text[])
+		        AND (SELECT COALESCE(bool_and(i.service_bindings ? rs.name), false) FROM unnest(d.required_stores) AS rs(name))
+		      )
+		    )
 		    AND (
 		      d.executor_name = ANY($2::text[])
 		      OR (d.executor_name IS NULL AND COALESCE(array_length(d.required_stores, 1), 0) > 0)
+		      OR (
+		        $4 <> ''
+		        AND $4 = ANY($2::text[])
+		        AND i.service_bindings ? d.executor_name
+		      )
 		    )
 		    AND d.enqueued_at <= NOW()
 		    AND NOT EXISTS (
@@ -233,7 +253,7 @@ func (q *queueImpl) SelectCandidates(
 		  ORDER BY d.enqueued_at
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
-		acceptedStores, acceptedExecutors, limit,
+		acceptedStores, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)

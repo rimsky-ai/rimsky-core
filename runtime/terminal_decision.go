@@ -46,6 +46,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // TerminalSource discriminates the call site so logging and metrics
@@ -312,6 +313,15 @@ func dispatchDataProcessingTerminal(
 // error on unknown outcomes or verb-side failures.
 func fireProducerVerb(ctx context.Context, td TerminalDecision) error {
 	claimID := locks.ClaimID(td.ClaimHandleID.String())
+	// Stamp the producer name so a host-agent-proxy fronting the
+	// claim-producer protocol can route this Commit/Abandon by service
+	// name. Prefer td.ProducerName (the claim_handle's recorded name);
+	// fall back to the client's own Name when unset.
+	producerName := td.ProducerName
+	if producerName == "" && td.Producer != nil {
+		producerName = td.Producer.Name()
+	}
+	ctx = peer.WithServiceName(ctx, producerName)
 	var verbErr error
 	switch td.Outcome {
 	case AggregateCommit:

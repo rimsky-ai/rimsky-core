@@ -98,6 +98,11 @@ type ControlAPIConfig struct {
 	// Optional; nil → no-op. Production wiring constructs an
 	// observability.RegistryHook from the per-process MetricsRegistry.
 	Metrics runtime.MetricsHook
+	// LateBindServiceProxies maps protocol name → proxy service name,
+	// passed verbatim from rimsky.yml's late_bind_service_proxies into
+	// controlapi.AppDeps. Consulted by LifecyclePeersForSpec to add the
+	// proxy peer to the fan-out when a template declares late_bind_services.
+	LateBindServiceProxies map[string]string
 }
 
 type ControlAPIHandle interface {
@@ -180,11 +185,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if persistQueue == nil {
 		return nil, fmt.Errorf("StartControlAPI: Driver.Queue() returned nil")
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
+	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
 	}
-	lifecycleReg, err := dialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
+	lifecycleReg, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartControlAPI: %w", err)
@@ -319,6 +324,9 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Publishers:     publisherReg,
 		Validators:     validationReg,
 		DataProcessors: dataProcessorReg,
+		// Plan: late-bind proxy fan-out. Threaded so LifecyclePeersForSpec
+		// can add the proxy peer when a template declares late_bind_services.
+		LateBindServiceProxies: cfg.LateBindServiceProxies,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))

@@ -88,14 +88,15 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	if err := cfg.NamedLocks.Validate(); err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
-	if err != nil {
-		return nil, fmt.Errorf("StartScheduler: %w", err)
-	}
 	persistStore := cfg.Driver.Tables()
 	if persistStore == nil {
-		registry.Close()
 		return nil, fmt.Errorf("StartScheduler: Database.Tables() returned nil — driver did not initialize the Tables accessor")
+	}
+	// The scheduler does not dispatch, so it has no late-bind proxy map;
+	// the Registry's late-bind hooks stay inert (nil proxy map).
+	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, nil)
+	if err != nil {
+		return nil, fmt.Errorf("StartScheduler: %w", err)
 	}
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {

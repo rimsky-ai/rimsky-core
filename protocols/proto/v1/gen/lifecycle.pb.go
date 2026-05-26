@@ -231,11 +231,19 @@ func (x *OnTemplateDeregisteredRequest) GetTemplateHash() string {
 }
 
 type OnInstanceCreatedRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	TemplateHash  string                 `protobuf:"bytes,2,opt,name=template_hash,json=templateHash,proto3" json:"template_hash,omitempty"`
-	InstanceKey   string                 `protobuf:"bytes,3,opt,name=instance_key,json=instanceKey,proto3" json:"instance_key,omitempty"` // may be empty
-	Params        []byte                 `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId   string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	TemplateHash string                 `protobuf:"bytes,2,opt,name=template_hash,json=templateHash,proto3" json:"template_hash,omitempty"`
+	InstanceKey  string                 `protobuf:"bytes,3,opt,name=instance_key,json=instanceKey,proto3" json:"instance_key,omitempty"` // may be empty
+	Params       []byte                 `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
+	// service_bindings carries the per-instance late-bound service catalog
+	// (opaque JSONB bytes). Empty when the instance has no late-bound services.
+	// Consumed by the host-agent-proxy to populate its binding cache.
+	ServiceBindings []byte `protobuf:"bytes,5,opt,name=service_bindings,json=serviceBindings,proto3" json:"service_bindings,omitempty"`
+	// owner_api_key_id is the api-key whose authenticated request created the
+	// instance (empty string for anonymous-mode-created instances). Consumed
+	// by the host-agent-proxy to route dispatches to the right user's agent.
+	OwnerApiKeyId string `protobuf:"bytes,6,opt,name=owner_api_key_id,json=ownerApiKeyId,proto3" json:"owner_api_key_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -298,6 +306,20 @@ func (x *OnInstanceCreatedRequest) GetParams() []byte {
 	return nil
 }
 
+func (x *OnInstanceCreatedRequest) GetServiceBindings() []byte {
+	if x != nil {
+		return x.ServiceBindings
+	}
+	return nil
+}
+
+func (x *OnInstanceCreatedRequest) GetOwnerApiKeyId() string {
+	if x != nil {
+		return x.OwnerApiKeyId
+	}
+	return ""
+}
+
 type OnInstanceTerminatedRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	InstanceId         string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
@@ -358,6 +380,73 @@ func (x *OnInstanceTerminatedRequest) GetTerminatedAtUnixMs() int64 {
 	return 0
 }
 
+type OnRunScopeTerminalRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RunScopeId     string                 `protobuf:"bytes,1,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	TerminalReason string                 `protobuf:"bytes,2,opt,name=terminal_reason,json=terminalReason,proto3" json:"terminal_reason,omitempty"`
+	// instance_id is the owning instance of the terminating run-scope.
+	// Populated at every firing site (control-api for main scopes; the
+	// supervisor for sub-graph and fanout-partition scopes). The
+	// host-agent-proxy keys lazily-spawned children by instance id (its v1
+	// dispatch-observable scope), so the reap path matches on instance_id
+	// rather than run_scope_id. Empty only for legacy callers that predate
+	// this field.
+	InstanceId    string `protobuf:"bytes,3,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnRunScopeTerminalRequest) Reset() {
+	*x = OnRunScopeTerminalRequest{}
+	mi := &file_lifecycle_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnRunScopeTerminalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnRunScopeTerminalRequest) ProtoMessage() {}
+
+func (x *OnRunScopeTerminalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_lifecycle_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnRunScopeTerminalRequest.ProtoReflect.Descriptor instead.
+func (*OnRunScopeTerminalRequest) Descriptor() ([]byte, []int) {
+	return file_lifecycle_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *OnRunScopeTerminalRequest) GetRunScopeId() string {
+	if x != nil {
+		return x.RunScopeId
+	}
+	return ""
+}
+
+func (x *OnRunScopeTerminalRequest) GetTerminalReason() string {
+	if x != nil {
+		return x.TerminalReason
+	}
+	return ""
+}
+
+func (x *OnRunScopeTerminalRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
 type LifecycleAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -366,7 +455,7 @@ type LifecycleAck struct {
 
 func (x *LifecycleAck) Reset() {
 	*x = LifecycleAck{}
-	mi := &file_lifecycle_proto_msgTypes[6]
+	mi := &file_lifecycle_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -378,7 +467,7 @@ func (x *LifecycleAck) String() string {
 func (*LifecycleAck) ProtoMessage() {}
 
 func (x *LifecycleAck) ProtoReflect() protoreflect.Message {
-	mi := &file_lifecycle_proto_msgTypes[6]
+	mi := &file_lifecycle_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -391,7 +480,7 @@ func (x *LifecycleAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifecycleAck.ProtoReflect.Descriptor instead.
 func (*LifecycleAck) Descriptor() ([]byte, []int) {
-	return file_lifecycle_proto_rawDescGZIP(), []int{6}
+	return file_lifecycle_proto_rawDescGZIP(), []int{7}
 }
 
 var File_lifecycle_proto protoreflect.FileDescriptor
@@ -408,26 +497,35 @@ const file_lifecycle_proto_rawDesc = "" +
 	"\x1bOnTemplateUndeployedRequest\x12#\n" +
 	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"D\n" +
 	"\x1dOnTemplateDeregisteredRequest\x12#\n" +
-	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"\x9b\x01\n" +
+	"\rtemplate_hash\x18\x01 \x01(\tR\ftemplateHash\"\xef\x01\n" +
 	"\x18OnInstanceCreatedRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
 	"\rtemplate_hash\x18\x02 \x01(\tR\ftemplateHash\x12!\n" +
 	"\finstance_key\x18\x03 \x01(\tR\vinstanceKey\x12\x16\n" +
-	"\x06params\x18\x04 \x01(\fR\x06params\"\x96\x01\n" +
+	"\x06params\x18\x04 \x01(\fR\x06params\x12)\n" +
+	"\x10service_bindings\x18\x05 \x01(\fR\x0fserviceBindings\x12'\n" +
+	"\x10owner_api_key_id\x18\x06 \x01(\tR\rownerApiKeyId\"\x96\x01\n" +
 	"\x1bOnInstanceTerminatedRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
 	"\rtemplate_hash\x18\x02 \x01(\tR\ftemplateHash\x121\n" +
-	"\x15terminated_at_unix_ms\x18\x03 \x01(\x03R\x12terminatedAtUnixMs\"\x0e\n" +
-	"\fLifecycleAck2\xa5\x04\n" +
+	"\x15terminated_at_unix_ms\x18\x03 \x01(\x03R\x12terminatedAtUnixMs\"\x87\x01\n" +
+	"\x19OnRunScopeTerminalRequest\x12 \n" +
+	"\frun_scope_id\x18\x01 \x01(\tR\n" +
+	"runScopeId\x12'\n" +
+	"\x0fterminal_reason\x18\x02 \x01(\tR\x0eterminalReason\x12\x1f\n" +
+	"\vinstance_id\x18\x03 \x01(\tR\n" +
+	"instanceId\"\x0e\n" +
+	"\fLifecycleAck2\xfa\x04\n" +
 	"\x13LifecycleSubscriber\x12W\n" +
 	"\x14OnTemplateRegistered\x12&.rimsky.v1.OnTemplateRegisteredRequest\x1a\x17.rimsky.v1.LifecycleAck\x12S\n" +
 	"\x12OnTemplateDeployed\x12$.rimsky.v1.OnTemplateDeployedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12W\n" +
 	"\x14OnTemplateUndeployed\x12&.rimsky.v1.OnTemplateUndeployedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12[\n" +
 	"\x16OnTemplateDeregistered\x12(.rimsky.v1.OnTemplateDeregisteredRequest\x1a\x17.rimsky.v1.LifecycleAck\x12Q\n" +
 	"\x11OnInstanceCreated\x12#.rimsky.v1.OnInstanceCreatedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12W\n" +
-	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a\x17.rimsky.v1.LifecycleAckBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12S\n" +
+	"\x12OnRunScopeTerminal\x12$.rimsky.v1.OnRunScopeTerminalRequest\x1a\x17.rimsky.v1.LifecycleAckBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_lifecycle_proto_rawDescOnce sync.Once
@@ -441,7 +539,7 @@ func file_lifecycle_proto_rawDescGZIP() []byte {
 	return file_lifecycle_proto_rawDescData
 }
 
-var file_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_lifecycle_proto_goTypes = []any{
 	(*OnTemplateRegisteredRequest)(nil),   // 0: rimsky.v1.OnTemplateRegisteredRequest
 	(*OnTemplateDeployedRequest)(nil),     // 1: rimsky.v1.OnTemplateDeployedRequest
@@ -449,7 +547,8 @@ var file_lifecycle_proto_goTypes = []any{
 	(*OnTemplateDeregisteredRequest)(nil), // 3: rimsky.v1.OnTemplateDeregisteredRequest
 	(*OnInstanceCreatedRequest)(nil),      // 4: rimsky.v1.OnInstanceCreatedRequest
 	(*OnInstanceTerminatedRequest)(nil),   // 5: rimsky.v1.OnInstanceTerminatedRequest
-	(*LifecycleAck)(nil),                  // 6: rimsky.v1.LifecycleAck
+	(*OnRunScopeTerminalRequest)(nil),     // 6: rimsky.v1.OnRunScopeTerminalRequest
+	(*LifecycleAck)(nil),                  // 7: rimsky.v1.LifecycleAck
 }
 var file_lifecycle_proto_depIdxs = []int32{
 	0, // 0: rimsky.v1.LifecycleSubscriber.OnTemplateRegistered:input_type -> rimsky.v1.OnTemplateRegisteredRequest
@@ -458,14 +557,16 @@ var file_lifecycle_proto_depIdxs = []int32{
 	3, // 3: rimsky.v1.LifecycleSubscriber.OnTemplateDeregistered:input_type -> rimsky.v1.OnTemplateDeregisteredRequest
 	4, // 4: rimsky.v1.LifecycleSubscriber.OnInstanceCreated:input_type -> rimsky.v1.OnInstanceCreatedRequest
 	5, // 5: rimsky.v1.LifecycleSubscriber.OnInstanceTerminated:input_type -> rimsky.v1.OnInstanceTerminatedRequest
-	6, // 6: rimsky.v1.LifecycleSubscriber.OnTemplateRegistered:output_type -> rimsky.v1.LifecycleAck
-	6, // 7: rimsky.v1.LifecycleSubscriber.OnTemplateDeployed:output_type -> rimsky.v1.LifecycleAck
-	6, // 8: rimsky.v1.LifecycleSubscriber.OnTemplateUndeployed:output_type -> rimsky.v1.LifecycleAck
-	6, // 9: rimsky.v1.LifecycleSubscriber.OnTemplateDeregistered:output_type -> rimsky.v1.LifecycleAck
-	6, // 10: rimsky.v1.LifecycleSubscriber.OnInstanceCreated:output_type -> rimsky.v1.LifecycleAck
-	6, // 11: rimsky.v1.LifecycleSubscriber.OnInstanceTerminated:output_type -> rimsky.v1.LifecycleAck
-	6, // [6:12] is the sub-list for method output_type
-	0, // [0:6] is the sub-list for method input_type
+	6, // 6: rimsky.v1.LifecycleSubscriber.OnRunScopeTerminal:input_type -> rimsky.v1.OnRunScopeTerminalRequest
+	7, // 7: rimsky.v1.LifecycleSubscriber.OnTemplateRegistered:output_type -> rimsky.v1.LifecycleAck
+	7, // 8: rimsky.v1.LifecycleSubscriber.OnTemplateDeployed:output_type -> rimsky.v1.LifecycleAck
+	7, // 9: rimsky.v1.LifecycleSubscriber.OnTemplateUndeployed:output_type -> rimsky.v1.LifecycleAck
+	7, // 10: rimsky.v1.LifecycleSubscriber.OnTemplateDeregistered:output_type -> rimsky.v1.LifecycleAck
+	7, // 11: rimsky.v1.LifecycleSubscriber.OnInstanceCreated:output_type -> rimsky.v1.LifecycleAck
+	7, // 12: rimsky.v1.LifecycleSubscriber.OnInstanceTerminated:output_type -> rimsky.v1.LifecycleAck
+	7, // 13: rimsky.v1.LifecycleSubscriber.OnRunScopeTerminal:output_type -> rimsky.v1.LifecycleAck
+	7, // [7:14] is the sub-list for method output_type
+	0, // [0:7] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -482,7 +583,7 @@ func file_lifecycle_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lifecycle_proto_rawDesc), len(file_lifecycle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

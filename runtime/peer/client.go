@@ -54,7 +54,12 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 		InstanceId:   spec.InstanceID,
 	})
 	if err != nil {
-		return locks.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: %w", c.name, err)
+		return locks.OpenOutcome{}, &ProducerCallError{
+			ProducerName: c.name,
+			Method:       "Open",
+			ErrorClass:   extractErrorClass(err),
+			Underlying:   err,
+		}
 	}
 	if u := resp.GetUnavailable(); u != nil {
 		return locks.OpenOutcome{Available: false}, nil
@@ -89,7 +94,12 @@ func (c *Client) Commit(ctx context.Context, claimID locks.ClaimID, scope, addre
 		Address:    address,
 	})
 	if err != nil {
-		return fmt.Errorf("remote producer %q: Commit: %w", c.name, err)
+		return &ProducerCallError{
+			ProducerName: c.name,
+			Method:       "Commit",
+			ErrorClass:   extractErrorClass(err),
+			Underlying:   err,
+		}
 	}
 	return nil
 }
@@ -103,7 +113,12 @@ func (c *Client) Abandon(ctx context.Context, claimID locks.ClaimID, scope, addr
 		Address:    address,
 	})
 	if err != nil {
-		return fmt.Errorf("remote producer %q: Abandon: %w", c.name, err)
+		return &ProducerCallError{
+			ProducerName: c.name,
+			Method:       "Abandon",
+			ErrorClass:   extractErrorClass(err),
+			Underlying:   err,
+		}
 	}
 	return nil
 }
@@ -116,7 +131,12 @@ func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, addr
 		Address:    address,
 	})
 	if err != nil {
-		return fmt.Errorf("remote producer %q: Release: %w", c.name, err)
+		return &ProducerCallError{
+			ProducerName: c.name,
+			Method:       "Release",
+			ErrorClass:   extractErrorClass(err),
+			Underlying:   err,
+		}
 	}
 	return nil
 }

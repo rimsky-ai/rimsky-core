@@ -21,7 +21,7 @@ The producer list and executor list are needed by every service-orchestrating pr
 
 ## Boundaries
 
-Owns: the file shape, validations at startup (write-semantics-allowed subset, blob backend gating), the loader. Does NOT own: service protocol shapes (those are the protocol concepts' territory), per-feature defaults (live in code). Adjacent: `claim-producer`, `executor`, `lifecycle-subscriber`, `service`, `blob-backend`, `persistence-database`, `write-semantics`.
+Owns: the file shape, validations at startup (write-semantics-allowed subset, blob backend gating), a per-protocol `late_bind_service_proxies` map (protocol name → the proxy service name that fronts late-bound services for that protocol), the loader. Does NOT own: service protocol shapes (those are the protocol concepts' territory), per-feature defaults (live in code). Adjacent: `claim-producer`, `executor`, `lifecycle-subscriber`, `service`, `blob-backend`, `persistence-database`, `write-semantics`, `host-agent-proxy`.
 
 ## Invariants
 
@@ -32,6 +32,7 @@ Owns: the file shape, validations at startup (write-semantics-allowed subset, bl
 - The legacy DB-URL environment variable is gone; all DSN config goes through the YAML.
 - Each service entry declares its protocol membership via an explicit protocol-membership list.
 - **No auth-related keys.** Auth state is data-derived (the active-status predicate over the persisted API-key ledger; see `concept:anonymous-mode`). Operators do not configure an auth mode, a bootstrap key, or any other auth knob in the yml file. The data state of the API-key ledger is the sole source of truth.
+- Late-bound service names resolve at dispatch via the proxy named for the relevant protocol in the per-protocol `late_bind_service_proxies` map; an empty map leaves late-bind resolution inert (today's strict behavior). See `concept:host-agent-proxy`.
 
 ## Aliases and historical names
 
@@ -47,4 +48,5 @@ Pre-`spec:2026-05-12-nomenclature-resolution`, the YAML accepted `stores:` as an
 - [2026-05-15] Clarifying addition: the config file carries no auth-related keys; auth state is data-derived (see `concept:anonymous-mode`). Added by `spec:2026-05-15-control-plane-mcp-and-auth-design`.
 - 2026-05-19 — A single service binary that plays multiple protocol roles (e.g. the bundled postgres store acting as both `concept:claim-producer` and `concept:executor`) is registered under each role's namespace in this file. Reusing the same logical name across the claim-producers and executors blocks for one binary is the canonical pattern; the entries' YAML shapes differ per the existing per-namespace conventions (URL-scheme endpoint for claim-producers, a transport selector plus bare host:port for executors). Per-namespace protocol enumerations are unchanged by this addition: claim-producer entries continue to advertise claim-producer (plus optional mix-ins); executor entries advertise executor. The new pattern is "same binary registered in both namespaces," not "new protocol values in either namespace." Per `spec:2026-05-19-multi-instance-template-ergonomics-design`.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- [2026-05-24] Adds a per-protocol `late_bind_service_proxies` map (protocol → proxy service name) so late-bound service names route through the named `concept:host-agent-proxy` at dispatch. Per spec 2026-05-24-host-agent-and-proxy-design.
 

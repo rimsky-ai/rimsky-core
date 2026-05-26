@@ -26,6 +26,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,7 +35,19 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
+
+// producerErrorClassOf recovers the translated error_class from a
+// faulted claim-producer Open RPC. Returns "" when err is not a
+// *peer.ProducerCallError or carries no ErrorInfo-derived class.
+func producerErrorClassOf(err error) string {
+	var pcErr *peer.ProducerCallError
+	if errors.As(err, &pcErr) {
+		return pcErr.ErrorClass
+	}
+	return ""
+}
 
 // lookupGraphName returns the GraphSpec.Name whose Nodes contains
 // nodeType. Falls back to spec.MainGraphName when no GraphSpec
@@ -190,6 +203,17 @@ type acquisition struct {
 	// it.
 	UnavailableSpec locks.ClaimSpec
 
+	// ErroredSpec is the spec whose Open RPC faulted, when the
+	// acquisition took the producer-errored branch
+	// (errAcquireProducerErrored). Carried through the rollback so the
+	// producer-error handler can log / route on the producer name.
+	ErroredSpec locks.ClaimSpec
+	// ProducerErrorClass is the translated error_class from the faulted
+	// producer's *peer.ProducerCallError (the gRPC ErrorInfo.Reason, or
+	// "" when the producer attached no ErrorInfo detail). Routed through
+	// the operator's `error_types:` chain by handleAcquireProducerError.
+	ProducerErrorClass string
+
 	// SubClaims is the per-sub-scope sub-claim list returned by
 	// `AcquireSubClaims` when the template node declares `fan_out:`.
 	// Empty for non-fan-out nodes. Spec
@@ -234,23 +258,33 @@ type acquisition struct {
 	TemplateHash string
 }
 
-// openResult discriminates the three outcomes of acquiring one
-// lock-or-claim spec under the §7.3 acquisition flow:
+// openResult discriminates the outcomes of acquiring one lock-or-claim
+// spec under the §7.3 acquisition flow:
 //
 //	openResultAcquired   — the spec acquired successfully.
 //	openResultUnavailable — the producer returned Available=false.
 //	                        Routed through the operator's
 //	                        `error_types: { acquire/unavailable: ... }`
 //	                        chain (synthetic class).
+//	openResultErrored     — the producer's Open RPC faulted (the wire
+//	                        call returned a gRPC error). The translated
+//	                        error_class travels on the returned
+//	                        *peer.ProducerCallError and is routed through
+//	                        the operator's `error_types:` chain — the
+//	                        same chain executor Error{error_class}
+//	                        terminals use. Distinguished from
+//	                        openResultBail so the producer fault reaches
+//	                        the policy chain rather than aborting the tick.
 //	openResultBail        — any other reason (eligibility, scope
 //	                        conflict, named-lock counter limit). The
 //	                        per-candidate tx rolls back without firing
-//	                        the acquire/unavailable chain.
+//	                        the error-policy chain.
 type openResult int
 
 const (
 	openResultAcquired openResult = iota
 	openResultUnavailable
+	openResultErrored
 	openResultBail
 )
 
@@ -260,6 +294,16 @@ const (
 // caller interprets it and routes through the operator's
 // `error_types: { acquire/unavailable: ... }` chain.
 var errAcquireUnavailable = fmt.Errorf("supervisor: acquire bailed on Unavailable claim (sentinel)")
+
+// errAcquireProducerErrored is a sentinel returned from tryAcquire when
+// a required claim's Open RPC faulted (the producer-side wire call
+// returned a gRPC error). Like errAcquireUnavailable it is not a real
+// error to surface — the per-candidate tx rolls back and the outer
+// caller routes the translated error_class through the operator's
+// `error_types:` chain (the same chain executor Error{error_class}
+// terminals use). acq carries ErroredSpec + ProducerErrorClass +
+// PartialLocks for the routing + Abandon cleanup.
+var errAcquireProducerErrored = fmt.Errorf("supervisor: acquire bailed on producer-faulted claim (sentinel)")
 
 // acquireCandidate runs the §7.3 flow against the live database.
 func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.Duration) (acquisition, bool, error) {
@@ -282,6 +326,10 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 		acq, ok, err := tryAcquireWithTx(ctx, args, cand, heartbeatInterval)
 		if err == errAcquireUnavailable {
 			handleAcquireUnavailable(ctx, args, acq, cand)
+			continue
+		}
+		if err == errAcquireProducerErrored {
+			handleAcquireProducerError(ctx, args, acq, cand)
 			continue
 		}
 		if err != nil {
@@ -344,9 +392,11 @@ func selectCandidatesShortTx(ctx context.Context, args RunArgs) ([]persistence.C
 	var candidates []persistence.Candidate
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := args.Queue.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
-			AcceptedExecutors: args.AcceptedExecutors,
-			AcceptedStores:    args.AcceptedStores,
-			Limit:             limit,
+			AcceptedExecutors:          args.AcceptedExecutors,
+			AcceptedStores:             args.AcceptedStores,
+			Limit:                      limit,
+			LateBindExecutorProxy:      args.LateBindServiceProxies["executor"],
+			LateBindClaimProducerProxy: args.LateBindServiceProxies["claim_producer"],
 		})
 		if err != nil {
 			return err
@@ -392,6 +442,12 @@ func tryAcquireWithTx(
 		// UnavailableSpec for the outer caller to route through the
 		// `error_types: { acquire/unavailable: ... }` chain.
 		return acq, false, errAcquireUnavailable
+	}
+	if err == errAcquireProducerErrored {
+		// Tx rolled back via the sentinel. acq carries PartialLocks /
+		// ErroredSpec / ProducerErrorClass for the outer caller to route
+		// through the operator's `error_types:` chain.
+		return acq, false, errAcquireProducerErrored
 	}
 	if err != nil && err != errTryAcquireRollback {
 		return acquisition{}, false, fmt.Errorf("tryAcquireWithTx: %w", err)
@@ -488,7 +544,40 @@ func tryAcquire(
 
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, res, err := acquireOneLock(ctx, args, tx, sp, cand, heartbeatInterval, heldSubgraphs)
+		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, heartbeatInterval, heldSubgraphs)
+		if res == openResultErrored {
+			// A producer Open RPC faulted. err is the *peer.ProducerCallError
+			// carrying the translated error_class; recover it and carry the
+			// partial-acquired list + errored spec out across the rollback so
+			// the outer caller routes the class through the operator's
+			// `error_types:` chain — the same chain executor Error{error_class}
+			// terminals use.
+			erroredSpec, _ := sp.(locks.ClaimSpec)
+			out := acquisition{
+				DispatchID:                cand.DispatchID,
+				NodeID:                    cand.NodeID,
+				InstanceID:                nd.InstanceID,
+				NodeType:                  nd.NodeType,
+				Executor:                  nd.Executor,
+				GraphName:                 graphName,
+				RunScopeID:                runScopeID,
+				PriorDispatchID:           cand.PriorDispatchID,
+				PriorDispatchDisposition:  cand.PriorDispatchDisposition,
+				FrameID:                   cand.FrameID,
+				NodeDef:                   nodeDef,
+				HeldSubgraphs:             heldSubgraphs,
+				PartialLocks:              acquiredLocks,
+				ErroredSpec:               erroredSpec,
+				ProducerErrorClass:        producerErrorClassOf(err),
+				TemplateAttributeDefaults: templateAttributeDefaults,
+			}
+			if inst != nil {
+				out.InstanceParams = inst.Params
+				out.InstanceAttributeOverrides = inst.AttributeOverrides
+				out.TemplateHash = inst.TemplateHash
+			}
+			return out, false, errAcquireProducerErrored
+		}
 		if err != nil {
 			return acquisition{}, false, err
 		}
@@ -550,7 +639,7 @@ func tryAcquire(
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
-	if err := acquireFanOutIfDeclared(ctx, args, tx, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
+	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
 		return acquisition{}, false, err
 	}
 	// E4b co-holder / inheritor row registration. For each `holds:`

@@ -21,6 +21,8 @@ vendor/
 /rimsky-data-processing-conformance
 /rimsky-entrypoint
 /rimsky-license-check
+/rimsky-host-agent
+/rimsky-host-agent-proxy
 /openlineage
 
 # The bundled-services (sensors, executors, subscribers, production

@@ -73,10 +73,12 @@ func (c *LifecycleClient) OnTemplateDeregistered(ctx context.Context, req locks.
 
 func (c *LifecycleClient) OnInstanceCreated(ctx context.Context, req locks.OnInstanceCreatedRequest) error {
 	_, err := c.rpc.OnInstanceCreated(ctx, &genv1.OnInstanceCreatedRequest{
-		InstanceId:   req.InstanceID,
-		TemplateHash: req.TemplateHash,
-		InstanceKey:  req.InstanceKey,
-		Params:       req.Params,
+		InstanceId:      req.InstanceID,
+		TemplateHash:    req.TemplateHash,
+		InstanceKey:     req.InstanceKey,
+		Params:          req.Params,
+		ServiceBindings: req.ServiceBindings,
+		OwnerApiKeyId:   req.OwnerAPIKeyID,
 	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnInstanceCreated: %w", c.name, err)
@@ -92,6 +94,18 @@ func (c *LifecycleClient) OnInstanceTerminated(ctx context.Context, req locks.On
 	})
 	if err != nil {
 		return fmt.Errorf("lifecycle subscriber %q: OnInstanceTerminated: %w", c.name, err)
+	}
+	return nil
+}
+
+func (c *LifecycleClient) OnRunScopeTerminal(ctx context.Context, req locks.OnRunScopeTerminalRequest) error {
+	_, err := c.rpc.OnRunScopeTerminal(ctx, &genv1.OnRunScopeTerminalRequest{
+		RunScopeId:     req.RunScopeID,
+		TerminalReason: req.TerminalReason,
+		InstanceId:     req.InstanceID,
+	})
+	if err != nil {
+		return fmt.Errorf("lifecycle subscriber %q: OnRunScopeTerminal: %w", c.name, err)
 	}
 	return nil
 }

@@ -28,6 +28,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
@@ -217,6 +219,12 @@ type RimskyConfig struct {
 	// Recommended defaults: time_wait: 1h, callback_wait: 7d,
 	// retry_backoff: 1h, other: 1h.
 	MaxParkDuration map[string]time.Duration
+	// LateBindServiceProxies maps protocol name → proxy service name.
+	// e.g., {"executor": "host-agent-proxy", "claim_producer": "host-agent-proxy"}.
+	// Consumed by LateBindResolver (executor) and *locks.Registry.GetWithContext
+	// (claim-producer) for late-bind dispatch resolution; consumed by
+	// LifecyclePeersForSpec for late-bind-proxy fan-out subscription.
+	LateBindServiceProxies map[string]string
 }
 
 // LoadRimskyConfigYAML reads rimsky.yml: the unified deployment-shape
@@ -299,6 +307,9 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		// / "retry_backoff" / "other"); values are time.Duration. Spec
 		// §Parked-state taxonomy.
 		MaxParkDuration map[string]time.Duration `yaml:"max_park_duration"`
+		// LateBindServiceProxies maps protocol name → proxy service name
+		// for late-bind dispatch resolution and fan-out subscription.
+		LateBindServiceProxies map[string]string `yaml:"late_bind_service_proxies"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
@@ -446,13 +457,14 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	}
 
 	return RimskyConfig{
-		Persistence:     pcfg,
-		Blob:            bcfg,
-		Stores:          stores,
-		NamedLocks:      locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
-		Executors:       executors,
-		Publishers:      publishersCfg,
-		MaxParkDuration: wrapper.MaxParkDuration,
+		Persistence:            pcfg,
+		Blob:                   bcfg,
+		Stores:                 stores,
+		NamedLocks:             locks.NamedLocksConfig{Locks: wrapper.NamedLocks},
+		Executors:              executors,
+		Publishers:             publishersCfg,
+		MaxParkDuration:        wrapper.MaxParkDuration,
+		LateBindServiceProxies: wrapper.LateBindServiceProxies,
 	}, nil
 }
 
@@ -530,8 +542,44 @@ func validateProtocols(name string, protocols []string) error {
 // failure.
 //
 // Returns a non-nil *Registry even on the empty-config path.
-func dialRemoteStores(ctx context.Context, cfg RemoteStoresConfig) (*locks.Registry, error) {
-	reg := locks.NewRegistry()
+//
+// persist + lateBindServiceProxies wire the Registry's late-bind
+// resolution hooks: lookupBindings reads a per-instance late-bound
+// service catalog from rimsky_instances.service_bindings, and the proxy
+// map maps a claim-producer name to the proxy peer the supervisor
+// dispatches against when the producer is late-bound. Both are inert
+// (no late-bind behavior) when the proxy map is empty.
+func dialRemoteStores(
+	ctx context.Context,
+	cfg RemoteStoresConfig,
+	persist persistence.Tables,
+	lateBindServiceProxies map[string]string,
+) (*locks.Registry, error) {
+	// Bindings-lookup hook backed by the live persistence layer.
+	// `shared.UUID` is an alias for `github.com/google/uuid.UUID`; parse
+	// via uuid.Parse (no shared.ParseUUID helper).
+	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
+		instID, err := uuid.Parse(instanceID)
+		if err != nil {
+			return nil, false, err
+		}
+		row, err := persist.Instances().Get(ctx, instID, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		if row == nil || len(row.ServiceBindings) == 0 {
+			return nil, false, nil
+		}
+		var bindings map[string]json.RawMessage
+		if err := json.Unmarshal(row.ServiceBindings, &bindings); err != nil {
+			return nil, false, err
+		}
+		return bindings, true, nil
+	}
+	reg := locks.NewRegistry(
+		locks.WithLookupInstanceBindings(lookupBindings),
+		locks.WithLateBindServiceProxies(lateBindServiceProxies),
+	)
 	for name, entry := range cfg.Stores {
 		if err := validateStoreEntry(name, entry); err != nil {
 			reg.Close()
@@ -554,13 +602,18 @@ func dialRemoteStores(ctx context.Context, cfg RemoteStoresConfig) (*locks.Regis
 	return reg, nil
 }
 
-// dialLifecycleSubscribers walks the union of claim_producers and
+// DialLifecycleSubscribers walks the union of claim_producers and
 // executors and dials a LifecycleClient for any peer whose protocols
 // list includes "lifecycle_subscriber". Each per-peer dial is bounded
 // by capabilitiesHandshakeTimeout (same envelope as dialRemoteStores)
 // so a wedged peer at startup cannot block the rimsky process forever.
 // Returns a non-nil *LifecycleRegistry even on the empty path.
-func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
+//
+// Exported so the supervisor entrypoint can dial its own outbound
+// lifecycle subscribers (the supervisor fires OnRunScopeTerminal at
+// sub-graph and fanout-partition scope closes) — control-api dials the
+// parallel set for the main-scope close.
+func DialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, execs ExecutorsConfig) (*locks.LifecycleRegistry, error) {
 	reg := locks.NewLifecycleRegistry()
 	for name, entry := range stores.Stores {
 		if !entry.HasProtocol(claimproducer.ProtocolLifecycleSubscriber) {
@@ -571,7 +624,7 @@ func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 		cancel()
 		if err != nil {
 			reg.Close()
-			return nil, fmt.Errorf("dialLifecycleSubscribers: producer %q: %w", name, err)
+			return nil, fmt.Errorf("DialLifecycleSubscribers: producer %q: %w", name, err)
 		}
 		reg.Add(name, client)
 	}
@@ -584,7 +637,7 @@ func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 		cancel()
 		if err != nil {
 			reg.Close()
-			return nil, fmt.Errorf("dialLifecycleSubscribers: executor %q: %w", name, err)
+			return nil, fmt.Errorf("DialLifecycleSubscribers: executor %q: %w", name, err)
 		}
 		reg.Add(name, client)
 	}

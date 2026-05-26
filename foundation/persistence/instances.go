@@ -6,6 +6,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
@@ -61,6 +62,12 @@ type InstanceRow struct {
 	//
 	// @concept: breakpoint
 	Paused bool `json:"paused"`
+	// ServiceBindings is opaque JSONB carrying the per-instance late-bound
+	// service catalog. Empty for instances that don't use late-bound services.
+	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
+	// CreatedByAPIKeyID is the api-key whose authenticated request created
+	// the instance. Nil for anonymous-mode-created instances.
+	CreatedByAPIKeyID *shared.UUID `json:"created_by_api_key_id,omitempty"`
 }
 
 // InstanceTable is the rimsky_instances accessor.
@@ -147,6 +154,12 @@ type InstanceCreateInput struct {
 	//
 	// @concept: breakpoint
 	Paused bool
+	// ServiceBindings is opaque JSONB carrying the per-instance late-bound
+	// service catalog. Empty for instances that don't use late-bound services.
+	ServiceBindings json.RawMessage
+	// CreatedByAPIKeyID is the api-key whose authenticated request created
+	// the instance. Nil for anonymous-mode-created instances.
+	CreatedByAPIKeyID *shared.UUID
 }
 
 // InstanceListFilter is the observability/list filter for instances.

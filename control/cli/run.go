@@ -16,9 +16,20 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// repeatedFlag collects a string flag that may be passed multiple times,
+// preserving declaration order. Used by `run`'s --param and --service.
+type repeatedFlag []string
+
+func (r *repeatedFlag) String() string { return strings.Join(*r, ",") }
+func (r *repeatedFlag) Set(v string) error {
+	*r = append(*r, v)
+	return nil
+}
 
 // RunRegister aliases `template register`.
 func RunRegister(ctx context.Context, args []string) int { return RunTemplateRegister(ctx, args) }
@@ -59,64 +70,122 @@ func RunLogs(ctx context.Context, args []string) int {
 
 // RunRun is the composed `run` verb: register + deploy + create. With
 // --no-keep, polls until terminal then cleans up.
+//
+// Additive flags (per spec 2026-05-24-host-agent-and-proxy-design.md):
+//   - --template <name>: name an already-registered template instead of
+//     passing a positional spec <file>. Mutually exclusive with <file>.
+//   - --param k=v (repeatable): merged into the params map; merged with
+//     --params JSON with later-wins precedence (--params is applied first,
+//     then each --param k=v in declaration order).
+//   - --service <name>=<path> | <name> (repeatable): per-instance late-bound
+//     service binding. A bare name resolves via the alias files; supplying
+//     any --service auto-starts the local host-agent if it is not already
+//     running (PID-existence check on ~/.rimsky/agent.pid).
 func RunRun(ctx context.Context, args []string) int {
 	var (
 		params       string
+		templateName string
 		key          string
 		tag          string
 		keep         bool
 		noKeep       bool
 		pollInterval time.Duration
 		timeout      time.Duration
+		paramKV      repeatedFlag
+		services     repeatedFlag
 	)
 	fs, common, endpoint, code := runWithCommon("run", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
+		fs.StringVar(&templateName, "template", "", "name of an already-registered template (mutually exclusive with <file>)")
 		fs.StringVar(&key, "instance-key", "", "instance_key")
 		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
 		fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default)")
 		fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "poll interval when --no-keep")
 		fs.DurationVar(&timeout, "timeout", 0, "max wait for terminal state when --no-keep (0 = unbounded)")
+		fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
+		fs.Var(&services, "service", "late-bound service binding: <name>=<path> or bare <name> (alias). "+
+			"Supplying any --service auto-starts the local agent if its ~/.rimsky/agent.pid is not live")
 	})
 	if code != 0 {
 		return code
 	}
 	rest := fs.Args()
-	if len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky run <file> [--params ...] [--key ...] [--tag ...] [--no-keep]")
+
+	// Source resolution: exactly one of (positional <file>) or (--template).
+	if templateName != "" && len(rest) > 0 {
+		fmt.Fprintln(os.Stderr, "rimsky run: --template and a positional <file> are mutually exclusive")
+		return 2
+	}
+	if templateName == "" && len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep]")
 		return 2
 	}
 	if noKeep {
 		keep = false
 	}
-	pp, err := parseParams(params)
+
+	pp, err := mergeParams(params, paramKV)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+
+	bindings, err := resolveServiceBindings(services)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
 	if tag != "" && strings.HasPrefix(tag, ReservedTagPrefix) {
 		fmt.Fprintf(os.Stderr, "tag %q uses reserved prefix %q\n", tag, ReservedTagPrefix)
 		return 2
 	}
-	spec, err := readSpecFile(rest[0])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
+
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
-	tpl, err := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: tag})
-	if err != nil {
-		return reportError(err)
+	// Resolve the template hash: either by registering a positional spec
+	// file, or by naming an already-registered template via --template.
+	var hash string
+	if templateName != "" {
+		tpl, rerr := c.GetTemplate(ctx, templateName)
+		if rerr != nil {
+			return reportError(rerr)
+		}
+		hash = tpl.Hash()
+	} else {
+		spec, rerr := readSpecFile(rest[0])
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, rerr)
+			return 2
+		}
+		tpl, terr := c.RegisterTemplate(ctx, RegisterTemplateRequest{Spec: spec, Tag: tag})
+		if terr != nil {
+			return reportError(terr)
+		}
+		hash = tpl.Hash()
 	}
-	hash := tpl.Hash()
 	if _, err := c.DeployTemplate(ctx, hash); err != nil {
 		return reportError(err)
 	}
+
+	// Auto-start the local host-agent when service bindings are supplied and
+	// no live agent daemon is recorded. v1 connection-state contract is
+	// PID-existence only (read ~/.rimsky/agent.pid + signal-0 liveness probe).
+	if len(bindings) > 0 {
+		if startErr := ensureAgentRunning(); startErr != nil {
+			fmt.Fprintf(os.Stderr, "rimsky run: could not start host-agent: %v\n", startErr)
+			return 1
+		}
+	}
+
 	body := CreateInstanceRequest{Template: hash, Params: pp}
 	if key != "" {
 		body.InstanceKey = &key
+	}
+	if len(bindings) > 0 {
+		body.ServiceBindings = bindings
 	}
 	inst, err := c.CreateInstance(ctx, body)
 	if err != nil {
@@ -133,6 +202,102 @@ func RunRun(ctx context.Context, args []string) int {
 		return 0
 	}
 	return waitAndCleanup(ctx, c, inst.UUID(), hash, pollInterval, timeout)
+}
+
+// mergeParams builds the params map from the --params JSON blob (applied
+// first) then overlays each --param k=v in declaration order (later wins).
+// Returns nil when neither source contributes anything.
+func mergeParams(paramsJSON string, kvs repeatedFlag) (map[string]any, error) {
+	base, err := parseParams(paramsJSON)
+	if err != nil {
+		return nil, err
+	}
+	if len(kvs) == 0 {
+		return base, nil
+	}
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for _, kv := range kvs {
+		k, v, found := strings.Cut(kv, "=")
+		if !found || k == "" {
+			return nil, fmt.Errorf("--param %q: expected k=v", kv)
+		}
+		out[k] = coerceParamValue(v)
+	}
+	return out, nil
+}
+
+// coerceParamValue interprets a --param value string as a bool, integer, or
+// float when it parses cleanly, otherwise leaving it as a string. This keeps
+// `--param count=3` an integer and `--param enabled=true` a bool without
+// requiring the user to write JSON; ambiguous values stay strings.
+func coerceParamValue(v string) any {
+	switch v {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return f
+	}
+	return v
+}
+
+// resolveServiceBindings turns each --service flag value into a binding.
+// `name=path` is explicit; a bare `name` resolves via the alias files
+// (Task 53). Returns nil when no --service flags were supplied.
+func resolveServiceBindings(values repeatedFlag) (map[string]bindingSpec, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	var aliases map[string]string
+	out := make(map[string]bindingSpec, len(values))
+	for _, raw := range values {
+		name, path, explicit := strings.Cut(raw, "=")
+		if name == "" {
+			return nil, fmt.Errorf("--service %q: service name is empty", raw)
+		}
+		if explicit {
+			if path == "" {
+				return nil, fmt.Errorf("--service %q: path is empty", raw)
+			}
+			out[name] = bindingSpec{Path: path}
+			continue
+		}
+		// Bare name: resolve via aliases (loaded lazily, once).
+		if aliases == nil {
+			aliases = LoadServiceAliases()
+		}
+		p, ok := aliases[name]
+		if !ok {
+			return nil, fmt.Errorf("--service %q: no alias defined; use --service %s=<path>", name, name)
+		}
+		out[name] = bindingSpec{Path: p}
+	}
+	return out, nil
+}
+
+// ensureAgentRunning starts the local host-agent daemon when no live agent
+// is recorded. v1 connection-state contract is PID-existence only: read
+// ~/.rimsky/agent.pid and send signal 0 to confirm the process is alive. A
+// live PID is assumed connected to the proxy (the proxy surfaces
+// host_agent_not_connected on dispatch if it isn't, which the operator
+// policy retries). When no live agent is recorded, daemonize one inline
+// before submitting.
+func ensureAgentRunning() error {
+	if pid, ok, err := readAgentPID(); err == nil && ok && processAlive(pid) {
+		return nil // already running
+	}
+	if code := runAgentStart(nil); code != 0 {
+		return fmt.Errorf("`rimsky agent start` exited with code %d", code)
+	}
+	return nil
 }
 
 // waitAndCleanup polls GetInstance until terminal, then deletes the

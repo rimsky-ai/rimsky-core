@@ -18,6 +18,8 @@
 package locks
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 )
@@ -66,13 +68,37 @@ func (c NamedLocksConfig) Validate() error {
 // the supervisor's acquisition flow, the scheduler's orphan reaper,
 // and the control-api's template validator.
 type Registry struct {
-	producers map[string]ClaimProducer
+	producers              map[string]ClaimProducer
+	lookupInstanceBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
+	lateBindServiceProxies map[string]string
+}
+
+// Option configures a Registry at construction time.
+type Option func(*Registry)
+
+// WithLookupInstanceBindings supplies the persistence hook for
+// late-bound claim-producer resolution. When nil (the default),
+// the registry has no late-bind support.
+func WithLookupInstanceBindings(fn func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)) Option {
+	return func(r *Registry) { r.lookupInstanceBindings = fn }
+}
+
+// WithLateBindServiceProxies supplies the per-protocol proxy-name
+// map (loaded from rimsky.yml's late_bind_service_proxies). When
+// empty or nil, the registry has no late-bind support.
+func WithLateBindServiceProxies(m map[string]string) Option {
+	return func(r *Registry) { r.lateBindServiceProxies = m }
 }
 
 // NewRegistry returns an empty Registry. Callers Add(name, producer)
-// after dialing each remote producer-service.
-func NewRegistry() *Registry {
-	return &Registry{producers: make(map[string]ClaimProducer)}
+// after dialing each remote producer-service. Optional functional
+// options configure late-bind claim-producer resolution.
+func NewRegistry(opts ...Option) *Registry {
+	r := &Registry{producers: make(map[string]ClaimProducer)}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // Add registers a ClaimProducer under name. Re-adding the same name
@@ -99,6 +125,46 @@ func (r *Registry) Add(name string, p ClaimProducer) {
 func (r *Registry) Get(name string) (ClaimProducer, bool) {
 	p, ok := r.producers[name]
 	return p, ok
+}
+
+// GetWithContext is the late-bind-aware sibling of Get. When the
+// registry was constructed without late-bind options (or no instance
+// context is supplied), it falls through to Get(name) — behavior is
+// identical to today. The caller's ctx is threaded into the binding
+// lookup (a DB hit) so it honors the dispatch's deadline/cancellation
+// rather than running uncancellable on context.Background(). A nil ctx
+// falls back to context.Background().
+//
+// @diverged: true
+// @reason: parallels runtime/executor/resolver.go::Resolver.Resolve(name, DispatchContext)
+//
+//	but uses a plain ctx + instanceID arg instead of a DispatchContext type
+//	to avoid foundation→runtime imports (banned by layer-purity).
+func (r *Registry) GetWithContext(ctx context.Context, name string, instanceID string) (ClaimProducer, bool) {
+	if p, ok := r.Get(name); ok {
+		return p, true
+	}
+	if instanceID == "" {
+		return nil, false
+	}
+	if r.lookupInstanceBindings == nil {
+		return nil, false
+	}
+	proxyName, ok := r.lateBindServiceProxies["claim_producer"]
+	if !ok || proxyName == "" {
+		return nil, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	bindings, ok, err := r.lookupInstanceBindings(ctx, instanceID)
+	if err != nil || !ok {
+		return nil, false
+	}
+	if _, exists := bindings[name]; !exists {
+		return nil, false
+	}
+	return r.Get(proxyName)
 }
 
 // Producers returns a snapshot of every registered ClaimProducer keyed

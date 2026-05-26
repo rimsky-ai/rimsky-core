@@ -148,6 +148,9 @@ func cancelInFlightSiblings(
 		if sib.ProducerName != nil {
 			producerName = *sib.ProducerName
 		}
+		// Terminal-resolution path (force-Abandon, not dispatch-time
+		// acquisition): bare Get — the sibling claim was bound at acquire
+		// time; no instance context is in scope here.
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
 			return fmt.Errorf("cancelInFlightSiblings: unknown producer %q for sibling %s",
@@ -275,6 +278,9 @@ func cancelDescendantClaims(
 		if d.ProducerName != nil {
 			producerName = *d.ProducerName
 		}
+		// Terminal-resolution path (force-Abandon, not dispatch-time
+		// acquisition): bare Get — the descendant claim was bound at
+		// acquire time; no instance context is in scope here.
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
 			return fmt.Errorf("cancelDescendantClaims: unknown producer %q for descendant %s",

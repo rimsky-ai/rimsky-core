@@ -30,6 +30,7 @@ apache:
   - runtime/peer/
   - runtime/executor/
   - runtime/clientiface/
+  - runtime/hostagent/  # dev-machine daemon (the agent end of HostAgent.Connect), client-side; bundled into the rimsky CLI
   - control/cli/
   - graph/node/
   - graph/shared/
@@ -43,6 +44,7 @@ apache:
   # examples/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/examples
   # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cmd/rimsky/
+  - cmd/rimsky-host-agent/  # standalone dev-machine daemon; same client-side carve-out as runtime/hostagent + cmd/rimsky
   - cmd/rimsky-executor-conformance/
   - cmd/rimsky-claim-producer-conformance/
   - cmd/rimsky-conformance-probe/
@@ -83,6 +85,7 @@ agpl:
   - cmd/rimsky-migrate/
   - cmd/rimsky-entrypoint/
   - cmd/rimsky-blob-backend-conformance/
+  - cmd/rimsky-host-agent-proxy/  # rimsky-stack service binary (multi-protocol proxy), platform side
   - test/
 
 exempt:

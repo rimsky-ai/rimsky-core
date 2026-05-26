@@ -154,6 +154,9 @@ func CheckAndFireResolution(
 	if row.ProducerName != nil {
 		producerName = *row.ProducerName
 	}
+	// Terminal-resolution path (not dispatch-time acquisition): the
+	// claim was already bound at acquire time and no instance context is
+	// in scope at this point, so a bare Get is correct here.
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
 		return fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)

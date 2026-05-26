@@ -32,6 +32,8 @@ The only structural differences are:
 
 The first three are degenerate cases of a unified policy/cardinality model. The latter two are genuine asymmetries.
 
+A unification would need no schema change — `partition_key` is already the discriminator between the delegation (`""`) and fan-out (non-empty per child) shapes.
+
 Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren`) and two settlement paths (`CarryExitWriteback`, `resolveParentClaimChain`) implement what could be one primitive parameterized by partition descriptors + aggregation policy.
 
 ## Why it matters
@@ -48,7 +50,7 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 - Keep `concept:delegation` and `concept:fan-out` but reframe both as referencing a shared cross-cutting concept; do the runtime unification without the concept-doc reshape.
 - Leave the duplication; accept the cost.
 
-See `sketch:2026-05-23-unify-child-execution`, which walks the unified shape, the migration story (no schema change — `partition_key` is already the discriminator), and open questions including entry-absorption asymmetry, naming, and the timing of the refactor relative to the just-landed reshape stabilizing.
+See `sketch:2026-05-23-unify-child-execution` for the unified shape and open questions (entry-absorption asymmetry, naming, refactor timing).
 
 ## Notes
 

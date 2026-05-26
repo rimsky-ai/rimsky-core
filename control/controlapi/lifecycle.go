@@ -21,6 +21,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
@@ -82,6 +83,12 @@ type InstancePayload struct {
 	// TerminatedAtUnixMs is rimsky_instances.terminated_at expressed
 	// as Unix milliseconds. Populated for OnInstanceTerminated.
 	TerminatedAtUnixMs int64
+	// ServiceBindings carries the per-instance late-bound service catalog
+	// (opaque JSON). Empty when the instance has no late-bound services.
+	ServiceBindings json.RawMessage
+	// OwnerAPIKeyID is the api-key that authenticated the create request.
+	// Nil for instances created under anonymous-mode.
+	OwnerAPIKeyID *shared.UUID
 }
 
 // FanOutTemplateEvent fires `event` to every LifecycleSubscriber peer
@@ -117,7 +124,10 @@ func FanOutTemplateEvent(
 	default:
 		return nil, nil, fmt.Errorf("FanOutTemplateEvent: %v is not a template-scope event", event)
 	}
-	peerNames := lifecyclePeersForSpec(deps, spec)
+	// Template-scope fan-out does NOT use the late-bind extension — the
+	// proxy doesn't subscribe to template events. Use the raw referenced
+	// peer set directly.
+	peerNames := peersReferencedBySpec(spec)
 	target := targetStateFor(event)
 	deletesRow := event == EventTemplateDeregistered
 	scopeKind := persistence.LifecycleIdempotencyScopeTemplate
@@ -222,7 +232,7 @@ func FanOutInstanceEvent(
 	default:
 		return nil, nil, fmt.Errorf("FanOutInstanceEvent: %v is not an instance-scope event", event)
 	}
-	peerNames := lifecyclePeersForSpec(deps, spec)
+	peerNames := LifecyclePeersForSpec(deps, spec)
 	deletesRow := event == EventInstanceTerminated
 	scopeKind := persistence.LifecycleIdempotencyScopeInstance
 	target := targetStateFor(event)
@@ -280,6 +290,88 @@ func FanOutInstanceEvent(
 	return peerNames, nil, nil
 }
 
+// FanOutRunScopeEvent fires OnRunScopeTerminal to every lifecycle
+// subscriber that matches the late-bind-extended peer filter
+// (LifecyclePeersForSpec) for the instance's template. Synchronous,
+// DB-idempotent via rimsky_lifecycle_idempotencies with
+// scope_kind="run_scope" and state="run_scope_terminal".
+//
+// Per spec 2026-05-24-host-agent-and-proxy-design.md §"Reap" and
+// §"Firing sites for OnRunScopeTerminal". Called by control-api's
+// instance_terminator.tick + DELETE path for main-scope close. The
+// supervisor has a parallel runtime/-side helper for sub-graph +
+// fanout-partition scopes; the two helpers close disjoint scope kinds.
+//
+// `tx` follows the same semantics as FanOutInstanceEvent: callers
+// inside an open transaction pass it through (so the SQLite
+// single-connection pool does not self-deadlock); a nil tx opens a
+// fresh short transaction per persistence call via withOptionalTx.
+//
+// Per-peer subscriber errors are collected in the returned map and the
+// loop continues to the next peer (matching FanOutInstanceEvent's
+// convention); only a persistence lookup/upsert failure aborts the
+// iteration with a top-level error.
+func FanOutRunScopeEvent(
+	ctx context.Context,
+	deps AppDeps,
+	tplSpec node.TemplateSpec,
+	runScopeID shared.UUID,
+	instanceID shared.UUID,
+	terminalReason string,
+	tx persistence.Tx,
+) ([]string, map[string]error, error) {
+	peers := LifecyclePeersForSpec(deps, tplSpec)
+	scopeID := runScopeID.String()
+	scopeKind := persistence.LifecycleIdempotencyScopeRunScope
+
+	perPeerErr := map[string]error{}
+	for _, name := range peers {
+		var row *persistence.LifecycleIdempotencyRow
+		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+			r, err := deps.Persist.LifecycleIdempotency().Get(ctx, name, scopeKind, scopeID, useTx)
+			row = r
+			return err
+		}); err != nil {
+			perPeerErr[name] = err
+			return peers, perPeerErr, fmt.Errorf("FanOutRunScopeEvent: lifecycle row lookup for %q: %w", name, err)
+		}
+		if row != nil && row.State == persistence.LifecycleIdempotencyStateRunScopeTerminal {
+			continue
+		}
+		if deps.LifecycleSubs == nil {
+			perPeerErr[name] = fmt.Errorf("lifecycle subscriber registry not initialized")
+			return peers, perPeerErr, fmt.Errorf("FanOutRunScopeEvent: lifecycle subscriber registry not initialized")
+		}
+		s, ok := deps.LifecycleSubs.Get(name)
+		if !ok {
+			continue
+		}
+		req := locks.OnRunScopeTerminalRequest{
+			RunScopeID:     scopeID,
+			TerminalReason: terminalReason,
+			InstanceID:     instanceID.String(),
+		}
+		if err := s.OnRunScopeTerminal(ctx, req); err != nil {
+			perPeerErr[name] = err
+			// Continue to next peer on subscriber error, surface via
+			// perPeerErr (matches FanOutInstanceEvent's convention).
+			continue
+		}
+		if err := withOptionalTx(ctx, deps.Persist, tx, func(ctx context.Context, useTx persistence.Tx) error {
+			return deps.Persist.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{
+				StoreRegistrationName: name,
+				ScopeKind:             scopeKind,
+				ScopeID:               scopeID,
+				State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
+			}, useTx)
+		}); err != nil {
+			perPeerErr[name] = err
+			return peers, perPeerErr, fmt.Errorf("FanOutRunScopeEvent: upsert lifecycle row %q: %w", name, err)
+		}
+	}
+	return peers, perPeerErr, nil
+}
+
 func dispatchTemplateEvent(ctx context.Context, s locks.LifecycleSubscriber, event LifecycleEvent, templateID string, payload TemplatePayload) error {
 	switch event {
 	case EventTemplateRegistered:
@@ -308,10 +400,12 @@ func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, eve
 	switch event {
 	case EventInstanceCreated:
 		return s.OnInstanceCreated(ctx, locks.OnInstanceCreatedRequest{
-			InstanceID:   instanceID,
-			TemplateHash: templateID,
-			InstanceKey:  payload.InstanceKey,
-			Params:       payload.Params,
+			InstanceID:      instanceID,
+			TemplateHash:    templateID,
+			InstanceKey:     payload.InstanceKey,
+			Params:          payload.Params,
+			ServiceBindings: payload.ServiceBindings,
+			OwnerAPIKeyID:   uuidString(payload.OwnerAPIKeyID),
 		})
 	case EventInstanceTerminated:
 		return s.OnInstanceTerminated(ctx, locks.OnInstanceTerminatedRequest{
@@ -323,7 +417,7 @@ func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, eve
 	return fmt.Errorf("dispatchInstanceEvent: %v is not instance-scope", event)
 }
 
-// lifecyclePeersForSpec returns the deduped, lex-sorted set of peer
+// LifecyclePeersForSpec returns the deduped, lex-sorted set of peer
 // names referenced by the template — the union of (a) every store-alias
 // declared on each node and (b) every executor declared on each node.
 // Per service-protocol-contract.md §3, a peer's `protocols:` list is the
@@ -332,8 +426,45 @@ func dispatchInstanceEvent(ctx context.Context, s locks.LifecycleSubscriber, eve
 // must still receive events on templates that reference them. A peer
 // that's referenced but does not appear in deps.LifecycleSubs is
 // fanned-out-skipped at dispatch time (no error, no bookkeeping).
-func lifecyclePeersForSpec(_ AppDeps, spec node.TemplateSpec) []string {
-	return peersReferencedBySpec(spec)
+//
+// When the template declares `late_bind_services`, the late-bind proxy
+// service names from deps.LateBindServiceProxies are appended (deduped
+// against the referenced peers) so the proxy receives instance-scope and
+// run-scope fan-out for the late-bound catalog. Exported because the
+// supervisor's outbound lifecycle dispatch calls it cross-package.
+// Template-scope fan-out deliberately does NOT use this extension (the
+// proxy doesn't care about template events) — FanOutTemplateEvent calls
+// peersReferencedBySpec directly.
+func LifecyclePeersForSpec(deps AppDeps, spec node.TemplateSpec) []string {
+	peers := peersReferencedBySpec(spec)
+	if len(spec.LateBindServices) > 0 {
+		seen := make(map[string]struct{}, len(peers))
+		for _, p := range peers {
+			seen[p] = struct{}{}
+		}
+		for _, proxyName := range deps.LateBindServiceProxies {
+			if proxyName == "" {
+				continue
+			}
+			if _, exists := seen[proxyName]; exists {
+				continue
+			}
+			peers = append(peers, proxyName)
+			seen[proxyName] = struct{}{}
+		}
+	}
+	return peers
+}
+
+// uuidString renders a *shared.UUID as its canonical string form,
+// returning "" for nil. The lifecycle proto carries owner_api_key_id as
+// a string, so the Go OnInstanceCreatedRequest.OwnerAPIKeyID is a
+// string; this bridges the nullable column type to the wire shape.
+func uuidString(u *shared.UUID) string {
+	if u == nil {
+		return ""
+	}
+	return u.String()
 }
 
 func targetStateFor(event LifecycleEvent) persistence.LifecycleIdempotencyState {

@@ -40,6 +40,8 @@ func main() {
 		os.Exit(dispatchNode(os.Args[2:]))
 	case "admin":
 		os.Exit(dispatchAdmin(os.Args[2:]))
+	case "agent":
+		os.Exit(cli.RunAgent(os.Args[2:]))
 	case "parked":
 		os.Exit(dispatchParked(os.Args[2:]))
 	case "messages":
@@ -379,6 +381,9 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Context:")
 	fmt.Fprintln(w, "  ctx list | use | add | rm | current")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Host agent:")
+	fmt.Fprintln(w, "  agent start | status | stop      Manage the local host-agent daemon")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Common flags (all verbs):")
 	fmt.Fprintln(w, "  --endpoint <url>     Override control-api endpoint")

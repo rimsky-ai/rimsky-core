@@ -216,6 +216,24 @@ type RunArgs struct {
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Protocol surfaces / DataProcessing.
 	DataProcessors DataProcessingRegistry
+
+	// LifecycleSubs is the supervisor's outbound LifecycleSubscriber
+	// registry, threaded from runtime.Config. Used by the sub-graph and
+	// fanout-partition RunScope close sites to fire OnRunScopeTerminal via
+	// FanOutRunScopeEvent. Nil → run-scope fan-out is a no-op.
+	//
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	LifecycleSubs *locks.LifecycleRegistry
+	// LifecyclePeersForSpec resolves the late-bind-aware peer set for a
+	// template at run-scope close. Function pointer populated at the cmd/
+	// entrypoint so runtime/ never imports control/. Nil → fan-out no-op.
+	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	// LateBindServiceProxies maps protocol name → proxy service name
+	// (rimsky.yml late_bind_service_proxies). Consulted at the §7.3
+	// SelectCandidates call so the dispatch SELECT admits the proxy peer
+	// as a stand-in for late-bound executor / claim-producer references.
+	// Empty → the admit-list extension stays inert.
+	LateBindServiceProxies map[string]string
 }
 
 // MetricsHook is the metric-instrumentation surface foundation calls

@@ -158,6 +158,21 @@ func resolveParentClaimChain(
 			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
 				return fmt.Errorf("resolveParentClaimChain: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
+			// Fire OnRunScopeTerminal to lifecycle subscribers for this
+			// fanout-partition RunScope, atomically with the close. Resolve
+			// the template spec via the two-step instance → template
+			// lookup. No-op when the supervisor wasn't wired with lifecycle
+			// outbound or when the lookups miss — the close is the
+			// load-bearing write. Per spec
+			// 2026-05-24-host-agent-and-proxy-design.md §"Firing sites for
+			// OnRunScopeTerminal".
+			if inst, err := args.Persist.Instances().Get(ctx, childScope.InstanceID, tx); err == nil && inst != nil {
+				if tpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
+					FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
+						args.LifecyclePeersForSpec, tpl.Spec, childRun.RunScopeID,
+						childScope.InstanceID, "fanout_partition_terminal", tx)
+				}
+			}
 		}
 	}
 	// Issue C: aggregate across ALL children using the snapshotted
@@ -173,6 +188,9 @@ func resolveParentClaimChain(
 	if parent.ProducerName != nil {
 		producerName = *parent.ProducerName
 	}
+	// Terminal-resolution path (not dispatch-time acquisition): bare Get
+	// — the parent claim was already bound at acquire time; no instance
+	// context is threaded into the recursive resolution walk.
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
 		return fmt.Errorf("resolveParentClaimChain: unknown producer %q", producerName)

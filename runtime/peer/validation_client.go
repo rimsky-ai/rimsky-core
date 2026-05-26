@@ -144,6 +144,7 @@ func DialValidation(_ context.Context, name, endpoint string, supportedRoles []s
 	if err != nil {
 		return nil, err
 	}
+	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("remote validation %q: dial %q: %w", name, endpoint, err)

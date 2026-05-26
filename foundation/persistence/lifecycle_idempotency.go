@@ -9,16 +9,21 @@ import (
 	"time"
 )
 
-// LifecycleIdempotencyScopeKind enumerates the two scopes a lifecycle
-// idempotency row may track (template-scope or instance-scope).
+// LifecycleIdempotencyScopeKind enumerates the scopes a lifecycle
+// idempotency row may track (template-scope, instance-scope, or
+// run-scope for the host-agent OnRunScopeTerminal fan-out).
 type LifecycleIdempotencyScopeKind string
 
 const (
 	LifecycleIdempotencyScopeTemplate LifecycleIdempotencyScopeKind = "template"
 	LifecycleIdempotencyScopeInstance LifecycleIdempotencyScopeKind = "instance"
+	// LifecycleIdempotencyScopeRunScope tracks per-RunScope terminal
+	// fan-out idempotency for OnRunScopeTerminal subscribers. Per spec
+	// 2026-05-24-host-agent-and-proxy-design.md.
+	LifecycleIdempotencyScopeRunScope LifecycleIdempotencyScopeKind = "run_scope"
 )
 
-// LifecycleIdempotencyState enumerates the four persisted lifecycle
+// LifecycleIdempotencyState enumerates the persisted lifecycle
 // states for the rimsky_lifecycle_idempotencies table.
 type LifecycleIdempotencyState string
 
@@ -27,6 +32,10 @@ const (
 	LifecycleIdempotencyStateDeployed   LifecycleIdempotencyState = "deployed"
 	LifecycleIdempotencyStateUndeployed LifecycleIdempotencyState = "undeployed"
 	LifecycleIdempotencyStateCreated    LifecycleIdempotencyState = "created"
+	// LifecycleIdempotencyStateRunScopeTerminal marks a run-scope-scoped
+	// row whose OnRunScopeTerminal fan-out has been delivered. Per spec
+	// 2026-05-24-host-agent-and-proxy-design.md.
+	LifecycleIdempotencyStateRunScopeTerminal LifecycleIdempotencyState = "run_scope_terminal"
 )
 
 // LifecycleIdempotencyRow mirrors a row of rimsky_lifecycle_idempotencies.

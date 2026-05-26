@@ -48,6 +48,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // abandonOpenedClaim fires Producer.Abandon on a claim whose Open
@@ -60,5 +61,8 @@ func abandonOpenedClaim(
 	scope, address []byte,
 ) error {
 	claimID := locks.ClaimID(claimHandleID.String())
+	// Stamp the producer name so a host-agent-proxy fronting the
+	// claim-producer protocol can route this Abandon by service name.
+	ctx = peer.WithServiceName(ctx, producer.Name())
 	return producer.Abandon(ctx, claimID, scope, address)
 }

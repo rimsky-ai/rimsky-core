@@ -68,6 +68,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
@@ -150,6 +151,27 @@ type Config struct {
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Parked-state taxonomy. Empty / nil → only per-row caps fire.
 	MaxParkDuration map[string]time.Duration
+
+	// LifecycleSubs is the supervisor's outbound LifecycleSubscriber
+	// registry. Threaded into RunArgs / CallbackServer so the sub-graph
+	// and fanout-partition RunScope close sites can fire
+	// OnRunScopeTerminal. Nil → run-scope fan-out is a no-op (the lint /
+	// unit-test path; production wiring populates it via
+	// config.StartSupervisor → DialLifecycleSubscribers).
+	//
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	LifecycleSubs *locks.LifecycleRegistry
+	// LifecyclePeersForSpec resolves the late-bind-aware peer set for a
+	// template at run-scope close time. Function pointer populated at the
+	// cmd/ entrypoint (control/ layer) so runtime/ never imports control/.
+	// Nil → run-scope fan-out is a no-op.
+	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	// LateBindServiceProxies maps protocol name → proxy service name
+	// (rimsky.yml late_bind_service_proxies). Threaded into RunArgs so the
+	// §7.3 SelectCandidates admit-list extension can offer the proxy peer
+	// as a stand-in for late-bound executor / claim-producer references.
+	// Empty → the admit-list extension is inert.
+	LateBindServiceProxies map[string]string
 }
 
 // Handle is returned by Start. Callers drive lifecycle via Shutdown and
@@ -264,6 +286,8 @@ func Start(cfg Config) (*Handle, error) {
 		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 		ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 		Metrics:                          cfg.Metrics,
+		LifecycleSubs:                    cfg.LifecycleSubs,
+		LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -468,6 +492,9 @@ func runLoop(
 				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 				ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 				Metrics:                          cfg.Metrics,
+				LifecycleSubs:                    cfg.LifecycleSubs,
+				LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
+				LateBindServiceProxies:           cfg.LateBindServiceProxies,
 			}, reg.Register)
 			if runErr != nil {
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())

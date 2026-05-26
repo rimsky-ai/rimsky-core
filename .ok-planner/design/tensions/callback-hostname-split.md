@@ -25,6 +25,11 @@ A misconfigured deployment fails silently: the supervisor accepts dispatches, th
 - Auto-derive the advertised host from the deployment environment.
 - Add a startup self-probe that POSTs to its own advertised URL and warns if unreachable.
 
+## Addendum (2026-05-24, per spec 2026-05-24-host-agent-and-proxy-design)
+
+1. Proxy-mediated executors do not sidestep this tension. The `concept:host-agent-proxy` → supervisor callback hop has the same advertise-host requirement as any other executor → supervisor hop today; routing a dispatch through the proxy does not change the callback-reachability story for that hop.
+2. A new hostname class joins the system implicitly: the `concept:host-agent`'s local-listener address, used by spawned processes to POST callbacks back through the agent. The agent's local address is implicit (loopback by default) and reported to the proxy at registration time; it needs no advertise-host knob because agents dial outbound (the proxy never dials the agent).
+
 ## Evidence
 
 - `_discover/2026-05-10-executor-streamed-execute.md` "Non-obvious gotchas" para.

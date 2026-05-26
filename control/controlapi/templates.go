@@ -99,10 +99,30 @@ func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 // fail validation — an empty `named_locks:` block is still a valid
 // (empty) declaration, and templates referencing any name when none
 // are declared must be rejected.
-func validatorHooksFor(deps AppDeps) node.RegistryHooks {
+//
+// Names in spec.LateBindServices bypass the registration-time existence
+// and expected_attributes_schema cross-checks: a late-bound service is
+// not declared in rimsky.yml and has no discovery-cache entry yet, so
+// the StoreDeclared / ExecutorDeclared / ExecutorExpectedAttributesSchema
+// hooks short-circuit to "declared, no schema cross-check" for those
+// names. The spawned binary's Capabilities supplies the real schema at
+// dispatch; the proxy enforces it there. Per spec
+// 2026-05-24-host-agent-and-proxy-design.md.
+func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks {
+	isLateBind := func(name string) bool {
+		for _, ls := range spec.LateBindServices {
+			if ls == name {
+				return true
+			}
+		}
+		return false
+	}
 	hooks := node.RegistryHooks{}
 	if deps.Stores != nil {
 		hooks.StoreDeclared = func(name string) bool {
+			if isLateBind(name) {
+				return true
+			}
 			_, ok := deps.Stores.Get(name)
 			return ok
 		}
@@ -113,6 +133,9 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 	}
 	if deps.Executors != nil {
 		hooks.ExecutorDeclared = func(name string) bool {
+			if isLateBind(name) {
+				return true
+			}
 			_, ok := deps.Executors[name]
 			return ok
 		}
@@ -127,6 +150,11 @@ func validatorHooksFor(deps AppDeps) node.RegistryHooks {
 			return classes, ok
 		}
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
+			if isLateBind(name) {
+				// Declared, no schema cross-check — the spawned binary's
+				// Capabilities supplies the schema at dispatch.
+				return nil, true
+			}
 			_, _, schema, ok := deps.ExecutorCapabilities(name)
 			return schema, ok
 		}
@@ -160,7 +188,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 
 		spec := *specBody
 		tValidate := time.Now()
-		res := node.ValidateTemplate(&spec, validatorHooksFor(deps))
+		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 		log.Debug("register.validate.done", "elapsed_ms", time.Since(tValidate).Milliseconds())
 		if !res.Ok() {
 			errs := make([]map[string]string, 0, len(res.Errors))

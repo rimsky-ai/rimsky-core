@@ -36,7 +36,14 @@ func Dial(ctx context.Context, name, endpoint string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Stamp x-rimsky-service-name from the per-call context so a
+		// host-agent-proxy fronting the claim-producer protocol can route
+		// by service name. No-op when the dispatch site set no name.
+		grpc.WithUnaryInterceptor(ServiceNameUnaryInterceptor),
+		grpc.WithStreamInterceptor(ServiceNameStreamInterceptor),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("remote producer %q: dial %q: %w", name, endpoint, err)
 	}
@@ -84,6 +91,7 @@ func DialLifecycle(_ context.Context, name, endpoint string) (*LifecycleClient, 
 	if err != nil {
 		return nil, err
 	}
+	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle subscriber %q: dial %q: %w", name, endpoint, err)

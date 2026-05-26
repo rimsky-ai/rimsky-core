@@ -13,6 +13,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/runtime"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
@@ -75,6 +76,36 @@ type SupervisorConfig struct {
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Parked-state taxonomy. Empty / nil → only per-row caps fire.
 	MaxParkDuration map[string]time.Duration
+
+	// LifecyclePeersForSpec returns the lifecycle peer names that should
+	// receive instance- and run-scope-keyed events for a given template
+	// spec. Production wiring supplies a closure that calls
+	// controlapi.LifecyclePeersForSpec with the rimsky.yml
+	// late_bind_service_proxies map baked in. The closure lives in the
+	// control/ layer (cmd/rimsky-supervisor/main.go) so runtime/ never
+	// imports control/ (denied by .golangci.yml's runtime-purity rule).
+	//
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+
+	// LifecycleSubs is the supervisor's outbound LifecycleSubscriber
+	// registry. Populated by StartSupervisor via DialLifecycleSubscribers
+	// (the same helper control-api uses). Used to fire OnRunScopeTerminal
+	// for sub-graph and fanout-partition scope closes.
+	LifecycleSubs *locks.LifecycleRegistry
+
+	// Executors mirrors the rimsky.yml executors: block. The supervisor
+	// needs it for DialLifecycleSubscribers (which walks the union of
+	// claim_producers: + executors: looking for peers whose protocols:
+	// list includes lifecycle_subscriber). Existing supervisor wiring
+	// already takes Stores but not Executors; adding this field is a
+	// prerequisite for the DialLifecycleSubscribers call.
+	Executors ExecutorsConfig
+
+	// LateBindServiceProxies passes the rimsky.yml late-bind map through
+	// to the supervisor for use in SelectCandidatesRequest construction
+	// and Registry option wiring (protocol name → proxy service name).
+	LateBindServiceProxies map[string]string
 }
 
 // SupervisorHandle is the lifecycle handle returned by StartSupervisor.
@@ -100,27 +131,37 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if cfg.Driver == nil {
 		return nil, fmt.Errorf("StartSupervisor: Driver required")
 	}
-	registry, err := dialRemoteStores(context.Background(), cfg.Stores)
+	persistStore := cfg.Driver.Tables()
+	if persistStore == nil {
+		return nil, fmt.Errorf("StartSupervisor: Database.Tables() returned nil — driver did not initialize the Tables accessor")
+	}
+	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, cfg.LateBindServiceProxies)
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
+	// Dial the supervisor's outbound LifecycleSubscriber peers (the same
+	// helper control-api uses). The supervisor fires OnRunScopeTerminal
+	// to these peers at sub-graph and fanout-partition scope closes.
+	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
+	if err != nil {
+		registry.Close()
+		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
+	}
 	if err := cfg.NamedLocks.Validate(); err != nil {
 		registry.Close()
+		lifecycleSubs.Close()
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
-	}
-	persistStore := cfg.Driver.Tables()
-	if persistStore == nil {
-		registry.Close()
-		return nil, fmt.Errorf("StartSupervisor: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {
 		registry.Close()
+		lifecycleSubs.Close()
 		return nil, fmt.Errorf("StartSupervisor: Driver.Queue() returned nil")
 	}
 	coordinator := cfg.Driver.AdvisoryLocker()
 	if coordinator == nil {
 		registry.Close()
+		lifecycleSubs.Close()
 		return nil, fmt.Errorf("StartSupervisor: Driver.AdvisoryLocker() returned nil")
 	}
 	inner, err := runtime.Start(runtime.Config{
@@ -145,24 +186,32 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		ExpectedAttributesSchemaFor: cfg.ExpectedAttributesSchemaFor,
 		Metrics:                     cfg.Metrics,
 		MaxParkDuration:             cfg.MaxParkDuration,
+		LifecycleSubs:               lifecycleSubs,
+		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
+		LateBindServiceProxies:      cfg.LateBindServiceProxies,
 	})
 	if err != nil {
 		registry.Close()
+		lifecycleSubs.Close()
 		return nil, err
 	}
-	return supervisorHandleWithRegistry{inner: inner, registry: registry}, nil
+	return supervisorHandleWithRegistry{inner: inner, registry: registry, lifecycleSubs: lifecycleSubs}, nil
 }
 
 // supervisorHandleWithRegistry wraps runtime.Handle to release the
-// remote-store gRPC connections at shutdown.
+// remote-store + lifecycle-subscriber gRPC connections at shutdown.
 type supervisorHandleWithRegistry struct {
-	inner    SupervisorHandle
-	registry *locks.Registry
+	inner         SupervisorHandle
+	registry      *locks.Registry
+	lifecycleSubs *locks.LifecycleRegistry
 }
 
 func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
 	err := h.inner.Shutdown(ctx)
 	h.registry.Close()
+	if h.lifecycleSubs != nil {
+		h.lifecycleSubs.Close()
+	}
 	return err
 }
 

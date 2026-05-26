@@ -120,6 +120,9 @@ type createInstanceRequest struct {
 	// existing row's paused value is unchanged. Operators wanting to
 	// pause an existing instance call POST /instances/{id}/pause.
 	Paused bool `json:"paused,omitempty"`
+	// ServiceBindings carries the per-instance late-bound service catalog.
+	// Opaque JSON; shape per spec (`{<name>: {"path": "<binary-path>"}}`).
+	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -140,6 +143,14 @@ type instanceItem struct {
 	Paused                        bool           `json:"paused"`
 	CreatedAt                     time.Time      `json:"created_at"`
 	TerminatedAt                  *time.Time     `json:"terminated_at,omitempty"`
+	// ServiceBindings and CreatedByAPIKeyID surface the per-instance
+	// late-bound service catalog and owning api-key so the host-agent-proxy
+	// can populate its binding cache on a GET /instances/{id} cache-miss
+	// fallback (when it did not observe the OnInstanceCreated lifecycle
+	// event). Omitted when empty/absent — most instances carry neither.
+	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
+	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
+	CreatedByAPIKeyID string          `json:"created_by_api_key_id,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
@@ -158,6 +169,12 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 	}
 	if len(r.AttributeOverridesMatchCounts) > 0 {
 		out.AttributeOverridesMatchCounts = r.AttributeOverridesMatchCounts
+	}
+	if len(r.ServiceBindings) > 0 {
+		out.ServiceBindings = r.ServiceBindings
+	}
+	if r.CreatedByAPIKeyID != nil {
+		out.CreatedByAPIKeyID = r.CreatedByAPIKeyID.String()
 	}
 	return out
 }
@@ -242,6 +259,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
+		// Capture the authenticated identity at handler entry. ident.KeyID
+		// is *shared.UUID (nil under anonymous-mode); it is the
+		// created_by_api_key_id column value and the OwnerAPIKeyID on the
+		// instance-created lifecycle fan-out. In scope at both the
+		// provisionArgs construction and the FanOutInstanceEvent payload.
+		ident, _ := IdentityFromContextOK(req.Context())
 		// Empty-string instance_key is treated as absent (spec §2.2 — the
 		// nullable column is the absence sentinel; an empty string would
 		// participate in the unique index and break further inserts with
@@ -296,6 +319,19 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			respOut           createInstanceResponse
 			existedKey        bool
 			existingOverrides map[string]any
+			// fanOutBindings is the service-binding catalog the
+			// OnInstanceCreated fan-out carries. It must reflect the value
+			// actually persisted on the instance row — on an idempotent
+			// re-create that is the existing row's bindings, which may differ
+			// from this request's body.ServiceBindings.
+			fanOutBindings json.RawMessage
+			// fanOutOwner is the owner-api-key the OnInstanceCreated fan-out
+			// carries. Like fanOutBindings it must reflect the persisted row,
+			// not the current request's identity: on an idempotent re-create
+			// by a different api-key the persisted owner (the original
+			// creator) is what the proxy must route dispatches to — stamping
+			// the re-creator's key here would poison the proxy's owner cache.
+			fanOutOwner *foundationshared.UUID
 		)
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			row, err := deps.Persist.Templates().LockForUpdate(ctx, hash, tx)
@@ -337,6 +373,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				if existing != nil {
 					existedKey = true
 					existingOverrides = existing.AttributeOverrides
+					// Fan out the persisted row's bindings + owner, not this
+					// request's body/identity — an idempotent re-create must
+					// not rewrite the proxy's binding cache or owner-routing
+					// with a divergent body or a different re-creator key.
+					fanOutBindings = existing.ServiceBindings
+					fanOutOwner = existing.CreatedByAPIKeyID
 					respOut = createInstanceResponse{
 						InstanceID:   existing.ID.String(),
 						TemplateHash: existing.TemplateHash,
@@ -367,10 +409,16 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				AttributeOverridesMatchCounts: initialMatchCounts,
 				FrameDeliveryMode:             deliveryMode,
 				Paused:                        body.Paused,
+				ServiceBindings:               body.ServiceBindings,
+				CreatedByAPIKeyID:             ident.KeyID,
 			})
 			if err != nil {
 				return err
 			}
+			// New-create path: the persisted bindings + owner are exactly
+			// what we passed to provisionInstanceTx.
+			fanOutBindings = body.ServiceBindings
+			fanOutOwner = ident.KeyID
 			respOut = provisioned
 			return nil
 		})
@@ -414,7 +462,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 			EventInstanceCreated, hash, respOut.InstanceID, tplSpec,
-			InstancePayload{InstanceKey: instanceKey, Params: paramsBytes}, nil); err != nil {
+			InstancePayload{
+				InstanceKey:     instanceKey,
+				Params:          paramsBytes,
+				ServiceBindings: fanOutBindings,
+				OwnerAPIKeyID:   fanOutOwner,
+			}, nil); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error":   "instance lifecycle fan-out failed",
 				"details": perStore,
@@ -611,6 +664,26 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				terminatedAtMs = inst.TerminatedAt.UnixMilli()
 			}
+			// Close the instance's main run-scope and fire
+			// OnRunScopeTerminal before OnInstanceTerminated, so the
+			// host-agent-proxy can reap any spawned processes scoped to
+			// this main run-scope. Synchronous in the request context;
+			// tpl is the template already loaded above — reuse it.
+			if inst.MainRunScopeID != (foundationshared.UUID{}) {
+				if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+					return deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID)
+				}); err != nil {
+					if deps.Logger != nil {
+						deps.Logger.Warn("handleDeleteInstance: close main run-scope failed",
+							"instance_id", inst.ID.String(),
+							"main_run_scope_id", inst.MainRunScopeID.String(),
+							"error", err.Error())
+					}
+				} else {
+					_, _, _ = FanOutRunScopeEvent(req.Context(), deps, tpl.Spec,
+						inst.MainRunScopeID, inst.ID, "instance_deleted", nil)
+				}
+			}
 			if _, perStore, err := FanOutInstanceEvent(req.Context(), deps,
 				EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 				InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil); err != nil {
@@ -775,6 +848,13 @@ type provisionArgs struct {
 	// Paused is the create-time hold flag. Threaded through to the
 	// persistence layer's InstanceCreateInput.Paused. Per concept:breakpoint.
 	Paused bool
+	// ServiceBindings is the per-instance late-bound service catalog
+	// (opaque JSON), threaded verbatim onto InstanceCreateInput.ServiceBindings.
+	ServiceBindings json.RawMessage
+	// CreatedByAPIKeyID is the api-key that authenticated the create
+	// request, threaded onto InstanceCreateInput.CreatedByAPIKeyID. Nil
+	// for instances created under anonymous-mode.
+	CreatedByAPIKeyID *foundationshared.UUID
 }
 
 // provisionInstanceTx is the instance-factory routine. Runs the create
@@ -833,6 +913,8 @@ func provisionInstanceTx(
 		FrameDeliveryMode:             args.FrameDeliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		Paused:                        args.Paused,
+		ServiceBindings:               args.ServiceBindings,
+		CreatedByAPIKeyID:             args.CreatedByAPIKeyID,
 	}, tx)
 	if err != nil {
 		return createInstanceResponse{}, err

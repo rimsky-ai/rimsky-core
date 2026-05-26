@@ -45,6 +45,19 @@ type TemplateSpec struct {
 	ParamsSchema map[string]any  `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
 	ParamsRedact []string        `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
+	// LateBindServices declares service names whose registration-time
+	// existence and schema checks are deferred to dispatch. Names in
+	// this list bypass the discovery-cache check and the
+	// expected_attributes_schema cross-check during template
+	// registration. At dispatch, the spawned binary's Capabilities
+	// provides the schema; the proxy validates resolved attribute
+	// values against it; mismatch → contract_mismatch error.
+	//
+	// Stored inside the canonical spec bytes — changes participate
+	// in the template hash (concept:template's content-addressing
+	// invariant is preserved).
+	LateBindServices []string `yaml:"late_bind_services,omitempty" json:"late_bind_services,omitempty"`
+
 	// Defaults holds template-author attribute baselines (L1 in the
 	// attribute override merge), merged into per-node effective schemas
 	// at registration. See `TemplateDefaults` for the shape; absent

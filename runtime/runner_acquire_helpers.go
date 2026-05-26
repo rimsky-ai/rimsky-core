@@ -21,6 +21,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 )
 
@@ -34,7 +35,7 @@ import (
 // @concept: fan-out
 // @concept: claim-tree
 func acquireFanOutIfDeclared(
-	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
+	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID, out *acquisition,
 	cand persistence.Candidate, nodeDef *node.TemplateNodeDef,
 	acquiredLocks []AcquiredLock, heartbeatInterval time.Duration,
 ) error {
@@ -93,6 +94,7 @@ func acquireFanOutIfDeclared(
 		NodeRunID:           cand.DispatchID,
 		HolderNodeID:        cand.NodeID,
 		HolderSupervisorID:  args.SupervisorID,
+		InstanceID:          instanceID,
 		FrameID:             &frameID,
 		HeartbeatInterval:   heartbeatInterval,
 		PartitionRequest:    []byte(nodeDef.FanOut.PartitionRequest),

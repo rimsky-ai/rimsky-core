@@ -26,7 +26,7 @@ import (
 // identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, service_bindings, created_by_api_key_id`
 
 // Create inserts a new rimsky_instances row. The caller supplies a
 // pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
@@ -66,11 +66,18 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if in.FrameDeliveryMode != "" {
 		deliveryMode = in.FrameDeliveryMode
 	}
+	// Empty json.RawMessage → NULL service_bindings (pgx encodes a nil
+	// []byte as SQL NULL for JSONB). created_by_api_key_id is passed as
+	// *shared.UUID; pgx encodes a nil pointer as NULL.
+	var serviceBindings []byte
+	if len(in.ServiceBindings) > 0 {
+		serviceBindings = in.ServiceBindings
+	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, attribute_overrides_match_counts, main_run_scope_id, paused)
-		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'), $7, $8, $9)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, attribute_overrides_match_counts, main_run_scope_id, paused, service_bindings, created_by_api_key_id)
+		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'coalesce'), $7, $8, $9, $10, $11)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode, matchCountsBytes, in.MainRunScopeID, in.Paused,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode, matchCountsBytes, in.MainRunScopeID, in.Paused, serviceBindings, in.CreatedByAPIKeyID,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -482,19 +489,21 @@ type scannable interface {
 
 func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 	var (
-		id             foundationshared.UUID
-		templateHash   string
-		instanceKey    *string
-		params         []byte
-		overrides      []byte
-		deliveryMode   string
-		createdAt      time.Time
-		terminatedAt   *time.Time
-		matchCounts    []byte
-		mainRunScopeID foundationshared.UUID
-		paused         bool
+		id                  foundationshared.UUID
+		templateHash        string
+		instanceKey         *string
+		params              []byte
+		overrides           []byte
+		deliveryMode        string
+		createdAt           time.Time
+		terminatedAt        *time.Time
+		matchCounts         []byte
+		mainRunScopeID      foundationshared.UUID
+		paused              bool
+		serviceBindingsByte []byte
+		createdByAPIKeyID   *foundationshared.UUID
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -515,6 +524,10 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 			return persistence.InstanceRow{}, fmt.Errorf("unmarshal attribute_overrides_match_counts: %w", err)
 		}
 	}
+	var serviceBindings json.RawMessage
+	if len(serviceBindingsByte) > 0 {
+		serviceBindings = json.RawMessage(serviceBindingsByte)
+	}
 	return persistence.InstanceRow{
 		ID:                            id,
 		TemplateHash:                  templateHash,
@@ -527,6 +540,8 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		CreatedAt:                     createdAt,
 		TerminatedAt:                  terminatedAt,
 		Paused:                        paused,
+		ServiceBindings:               serviceBindings,
+		CreatedByAPIKeyID:             createdByAPIKeyID,
 	}, nil
 }
 
