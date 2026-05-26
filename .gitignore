@@ -25,6 +25,9 @@ vendor/
 /rimsky-host-agent-proxy
 /openlineage
 
+# Test fixture binary — harness_test.go rebuilds it into a temp dir per run
+/runtime/hostagent/testdata/stubchild/stubchild
+
 # The bundled-services (sensors, executors, subscribers, production
 # stores, dashboards, docs-lint binaries) moved to sibling repos in the
 # 2026-05-24 reorganization. Their build-output / node_modules patterns
