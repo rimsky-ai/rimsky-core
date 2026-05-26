@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image core-images smoke-cli test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -125,6 +125,19 @@ cli-sync-embedded:
 
 cli-image:
 	docker build -f Dockerfile.cli --build-arg VERSION=$(VERSION) -t rimsky/cli:latest .
+
+# Core runtime + test-double images, built from this tree. The Dockerfiles
+# (Dockerfile.go-base, Dockerfile.all, the stub Dockerfiles) and the Go source
+# both live here; rimsky-docs/deploy/build-images.sh delegates to this target
+# for the quickstart and deploy stacks. Each image is tagged $(VERSION) + latest.
+core-images:
+	@for bin in scheduler supervisor control-api migrate; do \
+	  docker build -f Dockerfile.go-base --build-arg BINARY=rimsky-$$bin \
+	    -t rimsky/$$bin:$(VERSION) -t rimsky/$$bin:latest . || exit 1; \
+	done
+	docker build -f Dockerfile.all -t rimsky/all:$(VERSION) -t rimsky/all:latest .
+	docker build -f executors/stub/Dockerfile.stub -t rimsky/executor-stub:$(VERSION) -t rimsky/executor-stub:latest .
+	docker build -f stores/stub/Dockerfile.stub -t rimsky/store-stub:$(VERSION) -t rimsky/store-stub:latest .
 
 smoke-cli: cli
 	go test -tags smoke -count=1 -timeout 5m ./test/smoke/cli/...

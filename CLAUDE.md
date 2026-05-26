@@ -18,7 +18,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Public docs (cite from external/agent material)** — moved to `pkg:github.com/fallguyconsulting/rimsky-docs` per P4 of `spec:2026-05-24-repo-reorganization-design`. The 49 markdown files (`docs/concepts/`, `docs/protocols/`, `docs/agents/llms.txt`, `docs/humans/landing.md`, `docs/glossary.md`, etc.) live at the sibling repo; the three docs-lint binaries (`rimsky-docs-{lint,llms-full,glossary}`) live under that repo's `cmd/`. Pre-release docs reconciliation is enforced by `file:scripts/release.sh`.
 
-**Reference deployment** — `deploy/docker-compose.yml`, `deploy/rimsky.yml`, `deploy/Dockerfile.all`, `deploy/rimsky-all.yml`. Control API on `:8080`, Postgres on `:5544`.
+**Image builds & reference deployment** — Docker images build from this tree: `make core-images` builds the four runtime binaries (off `Dockerfile.go-base`) plus the unified `rimsky/all` dev image (`Dockerfile.all`) plus the stub executor/store images; `make cli-image` builds the CLI (`Dockerfile.cli`). The compose/deploy stacks (`docker-compose.yml`, `rimsky.yml`, `rimsky-all.yml`) live at `pkg:github.com/fallguyconsulting/rimsky-docs` (moved per P4 of `spec:2026-05-24-repo-reorganization-design`); that repo's `deploy/build-images.sh` delegates back to `make core-images`. Reference stack: Control API on `:8080`, Postgres on `:5544`.
 
 **TypeScript executor (lives in sibling repo)** — the TS claude-agent executor moved to `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent` in the 2026-05-24 reorganization. Its toolchain (`npm install && npm test && npm run build`) lives there, not here.
 
