@@ -25,9 +25,9 @@ This is the same shape as `async-callback-body-key` (the `type` vs `kind` issue)
 
 ## Resolution candidates (do NOT pick)
 
-- Add a `StubModeProbeResponse` message to `protocols/proto/v1/executor.proto` with a `stub bool` field; require it in `attributes_delta` rather than a free-form map.
-- Document the agreement explicitly in `docs/protocols/executor.md` "Stub mode signature" and `docs/concepts/conformance.md`.
-- Expose a shared Go constant `conformance.StubAttributesDelta = map[string]any{"stub": true}` and reference it from both the probe and the runner.
+- Give the stub-mode signature an explicit wire-protocol shape — a typed boolean field on the executor protocol — instead of asserting a free-form attribute map, so the handshake is part of the schema surface both sides depend on (see `concept:executor`).
+- Document the stub-mode signature as part of the conformance concept's definition and the executor protocol's contract, so a conformant executor has an authoritative description of the expected shape (see `concept:conformance`).
+- Centralize the expected stub-mode shape in one shared definition that both the conformance probe and the runner reference, so a rename or shape change has a single point of truth rather than independently hard-coded literals.
 
 ## Evidence
 

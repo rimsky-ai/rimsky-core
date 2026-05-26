@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-A named lock is a producer-independent capacity-counter primitive. Declared in operator config (`named_locks:` block in `rimsky.yml`) with `mode: mutex | counting` and a capacity. The Go type is `locks.NamedLockSpec{Name}`; runtime rows are `lock_kind='named'` in `rimsky_claim_handles`.
+A named lock is a producer-independent capacity-counter primitive. Declared in operator config (a `named_locks:` block) with `mode: mutex | counting` and a capacity. The named-lock spec carries just a name; at runtime it materializes as a `named`-kind row in the claim-handle ledger (see `concept:claim-handle`).
 
 ## Purpose
 
@@ -20,19 +20,23 @@ Some constraints have nothing to do with producers — "at most N runs of this t
 
 ## Boundaries
 
-Owns: the per-name capacity declaration in YAML, the named-lock rows in `rimsky_claim_handles`, the rimsky-internal "increment / decrement" disposition at terminal. Does NOT own: scope conflicts (those live on `claim`), per-claim write-semantics (named locks don't have one). Adjacent: `claim`, `claim-handle`, `scope`, `advisory-lock`.
+Owns: the per-name capacity declaration in YAML, the named-lock rows in the claim-handle ledger, the rimsky-internal "increment / decrement" disposition at terminal. Does NOT own: scope conflicts (those live on `claim`), per-claim write-semantics (named locks don't have one). Adjacent: `claim`, `claim-handle`, `claim-scope`, `advisory-lock`.
 
 ## Invariants
 
-- `ClaimSpec` (for scope claims) and `NamedLockSpec` are distinct types — no common interface. Callers dispatch by type.
-- Both primitives' acquisitions are walked in `(lock_kind, sort_key)` deterministic order to prevent the (N1-held, S1-wait) ⨯ (S1-held, N1-wait) deadlock (`@blessed-invariant 3`).
-- Named-lock capacity counts come from `rimsky_node_runs.claimed_by IS NOT NULL` joined against `rimsky_claim_handles` rows (`@blessed-invariant 2`).
+- The claim spec (for scope claims) and the named-lock spec are distinct shapes with no common interface; callers dispatch by kind.
+- Both primitives' acquisitions are walked in deterministic `(lock_kind, sort_key)` order to prevent the (N1-held, S1-wait) ⨯ (S1-held, N1-wait) deadlock (`@blessed-invariant 3`).
+- Named-lock capacity counts come from active node-runs joined against their claim-handle rows (`@blessed-invariant 2`).
 
 ## Aliases and historical names
 
-No live aliases. The CHECK constraint on `rimsky_claim_handles.lock_kind` enumerates `{'named','scope'}`.
+No live aliases. A CHECK constraint on the claim-handle lock-kind column enumerates `{'named','scope'}`.
 
 ## Open within this concept
 
 (no specific tensions distinct from the broader `claim-handle` / `claim-producer` set)
+
+## Notes
+
+2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 

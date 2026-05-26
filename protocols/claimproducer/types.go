@@ -15,6 +15,8 @@ import "encoding/json"
 // via Capabilities, and Open returns the realized value per claim. The
 // producer is required to honor the uniformity invariant — two claims
 // with byte-equal Scope MUST yield identical RealizedWriteSemantics.
+//
+// @concept: write-semantics
 type WriteSemantics string
 
 // WriteSemantics values.

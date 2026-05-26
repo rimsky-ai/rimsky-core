@@ -19,6 +19,10 @@ import (
 // Client wraps a generated gRPC ExecutorClient for rimsky's supervisor.
 // One Client per (transport, endpoint). Cached by endpoint URL inside the
 // supervisor so connections are reused across dispatches.
+//
+// @concept: executor (the in-repo Go-side surface of the Executor.Execute
+// wire protocol; reference executor impls are carved out to the
+// rimsky-services sibling repo)
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error)
 	Close() error

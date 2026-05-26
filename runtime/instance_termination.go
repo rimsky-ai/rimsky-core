@@ -13,7 +13,7 @@
 // does not block instance-termination completion — the operator can
 // re-run the cleanup explicitly.
 //
-// @concept: held-durable
+// @concept: claim-lifetime
 // @concept: claim-handle
 
 package runtime

@@ -18,7 +18,6 @@
 //     deletes runs from frames older than `retention.recent_frames_kept`.
 //     The skeleton lands here; the body wires up in a follow-up.
 //
-// @concept: retention
 // @concept: frame
 // @concept: lineage
 
@@ -54,7 +53,7 @@ type RetentionConfig struct {
 	// the operator `DELETE /instances/{id}/assets/{alias}` handler.
 	//
 	// @concept: claim-handle
-	// @concept: retention
+	// @concept: claim-lifetime
 	ClaimHandlesTrailing time.Duration
 
 	// MessageIdempotenciesTrailing is the trailing window for the
@@ -64,7 +63,6 @@ type RetentionConfig struct {
 	// intended behavior — dedup tokens are short-lived.
 	//
 	// @concept: message
-	// @concept: retention
 	MessageIdempotenciesTrailing time.Duration
 }
 

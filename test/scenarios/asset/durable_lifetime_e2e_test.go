@@ -21,7 +21,7 @@
 // foundation/spec constants + `ClaimHandleInsertInput` shape; this
 // scenario closes the end-to-end gap.
 //
-// @concept: held-durable
+// @concept: claim-lifetime
 // @concept: auto-terminal
 // @concept: claim-handle
 

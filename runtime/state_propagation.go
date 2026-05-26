@@ -22,8 +22,8 @@
 // Single transaction; ancestor locks taken in tree order (always upward)
 // — avoids deadlock since the partial order is a tree.
 //
-// @concept: run-tree
-// @concept: aggregation-policy
+// @concept: run-scope
+// @concept: terminal-resolution
 
 package runtime
 

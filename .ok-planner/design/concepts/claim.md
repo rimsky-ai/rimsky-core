@@ -14,9 +14,9 @@ references:
 
 ## What it is
 
-`claim` is the protocol-layer noun returned by `ClaimProducer.Open`; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
+`claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
 
-A claim is a node's request to access a producer-managed resource: an items-table row, a filesystem path, a queue head, an MVCC snapshot. Declared in templates as a `proto:claim_producer.proto::ClaimSpec` (fields: `producer_name`, `selector`, `intent`, `alias` — post-`spec:2026-05-12-nomenclature-resolution` Group B.3 the field is `producer_name`, formerly `store_name`). At runtime, the producer's `Open` returns an `Acquired{address, payload, claim_scope, realized_write_semantics}` (or `Unavailable`). The resolved claim scope bytes are persisted as `lock_kind='claim_scope'` rows in `table:rimsky_claim_handles`.
+A claim is a node's request to access a producer-managed resource: an items-table row, a filesystem path, a queue head, an MVCC snapshot. Declared in templates as a claim spec (fields: producer name, selector, intent, alias — post-`spec:2026-05-12-nomenclature-resolution` Group B.3 the producer-name field replaced the legacy store-name field). At runtime, the producer's open verb returns an acquired result (address, payload, claim scope, realized write semantics) or an unavailable response. The resolved claim scope bytes are persisted as claim-scope-kinded rows in the claim-handle ledger (see `concept:claim-handle`).
 
 ## Purpose
 
@@ -24,30 +24,31 @@ Claims are how a graph node says "I need exclusive (or coexisting) access to thi
 
 Per the 2026-05-15 data-platform-extensions, claims gain three orthogonal extensions:
 
-- **Lifetime** (`subgraph | durable`; default `subgraph`): governs auto-terminal behavior. A `durable` claim's row persists past holding-subgraph completion as `state = 'committed' AND lifetime = 'durable'`, released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.
-- **Sub-claim chains**: a claim's claim scope may be partitioned via `ClaimProducer.SplitScope` into sub-claims that hold sub-scopes. Persisted via `parent_claim_handle_id` on `rimsky_claim_handles`. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`.
-- **Co-holdership**: multiple node-runs may hold the same `claim_handle` via the `holds:` template directive. Each co-holder gets a row in `rimsky_claim_holders` keyed by `holder_run_id`. The holding subgraph extends to all co-holders; auto-terminal fires only after every co-holder reaches a non-active state. See `concept:claim-co-holdership`.
+- **Lifetime** (`subgraph | durable`; default `subgraph`): governs auto-terminal behavior. A `durable` claim's handle row persists past holding-subgraph completion in a committed-durable state, released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.
+- **Sub-claim chains**: a claim's claim scope may be partitioned via the producer's split-scope verb into sub-claims that hold sub-scopes. Persisted via a self-referential parent pointer on the claim-handle ledger. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`.
+- **Co-holdership**: multiple node-runs may hold the same claim handle via the `holds:` template directive. Each co-holder gets a row in a per-claim co-holder ledger keyed by holder run. The holding subgraph extends to all co-holders; auto-terminal fires only after every co-holder reaches a non-active state. See `concept:claim-co-holdership`.
 
 ## Boundaries
 
-Owns: the claim declaration, the address/payload/claim-scope returned at `Open`, the post-terminal verb (`Commit | Abandon | Release`). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its `### Held variant` subsection — the dropped `held-claim` concept's content lives there), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
+Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection — the dropped held-claim concept's content lives there), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
 
 ## Invariants
 
-- Claim content (payload, address, claim scope) is inert in rimsky: read only at the sanctioned substitution sites (`walkPath`, `stringifyRaw`) and one wire-encoding site (`makeStoreHandle`). Never logged, formatted with `%v`, attached to traces, validated beyond schema gates, or included in error messages (`@blessed-invariant 20`).
-- Producers do not persist lock state internally; the `rimsky_claim_handles` table is the sole authority (`@blessed-invariant 9a`).
-- Producers must not internally serialize on lock-shaped predicates (reader-lease serialization is forbidden for `staged_async`) — `@blessed-invariant 9b`.
+- Claim content (payload, address, claim scope) is inert in rimsky: read only at the sanctioned substitution sites and one wire-encoding site. Never logged, formatted into strings, attached to traces, validated beyond schema gates, or included in error messages (`@blessed-invariant 20`).
+- Producers do not persist lock state internally; the claim-handle ledger is the sole authority (`@blessed-invariant 9a`).
+- Producers must not internally serialize on lock-shaped predicates (reader-lease serialization is forbidden for the staged-async write semantics) — `@blessed-invariant 9b`.
 
 ## Aliases and historical names
 
-`region` is a deprecated synonym for `claim scope` and still appears in older sketches and comments (`foundation/locks/conflict.go:14-18` references "v2's per-store RegionsConflict").
+`region` is a deprecated synonym for `claim scope` and still appears in older sketches and comments.
 
-## Open within this concept
+## Resolved within this concept
 
-- `Store` vs `ClaimProducer` vocabulary split (see `tensions/store-vs-claim-producer-vocabulary.md`).
-- `region` legacy synonym (see `tensions/_resolved/region-vs-scope-legacy.md`).
+- The "store" vs claim-producer vocabulary split was resolved (see `tension:_resolved/store-vs-claim-producer-vocabulary`).
+- The `region` legacy synonym was resolved (see `tension:_resolved/region-vs-scope-legacy`).
 
 ## Notes
 
-- 2026-05-22 — Updated for ClaimScope rename per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: bare "scope" references in the claim-identity-bytes sense qualified to "claim scope"; `concept:scope` adjacency rewritten to `concept:claim-scope`; `lock_kind='scope'` → `lock_kind='claim_scope'`; byte-equal references retain meaning but read "byte-equal claim scope".
+- 2026-05-22 — Updated for the ClaimScope rename per `spec:2026-05-22-fan-out-safety-scope-first-design`: bare "scope" references in the claim-identity-bytes sense qualified to "claim scope"; the scope adjacency rewritten to `concept:claim-scope`; the claim-scope kind enum value renamed accordingly; byte-equal references retain meaning but read "byte-equal claim scope".
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 

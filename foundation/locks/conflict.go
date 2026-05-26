@@ -68,6 +68,8 @@ func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB Writ
 //
 // Empty claim-scopes never conflict: an absent claim-scope (e.g. a NamedLockSpec
 // row in a scope-keyed scan) cannot collide with another claim-scope.
+//
+// @concept: claim-scope
 func ClaimScopesByteEqual(a, b []byte) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return false

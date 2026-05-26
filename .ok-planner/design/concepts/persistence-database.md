@@ -13,42 +13,43 @@ references:
 
 ## What it is
 
-`code:foundation/persistence/database.go::Database` is the top-level umbrella over the rimsky persistence layer. One `Database` is constructed per process (`Open()`); the three runtime processes hold it for their lifetime and `Close()` it on shutdown. Analogous to Go stdlib `sql.DB` — the runtime object, not the adapter. It exposes the container methods `Queue()`, `Tables()`, `AdvisoryLocker()`, `Migrate()`, `Ping()`, `SetBlobBackend()`, `Close()`.
+The top-level database interface is the umbrella over the rimsky persistence layer. One database is constructed per process (a single open call); the three runtime processes hold it for their lifetime and close it on shutdown. Analogous to Go stdlib `sql.DB` — the runtime object, not the adapter. It exposes the container methods that hand back the queue, the per-row-type table accessors, the advisory locker, the migration runner, a ping/healthcheck, a blob-backend setter, and close.
 
-`code:foundation/persistence/tables.go::Tables` is the per-row-type accessor umbrella returned by `Database.Tables()`. It aggregates the per-row-type accessors (`Templates()`, `Nodes()`, `Frames()`, `Instances()`, `ClaimHandles()`, `ClaimHolders()`, etc.). Most callers depend on only a subset; the umbrella keeps startup wiring compact.
+The per-row-type accessor umbrella is the bundle returned by the database interface. It aggregates the per-row-type accessors (templates, nodes, frames, instances, claim-handles, claim-holders, etc.). Most callers depend on only a subset; the umbrella keeps startup wiring compact.
 
-Per-row-type sub-interfaces follow the singular `<RowKind>Table` convention: `TemplateTable`, `TemplateTagTable`, `InstanceTable`, `LifecycleIdempotencyTable`, `NodeTable`, `ClaimHandleTable`, `NodeAttributeTable`, `ClaimHolderTable`, `EventTable`, `ScheduleTable`, `SupervisorTable`, `FrameTable`, `BlobOrphanTable`, `NodeEventTable`. The bag-method names on `Tables` stay plural (`Templates()`, `Nodes()`, etc.) — the singular vs plural split mirrors Go-stdlib convention for one-row-of-many APIs.
+Each row kind has its own singular per-row accessor sub-interface — one per persisted ledger (templates and their tags, instances, lifecycle-idempotency rows, nodes, claim-handles, node attributes, claim-holders, events, schedules, supervisor rows, frames, blob-orphans, node-events). The accessor-bag methods that hand these back stay plural; the singular-accessor-vs-plural-bag split mirrors Go-stdlib convention for one-row-of-many APIs.
 
-Two impls: `foundation/persistence/postgres/` (production) and `foundation/persistence/sqlite/` (dev). Sub-interfaces: `AdvisoryLocker`, `Queue`, plus the per-row-type `<RowKind>Table` accessors hung off `Tables()`. Shared `Migrator` (`migrations.go`) so migrations don't fork.
+Two impls: a Postgres adapter (production) and an SQLite adapter (dev). Alongside the per-row accessors, the umbrella exposes an advisory locker and a queue facility; a single shared migration runner keeps migrations from forking across adapters.
 
-The adapter selector — `code:foundation/persistence/types.go::Config.Driver` (string "postgres" / "sqlite") — is distinct from the `Database` interface and stays as-is. "Driver" is correctly used there to name the adapter shape.
+The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface and stays as-is. "Driver" is correctly used there to name the adapter shape.
 
-Row-struct convention: Go-side row structs stay singular even though the SQL tables are plural — `NodeRow`, `FrameRow`, `ClaimHandleRow`, `NodeRunRow` (table: `rimsky_nodes`, `rimsky_frames`, `rimsky_claim_handles`, `rimsky_node_runs` post-`spec:2026-05-12-nomenclature-resolution` baseline rebase).
+Row-struct convention: row structs stay singular even though the persisted tables are plural — the node, frame, claim-handle, and node-run row structs map to the corresponding pluralized node, frame, claim-handle, and node-run ledgers, named in their final post-baseline-rebase form per `spec:2026-05-12-nomenclature-resolution`.
 
 ## Purpose
 
-Single abstraction so graph and control code (and the supervisor's integration runner) never touch pgx directly (depguard `pgx-isolation` enforces). Lets sqlite back testing-fast scenarios and lets a future third driver plug in.
+Single abstraction so graph and control code (and the supervisor's integration runner) never touch the raw Postgres driver directly — an enforced import boundary keeps the driver isolated behind the database interface. Lets SQLite back testing-fast scenarios and lets a future third driver plug in.
 
 ## Boundaries
 
-Owns: the `Database` container interface, the `Tables` per-row-type accessor umbrella, the per-row-type `<RowKind>Table` interfaces, the two impls, the migration runner. Does NOT own: schema content (that lives in `migrations/*.sql`), connection-pool sizing (operator config). Adjacent: `advisory-lock`, `blob-backend`, `node-run`, every persistence-typed concept.
+Owns: the top-level database container interface, the per-row-type accessor umbrella, the per-row-type accessor sub-interfaces, the two impls, the migration runner. Does NOT own: schema content (that lives in the migration files), connection-pool sizing (operator config). Adjacent: `advisory-lock`, `blob-backend`, `node-run`, every persistence-typed concept.
 
 ## Invariants
 
 - SQLite is dev-only — multi-host requires Postgres. Documented but NOT gate-rejected.
-- Memory blob backend IS gate-rejected outside `RIMSKY_PROCESS_ROLE=unified`.
-- depguard `pgx-isolation` allow-list: only `foundation/persistence/postgres/`, `foundation/internal/pgtest/`, `cmd/`, `internal/pgtest/`, `graph/scenario/`, `stores/`, `test/smoke/`.
+- The memory blob backend IS gate-rejected outside the unified single-process role.
+- The raw-Postgres-driver isolation rule restricts direct driver use to the Postgres adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.
 
 ## Aliases and historical names
 
-Pre-`spec:2026-05-12-nomenclature-resolution` baseline rebase, the migration history threaded through ~20 numbered files capturing the `rimsky_dispatch` → `rimsky_worker_request` → `rimsky_node_runs` renames, the `consumer_key` → `instance_key` rename, the `rimsky_lock_holders` → `rimsky_claim_handles` rename + plural shift, the `rimsky_frames.mode` → `frame_resolution_mode` rename, and `rimsky_lifecycle_idempotency` → `rimsky_lifecycle_idempotencies` plural shift. Post-rebase the chain collapses to a single `001-baseline.sql` reflecting the final schema; dev Postgres requires `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` before re-applying (per `spec:2026-05-12-nomenclature-resolution` Group A).
+Pre-`spec:2026-05-12-nomenclature-resolution` baseline rebase, the migration history threaded through ~20 numbered files capturing a chain of renames: the dispatch → worker-request → node-run ledger renames, the consumer-key → instance-key field rename, the lock-holder → claim-handle ledger rename plus pluralization, the frame `mode` field renamed to `frame_resolution_mode`, and the lifecycle-idempotency ledger pluralized. Post-rebase the chain collapses to a single baseline migration reflecting the final schema; dev Postgres requires dropping and recreating the public schema before re-applying (per `spec:2026-05-12-nomenclature-resolution` Group A).
 
 ## Open within this concept
 
-- SQLite-multi-replica silent-split is documented but not enforced; memory backend IS — asymmetric gating, see `tensions/sqlite-vs-memory-reject-asymmetry.md`.
+- SQLite-multi-replica silent-split is documented but not enforced; the memory backend IS — asymmetric gating, see `tension:sqlite-vs-memory-reject-asymmetry`.
 
 ## Notes
 
-- Renamed from `concept:persistence-driver` per the deferred B.7 follow-up of `spec:2026-05-12-nomenclature-resolution`. Top-tier interface renamed Driver→Database to match its actual role (runtime object, not adapter — analogous to Go stdlib sql.DB). Per-row-type sub-interfaces normalized to singular `<RowKind>Table` form. The `Store` accessor method on the top tier renamed to `Tables`. `cfg.Driver` (the string config field selecting "postgres" vs "sqlite") stays — that's the adapter selector and correctly named.
-- 2026-05-24 — Migration history flattened per spec 2026-05-24-instance-debugger-design. The 14 numbered migrations (001-baseline through 014-drop-last-outcome) are deleted and replaced with a single consolidated 001-schema.sql per backend reflecting current schema state plus the new breakpoint tables and rimsky_instances.paused column. Pre-v1 break-freely operation; existing dev databases drop and recreate. Adds BreakpointTable and BreakpointHitTable accessors on Tables().
+- Renamed from `persistence-driver` per the deferred B.7 follow-up of `spec:2026-05-12-nomenclature-resolution`. The top-tier interface was renamed from "driver" to "database" to match its actual role (runtime object, not adapter — analogous to Go stdlib sql.DB). Per-row-type sub-interfaces normalized to the singular per-row-accessor form. The top-tier accessor method that hands back the per-row-type umbrella was renamed from "store" to "tables". The string config field selecting "postgres" vs "sqlite" stays named "driver" — that's the adapter selector and correctly named.
+- 2026-05-24 — Migration history flattened per `spec:2026-05-24-instance-debugger-design`. The fourteen numbered migrations are deleted and replaced with a single consolidated baseline migration per backend reflecting current schema state plus the new breakpoint tables and a paused flag on the instance row. Pre-v1 break-freely operation; existing dev databases drop and recreate. Adds breakpoint and breakpoint-hit table accessors on the per-row-type accessor umbrella.
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

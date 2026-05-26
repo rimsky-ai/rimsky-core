@@ -4,85 +4,85 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 
 ## Concepts
 
-- `advisory-lock` — Four advisory-lock primitives for cross-process coordination through Postgres pg_advisory_* or in-process Mutex in dev.
-- `anonymous-mode` — Data-derived deployment state where `rimsky_api_keys` has zero active rows; every request gets a synthetic admin identity and a WARN banner fires. The bootstrap path.
-- `api-key` (aliases: bearer token) — High-entropy Bearer-token credential (`rk_<44-char-base64url>`); SHA-256-hashed at rest; per-key JSONB permission grant; lifecycle of mint / rotate / revoke / sweep.
-- `asset` — Documented compound: a claim against a `DataProcessing`-capable producer with `lifetime: durable`. Not a new primitive; surfaced via `/instances/{id}/assets/...`.
-- `atomic-staging` — Producer-side stage-then-swap pattern composing subgraph-lifetime claims, co-holding verifier nodes, and aggregation.
-- `attribute` — Typed inputs, outputs, and configuration of a node, declared by JSON Schema. Each property is source-bound (rimsky substitution), static-default (resolved at registration), or executor-written (populated at commit). Persisted per-run; overrides via `attribute_overrides`.
-- `auto-terminal` (aliases: held-claim resolution) — Mechanism that fires `Commit` or `Abandon` exactly once at the end of a held claim's holding-subgraph, then promotes the row to `state = 'committed'`/`'abandoned'` for forensic preservation.
-- `backfill` — Invalidate-kind message with a `partition_request_override` payload, targeting a fan-out node; surfaced via `/instances/{id}/backfills`.
-- `blob-backend` — Pluggable byte-stream backend for spilled attribute values, parked payloads, and named-event payloads (inline, pg-largeobject, filesystem, memory).
-- `breakpoint` — Runtime-installed pause/notify point on a live `concept:instance`, identified by UUID and bound to a `(matcher, checkpoint, signal_type?, mode, overflow_policy, ttl_seconds?)` tuple; persisted in `table:rimsky_instance_breakpoints` with hits in `table:rimsky_breakpoint_hits`.
-- `cancel-siblings` — Boolean field on the `strict` aggregation policy (`AggregationPolicy.CancelSiblings`) that turns on proactive sibling cancellation when one sub-claim resolves to Abandon; supervisor-scoped, skips non-active rows.
-- `cascade` (aliases: reactive-cascade) — Engine that propagates "this node changed" downstream via stale-marking walks and pure-cascade fresh-rolls. Post-2026-05-23 cascade-fire is subscriber-driven: subscription edge match against the emitted signal + CEL `when:` predicate (`concept:signal` + `concept:node-subscription`).
-- `cascade-graph` (aliases: operator dashboard backplane) — Operator-dashboard HTTP-route backplane on control-api (`/observability/*`, `/events`, `/frames`, ...) serving rimsky's own runtime state as JSON.
-- `claim` — A node's request to access a producer-managed resource, declared as a `ClaimSpec` and resolved at runtime by the producer's `Open`.
-- `claim-co-holdership` — Multiple node-runs holding the same `claim_handle` via the `holds:` directive; extends the holding subgraph.
-- `claim-handle` — Rimsky-side ledger row in `rimsky_claim_handles` representing one acquired claim or named-lock, with a 3-state lifecycle (`active`/`committed`/`abandoned`) and claimant-guarded transitions via `Promote`.
-- `claim-lifetime` — Per-claim property: `subgraph` (default; promoted on Commit and reaped at retention cutoff) vs `durable` (promoted on Commit and exempt from retention sweep — the asset surface).
-- `claim-producer` (aliases: store (bundled-services-layer colloquialism)) — Out-of-process service that implements the gRPC ClaimProducer protocol (4 verbs Open / Commit / Abandon / Release plus the Capabilities() startup handshake). Post-2026-05-15 gains optional SplitScope / ScopesConflict / Validation mix-in. Production-side reference impls (filesystem, postgres) live at `pkg:github.com/fallguyconsulting/rimsky-services/stores/`; `pkg:stores/stub` stays in rimsky as test infrastructure.
-- `claim-scope` (aliases: scope (pre-2026-05-22, retired)) — Opaque byte stream that `ClaimProducer.Open` returns to identify what was acquired; compared byte-equally by the conflict predicate. Renamed from `scope` per 2026-05-22 to disambiguate from `run-scope`.
-- `claim-tree` — Self-referential tree on `rimsky_claim_handles` via `parent_claim_handle_id`; created by fan-out, traversed bottom-up by recursive auto-terminal and top-down by descendant-cancel (which skips non-active rows).
-- `conformance` — Six thin CLI wrappers (`pkg:cmd/rimsky-*-conformance`) over a shared library at `pkg:sdk/go/conformance` that exercise third-party executor, claim-producer, blob-backend, DataProcessing, Validation, and Publisher implementations against rimsky's protocol expectations.
-- `control-api` — HTTP+JSON operator interface served by `rimsky-control-api` at bare paths; also fires LifecycleSubscriber events synchronously, and hosts the agentic MCP shim.
-- `data-processing` — Optional mix-in protocol on ClaimProducer for typed-data version lifecycle (candidates, partitions, schema). Control-plane only; data motion stays substrate-direct via `ClaimResult.address`.
-- `delegation` — Calling node ↔ sub-graph relationship; calling node absorbs the entry node (same row, same executor) and receives the exit node's writeback via the carry-rule.
-- `discovery-cache` (aliases: capabilities cache) — In-memory per-service Capabilities cache populated by the observability handshake at startup and consulted at template-registration gates.
-- `dry-run` — Per-grant-entry write-action modifier; validation runs faithfully, mutation skipped, synthetic `{ dry_run: true, would_have_X: ... }` envelope returned; audit row records `executed: false`.
-- `error-policy` (aliases: error-types policy chain) — Template-level `error_types:` block mapping per-error_class strings to a 4-value action vocabulary (`pass | give_up | retry | discard_claims_then_retry`), with a retry-loop cap. Unified surface for executor `Error` and pre-dispatch acquisition failure (synthetic class `acquire/*`).
-- `event-log` (aliases: audit log, rimsky_events table) — Rimsky's internal append-only audit log (`rimsky_events`) with free-form `kind` TEXT and rimsky-readable JSONB payload, feeding the cascade-graph `/events` route. Post-2026-05-23 the node-run-transition subset of `kind` values carries canonical signal type-paths (`concept:signal`); other audit kinds remain free-form per `tension:events-kind-no-enum`.
-- `executor` — Out-of-process service that implements `Executor.Execute`, streaming heartbeats and events and exactly one terminal `StreamClose{outcome: Success | Error | Park | AwaitAsyncCallback}` (closed 4-variant set; `Park` carries `ParkReason ∈ {AWAIT_CALLBACK, SNOOZE}`). Production-side reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) live at `pkg:github.com/fallguyconsulting/rimsky-services/executors/`; `pkg:executors/stub` stays in rimsky as test infrastructure.
-- `fan-out` — Node-level decision to partition a held claim into sub-claims via `ClaimProducer.SplitScope`, dispatching one work unit per sub-claim. Each child runs in its own fan-out partition RunScope (per `concept:run-scope`).
-- `frame` (aliases: cascade-frame) — One cascade resolution, tracked as a row in `rimsky_frames` and stamped on every dispatched run via `frame_id`. Message delivery is also a frame-creation site.
-- `graph` — Unit of node connectivity; uniform top-level declaration in `graphs:`. The reserved name `main` is the top-level graph.
-- `inertness` (aliases: opacity (legacy), inert bytes) — Cross-cutting discipline making seven carrier streams (claim scope, claim address, claim payload, blob content, attribute values, named-event payloads, message payloads, plus `Error.payload`) inert in rimsky; two sub-disciplines (byte-opaque + structural) with a precisely-enumerated set of sanctioned read sites including `evaluateMatcher` for attribute-value matcher predicates.
-- `instance` — One live deployment of a template, identified by UUID, bound to a `template_hash`, carrying `params` and optional `attribute_overrides`.
-- `invalidate` — Sole graph-level message that marks a node `stale`. Post-2026-05-15: one `kind` of message (the V1 kind). Post-2026-05-23: exactly one template-configurable emit site (operator API); runtime-internal emitters unchanged.
-- `lifecycle-subscriber` — Opt-in service protocol with six methods for template/instance lifecycle events, fired synchronously by control-api with DB-tracked idempotency.
-- `lineage` — Projection of computational + data-promotion records; persisted in `rimsky_lineage`; surfaced via `/lineage/...` control-api endpoints. Post-2026-05-23 carries `settling_signal_type` (canonical signal type-path per `concept:signal`) in place of the retired `last_outcome` projection.
-- `lineage-record` — Two record kinds (`leaf_run`, `claim_terminal`) capturing computational and data-promotion units. Post-2026-05-23 `leaf_run` carries `settling_signal_type` in place of the retired `last_outcome` field.
-- `message` — Boundary-crossing dispatch unit; pushed envelope matched via subscription; persisted in `rimsky_messages`.
-- `module-layout` (aliases: workspace-layout) — Four-Go-module workspace (protocols, foundation, sdk/go, root) with depguard-enforced import boundaries and a per-directory Apache/AGPL licensing map.
-- `named-event` — Non-terminal executor emission with a name and inert payload, persisted to `rimsky_node_events` and consumable via substitution or subscription.
-- `named-lock` — Producer-independent capacity-counter primitive declared in `rimsky.yml` with mode mutex or counting, persisted as `lock_kind='named'`.
-- `node` (aliases: graph-node) — One declarative unit of work in a template's graph, materialized at runtime as a row in `rimsky_nodes`.
-- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — One execution of one node within a frame; persisted as a row in `rimsky_node_runs`. Post-2026-05-15 extended to run-tree; post-2026-05-20 `rimsky_node_attributes` is also per-run; post-2026-05-22 inline `parent_run_id` + `child_key` removed in favor of non-null `run_scope_id` FK (run-tree shape lives on `concept:run-scope`).
-- `node-subscription` — Impactee-side declaration of "fire me when this upstream topic transitions" via per-template `subscribes:`. Four topic kinds: `state`, `attribute`, `event`, `message`. Renamed from `subscription` in 2026-05-17 to disambiguate from `publisher-subscription`.
-- `observability` — Service-facing optional observability protocols (ExecutorObservability / ClaimProducerObservability) plus the startup handshake that probes them and populates the discovery cache.
-- `orphan-reaper` — Periodic sweep that hard-deletes stale `active` rows from `rimsky_node_runs` and `rimsky_claim_handles` past `5 × heartbeat_interval`, claimant-guarded; sibling sweep `SweepClaimHandleRetention` handles terminal-row cleanup.
-- `parked-state` (aliases: park, parked node) — Fifth legal node-state entered from `running` when the executor emits a park terminal. Post-2026-05-22 closed two-value `ParkReason` taxonomy (`AWAIT_CALLBACK | SNOOZE`) + freeform label. Park terminals emit canonical `terminal/park/snooze` and `terminal/park/await_callback` signals (`concept:signal`); the "cascade does not propagate from parked" invariant retracted 2026-05-23 (propagation is subscriber-driven).
-- `permission` (aliases: grant, action) — Verb-noun action grammar; per-key JSONB grant; wildcards `*`, `<noun>:*`, `*:<verb>` with colon-boundary; first-match-wins; `mode: execute | dry_run` modifier.
-- `persistence-database` — Umbrella `persistence.Database` interface (runtime object analogous to stdlib `sql.DB`) with per-row-type `<RowKind>Table` accessors hung off `Tables()`, abstracting Postgres vs SQLite via a shared migrator.
-- `publisher` — Peer service that pushes messages into rimsky via the Publisher protocol (`Subscribe`/`Unsubscribe`/`ListSubscriptions`); emits message envelopes to `POST /instances/{id}/messages` with `sender_kind: "publisher"`. Sensors are one class of publisher implementation.
-- `publisher-subscription` — Rimsky↔publisher binding state per (instance, publisher, kind) triple; lives in `rimsky_publisher_subscriptions`. Created at instance creation, dropped at termination. Authority token validated at the messages endpoint.
-- `replica` — Deployment-tier concept; rimsky does not model replica coordination as a first-class concept. Bundled sensors (at `pkg:github.com/fallguyconsulting/rimsky-services/sensors/`) are single-replica per v1 contract.
-- `rimsky` (aliases: rimsky-cli) — Thin HTTP+JSON client over the control-api; every CLI verb is one or more HTTP calls, with `compose` for manifest deployments and (post-2026-05-15) an `auth` subcommand group.
-- `rimsky-yml` (aliases: unified config) — Single YAML file read by all three runtime processes plus migrate, declaring persistence, named_locks, claim_producers, executors, and publishers. Carries no auth-related keys.
-- `role-template` (aliases: bundled role) — CLI-bundled JSON resource that expands into a permission grant at key-creation time; server has no role concept. V1 ships admin, operator, read-only, agent-supervisor, publisher-service.
-- `run-scope` — First-class execution context for one graph instantiation (main / subgraph / fanout_partition); persisted as `rimsky_run_scopes`; owns the per-RunScope set of `rimsky_node_runs` rows and forms a tree via `parent_run_scope_id`. Introduced 2026-05-22.
-- `sdk` (aliases: rimsky-sdk, sdk/go) — Canonical Go-side implementer-facing surface for building services rimsky talks to.
-- `sensor` — One class of `publisher` implementation that observes external state. Bundled reference impls under `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-{cron,http,object-store,webhook}/`.
-- `service` (aliases: peer (legacy), peer service (legacy)) — Out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky; umbrella for executor, claim-producer, lifecycle-subscriber, blob-backend, publisher.
-- `signal` — Hierarchical type-path-plus-payload envelope emitted on every node-run transition; drives cascade-fire (via subscriber-side CEL match), audit (`rimsky_events.kind`), and the canonical "what just happened" vocabulary. Introduced 2026-05-23.
-- `sub-graph` — Graph with declared `entry:` and `exit:`; invocable from another node via `delegate:`.
-- `supervisor` — Runtime binary that implements the acquisition transaction, dispatch, terminal handling, and auto-terminal; registers in `rimsky_supervisors`.
-- `tag` (aliases: template-tag) — Movable string alias pointing at a `template_hash`, stored in `rimsky_template_tags` and reassignable without changing template identity.
-- `template` (aliases: canonical-spec) — Static artifact a consumer registers, keyed by `sha256-<hex>` over the JCS-canonicalized spec bytes, with a four-state lifecycle.
-- `terminal-resolution` (aliases: executor-terminal-spine) — End-to-end four-stage spine (post-2026-05-23) that takes one executor terminal (or pre-dispatch acquisition failure) and decides emitted-signal type-path + run-row color, dispatch row fate, producer verb, and claim-handle release.
-- `transition-reason` — Closed enum carried on every node-state transition; load-bearing input to the state machine's `NextState` validation; also serves as the audit `kind` for non-signal transitions (`dispatch_claimed`, `pure_cascade`, `infra_reenqueue`, `handler_resume`, `park_timeout`, ...). Signal-bearing transitions use signal type-paths instead per `concept:signal` (post-2026-05-23 narrowing).
-- `validation` — Cross-cutting service protocol for registration-time validation of node attributes against producer / executor / sensor / lifecycle-subscriber surfaces, per a `role` discriminator.
-- `wait-set` — Per-frame ledger (`rimsky_wait_set`) that records receiver→sender gating from cascade walks; settled-state drain marks rows (`drained_at = NOW()`) rather than deleting them; eligibility predicate is "no undrained rows for this receiver in the current frame." Drained rows remain queryable for the substitution-context builder.
-- `write-semantics` — Per-claim enum (sync, staged_async, blocking_async, read_only) that determines how `ModeCoexists` treats concurrent claims on byte-equal claim scope.
+- `advisory-lock` — Four advisory-lock primitives on the persistence-layer advisory-locker interface: scheduler-tick, migration, per-name (in-tx), and per-scope (in-tx).
+- `anonymous-mode` (aliases: implicit anonymous mode) — A data-derived deployment state in which the API-key ledger has zero active rows.
+- `api-key` (aliases: bearer token) — A high-entropy, rimsky-issued credential carried by control-api clients as a Bearer token.
+- `asset` — An asset is a documented compound, not a new primitive: a claim against a data-processing-capable producer with a durable lifetime.
+- `atomic-staging` — Producer-side stage-then-swap pattern: writers stage data into a side area; on commit the producer atomically swaps the staging into the canonical view; on abandon the staging is dropped.
+- `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a JSON Schema in the template's attributes block.
+- `auto-terminal` (aliases: held-claim resolution) — The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph.
+- `backfill` — A backfill is one invalidate-kind message with a partition-request-override payload field, targeting a fan-out node.
+- `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads.
+- `breakpoint` — A breakpoint is a runtime-installed pause-point on a live `concept:instance`, identified by UUID and bound to a matcher / checkpoint / signal-type / mode / overflow-policy / ttl tuple.
+- `cancel-siblings` — A boolean field on the strict aggregation policy that turns on proactive sibling cancellation: when one sub-claim resolves to an aggregate-abandon, the runtime force-Abandons the parent's other in-flight sub-claims.
+- `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node-state transition into the set of downstream node-state transitions.
+- `cascade-graph` (aliases: operator dashboard backplane) — The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches.
+- `claim` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
+- `claim-co-holdership` (aliases: inherits (legacy)) — Multiple node-runs holding the same claim handle via the `holds:` template directive.
+- `claim-handle` (aliases: lock-holder (legacy), held-claim (folded)) — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
+- `claim-lifetime` — Per-claim property in the claims block: lifetime subgraph or durable (default subgraph), governing auto-terminal behavior.
+- `claim-producer` (aliases: store (legacy / colloquial), claim-store) — A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — four verbs (open / commit / abandon / release) plus the capabilities startup handshake.
+- `claim-scope` (aliases: scope (pre-2026-05-22, retired)) — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired."
+- `claim-tree` — The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer.
+- `conformance` — Six thin CLI wrappers (one per protocol) over a shared SDK conformance library (one sub-package per protocol).
+- `control-api` — The operator interface exposed by the control-api binary.
+- `data-processing` — Optional mix-in protocol on a claim producer, advertised in the capabilities handshake alongside the claim-producer protocol, for the typed-data version lifecycle.
+- `delegation` — Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit.
+- `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
+- `dry-run` — A per-grant-entry modifier on `concept:permission` entries that runs validation but skips the actual mutation, returning a synthetic would-have envelope.
+- `error-policy` (aliases: error-types policy chain) — The template-level error-types block maps per-error-class strings to one of four runtime actions: pass, give_up, retry, discard_claims_then_retry.
+- `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
+- `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
+- `fan-out` — Fan-out is a node-level decision to partition a held claim into sub-claims and dispatch one work unit per sub-claim.
+- `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
+- `graph` — A graph is rimsky's unit of node connectivity.
+- `inertness` (aliases: opacity (legacy), inert bytes) — A uniform discipline applied across two overlapping lists of carrier byte streams.
+- `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
+- `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
+- `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — six event callbacks for template and instance lifecycle.
+- `lineage` — A persisted projection of computational + data-promotion records.
+- `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`), in two kinds.
+- `message` — A boundary-crossing dispatch unit.
+- `module-layout` (aliases: workspace-layout) — The Go workspace ties four modules into one build, with the root module itself carrying a four-layer split.
+- `named-event` — A named event is a non-terminal executor emission carrying a name and an inert payload.
+- `named-lock` — A named lock is a producer-independent capacity-counter primitive.
+- `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
+- `node-run` (aliases: worker-request (legacy), dispatch (legacy)) — The node-run row is the parent row for one execution of one node within a frame.
+- `node-subscription` (aliases: subscription) — A node-subscription declares a canonical signal type-path (exact or trailing-`*` prefix) plus an optional CEL predicate over the signal payload.
+- `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
+- `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
+- `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.
+- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`.
+- `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
+- `publisher` — A publisher is a peer service that publishes messages into rimsky.
+- `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, kind) triple.
+- `replica` — A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer.
+- `rimsky` (aliases: rimsky-cli) — Thin HTTP+JSON client over the control-api.
+- `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path read by all three runtime processes plus the migrate step.
+- `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
+- `run-scope` — RunScope is the first-class execution context for one graph instantiation (main / subgraph / fanout_partition).
+- `sdk` (aliases: rimsky-sdk, sdk/go) — The Go-side SDK is the canonical implementer-facing surface for building services that rimsky talks to.
+- `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
+- `service` (aliases: peer (legacy), peer service (legacy)) — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
+- `signal` — A signal is the unified emission shape for any transition that affects a node-run, carrying a canonical hierarchical type-path and a structured payload.
+- `sub-graph` — A sub-graph is a graph with declared entry and exit nodes, invocable from another node via `delegate:`.
+- `supervisor` — One of the three rimsky runtime binaries, implementing the acquisition transaction, dispatch, terminal handling, and auto-terminal.
+- `tag` (aliases: template-tag) — A tag is a movable string alias pointing at a template hash.
+- `template` (aliases: canonical-spec) — A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules.
+- `terminal-resolution` (aliases: executor-terminal-spine) — The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions.
+- `transition-reason` — The transition reason is the closed enum carried on every node-state transition.
+- `validation` — Cross-cutting service protocol any service may advertise, exposing a single validate method (request to response).
+- `wait-set` — The wait-set is a per-frame persisted ledger that records "receiver R is waiting for sender S in frame F" under a topic-kind / subscription-scope / topic-filter key.
+- `write-semantics` — A per-claim enum (sync / staged_async / blocking_async / read_only) that determines how the coexistence matrix treats concurrent claims on byte-equal claim scope.
 
 ## Retired concepts
 
 See `concepts/_retired/` for the full retirement notes.
 
-- `last-outcome` — TEXT column on `rimsky_node_runs` carrying one of `{fresh_changed, fresh_unchanged, passed, pure_cascade, failed}`. Retired 2026-05-23 alongside the cascade-fire-gate semantic (cascade-fire is now subscriber-driven via `concept:signal`). The replacement column is `settling_signal_type` (canonical signal type-path); the lineage projection's `last_outcome` field was likewise renamed.
-- `lifecycle-handler` (aliases: reactive handler) — Three per-node template slots (`on_acquire_unavailable`, `on_executor_complete`, `on_executor_errored`) retired 2026-05-23. Acquisition failure folds into `concept:error-policy` via synthetic class `acquire/*`; cascade-fire selectivity moves to receiver-side CEL `when:` predicates under `concept:node-subscription`; per-error `pass` is now an action in `error_types:`.
-- `node-state` — state lives entirely on `rimsky_node_runs` now; semantics described under `concept:node-run`.
-- `on-event-handler` — `on_event:` map retired in favor of `subscribes: [{node: X, type: event/Y}]`.
-- `quality-rule` — replaced by the verifier-executor pattern; no successor concept (pattern is documentation).
-- `schedule` — replaced by the bundled `sensor-cron`; cron is a sensor kind under `concept:sensor` + `concept:message`.
-- `userdata` — collapsed into `concept:attribute`; per-node executor configuration now uses `default:` properties on the unified attribute schema, with overrides via `attribute_overrides`.
+- `last-outcome` — Per-resolution cascade-gate projection on the node-run. Retired 2026-05-23 alongside the cascade-fire-gate semantic (cascade-fire is now subscriber-driven via `concept:signal`); replaced by a settling-signal-type field carrying a canonical signal type-path.
+- `lifecycle-handler` (aliases: reactive handler) — The three per-node template slots (acquire-unavailable, executor-complete, executor-errored). Retired 2026-05-23: acquisition failure folds into `concept:error-policy` via synthetic class `acquire/*`, cascade-fire selectivity moves to receiver-side CEL predicates under `concept:node-subscription`, and per-error `pass` is now an action in the error-policy chain.
+- `node-state` — The five-state node enum now lives entirely on the node-run rather than the node row; its semantics are documented under `concept:node-run`.
+- `on-event-handler` — The `on_event:` map, retired in favor of subscription-to-event entries under `concept:node-subscription` (which subsume both the substitution and the invalidate-downstream paths).
+- `quality-rule` — Replaced by the verifier-executor pattern (a regular executor that co-holds the upstream claim, runs checks, and returns success or error); no successor concept — the pattern is documentation only.
+- `schedule` — Replaced by the bundled cron sensor; cron-style firing is now a sensor kind under `concept:sensor` plus `concept:message`, preserving the missed-fires-not-backfilled semantic.
+- `userdata` — Collapsed into `concept:attribute`; per-node executor configuration now uses static-default attribute properties, with per-instance overrides renamed from userdata-overrides to attribute-overrides.

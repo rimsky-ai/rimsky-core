@@ -25,9 +25,9 @@ A reaper that started firing `Abandon` would silently double-call the producer (
 
 ## Resolution candidates (do NOT pick)
 
-- Surface the asymmetry in a single "release-paths" prose section in `docs/concepts/claim-handle.md`.
-- Encode the asymmetry in the function names (`SweepClaimHandlesNoAbandon`, `BailOrphanedClaimWithAbandon`).
-- Add a regression test that fails if the reaper starts firing `Abandon`.
+- Capture the two release paths and why only the bail path abandons the producer claim in a single "release-paths" section of the claim-handle concept, so the asymmetry is documented rather than buried in adjacent code (see `concept:claim-handle`, `concept:orphan-reaper`, `concept:claim-producer`).
+- Make the abandon-vs-no-abandon distinction explicit in the names of the two release paths, so a contributor adding a new cleanup path can tell which to mirror.
+- Add a regression guard that fails if the periodic reaper ever begins abandoning producer claims, locking in the invariant that only the supervisor-initiated bail path abandons (see `concept:supervisor`).
 
 ## Evidence
 

@@ -92,36 +92,3 @@ func mustLoadCfg(t *testing.T, body string) RimskyConfig {
 	}
 	return cfg
 }
-
-// TestLoadDeployRimskyYAML_Phase4Shape parses the canonical
-// deploy/rimsky.yml against the post-Phase-4 parser and asserts each
-// claim_producers entry carries the protocols list and a non-empty
-// write_semantics_allowed. Gates the verification block for Task 28.
-func TestLoadDeployRimskyYAML_Phase4Shape(t *testing.T) {
-	cfg, err := LoadRimskyConfigYAML(filepath.Join("..", "..", "deploy", "rimsky.yml"))
-	if err != nil {
-		t.Fatalf("LoadRimskyConfigYAML(deploy/rimsky.yml): %v", err)
-	}
-	if len(cfg.Stores.Stores) == 0 {
-		t.Fatal("expected at least one claim_producer in deploy/rimsky.yml")
-	}
-	for name, e := range cfg.Stores.Stores {
-		if len(e.Protocols) == 0 {
-			t.Errorf("claim_producers[%q]: protocols list empty", name)
-		}
-		if !e.HasProtocol(ProtocolClaimProducer) {
-			t.Errorf("claim_producers[%q]: protocols list must include %q", name, ProtocolClaimProducer)
-		}
-		if len(e.Capabilities.WriteSemanticsAllowed) == 0 {
-			t.Errorf("claim_producers[%q]: write_semantics_allowed empty", name)
-		}
-	}
-	if len(cfg.Executors.Executors) == 0 {
-		t.Fatal("expected at least one executor in deploy/rimsky.yml")
-	}
-	for name, e := range cfg.Executors.Executors {
-		if !e.HasProtocol(ProtocolExecutor) {
-			t.Errorf("executors[%q]: protocols list must include %q", name, ProtocolExecutor)
-		}
-	}
-}

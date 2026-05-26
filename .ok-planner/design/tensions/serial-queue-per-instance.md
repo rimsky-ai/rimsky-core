@@ -19,9 +19,9 @@ A consumer relying on serial ordering across instances will see independent orde
 
 ## Resolution candidates (do NOT pick)
 
-- Make the per-instance scope louder in `docs/concepts/frame.md`.
-- Add a template-level "serialize across instances" mode (would require a deployment-scope frame queue).
-- Rename `serial_queue` to `serial_queue_per_instance` for clarity.
+- State prominently in the frame concept's definition that serial-queue ordering is per-instance, so template authors do not assume template-wide serialization (see `concept:frame`, `concept:instance`).
+- Add a template-level "serialize across instances" resolution mode, which would require a frame queue scoped to the whole deployment rather than to a single instance.
+- Rename the serial-queue mode to make its per-instance scope explicit in the mode name itself.
 
 ## Evidence
 

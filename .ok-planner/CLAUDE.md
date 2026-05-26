@@ -95,7 +95,10 @@ Skills relate to the design docs in three modes:
    - `write-plan` reads to plan spec-directed mutations as
      first-class tasks.
    - `review-work` and `review-plan` read to verify that
-     spec-directed mutations landed correctly.
+     spec-directed mutations landed correctly. `review-work`
+     additionally runs an independent design-doc compliance
+     cycle that audits the design docs against the concept
+     self-containment rule (see below).
 
 Layout (created by `/discover-design`):
 - `_discover/` — as-is scaffolding. Wide, detailed, possibly
@@ -131,6 +134,50 @@ Layout (created by `/discover-design`):
 - **DO NOT mutate `tensions/` entries outside the spec
   pipeline** — those entries record what the project considers
   unresolved.
+
+#### Concept self-containment rule
+
+Concept body is **self-contained**. The design owns the
+definition; code references the design via `@concept:`
+annotations, not the other way around. A refactor that moves
+files around does not invalidate a concept, and an external
+doc that moves to another repo does not orphan one. To make
+that durable, citations in concept body are restricted to
+forms that survive the codebase moving.
+
+**Allowed in concept body:**
+- Other concept slugs (`see also: claim-handle`,
+  `concept:claim-handle`).
+- Annotation IDs the codebase uses (`@blessed-invariant: N`,
+  `@agent-contract: X`) — IDs are stable across file moves;
+  paths are not.
+- Spec slugs in dated Notes entries
+  (`spec:YYYY-MM-DD-<topic>`).
+- Dates.
+
+**Disallowed in concept body:**
+- File or directory paths in any form (`foo/bar.go`,
+  `services/widget/`, `pkg:github.com/...`, bare URLs,
+  `code:foo.go::Symbol`, "the code at X" pointers).
+- References to external documentation (`docs/...`, READMEs,
+  CHANGELOG, sibling-repo paths).
+- Quoted code, quoted lint-config allowlists, quoted external
+  prose.
+- "Owns / Does NOT own" sections that name code paths.
+  Boundaries is the in-vs-out section; it names neighbor
+  concepts by slug.
+
+**For tensions:** the same self-containment rule applies to
+`## Resolution candidates` — resolutions become spec
+instructions and live forward in time, so they must be
+path-free. `## What is muddy` and `## Evidence` are
+point-in-time snapshots and may cite code as evidence.
+
+The canonical statement of the rule lives in
+`ok-planner:discover-design`'s SKILL.md ("Concept
+self-containment rule" and "Tension surface rule"). The
+`review-work` skill's design-doc compliance cycle audits the
+live design docs against this rule on every review.
 
 #### Consulting the design docs: read `concepts.md` first
 

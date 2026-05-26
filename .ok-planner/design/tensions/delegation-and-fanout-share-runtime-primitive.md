@@ -44,11 +44,11 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 ## Resolution candidates (do NOT pick)
 
 - Introduce a `child-execution` concept that owns the shared invariants; demote `delegation` and `fan-out` to "invocation patterns" docs that describe the template surface + the canonicalizer-time defaults they imply.
-- Introduce a `DispatchChildExecution` + `SettleChildExecution` runtime primitive pair that both `applyTerminalCompleteSubgraphCaller` (or its successor) and `CreateFanOutChildren` (or its successor) call into; `CarryExitWriteback` collapses into `SettleChildExecution` with a `CarryVerbatim` aggregation policy.
+- Introduce a unified dispatch-child / settle-child runtime primitive pair that both delegation and fan-out route through; the delegation carry-rule collapses into the settle-child path expressed as a verbatim-carry aggregation policy.
 - Keep `concept:delegation` and `concept:fan-out` but reframe both as referencing a shared cross-cutting concept; do the runtime unification without the concept-doc reshape.
 - Leave the duplication; accept the cost.
 
-A sketch at `.ok-planner/sketches/2026-05-23-unify-child-execution-sketch.md` walks the unified shape, the migration story (no schema change — `partition_key` is already the discriminator), and open questions including entry-absorption asymmetry, naming, and the timing of the refactor relative to the just-landed reshape stabilizing.
+See `sketch:2026-05-23-unify-child-execution`, which walks the unified shape, the migration story (no schema change — `partition_key` is already the discriminator), and open questions including entry-absorption asymmetry, naming, and the timing of the refactor relative to the just-landed reshape stabilizing.
 
 ## Notes
 

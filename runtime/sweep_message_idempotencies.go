@@ -13,7 +13,6 @@
 // have no holder.
 //
 // @concept: message
-// @concept: retention
 
 package runtime
 

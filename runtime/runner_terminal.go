@@ -180,10 +180,11 @@ func terminalClassFor(k terminalKind) string {
 // pass` branch retired with concept:lifecycle-handler; per-class
 // `pass` in `error_types:` is the replacement.
 
-// @concept: last-outcome
+// @concept: signal
 //
-// Writes the cascade-firing gate enum on every terminal. Sibling to
-// `transition_reason` (see `.ok-planner/design/concepts/last-outcome.md`).
+// Writes the cascade-firing gate enum on every terminal. The historical
+// last_outcome / transition_reason surfaces were collapsed into the
+// unified signal type-path taxonomy (see concept:signal).
 //
 // applyTerminalComplete runs the §7.6 success-branch release tx
 // alongside the state→fresh transition, final attribute upsert, and

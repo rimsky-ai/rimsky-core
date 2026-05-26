@@ -57,6 +57,8 @@ type NodeEvent struct {
 // were referenced by those rows. The caller (graph/instance
 // teardown) is responsible for queueing those handles into
 // rimsky_blob_orphans via BlobOrphanTable.Insert.
+//
+// @concept: named-event
 type NodeEventTable interface {
 	Insert(ctx context.Context, evt NodeEvent, tx Tx) (int64, error)
 	LatestByName(ctx context.Context, instanceID, emitterNodeID, eventName string, tx Tx) (*NodeEvent, error)

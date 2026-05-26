@@ -3,7 +3,7 @@ tension: coalesced-fire-observability-gap
 category: unspecified
 status: open
 affects:
-  - schedule
+  - sensor
   - frame
   - event-log
 ---
@@ -28,9 +28,9 @@ The information is inferable by joining `rimsky_schedules.last_fired_at` against
 
 ## Resolution candidates (do NOT pick)
 
-- Emit a `frame_coalesced` event from `EnqueueCoalesceFrame` when the `ON CONFLICT DO UPDATE` branch fires (i.e. an existing queued row was updated rather than a new one inserted).
-- Add a metric `rimsky_frame_coalesced_total{instance, source_node}` alongside `rimsky_frame_created_total`.
-- Document the inferred-from-schema audit-trail technique inline at `docs/concepts/frame.md`.
+- Make coalescing a first-class audited event: when an incoming fire merges into an existing pending frame rather than creating a fresh one, emit a distinct audit entry so the event log distinguishes coalesced fires from fresh ones (see `concept:frame`, `concept:event-log`).
+- Expose a coalesced-fire counter in the observability surface alongside the existing frame-created counter, so operators can validate that coalescing happened without reconstructing it from a join (see `concept:observability`).
+- Capture in the frame concept's definition how the coalesce-vs-fresh distinction is currently inferable from the persisted state, so operators have a documented technique until a first-class signal exists.
 
 ## Evidence
 

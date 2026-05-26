@@ -12,7 +12,7 @@
 //
 //	@concept: sub-graph
 //	@concept: delegation
-//	@concept: run-tree
+//	@concept: run-scope
 //
 // Architectural shape:
 //
@@ -417,7 +417,7 @@ func IsSubgraphExit(tmpl *node.TemplateSpec, nodeType string) bool {
 // node per `ResolvesViaCallingNode`).
 //
 //	@concept: sub-graph
-//	@concept: run-tree
+//	@concept: run-scope
 func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, t terminalEvent, tx persistence.Tx,
@@ -650,7 +650,7 @@ func applyTerminalCompleteSubgraphCaller(
 // the rest of the exit terminal's standard release path.
 //
 //	@concept: sub-graph
-//	@concept: run-tree
+//	@concept: run-scope
 //	@blessed-invariant: exit-node-writeback flows to parent run writeback
 func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,

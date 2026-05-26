@@ -10,7 +10,7 @@ references:
 
 ## Definition
 
-A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`. The calling node and the sub-graph's entry node share runtime identity (same `rimsky_nodes` row, same executor — see `concept:delegation`); the exit node remains a separate child whose writeback flows back to the calling node via the carry-rule.
+A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`. The calling node and the sub-graph's entry node share runtime identity (the same persisted node record, same executor — see `concept:delegation`); the exit node remains a separate child whose writeback flows back to the calling node via the carry-rule.
 
 ## Boundaries
 
@@ -25,13 +25,8 @@ Owns: the sub-graph template-DSL shape (`entry:`, `exit:`, internal `nodes:`), t
 - Recursive sub-graphs (a sub-graph delegating to itself, directly or via a cycle) are rejected as `subgraph_recursion_unsupported`.
 - The `main` graph cannot be a sub-graph (no `entry:` / `exit:`; reject).
 
-## Annotation sites
-
-- `code:graph/template/canonical/` — sub-graph parser, validator, edge-case rejections.
-- `code:foundation/spec/graphs.go` — `GraphSpec` row-type (with `Entry`, `Exit`, `Nodes` fields).
-- `code:runtime/subgraph_dispatch.go` — entry absorption + exit-writeback carry-rule.
-- `code:test/scenarios/subgraph/` — scenario coverage.
-
 ## Notes
 
-Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md` as the first-class composition primitive. The entry-node absorption discipline is what makes delegation feel like a function call from outside while still letting internal nodes structure their own DAG.
+Introduced by `spec:2026-05-15-data-platform-extensions` as the first-class composition primitive. The entry-node absorption discipline is what makes delegation feel like a function call from outside while still letting internal nodes structure their own DAG.
+
+2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

@@ -7,8 +7,8 @@
 // parent/child run linkage, snapshotted aggregation policy, and the
 // state/last_outcome columns lifted from `rimsky_nodes`.
 //
-// @concept: run-tree
-// @concept: aggregation-policy
+// @concept: run-scope
+// @concept: terminal-resolution
 //
 // The leaf-style state (one row per node per frame, no children) was
 // previously read/written via `NodeTable.UpdateState` against

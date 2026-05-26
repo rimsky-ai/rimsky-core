@@ -17,7 +17,7 @@ Producer-side stage-then-swap pattern: writers stage data into a side area; on `
 
 ## Boundaries
 
-Owns: the producer-side discipline, the documented pattern, the reference impl (`examples/atomic-staging-fs-producer/`), the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (filesystem rename, Postgres tx, Iceberg manifest pointer, etc.). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
+Owns: the producer-side discipline, the documented pattern, a filesystem-substrate reference implementation, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (filesystem rename, Postgres tx, Iceberg manifest pointer, etc.). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
 
 ## Substrate atomicity caveats
 
@@ -30,14 +30,9 @@ Owns: the producer-side discipline, the documented pattern, the reference impl (
 | Manifest pointer flip | Atomic if the manifest write is. |
 | Kafka | Incoherent for the pattern. |
 
-## Annotation sites
-
-- `code:examples/atomic-staging-fs-producer/` — reference impl on POSIX filesystem.
-- `docs/agents/examples/atomic-staging.md` — operator-facing pattern doc.
-- `code:test/scenarios/atomic_staging/` — scenario coverage.
-
 ## Notes
 
-Introduced by `.ok-planner/specs/2026-05-15-data-platform-extensions-design.md`. The pattern is producer-side discipline; no rimsky-level surface change is required (subgraph-lifetime claims + co-holdership + aggregation existed before, in earlier form; this concept names the recurring shape and points at a reference impl).
+Introduced by spec:2026-05-15-data-platform-extensions-design. The pattern is producer-side discipline; no rimsky-level surface change is required (subgraph-lifetime claims + co-holdership + aggregation existed before, in earlier form; this concept names the recurring shape and points at a reference impl).
 
-- 2026-05-19 — Reference impl set extends to the **SQL-substrate verifier role** demonstrated by the fused `stores/postgres/` (`concept:claim-producer` + `concept:executor` on one binary), per spec 2026-05-19-multi-instance-template-ergonomics-design. The verifier role runs read-only aggregate SQL against a staging schema named by `{{claim.<alias>.address}}` and emits `Success` / `Error{verifier_failed}` shaped to the supervisor's terminal-routing contract; aggregation across co-holding verifiers fires `Commit` on all-success and `Abandon` on any-failure per the existing atomic-staging pattern. The **producer-side staging-schema lifecycle for SQL substrates is not yet shipped**: the postgres store's `Open` echoes the selector as the address (no `CREATE SCHEMA`, no scope-reservation, no staging setup), so the example template's `stage-items` producer is illustrative of the held-claim shape, not a working schema creator. Operators wanting an SQL substrate that also creates the staging schema must wrap the postgres store or supply a sidecar producer. Substrate-atomicity table unchanged.
+- 2026-05-19 — Reference impl set extends to the **SQL-substrate verifier role** demonstrated by a fused producer-plus-executor binary (`concept:claim-producer` + `concept:executor` on one binary), per spec:2026-05-19-multi-instance-template-ergonomics-design. The verifier role runs read-only aggregate SQL against a staging schema named by the claim's address selector and emits success / verifier-failed-error outcomes shaped to the supervisor's terminal-routing contract; aggregation across co-holding verifiers fires Commit on all-success and Abandon on any-failure per the existing atomic-staging pattern. The **producer-side staging-schema lifecycle for SQL substrates is not yet shipped**: the postgres store's open verb echoes the selector as the address (no schema creation, no scope-reservation, no staging setup), so the example template's staging producer is illustrative of the held-claim shape, not a working schema creator. Operators wanting an SQL substrate that also creates the staging schema must wrap the postgres store or supply a sidecar producer. Substrate-atomicity table unchanged.
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

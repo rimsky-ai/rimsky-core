@@ -3,7 +3,8 @@ tension: quality-rule-custom-handler-ordering
 category: unspecified
 status: open
 affects:
-  - quality-rule
+  - validation
+  - attribute
 ---
 
 # Custom quality-rule handlers must be registered before any template that references them is loaded — but no contract enforces this
@@ -20,9 +21,9 @@ The contract for registration timing is implicit: it relies on the consumer orde
 
 ## Resolution candidates (do NOT pick)
 
-- Validate at template registration that every referenced rule type is registered, and re-validate when new templates land.
-- Provide a startup-completion barrier the consumer calls after all `Register` calls; reject `EvaluateAll` until the barrier is past.
-- Document the ordering requirement at the top of `graph/qualityrule/eval/rules.go` and in `docs/concepts/quality-rule.md`.
+- Validate at template registration that every referenced quality-rule type already has a registered handler, and re-validate as new templates land, so a missing custom handler is caught at registration rather than at commit time.
+- Provide a startup-completion barrier the consumer signals once all custom quality-rule handlers are registered, and reject rule evaluation until that barrier is past, making the registration-before-use ordering explicit.
+- Document the registration-before-use ordering requirement as a property of the quality-rule (verifier-executor) pattern, so a consumer knows custom handlers must be registered before any referencing template loads.
 
 ## Evidence
 

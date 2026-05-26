@@ -3,7 +3,6 @@ concept: event-log
 status: as-is
 aliases:
   - audit log
-  - rimsky_events table
 references:
   - _discover/2026-05-10-event-log-append-only-jsonb.md
 ---
@@ -12,7 +11,7 @@ references:
 
 ## What it is
 
-`rimsky_events` — rimsky's internal append-only audit log. Schema: `id BIGSERIAL`, `instance_id`, `node_id`, `kind TEXT` (free-form, no enum CHECK), `payload JSONB`, `occurred_at TIMESTAMPTZ`. Indexed by `(node_id, occurred_at DESC)`, `(instance_id, ...)`, `(kind, ...)`. Written by rimsky's supervisor / scheduler / control-api at observable transitions. Read by the `/events` route in `cascade-graph` for the operator dashboard.
+Rimsky's internal append-only audit-log ledger. Each row carries an auto-incrementing id, the originating instance and node, a free-form `kind` text column (no enum constraint), a JSON `payload`, and an `occurred_at` timestamp. Indexed for lookup by node, by instance, and by kind, each ordered newest-first. Written by rimsky's supervisor / scheduler / control-api at observable transitions. Read by the operator-dashboard event-feed endpoint that `cascade-graph` exposes.
 
 ## Purpose
 
@@ -20,35 +19,36 @@ Rimsky needs an append-only record of "what happened" for incident review, opera
 
 ## Boundaries
 
-Owns: the `rimsky_events` schema, the CRUD path, the read pattern feeding `cascade-graph`. Does NOT own: the named-event ledger (`rimsky_node_events` — see `named-event` "Ledger storage" subsection), retention policy (operator-managed), interpretation of individual `kind` strings (lives in consumers). Adjacent: `cascade-graph` (reads from `/events`), `observability`, `named-event` (sibling append-only table with different opacity discipline).
+Owns: the audit-log schema, the CRUD path, the read pattern feeding `cascade-graph`. Does NOT own: the named-event ledger (see `named-event` "Ledger storage" subsection), retention policy (operator-managed), interpretation of individual `kind` strings (lives in consumers). Adjacent: `cascade-graph` (reads from the event feed), `observability`, `named-event` (sibling append-only ledger with a different opacity discipline).
 
 ## Invariants
 
-- `rimsky_events.kind` is free-form; no enum CHECK. Zero-migration to add a new kind; typos produce events no consumer finds.
-- `rimsky_events.payload` is rimsky's own JSONB — readable by rimsky for the dashboard and audit consumers. NOT bound by `@blessed-invariant 21` (which governs the named-event ledger).
+- The `kind` column is free-form; no enum constraint. Zero-migration to add a new kind; typos produce events no consumer finds.
+- The `payload` is rimsky's own JSON — readable by rimsky for the dashboard and audit consumers. NOT bound by `@blessed-invariant 21` (which governs the named-event ledger).
 - No built-in retention; operator-managed retention is required.
 
 ## Aliases and historical names
 
-Pre-`2026-05-11-design-log-convergence`, this concept also covered `rimsky_node_events` (named-event ledger). That material moved to `concepts/named-event.md` "Ledger storage" subsection. Filename `event-log.md` retained; content is now audit-log-only.
+Pre-`spec:2026-05-11-design-log-convergence`, this concept also covered the named-event ledger. That material moved to `named-event`'s "Ledger storage" subsection. The concept name `event-log` is retained; content is now audit-log-only.
 
-Post-2026-05-15: `rimsky_events` remains the audit log for **events** (executor emissions, state transitions, error classifications). The new **messages** primitive (`concept:message`) has its own audit table `rimsky_messages` with operational columns (`kind`, `sender`, `sender_kind`, `target`, `payload`, `delivered_at`, `frame_id`, `cancelled`, `backfill_operation_id`). The two tables are siblings — events are internal-to-rimsky and frame-synchronous; messages are boundary-crossing and frame-bounded. See `concept:message`, `concept:named-event`.
+Post-2026-05-15: the audit log remains the record for **events** (executor emissions, state transitions, error classifications). The new **messages** primitive (`concept:message`) has its own audit ledger with operational columns (kind, sender, sender-kind, target, payload, delivered-at, frame id, cancelled flag, backfill-operation id). The two ledgers are siblings — events are internal-to-rimsky and frame-synchronous; messages are boundary-crossing and frame-bounded. See `concept:message`, `concept:named-event`.
 
 ## Auth event kinds (added 2026-05-15)
 
-The control-plane MCP and auth spec (`.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`) adds five `auth.*` event kinds. They share the same `(kind, payload)` shape as every other row in `rimsky_events` — no schema change.
+The control-plane MCP and auth spec (`spec:2026-05-15-control-plane-mcp-and-auth`) adds five `auth.*` event kinds. They share the same `(kind, payload)` shape as every other audit-log row — no schema change.
 
-- `auth.access_attempted` — emitted by `code:control/controlapi/auth_middleware.go::AuthState.gateByAction` after every authenticated request runs. Payload includes `key_id`, `key_name`, `identity_kind`, `protocol_skin` (`http` | `mcp`), `action`, `request_path`, `request_method`, `request_params` (verbatim), `response_status`, `mode` (`execute` | `dry_run`), `executed` (bool), `duration_ms`, `client_ip`, `user_agent`.
+- `auth.access_attempted` — emitted by the control-plane auth middleware's per-action gate after every authenticated request runs. Payload includes `key_id`, `key_name`, `identity_kind`, `protocol_skin` (`http` | `mcp`), `action`, `request_path`, `request_method`, `request_params` (verbatim), `response_status`, `mode` (`execute` | `dry_run`), `executed` (bool), `duration_ms`, `client_ip`, `user_agent`.
 - `auth.access_denied` — emitted on 401 / 403. Same shape plus a `denial_reason` enum: `no_token | invalid_token | expired_token | revoked_token | permission_denied`. For pre-action-resolution denials (the first four) `action`, `request_params`, `mode` are null; for `permission_denied` they are populated.
-- `auth.key_created` — emitted by `code:control/controlapi/auth_handlers.go::handleCreateKey`. Payload: `key_id`, `key_name`, `permissions`, `created_by_key_id`, `expires_at`.
-- `auth.key_revoked` — emitted by `code:control/controlapi/auth_handlers.go::handleRevokeKey` and the rotation-grace sweep `code:runtime/auth_sweep.go::SweepRotationGrace`. Payload: `key_id`, `key_name`, `revoked_by_key_id`, `reason` (`manual | rotation_grace | expired`).
-- `auth.key_rotated` — emitted by `code:control/controlapi/auth_handlers.go::handleRotateKey`. Payload: `old_key_id`, `new_key_id`, `name`, `revoke_at`.
+- `auth.key_created` — emitted by the control-plane key-creation handler. Payload: `key_id`, `key_name`, `permissions`, `created_by_key_id`, `expires_at`.
+- `auth.key_revoked` — emitted by the control-plane key-revocation handler and the runtime rotation-grace sweep. Payload: `key_id`, `key_name`, `revoked_by_key_id`, `reason` (`manual | rotation_grace | expired`).
+- `auth.key_rotated` — emitted by the control-plane key-rotation handler. Payload: `old_key_id`, `new_key_id`, `name`, `revoke_at`.
 
 ## Notes
 
-- [2026-05-15] `auth.*` event kinds added by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md`.
-- 2026-05-23 — Per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`: the node-run-transition subset of `rimsky_events.kind` now carries canonical signal type-paths (e.g., `terminal/error/http/timeout`) rather than free-form strings; for those rows `payload` carries the signal payload per its type's schema (`concept:signal`). Other audit kinds (`state_transition`, `lock_*`, `work_*`, `auth.*`, etc.) continue to use free-form text — see `tension:events-kind-no-enum` partial-coverage note.
+- [2026-05-15] `auth.*` event kinds added by `spec:2026-05-15-control-plane-mcp-and-auth`.
+- 2026-05-23 — Per `spec:2026-05-23-signal-taxonomy-and-policy-decoupling`: the node-run-transition subset of the audit log's `kind` values now carries canonical signal type-paths (e.g., `terminal/error/http/timeout`) rather than free-form strings; for those rows `payload` carries the signal payload per its type's schema (`concept:signal`). Other audit kinds (`state_transition`, `lock_*`, `work_*`, `auth.*`, etc.) continue to use free-form text — see `tension:events-kind-no-enum` partial-coverage note.
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 
 ## Open within this concept
 
-- `rimsky_events.kind` is free-form — see `tensions/events-kind-no-enum.md`.
+- The audit log's `kind` column is free-form — see `tension:events-kind-no-enum`.

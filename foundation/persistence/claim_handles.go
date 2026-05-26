@@ -277,7 +277,7 @@ type ClaimHandleTable interface {
 	// @blessed-invariant 4 (post-refactor): non-active-row deletions
 	// are guarded by absence + the row-discovery query filter.
 	// @concept: claim-handle
-	// @concept: retention
+	// @concept: claim-lifetime
 	DeleteResolvedOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 
 	// DeleteResolved deletes a non-active claim_handle row (state ∈

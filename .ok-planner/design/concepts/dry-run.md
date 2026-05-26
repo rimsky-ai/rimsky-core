@@ -10,9 +10,9 @@ references:
 
 ## What it is
 
-A per-grant-entry modifier on `concept:permission` entries: `{ "action": "<action>", "mode": "dry_run" }`. When the per-request mode resolves to `dry_run`, the handler runs validation (including side-effect-free external calls like the `Validation` mix-in's RPCs) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
+A per-grant-entry modifier on `concept:permission` entries: `{ "action": "<action>", "mode": "dry_run" }`. When the per-request mode resolves to `dry_run`, the handler runs validation (including side-effect-free external calls like the validation protocol's checks; see `concept:validation`) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
 
-The middleware threads the mode through the request context via `code:control/controlapi/auth.go::ctxKeyMode`; handlers read it with `code:control/controlapi/auth.go::ModeFromContext` and gate the side-effectful path with `code:control/controlapi/dryrun.go::WriteDryRunResponse`.
+The control-plane auth middleware threads the resolved mode through the request context; handlers read it back from the context and gate the side-effectful path through a shared dry-run-response helper that emits the synthetic envelope.
 
 ## Purpose
 
@@ -20,12 +20,12 @@ Agentic supervision needs a way to ask "what would happen if I did X?" without a
 
 ## Boundaries
 
-Owns: the `Mode` enum in `code:foundation/auth/grant.go`, the per-request context plumbing, the `WriteDryRunResponse` helper, the per-handler dry-run branches (instance:create, instance:terminate, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
+Owns: the per-grant-entry mode vocabulary (`execute` / `dry_run`), the per-request context plumbing, the dry-run-response helper, the per-handler dry-run branches (instance:create, instance:terminate, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
 
 ## Invariants
 
 - **Read actions ignore mode.** The dry-run modifier is meaningful only for write actions.
-- **Validation runs faithfully.** Dry-run is "validate-without-mutate." For `template:register`, this includes firing the `Validation` mix-in's `Validate` RPCs against advertising services — those are side-effect-free reads from the platform's perspective.
+- **Validation runs faithfully.** Dry-run is "validate-without-mutate." For `template:register`, this includes firing the validation protocol's checks against advertising services (see `concept:validation`) — those are side-effect-free reads from the platform's perspective.
 - **Audit row reflects intent.** The middleware emits `auth.access_attempted` with `mode: dry_run` and `executed: false`. The row is the canonical evidence of "the agent attempted this; we didn't apply it."
 - **Auth mutations are NOT dry-runnable.** `auth:create`, `auth:revoke`, `auth:rotate` always execute regardless of the matching grant entry's mode. Rationale: dry-running auth mutations doesn't compose well with the implicit-anonymous predicate (a dry-run create wouldn't change the active-key count, leading to confusing audit trails).
 
@@ -47,4 +47,5 @@ Clients (CLI, MCP) check the top-level `dry_run` flag to render the response dis
 
 ## Notes
 
-- [2026-05-15] Concept introduced by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` ("Dry-run mode").
+- [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth` ("Dry-run mode").
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

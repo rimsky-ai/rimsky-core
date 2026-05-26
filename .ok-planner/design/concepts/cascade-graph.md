@@ -11,7 +11,7 @@ references:
 
 ## What it is
 
-The operator-dashboard HTTP-route backplane exposed by rimsky-control-api: `/observability/*`, `/events`, `/frames`, `/nodes/{instance}/{type}`, `/dispatches`. Routes mounted via `go-chi/chi`. Reads rimsky's own runtime state (frames, nodes, dispatches, events) and serves JSON to dashboards and operator tooling.
+The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches. Reads rimsky's own runtime state (frames, nodes, dispatches, events) and serves JSON to dashboards and operator tooling.
 
 ## Purpose
 
@@ -19,13 +19,13 @@ Operators (and dashboards built on top of rimsky) need to see what's running, wh
 
 ## Boundaries
 
-Owns: the route definitions, the per-route handlers, the JSON marshalling, the `inTx`-per-handler discipline. Does NOT own: per-service executor/store observability protocols (see `observability`), audit-log writes (see `event-log`), control-plane mutation endpoints (see `control-api`). Adjacent: `observability`, `control-api`, `event-log`, `frame`, `node`.
+Owns: the read-route definitions, the per-route handlers, the JSON marshalling, the per-handler short-transaction discipline. Does NOT own: per-service executor/store observability protocols (see `observability`), audit-log writes (see `event-log`), control-plane mutation endpoints (see `control-api`). Adjacent: `observability`, `control-api`, `event-log`, `frame`, `node`.
 
 ## Invariants
 
-- All cascade-graph HTTP handlers run inside a short fresh transaction (`inTx`).
+- All cascade-graph HTTP handlers run inside a short fresh transaction.
 - Read-only: no handler in this surface mutates state.
-- Routes are mounted at bare paths (no `/v1/` prefix), matching the parent `control-api` versioning discipline.
+- Routes are mounted at bare, unversioned paths, matching the parent `control-api` versioning discipline.
 
 ## Aliases and historical names
 
@@ -34,3 +34,7 @@ The HTTP surface was previously documented inside `observability`; promoted to i
 ## Open within this concept
 
 (no live tensions.)
+
+## Notes
+
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

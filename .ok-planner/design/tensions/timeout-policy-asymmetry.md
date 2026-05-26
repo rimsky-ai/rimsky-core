@@ -24,9 +24,9 @@ An operator who learns "rimsky doesn't kill on timeout" from the frame surface i
 
 ## Resolution candidates (do NOT pick)
 
-- Document the asymmetry in a single "timeout philosophy" section in `docs/concepts/operational-health.md`.
-- Unify both as advisory + an optional destructive-mode flag.
-- Unify both as destructive with explicit overrides per template.
+- Surface the deliberate asymmetry — frame-timeout observes, park-timeout kills — in a single "timeout philosophy" statement spanning the frame and parked-state concept definitions, so an operator does not generalize one timeout's behavior to the other (see `concept:frame`, `concept:parked-state`).
+- Unify both timeouts as advisory by default, with an optional destructive mode, so the two disciplines share one policy shape.
+- Unify both timeouts as destructive by default, with explicit per-template overrides, so the two disciplines share one policy shape.
 
 ## Evidence
 

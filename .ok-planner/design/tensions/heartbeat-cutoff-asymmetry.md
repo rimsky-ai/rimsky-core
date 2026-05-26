@@ -4,7 +4,7 @@ category: inconsistent
 status: open
 affects:
   - orphan-reaper
-  - worker-request
+  - node-run
   - claim-handle
 ---
 

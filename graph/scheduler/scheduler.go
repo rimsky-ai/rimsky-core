@@ -127,7 +127,7 @@ type Config struct {
 	// (excluding committed-durable rows — the asset surface). Zero /
 	// unset trailing → sweep disabled.
 	//
-	// @concept: retention
+	// @concept: claim-lifetime
 	// @concept: claim-handle
 	Retention runtime.RetentionConfig
 }

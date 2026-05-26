@@ -21,8 +21,8 @@ A misconfigured deployment fails silently: the supervisor accepts dispatches, th
 
 ## Resolution candidates (do NOT pick)
 
-- Make `callback.advertise_host` required (no default); fail fast at startup if missing.
-- Auto-derive from environment (`POD_IP`, `HOSTNAME`).
+- Require the advertised-callback-host setting (no default) and fail fast at startup if it is missing.
+- Auto-derive the advertised host from the deployment environment.
 - Add a startup self-probe that POSTs to its own advertised URL and warns if unreachable.
 
 ## Evidence

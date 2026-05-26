@@ -3,7 +3,7 @@ tension: state-count-drift
 category: inconsistent
 status: open
 affects:
-  - node-state
+  - node-run
   - parked-state
 ---
 
@@ -25,9 +25,9 @@ A reader counting from one surface gets a stale picture: they may build mental m
 
 ## Resolution candidates (do NOT pick)
 
-- Reconcile every prose to "5 states" with `parked` listed inline.
-- Reconcile to "4 base + 1 hold state (`parked`)" and explain the distinction.
-- Add a single authoritative table in `docs/concepts/node-state.md` that prose references.
+- Reconcile every surface to a single count of five states with `parked` listed inline.
+- Reconcile to "4 base states + 1 hold state (`parked`)" and explain the base-vs-hold distinction (see `concept:parked-state`).
+- Establish the node-run concept's definition as the single authoritative state enumeration that all other prose references, so the count cannot drift across surfaces (see `concept:node-run`).
 
 ## Evidence
 

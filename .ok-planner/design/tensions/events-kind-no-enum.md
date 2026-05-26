@@ -20,9 +20,9 @@ Observability blind spots accumulate silently. A future "kind catalog" tool can'
 
 ## Resolution candidates (do NOT pick)
 
-- Add a CHECK constraint enumerating valid kinds.
-- Promote `kind` to a foreign key into a `rimsky_event_kinds` registry table.
-- Lint at write time using `events.proto`'s defined kinds as the registry.
+- Constrain the event-kind field to an enumerated set at the persistence layer, so an unrecognized kind is rejected at write time (see `concept:event-log`).
+- Back the kind field with a registry of valid kinds and reference it from each event row, making the kind catalog authoritative and enforced.
+- Validate the kind against the wire-protocol-declared kinds at write time, treating the protocol's defined payload shapes as the registry.
 
 ## Evidence
 

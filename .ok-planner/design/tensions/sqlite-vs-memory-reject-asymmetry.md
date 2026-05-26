@@ -24,9 +24,9 @@ An operator deploying the unified image with replicas > 1 silently splits state 
 
 ## Resolution candidates (do NOT pick)
 
-- Add the symmetric reject gate: if `driver: sqlite` and `RIMSKY_PROCESS_ROLE != unified`, reject at startup.
-- Make sqlite + replicas > 1 a deployment-time check (`deploy/rimsky-all.yml`).
-- Default the unified image to postgres if `REPLICAS > 1`.
+- Add a symmetric startup gate that rejects the SQLite driver outside the unified single-process role.
+- Add a deployment-time check that rejects SQLite under multiple replicas.
+- Default the unified image to Postgres when scaled beyond one replica.
 
 ## Evidence
 

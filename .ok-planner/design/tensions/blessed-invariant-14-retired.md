@@ -4,7 +4,6 @@ category: vestigial
 status: open
 affects:
   - claim-handle
-  - held-claim
 ---
 
 # `@blessed-invariant 14` is retired post-v3 but the number remains in the list
@@ -23,7 +22,7 @@ A grep for `@blessed-invariant 14` should return zero hits (or only the CLAUDE.m
 
 - Grep-audit for `@blessed-invariant 14` references and remove any stale citations.
 - Renumber the invariants (would break every external reference to specific numbers).
-- Annotate §14 in CLAUDE.md as "explicitly retired; do not reuse the number."
+- Annotate the retired invariant slot as "explicitly retired; do not reuse the number."
 
 ## Evidence
 

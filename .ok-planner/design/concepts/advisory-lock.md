@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-Four advisory-lock primitives on `persistence.AdvisoryLocker` (`foundation/persistence/driver.go:53-82`): `TrySchedulerTick`, `AcquireMigrationLock`, `TakeNamedLockInTx`, `TakeScopeLockInTx`. Postgres uses `pg_advisory_*`; SQLite degrades to `sync.Mutex` / no-op.
+Four advisory-lock primitives on the persistence-layer advisory-locker interface: scheduler-tick, migration, per-name (in-tx), and per-scope (in-tx). Postgres uses native session/transaction advisory locks; SQLite degrades to an in-process mutex / no-op.
 
 ## Purpose
 
@@ -20,15 +20,15 @@ Cross-process coordination through Postgres (or `sync.Mutex` in single-process d
 
 ## Boundaries
 
-Owns: the four primitives, the two pinned long-lived keys (`SCHEDULER_TICK_KEY`, `advisoryMigrationLockKey`), the session-vs-transaction scope difference. Does NOT own: the conflict matrix (`ModeCoexists`), heartbeat cutoffs, the claim-handle ledger. Adjacent: `schedule` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
+Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and migration), the session-vs-transaction scope difference. Does NOT own: the conflict matrix that decides which lock modes coexist, heartbeat cutoffs, the claim-handle ledger. Adjacent: `sensor` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
 
 ## Invariants
 
-- Scheduler tick uses `pg_try_advisory_lock(SCHEDULER_TICK_KEY)` (Postgres) or `sync.Mutex` (SQLite) (`@blessed-invariant 7`).
-- Migration uses session-level `pg_advisory_lock` for the duration of the batch (`@blessed-invariant 8`).
-- Per-name and per-scope advisory locks are transaction-scoped (`pg_advisory_xact_lock`), released at COMMIT/ROLLBACK.
-- All multi-lock acquisitions walk `(lock_kind, sort_key)` deterministic order (`@blessed-invariant 3`).
-- Two pinned int64 keys are documented as "never reuse" in code (`advisory_locker.go:20-28`).
+- Scheduler tick uses a non-blocking try-acquire on the pinned tick key (Postgres) or an in-process mutex (SQLite) (`@blessed-invariant 7`).
+- Migration uses a session-level advisory lock held for the duration of the batch (`@blessed-invariant 8`).
+- Per-name and per-scope advisory locks are transaction-scoped, released at COMMIT/ROLLBACK.
+- All multi-lock acquisitions walk a deterministic order keyed by lock kind then sort key (`@blessed-invariant 3`).
+- Two pinned int64 keys are documented as "never reuse" at the definition site.
 
 ## Aliases and historical names
 
@@ -36,5 +36,9 @@ None live.
 
 ## Open within this concept
 
-- SQLite advisory-lock no-op semantics under multi-host break the cross-process exclusion silently — adjacent to `tensions/sqlite-vs-memory-reject-asymmetry.md`.
+- SQLite advisory-lock no-op semantics under multi-host break the cross-process exclusion silently — adjacent to `tension:sqlite-vs-memory-reject-asymmetry`.
+
+## Notes
+
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 

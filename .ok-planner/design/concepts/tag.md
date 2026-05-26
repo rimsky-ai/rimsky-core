@@ -12,7 +12,7 @@ references:
 
 ## What it is
 
-A tag is a movable string alias pointing at a `template_hash`. Stored in `rimsky_template_tags` (TEXT tag-name → template_hash). Tags can be moved by operators (or by `rimsky-cli compose`) without changing template identity.
+A tag is a movable string alias pointing at a `template_hash`. Persisted as a tag-name → template-hash mapping record. Tags can be moved by operators (or by the CLI's `compose` flow) without changing template identity.
 
 ## Purpose
 
@@ -20,7 +20,7 @@ Templates are immutable (content-addressed). Tags are how operators say "the cur
 
 ## Boundaries
 
-Owns: name → hash mapping, lifecycle event fan-out (tags arrive on `OnTemplateDeployed`). Does NOT own: the underlying spec (see `template`), instance routing (instances bind to hashes, not tags). Adjacent: `template`, `lifecycle-subscriber`, `rimsky-cli`.
+Owns: name → hash mapping, lifecycle event fan-out (tags arrive on the template-deployed lifecycle event). Does NOT own: the underlying spec (see `concept:template`), instance routing (instances bind to hashes, not tags). Adjacent: `concept:template`, `concept:lifecycle-subscriber`, `concept:rimsky`.
 
 ## Invariants
 
@@ -33,5 +33,9 @@ Owns: name → hash mapping, lifecycle event fan-out (tags arrive on `OnTemplate
 
 ## Open within this concept
 
-- `compose:<project>:<...>` prefix reservation is enforced client-side only by `rimsky-cli`; the server accepts any tag string — see `tensions/compose-prefix-client-side.md`.
+- `compose:<project>:<...>` prefix reservation is enforced client-side only by the CLI (see `concept:rimsky`); the server accepts any tag string — see `tension:compose-prefix-client-side`.
+
+## Notes
+
+2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 

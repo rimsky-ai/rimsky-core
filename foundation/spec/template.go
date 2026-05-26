@@ -252,6 +252,8 @@ const (
 // Data is the opaque-to-rimsky producer-targeted bytes (the `data:`
 // block on the claim in YAML). Per @blessed-invariant 20 rimsky
 // forwards verbatim to the producer; never inspects.
+//
+// @concept: claim
 type NodeStoreRef struct {
 	Name     string          `yaml:"name" json:"name"`
 	Selector string          `yaml:"selector" json:"selector"`

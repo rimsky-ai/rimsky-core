@@ -14,7 +14,7 @@ references:
 
 ## What it is
 
-An executor is an out-of-process service that implements the gRPC `proto:executor.proto::Executor.Execute` server-streaming RPC plus optional `proto:executor_observability.proto::ExecutorObservability`. Bundled reference impls: `pkg:github.com/fallguyconsulting/rimsky-services/executors/http-node` (Go), `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent` (TypeScript), `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-http` (Go), `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-shape-checks` (Go); the in-rimsky `pkg:executors/stub` (Go) test-double carve-out stays for conformance + scenario harness use. Receives one `ExecuteRequest`, streams zero-or-more `Heartbeat`/`NamedEvent`, and exactly one `StreamClose` event carrying an outcome `oneof` (`Success | Error | Park | AwaitAsyncCallback`). `Park` carries an inner `ParkReason ∈ {AWAIT_CALLBACK, SNOOZE}`; the two-value taxonomy is closed (`concept:parked-state`).
+An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol. Production-side reference implementations (an HTTP-node executor, an LLM-agent executor, and two verifier executors) live on the consumption side, outside the platform. A stub test-double executor stays in-rimsky for conformance + scenario harness use. The executor receives one execute request, streams zero-or-more heartbeat / named-event messages, and exactly one stream-close event carrying one of four outcome variants (success, error, park, await-async-callback). The park outcome carries an inner park reason from the closed two-value set `AWAIT_CALLBACK | SNOOZE` (`concept:parked-state`).
 
 ## Purpose
 
@@ -22,31 +22,32 @@ Executors are where actual work happens. Out-of-process gives language-portabili
 
 ## Boundaries
 
-Owns: the per-dispatch work, the stream-close outcome vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`), operator-decided retry/pass/give_up on Error (see `error-policy`). Adjacent: `attribute`, `named-event`, `parked-state`, `error-policy`, `observability`, `terminal-resolution`, `service`.
+Owns: the per-dispatch work, the stream-close outcome vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`), operator-decided retry/pass/give_up on the error outcome (see `error-policy`). Adjacent: `attribute`, `named-event`, `parked-state`, `error-policy`, `observability`, `terminal-resolution`, `service`.
 
-The bundled SQL-based store `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres` registers this protocol alongside `concept:claim-producer`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Future SQL-substrate stores may adopt the same pattern.
+The bundled SQL-based reference store registers this protocol alongside `concept:claim-producer`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Future SQL-substrate stores may adopt the same pattern.
 
 ## Invariants
 
-- Exactly one `StreamClose` closes the stream; the executor MUST close the stream immediately after.
-- `AwaitAsyncCallback` switches to expecting POST to `${callback_url}/v1/callback/{async_ack_id}` with body keyed `type` (not `kind`) — chi route enforced.
-- `Heartbeat` events refresh `col:rimsky_node_runs.last_heartbeat_at`; cadence is executor-defined.
-- `userdata_schema` reported via `ExecutorObservability.Capabilities` is the only place rimsky reads userdata-adjacent metadata (schema-only, not content).
-- `declared_events` reported via observability is the source of truth for `on_event` template validation.
+- Exactly one stream-close event closes the stream; the executor MUST close the stream immediately after.
+- The await-async-callback outcome switches to expecting an async-callback POST keyed on the assigned ack id, with the body keyed `type` (not `kind`) — enforced by the supervisor's callback route.
+- Heartbeat events refresh the node-run's last-heartbeat timestamp; cadence is executor-defined.
+- The userdata schema reported via the observability capabilities call is the only place rimsky reads userdata-adjacent metadata (schema-only, not content).
+- The declared-events list reported via observability is the source of truth for subscription template validation.
 
 ## Aliases and historical names
 
-Pre-`spec:2026-05-12-nomenclature-resolution` Group E.1, the proto service name was `NodeExecutor`; the rename drops the `Node` prefix. The operator/binary vocabulary always used "executor" so no operator-visible churn. The pre-E.2 wire shape exposed per-terminal messages (`Complete | Blocked | Errored | AsyncAccepted | ParkRequested`); post-E.2 the wire shape is `StreamClose{outcome: Success | Error | Snooze | AwaitAsyncCallback}` with the historical `Blocked` collapsed into `Error{error_class: "executor_blocked"}`.
+Pre-`spec:2026-05-12-nomenclature-resolution` Group E.1, the proto service carried a node- prefix on the executor name; the rename drops it. The operator/binary vocabulary always used "executor" so no operator-visible churn. The pre-E.2 wire shape exposed per-terminal messages (complete, blocked, errored, async-accepted, park-requested); post-E.2 the wire shape is a single stream-close event carrying one of the outcome variants (success, error, park, await-async-callback) with the historical blocked terminal collapsed into an error outcome bearing the `executor_blocked` error class.
 
 ## Open within this concept
 
-- Two distinct callback hostnames (bind vs advertise) — see `tensions/callback-hostname-split.md`.
+- Two distinct callback hostnames (bind vs advertise) — see `tension:callback-hostname-split`.
 
 ## Notes
 
-- Proto service renamed `NodeExecutor` → `Executor` per `spec:2026-05-12-nomenclature-resolution` Group E.1. Wire-event shape rewritten to channel-mechanics (`StreamClose` + outcome oneof) per Group E.2; `Blocked` collapsed into `Error{error_class}`; `ParkRequested` renamed `Snooze` (the state-machine value `'parked'` is unchanged). Capabilities RPC renamed `GetCapabilities` → `Capabilities` per Group E.11. Resolves `tension:_resolved/terminal-event-overloaded` and `tension:_resolved/async-callback-body-key`.
+- Proto service renamed to drop its node- prefix per `spec:2026-05-12-nomenclature-resolution` Group E.1. Wire-event shape rewritten to channel-mechanics (a single stream-close event + an outcome variant) per Group E.2; the blocked terminal collapsed into an error outcome bearing an error-class field; the park-requested terminal renamed to the park outcome (the state-machine value `'parked'` is unchanged). The capabilities query was renamed for uniformity per Group E.11. Resolves `tension:_resolved/terminal-event-overloaded` and `tension:_resolved/async-callback-body-key`.
 
-- 2026-05-14: `Park.reason` typed as `ParkReason` enum on the wire; new `reason_note` field carries human annotation. The Notes section already references the prior Snooze→Park rename; this entry sits alongside it. Per spec Piece 2 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
-- 2026-05-19 — `stores/postgres/` extends to the executor role per spec 2026-05-19-multi-instance-template-ergonomics-design.
-- 2026-05-23 — Per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`: executor terminal vocabulary is the 4-variant `StreamClose.outcome` (`Success | Error | Park | AwaitAsyncCallback`); operator-decided retry is via the operator's `error_types:` chain on `Error`, not an executor wire surface. Executors handle internal retry silently or via `Park{reason: SNOOZE}`. The pre-existing Notes entry mis-listing `Snooze` as the third oneof variant has been corrected above to `Park`.
-- 2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/fallguyconsulting/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.
+- 2026-05-14: the park outcome's reason is typed as the closed park-reason enum on the wire; a new reason-note field carries human annotation. The Notes section already references the prior snooze→park rename; this entry sits alongside it. Per `spec:2026-05-14-subscription-cascade-and-quality-of-life` Piece 2.
+- 2026-05-19 — the bundled SQL-based reference store extends to the executor role per `spec:2026-05-19-multi-instance-template-ergonomics`.
+- 2026-05-23 — Per `spec:2026-05-23-signal-taxonomy-and-policy-decoupling`: executor terminal vocabulary is the 4-variant outcome (success, error, park, await-async-callback); operator-decided retry is via the operator's `error_types:` chain over the error outcome, not an executor wire surface. Executors handle internal retry silently or via a park outcome with reason `SNOOZE`. The pre-existing Notes entry mis-listing snooze as the third outcome variant has been corrected above to park.
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-24: production-side bundled executor reference implementations (the LLM-agent executor, the HTTP-node executor, the two verifiers) moved to the consumption side, outside the platform. The stub executor stays in rimsky as test infrastructure. The cross-reference to the bundled SQL store was retargeted alongside. See `spec:2026-05-24-repo-reorganization` phase P3.

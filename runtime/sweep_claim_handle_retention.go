@@ -32,7 +32,7 @@
 // @blessed-invariant 22: held-durable claim handles persist across
 // instance dispatches.
 // @concept: claim-handle
-// @concept: retention
+// @concept: claim-lifetime
 
 package runtime
 

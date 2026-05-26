@@ -220,7 +220,7 @@ func (s *claimHandlesImpl) ListChildClaimHandles(ctx context.Context, parentID s
 // @blessed-invariant 4 (post-refactor): non-active-row deletions are
 // guarded by absence + the row-discovery query filter.
 // @concept: claim-handle
-// @concept: retention
+// @concept: claim-lifetime
 func (s *claimHandlesImpl) DeleteResolvedOlderThan(
 	ctx context.Context, cutoff time.Time,
 ) (int, error) {

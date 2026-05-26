@@ -3,7 +3,7 @@ tension: force-fire-204-hides-asynchrony
 category: unclear
 status: open
 affects:
-  - schedule
+  - sensor
   - control-api
 ---
 
@@ -28,9 +28,9 @@ The design choice (row-write rather than direct invalidate dispatch) is correct 
 
 ## Resolution candidates (do NOT pick)
 
-- Return 202 Accepted (with a `Retry-After` or polling hint) instead of 204.
-- Document the asynchrony inline in `control/controlapi/admin_force_fire.go` and at `docs/concepts/operational-health.md`.
-- Synchronously wait for the next tick before returning (rejected by design — would block the request thread on tick latency).
+- Have the force-fire endpoint answer with an "accepted / queued for next tick" status (with a polling hint) rather than a "done" status, so the response conveys the deferred-fire semantics honestly (see `concept:control-api`).
+- State plainly in the sensor concept's definition that force-fire is a row-write whose actual fire lands on the next scheduler tick, so operators and test authors expect the tick-bounded latency (see `concept:sensor`, `concept:observability`).
+- Synchronously wait for the next tick before responding — rejected by design, since it would block the request on tick latency and undermine the advisory-lock-guarded per-tick orchestration.
 
 ## Evidence
 

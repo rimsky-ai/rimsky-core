@@ -25,9 +25,9 @@ The competing pull is that denormalizing creates a "two sources of truth" proble
 
 ## Resolution candidates (do NOT pick)
 
-- Denormalize `frame_resolution_mode` and `frame_timeout_ms` onto `rimsky_instances` at instance create-time; drop the JOIN.
-- Cache the per-instance result for the process lifetime (no cache invalidation needed since the value is immutable).
-- Document the join's "per-instance constant" character inline at `LookupFrameResolutionMode` and explain why the join is acceptable.
+- Denormalize the frame-resolution and frame-timeout values onto the instance record at instance-create time, so each enqueue reads a per-instance constant directly instead of recomputing it through a template join (see `concept:instance`, `concept:frame`).
+- Cache the per-instance resolution result for the process lifetime, relying on the values being immutable for the instance so no invalidation is needed.
+- Keep the join but capture in the frame concept's boundaries why these per-instance constants are sourced from the template rather than the instance, so the spec-resident vs instance-resident boundary is intentional rather than incidental.
 
 ## Evidence
 

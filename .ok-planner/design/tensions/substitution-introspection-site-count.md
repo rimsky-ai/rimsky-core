@@ -3,7 +3,7 @@ tension: substitution-introspection-site-count
 category: inconsistent
 status: open
 affects:
-  - opacity
+  - inertness
   - attribute
 ---
 
@@ -25,7 +25,7 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 ## Resolution candidates (do NOT pick)
 
-- Update the substitution.go docstring to lead with "three sanctioned sites" rather than "single."
+- Update the substitution module's docstring to lead with "three sanctioned sites" rather than "single."
 - Move all three sites under a uniformly-annotated helper package.
 - Add a per-site annotation block listing all three for cross-reference.
 

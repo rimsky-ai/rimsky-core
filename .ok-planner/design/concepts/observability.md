@@ -10,7 +10,7 @@ references:
 
 ## What it is
 
-The service-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols per service (`ExecutorObservability`, `ClaimProducerObservability`) exposing `Capabilities` / `GetTrace` / `StreamTrace`. The handshake (`control/observability/handshake.go`) probes each declared service in parallel at rimsky startup, populating the `discovery-cache`. Also the canonical site for the per-service `userdata_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
+The service-facing optional observability protocols and the startup handshake that probes them. Two optional gRPC protocols per service — the executor-observability protocol and the claim-producer-observability protocol — each exposing a capabilities query plus single-trace fetch and trace-stream methods. The handshake probes each declared service in parallel at rimsky startup, populating the discovery cache (see `concept:discovery-cache`). Also the canonical site for the per-service `userdata_schema` declaration (read from the handshake, applied at template registration and at dispatch post-merge/post-substitution).
 
 ## Purpose
 
@@ -22,14 +22,18 @@ Owns: the optional service protocols, the handshake mechanism, the refresh-loop 
 
 ## Invariants
 
-- The handshake is best-effort: unreachable services recorded as `Unreachable` in `discovery-cache`; never aborts startup.
-- The Capabilities RPC is named `Capabilities` uniformly across `ExecutorObservability` and `ClaimProducerObservability` (per `spec:2026-05-12-nomenclature-resolution` Group E.11 / B.4); pre-2026-05-12 the executor side was `GetCapabilities` and the store side was `Capabilities`.
+- The handshake is best-effort: unreachable services are recorded with an unreachable status in `discovery-cache`; never aborts startup.
+- The capabilities query is named uniformly across both observability protocols (per `spec:2026-05-12-nomenclature-resolution` Group E.11 / B.4); pre-2026-05-12 the executor side and the store side used divergent names.
 - Per-service `userdata_schema` validates at template registration AND at dispatch post-merge/post-substitution.
 
 ## Aliases and historical names
 
 Pre-`2026-05-11-design-log-convergence`, this concept also covered the cascade-graph HTTP routes and the discovery cache; those are now `cascade-graph` and `discovery-cache` respectively.
 
-## Open within this concept
+## Resolved within this concept
 
-- `userdata_schema` placement on the observability protocol (read by rimsky to validate userdata bytes at template-registration and dispatch time) sits in tension with `@blessed-invariant 11` opacity — see `tensions/userdata-schema-as-opacity-exception.md`.
+- The `userdata_schema` placement on the observability protocol (read by rimsky to validate userdata bytes at template-registration and dispatch time), which sat in tension with `@blessed-invariant 11` opacity, was resolved — see `tension:_resolved/userdata-schema-as-opacity-exception`.
+
+## Notes
+
+2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

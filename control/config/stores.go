@@ -56,6 +56,9 @@ const capabilitiesHandshakeTimeout = 30 * time.Second
 // referenced from there. Only the three role-anchor protocols specific to
 // rimsky.yml's three top-level blocks (claim_producers, executors,
 // publishers) are declared here.
+//
+// @concept: service (a service is an orchestrated out-of-process binary that
+// declares its protocol membership; this is the protocol-role vocabulary)
 const (
 	ProtocolClaimProducer = "claim_producer"
 	ProtocolExecutor      = "executor"
@@ -185,6 +188,8 @@ func (c ExecutorsConfig) ExecutorDeclared(name string) bool {
 
 // RimskyConfig is the parsed rimsky.yml: the unified deployment-shape
 // config loaded by all four rimsky binaries from $RIMSKY_CONFIG.
+//
+// @concept: rimsky-yml
 type RimskyConfig struct {
 	Persistence persistence.Config
 	// Blob is the spill-config triple parsed from persistence.blob.

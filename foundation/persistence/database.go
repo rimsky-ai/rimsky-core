@@ -20,6 +20,8 @@ import (
 // package tree may depend on driver-specific libraries (pgx, modernc).
 // The adapter selector string (Config.Driver = "postgres"/"sqlite") is
 // distinct from this interface name.
+//
+// @concept: persistence-database
 type Database interface {
 	Queue() Queue
 	Tables() Tables

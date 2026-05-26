@@ -18,6 +18,8 @@ import "encoding/json"
 // GraphSpec is one graph in a template. Per spec §Sub-graphs, the
 // reserved name `main` is the top-level graph; all other graphs are
 // sub-graphs that MUST declare `entry:` and `exit:` aliases.
+//
+// @concept: graph
 type GraphSpec struct {
 	Name  string            `yaml:"name" json:"name"`
 	Entry string            `yaml:"entry,omitempty" json:"entry,omitempty"`

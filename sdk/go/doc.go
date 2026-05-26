@@ -12,4 +12,6 @@
 // Does NOT contain calling-side wire code: rimsky-internal infrastructure
 // (supervisor, terminal-resolution, discovery-cache) stays in rimsky's
 // runtime/peer/. See concept:sdk in .ok-planner/design/concepts/sdk.md.
+//
+// @concept: sdk
 package sdk

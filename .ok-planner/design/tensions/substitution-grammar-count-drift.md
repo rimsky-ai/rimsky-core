@@ -20,9 +20,9 @@ Template authors writing `{{nodes.emitter.event.name.path}}` need to know whethe
 
 ## Resolution candidates (do NOT pick)
 
-- Tabulate all six kinds in one canonical place (`docs/concepts/attributes.md` substitution section).
-- Move the sixth kind into the inline enumeration at `graph/attribute/substitution.go`.
-- Add a substitution-grammar-listing test that pins the count.
+- Enumerate all six substitution source kinds in one canonical place — the attribute concept's definition — so the grammar count cannot drift across surfaces (see `concept:attribute`).
+- Fold the event-lookup source kind into the single canonical grammar enumeration rather than declaring it separately, so the implementation lists all six kinds together (see `concept:named-event`).
+- Add a guard that pins the substitution-grammar count, so an added or removed source kind cannot silently desynchronize the enumeration from the documented grammar.
 
 ## Evidence
 

@@ -11,7 +11,7 @@
 //
 //	@concept: fan-out
 //	@concept: claim-tree
-//	@concept: run-tree
+//	@concept: run-scope
 //
 // Architectural shape:
 //
@@ -357,7 +357,7 @@ func FanOutAggregationPolicy(def *node.TemplateNodeDef) spec.AggregationPolicy {
 // holds the parent claim until children settle.
 //
 //	@concept: fan-out
-//	@concept: run-tree
+//	@concept: run-scope
 //	@concept: claim-tree
 func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition) error {
 	if acq == nil || acq.NodeDef == nil || acq.NodeDef.FanOut == nil {

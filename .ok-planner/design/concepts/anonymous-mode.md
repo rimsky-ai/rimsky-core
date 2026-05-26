@@ -11,38 +11,39 @@ references:
 
 ## What it is
 
-A data-derived deployment state in which `table:rimsky_api_keys` has zero active rows. While in this state, every request — including requests with no `Authorization` header — is admitted as a synthetic admin identity (`key_id: null`, `key_name: "anonymous"`, permissions `[{ "action": "*" }]`). The mode flips automatically the moment the first key is minted.
+A data-derived deployment state in which the API-key ledger has zero active rows. While in this state, every request — including requests with no `Authorization` header — is admitted as a synthetic admin identity (null key id, name `"anonymous"`, a wildcard `*` permission). The mode flips automatically the moment the first key is minted.
 
-Implemented at `code:control/controlapi/auth_middleware.go::AuthState.IsAnonymousMode` (the predicate + TTL cache) + `code:foundation/auth/identity.go::AnonymousIdentity` (the synthetic identity).
+The control-api auth middleware computes the predicate (with a short TTL cache) and substitutes the synthetic anonymous identity when the predicate holds.
 
 ## Purpose
 
-The bootstrap problem: a fresh rimsky deployment has no keys, so it can't authenticate anyone, so `POST /auth/keys` would be unreachable. Anonymous mode is the floor that lets the first key get minted via the same endpoint operators use thereafter, without a separate `psql`-only bootstrap path.
+The bootstrap problem: a fresh rimsky deployment has no keys, so it can't authenticate anyone, so the key-mint endpoint would be unreachable. Anonymous mode is the floor that lets the first key get minted via the same endpoint operators use thereafter, without a separate database-only bootstrap path.
 
 ## Boundaries
 
-Owns: the active-status predicate on `table:rimsky_api_keys`, the synthetic-identity helper, the startup WARN banner. Does NOT own: any persistent config bit (the mode is computed; there is no `rimsky.yml` knob). Adjacent: `concept:api-key`, `concept:rimsky-yml`.
+Owns: the active-key-count predicate over the API-key ledger, the synthetic-identity helper, the startup WARN banner. Does NOT own: any persistent config bit (the mode is computed; there is no config knob). Adjacent: `concept:api-key`, `concept:rimsky-yml`.
 
 ## Invariants
 
-- **Data-derived, not config-derived.** The mode is computed from the row count of active keys at request time. There is no `rimsky.yml` knob. Operators cannot disable anonymous mode without provisioning a key; they cannot stay in anonymous mode after a key exists without explicitly revoking it.
-- **Loud startup banner.** Control-api logs at WARN once at startup and every 5 minutes thereafter while in anonymous mode: `"ANONYMOUS MODE: no API keys provisioned; all requests treated as admin. Run 'rimsky auth init' to enable authentication."`. The banner stops once any active key exists. Implemented at `code:control/controlapi/auth_banner.go::WatchAnonymousMode`.
-- **Predicate caching.** Each control-api replica caches the result for 1s (anonCacheTTL). The cache is invalidated on every mutation (create / revoke / rotate / sweep) so the same replica's next request sees the fresh value immediately; cross-replica freshness is bounded by the TTL.
-- **Revoke-the-last-key guard.** `DELETE /auth/keys/{name-or-id}` refuses if the operation would leave zero active keys unless `?force_leave_anonymous=true` is set. Operators returning the deployment to anonymous mode must do so explicitly.
+- **Data-derived, not config-derived.** The mode is computed from the count of active keys at request time. There is no config knob. Operators cannot disable anonymous mode without provisioning a key; they cannot stay in anonymous mode after a key exists without explicitly revoking it.
+- **Loud startup banner.** Control-api logs at WARN once at startup and every 5 minutes thereafter while in anonymous mode, telling operators that no keys are provisioned, all requests are treated as admin, and that running the auth-init command enables authentication. The banner stops once any active key exists.
+- **Predicate caching.** Each control-api replica caches the result for one second. The cache is invalidated on every mutation (create / revoke / rotate / sweep) so the same replica's next request sees the fresh value immediately; cross-replica freshness is bounded by the TTL.
+- **Revoke-the-last-key guard.** The key-revoke endpoint refuses if the operation would leave zero active keys unless an explicit force-leave-anonymous flag is supplied. Operators returning the deployment to anonymous mode must do so explicitly.
 
 ## Bootstrap sequence
 
-1. Operator deploys rimsky; migration runs; `rimsky_api_keys` is empty.
+1. Operator deploys rimsky; migration runs; the API-key ledger is empty.
 2. Control-api starts; predicate is true; banner WARN fires.
-3. Operator runs `rimsky auth init`. CLI POSTs to `/auth/keys` with the bundled `admin` role expansion; no Bearer token.
+3. Operator runs the auth-init command. The CLI posts to the key-mint endpoint with the bundled `admin` role expansion; no bearer token.
 4. Server admits the request via the synthetic admin identity; mints the key; returns the plaintext exactly once.
-5. Operator captures the plaintext (env var or `--key` flag) for subsequent commands.
-6. Anonymous mode ends — subsequent unauthenticated requests get 401.
+5. Operator captures the plaintext (env var or flag) for subsequent commands.
+6. Anonymous mode ends — subsequent unauthenticated requests are rejected as unauthorized.
 
 ## Break-glass: lost admin key
 
-If all keys are lost: the operator opens `psql` and either deletes the rows (`DELETE FROM rimsky_api_keys`) or marks them revoked (`UPDATE rimsky_api_keys SET revoked_at = now() WHERE revoked_at IS NULL`). Anonymous mode resumes; `rimsky auth init` works again. Documented as operator-recoverable; no CLI verb required (by definition the operator has DB access).
+If all keys are lost: the operator connects to the database directly and either deletes the key rows or marks them all revoked. With no active key remaining, anonymous mode resumes and the auth-init command works again. Documented as operator-recoverable; no CLI verb required (by definition the operator has DB access).
 
 ## Notes
 
-- [2026-05-15] Concept introduced by spec `.ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md` ("Implicit anonymous mode").
+- [2026-05-15] Concept introduced by spec:2026-05-15-control-plane-mcp-and-auth-design ("Implicit anonymous mode").
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

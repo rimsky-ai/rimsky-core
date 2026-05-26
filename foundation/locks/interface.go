@@ -65,4 +65,6 @@ import (
 // producers that don't advertise default to byte-equal comparison of
 // `rimsky_claim_handles.claim_scope_data`. Either way, two writers cannot
 // simultaneously hold the same logical claim-scope.
+//
+// @concept: claim-producer
 type ClaimProducer = claimproducer.ClaimProducer

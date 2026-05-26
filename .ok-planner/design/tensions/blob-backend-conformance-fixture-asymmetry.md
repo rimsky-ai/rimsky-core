@@ -23,9 +23,9 @@ A third-party `BlobBackend` implementer who wants to run the same checks under `
 
 ## Resolution candidates (do NOT pick)
 
-- Move the six checks into a `foundation/persistence/conformance/blob_backend.go` fixture; have `main.go` call into it; let driver tests reuse it.
-- Expose a `RunBlobBackendConformance(ctx, backend) Summary` library function paralleling `RunClaimProducerConformance`.
-- Document the deliberate inline-only decision at the top of `rimsky-blob-backend-conformance/main.go`.
+- Move the six blob-backend checks into a shared persistence-conformance fixture that both the conformance binary and the driver-internal tests consume, matching the pattern the persistence-driver fixtures already use (see `concept:conformance`).
+- Expose a blob-backend conformance run as a library function, paralleling the claim-producer conformance entry point so a third-party implementer can invoke it under `go test`.
+- Accept the inline-only arrangement as deliberate and record that decision at the blob-backend conformance binary, so the asymmetry with the other conformance suites is documented rather than incidental.
 
 ## Evidence
 

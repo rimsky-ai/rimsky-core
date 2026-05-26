@@ -3,7 +3,8 @@ tension: quality-rule-severity-string-footgun
 category: unspecified
 status: open
 affects:
-  - quality-rule
+  - validation
+  - attribute
 ---
 
 # Quality-rule severity is partitioned by exact-string equality on `"warning"` — any other value silently blocks
@@ -20,9 +21,9 @@ Two cold-read problems: (1) a reader inspecting `Spec.Severity string` cannot te
 
 ## Resolution candidates (do NOT pick)
 
-- Introduce a `shared.Severity` type with `SeverityError | SeverityWarning` constants; require `Spec.Severity` to be one of them at template registration.
-- Validate the severity string at template registration with a constant allowed-set check.
-- Document the allowed values inline at `graph/qualityrule/spec.go` and in `docs/concepts/quality-rule.md`.
+- Model quality-rule severity as a closed enumerated type (the warning/error pair) and require the configured severity to be one of its members at template registration, so an unrecognized value is rejected where it is authored.
+- Validate the severity value against a fixed allowed-set at template registration, surfacing typos at authoring time rather than at the first failing commit.
+- Document the allowed severity values as part of the quality-rule (verifier-executor) pattern, so authors know which strings are meaningful and that anything else defaults to blocking.
 
 ## Evidence
 

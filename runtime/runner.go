@@ -371,6 +371,9 @@ type AcquiredLock struct {
 // and the error; callers log and move on. Recoverable conditions
 // (executor stream failure, terminal classification) are handled inline
 // via the terminal handler.
+//
+// @concept: supervisor (this claim-and-execute cycle is the supervisor's
+// core behavior: acquisition tx, dispatch, terminal handling, auto-terminal)
 func RunNode(
 	ctx context.Context,
 	args RunArgs,
@@ -419,7 +422,7 @@ func RunNode(
 	// §Fan-out template DSL "Mechanics at dispatch" steps 3-5.
 	//
 	//	@concept: fan-out
-	//	@concept: run-tree
+	//	@concept: run-scope
 	if len(acq.SubClaims) > 0 && IsFanOutNode(acq.NodeDef) {
 		if err := dispatchFanOutChildren(ctx, args, &acq); err != nil {
 			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err

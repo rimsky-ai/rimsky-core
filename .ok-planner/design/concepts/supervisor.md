@@ -14,29 +14,29 @@ references:
 
 ## What it is
 
-One of the three rimsky runtime binaries (`cmd/rimsky-supervisor/`). Implements the acquisition transaction, dispatch, terminal handling, auto-terminal. Registers in `table:rimsky_supervisors` at startup with `accepted_executors` / `accepted_stores` / `concurrency` / `callback_host` / `callback_port`. Heartbeats are queryable timestamps on `table:rimsky_node_runs` and `table:rimsky_claim_handles`.
+One of the three rimsky runtime binaries. Implements the acquisition transaction, dispatch, terminal handling, auto-terminal. Registers itself in a persisted supervisor-registry record at startup carrying its `accepted_executors` / `accepted_stores` / `concurrency` / `callback_host` / `callback_port`. Heartbeats are queryable timestamps on the persisted node-run rows and claim-handle rows it owns.
 
 ## Purpose
 
-The supervisor is rimsky's worker side. It selects candidate work, performs the atomic acquisition transaction, calls executor `Execute`, handles terminal events, fires auto-terminal verbs. Multiple supervisors run concurrently and coordinate only through Postgres.
+The supervisor is rimsky's worker side. It selects candidate work, performs the atomic acquisition transaction, invokes the executor's execute method, handles terminal events, fires auto-terminal verbs. Multiple supervisors run concurrently and coordinate only through Postgres.
 
 ## Boundaries
 
-Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating, breakpoint checkpoint evaluation at before_dispatch and after_terminal, blocked-runner polling for resume. Does NOT own: scheduling (see `schedule`), control-plane (see `control-api`), claim-state mutation outside the tx (see `claim-producer`). Adjacent: `node-run`, `claim-handle`, `executor`, `frame`, `error-policy`, `auto-terminal`.
+Owns: the acquisition tx, the dispatch call, terminal-handler resolution, callback HTTP server, heartbeating, breakpoint checkpoint evaluation at before_dispatch and after_terminal, blocked-runner polling for resume. Does NOT own: scheduling (see `concept:sensor`), control-plane (see `concept:control-api`), claim-state mutation outside the tx (see `concept:claim-producer`). Adjacent: `concept:node-run`, `concept:claim-handle`, `concept:executor`, `concept:frame`, `concept:error-policy`, `concept:auto-terminal`.
 
 ## Invariants
 
-- All claim-handle mutations and claim releases by this supervisor carry `AND holder_supervisor_id = supervisor_id` (`@blessed-invariant 4`).
-- Verify-before-run: after the acquisition tx commits, re-read `claimed_by` and bail as `orphaned_claim_lost_race` if ownership moved (`@blessed-invariant 5`).
-- Acquisition transaction is rimsky-side atomic; `ClaimProducer.Open` runs in its own decoupled tx (`@blessed-invariant 10`).
-- `Open` fires inside the rimsky-side acquisition transaction (`@blessed-invariant 15`).
-- `accepted_executors` / `accepted_stores` filter candidate selection: `required_stores <@ :accepted_stores` (Postgres array-contained-in).
-- Two distinct callback hostnames: binds on `0.0.0.0`; advertises via `callback.advertise_host`.
+- All claim-handle mutations and claim releases by this supervisor are guarded by a predicate matching the acting supervisor's own id, so a supervisor can only mutate handles it holds (`@blessed-invariant 4`).
+- Verify-before-run: after the acquisition tx commits, re-read the claim's owner and bail as `orphaned_claim_lost_race` if ownership moved (`@blessed-invariant 5`).
+- Acquisition transaction is rimsky-side atomic; the claim-producer open verb runs in its own decoupled tx (`@blessed-invariant 10`).
+- The open verb fires inside the rimsky-side acquisition transaction (`@blessed-invariant 15`).
+- `accepted_executors` / `accepted_stores` filter candidate selection: a node-run is selectable only when its required-stores set is contained in the supervisor's accepted-stores set.
+- Two distinct callback hostnames: the listener binds on the all-interfaces address; executors dial back via a separately configured advertised host.
 - Candidate selection skips paused instances and dispatches matching pause-mode breakpoints with unresumed hits.
 
 ## Aliases and historical names
 
-The supervisor's role was once split differently pre-phase-5; the unified runner under `runtime/` is the current home.
+The supervisor's role was once split differently pre-phase-5; the unified runner is the current home.
 
 ## Open within this concept
 
@@ -44,5 +44,6 @@ The supervisor's role was once split differently pre-phase-5; the unified runner
 
 ## Notes
 
-- 2026-05-24 — Adds breakpoint checkpoint cooperation per spec 2026-05-24-instance-debugger-design. Pause-mode breakpoints block the runner until resume; notify_only breakpoints emit a hit row and continue. Pause-mode block uses polling (250ms) on rimsky_breakpoint_hits.resumed_at; no cross-process IPC bus.
+- 2026-05-24 — Adds breakpoint checkpoint cooperation per spec:2026-05-24-instance-debugger. Pause-mode breakpoints block the runner until resume; notify_only breakpoints emit a hit row and continue. Pause-mode block uses polling (250ms) on the persisted breakpoint-hit row's resume marker; no cross-process IPC bus.
+- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 

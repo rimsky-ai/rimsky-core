@@ -3,7 +3,7 @@ tension: compose-prefix-client-side
 category: inconsistent
 status: open
 affects:
-  - rimsky-cli
+  - rimsky
   - template
   - tag
   - control-api
@@ -29,9 +29,9 @@ The `rimsky-cli compose` workflow relies on the prefix being predictable to scan
 
 ## Resolution candidates (do NOT pick)
 
-- Server-side CHECK constraint or chi middleware rejecting `compose:` outside a privileged endpoint.
-- Promote the prefix to a separate `rimsky_compose_artifacts` table.
-- Document the convention more loudly with a warning that the workflow assumes single-source-of-truth.
+- Make the reservation a server-enforced invariant: the control plane rejects compose-prefixed names submitted outside the privileged compose path, so the prefix is reserved at the source of truth rather than only by the client (see `concept:control-api`, `concept:tag`).
+- Give compose-owned artifacts their own persisted namespace distinct from the general tag/instance-key space, so the prefix reservation is structural rather than conventional.
+- Accept the convention as client-side-only and document loudly that the compose workflow assumes a single producer of compose-prefixed names.
 
 ## Evidence
 

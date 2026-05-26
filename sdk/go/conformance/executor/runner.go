@@ -38,6 +38,10 @@ type RunnerOpts struct {
 // Run dials the endpoint, starts a CallbackReceiver, probes capabilities, and
 // executes every registered scenario (subject to Only/Skip filters). Returns
 // one Result per scenario.
+//
+// @concept: conformance (executor conformance entry; the conformance library
+// lives in the sdk/go peer module, invocable from the thin CLI wrappers and
+// from service authors' own Go tests)
 func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second

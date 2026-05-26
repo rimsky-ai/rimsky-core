@@ -21,9 +21,9 @@ A new operator running `rimsky-executor-conformance --endpoint http://claude-age
 
 ## Resolution candidates (do NOT pick)
 
-- Reverse the default: probe always runs unless `--allow-non-stub` is set.
-- Detect the executor name (e.g., `claude-agent`) and require the flag for known LLM-calling executors.
-- Add a documented protocol-level "stub-mode signature" in `Capabilities()` so any LLM-calling executor self-declares.
+- Reverse the default: the stub probe always runs unless the operator explicitly disables it.
+- Detect known LLM-calling executors and require the opt-in for them.
+- Add a documented protocol-level stub-mode declaration in the capabilities handshake so any LLM-calling executor self-declares.
 
 ## Evidence
 
