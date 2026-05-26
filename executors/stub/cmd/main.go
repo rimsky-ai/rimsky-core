@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"net"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/executors/stub"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/sdk/go/server"
 )
 
 func main() {
@@ -34,6 +36,8 @@ func main() {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
+	// Bind retains its host:port form so users can override via flag
+	// or env; net.Listen handles both shapes directly.
 	lis, err := net.Listen("tcp", *bind)
 	if err != nil {
 		log.Error("listen failed", "addr", *bind, "err", err)
@@ -44,19 +48,17 @@ func main() {
 	genv1.RegisterExecutorServer(srv, s)
 	stub.RegisterObservability(srv)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		log.Info("shutdown signal received")
-		srv.GracefulStop()
+		cancel()
 	}()
 
 	log.Info("executor-stub listening", "addr", *bind)
-	if err := srv.Serve(lis); err != nil {
-		log.Error("serve failed", "err", err)
-		os.Exit(1)
-	}
+	server.RunGRPC(ctx, srv, lis, "executor-stub")
 }
 
 func envOr(key, fallback string) string {

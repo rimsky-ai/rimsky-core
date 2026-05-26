@@ -14,6 +14,10 @@
 //     binary or an executor binary that opts in). Exits non-zero on
 //     any RPC error.
 //
+// The runner library lives in `pkg:sdk/go/conformance/executor`; this
+// binary is a thin CLI wrapper that parses flags, invokes the library,
+// and formats output.
+//
 // Usage:
 //
 //	rimsky-executor-conformance --endpoint localhost:9091 --transport grpc \
@@ -30,9 +34,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/conformance"
-	_ "github.com/fallguyconsulting/rimsky/conformance/scenarios" // init() registration
-	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	conformance "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor"
+	_ "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor/scenarios" // init() registration
 )
 
 func main() {
@@ -48,7 +51,6 @@ func main() {
 	callbackBind := flag.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
 	callbackHost := flag.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
 	flag.Parse()
-	obsRetentionTestSeconds = *retentionSec
 
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky-executor-conformance: --endpoint required")
@@ -58,7 +60,7 @@ func main() {
 	ctx := context.Background()
 
 	if *checkLifecycle {
-		if err := runLifecycleCheck(ctx, *endpoint, *timeout); err != nil {
+		if err := conformance.RunLifecycleCheck(ctx, *endpoint, *timeout); err != nil {
 			fmt.Fprintf(os.Stderr, "lifecycle: %v\n", err)
 			os.Exit(1)
 		}
@@ -66,7 +68,7 @@ func main() {
 		return
 	}
 
-	ep := executor.Endpoint{Transport: *transport, URL: *endpoint}
+	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint}
 
 	onlyList := splitCSV(*only)
 	skipList := splitCSV(*skip)
@@ -93,7 +95,11 @@ func main() {
 	}
 
 	if *checkObs {
-		if err := runObservabilityCheck(ctx, ep, *requireStub); err != nil {
+		err := conformance.RunObservabilityCheck(ctx, conformance.ObservabilityCheckOpts{
+			Endpoint:             ep,
+			RetentionTestSeconds: *retentionSec,
+		}, func(format string, args ...any) { fmt.Printf(format, args...) })
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
 			os.Exit(1)
 		}

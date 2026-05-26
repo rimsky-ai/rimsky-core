@@ -17,7 +17,7 @@ import (
 
 // PublisherClient is the rimsky-side surface every publisher-service
 // binding satisfies. Implementations live in
-// `runtime/remote/publisher_client.go` (the gRPC client) or in test
+// `runtime/peer/publisher_client.go` (the gRPC client) or in test
 // fixtures.
 type PublisherClient interface {
 	Name() string

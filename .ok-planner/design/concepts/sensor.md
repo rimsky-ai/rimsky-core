@@ -14,7 +14,7 @@ A sensor is a class of `concept:publisher` implementation that observes external
 
 Sensors implement the `concept:publisher` protocol — `Capabilities`, `Subscribe`, `Unsubscribe`, `ListSubscriptions` — and POST message envelopes to the generic `POST /instances/{instance_id}/messages` endpoint with `sender_kind: "publisher"` + `publisher_subscription_id` capability token.
 
-The bundled reference impls under `pkg:sensors/sensor-*/` are sensors-by-construction; they share no protocol-level surface with rimsky beyond the Publisher protocol itself.
+The bundled reference impls under `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/` are sensors-by-construction; they share no protocol-level surface with rimsky beyond the Publisher protocol itself.
 
 ## Purpose
 
@@ -40,7 +40,7 @@ Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscri
 ## Annotation sites
 
 - `code:protocols/proto/v1/publisher.proto` — protobuf surface (shared with all publishers; sensors are one class).
-- `code:sensors/sensor-cron/`, `code:sensors/sensor-http/`, `code:sensors/sensor-object-store/`, `code:sensors/sensor-webhook/` — bundled reference impls.
+- `code:github.com/fallguyconsulting/rimsky-services/sensors/sensor-cron/`, `code:github.com/fallguyconsulting/rimsky-services/sensors/sensor-http/`, `code:github.com/fallguyconsulting/rimsky-services/sensors/sensor-object-store/`, `code:github.com/fallguyconsulting/rimsky-services/sensors/sensor-webhook/` — bundled reference impls.
 - `code:cmd/rimsky-publisher-conformance/` — conformance suite.
 
 ## Notes
@@ -50,3 +50,5 @@ Introduced as a service kind by `.ok-planner/specs/2026-05-15-data-platform-exte
 The bundled `sensor-cron` replaces the retired per-node `schedule:` field — cron becomes a publisher kind, not a rimsky-core concept. Its missed-fire policy ("at most one MISSED fire per restart per publisher-subscription") preserves the freshness-over-backfill semantic of the retired scheduler-tick cron path.
 
 V1 deferred: `sensor-sql` (substrate/connection/query surface complex), `sensor-kafka` (heavy dependency).
+
+2026-05-24: bundled sensor reference impls moved to pkg:github.com/fallguyconsulting/rimsky-services. Path references updated. See spec 2026-05-24-repo-reorganization-design phase P3.

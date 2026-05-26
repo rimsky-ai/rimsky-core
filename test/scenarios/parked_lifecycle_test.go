@@ -341,11 +341,11 @@ func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
 //	template → create instance → wait-for-parked → SQL probes →
 //	re-script stub) and (b) the wall-clock resume_at deadline. The
 //	setup sequence's wall-time is dominated by testcontainer
-//	cold-start: each scenario test calls pgtest.OpenDriver which
+//	cold-start: each scenario test calls pgmigrate.OpenDriver which
 //	spins up its own postgres:14-alpine container; the harness's
 //	per-poll Docker state-query is "~1-6s under saturated parallel
 //	load; occasional 15-20s spikes" (see
-//	internal/pgtest/pgtest.go::StartFreshPostgresDSN). Under the
+//	sdk/go/testpg/testpg.go::StartFreshPostgresDSN). Under the
 //	historical 1-2s resume_at budget the sweep could fire before
 //	the rescript landed.
 //

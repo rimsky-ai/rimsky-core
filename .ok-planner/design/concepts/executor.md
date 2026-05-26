@@ -14,7 +14,7 @@ references:
 
 ## What it is
 
-An executor is an out-of-process service that implements the gRPC `proto:executor.proto::Executor.Execute` server-streaming RPC plus optional `proto:executor_observability.proto::ExecutorObservability`. Bundled reference impls: `executors/http-node` (Go), `executors/stub` (Go), `executors/claude-agent` (TypeScript). Receives one `ExecuteRequest`, streams zero-or-more `Heartbeat`/`NamedEvent`, and exactly one `StreamClose` event carrying an outcome `oneof` (`Success | Error | Park | AwaitAsyncCallback`). `Park` carries an inner `ParkReason ∈ {AWAIT_CALLBACK, SNOOZE}`; the two-value taxonomy is closed (`concept:parked-state`).
+An executor is an out-of-process service that implements the gRPC `proto:executor.proto::Executor.Execute` server-streaming RPC plus optional `proto:executor_observability.proto::ExecutorObservability`. Bundled reference impls: `pkg:github.com/fallguyconsulting/rimsky-services/executors/http-node` (Go), `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent` (TypeScript), `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-http` (Go), `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-shape-checks` (Go); the in-rimsky `pkg:executors/stub` (Go) test-double carve-out stays for conformance + scenario harness use. Receives one `ExecuteRequest`, streams zero-or-more `Heartbeat`/`NamedEvent`, and exactly one `StreamClose` event carrying an outcome `oneof` (`Success | Error | Park | AwaitAsyncCallback`). `Park` carries an inner `ParkReason ∈ {AWAIT_CALLBACK, SNOOZE}`; the two-value taxonomy is closed (`concept:parked-state`).
 
 ## Purpose
 
@@ -24,7 +24,7 @@ Executors are where actual work happens. Out-of-process gives language-portabili
 
 Owns: the per-dispatch work, the stream-close outcome vocabulary, the observability protocol surface, the userdata interpretation. Does NOT own: dispatch routing (supervisor's job), attribute schema validation (rimsky validates at dispatch + commit), substitution (rimsky's job before dispatch), the supervisor-side stitching from terminal event to producer verb (see `terminal-resolution`), operator-decided retry/pass/give_up on Error (see `error-policy`). Adjacent: `attribute`, `named-event`, `parked-state`, `error-policy`, `observability`, `terminal-resolution`, `service`.
 
-The bundled SQL-based store `stores/postgres/` registers this protocol alongside `concept:claim-producer`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Future SQL-substrate stores may adopt the same pattern.
+The bundled SQL-based store `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres` registers this protocol alongside `concept:claim-producer`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. Future SQL-substrate stores may adopt the same pattern.
 
 ## Invariants
 
@@ -49,3 +49,4 @@ Pre-`spec:2026-05-12-nomenclature-resolution` Group E.1, the proto service name 
 - 2026-05-14: `Park.reason` typed as `ParkReason` enum on the wire; new `reason_note` field carries human annotation. The Notes section already references the prior Snooze→Park rename; this entry sits alongside it. Per spec Piece 2 `.ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md`.
 - 2026-05-19 — `stores/postgres/` extends to the executor role per spec 2026-05-19-multi-instance-template-ergonomics-design.
 - 2026-05-23 — Per spec `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md`: executor terminal vocabulary is the 4-variant `StreamClose.outcome` (`Success | Error | Park | AwaitAsyncCallback`); operator-decided retry is via the operator's `error_types:` chain on `Error`, not an executor wire surface. Executors handle internal retry silently or via `Park{reason: SNOOZE}`. The pre-existing Notes entry mis-listing `Snooze` as the third oneof variant has been corrected above to `Park`.
+- 2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/fallguyconsulting/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.

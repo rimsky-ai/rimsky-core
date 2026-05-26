@@ -75,11 +75,11 @@ func TestExecutorBlocked(t *testing.T) {
 	//   `failed` row is well under 100ms when the node is dispatched
 	//   promptly. The dominant cost when the budget overruns is
 	//   testcontainer Postgres cold-start: each scenario test calls
-	//   pgtest.OpenDriver, spinning up its own postgres:14-alpine
+	//   pgmigrate.OpenDriver, spinning up its own postgres:14-alpine
 	//   container, and the harness's per-poll Docker state-query is
 	//   "~1-6s under saturated parallel load; occasional 15-20s
 	//   spikes when the daemon is heavily contended" (see
-	//   internal/pgtest/pgtest.go::StartFreshPostgresDSN).
+	//   sdk/go/testpg/testpg.go::StartFreshPostgresDSN).
 	//
 	//   Ruled out: scheduler tick rate (100ms claim poll, 250ms
 	//   scheduler tick; sub-second under any healthy load); the

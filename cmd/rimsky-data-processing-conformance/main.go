@@ -3,12 +3,10 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // rimsky-data-processing-conformance is a black-box conformance suite
-// for the DataProcessing mix-in service-protocol. Any producer that
-// advertises `data_processing` in Capabilities.protocols can be
-// pointed at this binary; it exercises the seven RPCs (Capabilities +
-// BeginCandidate + CommitCandidate + AbandonCandidate + ListVersions +
-// ListPartitions + GetVersionSchema) plus per-RPC idempotency and
-// concurrent-write coverage.
+// for the DataProcessing mix-in service-protocol. The runner library
+// lives in `pkg:sdk/go/conformance/dataprocessing`; this binary is a
+// thin CLI wrapper that dials the endpoint, invokes the library, and
+// formats the output.
 //
 // Per plan:2026-05-15-data-platform-extensions-plan.md §M1.
 //
@@ -32,6 +30,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/dataprocessing"
 )
 
 func main() {
@@ -76,4 +75,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rimsky-data-processing-conformance: %d/%d checks failed\n", failed, len(results))
 		os.Exit(1)
 	}
+}
+
+// CheckResult mirrors `pkg:sdk/go/conformance/dataprocessing.CheckResult` so
+// the existing tests at cmd/rimsky-data-processing-conformance/main_test.go
+// keep their existing shape.
+type CheckResult = dataprocessing.CheckResult
+
+// RunDataProcessingConformance delegates to the importable package.
+func RunDataProcessingConformance(ctx context.Context, c genv1.DataProcessingClient) []CheckResult {
+	return dataprocessing.Run(ctx, c)
 }

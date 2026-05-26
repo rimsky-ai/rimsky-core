@@ -5,7 +5,7 @@ canonical directory + a one-line purpose + the layer it sits in + the
 features it depends on. Layer ordering is foundation → graph → runtime →
 control → cmd / stores / executors / sensors / subscribers / dashboards.
 Keep entries terse; deep design lives in `.ok-planner/specs/` and
-`docs/concepts/`.
+`pkg:github.com/fallguyconsulting/rimsky-docs/docs/concepts/`.
 
 ## Foundation layer (`foundation/`)
 
@@ -51,7 +51,7 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | run-tree state propagation | `runtime/state_propagation.go`, `runtime/run_tree.go` | persistence, cascade | Child→parent aggregation policies (`strict` / `min_quorum` / etc.); leaf-run terminal → parent-run state aggregation. |
 | lineage writer | `runtime/lineage_writer.go` | persistence, graph/node | Append-only emit path for `leaf_run` + `claim_terminal` lineage rows; hash helpers; SubstitutionRef collection. |
 | messages + publishers | `runtime/message_delivery.go`, `runtime/publishers.go`, `runtime/backfill.go` | persistence | Frame-boundary message delivery; publisher Subscribe/Unsubscribe lifecycle + resync sweep; backfill operation orchestration. |
-| remote | `runtime/remote/` | protocols | The only concrete gRPC `ClaimProducer` client. |
+| peer | `runtime/peer/` | protocols | The only concrete gRPC `ClaimProducer` / `LifecycleSubscriber` / `Publisher` / `Validation` / `DataProcessing` client. Renamed from `runtime/remote/` in spec `2026-05-24-repo-reorganization-design` phase P2 — "peer" matches the `concept:service` vocabulary better. |
 | executor pool | `runtime/executor/` | protocols | Executor gRPC client pool. |
 
 ## Control layer (`control/`)
@@ -81,53 +81,63 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 | rimsky-publisher-conformance | `cmd/rimsky-publisher-conformance/` | Conformance harness for `Publisher` impls. |
 | rimsky-blob-backend-conformance | `cmd/rimsky-blob-backend-conformance/` | Conformance harness for `BlobBackend` impls. |
 | rimsky-conformance-probe | `cmd/rimsky-conformance-probe/` | Stub-mode probe used by executor-conformance startup. |
-| rimsky-verifier-http | `cmd/rimsky-verifier-http/` | Reference verifier executor (HTTP-shape checks). |
-| rimsky-verifier-shape-checks | `cmd/rimsky-verifier-shape-checks/` | Reference verifier executor (JSON-shape checks). |
-| rimsky-docs-glossary / lint / llms-full | `cmd/rimsky-docs-*/` | Docs build tooling. |
 | rimsky-license-check | `cmd/rimsky-license-check/` | License-boundary lint + header stamp. |
 
+Docs build tooling (`rimsky-docs-glossary` / `rimsky-docs-lint` /
+`rimsky-docs-llms-full`) moved out of rimsky to
+`pkg:github.com/fallguyconsulting/rimsky-docs/cmd/` per spec
+`2026-05-24-repo-reorganization-design` phase P4. Invoked from the
+sibling repo with `env:RIMSKY_REPO` set; the pre-release
+reconciliation gate at `file:scripts/release.sh` enforces drift-clean
+docs before any rimsky tag is cut.
+
 ## Bundled service reference impls
+
+Production-side bundled implementations moved out of rimsky to
+`pkg:github.com/fallguyconsulting/rimsky-services` per spec
+`2026-05-24-repo-reorganization-design` phase P3. Only test-
+infrastructure carve-outs and the in-rimsky testfixture wrappers remain
+here.
 
 ### Claim producers (`stores/`)
 
 | Producer | Path | Purpose |
 | --- | --- | --- |
-| filesystem | `stores/filesystem/` | Concrete-paths producer; opt-in `LifecycleSubscriber`. |
-| postgres | `stores/postgres/` | Regional-access + items-queue producer; opt-in `LifecycleSubscriber`; opt-in `Executor` (verifier role via `enable_executor: true`). |
-| stub | `stores/stub/` | In-memory test fixture. |
-| common | `stores/common/` | Shared helpers across the reference impls. |
-| shared/sql-checks | `stores/shared/sql-checks/` | Apache-licensed declarative SQL-check compiler (no_nulls, row_count_absolute, pk_unique) for verifier-role SQL stores. |
+| stub | `stores/stub/` | In-memory test fixture. Stays in rimsky as test infrastructure. |
+| filesystem/testfixture | `stores/filesystem/testfixture/` | Test-fixture wrapper around `stores/stub`; preserves the public `Start` + `Config` surface for in-rimsky scenario tests. Production filesystem store lives in rimsky-services. |
+| postgres/testfixture | `stores/postgres/testfixture/` | Test-fixture wrapper around `stores/stub`; preserves the public surface for in-rimsky scenario tests. Production postgres store lives in rimsky-services. |
+| filesystem (production) | `pkg:github.com/fallguyconsulting/rimsky-services/stores/filesystem` | Concrete-paths producer; opt-in `LifecycleSubscriber`. |
+| postgres (production) | `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres` | Regional-access + items-queue producer; opt-in `LifecycleSubscriber`; opt-in `Executor` (verifier role via `enable_executor: true`). |
+| shared/sql-checks | `pkg:github.com/fallguyconsulting/rimsky-services/stores/shared/sql-checks` | Declarative SQL-check compiler (no_nulls, row_count_absolute, pk_unique) for verifier-role SQL stores. |
 
 ### Executors (`executors/`)
 
 | Executor | Path | Purpose |
 | --- | --- | --- |
-| http-node | `executors/http-node/` | HTTP-driven executor (Go). |
-| stub | `executors/stub/` | In-memory test fixture (Go). |
-| claude-agent | `executors/claude-agent/` | TypeScript / npm executor. |
-| verifier-http | `executors/verifier-http/` | Verifier executor that runs HTTP-shape checks. |
-| verifier-shape-checks | `executors/verifier-shape-checks/` | Verifier executor that runs JSON-shape checks. |
+| stub | `executors/stub/` | In-memory test fixture (Go). Stays in rimsky as test infrastructure. |
+| http-node (production) | `pkg:github.com/fallguyconsulting/rimsky-services/executors/http-node` | HTTP-driven executor (Go). |
+| claude-agent (production) | `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent` | TypeScript / npm executor. |
+| verifier-http (production) | `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-http` | Verifier executor that runs HTTP-shape checks. |
+| verifier-shape-checks (production) | `pkg:github.com/fallguyconsulting/rimsky-services/executors/verifier-shape-checks` | Verifier executor that runs JSON-shape checks. |
 
-### Sensors (`sensors/`)
+### Sensors
 
-| Sensor | Path | Purpose |
-| --- | --- | --- |
-| sensor-cron | `sensors/sensor-cron/` | Cron-firing sensor (replaces the retired per-node `schedule:` field). |
-| sensor-http | `sensors/sensor-http/` | HTTP polling sensor. |
-| sensor-object-store | `sensors/sensor-object-store/` | Object-store change-detection sensor. |
-| sensor-webhook | `sensors/sensor-webhook/` | Webhook-receiver sensor. |
+Production sensor impls live in
+`pkg:github.com/fallguyconsulting/rimsky-services/sensors`:
+`sensor-cron`, `sensor-http`, `sensor-object-store`, `sensor-webhook`.
+No sensor reference impls remain in rimsky.
 
-### Lifecycle subscribers (`subscribers/`)
+### Lifecycle subscribers
 
-| Subscriber | Path | Purpose |
-| --- | --- | --- |
-| openlineage | `subscribers/openlineage/` | Polls `rimsky_lineage` and emits OpenLineage 1.x events. |
+Production subscriber reference impl (`openlineage`) lives in
+`pkg:github.com/fallguyconsulting/rimsky-services/subscribers/openlineage`.
+No subscriber reference impls remain in rimsky.
 
-### Dashboards (`dashboards/`)
+### Dashboards
 
-| Dashboard | Path | Purpose |
-| --- | --- | --- |
-| rimsky-dashboard | `dashboards/rimsky-dashboard/` | Operator dashboard (TypeScript / Vite). |
+The operator dashboard reference impl (`rimsky-dashboard`) lives in
+`pkg:github.com/fallguyconsulting/rimsky-dashboard`.
+No dashboard reference impls remain in rimsky.
 
 ## Shared infrastructure
 
@@ -138,9 +148,12 @@ Keep entries terse; deep design lives in `.ok-planner/specs/` and
 
 ## Reference impls (examples)
 
-| Reference impl | Path | Purpose |
-| --- | --- | --- |
-| atomic-staging-fs-producer | `examples/atomic-staging-fs-producer/` | Reference `ClaimProducer` impl wiring the atomic-staging pattern (`asset` lifetime: `durable`) over a filesystem backing store. Bundles `cmd/`, `server/`, `store/`, `sweep/`, and a sample `template.yaml`. |
+Compilable Go reference impls moved out of rimsky to
+`pkg:github.com/fallguyconsulting/rimsky-docs/examples` per spec
+`2026-05-24-repo-reorganization-design` phase P4. Today the
+sibling repo houses `atomic-staging-fs-producer/` (and its four
+scenario tests under `atomic-staging-fs-producer/scenarios/`). No
+example reference impls remain in rimsky.
 
 ## Test harnesses (`test/`)
 

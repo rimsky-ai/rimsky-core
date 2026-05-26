@@ -3,6 +3,16 @@ image:
   tag: "0.1"
   pullPolicy: IfNotPresent
 
+# Bundled services (stores, sensors, subscribers, production-side executors)
+# live in the separate ../rimsky-services repo per spec
+# .ok-planner/specs/2026-05-24-repo-reorganization-design.md phase P3.
+# Their images are published independently; default repo is the
+# ghcr namespace.
+bundledServicesImage:
+  repository: ghcr.io/fallguyconsulting/rimsky-services
+  tag: latest
+  pullPolicy: IfNotPresent
+
 postgres:
   dsn: ""                      # required; consumer supplies
 

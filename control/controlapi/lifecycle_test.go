@@ -21,7 +21,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 )
 
 // fanOutFixture wires a real persistence.Database-backed Postgres, two

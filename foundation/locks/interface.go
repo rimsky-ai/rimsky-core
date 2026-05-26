@@ -8,7 +8,7 @@
 //
 // Standard producer implementations live in standalone binaries under
 // stores/ and rimsky talks to them via the gRPC client in
-// runtime/remote/. Type assertions to a concrete producer
+// runtime/peer/. Type assertions to a concrete producer
 // from any rimsky package are forbidden — the ClaimProducer interface is
 // the only contract.
 //

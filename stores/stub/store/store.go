@@ -14,15 +14,15 @@ import (
 	"sort"
 	"sync"
 
-	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 )
 
 // Store is the in-memory store implementation. Two operating modes: scoped-direct
 // (selectors echoed verbatim) and pick-policy (FIFO queue per
 // configured selector).
 type Store struct {
-	caps         corestore.Capabilities
+	caps         claimproducer.Capabilities
 	pickPolicies map[string]*pickPolicy
 
 	mu     sync.Mutex
@@ -56,7 +56,7 @@ type Call struct {
 
 // Config is the store's config schema.
 type Config struct {
-	Capabilities corestore.Capabilities
+	Capabilities claimproducer.Capabilities
 	PickPolicies map[string]PickPolicyConfig
 }
 
@@ -73,7 +73,7 @@ type PickPolicyConfig struct {
 func New(cfg Config) *Store {
 	caps := cfg.Capabilities
 	if len(caps.WriteSemanticsAllowed) == 0 {
-		caps.WriteSemanticsAllowed = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
+		caps.WriteSemanticsAllowed = []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}
 	}
 	s := &Store{
 		caps:         caps,
@@ -99,7 +99,7 @@ func New(cfg Config) *Store {
 }
 
 // Capabilities returns the configured capability struct.
-func (s *Store) Capabilities() corestore.Capabilities { return s.caps }
+func (s *Store) Capabilities() claimproducer.Capabilities { return s.caps }
 
 // Open performs the store's claim acquisition. ctx is accepted for
 // signature uniformity with the postgres / filesystem stores; the
@@ -107,14 +107,14 @@ func (s *Store) Capabilities() corestore.Capabilities { return s.caps }
 //
 // The stub declares a singleton envelope, so RealizedWriteSemantics is
 // uniform across all claims (uniformity invariant trivially holds).
-func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.OpenOutcome, error) {
+func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, Call{Verb: "open", ClaimID: claimID, Selector: selector})
 	rws := s.realizedSemantics()
 	if pp, ok := s.pickPolicies[selector]; ok {
 		if len(pp.queue) == 0 {
-			return corestore.OpenOutcome{Available: false}, nil
+			return claimproducer.OpenOutcome{Available: false}, nil
 		}
 		head := pp.queue[0]
 		pp.queue = pp.queue[1:]
@@ -122,9 +122,9 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 		s.claims[claimID] = head.id
 		addrBytes, _ := json.Marshal(head.id)
 		scopeBytes, _ := json.Marshal(head.id)
-		return corestore.OpenOutcome{
+		return claimproducer.OpenOutcome{
 			Available: true,
-			Result: corestore.ClaimResult{
+			Result: claimproducer.ClaimResult{
 				Address:                json.RawMessage(addrBytes),
 				Payload:                head.payload,
 				ClaimScope:             json.RawMessage(scopeBytes),
@@ -134,9 +134,9 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 	}
 	addr, _ := json.Marshal(selector)
 	scope, _ := json.Marshal(selector)
-	return corestore.OpenOutcome{
+	return claimproducer.OpenOutcome{
 		Available: true,
-		Result: corestore.ClaimResult{
+		Result: claimproducer.ClaimResult{
 			Address:                json.RawMessage(addr),
 			ClaimScope:             json.RawMessage(scope),
 			RealizedWriteSemantics: rws,
@@ -147,9 +147,9 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (corestore.Ope
 // realizedSemantics picks the realized value for an Open. The stub
 // declares a singleton envelope, so the returned value is fixed across
 // claims (satisfies the uniformity invariant trivially).
-func (s *Store) realizedSemantics() corestore.WriteSemantics {
+func (s *Store) realizedSemantics() claimproducer.WriteSemantics {
 	if len(s.caps.WriteSemanticsAllowed) == 0 {
-		return corestore.WriteSemanticsSync
+		return claimproducer.WriteSemanticsSync
 	}
 	return s.caps.WriteSemanticsAllowed[0]
 }

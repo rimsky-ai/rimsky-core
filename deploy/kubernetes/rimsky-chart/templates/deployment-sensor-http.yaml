@@ -20,8 +20,8 @@ spec:
       serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
       containers:
         - name: sensor-http
-          image: "{{ .Values.image.repository }}/sensor-http:{{ .Values.sensorHttp.imageTag | default .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.bundledServicesImage.repository }}/sensor-http:{{ .Values.sensorHttp.imageTag | default .Values.bundledServicesImage.tag }}"
+          imagePullPolicy: {{ .Values.bundledServicesImage.pullPolicy }}
           env:
             - name: RIMSKY_ENDPOINT
               value: "{{ .Values.rimskyEndpoint | default (printf "http://%s-control-api:8080" (include "rimsky.fullname" .)) }}"

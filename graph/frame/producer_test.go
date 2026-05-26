@@ -15,7 +15,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/graph/frame"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 )
 
 // enqueueAgainstDriver runs frame.EnqueueOrCoalesce inside a fresh tx

@@ -66,7 +66,7 @@ docker compose down -v
 | `rimsky` | `rimsky/all` | scheduler + supervisor + control-api + migrate, all under one entrypoint; SQLite state in a named volume |
 | `store-stub` | `rimsky/store-stub` | bundled stub claim-producer (in-memory; deterministic) |
 | `executor-stub` | `rimsky/executor-stub` | bundled stub executor (every Execute returns Complete) |
-| `dashboard` | `rimsky/dashboard` | read-only UI on :8090, dials the control-api |
+| `dashboard` | `ghcr.io/fallguyconsulting/rimsky-dashboard` | read-only UI on :8090, dials the control-api |
 
 The `rimsky.yml` here wires them together. To bring your own claim producer or executor, point the `claim_producers:` / `executors:` blocks at your service and rebuild the compose stack.
 

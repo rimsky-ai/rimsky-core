@@ -24,7 +24,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
-	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // publisherRegistryImpl satisfies runtime.PublisherRegistry over a
@@ -155,7 +155,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := remote.DialPublisher(dialCtx, p.name, p.endpoint)
+				c, dErr := peer.DialPublisher(dialCtx, p.name, p.endpoint)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -167,7 +167,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := remote.DialValidation(dialCtx, p.name, p.endpoint, p.roles)
+				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, p.roles)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -179,7 +179,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := remote.DialDataProcessing(dialCtx, p.name, p.endpoint)
+				c, dErr := peer.DialDataProcessing(dialCtx, p.name, p.endpoint)
 				cancel()
 				if dErr != nil {
 					closeAll()

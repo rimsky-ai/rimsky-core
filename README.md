@@ -34,8 +34,9 @@ This README is for evaluators deciding whether to engage with rimsky for
 an agentic workflow problem. It frames what rimsky is, what it was
 built for, what makes it different from the things you might be
 pattern-matching against, and where to go next if the answer is yes.
-Builders point their coding agent at `docs/agents/llms.txt` and let it
-walk them through depth.
+Builders point their coding agent at `llms.txt` in the sibling
+`pkg:github.com/fallguyconsulting/rimsky-docs` repo and let it walk
+them through depth.
 
 ## 2. What rimsky was built for
 
@@ -315,9 +316,10 @@ service or an adjacent system, not to grow the primitive.
 
 ## 6. Where to learn more
 
-For agents: `docs/agents/llms.txt` is the manifest pointing at every
-public surface. Point your coding agent at it and the agent walks you
-through depth.
+For agents: the canonical agent-oriented manifest at `llms.txt` in the
+sibling `pkg:github.com/fallguyconsulting/rimsky-docs` repo points at
+every public surface. Point your coding agent at it and the agent walks
+you through depth.
 
 For the concept catalog: `.ok-planner/design/concepts.md` is an
 auto-generated TOC over the per-concept files under
@@ -326,11 +328,11 @@ purpose, boundaries, and invariants, plus a notes section recording how
 the concept evolved. Inline `@concept:` annotations in the source code
 point at enforcement sites.
 
-For protocols (claim producer, executor, lifecycle subscriber,
-publisher): `docs/protocols/`.
-
-For copy-pasteable starter templates: `docs/agents/examples/`.
-
-For where rimsky is going: `docs/roadmap.md`.
+For protocols, copy-pasteable starter templates, and the roadmap
+(claim producer, executor, lifecycle subscriber, publisher,
+agent examples, `roadmap.md`): see
+`pkg:github.com/fallguyconsulting/rimsky-docs/docs/protocols/`,
+`pkg:github.com/fallguyconsulting/rimsky-docs/docs/agents/examples/`,
+`pkg:github.com/fallguyconsulting/rimsky-docs/docs/roadmap.md`.
 
 Point your coding agent at this repo and ask.

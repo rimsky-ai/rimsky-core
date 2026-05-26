@@ -20,8 +20,8 @@ spec:
       serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
       containers:
         - name: claude-agent
-          image: "{{ .Values.image.repository }}/executor-claude-agent:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.bundledServicesImage.repository }}/executor-claude-agent:{{ .Values.bundledServicesImage.tag }}"
+          imagePullPolicy: {{ .Values.bundledServicesImage.pullPolicy }}
           env:
             - name: RIMSKY_EXECUTOR_HOST
               value: "0.0.0.0"

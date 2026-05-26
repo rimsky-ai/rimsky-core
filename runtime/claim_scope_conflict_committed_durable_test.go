@@ -22,7 +22,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 )
 
 func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {

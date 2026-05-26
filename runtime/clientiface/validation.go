@@ -32,7 +32,7 @@ type ValidationOutcome struct {
 
 // ValidationClient is the rimsky-side wrapper around the per-service
 // Validation gRPC client. Implementations live in
-// `runtime/remote/validation_client.go` (the wired gRPC client) or in
+// `runtime/peer/validation_client.go` (the wired gRPC client) or in
 // test fixtures.
 type ValidationClient interface {
 	// Name returns the operator-configured peer name.

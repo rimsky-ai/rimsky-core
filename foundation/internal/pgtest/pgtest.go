@@ -62,6 +62,16 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 // without applying any migrations. Caller MUST invoke the returned
 // teardown func. Used by tests that exercise the migration runner itself.
 //
+// @source: sdk/go/testpg/testpg.go::StartFreshPostgresDSN
+// @diverged: false
+// @reason: foundation/ cannot import sdk/go (foundation-purity depguard
+// rule forbids it: sdk is an implementer-facing surface that consumes
+// foundation, not the other way around). Keep this body byte-identical
+// to the sdk/go copy modulo the log prefix; port-mapping retry tuning
+// lives in two places and any fix must land in both. Symptoms drift
+// silently if the copies disagree (sdk consumers see one timeout
+// behavior, rimsky-internal tests see another).
+//
 // The wait strategy pairs the postgres-ready log signal with
 // `wait.ForListeningPort` — both are required to defeat the docker
 // port-table race. Without the port-listening wait, ConnectionString
@@ -114,6 +124,11 @@ func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
 // Returns the successful DSN; logs a WARN line per retry so the flake
 // becomes observable in CI logs. Production-fast tests (port mapping
 // resolves on first attempt) log nothing.
+//
+// @source: sdk/go/testpg/testpg.go::resolveConnectionString
+// @diverged: false
+// @reason: foundation/ cannot import sdk/go. See StartFreshPostgresDSN
+// above for the divergence-tracking rationale.
 func resolveConnectionString(
 	ctx context.Context, t *testing.T, container *pgmodule.PostgresContainer,
 ) (string, error) {

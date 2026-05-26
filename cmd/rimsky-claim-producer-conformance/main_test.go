@@ -12,7 +12,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
-	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
@@ -30,7 +30,7 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 	t.Cleanup(teardown)
 
 	ctx := context.Background()
-	client, err := remote.Dial(ctx, "stub", "grpc://"+endpoint)
+	client, err := peer.Dial(ctx, "stub", "grpc://"+endpoint)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

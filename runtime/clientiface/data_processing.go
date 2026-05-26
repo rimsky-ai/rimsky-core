@@ -6,7 +6,7 @@
 // DTO types for the producer-protocol clients (DataProcessing, Sensor,
 // Validation). The types live here — separate from the orchestration
 // logic in `runtime/` — so that wire-surface consumers (the gRPC
-// remote clients in `runtime/remote/`, the conformance binaries under
+// remote clients in `runtime/peer/`, the conformance binaries under
 // `cmd/rimsky-*-conformance/`, and external producer authors) can
 // link against them without crossing the runtime/Apache → AGPL
 // licensing boundary. Pure interface + DTO shapes; no orchestration.

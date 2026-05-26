@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp docs-glossary docs-llms-full docs-lint docs-roots docs-build
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-sync-embedded cli-image smoke-cli test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -19,6 +19,7 @@ lint:
 	golangci-lint run
 	cd foundation && golangci-lint run
 	cd protocols && golangci-lint run
+	cd sdk/go && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
@@ -36,34 +37,29 @@ tidy:
 	go mod tidy
 
 # ── Documentation tooling ──
+#
+# Docs sources, the three docs-lint Go binaries (rimsky-docs-{lint,llms-full,glossary}),
+# and the generated root llms.txt / llms-full.txt files moved to the sibling
+# repo github.com/fallguyconsulting/rimsky-docs as part of P4 of
+# spec:2026-05-24-repo-reorganization-design. Run docs targets from there:
+#   cd ../rimsky-docs/cmd && RIMSKY_REPO=../../rimsky go run ./rimsky-docs-lint all
+# The pre-release reconciliation gate at scripts/release.sh invokes those
+# binaries to block tags on unaddressed docs drift.
 
-docs-glossary:
-	go run ./cmd/rimsky-docs-glossary
-
-docs-llms-full:
-	go run ./cmd/rimsky-docs-llms-full
-
-docs-lint:
-	go run ./cmd/rimsky-docs-lint all
-
-docs-roots: docs-llms-full docs-glossary
-	cp docs/agents/llms.txt llms.txt
-	cp docs/agents/llms-full.txt llms-full.txt
-
-docs-build: docs-roots
-
-# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols).
+# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols + sdk/go).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
 # inter-module references resolve via local replace.
 test-all:
 	go test ./...
 	cd foundation && go test ./...
 	cd protocols && go test ./...
+	cd sdk/go && go test ./...
 
 build-all:
 	go build ./...
 	cd foundation && go build ./...
 	cd protocols && go build ./...
+	cd sdk/go && go build ./...
 
 # ── rimsky CLI targets ──
 
@@ -164,7 +160,8 @@ lint-docker:
 	    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
 	  cd foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd ../protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
+	  cd ../protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
+	  cd ../sdk/go && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy

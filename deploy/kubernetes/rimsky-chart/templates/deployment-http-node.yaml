@@ -20,8 +20,8 @@ spec:
       serviceAccountName: {{ include "rimsky.serviceAccountName" . }}
       containers:
         - name: http-node
-          image: "{{ .Values.image.repository }}/executor-http-node:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.bundledServicesImage.repository }}/executor-http-node:{{ .Values.bundledServicesImage.tag }}"
+          imagePullPolicy: {{ .Values.bundledServicesImage.pullPolicy }}
           env:
             - name: RIMSKY_EXECUTOR_HTTP_NODE_HOST
               value: "0.0.0.0"

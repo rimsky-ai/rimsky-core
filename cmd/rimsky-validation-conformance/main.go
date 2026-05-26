@@ -3,11 +3,9 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // rimsky-validation-conformance is a black-box conformance suite for
-// the Validation mix-in service-protocol. Any service binary that
-// advertises `validation` in its primary Capabilities.protocols can
-// be pointed at this binary; it exercises the single Validate RPC
-// per supported role with both happy-path and malformed-input
-// inputs.
+// the Validation mix-in service-protocol. The runner library lives in
+// `pkg:sdk/go/conformance/validation`; this binary is a thin CLI
+// wrapper.
 //
 // Per plan:2026-05-15-data-platform-extensions-plan.md §M2.
 //
@@ -31,6 +29,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/validation"
 )
 
 func main() {
@@ -76,4 +75,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rimsky-validation-conformance: %d/%d checks failed\n", failed, len(results))
 		os.Exit(1)
 	}
+}
+
+// CheckResult mirrors `pkg:sdk/go/conformance/validation.CheckResult`
+// so the existing tests at cmd/rimsky-validation-conformance/main_test.go
+// keep their existing shape.
+type CheckResult = validation.CheckResult
+
+// RunValidationConformance delegates to the importable package.
+func RunValidationConformance(ctx context.Context, c genv1.ValidationClient, role string) []CheckResult {
+	return validation.Run(ctx, c, role)
 }

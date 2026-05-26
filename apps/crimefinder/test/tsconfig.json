@@ -1,9 +1,0 @@
-{
-  "extends": "../tsconfig.base.json",
-  "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "."
-  },
-  "include": ["scenarios/**/*.ts", "e2e/**/*.ts", "integration/**/*.ts"],
-  "exclude": ["dist", "node_modules", "integration/fixtures/**"]
-}

@@ -17,7 +17,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/graph/frame"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 )
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {

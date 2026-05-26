@@ -8,6 +8,11 @@
 // surface is in-process Go (`persistence.BlobBackend`), not a wire
 // protocol.
 //
+// The runner library lives in `pkg:sdk/go/conformance/blobbackend`;
+// this binary is the thin CLI wrapper. It adapts each rimsky-internal
+// backend (memory / filesystem / pg-largeobject) to the SDK's
+// minimal `Backend` interface and invokes the suite.
+//
 // Usage:
 //
 //	rimsky-blob-backend-conformance --backend filesystem --root /tmp/x
@@ -19,20 +24,18 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/blobbackend"
 )
 
 func main() {
@@ -55,17 +58,17 @@ func main() {
 	}
 	defer cleanup()
 
-	results := runChecks(ctx, be)
+	results := blobbackend.Run(ctx, &adapter{be: be})
 	failed := 0
 	for _, r := range results {
 		status := "PASS"
-		if r.err != nil {
+		if r.Err != nil {
 			status = "FAIL"
 			failed++
 		}
-		fmt.Printf("[%s] %s", status, r.name)
-		if r.err != nil {
-			fmt.Printf(": %v", r.err)
+		fmt.Printf("[%s] %s", status, r.Name)
+		if r.Err != nil {
+			fmt.Printf(": %v", r.Err)
 		}
 		fmt.Println()
 	}
@@ -73,6 +76,41 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rimsky-blob-backend-conformance: %d failure(s)\n", failed)
 		os.Exit(1)
 	}
+}
+
+// adapter bridges rimsky's persistence.BlobBackend (typed key + opaque
+// Handle) to the SDK's reduced blobbackend.Backend surface. ErrBlobNotFound
+// is translated so the conformance suite's errors.Is check matches.
+type adapter struct {
+	be persistence.BlobBackend
+}
+
+func (a *adapter) Write(ctx context.Context, hint string, bytes []byte) (blobbackend.Handle, error) {
+	h, err := a.be.Write(ctx, persistence.BlobKey{Hint: hint}, bytes)
+	if err != nil {
+		return "", err
+	}
+	return blobbackend.Handle(h), nil
+}
+
+func (a *adapter) Read(ctx context.Context, handle blobbackend.Handle) ([]byte, error) {
+	b, err := a.be.Read(ctx, persistence.Handle(handle))
+	if errors.Is(err, persistence.ErrBlobNotFound) {
+		return nil, blobbackend.ErrBlobNotFound
+	}
+	return b, err
+}
+
+func (a *adapter) ReadRange(ctx context.Context, handle blobbackend.Handle, offset, length int64) ([]byte, error) {
+	b, err := a.be.ReadRange(ctx, persistence.Handle(handle), offset, length)
+	if errors.Is(err, persistence.ErrBlobNotFound) {
+		return nil, blobbackend.ErrBlobNotFound
+	}
+	return b, err
+}
+
+func (a *adapter) Delete(ctx context.Context, handle blobbackend.Handle) error {
+	return a.be.Delete(ctx, persistence.Handle(handle))
 }
 
 // openBackend constructs a BlobBackend by name.
@@ -106,146 +144,3 @@ func openBackend(ctx context.Context, name, root, dsn string) (persistence.BlobB
 		return nil, nil, fmt.Errorf("unknown backend %q (want memory | filesystem | pg-largeobject)", name)
 	}
 }
-
-type checkResult struct {
-	name string
-	err  error
-}
-
-func runChecks(ctx context.Context, be persistence.BlobBackend) []checkResult {
-	checks := []func(context.Context, persistence.BlobBackend) error{
-		checkRoundtripSmall,
-		checkRoundtripLarge,
-		checkReadRange,
-		checkDeleteThenRead,
-		checkIdempotentDelete,
-		checkConcurrentWrites,
-	}
-	names := []string{
-		"round-trip 1KB",
-		"round-trip 10MB",
-		"range read",
-		"delete then read returns ErrBlobNotFound",
-		"idempotent delete",
-		"concurrent writes",
-	}
-	out := make([]checkResult, 0, len(checks))
-	for i, c := range checks {
-		err := c(ctx, be)
-		out = append(out, checkResult{name: names[i], err: err})
-	}
-	return out
-}
-
-func checkRoundtripSmall(ctx context.Context, be persistence.BlobBackend) error {
-	payload := bytes.Repeat([]byte("x"), 1024)
-	h, err := be.Write(ctx, persistence.BlobKey{Hint: "rt-small"}, payload)
-	if err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-	got, err := be.Read(ctx, h)
-	if err != nil {
-		return fmt.Errorf("read: %w", err)
-	}
-	if !bytes.Equal(got, payload) {
-		return errors.New("byte mismatch")
-	}
-	return be.Delete(ctx, h)
-}
-
-func checkRoundtripLarge(ctx context.Context, be persistence.BlobBackend) error {
-	payload := bytes.Repeat([]byte("0123456789"), 1024*1024) // 10 MiB
-	h, err := be.Write(ctx, persistence.BlobKey{Hint: "rt-large"}, payload)
-	if err != nil {
-		return fmt.Errorf("write: %w", err)
-	}
-	got, err := be.Read(ctx, h)
-	if err != nil {
-		return fmt.Errorf("read: %w", err)
-	}
-	if !bytes.Equal(got, payload) {
-		return errors.New("byte mismatch")
-	}
-	return be.Delete(ctx, h)
-}
-
-func checkReadRange(ctx context.Context, be persistence.BlobBackend) error {
-	payload := []byte("0123456789abcdef")
-	h, err := be.Write(ctx, persistence.BlobKey{Hint: "range"}, payload)
-	if err != nil {
-		return err
-	}
-	got, err := be.ReadRange(ctx, h, 5, 5)
-	if err != nil {
-		return err
-	}
-	if string(got) != "56789" {
-		return fmt.Errorf("range mismatch: got %q", got)
-	}
-	return be.Delete(ctx, h)
-}
-
-func checkDeleteThenRead(ctx context.Context, be persistence.BlobBackend) error {
-	h, err := be.Write(ctx, persistence.BlobKey{Hint: "del-read"}, []byte("x"))
-	if err != nil {
-		return err
-	}
-	if err := be.Delete(ctx, h); err != nil {
-		return fmt.Errorf("delete: %w", err)
-	}
-	if _, err := be.Read(ctx, h); !errors.Is(err, persistence.ErrBlobNotFound) {
-		return fmt.Errorf("post-delete Read: want ErrBlobNotFound, got %v", err)
-	}
-	return nil
-}
-
-func checkIdempotentDelete(ctx context.Context, be persistence.BlobBackend) error {
-	h, err := be.Write(ctx, persistence.BlobKey{Hint: "idem"}, []byte("x"))
-	if err != nil {
-		return err
-	}
-	if err := be.Delete(ctx, h); err != nil {
-		return err
-	}
-	if err := be.Delete(ctx, h); err != nil {
-		return fmt.Errorf("second delete: %w", err)
-	}
-	return nil
-}
-
-func checkConcurrentWrites(ctx context.Context, be persistence.BlobBackend) error {
-	const N = 16
-	var wg sync.WaitGroup
-	errs := make([]error, N)
-	for i := 0; i < N; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			h, err := be.Write(ctx, persistence.BlobKey{Hint: fmt.Sprintf("c-%d", i)}, []byte(fmt.Sprintf("payload-%d", i)))
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer func() { _ = be.Delete(ctx, h) }()
-			got, err := be.Read(ctx, h)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			if !bytes.Equal(got, []byte(fmt.Sprintf("payload-%d", i))) {
-				errs[i] = fmt.Errorf("c-%d byte mismatch", i)
-			}
-		}()
-	}
-	wg.Wait()
-	for _, e := range errs {
-		if e != nil {
-			return e
-		}
-	}
-	return nil
-}
-
-// silence unused-import warning when io is only conditionally used.
-var _ = io.EOF

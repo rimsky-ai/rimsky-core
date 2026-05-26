@@ -67,9 +67,7 @@ services:
     expose: ["9300"]
 
   dashboard:
-    build:
-      context: ../dashboards/rimsky-dashboard
-    image: rimsky/dashboard:quickstart
+    image: ghcr.io/fallguyconsulting/rimsky-dashboard:latest
     ports:
       - "${RIMSKY_DASHBOARD_HOST_PORT:-8090}:8090"
     environment:

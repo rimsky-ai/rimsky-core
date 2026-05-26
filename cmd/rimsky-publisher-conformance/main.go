@@ -8,6 +8,9 @@
 // sensors/sensor-webhook). Custom publisher authors can point this
 // binary at their service to verify lifecycle + message-push shape.
 //
+// The runner library lives in `pkg:sdk/go/conformance/publisher`; this
+// binary is a thin CLI wrapper.
+//
 // Per spec
 // .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
 // §Publisher protocol unification.
@@ -38,6 +41,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/publisher"
 )
 
 func main() {
@@ -93,4 +97,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rimsky-publisher-conformance: %d/%d checks failed\n", failed, len(results))
 		os.Exit(1)
 	}
+}
+
+// CheckResult mirrors `pkg:sdk/go/conformance/publisher.CheckResult`
+// so the existing tests at cmd/rimsky-publisher-conformance/main_test.go
+// keep their existing shape.
+type CheckResult = publisher.CheckResult
+
+// RunOpts mirrors `pkg:sdk/go/conformance/publisher.RunOpts`.
+type RunOpts = publisher.RunOpts
+
+// MessageReceiver mirrors `pkg:sdk/go/conformance/publisher.MessageReceiver`.
+type MessageReceiver = publisher.MessageReceiver
+
+// NewMessageReceiver constructs an empty receiver.
+func NewMessageReceiver() *MessageReceiver {
+	return publisher.NewMessageReceiver()
+}
+
+// RunPublisherConformance delegates to the importable package.
+func RunPublisherConformance(ctx context.Context, c genv1.PublisherClient, opts RunOpts) []CheckResult {
+	return publisher.Run(ctx, c, opts)
 }

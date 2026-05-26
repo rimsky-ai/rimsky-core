@@ -5,7 +5,7 @@
 // data_processing.go — runtime-side surface for the DataProcessing
 // protocol. The canonical interface + DTO types live in
 // `runtime/clientiface/` (Apache-licensed) so the wire-surface gRPC
-// remote client in `runtime/remote/data_processing_client.go` can
+// remote client in `runtime/peer/data_processing_client.go` can
 // implement them without crossing the licensing boundary; this file
 // re-exports them under the `runtime` package via type aliases so
 // every other AGPL-licensed runtime file continues to refer to them

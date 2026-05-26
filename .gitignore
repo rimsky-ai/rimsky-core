@@ -17,26 +17,16 @@ vendor/
 /rimsky-claim-producer-conformance
 /rimsky-blob-backend-conformance
 /rimsky-publisher-conformance
+/rimsky-validation-conformance
+/rimsky-data-processing-conformance
 /rimsky-entrypoint
-/rimsky-docs-glossary
-/rimsky-docs-lint
-/rimsky-docs-llms-full
-/http-node
+/rimsky-license-check
 /openlineage
-/subscribers/openlineage/openlineage
 
-# Node executor deps / build output
-executors/*/node_modules/
-executors/*/dist/
-
-# Dashboard deps / build output
-dashboards/*/node_modules/
-dashboards/*/dist/
-dashboards/*/.vite/
-dashboards/*/coverage/
-dashboards/*/playwright-report/
-dashboards/*/test-results/
-dashboards/*/*.tsbuildinfo
+# The bundled-services (sensors, executors, subscribers, production
+# stores, dashboards, docs-lint binaries) moved to sibling repos in the
+# 2026-05-24 reorganization. Their build-output / node_modules patterns
+# moved with them and no longer apply here.
 
 # Local env / coverage
 .env

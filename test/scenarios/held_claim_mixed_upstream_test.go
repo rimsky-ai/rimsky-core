@@ -29,7 +29,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
-	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )

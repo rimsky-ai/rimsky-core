@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 )
 
 // templateBodyWithTag wraps validTemplateBody and attaches a tag.

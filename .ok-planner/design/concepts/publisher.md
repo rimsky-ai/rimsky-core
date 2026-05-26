@@ -20,7 +20,7 @@ To give rimsky a uniform way to accept inbound messages from peer services — s
 
 ## Boundaries
 
-Owns: the four-verb protocol surface (proto types + RPC contract), the wire-shape Go types under `code:runtime/clientiface/publisher.go`, the gRPC client under `code:runtime/remote/publisher_client.go`, the rimsky-side dispatch helpers under `code:runtime/publishers.go`, the dial path under `code:control/config/publishers.go`, and the universal capability check on the messages endpoint.
+Owns: the four-verb protocol surface (proto types + RPC contract), the wire-shape Go types under `code:runtime/clientiface/publisher.go`, the gRPC client under `code:runtime/peer/publisher_client.go`, the rimsky-side dispatch helpers under `code:runtime/publishers.go`, the dial path under `code:control/config/publishers.go`, and the universal capability check on the messages endpoint.
 
 Does NOT own: the publisher's substrate (cron clock, HTTP endpoint, object-store, etc.), per-publisher state persistence (each publisher owns its own state DB; see `concept:sensor`), the message envelope shape (that's `concept:message`), or the deployment-tier replica posture (that's `concept:replica`).
 
@@ -39,7 +39,7 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 
 - `code:protocols/proto/v1/publisher.proto` — protobuf surface.
 - `code:runtime/clientiface/publisher.go` — Go-side wire types.
-- `code:runtime/remote/publisher_client.go` — gRPC remote client.
+- `code:runtime/peer/publisher_client.go` — gRPC remote client.
 - `code:runtime/publishers.go` — rimsky-side lifecycle dispatch (Start / Stop / Resync helpers).
 - `code:control/config/publishers.go` — operator-side dial path.
 - `code:cmd/rimsky-publisher-conformance/` — conformance suite.
@@ -48,4 +48,6 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 
 The protocol is the 2026-05-17 rename of what was previously called the `Sensor` protocol. The reframe: rimsky's wire-level abstraction is "a peer that publishes messages"; sensors are one kind of publisher. The earlier name baked the implementation class into the protocol name. The new name is honest about what the protocol is.
 
-The bundled implementations under `pkg:sensors/sensor-*/` keep their sensor-named identities — they ARE sensors at the binary boundary, but at the wire boundary their protocol role is publisher.
+The bundled implementations under `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/` keep their sensor-named identities — they ARE sensors at the binary boundary, but at the wire boundary their protocol role is publisher.
+
+2026-05-24: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename; bundled-sensor path references retargeted to pkg:github.com/fallguyconsulting/rimsky-services/sensors/* per P3 move. See spec 2026-05-24-repo-reorganization-design.

@@ -16,7 +16,7 @@ references:
 
 ## What it is
 
-A claim producer is an out-of-process service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `stores/` (filesystem, postgres, stub) as standalone binaries. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `runtime/remote/`.
+A claim producer is an out-of-process service that implements the gRPC `ClaimProducer` protocol — 4 verbs (`Open` / `Commit` / `Abandon` / `Release`) plus the `Capabilities()` startup handshake. Bundled reference impls live under `pkg:github.com/fallguyconsulting/rimsky-services/stores/` (filesystem, postgres) as standalone binaries; the in-rimsky `pkg:stores/stub` carve-out stays as test infrastructure. The only in-rimsky concrete implementation of the Go `ClaimProducer` interface is the gRPC client at `runtime/peer/`.
 
 Post-2026-05-15 the protocol gains three optional methods, each advertised in `Capabilities`:
 
@@ -34,7 +34,7 @@ Out-of-process producers let rimsky stay project-agnostic: the producer knows wh
 
 Owns: the producer-side resource state (filesystem stagings, items-table flips, MVCC transactions), the canonical claim-scope-bytes emission, the realized write-semantics per claim. Does NOT own: lock state ledger (lives in `claim-handle`), the conflict predicate (lives in rimsky). Adjacent: `claim`, `claim-handle`, `claim-scope`, `write-semantics`, `auto-terminal`, `lifecycle-subscriber` (sibling opt-in protocol on the same service).
 
-The bundled SQL-based store `stores/postgres/` additionally registers `proto:executor.proto::Executor` to support verification of its own staged content; see `concept:executor`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. The pattern is open to future SQL-substrate stores adopting the same fusion.
+The bundled SQL-based store `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres` additionally registers `proto:executor.proto::Executor` to support verification of its own staged content; see `concept:executor`. The same binary plays both roles via separate gRPC service registrations on a single endpoint. The pattern is open to future SQL-substrate stores adopting the same fusion.
 
 ## Invariants
 
@@ -45,9 +45,9 @@ The bundled SQL-based store `stores/postgres/` additionally registers `proto:exe
 
 ## Aliases and historical names
 
-`store` is the colloquial bundled-services term and the directory name (`stores/`). `ClaimProducer` is the protocol-level canonical name. The two coexist; CLAUDE.md "Vocabulary" notes the split. YAML config key `claim_producers:` aliases the legacy `stores:` key.
+`store` is the colloquial bundled-services term and the directory name (`stores/` in `pkg:github.com/fallguyconsulting/rimsky-services` for production-side reference impls; `pkg:stores/stub` stays in rimsky as test infrastructure). `ClaimProducer` is the protocol-level canonical name. The two coexist; CLAUDE.md "Vocabulary" notes the split. YAML config key `claim_producers:` aliases the legacy `stores:` key.
 
-**Naming discipline.** In protocol-level prose — wire protocols, conformance suites, the Go interface name — the canonical term is **claim producer** and the Go interface is `ClaimProducer`. In casual operator parlance and in the reference-implementation tree (`stores/filesystem/`, `stores/postgres/`, `stores/stub/`), the colloquial **store** survives ("the filesystem store," "the postgres store"). Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is acceptable in casual contexts about the bundled reference impls. Backticked-`Store` references in protocol-level prose are stale — the legacy Go interface was renamed to `ClaimProducer`.
+**Naming discipline.** In protocol-level prose — wire protocols, conformance suites, the Go interface name — the canonical term is **claim producer** and the Go interface is `ClaimProducer`. In casual operator parlance and in the reference-implementation tree (`pkg:github.com/fallguyconsulting/rimsky-services/stores/filesystem/`, `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres/`, `pkg:stores/stub/`), the colloquial **store** survives ("the filesystem store," "the postgres store"). Use "claim producer" in protocol-level discussion (someone implementing the protocol; someone reading the proto sources); "store" is acceptable in casual contexts about the bundled reference impls. Backticked-`Store` references in protocol-level prose are stale — the legacy Go interface was renamed to `ClaimProducer`.
 
 **Rimsky's "store" is not a JS-framework store.** A Rimsky bundled-services-layer "store" is a data-backed `ClaimProducer` reference impl. Nothing to do with Redux / Vue / Svelte / Pinia state-management stores.
 
@@ -65,3 +65,4 @@ The Go `ClaimProducer` interface (`foundation/locks/interface.go`) carries a six
 - [2026-05-18] Folded content from former `docs/concepts/claim-producer.md` (now retired) — store-vs-claim-producer naming discipline + JS-framework-store disambiguation appended to Aliases section.
 - 2026-05-19 — `stores/postgres/` extends to the executor role per spec 2026-05-19-multi-instance-template-ergonomics-design.
 - 2026-05-22 — Updated for ClaimScope rename per spec `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`: "scope bytes" references qualified to "claim scope bytes"; `concept:scope` adjacency rewritten to `concept:claim-scope`. Proto field renames (`scope` → `claim_scope`, `scope_data` → `claim_scope_data`, `ScopesConflictRequest` → `ClaimScopesConflictRequest`) ride alongside.
+- 2026-05-24: production-side bundled claim-producer reference impls (stores/{filesystem,postgres}) moved out of rimsky to pkg:github.com/fallguyconsulting/rimsky-services. Test-infrastructure carve-outs (stores/stub for test-double + quickstart, stores/{filesystem,postgres}/testfixture as test-fixture packages) stay in rimsky. Boundary statement updated to reflect new home. Also: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename. See spec 2026-05-24-repo-reorganization-design phases P2 and P3.

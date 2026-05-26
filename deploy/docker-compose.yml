@@ -61,7 +61,7 @@ services:
   # ----- Standard store-services -----
 
   store-filesystem:
-    image: rimsky/store-filesystem:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/store-filesystem:latest
     environment:
       STORE_FILESYSTEM_CONFIG: "/etc/store/config.yml"
     volumes:
@@ -72,7 +72,7 @@ services:
       - "9110"
 
   store-postgres:
-    image: rimsky/store-postgres:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/store-postgres:latest
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -150,7 +150,7 @@ services:
   # ----- Executors -----
 
   http-node:
-    image: rimsky/executor-http-node:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/executor-http-node:latest
     environment:
       RIMSKY_EXECUTOR_HTTP_NODE_HOST: "0.0.0.0"
       RIMSKY_EXECUTOR_HTTP_NODE_PORT: "9091"
@@ -164,7 +164,7 @@ services:
       - "${HTTP_NODE_HTTP_HOST_PORT:-9092}:9092"
 
   claude-agent:
-    image: rimsky/executor-claude-agent:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/executor-claude-agent:latest
     environment:
       RIMSKY_EXECUTOR_HOST: "0.0.0.0"
       RIMSKY_EXECUTOR_PORT_GRPC: "9090"
@@ -180,8 +180,7 @@ services:
   # ----- Reference dashboard -----
 
   rimsky-dashboard:
-    build: ../dashboards/rimsky-dashboard
-    image: rimsky/rimsky-dashboard:latest
+    image: ghcr.io/fallguyconsulting/rimsky-dashboard:latest
     depends_on:
       - control-api
     environment:
@@ -202,7 +201,7 @@ services:
   # v1 contract is single-replica per sensor binary.
 
   sensor-cron:
-    image: rimsky/sensor-cron:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/sensor-cron:latest
     depends_on:
       - control-api
     environment:
@@ -213,7 +212,7 @@ services:
       - "${SENSOR_CRON_HOST_PORT:-9081}:9081"
 
   sensor-http:
-    image: rimsky/sensor-http:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/sensor-http:latest
     depends_on:
       - control-api
       - postgres
@@ -226,7 +225,7 @@ services:
       - "${SENSOR_HTTP_HOST_PORT:-9082}:9082"
 
   sensor-object-store:
-    image: rimsky/sensor-object-store:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/sensor-object-store:latest
     depends_on:
       - control-api
       - postgres
@@ -239,7 +238,7 @@ services:
       - "${SENSOR_OBJECT_STORE_HOST_PORT:-9083}:9083"
 
   sensor-webhook:
-    image: rimsky/sensor-webhook:latest
+    image: ghcr.io/fallguyconsulting/rimsky-services/sensor-webhook:latest
     depends_on:
       - control-api
       - postgres

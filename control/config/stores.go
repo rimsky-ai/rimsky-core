@@ -40,7 +40,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
 // capabilitiesHandshakeTimeout bounds the per-producer Capabilities() RPC
@@ -533,7 +533,7 @@ func dialRemoteStores(ctx context.Context, cfg RemoteStoresConfig) (*locks.Regis
 			return nil, fmt.Errorf("dialRemoteStores: %w", err)
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := remote.Dial(dialCtx, name, entry.Endpoint)
+		client, err := peer.Dial(dialCtx, name, entry.Endpoint)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -562,7 +562,7 @@ func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := remote.DialLifecycle(dialCtx, name, entry.Endpoint)
+		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -575,7 +575,7 @@ func dialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := remote.DialLifecycle(dialCtx, name, entry.Endpoint)
+		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint)
 		cancel()
 		if err != nil {
 			reg.Close()

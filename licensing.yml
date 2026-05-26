@@ -9,7 +9,7 @@
 #
 # Path classification rule: longest-prefix-match wins. Subdirectories of
 # AGPL paths can be reclassified Apache by being listed under the apache:
-# block (e.g. runtime/remote/ is Apache despite living under runtime/
+# block (e.g. runtime/peer/ is Apache despite living under runtime/
 # AGPL — the gRPC client to ClaimProducer impls is interface-shaped so
 # that out-of-tree adopters can dial producer impls without crossing
 # the boundary).
@@ -18,7 +18,7 @@
 # directory was renamed to `runtime/` (root module bridge layer) and
 # `graph/executor/` was renamed to `runtime/executor/`. The boundary
 # rules carry over: `runtime/` is AGPL (orchestrator-internal bridge)
-# with `runtime/remote/` and `runtime/executor/` carved out as Apache
+# with `runtime/peer/` and `runtime/executor/` carved out as Apache
 # (interface-shaped client surfaces).
 
 apache:
@@ -27,7 +27,7 @@ apache:
   - foundation/locks/
   - foundation/shared/
   - foundation/spec/
-  - runtime/remote/
+  - runtime/peer/
   - runtime/executor/
   - runtime/clientiface/
   - control/cli/
@@ -35,11 +35,13 @@ apache:
   - graph/shared/
   - graph/template/canonical/
   - conformance/
-  - stores/
-  - executors/
-  - sensors/
-  - subscribers/
-  - examples/
+  - stores/  # rimsky-internal test-infra carve-outs: stub + per-driver testfixture
+  - executors/stub/  # rimsky-internal test-infra carve-out
+  # sensors/, subscribers/, executors/{claude-agent,http-node,verifier-*}/
+  # moved to pkg:github.com/fallguyconsulting/rimsky-services per P3 of
+  # spec:2026-05-24-repo-reorganization-design.
+  # examples/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/examples
+  # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cmd/rimsky/
   - cmd/rimsky-executor-conformance/
   - cmd/rimsky-claim-producer-conformance/
@@ -48,12 +50,14 @@ apache:
   - cmd/rimsky-publisher-conformance/
   - cmd/rimsky-validation-conformance/
   - cmd/rimsky-license-check/
-  - cmd/rimsky-docs-glossary/
-  - cmd/rimsky-docs-llms-full/
-  - cmd/rimsky-docs-lint/
-  - dashboards/
+  # cmd/rimsky-docs-{glossary,llms-full,lint} moved to
+  # pkg:github.com/fallguyconsulting/rimsky-docs/cmd per P4 of
+  # spec:2026-05-24-repo-reorganization-design.
+  # dashboards/ moved to github.com/fallguyconsulting/rimsky-dashboard per P6
+  # of spec:2026-05-24-repo-reorganization-design.
   - deploy/
-  - docs/
+  # docs/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/docs
+  # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cold-read/
   # Top-level files and dotfiles default to Apache (build config, README,
   # CHANGELOG, Makefile, .golangci.yml, etc.). Non-source files (LICENSE.*,
@@ -72,7 +76,7 @@ agpl:
   - control/observability/
   - graph/scenario/
   - graph/scheduler/
-  - runtime/  # excludes runtime/remote/ and runtime/executor/ (overrides above)
+  - runtime/  # excludes runtime/peer/ and runtime/executor/ (overrides above)
   - cmd/rimsky-scheduler/
   - cmd/rimsky-supervisor/
   - cmd/rimsky-control-api/
@@ -102,14 +106,10 @@ exempt:
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
   - bin/
   - protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
-  - cmd/rimsky-docs-lint/testdata/  # fixture .proto and .md content; not source
-  - executors/claude-agent/node_modules/
-  - executors/claude-agent/dist/
-  - executors/claude-agent/build/
-  - executors/claude-agent/.cache/
-  - dashboards/rimsky-dashboard/node_modules/
-  - dashboards/rimsky-dashboard/dist/
-  - dashboards/rimsky-dashboard/build/
-  - dashboards/rimsky-dashboard/.cache/
+  # cmd/rimsky-docs-lint/testdata/ moved with the binary to rimsky-docs.
+  # executors/claude-agent/{node_modules,dist,build,.cache}/ entries
+  # dropped after P3 — claude-agent moved to
+  # pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent
+  # along with the rest of the consumption-side service impls.
   - .elves/
   # Binary blobs are skipped by the walker (see cmd/rimsky-license-check/).

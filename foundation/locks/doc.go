@@ -10,7 +10,7 @@
 //
 // Standard claim-producer implementations live in standalone binaries
 // under stores/ and rimsky talks to them via the gRPC client in
-// runtime/remote/. This package owns:
+// runtime/peer/. This package owns:
 //
 //   - The ClaimProducer interface (interface.go) — four runtime verbs plus
 //     Capabilities, every verb keyed on a rimsky-generated claim_id.
@@ -26,7 +26,7 @@
 //
 // Concrete implementations:
 //
-//   - runtime/remote/ — the gRPC client; the only
+//   - runtime/peer/ — the gRPC client; the only
 //     concrete ClaimProducer in the rimsky module.
 //   - foundation/locks/storetest/    — an in-Go fake for unit tests
 //     where the wire isn't relevant.

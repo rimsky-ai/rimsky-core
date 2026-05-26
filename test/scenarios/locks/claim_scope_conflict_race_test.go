@@ -46,7 +46,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
 	"github.com/fallguyconsulting/rimsky/runtime"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
-	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
@@ -102,12 +102,12 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// Build one shared registry holding a remote.Client to the loopback
+	// Build one shared registry holding a peer.Client to the loopback
 	// fixture. The Client and the underlying gRPC connection are
 	// concurrency-safe so two RunNode goroutines can share both.
 	dialCtx, dialCancel := context.WithTimeout(h.Ctx, 5*time.Second)
 	defer dialCancel()
-	client, err := remote.Dial(dialCtx, "content", "grpc://"+endpoint)
+	client, err := peer.Dial(dialCtx, "content", "grpc://"+endpoint)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	reg := locks.NewRegistry()

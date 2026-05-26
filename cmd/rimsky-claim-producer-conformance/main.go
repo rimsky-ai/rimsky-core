@@ -8,10 +8,9 @@
 // uniformity invariant (byte-equal Scope ⇒ identical
 // RealizedWriteSemantics), and the four runtime verbs.
 //
-// The conformance logic lives in `conformance/claimproducer/` so tests
-// (e.g. `test/scenarios/atomic_staging/pg_verifier_conformance_test.go`)
-// can invoke the same code path against an in-process fused server
-// without forking the binary.
+// The conformance logic lives in `pkg:sdk/go/conformance/claimproducer/`
+// so external Go authors can invoke the same suite from a Go test
+// without forking the binary; this binary is a thin CLI wrapper.
 //
 // Lifecycle conformance lives in `rimsky-executor-conformance --check-lifecycle`
 // per the layer-crystallization plan (Phase 4 / Task 29).
@@ -30,9 +29,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/conformance/claimproducer"
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/runtime/remote"
+	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
+	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/claimproducer"
 )
 
 func main() {
@@ -41,7 +40,6 @@ func main() {
 	checkObs := flag.Bool("check-observability", false, "additionally probe ClaimProducerObservability")
 	retentionSec := flag.Int("retention-test-seconds", 0, "if >0, drive a canned claim then sleep this long and verify GetClaim returns evicted")
 	flag.Parse()
-	obsRetentionTestSeconds = *retentionSec
 
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "rimsky-claim-producer-conformance: --endpoint required")
@@ -51,7 +49,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	client, err := remote.Dial(ctx, "conformance-target", *endpoint)
+	client, err := peer.Dial(ctx, "conformance-target", *endpoint)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-claim-producer-conformance: dial: %v\n", err)
 		os.Exit(1)
@@ -74,7 +72,10 @@ func main() {
 	}
 
 	if *checkObs {
-		if err := runObservabilityCheck(ctx, *endpoint); err != nil {
+		if err := claimproducer.RunObservabilityCheck(ctx, claimproducer.ObservabilityCheckOpts{
+			Endpoint:             *endpoint,
+			RetentionTestSeconds: *retentionSec,
+		}, func(format string, args ...any) { fmt.Printf(format, args...) }); err != nil {
 			fmt.Fprintf(os.Stderr, "observability: %v\n", err)
 			os.Exit(1)
 		}
@@ -82,8 +83,8 @@ func main() {
 	}
 }
 
-// CheckResult mirrors `conformance/claimproducer.CheckResult` so the
-// existing tests at cmd/rimsky-claim-producer-conformance/main_test.go
+// CheckResult mirrors `pkg:sdk/go/conformance/claimproducer.CheckResult`
+// so the existing tests at cmd/rimsky-claim-producer-conformance/main_test.go
 // keep their existing shape. The binary delegates to the importable
 // package; this thin alias avoids churn in callers.
 type CheckResult = claimproducer.CheckResult

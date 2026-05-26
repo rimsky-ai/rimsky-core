@@ -2,6 +2,16 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
+// rimsky-conformance-probe is the protocol-agnostic stub-mode probe.
+// Issues one Execute RPC with `attributes: {stub_probe: true}` and
+// asserts the terminal carries `attributes_delta = {stub: true}`. Used
+// as a sidecar by every conformance binary.
+//
+// The conformance scaffolding (callback receiver, AwaitTerminal,
+// minimal Client) lives in `pkg:sdk/go/conformance/executor`; this
+// binary uses that surface so it does not import any rimsky-internal
+// runtime package.
+
 package main
 
 import (
@@ -13,9 +23,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguyconsulting/rimsky/conformance"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	conformance "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor"
 )
 
 func main() {
@@ -30,8 +39,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ep := executor.Endpoint{Transport: *transport, URL: *endpoint}
-	pool := executor.NewClientPool()
+	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint}
+	pool := conformance.NewClientPool()
 	defer pool.Close()
 	client, err := pool.GetOrCreate(ep)
 	if err != nil {

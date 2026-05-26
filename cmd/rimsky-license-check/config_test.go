@@ -26,22 +26,22 @@ func writeLicensingYAML(t *testing.T, dir, contents string) *licensingConfig {
 
 func TestClassifyLongestPrefixMatch(t *testing.T) {
 	cfg := writeLicensingYAML(t, t.TempDir(), `apache:
-  - runtime/remote/
+  - runtime/peer/
 agpl:
   - runtime/
 exempt:
-  - runtime/remote/internal/skip/
+  - runtime/peer/internal/skip/
 `)
 	cases := []struct {
 		path string
 		want classification
 	}{
 		// Apache override under AGPL parent — longer prefix wins.
-		{"runtime/remote/client.go", classApache},
+		{"runtime/peer/client.go", classApache},
 		// Plain AGPL parent.
 		{"runtime/runner.go", classAGPL},
 		// Exempt prefix beats both.
-		{"runtime/remote/internal/skip/dummy.go", classExempt},
+		{"runtime/peer/internal/skip/dummy.go", classExempt},
 		// Default-deny when no prefix matches.
 		{"unrelated/path/file.go", classUnknown},
 	}

@@ -21,7 +21,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/internal/pgtest"
+	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -136,7 +136,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 //	Once OpenDriver returns the latency to assertion is sub-second.
 //
 //	Root cause located: testcontainer cold-start latency in
-//	internal/pgtest/pgtest.go::StartFreshPostgresDSN. That helper
+//	sdk/go/testpg/testpg.go::StartFreshPostgresDSN. That helper
 //	already documents the 300s container-startup ceiling and the
 //	"~1-6s per Docker poll under saturated parallel load;
 //	occasional 15-20s spikes" envelope; under -parallel=N the

@@ -21,8 +21,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	corestore "github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/stores/common/action"
+	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/fallguyconsulting/rimsky/sdk/go/ops"
+	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 	"github.com/fallguyconsulting/rimsky/stores/stub/server"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )
@@ -50,7 +51,7 @@ type yamlPickPolicy struct {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	ops.Setup(slog.LevelInfo)
 
 	cfgPath := os.Getenv(defaultConfigEnv)
 	if cfgPath == "" {
@@ -66,15 +67,15 @@ func main() {
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	envelope := make([]corestore.WriteSemantics, 0, len(cfg.WriteSemanticsAllowed)+1)
+	envelope := make([]claimproducer.WriteSemantics, 0, len(cfg.WriteSemanticsAllowed)+1)
 	for _, ws := range cfg.WriteSemanticsAllowed {
-		envelope = append(envelope, corestore.WriteSemantics(ws))
+		envelope = append(envelope, claimproducer.WriteSemantics(ws))
 	}
 	if cfg.WriteSemantics != "" && len(envelope) == 0 {
-		envelope = append(envelope, corestore.WriteSemantics(cfg.WriteSemantics))
+		envelope = append(envelope, claimproducer.WriteSemantics(cfg.WriteSemantics))
 	}
 	if len(envelope) == 0 {
-		envelope = []corestore.WriteSemantics{corestore.WriteSemanticsSync}
+		envelope = []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}
 	}
 	policies := make(map[string]stubstore.PickPolicyConfig, len(cfg.PickPolicies))
 	for selector, p := range cfg.PickPolicies {
@@ -109,7 +110,7 @@ func main() {
 	defer cancel()
 	if err := server.Run(ctx, server.Config{
 		Substrate: stubstore.Config{
-			Capabilities: corestore.Capabilities{WriteSemanticsAllowed: envelope},
+			Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: envelope},
 			PickPolicies: policies,
 		},
 		EnableLifecycle: cfg.EnableLifecycle,

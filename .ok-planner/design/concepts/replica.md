@@ -28,9 +28,9 @@ Does NOT own: the actual replica posture of any individual binary, the deploymen
   - `pkg:cmd/rimsky-control-api/` — N replicas behind a load balancer; statelessly serves operator-facing routes.
   - `pkg:cmd/rimsky-supervisor/` — N replicas, coordinated through claim-handle / orphan-reap advisory locks.
   - `pkg:cmd/rimsky-scheduler/` — N replicas, coordinated through scheduler-tick advisory lock.
-  - `pkg:sensors/sensor-*/` — single replica per binary. Each sensor binary's bundled implementation is honestly single-replica; running two sensor-cron replicas pointed at the same rimsky endpoint will double-fire per fire window. Operators wanting HA pick a publisher implementation that handles it.
-  - `pkg:executors/*` — N replicas behind a load balancer; rimsky dispatch picks any reachable replica.
-  - `pkg:stores/*` — depends on the store; postgres / filesystem stores are typically single-replica.
+  - `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/` — single replica per binary. Each sensor binary's bundled implementation is honestly single-replica; running two sensor-cron replicas pointed at the same rimsky endpoint will double-fire per fire window. Operators wanting HA pick a publisher implementation that handles it.
+  - `pkg:github.com/fallguyconsulting/rimsky-services/executors/*` (production-side: `claude-agent`, `http-node`, `verifier-http`, `verifier-shape-checks`) — N replicas behind a load balancer; rimsky dispatch picks any reachable replica. The in-rimsky `pkg:executors/stub` test double inherits the same posture for completeness.
+  - `pkg:github.com/fallguyconsulting/rimsky-services/stores/*` (production-side: `filesystem`, `postgres`) — depends on the store; postgres / filesystem stores are typically single-replica. The in-rimsky `pkg:stores/stub` test double is single-process by construction.
 
 - Multi-replica safety (when required) lives in the binary's implementation, not rimsky's runtime. The supervisor's claim-handle advisory lock is the canonical pattern; bundled sensors do NOT attempt similar coordination.
 
@@ -41,3 +41,5 @@ Does NOT own: the actual replica posture of any individual binary, the deploymen
 Introduced by the 2026-05-17 publisher-unification spec to document the v1 sensor replica posture decision. The earlier pre-2026-05-17 draft proposed adding per-publisher-subscription advisory locks to coordinate multi-replica sensors; that proposal was retired in favor of "single-replica is the v1 contract."
 
 If a publisher implementation wants HA, it owns the implementation. Rimsky's job at the protocol surface is "accept messages from publishers and deliver them"; HA at the publisher tier is a sibling concern.
+
+2026-05-24: path references retargeted from in-tree bundled-impl locations to pkg:github.com/fallguyconsulting/rimsky-services. See spec 2026-05-24-repo-reorganization-design phase P3.
