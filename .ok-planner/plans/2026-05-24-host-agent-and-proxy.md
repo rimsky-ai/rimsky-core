@@ -15,8 +15,8 @@ This plan modifies code across the entire rimsky tree. Key conventions to follow
 - **Postgres:** `jackc/pgx/v5`. SQLite: `modernc.org/sqlite` (pure-Go, no CGO).
 - **HTTP routing:** `go-chi/chi`.
 - **Layer boundaries** (enforced by `.golangci.yml` depguard): `foundation/` < `graph/` < `runtime/` < `control/`. The `runtime-purity` rule forbids `runtime/` from importing `control/`. Any new cross-layer wiring uses function pointers (see the `LifecyclePeersForSpec` pattern in Pass 7).
-- **Multi-module workspace:** `go.work` ties three modules: root, `foundation/`, `protocols/`. Run tests/builds at the module level (`cd foundation && go test ./...`) where indicated.
-- **`concept:lifecycle-subscriber` has two parallel surfaces.** The proto service (`proto:lifecycle.proto::LifecycleSubscriber`) AND a Go interface (`code:protocols/lifecycle/lifecycle.go::LifecycleSubscriber`) with re-export aliases in `code:foundation/locks/lifecycle.go`. The remote-client adapter at `code:runtime/remote/lifecycle_client.go` converts Go struct → proto on outbound calls. **Every proto change to lifecycle.proto requires a parallel Go-interface change**, or downstream consumers won't compile.
+- **Multi-module workspace:** `go.work` ties four modules: root, `foundation/`, `protocols/`, `sdk/go/`. Run tests/builds at the module level (`cd foundation && go test ./...`) where indicated.
+- **`concept:lifecycle-subscriber` has two parallel surfaces.** The proto service (`proto:lifecycle.proto::LifecycleSubscriber`) AND a Go interface (`code:protocols/lifecycle/lifecycle.go::LifecycleSubscriber`) with re-export aliases in `code:foundation/locks/lifecycle.go`. The peer-client adapter at `code:runtime/peer/lifecycle_client.go` converts Go struct → proto on outbound calls. **Every proto change to lifecycle.proto requires a parallel Go-interface change**, or downstream consumers won't compile.
 - **No skipping hooks:** never use `--no-verify`, `--no-gpg-sign`. If a check fails, fix the underlying issue.
 - **No commits:** this plan produces working-tree edits only. The user commits when they're ready.
 - **Verification convention:** every pass ends with a runnable `go build` / `go test` / `make` command whose exit code is the pass gate.
@@ -32,7 +32,7 @@ When in doubt, prefer matching the prevailing pattern in the immediate neighborh
 
 ## Pass 1: Protocol surfaces (proto + Go interface)
 
-**Goal:** Land the new `host_agent.proto` file and the lifecycle.proto extensions (new `service_bindings` + `owner_api_key_id` fields on `OnInstanceCreatedRequest`; new `OnRunScopeTerminal` RPC + request message). Regenerate Go bindings. Extend the parallel Go interface in `protocols/lifecycle/` and the alias re-exports in `foundation/locks/lifecycle.go`. Update the `runtime/remote/lifecycle_client.go` adapter to translate the new fields/method. Update all existing test fakes that implement `LifecycleSubscriber`.
+**Goal:** Land the new `host_agent.proto` file and the lifecycle.proto extensions (new `service_bindings` + `owner_api_key_id` fields on `OnInstanceCreatedRequest`; new `OnRunScopeTerminal` RPC + request message). Regenerate Go bindings. Extend the parallel Go interface in `protocols/lifecycle/` and the alias re-exports in `foundation/locks/lifecycle.go`. Update the `runtime/peer/lifecycle_client.go` adapter to translate the new fields/method. Update all existing test fakes that implement `LifecycleSubscriber`.
 **Scope:** Tasks 1–7
 **End state:** working
 **Verification:** `make proto-gen && cd protocols && go build ./... && cd .. && cd foundation && go build ./... && cd .. && go build ./...`
@@ -307,13 +307,13 @@ type OnRunScopeTerminalRequest struct {
 OnRunScopeTerminal(ctx context.Context, req OnRunScopeTerminalRequest) error
 ```
 
-5. Build the protocols module: `cd protocols && go build ./... && cd ..`. (Code that *consumes* the interface — remote client, test fakes — won't compile yet. Tasks 6 + 7 fix those.)
+5. Build the protocols module: `cd protocols && go build ./... && cd ..`. (Code that *consumes* the interface — peer client, test fakes — won't compile yet. Tasks 6 + 7 fix those.)
 
 **Verification:** `cd protocols && go build ./... && cd ..`.
 
-### Task 6: Add type alias + remote-client adapter for the new method
+### Task 6: Add type alias + peer-client adapter for the new method
 
-**Files:** `foundation/locks/lifecycle.go`, `runtime/remote/lifecycle_client.go`
+**Files:** `foundation/locks/lifecycle.go`, `runtime/peer/lifecycle_client.go`
 
 **Steps:**
 
@@ -325,7 +325,7 @@ OnRunScopeTerminalRequest = lifecycle.OnRunScopeTerminalRequest
 
 (Place in alphabetic/file order with the existing aliases.)
 
-2. Read `runtime/remote/lifecycle_client.go`. The file implements each Go-interface method by translating to the gen-v1 proto and calling the wrapped gRPC client (`c.rpc.OnInstanceCreated(ctx, ...)` etc.).
+2. Read `runtime/peer/lifecycle_client.go`. The file implements each Go-interface method by translating to the gen-v1 proto and calling the wrapped gRPC client (`c.rpc.OnInstanceCreated(ctx, ...)` etc.).
 
 3. Update the existing `OnInstanceCreated` method to set the two new proto fields:
 
@@ -355,9 +355,9 @@ func (c *LifecycleClient) OnRunScopeTerminal(ctx context.Context, req lifecycle.
 }
 ```
 
-5. Build the remote module: `go build ./runtime/remote/...`. (Full-tree build fails until Task 7 updates test fakes.)
+5. Build the peer module: `go build ./runtime/peer/...`. (Full-tree build fails until Task 7 updates test fakes.)
 
-**Verification:** `go build ./runtime/remote/...`.
+**Verification:** `go build ./runtime/peer/...`.
 
 ### Task 7: Update all `LifecycleSubscriber` implementations (test fakes + any other implementers)
 
@@ -950,7 +950,7 @@ input := AcquireSubClaimsInput{
 
 **Steps:**
 
-1. Confirm `runtime/clientiface/` is the right home (check sibling files there). If `clientiface` is shared infrastructure for typed wire types and doesn't own gRPC plumbing, use `runtime/remote/` or `runtime/executor/` instead — pick the location nearest the existing gRPC dial code that already imports `google.golang.org/grpc`.
+1. Confirm `runtime/clientiface/` is the right home (check sibling files there). If `clientiface` is shared infrastructure for typed wire types and doesn't own gRPC plumbing, use `runtime/peer/` or `runtime/executor/` instead — pick the location nearest the existing gRPC dial code that already imports `google.golang.org/grpc`.
 
 2. Define the interceptor pair + context helper:
 
@@ -1011,7 +1011,7 @@ func ServiceNameStreamInterceptor(
 
 ### Task 22: Install the interceptor on the executor and claim-producer dial sites
 
-**Files:** `runtime/executor/client.go`, `runtime/remote/dial.go`
+**Files:** `runtime/executor/client.go`, `runtime/peer/dial.go`
 
 **Steps:**
 
@@ -1026,7 +1026,7 @@ opts = append(opts,
 
 (Substitute the package import based on Task 21's location.)
 
-2. Read `runtime/remote/dial.go::Dial`. Add the same interceptors to its `grpc.NewClient` call.
+2. Read `runtime/peer/dial.go::Dial`. Add the same interceptors to its `grpc.NewClient` call.
 
 3. For other peer-service clients (`lifecycle_client.go`, `publisher_client.go`, `validation_client.go`, `data_processing_client.go`): leave a `// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support` comment at each dial site. v1 only fronts executor and claim-producer.
 
@@ -1075,13 +1075,13 @@ err := producer.Open(ctx, ...)
 
 ### Task 25: Translate claim-producer gRPC status → typed error carrying `error_class`
 
-**Files:** `runtime/remote/client.go`
+**Files:** `runtime/peer/client.go`
 
 **Steps:**
 
-1. Read `runtime/remote/client.go`. The `Open`/`Commit`/`Abandon`/`Release` methods today wrap gRPC errors as `fmt.Errorf("remote producer %q: Open: %w", ...)`.
+1. Read `runtime/peer/client.go`. The `Open`/`Commit`/`Abandon`/`Release` methods today wrap gRPC errors as `fmt.Errorf("remote producer %q: Open: %w", ...)`.
 
-2. Add the typed error and the gRPC-status helper to the same file (or a sibling `runtime/remote/errors.go`):
+2. Add the typed error and the gRPC-status helper to the same file (or a sibling `runtime/peer/errors.go`):
 
 ```go
 import (
@@ -1124,7 +1124,7 @@ func extractErrorClass(err error) string {
 }
 ```
 
-3. Update each remote method (`Open`, `Commit`, `Abandon`, `Release`) on `Client`:
+3. Update each method (`Open`, `Commit`, `Abandon`, `Release`) on `Client`:
 
 ```go
 if err != nil {
@@ -1139,9 +1139,9 @@ if err != nil {
 
 (Existing call-site error types — `(*OpenResponse, error)`, `error`, etc. — stay unchanged; the new typed error wraps the underlying error rather than replacing it.)
 
-4. Build: `go build ./runtime/remote/...`.
+4. Build: `go build ./runtime/peer/...`.
 
-**Verification:** `go build ./runtime/remote/...`.
+**Verification:** `go build ./runtime/peer/...`.
 
 ### Task 26: Route claim-producer errors through `applyErrorPolicy`
 
@@ -1165,7 +1165,7 @@ It takes `*acquisition`, not `cand` / `nodeDef`.
 3. The cleanest landing point is `tryAcquire` in `runtime/runner_acquire.go`, AFTER it receives the failure signal from `acquireOneLock` (which propagates from `acquireClaim`). `tryAcquire` already has the partial `acquisition` it's been building.
 
 4. Implementation steps:
-   - In `acquireClaim`: when `producer.Open` returns a `*remote.ProducerCallError`, extract the `ErrorClass` from it and return a new sentinel + the error class up to `acquireOneLock`. Re-use the existing `openResult` enum if it has an "errored" variant, or add one.
+   - In `acquireClaim`: when `producer.Open` returns a `*peer.ProducerCallError`, extract the `ErrorClass` from it and return a new sentinel + the error class up to `acquireOneLock`. Re-use the existing `openResult` enum if it has an "errored" variant, or add one.
    - In `acquireOneLock`: propagate the error class up to `tryAcquire`.
    - In `tryAcquire`: when the acquisition signal is "errored with class X", build the partial `acquisition` (matching the pattern at the existing `openResultUnavailable` handling around lines 504-526) and call `applyErrorPolicy(ctx, args, partialAcq, errorClass, payload, tx)`. Treat the return as a post-commit hook same as the existing acquire-failure path.
 
@@ -1217,7 +1217,7 @@ LateBindServices []string `json:"late_bind_services,omitempty" yaml:"late_bind_s
 
 ### Task 28: Add `late_bind_service_proxies` to `RimskyConfig`
 
-**Files:** `control/config/stores.go` (or wherever `RimskyConfig` is declared — confirm via `rg 'type RimskyConfig'`), `deploy/rimsky.yml`
+**Files:** `control/config/stores.go` (or wherever `RimskyConfig` is declared — confirm via `rg 'type RimskyConfig'`)
 
 **Steps:**
 
@@ -1232,21 +1232,7 @@ LateBindServices []string `json:"late_bind_services,omitempty" yaml:"late_bind_s
 LateBindServiceProxies map[string]string `yaml:"late_bind_service_proxies"`
 ```
 
-2. Update `deploy/rimsky.yml` with a commented-out example:
-
-```yaml
-# late_bind_service_proxies maps protocol name → proxy service name.
-# When a template declares late_bind_services and a dispatch row's
-# service name matches one of those, the resolver routes to the named
-# proxy (which must be declared in the corresponding executors:/
-# claim_producers: block). v1 supports executor and claim_producer.
-#
-# late_bind_service_proxies:
-#   executor: host-agent-proxy
-#   claim_producer: host-agent-proxy
-```
-
-3. Build: `go build ./control/config/...`.
+2. Build: `go build ./control/config/...`.
 
 **Verification:** `go build ./control/config/...`.
 
@@ -1922,7 +1908,7 @@ hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
 
 **Steps:**
 
-1. Model after `cmd/rimsky-supervisor/main.go` and `executors/http-node/main.go` for the binary structure (gRPC listener, signal-handled graceful shutdown, slog setup).
+1. Model after `cmd/rimsky-supervisor/main.go` and the in-repo stub executor at `executors/stub/` (binary entrypoint under `executors/stub/cmd/`, gRPC `Executor` server in `executors/stub/stub.go`) for the binary structure (gRPC listener, signal-handled graceful shutdown, slog setup).
 
 2. Create `config.go` with:
 
@@ -2447,10 +2433,10 @@ case "agent":
 
 ---
 
-## Pass 10: CLI run extensions + auth login + Context.api_key + aliases + deploy stack + tests + design docs
+## Pass 10: CLI run extensions + auth login + Context.api_key + aliases + tests + design docs
 
-**Goal:** Add the additive `rimsky run` flags + auto-start agent. Implement `rimsky auth login`. Extend `Context` with `api_key`. Add CLI-side alias resolution. Update `deploy/rimsky.yml`, `deploy/rimsky-all.yml`, `deploy/docker-compose.yml`, and `deploy/Dockerfile.all` to declare and ship the proxy. Write scenario tests under `test/scenarios/`. Apply all design-doc edits.
-**Scope:** Tasks 51–59
+**Goal:** Add the additive `rimsky run` flags + auto-start agent. Implement `rimsky auth login`. Extend `Context` with `api_key`. Add CLI-side alias resolution. Write scenario tests under `test/scenarios/`. Apply all design-doc edits. (Declaring/shipping the proxy in the reference deployment is out of scope — those assets live in the rimsky-docs repo.)
+**Scope:** Tasks 51–58
 **End state:** working
 **Verification:** `go build ./... && go test ./control/cli/... ./test/scenarios/... -count=1 && make lint`
 
@@ -2584,82 +2570,7 @@ if len(parts) == 2 {
 
 **Verification:** `go test ./control/cli/... -count=1`.
 
-### Task 54: Update `deploy/` to declare and ship the proxy
-
-**Files:** `deploy/rimsky.yml`, `deploy/rimsky-all.yml`, `deploy/docker-compose.yml`, `deploy/Dockerfile.all` (or whichever Dockerfile builds the rimsky binaries)
-
-**Steps:**
-
-1. Read `deploy/rimsky.yml`. Add the proxy's entries:
-
-```yaml
-executors:
-  # ... existing
-  host-agent-proxy:
-    transport: grpc
-    endpoint: "agent-proxy:9090"
-    tls: off
-    protocols: [executor, lifecycle_subscriber]
-
-claim_producers:
-  # ... existing
-  host-agent-proxy:
-    endpoint: "grpc://agent-proxy:9090"
-    protocols: [claim_producer]
-    write_semantics_allowed: [sync, staged_async, blocking_async, read_only]
-
-late_bind_service_proxies:
-  executor: host-agent-proxy
-  claim_producer: host-agent-proxy
-```
-
-2. Apply the same additions to `deploy/rimsky-all.yml`.
-
-3. Read `deploy/docker-compose.yml`. The file uses pre-built images (`image: rimsky/<binary>:latest` with NO `build:` directive — images are built separately by `deploy/build-images.sh`). Add a service following the existing convention:
-
-```yaml
-  rimsky-host-agent-proxy:
-    image: rimsky/host-agent-proxy:latest
-    container_name: rimsky-host-agent-proxy
-    ports:
-      - "${RIMSKY_HOST_AGENT_PROXY_HOST_PORT:-9090}:9090"
-    environment:
-      RIMSKY_PROXY_GRPC_PORT: "9090"
-      RIMSKY_CONTROL_API_URL: "http://rimsky-control-api:8080"
-      # RIMSKY_CONTROL_API_TOKEN supplied via .env (see deploy/dev-up.sh)
-    depends_on:
-      - rimsky-control-api
-```
-
-(Confirm the existing image-naming pattern by reading the other services. Match the `${VAR:-default}` host-port parameterization per `deploy/dev-up.sh`'s convention. Match healthcheck conventions if siblings have them.)
-
-4. Read `deploy/Dockerfile.all` (around lines 20-31 in the builder stage and lines 43-48 in the final stage). The builder stage has SIX explicit discrete `CGO_ENABLED=0 GOOS=linux go build ... && \` lines (one per binary; chained with `&&`) — NOT a for-loop. The final distroless stage has matching explicit `COPY --from=build /out/<binary> /usr/local/bin/<binary>` lines (one per binary).
-
-   Two edits required:
-
-   (a) **In the builder RUN chain**: append a 7th `&&` clause for the new binary, matching the format of the existing ones:
-
-   ```dockerfile
-   CGO_ENABLED=0 GOOS=linux go build -o /out/rimsky-host-agent-proxy ./cmd/rimsky-host-agent-proxy && \
-   ```
-
-   (b) **In the final stage**: append a matching `COPY` line:
-
-   ```dockerfile
-   COPY --from=build /out/rimsky-host-agent-proxy /usr/local/bin/rimsky-host-agent-proxy
-   ```
-
-   Both additions go at the end of their respective lists. Match the indentation and line-continuation style of the surrounding lines exactly.
-
-5. Read `deploy/build-images.sh`. Add `rimsky-host-agent-proxy` to its for-loop or per-binary build call so the `make` target / convenience script produces an image for the new binary.
-
-6. There is a separate `Dockerfile.go-base` with `BINARY` build-arg that's used for per-binary images. Check whether `deploy/build-images.sh` invokes `docker build` with `Dockerfile.go-base` per binary, or with `Dockerfile.all` once. If per-binary: nothing special needed beyond the loop add in step 5 — the existing `BINARY=rimsky-host-agent-proxy` invocation will work once `cmd/rimsky-host-agent-proxy/` exists. If the script uses `Dockerfile.all`: the binary builds via step 4's additions.
-
-7. Verify the YAML parses (lint runs in Task 59).
-
-**Verification:** `grep -q 'host-agent-proxy' deploy/rimsky.yml && grep -q 'host-agent-proxy' deploy/docker-compose.yml && grep -q 'rimsky-host-agent-proxy' deploy/Dockerfile.all`.
-
-### Task 55: End-to-end scenario test — late-bound executor happy path
+### Task 54: End-to-end scenario test — late-bound executor happy path
 
 **Files:** `test/scenarios/host_agent_late_bind_executor_test.go` (new)
 
@@ -2672,7 +2583,7 @@ late_bind_service_proxies:
    - Spin up an in-process proxy (call `proxy.NewServer(state, cfg)` directly — bypass the binary; bind to a free port).
    - Spin up an in-process host-agent (call `hostagent.Run(ctx, cfg)` with `cfg.RimskyURL` pointing at the proxy's port).
    - Stub binary: a small in-process gRPC server implementing `Executor.Execute` that returns Heartbeat + StreamClose{Success}. Bind to a free port; expect the agent to dial it.
-   - For the stub-binary approach to work in tests, the agent's spawn path needs to support "the binary is already running on a known port" — modify the test setup to register the stub binary's address into the agent's `liveChildren` map directly, bypassing `exec.Command`. Or: build the stub binary at test setup time via `go build` and exec it. Pick whichever is more idiomatic for the rimsky test suite (check how `executors/http-node`-based tests do this).
+   - For the stub-binary approach to work in tests, the agent's spawn path needs to support "the binary is already running on a known port" — modify the test setup to register the stub binary's address into the agent's `liveChildren` map directly, bypassing `exec.Command`. Or: build the stub binary at test setup time via `go build` and exec it. Pick whichever is more idiomatic for the rimsky test suite (check how the in-repo stub executor at `executors/stub` and its `stubtest` helpers are stood up in existing scenario / conformance tests).
    - Create an instance with `service_bindings: {"codegen": {"path": "<stub-binary-path>"}}` (or whatever the stub-injection mechanism above requires).
    - Trigger a frame; assert dispatch completes via the proxy + agent path, the stub binary handles the Execute, and the run reaches terminal.
 
@@ -2680,13 +2591,13 @@ late_bind_service_proxies:
 
 **Verification:** `go test ./test/scenarios/host_agent_late_bind_executor_test.go -count=1`.
 
-### Task 56: End-to-end scenario tests — failure modes
+### Task 55: End-to-end scenario tests — failure modes
 
 **Files:** `test/scenarios/host_agent_failure_modes_test.go` (new)
 
 **Steps:**
 
-Add tests covering each failure mode (use the same in-process scaffold as Task 55):
+Add tests covering each failure mode (use the same in-process scaffold as Task 54):
 
 - **Agent not connected:** instance with bindings, no agent dialed; assert dispatch returns `StreamClose{Error, error_class: "host_agent_not_connected"}`.
 - **Missing binding:** instance with empty `service_bindings`; assert `binding_not_found`.
@@ -2698,36 +2609,32 @@ Build and test: `go test ./test/scenarios/host_agent_failure_modes_test.go -coun
 
 **Verification:** `go test ./test/scenarios/host_agent_failure_modes_test.go -count=1`.
 
-### Task 57: Create the two new concept files + add to `concepts.md` TOC
+### Task 56: Create the two new concept files + add to `concepts.md` TOC
 
 **Files:** `.ok-planner/design/concepts/host-agent.md` (new), `.ok-planner/design/concepts/host-agent-proxy.md` (new), `.ok-planner/design/concepts.md`
 
 **Steps:**
 
-1. Create `.ok-planner/design/concepts/host-agent.md` with the exact content specified in the spec §"Design changes — New concepts" (frontmatter + `## What it is` / `## Purpose` / `## Boundaries` / `## Invariants` / `## Aliases and historical names` / `## Open within this concept` / `## Notes` sections, all per spec).
+1. Create `.ok-planner/design/concepts/host-agent.md` with the content specified in the spec §"Design changes — New concepts" (frontmatter + `## What it is` / `## Purpose` / `## Boundaries` / `## Invariants` / `## Aliases and historical names` / `## Open within this concept` / `## Notes` sections, all per spec). The spec's New-concepts bodies are written path-free per the concept self-containment rule — transcribe them as-is and do not add any file paths, Go symbols, or proto/RPC citations.
 
 2. Create `.ok-planner/design/concepts/host-agent-proxy.md` similarly.
 
-3. Read `.ok-planner/design/concepts.md`. The file is described in its header as auto-generated; per `.ok-planner/CLAUDE.md`, `concepts.md` is regenerated by `execute-plan` when a plan touches `concepts/`. Two options:
-   - If a regeneration tool exists (look for `cmd/rimsky-docs-glossary` or similar), invoke it.
-   - Otherwise, manually insert two new entries (alphabetically), and note in the task that `execute-plan`'s post-pass regeneration may overwrite hand-edits — that's fine, the regen produces equivalent content from the new concept files' frontmatter.
-
-   Insert (alphabetically):
+3. Read `.ok-planner/design/concepts.md`. Per `.ok-planner/CLAUDE.md`, `concepts.md` is regenerated by `execute-plan`'s post-pass design-doc step from each concept's lead sentence whenever a plan touches `concepts/` — so hand-edits here are a fallback the regen normalizes. Manually insert two new entries (alphabetically) so the TOC is correct even before regen:
 
 ```markdown
-- `host-agent` — Long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary, that authenticates outbound to a `host-agent-proxy` and serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
-- `host-agent-proxy` — Rimsky-stack `concept:service` implementing the multi-protocol composition pattern; presents `Executor` / `ClaimProducer` / `LifecycleSubscriber` on the supervisor-facing side and maintains agent connections on the dev-facing side via `HostAgent.Connect`.
+- `host-agent` — Long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary, that authenticates outbound to a host-agent-proxy and serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
+- `host-agent-proxy` — Rimsky-stack `concept:service` implementing the multi-protocol composition pattern; presents the executor, claim-producer, and lifecycle-subscriber protocols on the supervisor-facing side and maintains agent connections on the dev-facing side via a long-lived bidi-stream protocol.
 ```
 
 **Verification:** `test -f .ok-planner/design/concepts/host-agent.md && test -f .ok-planner/design/concepts/host-agent-proxy.md && grep -q '\`host-agent\`' .ok-planner/design/concepts.md && grep -q '\`host-agent-proxy\`' .ok-planner/design/concepts.md`.
 
-### Task 58: Apply concept mutations + tension addendum + create new tensions
+### Task 57: Apply concept mutations + tension addendum + create new tensions
 
 **Files:** `.ok-planner/design/concepts/{executor,claim-producer,service,instance,rimsky-yml,template,lifecycle-subscriber,supervisor,error-policy,conformance,rimsky}.md`, `.ok-planner/design/tensions/callback-hostname-split.md`, `.ok-planner/design/tensions/unreachable-service-row-stall.md` (new), `.ok-planner/design/tensions/anonymous-mode-locks-out-late-bind.md` (new), `.ok-planner/design/tensions/internal-service-auth-unspeced.md` (new)
 
 **Steps:**
 
-1. Apply each concept mutation from the spec §"Design changes — Mutations to existing concepts" verbatim:
+1. Apply each concept mutation from the spec §"Design changes — Mutations to existing concepts", writing the concept-file text **path-free** per the concept self-containment rule (see the Self-containment note at the head of that spec section). The spec's citation hints orient you to *where* each change lands; do not transcribe file paths, Go symbols, proto/RPC method names, or `table:`/`cfg:` citations into the concept bodies. Apply each:
    - `executor.md`: append the Notes entry.
    - `claim-producer.md`: append the analogous Notes entry.
    - `service.md`: append the Notes entry.
@@ -2746,7 +2653,7 @@ Build and test: `go test ./test/scenarios/host_agent_failure_modes_test.go -coun
 
 **Verification:** `grep -l 'Per spec 2026-05-24-host-agent-and-proxy-design' .ok-planner/design/concepts/ | wc -l` should report ≥ 11 (one per mutated file). Plus: `grep -q 'Per spec 2026-05-24-host-agent-and-proxy-design' .ok-planner/design/tensions/callback-hostname-split.md && for f in unreachable-service-row-stall anonymous-mode-locks-out-late-bind internal-service-auth-unspeced; do test -f ".ok-planner/design/tensions/$f.md"; done`.
 
-### Task 59: Final integration check — full test + lint
+### Task 58: Final integration check — full test + lint
 
 **Files:** None (verification-only task)
 
@@ -2765,7 +2672,7 @@ Build and test: `go test ./test/scenarios/host_agent_failure_modes_test.go -coun
 
 These cannot be automated and should be run by the user after the implementation is complete:
 
-- **Multi-process integration via Docker.** Bring up the full stack with `cd deploy && ./dev-up.sh up -d`. Verify the `rimsky-host-agent-proxy` container starts (`./dev-up.sh ps`). Run a `rimsky auth login`, `rimsky run --template <name> --service codegen=<bin>` cycle against it; confirm the spawned binary runs on the host machine and the workflow completes.
+- **Multi-process integration.** Against a running multi-process deployment that includes the `rimsky-host-agent-proxy` service (the reference-deployment assets live in the rimsky-docs repo, out of scope for this plan), run a `rimsky auth login`, `rimsky run --template <name> --service codegen=<bin>` cycle; confirm the spawned binary runs on the host machine and the workflow completes.
 - **CLI ergonomics smoke test.** Run `rimsky auth login` interactively against a deployed rimsky, `rimsky agent start`, `rimsky run --template my-workflow --param cwd=. --service codegen=./my-binary`. Confirm the full UX feels right and error messages are clear (no agent → `host_agent_not_connected`; missing binary → `spawn_failed`; bad path → clear CLI-side error).
-- **Documentation sweep.** Browse `docs/concepts/` (if rimsky's public docs are derived from `.ok-planner/design/concepts/`) and verify host-agent + host-agent-proxy surface correctly. Run `make docs-build` if applicable.
+- **Concept-doc check.** Confirm the new `host-agent` and `host-agent-proxy` concept files read correctly and follow the self-containment rule (no code paths or citations in the bodies). Public-docs propagation is handled separately in the rimsky-docs repo.
 - **Anonymous-mode interaction.** Confirm anonymous-mode users get a clear error when attempting to use `--service` (per the new tension `anonymous-mode-locks-out-late-bind`); the error should mention that the deployment must be authenticated to use late-bound services.
