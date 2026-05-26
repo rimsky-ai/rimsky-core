@@ -19,7 +19,7 @@ lint:
 	golangci-lint run
 	cd foundation && golangci-lint run
 	cd protocols && golangci-lint run
-	cd sdk/go && golangci-lint run
+	cd testpg && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
@@ -46,20 +46,20 @@ tidy:
 # The pre-release reconciliation gate at scripts/release.sh invokes those
 # binaries to block tags on unaddressed docs drift.
 
-# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols + sdk/go).
+# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols + testpg).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
 # inter-module references resolve via local replace.
 test-all:
 	go test ./...
 	cd foundation && go test ./...
 	cd protocols && go test ./...
-	cd sdk/go && go test ./...
+	cd testpg && go test ./...
 
 build-all:
 	go build ./...
 	cd foundation && go build ./...
 	cd protocols && go build ./...
-	cd sdk/go && go build ./...
+	cd testpg && go build ./...
 
 # ── rimsky CLI targets ──
 
@@ -174,7 +174,7 @@ lint-docker:
 	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
 	  cd foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
 	  cd ../protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd ../sdk/go && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
+	  cd ../testpg && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy

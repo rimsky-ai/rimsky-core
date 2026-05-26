@@ -27,6 +27,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
@@ -45,7 +46,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	// below substitutes its own in-process Fake registry so we can
 	// observe TemplateID/InstanceID directly on the recorded call.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -55,7 +56,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -80,7 +81,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	fake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg := locks.NewRegistry()
 	reg.Add("content", fake)
 

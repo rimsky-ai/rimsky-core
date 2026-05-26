@@ -9,7 +9,7 @@
 // store.LockSpec / RegionLockSpec / ClaimLockSpec / LockHandle /
 // AcquireLock / OpenHandle / ReleaseLock surface. Under the redesign
 // the supervisor's acquisition path no longer exposes these types
-// externally — Locks live as locks.NamedLockSpec | locks.ClaimSpec,
+// externally — Locks live as locks.NamedLockSpec | claimproducer.ClaimSpec,
 // and the verbs are Open / Commit / Abandon / Release on
 // store.Store itself.
 //

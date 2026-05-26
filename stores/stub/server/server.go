@@ -18,7 +18,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	bridge "github.com/fallguyconsulting/rimsky/sdk/go/server"
+	bridge "github.com/fallguyconsulting/rimsky/protocols/serverkit"
 	dataprocessing "github.com/fallguyconsulting/rimsky/stores/stub/dataprocessing"
 	"github.com/fallguyconsulting/rimsky/stores/stub/lifecycle"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"

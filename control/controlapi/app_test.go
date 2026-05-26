@@ -30,6 +30,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 type harness struct {
@@ -56,8 +57,8 @@ func newHarness(t *testing.T) (*harness, func()) {
 	d := pgtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
-	contentFake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
-	topicsFake := storetest.NewFake("topics-ring", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	topicsFake := storetest.NewFake("topics-ring", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("content", contentFake)
 	reg.Add("topics-ring", topicsFake)
 

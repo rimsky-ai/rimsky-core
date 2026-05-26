@@ -70,6 +70,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 )
 
@@ -352,14 +353,14 @@ type AsyncContext struct {
 // the slice in deterministic sort order (blessed-invariant 3) to drive
 // Commit/Abandon and the auto-terminal subgraph check.
 type AcquiredLock struct {
-	// Spec is one of locks.NamedLockSpec or locks.ClaimSpec.
+	// Spec is one of locks.NamedLockSpec or claimproducer.ClaimSpec.
 	Spec any
 	// ClaimHandleID is the rimsky_claim_handles row id created at
 	// acquisition. Drives all subsequent claimant-guarded mutations.
 	ClaimHandleID shared.UUID
 	// ClaimResult is populated by Open for ClaimSpec acquisitions;
 	// zero for NamedLockSpec.
-	ClaimResult locks.ClaimResult
+	ClaimResult claimproducer.ClaimResult
 	// Producer is the resolved ClaimProducer. Nil for NamedLockSpec;
 	// non-nil for ClaimSpec.
 	Producer locks.ClaimProducer

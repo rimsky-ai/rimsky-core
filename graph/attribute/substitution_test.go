@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 func mustJSON(t *testing.T, v any) json.RawMessage {
@@ -35,7 +35,7 @@ func TestSubstitute(t *testing.T) {
 				"scope_notes": "focus on coastal habitats",
 			}),
 		},
-		Claim: map[string]locks.ClaimResult{
+		Claim: map[string]claimproducer.ClaimResult{
 			"topics-ring": {
 				Address:    mustJSON(t, "/data/topics/row-7"),
 				ClaimScope: mustJSON(t, "row-7"),
@@ -195,7 +195,7 @@ func TestSubstitute_ErrorRedaction(t *testing.T) {
 	t.Parallel()
 	const sentinel = "SECRET_SENTINEL_DO_NOT_LOG"
 	ctx := ResolveContext{
-		Claim: map[string]locks.ClaimResult{
+		Claim: map[string]claimproducer.ClaimResult{
 			"alias": {
 				Payload: mustJSON(t, map[string]any{"field": sentinel}),
 			},
@@ -373,7 +373,7 @@ func TestSubstituteValue_WholeDirective(t *testing.T) {
 				"list": []any{"x", "y", "z"},
 			}),
 		},
-		Claim: map[string]locks.ClaimResult{
+		Claim: map[string]claimproducer.ClaimResult{
 			"staging": {
 				Payload: mustJSON(t, map[string]any{"items": []any{"a", "b"}}),
 			},
@@ -505,7 +505,7 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 		Deps: map[string]json.RawMessage{
 			"upstream": mustJSON(t, map[string]any{"a": "v"}),
 		},
-		Claim: map[string]locks.ClaimResult{
+		Claim: map[string]claimproducer.ClaimResult{
 			"staging": {
 				Payload: mustJSON(t, map[string]any{"items": float64(5)}),
 			},

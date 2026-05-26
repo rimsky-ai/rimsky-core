@@ -30,10 +30,10 @@ func nextFakeSequence() int {
 // per-Fake; not shared across instances.
 type Fake struct {
 	name string
-	caps locks.Capabilities
+	caps claimproducer.Capabilities
 
 	mu    sync.Mutex
-	state map[locks.ClaimID]fakeState
+	state map[claimproducer.ClaimID]fakeState
 	calls []FakeCall
 
 	// OpenFunc is an optional override the test sets to control the
@@ -41,19 +41,19 @@ type Fake struct {
 	// selector as Address and Scope (Available: true). Set to a
 	// function that returns OpenOutcome{Available: false} to simulate
 	// a store having no claim to give right now.
-	OpenFunc func(claimID locks.ClaimID, spec locks.ClaimSpec) (locks.OpenOutcome, error)
+	OpenFunc func(claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error)
 
 	// ErrorFunc is an optional override the test sets to inject
 	// errors on a specific verb. Receives the verb name; returning
 	// non-nil short-circuits the call.
-	ErrorFunc func(verb string, claimID locks.ClaimID) error
+	ErrorFunc func(verb string, claimID claimproducer.ClaimID) error
 
 	// SplitClaimScopeFunc is an optional override the test sets to control
 	// the SubClaimScopeDescriptor list returned by SplitScope. Default
 	// behavior returns ErrSplitScopeUnsupported (the fake does not
 	// advertise SupportsSplitScope unless caps say so; scenarios that
 	// need split set this function explicitly).
-	SplitClaimScopeFunc func(req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error)
+	SplitClaimScopeFunc func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error)
 
 	// ScopesConflictFunc is an optional override the test sets to
 	// control the boolean returned by ScopesConflict. Default
@@ -71,9 +71,9 @@ type fakeState struct {
 // Calls() slice to verify what fired.
 type FakeCall struct {
 	Verb       string
-	ClaimID    locks.ClaimID
+	ClaimID    claimproducer.ClaimID
 	Selector   string
-	Intent     locks.Intent
+	Intent     claimproducer.Intent
 	Scope      []byte
 	Address    []byte
 	TemplateID string // populated for lifecycle calls and Open
@@ -92,11 +92,11 @@ type FakeCall struct {
 }
 
 // NewFake returns an empty Fake under name with the given capabilities.
-func NewFake(name string, caps locks.Capabilities) *Fake {
+func NewFake(name string, caps claimproducer.Capabilities) *Fake {
 	return &Fake{
 		name:  name,
 		caps:  caps,
-		state: make(map[locks.ClaimID]fakeState),
+		state: make(map[claimproducer.ClaimID]fakeState),
 	}
 }
 
@@ -110,7 +110,7 @@ var (
 func (f *Fake) Name() string { return f.name }
 
 // Capabilities returns the configured capability struct.
-func (f *Fake) Capabilities(_ context.Context) (locks.Capabilities, error) {
+func (f *Fake) Capabilities(_ context.Context) (claimproducer.Capabilities, error) {
 	return f.caps, nil
 }
 
@@ -124,7 +124,7 @@ func (f *Fake) Capabilities(_ context.Context) (locks.Capabilities, error) {
 // briefly re-acquires f.mu to write the synthesized state into
 // f.state before returning. Mirror this pattern in any future verbs
 // that mutate state after a callback dispatch.
-func (f *Fake) Open(_ context.Context, claimID locks.ClaimID, spec locks.ClaimSpec) (locks.OpenOutcome, error) {
+func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb:       "open",
@@ -141,7 +141,7 @@ func (f *Fake) Open(_ context.Context, claimID locks.ClaimID, spec locks.ClaimSp
 
 	if errFn != nil {
 		if err := errFn("open", claimID); err != nil {
-			return locks.OpenOutcome{}, err
+			return claimproducer.OpenOutcome{}, err
 		}
 	}
 	if openFn != nil {
@@ -149,9 +149,9 @@ func (f *Fake) Open(_ context.Context, claimID locks.ClaimID, spec locks.ClaimSp
 	}
 	addr, _ := json.Marshal(spec.Selector)
 	scope, _ := json.Marshal(spec.Selector)
-	outcome := locks.OpenOutcome{
+	outcome := claimproducer.OpenOutcome{
 		Available: true,
-		Result:    locks.ClaimResult{Address: addr, ClaimScope: scope},
+		Result:    claimproducer.ClaimResult{Address: addr, ClaimScope: scope},
 	}
 	f.mu.Lock()
 	f.state[claimID] = fakeState{scope: scope, address: addr}
@@ -164,7 +164,7 @@ func (f *Fake) Open(_ context.Context, claimID locks.ClaimID, spec locks.ClaimSp
 // User-supplied ErrorFunc runs AFTER f.mu is released so a callback that
 // itself calls Calls() / Reset() / etc. on the same Fake won't deadlock.
 // Mirrors the Open lock-discipline pattern.
-func (f *Fake) Commit(_ context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "commit", ClaimID: claimID,
@@ -190,7 +190,7 @@ func (f *Fake) Commit(_ context.Context, claimID locks.ClaimID, scope, address [
 // User-supplied ErrorFunc runs AFTER f.mu is released so a callback that
 // itself calls Calls() / Reset() / etc. on the same Fake won't deadlock.
 // Mirrors the Open lock-discipline pattern.
-func (f *Fake) Abandon(_ context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (f *Fake) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "abandon", ClaimID: claimID,
@@ -216,7 +216,7 @@ func (f *Fake) Abandon(_ context.Context, claimID locks.ClaimID, scope, address 
 // User-supplied ErrorFunc runs AFTER f.mu is released so a callback that
 // itself calls Calls() / Reset() / etc. on the same Fake won't deadlock.
 // Mirrors the Open lock-discipline pattern.
-func (f *Fake) Release(_ context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (f *Fake) Release(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "release", ClaimID: claimID,
@@ -251,7 +251,7 @@ func (f *Fake) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = nil
-	f.state = make(map[locks.ClaimID]fakeState)
+	f.state = make(map[claimproducer.ClaimID]fakeState)
 }
 
 // Lifecycle event methods. Each records a FakeCall and returns nil
@@ -297,7 +297,7 @@ func (f *Fake) OnRunScopeTerminal(_ context.Context, req locks.OnRunScopeTermina
 // SplitScope records the call and delegates to SplitClaimScopeFunc. When
 // no function is set the fake returns ErrSplitScopeUnsupported —
 // scenarios that want sub-claim-scope fan-out must register a function.
-func (f *Fake) SplitScope(_ context.Context, req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
+func (f *Fake) SplitScope(_ context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb:     "split_scope",
@@ -306,7 +306,7 @@ func (f *Fake) SplitScope(_ context.Context, req locks.SplitClaimScopeRequest) (
 	fn := f.SplitClaimScopeFunc
 	f.mu.Unlock()
 	if fn == nil {
-		return locks.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
 	return fn(req)
 }

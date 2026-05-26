@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 )
 
@@ -53,10 +53,10 @@ func Dial(ctx context.Context, name, endpoint string) (*Client, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("remote producer %q: Capabilities handshake: %w", name, err)
 	}
-	envelope := make([]locks.WriteSemantics, 0, len(resp.GetWriteSemanticsAllowed()))
+	envelope := make([]claimproducer.WriteSemantics, 0, len(resp.GetWriteSemanticsAllowed()))
 	for _, ws := range resp.GetWriteSemanticsAllowed() {
 		mapped := writeSemanticsFromProto(ws)
-		if mapped == locks.WriteSemanticsUnknown {
+		if mapped == claimproducer.WriteSemanticsUnknown {
 			_ = conn.Close()
 			return nil, fmt.Errorf("remote producer %q: Capabilities advertises UNKNOWN write_semantics value", name)
 		}
@@ -70,7 +70,7 @@ func Dial(ctx context.Context, name, endpoint string) (*Client, error) {
 		name: name,
 		conn: conn,
 		rpc:  rpc,
-		caps: locks.Capabilities{
+		caps: claimproducer.Capabilities{
 			WriteSemanticsAllowed:    envelope,
 			SupportsSplitScope:       resp.GetSupportsSplitScope(),
 			SupportsScopesConflict:   resp.GetSupportsScopesConflict(),

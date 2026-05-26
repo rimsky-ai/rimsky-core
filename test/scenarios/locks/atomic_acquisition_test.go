@@ -40,6 +40,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
@@ -67,7 +68,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Loopback stub for control-api and scheduler startup. The Fake
 	// shadows it inside the runner-local registry built below.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -77,7 +78,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},
@@ -105,9 +106,9 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	// Build a runner-local registry with the error-injecting Fake. This
 	// registry shadows the harness control-api's registry — the runner
 	// uses what we hand it via RunArgs.
-	fake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	fake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	openErr := errOpenInjected{}
-	fake.ErrorFunc = func(verb string, _ locks.ClaimID) error {
+	fake.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if verb == "open" {
 			return openErr
 		}
@@ -186,7 +187,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -195,7 +196,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

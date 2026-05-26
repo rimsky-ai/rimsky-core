@@ -4,9 +4,9 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 ## Where to look first
 
-**Architecture, concepts, invariants** — `.ok-planner/design/concepts.md` is the TOC; per-noun definitions, boundaries, and invariants live under `.ok-planner/design/concepts/<slug>.md`. The concept catalog is the durable design surface, updated alongside code through `/execute-plan` runs, and is the authoritative source for ownership and invariants. Start with `concepts/module-layout.md` for the four-module / four-layer split (`protocols/` + `foundation/` + root with `graph/` → `runtime/` → `control/`).
+**Architecture, concepts, invariants** — `.ok-planner/design/concepts.md` is the TOC; per-noun definitions, boundaries, and invariants live under `.ok-planner/design/concepts/<slug>.md`. The concept catalog is the durable design surface, updated alongside code through `/execute-plan` runs, and is the authoritative source for ownership and invariants. Start with `concepts/module-layout.md` for the four-module / four-layer split (`protocols/` + `foundation/` + the opt-in test-only `testpg/` + root with `graph/` → `runtime/` → `control/`).
 
-**Enforced import boundaries** — `.golangci.yml` `depguard` block (`pgx-isolation`, `foundation-internal-isolation`, `foundation-purity`, `graph-purity`, `runtime-purity`). If lint and prose disagree, lint wins. `go.work` ties the three Go modules together.
+**Enforced import boundaries** — `.golangci.yml` `depguard` block (`pgx-isolation`, `foundation-internal-isolation`, `protocols-purity`, `foundation-purity`, `graph-purity`, `runtime-purity`, `consumption-side-isolation`). If lint and prose disagree, lint wins. `go.work` ties the four Go modules together (root, `foundation`, `protocols`, `testpg`).
 
 **Load-bearing safety properties** — `grep -rn '@blessed-invariant' .` in source. Each annotation carries the invariant plus the code site that enforces it; scenario tests under `test/scenarios/` exercise them.
 

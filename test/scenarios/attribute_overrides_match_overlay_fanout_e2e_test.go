@@ -50,11 +50,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguyconsulting/rimsky/control/config"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
@@ -76,7 +76,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 	// Address+Scope. That's all the fan-out path needs: an
 	// acquired parent claim from which to split.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -85,7 +85,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

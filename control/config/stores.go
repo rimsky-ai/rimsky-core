@@ -72,7 +72,7 @@ const (
 // read it as "claim-producer entry."
 type StoreEntry struct {
 	Endpoint     string
-	Capabilities locks.Capabilities
+	Capabilities claimproducer.Capabilities
 	// Protocols is the set of wire protocols this peer speaks. Always
 	// includes "claim_producer" for entries under the claim_producers:
 	// block; may also include "lifecycle_subscriber".
@@ -351,7 +351,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		}
 		stores.Stores[name] = StoreEntry{
 			Endpoint:              e.Endpoint,
-			Capabilities:          locks.Capabilities{WriteSemanticsAllowed: envelope},
+			Capabilities:          claimproducer.Capabilities{WriteSemanticsAllowed: envelope},
 			Protocols:             protocols,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
@@ -490,14 +490,14 @@ func validateMaxParkDurationKeys(m map[string]time.Duration) error {
 }
 
 // parseAllowed normalizes the operator-declared write_semantics_allowed
-// into a non-empty []locks.WriteSemantics. Returns an error when the
+// into a non-empty []claimproducer.WriteSemantics. Returns an error when the
 // list is absent or any value is unknown. The legacy single-value
 // `write_semantics:` shortcut and `write_semantics_envelope:` alias
 // are rejected at the loader entry point (cross-layer #6 / C.1, C.2).
-func parseAllowed(name string, allowed []string) ([]locks.WriteSemantics, error) {
-	values := make([]locks.WriteSemantics, 0, len(allowed))
+func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics, error) {
+	values := make([]claimproducer.WriteSemantics, 0, len(allowed))
 	for _, raw := range allowed {
-		ws, ok := locks.ParseWriteSemantics(raw)
+		ws, ok := claimproducer.ParseWriteSemantics(raw)
 		if !ok {
 			return nil, fmt.Errorf("claim_producers[%q]: unknown write_semantics value %q", name, raw)
 		}

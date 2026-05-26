@@ -79,7 +79,7 @@ func TestExecutorBlocked(t *testing.T) {
 	//   container, and the harness's per-poll Docker state-query is
 	//   "~1-6s under saturated parallel load; occasional 15-20s
 	//   spikes when the daemon is heavily contended" (see
-	//   sdk/go/testpg/testpg.go::StartFreshPostgresDSN).
+	//   testpg/testpg.go::StartFreshPostgresDSN).
 	//
 	//   Ruled out: scheduler tick rate (100ms claim poll, 250ms
 	//   scheduler tick; sub-second under any healthy load); the

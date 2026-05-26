@@ -8,7 +8,7 @@
 // as a sidecar by every conformance binary.
 //
 // The conformance scaffolding (callback receiver, AwaitTerminal,
-// minimal Client) lives in `pkg:sdk/go/conformance/executor`; this
+// minimal Client) lives in `pkg:protocols/conformance/executor`; this
 // binary uses that surface so it does not import any rimsky-internal
 // runtime package.
 
@@ -23,8 +23,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	conformance "github.com/fallguyconsulting/rimsky/protocols/conformance/executor"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	conformance "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor"
 )
 
 func main() {

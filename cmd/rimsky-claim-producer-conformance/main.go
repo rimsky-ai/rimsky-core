@@ -8,7 +8,7 @@
 // uniformity invariant (byte-equal Scope ⇒ identical
 // RealizedWriteSemantics), and the four runtime verbs.
 //
-// The conformance logic lives in `pkg:sdk/go/conformance/claimproducer/`
+// The conformance logic lives in `pkg:protocols/conformance/claimproducer/`
 // so external Go authors can invoke the same suite from a Go test
 // without forking the binary; this binary is a thin CLI wrapper.
 //
@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/conformance/claimproducer"
 	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
-	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/claimproducer"
 )
 
 func main() {
@@ -83,7 +83,7 @@ func main() {
 	}
 }
 
-// CheckResult mirrors `pkg:sdk/go/conformance/claimproducer.CheckResult`
+// CheckResult mirrors `pkg:protocols/conformance/claimproducer.CheckResult`
 // so the existing tests at cmd/rimsky-claim-producer-conformance/main_test.go
 // keep their existing shape. The binary delegates to the importable
 // package; this thin alias avoids churn in callers.

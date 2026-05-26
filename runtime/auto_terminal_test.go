@@ -25,6 +25,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -202,7 +203,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	}))
 
 	reg := locks.NewRegistry()
-	stubStore := storetest.NewFake("workspace", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace", stubStore)
 
 	// Seed a frame + run row per holder so the post-stage-5 FK chain on
@@ -319,8 +320,8 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	}))
 
 	reg := locks.NewRegistry()
-	stubStore := storetest.NewFake("workspace", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("workspace", stubStore)
 
@@ -556,8 +557,8 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("be-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("be-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("be-store", store)
 	args := runtime.RunArgs{
@@ -615,8 +616,8 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("th-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("th-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("th-store", store)
 	args := runtime.RunArgs{
@@ -675,8 +676,8 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("st-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("st-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("st-store", store)
 	args := runtime.RunArgs{
@@ -742,8 +743,8 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	coRunID := seedRunForNode(ctx, t, backend, d.Queue(), coNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("hp-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("hp-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("hp-store", store)
 	args := runtime.RunArgs{
@@ -849,8 +850,8 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("cq-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("cq-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("cq-store", store)
 	args := runtime.RunArgs{
@@ -965,7 +966,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 	}))
 
 	reg := locks.NewRegistry()
-	stubStore := storetest.NewFake("workspace", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace", stubStore)
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID)
@@ -1084,8 +1085,8 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("be-dur-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("be-dur-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("be-dur-store", store)
 	args := runtime.RunArgs{
@@ -1172,8 +1173,8 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("cs-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("cs-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("cs-store", store)
 	args := runtime.RunArgs{
@@ -1277,8 +1278,8 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("cs-dur-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("cs-dur-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("cs-dur-store", store)
 	args := runtime.RunArgs{
@@ -1432,8 +1433,8 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("cs-rec-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("cs-rec-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("cs-rec-store", store)
 	args := runtime.RunArgs{

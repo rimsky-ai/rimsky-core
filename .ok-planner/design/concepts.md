@@ -24,7 +24,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `claim-producer` (aliases: store (legacy / colloquial), claim-store) — A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — four verbs (open / commit / abandon / release) plus the capabilities startup handshake.
 - `claim-scope` (aliases: scope (pre-2026-05-22, retired)) — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired."
 - `claim-tree` — The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer.
-- `conformance` — Six thin CLI wrappers (one per protocol) over a shared SDK conformance library (one sub-package per protocol).
+- `conformance` — Six thin CLI wrappers (one per protocol) over a shared conformance library in the protocols module (one sub-package per protocol).
 - `control-api` — The operator interface exposed by the control-api binary.
 - `data-processing` — Optional mix-in protocol on a claim producer, advertised in the capabilities handshake alongside the claim-producer protocol, for the typed-data version lifecycle.
 - `delegation` — Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit.
@@ -63,7 +63,6 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path read by all three runtime processes plus the migrate step.
 - `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (main / subgraph / fanout_partition).
-- `sdk` (aliases: rimsky-sdk, sdk/go) — The Go-side SDK is the canonical implementer-facing surface for building services that rimsky talks to.
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
 - `service` (aliases: peer (legacy), peer service (legacy)) — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
 - `signal` — A signal is the unified emission shape for any transition that affects a node-run, carrying a canonical hierarchical type-path and a structured payload.
@@ -86,5 +85,6 @@ See `concepts/_retired/` for the full retirement notes.
 - `node-state` — The five-state node enum now lives entirely on the node-run rather than the node row; its semantics are documented under `concept:node-run`.
 - `on-event-handler` — The `on_event:` map, retired in favor of subscription-to-event entries under `concept:node-subscription` (which subsume both the substitution and the invalidate-downstream paths).
 - `quality-rule` — Replaced by the verifier-executor pattern (a regular executor that co-holds the upstream claim, runs checks, and returns success or error); no successor concept — the pattern is documentation only.
+- `sdk` — The separate Go SDK module dissolved into the protocols module (implementer scaffolding, action vocabulary, and the conformance library), the ops glue demoted to a rimsky-internal package, and the Postgres testcontainer helper carved into its own opt-in module. Retired 2026-05-26: for Go there is no separate SDK — the protocols module is the single public surface; a future development kit is a different-purpose, Python-first authoring layer, not a Go SDK successor.
 - `schedule` — Replaced by the bundled cron sensor; cron-style firing is now a sensor kind under `concept:sensor` plus `concept:message`, preserving the missed-fires-not-backfilled semantic.
 - `userdata` — Collapsed into `concept:attribute`; per-node executor configuration now uses static-default attribute properties, with per-instance overrides renamed from userdata-overrides to attribute-overrides.

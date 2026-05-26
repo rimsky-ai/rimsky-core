@@ -9,8 +9,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/google/uuid"
+
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // abandonStub is a minimal locks.ClaimProducer test double that
@@ -21,7 +22,7 @@ import (
 // transported on the wire. The stub implements all six so it satisfies
 // the interface, but only Abandon is exercised.
 type abandonStub struct {
-	lastClaimID locks.ClaimID
+	lastClaimID claimproducer.ClaimID
 	lastScope   []byte
 	lastAddress []byte
 	abandonErr  error
@@ -29,31 +30,31 @@ type abandonStub struct {
 
 func (s *abandonStub) Name() string { return "abandon-stub" }
 
-func (s *abandonStub) Capabilities(context.Context) (locks.Capabilities, error) {
-	return locks.Capabilities{}, errors.New("Capabilities not implemented in stub")
+func (s *abandonStub) Capabilities(context.Context) (claimproducer.Capabilities, error) {
+	return claimproducer.Capabilities{}, errors.New("Capabilities not implemented in stub")
 }
 
-func (s *abandonStub) Open(context.Context, locks.ClaimID, locks.ClaimSpec) (locks.OpenOutcome, error) {
-	return locks.OpenOutcome{}, errors.New("Open not implemented in stub")
+func (s *abandonStub) Open(context.Context, claimproducer.ClaimID, claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
+	return claimproducer.OpenOutcome{}, errors.New("Open not implemented in stub")
 }
 
-func (s *abandonStub) Commit(context.Context, locks.ClaimID, []byte, []byte) error {
+func (s *abandonStub) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) error {
 	return errors.New("Commit not implemented in stub")
 }
 
-func (s *abandonStub) Abandon(_ context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (s *abandonStub) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	s.lastClaimID = claimID
 	s.lastScope = scope
 	s.lastAddress = address
 	return s.abandonErr
 }
 
-func (s *abandonStub) Release(context.Context, locks.ClaimID, []byte, []byte) error {
+func (s *abandonStub) Release(context.Context, claimproducer.ClaimID, []byte, []byte) error {
 	return errors.New("Release not implemented in stub")
 }
 
-func (s *abandonStub) SplitScope(context.Context, locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
-	return locks.SplitClaimScopeResponse{}, errors.New("SplitScope not implemented in stub")
+func (s *abandonStub) SplitScope(context.Context, claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+	return claimproducer.SplitClaimScopeResponse{}, errors.New("SplitScope not implemented in stub")
 }
 
 func (s *abandonStub) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
@@ -73,7 +74,7 @@ func TestAbandonOpenedClaim(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
-		want := locks.ClaimID(handleID.String())
+		want := claimproducer.ClaimID(handleID.String())
 		if stub.lastClaimID != want {
 			t.Errorf("claim_id = %q, want %q", stub.lastClaimID, want)
 		}

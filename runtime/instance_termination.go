@@ -22,10 +22,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
@@ -86,7 +86,7 @@ func ReleaseHeldDurableClaims(
 			})
 			continue
 		}
-		claimID := locks.ClaimID(r.ID.String())
+		claimID := claimproducer.ClaimID(r.ID.String())
 		// Stamp the producer name so a host-agent-proxy fronting the
 		// claim-producer protocol can route this Release by service name.
 		relCtx := peer.WithServiceName(ctx, producerName)

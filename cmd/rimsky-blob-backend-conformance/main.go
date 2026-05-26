@@ -8,10 +8,10 @@
 // surface is in-process Go (`persistence.BlobBackend`), not a wire
 // protocol.
 //
-// The runner library lives in `pkg:sdk/go/conformance/blobbackend`;
+// The runner library lives in `pkg:protocols/conformance/blobbackend`;
 // this binary is the thin CLI wrapper. It adapts each rimsky-internal
-// backend (memory / filesystem / pg-largeobject) to the SDK's
-// minimal `Backend` interface and invokes the suite.
+// backend (memory / filesystem / pg-largeobject) to the conformance
+// library's minimal `Backend` interface and invokes the suite.
 //
 // Usage:
 //
@@ -35,7 +35,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
-	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/blobbackend"
+	"github.com/fallguyconsulting/rimsky/protocols/conformance/blobbackend"
 )
 
 func main() {
@@ -79,7 +79,7 @@ func main() {
 }
 
 // adapter bridges rimsky's persistence.BlobBackend (typed key + opaque
-// Handle) to the SDK's reduced blobbackend.Backend surface. ErrBlobNotFound
+// Handle) to the conformance library's reduced blobbackend.Backend surface. ErrBlobNotFound
 // is translated so the conformance suite's errors.Is check matches.
 type adapter struct {
 	be persistence.BlobBackend

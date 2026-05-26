@@ -11,7 +11,7 @@
 # gate: invoke the docs-lint binaries from a sibling rimsky-docs checkout
 # with RIMSKY_REPO pointing at this rimsky tree. Drift blocks the release.
 #
-# Future work: tagging (root + sdk/go lockstep), pushing tags, producing
+# Future work: tagging (root + protocols lockstep), pushing tags, producing
 # release notes. Today the script stops after the gate; the operator
 # performs the remaining steps manually.
 #

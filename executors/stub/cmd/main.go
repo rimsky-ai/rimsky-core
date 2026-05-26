@@ -27,7 +27,7 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/executors/stub"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/sdk/go/server"
+	"github.com/fallguyconsulting/rimsky/protocols/serverkit"
 )
 
 func main() {
@@ -58,7 +58,7 @@ func main() {
 	}()
 
 	log.Info("executor-stub listening", "addr", *bind)
-	server.RunGRPC(ctx, srv, lis, "executor-stub")
+	serverkit.RunGRPC(ctx, srv, lis, "executor-stub")
 }
 
 func envOr(key, fallback string) string {

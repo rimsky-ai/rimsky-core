@@ -35,10 +35,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/fallguyconsulting/rimsky/control/config"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
@@ -48,7 +48,7 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -57,7 +57,7 @@ func TestFanOutChildErrorRetryE2E(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

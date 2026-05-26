@@ -45,7 +45,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/fallguyconsulting/rimsky/control/config"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
@@ -78,7 +77,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"canary-lifecycle": {
 					Endpoint:     "grpc://" + fake.addr,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 					Protocols:    []string{config.ProtocolClaimProducer, claimproducer.ProtocolLifecycleSubscriber},
 				},
 			},

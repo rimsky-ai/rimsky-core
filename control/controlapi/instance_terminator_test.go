@@ -24,6 +24,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 type terminatorFixture struct {
@@ -39,7 +40,7 @@ func newTerminatorFixture(t *testing.T) *terminatorFixture {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	reg := locks.NewRegistry()
-	alpha := storetest.NewFake("alpha", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	alpha := storetest.NewFake("alpha", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("alpha", alpha)
 	lcReg := locks.NewLifecycleRegistry()
 	lcReg.Add("alpha", alpha)
@@ -172,7 +173,7 @@ func TestInstanceTerminator_RowFoundRPCFailsRowPreserved(t *testing.T) {
 	f := newTerminatorFixture(t)
 
 	_, inst := seedTerminatedInstance(t, f, "alpha", true)
-	f.alpha.ErrorFunc = func(verb string, _ locks.ClaimID) error {
+	f.alpha.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if verb == "on_instance_terminated" {
 			return errors.New("simulated alpha failure")
 		}

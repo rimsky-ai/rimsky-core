@@ -44,6 +44,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
@@ -59,7 +60,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -69,7 +70,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"content": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

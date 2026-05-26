@@ -39,10 +39,10 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/control/config"
 	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
@@ -51,7 +51,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 	})
 	t.Cleanup(teardown)
 
@@ -60,7 +60,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

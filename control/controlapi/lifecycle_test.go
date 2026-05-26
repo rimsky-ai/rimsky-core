@@ -22,6 +22,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // fanOutFixture wires a real persistence.Database-backed Postgres, two
@@ -40,8 +41,8 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	reg := locks.NewRegistry()
-	alpha := storetest.NewFake("alpha", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
-	beta := storetest.NewFake("beta", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	alpha := storetest.NewFake("alpha", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	beta := storetest.NewFake("beta", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("alpha", alpha)
 	reg.Add("beta", beta)
 
@@ -131,7 +132,7 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("c", 64)
 	// "beta" sorts after "alpha" → first call goes to alpha, second to beta.
-	f.beta.ErrorFunc = func(verb string, _ locks.ClaimID) error {
+	f.beta.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if verb == "on_template_registered" {
 			return errors.New("simulated beta failure")
 		}

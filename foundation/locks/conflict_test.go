@@ -4,7 +4,11 @@
 
 package locks
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+)
 
 // TestClaimScopesByteEqual covers the rimsky-side byte-equal claim-scope
 // conflict predicate (per v3 spec §7.7). Empty claim-scopes never conflict;
@@ -42,49 +46,49 @@ func TestClaimScopesByteEqual(t *testing.T) {
 func TestModeCoexistsMatrix(t *testing.T) {
 	// Helper: every sync write_semantics value should behave the same
 	// way; assert both Direct and StagedBlocking pairings.
-	syncSemantics := []WriteSemantics{WriteSemanticsSync, WriteSemanticsBlockingAsync}
+	syncSemantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync}
 	for _, sem := range syncSemantics {
 		t.Run("sync-"+string(sem)+"-r-r", func(t *testing.T) {
-			if !ModeCoexists(IntentRead, sem, IntentRead, sem) {
+			if !ModeCoexists(claimproducer.IntentRead, sem, claimproducer.IntentRead, sem) {
 				t.Fatal("sync r×r must coexist")
 			}
 		})
 		t.Run("sync-"+string(sem)+"-r-w", func(t *testing.T) {
-			if ModeCoexists(IntentRead, sem, IntentReadWrite, sem) {
+			if ModeCoexists(claimproducer.IntentRead, sem, claimproducer.IntentReadWrite, sem) {
 				t.Fatal("sync r×w must conflict")
 			}
 		})
 		t.Run("sync-"+string(sem)+"-w-r", func(t *testing.T) {
-			if ModeCoexists(IntentReadWrite, sem, IntentRead, sem) {
+			if ModeCoexists(claimproducer.IntentReadWrite, sem, claimproducer.IntentRead, sem) {
 				t.Fatal("sync w×r must conflict")
 			}
 		})
 		t.Run("sync-"+string(sem)+"-w-w", func(t *testing.T) {
-			if ModeCoexists(IntentReadWrite, sem, IntentReadWrite, sem) {
+			if ModeCoexists(claimproducer.IntentReadWrite, sem, claimproducer.IntentReadWrite, sem) {
 				t.Fatal("sync w×w must conflict")
 			}
 		})
 	}
 
 	// Async block (staged_async).
-	async := WriteSemanticsStagedAsync
+	async := claimproducer.WriteSemanticsStagedAsync
 	t.Run("async-r-r", func(t *testing.T) {
-		if !ModeCoexists(IntentRead, async, IntentRead, async) {
+		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentRead, async) {
 			t.Fatal("async r×r must coexist")
 		}
 	})
 	t.Run("async-r-w", func(t *testing.T) {
-		if !ModeCoexists(IntentRead, async, IntentReadWrite, async) {
+		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentReadWrite, async) {
 			t.Fatal("async r×w must coexist")
 		}
 	})
 	t.Run("async-w-r", func(t *testing.T) {
-		if !ModeCoexists(IntentReadWrite, async, IntentRead, async) {
+		if !ModeCoexists(claimproducer.IntentReadWrite, async, claimproducer.IntentRead, async) {
 			t.Fatal("async w×r must coexist")
 		}
 	})
 	t.Run("async-w-w", func(t *testing.T) {
-		if ModeCoexists(IntentReadWrite, async, IntentReadWrite, async) {
+		if ModeCoexists(claimproducer.IntentReadWrite, async, claimproducer.IntentReadWrite, async) {
 			t.Fatal("async w×w must conflict")
 		}
 	})
@@ -96,10 +100,10 @@ func TestModeCoexistsMatrix(t *testing.T) {
 // prevents this combo because two claims on the same store share its
 // write_semantics.
 func TestModeCoexistsCrossQuadrant(t *testing.T) {
-	if !ModeCoexists(IntentRead, WriteSemanticsSync, IntentRead, WriteSemanticsStagedAsync) {
+	if !ModeCoexists(claimproducer.IntentRead, claimproducer.WriteSemanticsSync, claimproducer.IntentRead, claimproducer.WriteSemanticsStagedAsync) {
 		t.Fatal("cross-quadrant r×r should report no conflict")
 	}
-	if !ModeCoexists(IntentReadWrite, WriteSemanticsSync, IntentReadWrite, WriteSemanticsStagedAsync) {
+	if !ModeCoexists(claimproducer.IntentReadWrite, claimproducer.WriteSemanticsSync, claimproducer.IntentReadWrite, claimproducer.WriteSemanticsStagedAsync) {
 		t.Fatal("cross-quadrant w×w should report no conflict (different semantics)")
 	}
 }
@@ -107,8 +111,8 @@ func TestModeCoexistsCrossQuadrant(t *testing.T) {
 // TestModeCoexistsSymmetric: the matrix is symmetric in both arguments.
 // Verify exhaustively across all (intent×semantics)² combinations.
 func TestModeCoexistsSymmetric(t *testing.T) {
-	intents := []Intent{IntentRead, IntentReadWrite}
-	semantics := []WriteSemantics{WriteSemanticsSync, WriteSemanticsBlockingAsync, WriteSemanticsStagedAsync}
+	intents := []claimproducer.Intent{claimproducer.IntentRead, claimproducer.IntentReadWrite}
+	semantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsStagedAsync}
 	for _, ia := range intents {
 		for _, sa := range semantics {
 			for _, ib := range intents {

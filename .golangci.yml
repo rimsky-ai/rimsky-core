@@ -24,7 +24,7 @@ linters-settings:
           - "!**/foundation/internal/pgtest/**"
           - "!**/cmd/**"
           - "!**/internal/pgmigrate/**"
-          - "!**/sdk/go/**"
+          - "!**/testpg/**"
           - "!**/graph/scenario/**"
           - "!**/stores/**"
           - "!**/sensors/**"
@@ -32,7 +32,7 @@ linters-settings:
           - "!**/test/smoke/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, internal/pgmigrate/, sdk/go/, graph/scenario/, stores/, sensors/, subscribers/, and test/smoke/. Use the persistence interfaces."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, internal/pgmigrate/, testpg/, graph/scenario/, stores/, sensors/, subscribers/, and test/smoke/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"
@@ -45,26 +45,29 @@ linters-settings:
         deny:
           - pkg: "github.com/fallguyconsulting/rimsky/foundation/internal"
             desc: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
-      # sdk-purity: pkg:sdk/go is the implementer-facing surface. It imports
-      # only protocols/ + stdlib + minimal third-party. No imports from
+      # protocols-purity: the protocols module is the implementer-facing
+      # public contract surface. Its dependency budget is stdlib + grpc +
+      # protobuf + uuid + yaml.v3 — no test infrastructure. No imports from
       # foundation/, internal/, graph/, runtime/, control/, or cmd/.
-      sdk-purity:
+      protocols-purity:
         list-mode: lax
         files:
-          - "**/sdk/go/**"
+          - "**/protocols/**"
         deny:
           - pkg: "github.com/fallguyconsulting/rimsky/foundation"
-            desc: "sdk/go imports only protocols/ + stdlib + minimal third-party. foundation/ is rimsky-internal."
+            desc: "the protocols module imports only stdlib + grpc + protobuf + uuid + yaml.v3. foundation/ is rimsky-internal."
           - pkg: "github.com/fallguyconsulting/rimsky/internal"
             desc: "internal/ is private to rimsky."
           - pkg: "github.com/fallguyconsulting/rimsky/graph"
-            desc: "sdk/go must not import graph/ (rimsky-internal layer)."
+            desc: "the protocols module must not import graph/ (rimsky-internal layer)."
           - pkg: "github.com/fallguyconsulting/rimsky/runtime"
-            desc: "sdk/go must not import runtime/ (rimsky-internal layer)."
+            desc: "the protocols module must not import runtime/ (rimsky-internal layer)."
           - pkg: "github.com/fallguyconsulting/rimsky/control"
-            desc: "sdk/go must not import control/ (rimsky-internal layer)."
+            desc: "the protocols module must not import control/ (rimsky-internal layer)."
           - pkg: "github.com/fallguyconsulting/rimsky/cmd"
-            desc: "sdk/go must not import cmd/ (cmd is the topmost binary layer)."
+            desc: "the protocols module must not import cmd/ (cmd is the topmost binary layer)."
+          - pkg: "github.com/testcontainers/testcontainers-go"
+            desc: "the protocols module is the public contract surface; no test infrastructure."
       # foundation-purity: foundation/ depends only on protocols/ + stdlib + minimal third-party.
       # Applies unconditionally — the persistable row-type primitives that
       # foundation/persistence needs live in foundation/spec/ (moved from
@@ -86,8 +89,6 @@ linters-settings:
             desc: "foundation/ may not import stores/ (stores are consumption-side binaries)."
           - pkg: "github.com/fallguyconsulting/rimsky/executors"
             desc: "foundation/ may not import executors/ (executors are consumption-side binaries)."
-          - pkg: "github.com/fallguyconsulting/rimsky/sdk/go"
-            desc: "foundation/ may not import sdk/go (sdk is implementer-facing surface)."
       # graph-purity: graph/ depends only on foundation/ + protocols/ + stdlib + third-party.
       # Documented residual: graph/scheduler imports runtime for ConductorArgs + sweep fns +
       # InvalidateNode / RecalculateNode — the scheduler tick drives runtime sweeps. Flagged
@@ -112,8 +113,6 @@ linters-settings:
             desc: "graph/ may not import stores/ (stores are consumption-side binaries)."
           - pkg: "github.com/fallguyconsulting/rimsky/executors"
             desc: "graph/ may not import executors/ (executors are consumption-side binaries). Exception: graph/scenario/ boots reference executors for scenario tests."
-          - pkg: "github.com/fallguyconsulting/rimsky/sdk/go"
-            desc: "graph/ may not import sdk/go (sdk is implementer-facing surface)."
       # runtime-purity: runtime/ depends only on foundation/ + graph/ + protocols/ + stdlib + third-party.
       # runtime is the bridge layer; it freely consumes foundation primitives and graph types.
       runtime-purity:
@@ -132,10 +131,17 @@ linters-settings:
       # consumption-side-isolation: stores/, sensors/, subscribers/, executors/
       # are bundled reference impls that the 2026-05-24 reorganization
       # moves to a sibling repo (../rimsky-services). They must implement
-      # against protocols/ + (post-P2) sdk/go only; importing rimsky-
-      # internal packages would prevent the move. After P3 lands, the
-      # `files:` targets no longer have local matches in rimsky; the rule
-      # stays as a defensive guard against re-bundling.
+      # against protocols/ only; importing rimsky-internal packages would
+      # prevent the move. After P3 lands, the `files:` targets no longer
+      # have local matches in rimsky; the rule stays as a defensive guard
+      # against re-bundling.
+      #
+      # The in-repo stub claim-producer (stores/stub/**) and stub executor
+      # (executors/stub/**) deliberately stayed in rimsky as test
+      # infrastructure (Apache-classified rimsky-internal carve-outs), so
+      # they are exempt — they may consume rimsky-internal helpers such as
+      # internal/ops. The bare stores/**, executors/** globs over-match the
+      # stub, hence the !stores/stub/** and !executors/stub/** exclusions.
       consumption-side-isolation:
         list-mode: lax
         # Root-anchored patterns intentionally — the spec's
@@ -148,9 +154,11 @@ linters-settings:
         # `test/scenarios/stores/` will be addressed by P3.4.
         files:
           - "stores/**"
+          - "!stores/stub/**"
           - "sensors/**"
           - "subscribers/**"
           - "executors/**"
+          - "!executors/stub/**"
         deny:
           - pkg: "github.com/fallguyconsulting/rimsky/foundation"
             desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."

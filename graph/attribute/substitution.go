@@ -47,7 +47,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // ResolveContext carries the three substitution source kinds plus the
@@ -83,7 +83,7 @@ import (
 // payloads use, preserving @blessed-invariant 20.
 type ResolveContext struct {
 	Deps   map[string]json.RawMessage
-	Claim  map[string]locks.ClaimResult
+	Claim  map[string]claimproducer.ClaimResult
 	Params json.RawMessage
 
 	// EventLookup, when non-nil, resolves named-event payload bytes for
@@ -562,7 +562,7 @@ func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any
 // shape-flattening output via `stringifyRaw`); `payload(.<field>?)`
 // returns the JSON-decoded value at the named path or — with an empty
 // trailing path — the whole payload object.
-func resolveClaimValue(directive string, rest []string, claims map[string]locks.ClaimResult) (any, error) {
+func resolveClaimValue(directive string, rest []string, claims map[string]claimproducer.ClaimResult) (any, error) {
 	if len(rest) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "claim directive needs <alias>.{address|claim_scope|payload[.<field>]}"}
 	}

@@ -14,8 +14,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/fallguyconsulting/rimsky/protocols/action"
 	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 )
 
 // Store is the in-memory store implementation. Two operating modes: scoped-direct

@@ -14,7 +14,7 @@
 //     binary or an executor binary that opts in). Exits non-zero on
 //     any RPC error.
 //
-// The runner library lives in `pkg:sdk/go/conformance/executor`; this
+// The runner library lives in `pkg:protocols/conformance/executor`; this
 // binary is a thin CLI wrapper that parses flags, invokes the library,
 // and formats output.
 //
@@ -34,8 +34,8 @@ import (
 	"strings"
 	"time"
 
-	conformance "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor"
-	_ "github.com/fallguyconsulting/rimsky/sdk/go/conformance/executor/scenarios" // init() registration
+	conformance "github.com/fallguyconsulting/rimsky/protocols/conformance/executor"
+	_ "github.com/fallguyconsulting/rimsky/protocols/conformance/executor/scenarios" // init() registration
 )
 
 func main() {

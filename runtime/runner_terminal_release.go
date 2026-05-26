@@ -28,6 +28,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // releaseLocksInTx is the release-tx body. Walks the acquired-locks
@@ -76,7 +77,7 @@ func releaseAcquiredLock(
 			return fmt.Errorf("releaseAcquiredLock: named Delete: %w", err)
 		}
 		return emitLockReleased(ctx, args, tx, acq, lk, releaseActionString(success))
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		return releaseClaim(ctx, args, tx, acq, lk, sp, success)
 	}
 	return fmt.Errorf("releaseAcquiredLock: unknown spec %T", lk.Spec)
@@ -92,7 +93,7 @@ func releaseAcquiredLock(
 // binary.
 func releaseClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	acq *acquisition, lk AcquiredLock, claimSpec locks.ClaimSpec, success bool,
+	acq *acquisition, lk AcquiredLock, claimSpec claimproducer.ClaimSpec, success bool,
 ) error {
 	held := isAliasHeld(acq.HeldSubgraphs, acq.NodeType, claimSpec.Alias)
 	if held {
@@ -237,7 +238,7 @@ func emitLockReleased(
 	case locks.NamedLockSpec:
 		payload["lock_kind"] = string(persistence.LockKindNamed)
 		payload["lock_name"] = sp.Name
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		payload["lock_kind"] = string(persistence.LockKindScope)
 		payload["producer_name"] = sp.ProducerName
 		payload["alias"] = sp.Alias

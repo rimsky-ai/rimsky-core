@@ -17,13 +17,13 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
 	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
 	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 	"github.com/fallguyconsulting/rimsky/runtime/executor"
 	"github.com/fallguyconsulting/rimsky/runtime/peer"
@@ -163,7 +163,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		// Success{changed: true} so dependents recalc.
 		summary := "pure_cascade"
 		for _, lk := range acq.Locks {
-			if _, ok := lk.Spec.(locks.ClaimSpec); ok {
+			if _, ok := lk.Spec.(claimproducer.ClaimSpec); ok {
 				summary = "claim_acquired"
 				break
 			}
@@ -590,7 +590,7 @@ func buildResolveContextForDispatch(
 	ctx context.Context, args RunArgs, acq *acquisition,
 ) (attributes.ResolveContext, error) {
 	deps := loadSubscribedNodeAttributesByID(ctx, args, acq)
-	claims := map[string]locks.ClaimResult{}
+	claims := map[string]claimproducer.ClaimResult{}
 	for _, lk := range acq.Locks {
 		if lk.Alias == "" {
 			continue
@@ -1087,7 +1087,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) {
 	out := make(map[string]*genv1.StoreHandle, len(acq.Locks)+len(acq.HeldClaims))
 	for _, lk := range acq.Locks {
-		spec, ok := lk.Spec.(locks.ClaimSpec)
+		spec, ok := lk.Spec.(claimproducer.ClaimSpec)
 		if !ok {
 			continue
 		}
@@ -1134,7 +1134,7 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 //
 // @blessed-invariant 20 (wire-encoding site exception): the same JSON
 // round-trip discipline as `makeClaimHandle`.
-func makeHeldClaimHandle(alias string, claim locks.ClaimResult) (*genv1.StoreHandle, error) {
+func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	fields := map[string]any{"alias": alias}
 	if len(claim.Address) > 0 {
@@ -1175,7 +1175,7 @@ func makeHeldClaimHandle(alias string, claim locks.ClaimResult) (*genv1.StoreHan
 // verbatim on the executor side. If the spec moves the
 // `StoreHandle.handle` field to `bytes`, this function shrinks to a
 // straight byte-copy and the wire-encoding site disappears entirely.
-func makeClaimHandle(lk AcquiredLock, spec locks.ClaimSpec) (*genv1.StoreHandle, error) {
+func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	if lk.Producer != nil {
 		// The wire StoreHandle.kind field is informational only and

@@ -46,6 +46,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
@@ -312,7 +313,7 @@ func dispatchDataProcessingTerminal(
 // through the carve-out abandonOpenedClaim helper). Returns a typed
 // error on unknown outcomes or verb-side failures.
 func fireProducerVerb(ctx context.Context, td TerminalDecision) error {
-	claimID := locks.ClaimID(td.ClaimHandleID.String())
+	claimID := claimproducer.ClaimID(td.ClaimHandleID.String())
 	// Stamp the producer name so a host-agent-proxy fronting the
 	// claim-producer protocol can route this Commit/Abandon by service
 	// name. Prefer td.ProducerName (the claim_handle's recorded name);

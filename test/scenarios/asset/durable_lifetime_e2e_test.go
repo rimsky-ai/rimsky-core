@@ -44,6 +44,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -89,8 +90,8 @@ func TestDurableLifetimeE2E(t *testing.T) {
 
 	reg := locks.NewRegistry()
 	storeName := "workspace"
-	stubStore := storetest.NewFake(storeName, locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	stubStore := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add(storeName, stubStore)
 

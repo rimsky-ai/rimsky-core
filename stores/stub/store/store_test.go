@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/fallguyconsulting/rimsky/protocols/action"
 	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 )
 
 func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp action.Action) *Store {

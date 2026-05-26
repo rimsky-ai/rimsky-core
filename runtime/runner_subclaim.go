@@ -34,10 +34,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // AcquireSubClaimsInput bundles the parent-claim row + the canonicalized
@@ -142,7 +142,7 @@ func AcquireSubClaims(
 	// claimproducer.ErrSplitScopeUnsupported when the producer doesn't
 	// advertise. Surface as a typed error so callers can route to the
 	// validation pipeline (D4).
-	resp, err := producer.SplitScope(ctx, locks.SplitClaimScopeRequest{
+	resp, err := producer.SplitScope(ctx, claimproducer.SplitClaimScopeRequest{
 		ClaimHandleID:    in.ParentClaimHandleID.String(),
 		PartitionRequest: in.PartitionRequest,
 	})

@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // acquireFanOutIfDeclared performs the E4 atomic sub-claim acquisition
@@ -74,7 +74,7 @@ func acquireFanOutIfDeclared(
 	}
 	// `parent.Spec` is `any` — narrow to ClaimSpec; named locks
 	// can't be fan-out targets (no producer name).
-	parentClaimSpec, ok := parent.Spec.(locks.ClaimSpec)
+	parentClaimSpec, ok := parent.Spec.(claimproducer.ClaimSpec)
 	if !ok {
 		args.Logger.Warn("tryAcquire: fan-out alias references non-claim spec; ignored",
 			"node_id", cand.NodeID.String(),

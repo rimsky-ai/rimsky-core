@@ -4,7 +4,7 @@
 
 // Lock-spec construction + template lookup helpers.
 //
-// Two primitives, two types: locks.NamedLockSpec and locks.ClaimSpec.
+// Two primitives, two types: locks.NamedLockSpec and claimproducer.ClaimSpec.
 // There is no LockSpec interface; this file's helpers operate on `any`
 // values and dispatch by type-switch.
 //
@@ -25,6 +25,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // sortLockSpecs orders specs by (kind, sort_key) per blessed-invariant
@@ -47,7 +48,7 @@ func kindForSpec(sp any) string {
 	switch sp.(type) {
 	case locks.NamedLockSpec:
 		return "named"
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		return "scope"
 	}
 	return "zzz"
@@ -58,7 +59,7 @@ func sortKeyForSpec(sp any) string {
 	switch v := sp.(type) {
 	case locks.NamedLockSpec:
 		return v.Name
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		return v.ProducerName + ":" + v.Selector
 	}
 	return ""
@@ -68,7 +69,7 @@ func sortKeyForSpec(sp any) string {
 // NamedLockSpec. Used to populate the `producer_name` audit-log payload
 // field on claim-kind events.
 func producerNameForSpec(sp any) string {
-	if v, ok := sp.(locks.ClaimSpec); ok {
+	if v, ok := sp.(claimproducer.ClaimSpec); ok {
 		return v.ProducerName
 	}
 	return ""
@@ -129,10 +130,10 @@ func buildLockSpecs(
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, locks.ClaimSpec{
+		out = append(out, claimproducer.ClaimSpec{
 			ProducerName: sref.Name,
 			Selector:     selectorSub,
-			Intent:       locks.Intent(sref.Intent),
+			Intent:       claimproducer.Intent(sref.Intent),
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
@@ -164,7 +165,7 @@ func buildLockSpecs(
 // and walks to the upstream's `rimsky_claim_handles` row directly.
 //
 // Reuses the caller's tx (option C / no-nil-tx). See buildLockSpecs.
-func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]locks.ClaimResult {
+func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistence.Tx, nd *persistence.NodeRow) map[string]claimproducer.ClaimResult {
 	if nd == nil {
 		return nil
 	}
@@ -186,7 +187,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	if len(nodeDef.Holds) == 0 && len(nodeDef.Inherits) == 0 {
 		return nil
 	}
-	out := map[string]locks.ClaimResult{}
+	out := map[string]claimproducer.ClaimResult{}
 	collectCoHeldClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out)
 	collectInheritedClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out)
 	if len(out) == 0 {
@@ -205,7 +206,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 func collectCoHeldClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec *node.TemplateSpec, instanceID shared.UUID,
-	nodeDef *node.TemplateNodeDef, out map[string]locks.ClaimResult,
+	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult,
 ) {
 	if nodeDef == nil || len(nodeDef.Holds) == 0 {
 		return
@@ -229,7 +230,7 @@ func collectCoHeldClaims(
 		if binding.As != "" {
 			localAlias = binding.As
 		}
-		out[localAlias] = locks.ClaimResult{
+		out[localAlias] = claimproducer.ClaimResult{
 			Address:    lh.Address,
 			ClaimScope: lh.ClaimScopeData,
 		}
@@ -243,7 +244,7 @@ func collectCoHeldClaims(
 func collectInheritedClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec *node.TemplateSpec, instanceID shared.UUID,
-	nodeDef *node.TemplateNodeDef, out map[string]locks.ClaimResult,
+	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult,
 ) {
 	if nodeDef == nil || len(nodeDef.Inherits) == 0 {
 		return
@@ -283,7 +284,7 @@ func collectInheritedClaims(
 		if lh == nil {
 			continue
 		}
-		out[alias] = locks.ClaimResult{
+		out[alias] = claimproducer.ClaimResult{
 			Address:    lh.Address,
 			ClaimScope: lh.ClaimScopeData,
 		}

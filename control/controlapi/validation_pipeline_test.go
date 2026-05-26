@@ -22,6 +22,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -99,7 +100,7 @@ func newValidatorHarness(t *testing.T, vr *fakeValidatorRegistry, vfake *fakeVal
 	d := pgtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
-	contentFake := storetest.NewFake("content", locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}})
+	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("content", contentFake)
 	lcReg := locks.NewLifecycleRegistry()
 	lcReg.Add("content", contentFake)

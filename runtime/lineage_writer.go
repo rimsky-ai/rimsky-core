@@ -30,10 +30,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	graphnode "github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // LeafRunHeldClaim is the per-held-claim entry of LeafRunRecord.HeldClaims.
@@ -416,7 +416,7 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 	}
 	out := make([]LeafRunHeldClaim, 0, len(acq.Locks)+len(acq.HeldClaims))
 	for _, lk := range acq.Locks {
-		sp, ok := lk.Spec.(locks.ClaimSpec)
+		sp, ok := lk.Spec.(claimproducer.ClaimSpec)
 		if !ok {
 			// NamedLockSpec rows — no producer.
 			continue

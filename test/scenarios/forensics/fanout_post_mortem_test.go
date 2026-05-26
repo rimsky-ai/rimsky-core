@@ -42,6 +42,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -53,8 +54,8 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 
 	inst, frameID, parentRunID, parentNodeID := seedForensicsScenario(ctx, t, backend, "fanout-postmortem")
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("postmortem-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("postmortem-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("postmortem-store", store)
 	args := runtime.RunArgs{

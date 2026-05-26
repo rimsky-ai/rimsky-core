@@ -21,6 +21,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -32,8 +33,8 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 	ctx := context.Background()
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("ds-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("ds-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		// SupportsSplitScope unset → fake's SplitScope returns
 		// ErrSplitScopeUnsupported by default.
 	})
@@ -214,14 +215,14 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 	// Producer fake — advertises SplitScope so AcquireSubClaims can call
 	// it; SplitClaimScopeFunc returns two sub-claim-scopes.
 	reg := locks.NewRegistry()
-	store := storetest.NewFake(storeName, locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		SupportsSplitScope:    true,
 	})
-	store.SplitClaimScopeFunc = func(req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 		// Two sub-scopes; bytes are inert in rimsky.
-		return locks.SplitClaimScopeResponse{
-			SubClaimScopes: []locks.SubClaimScopeDescriptor{
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
 				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
 				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`)},
 			},

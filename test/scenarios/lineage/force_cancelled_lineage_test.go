@@ -35,6 +35,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -46,8 +47,8 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 
 	inst, frameID, parentRunID, parentNodeID := seedForceCancelScenario(ctx, t, backend, "force-cancel")
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("cancel-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("cancel-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("cancel-store", store)
 	args := runtime.RunArgs{

@@ -22,7 +22,7 @@ type Client struct {
 	name string
 	conn *grpc.ClientConn
 	rpc  genv1.ClaimProducerClient
-	caps locks.Capabilities
+	caps claimproducer.Capabilities
 }
 
 // Compile-time interface check.
@@ -35,7 +35,7 @@ func (c *Client) Name() string { return c.name }
 // startup handshake. Returns the cached value without making another
 // RPC; rimsky calls Capabilities exactly once per producer-service per
 // process at startup.
-func (c *Client) Capabilities(_ context.Context) (locks.Capabilities, error) {
+func (c *Client) Capabilities(_ context.Context) (claimproducer.Capabilities, error) {
 	return c.caps, nil
 }
 
@@ -43,7 +43,7 @@ func (c *Client) Capabilities(_ context.Context) (locks.Capabilities, error) {
 // OpenOutcome: Acquired → {Available: true, Result: ...};
 // Unavailable → {Available: false}. Producer-side faults flow as
 // gRPC errors and are surfaced to the caller.
-func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.ClaimSpec) (locks.OpenOutcome, error) {
+func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 	resp, err := c.rpc.Open(ctx, &genv1.OpenRequest{
 		ClaimId:      string(claimID),
 		ProducerName: spec.ProducerName,
@@ -54,7 +54,7 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 		InstanceId:   spec.InstanceID,
 	})
 	if err != nil {
-		return locks.OpenOutcome{}, &ProducerCallError{
+		return claimproducer.OpenOutcome{}, &ProducerCallError{
 			ProducerName: c.name,
 			Method:       "Open",
 			ErrorClass:   extractErrorClass(err),
@@ -62,22 +62,22 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 		}
 	}
 	if u := resp.GetUnavailable(); u != nil {
-		return locks.OpenOutcome{Available: false}, nil
+		return claimproducer.OpenOutcome{Available: false}, nil
 	}
 	acq := resp.GetAcquired()
 	if acq == nil {
-		return locks.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: response carries neither Acquired nor Unavailable", c.name)
+		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: response carries neither Acquired nor Unavailable", c.name)
 	}
 	rws := writeSemanticsFromProto(acq.GetRealizedWriteSemantics())
-	if rws == locks.WriteSemanticsUnknown {
-		return locks.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics is UNKNOWN (producer must declare a concrete value)", c.name)
+	if rws == claimproducer.WriteSemanticsUnknown {
+		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics is UNKNOWN (producer must declare a concrete value)", c.name)
 	}
 	if !c.caps.Contains(rws) {
-		return locks.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics %q not in advertised envelope %v", c.name, rws, c.caps.WriteSemanticsAllowed)
+		return claimproducer.OpenOutcome{}, fmt.Errorf("remote producer %q: Open: realized_write_semantics %q not in advertised envelope %v", c.name, rws, c.caps.WriteSemanticsAllowed)
 	}
-	return locks.OpenOutcome{
+	return claimproducer.OpenOutcome{
 		Available: true,
-		Result: locks.ClaimResult{
+		Result: claimproducer.ClaimResult{
 			Address:                acq.GetAddress(),
 			Payload:                acq.GetPayload(),
 			ClaimScope:             acq.GetClaimScope(),
@@ -87,7 +87,7 @@ func (c *Client) Open(ctx context.Context, claimID locks.ClaimID, spec locks.Cla
 }
 
 // Commit RPCs to the remote producer.
-func (c *Client) Commit(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
@@ -106,7 +106,7 @@ func (c *Client) Commit(ctx context.Context, claimID locks.ClaimID, scope, addre
 
 // Abandon RPCs to the remote producer. address may be nil when Open's
 // response was lost — the producer identifies state by claim_id.
-func (c *Client) Abandon(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Abandon(ctx, &genv1.AbandonRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
@@ -124,7 +124,7 @@ func (c *Client) Abandon(ctx context.Context, claimID locks.ClaimID, scope, addr
 }
 
 // Release RPCs to the remote producer.
-func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, address []byte) error {
+func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
 	_, err := c.rpc.Release(ctx, &genv1.ReleaseRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
@@ -146,20 +146,20 @@ func (c *Client) Release(ctx context.Context, claimID locks.ClaimID, scope, addr
 // Producers that do not advertise SupportsSplitScope return
 // ErrSplitScopeUnsupported; rimsky validates at registration so this
 // path is normally unreachable.
-func (c *Client) SplitScope(ctx context.Context, req locks.SplitClaimScopeRequest) (locks.SplitClaimScopeResponse, error) {
+func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
 	if !c.caps.SupportsSplitScope {
-		return locks.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
+		return claimproducer.SplitClaimScopeResponse{}, claimproducer.ErrSplitScopeUnsupported
 	}
 	resp, err := c.rpc.SplitScope(ctx, &genv1.SplitScopeRequest{
 		ClaimHandleId:    req.ClaimHandleID,
 		PartitionRequest: req.PartitionRequest,
 	})
 	if err != nil {
-		return locks.SplitClaimScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
+		return claimproducer.SplitClaimScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
 	}
-	out := locks.SplitClaimScopeResponse{}
+	out := claimproducer.SplitClaimScopeResponse{}
 	for _, sub := range resp.GetSubScopes() {
-		out.SubClaimScopes = append(out.SubClaimScopes, locks.SubClaimScopeDescriptor{
+		out.SubClaimScopes = append(out.SubClaimScopes, claimproducer.SubClaimScopeDescriptor{
 			ClaimScopeData:   sub.GetClaimScopeData(),
 			PartitionKey:     sub.GetPartitionKey(),
 			ProducerMetadata: sub.GetProducerMetadata(),
@@ -197,7 +197,7 @@ func (c *Client) Close() {
 // ValidateCapabilities compares the cached capability struct against
 // the operator-declared envelope. The operator-declared envelope MUST
 // be a non-empty subset of the producer-advertised envelope.
-func (c *Client) ValidateCapabilities(declared locks.Capabilities) error {
+func (c *Client) ValidateCapabilities(declared claimproducer.Capabilities) error {
 	if len(declared.WriteSemanticsAllowed) == 0 {
 		return fmt.Errorf("remote producer %q: operator-declared write_semantics_allowed is empty", c.name)
 	}
@@ -212,17 +212,17 @@ func (c *Client) ValidateCapabilities(declared locks.Capabilities) error {
 
 // writeSemanticsFromProto maps the proto enum to the Go-side string
 // constant. Returns WriteSemanticsUnknown for the proto zero value.
-func writeSemanticsFromProto(ws genv1.WriteSemantics) locks.WriteSemantics {
+func writeSemanticsFromProto(ws genv1.WriteSemantics) claimproducer.WriteSemantics {
 	switch ws {
 	case genv1.WriteSemantics_WRITE_SEMANTICS_SYNC:
-		return locks.WriteSemanticsSync
+		return claimproducer.WriteSemanticsSync
 	case genv1.WriteSemantics_WRITE_SEMANTICS_STAGED_ASYNC:
-		return locks.WriteSemanticsStagedAsync
+		return claimproducer.WriteSemanticsStagedAsync
 	case genv1.WriteSemantics_WRITE_SEMANTICS_BLOCKING_ASYNC:
-		return locks.WriteSemanticsBlockingAsync
+		return claimproducer.WriteSemanticsBlockingAsync
 	case genv1.WriteSemantics_WRITE_SEMANTICS_READ_ONLY:
-		return locks.WriteSemanticsReadOnly
+		return claimproducer.WriteSemanticsReadOnly
 	default:
-		return locks.WriteSemanticsUnknown
+		return claimproducer.WriteSemanticsUnknown
 	}
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -45,8 +46,8 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	inst, frameID, claimHandleID, nodeID := seedAbandonScenario(ctx, t, backend, "abandon-natural")
 
 	reg := locks.NewRegistry()
-	store := storetest.NewFake("abandon-store", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	store := storetest.NewFake("abandon-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	reg.Add("abandon-store", store)
 	args := runtime.RunArgs{

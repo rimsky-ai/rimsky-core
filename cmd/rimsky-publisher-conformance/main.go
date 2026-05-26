@@ -8,7 +8,7 @@
 // sensors/sensor-webhook). Custom publisher authors can point this
 // binary at their service to verify lifecycle + message-push shape.
 //
-// The runner library lives in `pkg:sdk/go/conformance/publisher`; this
+// The runner library lives in `pkg:protocols/conformance/publisher`; this
 // binary is a thin CLI wrapper.
 //
 // Per spec
@@ -40,8 +40,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/fallguyconsulting/rimsky/protocols/conformance/publisher"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/publisher"
 )
 
 func main() {
@@ -99,15 +99,15 @@ func main() {
 	}
 }
 
-// CheckResult mirrors `pkg:sdk/go/conformance/publisher.CheckResult`
+// CheckResult mirrors `pkg:protocols/conformance/publisher.CheckResult`
 // so the existing tests at cmd/rimsky-publisher-conformance/main_test.go
 // keep their existing shape.
 type CheckResult = publisher.CheckResult
 
-// RunOpts mirrors `pkg:sdk/go/conformance/publisher.RunOpts`.
+// RunOpts mirrors `pkg:protocols/conformance/publisher.RunOpts`.
 type RunOpts = publisher.RunOpts
 
-// MessageReceiver mirrors `pkg:sdk/go/conformance/publisher.MessageReceiver`.
+// MessageReceiver mirrors `pkg:protocols/conformance/publisher.MessageReceiver`.
 type MessageReceiver = publisher.MessageReceiver
 
 // NewMessageReceiver constructs an empty receiver.

@@ -18,8 +18,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // nodeRunSnapshotForBreakpoint projects the acquisition's node-run
@@ -66,7 +66,7 @@ func heldClaimsSummaryForBreakpoint(acq *acquisition) []map[string]any {
 	}
 	out := []map[string]any{}
 	for _, lk := range acq.Locks {
-		spec, ok := lk.Spec.(locks.ClaimSpec)
+		spec, ok := lk.Spec.(claimproducer.ClaimSpec)
 		if !ok {
 			continue
 		}
@@ -83,7 +83,7 @@ func heldClaimsSummaryForBreakpoint(acq *acquisition) []map[string]any {
 	}
 	for alias := range acq.HeldClaims {
 		// Co-held upstream claims (`holds:` / legacy `inherits:`)
-		// arrive via locks.ClaimResult — we have no
+		// arrive via claimproducer.ClaimResult — we have no
 		// ClaimHandleID for them on the in-memory acquisition
 		// shape, so the summary records only the alias label and
 		// flags the source so the agent can distinguish co-held

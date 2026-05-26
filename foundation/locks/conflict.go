@@ -18,7 +18,11 @@
 
 package locks
 
-import "bytes"
+import (
+	"bytes"
+
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+)
 
 // ModeCoexists reports whether two claims with given intents on stores
 // with given write_semantics can coexist on overlapping scopes, per the
@@ -40,7 +44,7 @@ import "bytes"
 //
 // The w×w false in both blocks is the structural single-writer-per-scope
 // rule.
-func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB WriteSemantics) bool {
+func ModeCoexists(intentA claimproducer.Intent, semA claimproducer.WriteSemantics, intentB claimproducer.Intent, semB claimproducer.WriteSemantics) bool {
 	syncA := isSync(semA)
 	syncB := isSync(semB)
 	if syncA != syncB {
@@ -50,8 +54,8 @@ func ModeCoexists(intentA Intent, semA WriteSemantics, intentB Intent, semB Writ
 		// true to indicate "no semantic conflict" rather than blocking.
 		return true
 	}
-	rwA := intentA == IntentReadWrite
-	rwB := intentB == IntentReadWrite
+	rwA := intentA == claimproducer.IntentReadWrite
+	rwB := intentB == claimproducer.IntentReadWrite
 	if syncA {
 		// Sync block: r×r ✅; r×w / w×r / w×w ❌.
 		return !rwA && !rwB
@@ -82,11 +86,11 @@ func ClaimScopesByteEqual(a, b []byte) bool {
 // StagedAsync does not (async block); ReadOnly cannot mutate so the
 // matrix degenerates — treat ReadOnly as sync (r-only claims trivially
 // coexist with any other r-only claim and never conflict on w).
-func isSync(ws WriteSemantics) bool {
+func isSync(ws claimproducer.WriteSemantics) bool {
 	switch ws {
-	case WriteSemanticsSync, WriteSemanticsBlockingAsync, WriteSemanticsReadOnly:
+	case claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync, claimproducer.WriteSemanticsReadOnly:
 		return true
-	case WriteSemanticsStagedAsync:
+	case claimproducer.WriteSemanticsStagedAsync:
 		return false
 	}
 	// Unrecognized: conservative — treat as sync.

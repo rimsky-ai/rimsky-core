@@ -36,8 +36,7 @@ apache:
   - graph/node/
   - graph/shared/
   - graph/template/canonical/
-  - conformance/
-  - sdk/go/  # adopter-facing SDK (build-your-own executor/producer/publisher); imports only Apache-tier packages
+  - testpg/  # opt-in adopter-facing Postgres test helper (testcontainers); deps-isolated standalone module, imports no rimsky package
   - stores/  # rimsky-internal test-infra carve-outs: stub + per-driver testfixture
   - executors/stub/  # rimsky-internal test-infra carve-out
   # sensors/, subscribers/, executors/{claude-agent,http-node,verifier-*}/
@@ -80,6 +79,7 @@ agpl:
   - control/controlapi/
   - graph/frame/
   - internal/
+  - stores/stub/cmd/  # rimsky-internal stub entrypoint: wires in internal/ops (AGPL); the stub store/server/testfixture packages stay Apache (adopter-referenceable)
   - control/observability/
   - graph/scenario/
   - graph/scheduler/

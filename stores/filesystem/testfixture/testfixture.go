@@ -29,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
+	"github.com/fallguyconsulting/rimsky/protocols/action"
 	stubserver "github.com/fallguyconsulting/rimsky/stores/stub/server"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )

@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
@@ -26,8 +26,8 @@ import (
 // store-service's in-memory DataProcessing extension.
 func TestDataProcessingConformance_StubStore(t *testing.T) {
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{
-			WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+		Capabilities: claimproducer.Capabilities{
+			WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		},
 	})
 	t.Cleanup(teardown)

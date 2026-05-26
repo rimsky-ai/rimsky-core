@@ -42,10 +42,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime"
 )
 
@@ -703,7 +703,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 		// ClaimProducer. Skip when no producer name is recorded (defensive).
 		if deps.Stores != nil && row.ProducerName != nil {
 			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
-				if err := producer.Release(req.Context(), locks.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
+				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]any{
 						"error": "ClaimProducer.Release failed: " + err.Error(),
 					})

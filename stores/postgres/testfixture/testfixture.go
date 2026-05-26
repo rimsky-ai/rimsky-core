@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fallguyconsulting/rimsky/protocols/action"
 	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 	stubserver "github.com/fallguyconsulting/rimsky/stores/stub/server"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )

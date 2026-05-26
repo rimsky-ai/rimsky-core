@@ -20,11 +20,11 @@ import (
 
 	"github.com/fallguyconsulting/rimsky/control/config"
 	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/graph/node"
 	"github.com/fallguyconsulting/rimsky/graph/scenario"
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
+	"github.com/fallguyconsulting/rimsky/protocols/action"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
 )
@@ -40,7 +40,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	t.Parallel()
 
 	endpoint, sub, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 		PickPolicies: map[string]stubstore.PickPolicyConfig{
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
@@ -55,7 +55,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"queue-store": {
 					Endpoint:     "grpc://" + endpoint,
-					Capabilities: locks.Capabilities{WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync}},
+					Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
 				},
 			},
 		},

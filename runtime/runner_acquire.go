@@ -20,7 +20,7 @@
 // own state mutation in its own transaction. Tx-sharing via
 // locks.WithTx / TxFromContext is gone.
 //
-// Two primitives, two types: locks.NamedLockSpec and locks.ClaimSpec.
+// Two primitives, two types: locks.NamedLockSpec and claimproducer.ClaimSpec.
 
 package runtime
 
@@ -30,11 +30,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/foundation/spec"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
@@ -201,13 +201,13 @@ type acquisition struct {
 	// the acquisition took the Unavailable branch. Carried through the
 	// rollback so the unavailable-handler dispatch can log / route on
 	// it.
-	UnavailableSpec locks.ClaimSpec
+	UnavailableSpec claimproducer.ClaimSpec
 
 	// ErroredSpec is the spec whose Open RPC faulted, when the
 	// acquisition took the producer-errored branch
 	// (errAcquireProducerErrored). Carried through the rollback so the
 	// producer-error handler can log / route on the producer name.
-	ErroredSpec locks.ClaimSpec
+	ErroredSpec claimproducer.ClaimSpec
 	// ProducerErrorClass is the translated error_class from the faulted
 	// producer's *peer.ProducerCallError (the gRPC ErrorInfo.Reason, or
 	// "" when the producer attached no ErrorInfo detail). Routed through
@@ -233,7 +233,7 @@ type acquisition struct {
 	// rimsky carries the bytes verbatim.
 	//
 	// @concept: claim-co-holdership
-	HeldClaims map[string]locks.ClaimResult
+	HeldClaims map[string]claimproducer.ClaimResult
 
 	// MergedAttributes is the per-dispatch attribute bag the executor
 	// actually saw on this dispatch — the result of source-resolution +
@@ -552,7 +552,7 @@ func tryAcquire(
 			// the outer caller routes the class through the operator's
 			// `error_types:` chain — the same chain executor Error{error_class}
 			// terminals use.
-			erroredSpec, _ := sp.(locks.ClaimSpec)
+			erroredSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
 				DispatchID:                cand.DispatchID,
 				NodeID:                    cand.NodeID,
@@ -589,7 +589,7 @@ func tryAcquire(
 			// out across the rollback so the outer caller can route
 			// through the operator's `error_types: { acquire/unavailable:
 			// ... }` chain.
-			unavailableSpec, _ := sp.(locks.ClaimSpec)
+			unavailableSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
 				DispatchID:                cand.DispatchID,
 				NodeID:                    cand.NodeID,

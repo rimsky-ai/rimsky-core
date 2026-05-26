@@ -10,8 +10,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
@@ -23,8 +23,8 @@ import (
 // matching RealizedWriteSemantics; the uniformity invariant holds.
 func TestClaimProducerConformance_StubStore(t *testing.T) {
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
-		Capabilities: locks.Capabilities{
-			WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+		Capabilities: claimproducer.Capabilities{
+			WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 		},
 	})
 	t.Cleanup(teardown)
@@ -63,20 +63,20 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 // SupportsScopesConflict still passes conformance; the optional
 // checks surface as SplitScopeSkipped / ScopesConflictSkipped.
 func TestClaimProducerConformance_NoPartitioning(t *testing.T) {
-	fake := storetest.NewFake("no-partitioning", locks.Capabilities{
-		WriteSemanticsAllowed: []locks.WriteSemantics{locks.WriteSemanticsSync},
+	fake := storetest.NewFake("no-partitioning", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
 	// The default Fake.Open echoes the selector as scope/address but
 	// leaves RealizedWriteSemantics unset; tighten to the advertised
 	// sync semantics for the uniformity probe.
-	fake.OpenFunc = func(_ locks.ClaimID, spec locks.ClaimSpec) (locks.OpenOutcome, error) {
+	fake.OpenFunc = func(_ claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 		bytes := []byte(`"` + spec.Selector + `"`)
-		return locks.OpenOutcome{
+		return claimproducer.OpenOutcome{
 			Available: true,
-			Result: locks.ClaimResult{
+			Result: claimproducer.ClaimResult{
 				Address:                bytes,
 				ClaimScope:             bytes,
-				RealizedWriteSemantics: locks.WriteSemanticsSync,
+				RealizedWriteSemantics: claimproducer.WriteSemanticsSync,
 			},
 		}, nil
 	}

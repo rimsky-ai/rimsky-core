@@ -18,6 +18,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/cascade"
 	"github.com/fallguyconsulting/rimsky/foundation/locks"
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // verifyBeforeRun is the separate-read guard.
@@ -116,7 +117,7 @@ func emitLockAcquired(
 	case locks.NamedLockSpec:
 		payload["lock_kind"] = string(persistence.LockKindNamed)
 		payload["lock_name"] = sp.Name
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		payload["lock_kind"] = string(persistence.LockKindScope)
 		payload["producer_name"] = sp.ProducerName
 		payload["alias"] = sp.Alias

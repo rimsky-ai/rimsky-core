@@ -19,6 +19,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 )
 
 // takeNamedAdvisoryLocks walks the sorted spec slice and takes one
@@ -56,7 +57,7 @@ func acquireOneLock(
 			return AcquiredLock{}, openResultBail, nil
 		}
 		return al, openResultAcquired, nil
-	case locks.ClaimSpec:
+	case claimproducer.ClaimSpec:
 		return acquireClaim(ctx, args, tx, instanceID, spec, cand, heartbeatInterval, heldSubgraphs)
 	}
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)

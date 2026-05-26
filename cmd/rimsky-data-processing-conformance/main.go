@@ -4,7 +4,7 @@
 
 // rimsky-data-processing-conformance is a black-box conformance suite
 // for the DataProcessing mix-in service-protocol. The runner library
-// lives in `pkg:sdk/go/conformance/dataprocessing`; this binary is a
+// lives in `pkg:protocols/conformance/dataprocessing`; this binary is a
 // thin CLI wrapper that dials the endpoint, invokes the library, and
 // formats the output.
 //
@@ -29,8 +29,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/fallguyconsulting/rimsky/protocols/conformance/dataprocessing"
 	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/sdk/go/conformance/dataprocessing"
 )
 
 func main() {
@@ -77,7 +77,7 @@ func main() {
 	}
 }
 
-// CheckResult mirrors `pkg:sdk/go/conformance/dataprocessing.CheckResult` so
+// CheckResult mirrors `pkg:protocols/conformance/dataprocessing.CheckResult` so
 // the existing tests at cmd/rimsky-data-processing-conformance/main_test.go
 // keep their existing shape.
 type CheckResult = dataprocessing.CheckResult

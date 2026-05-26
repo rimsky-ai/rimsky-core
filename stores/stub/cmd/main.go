@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // store-stub is the stub store-service: in-memory state, deterministic
 // behavior. Per spec §8.3.
@@ -21,9 +21,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/fallguyconsulting/rimsky/internal/ops"
+	"github.com/fallguyconsulting/rimsky/protocols/action"
 	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/sdk/go/ops"
-	"github.com/fallguyconsulting/rimsky/sdk/go/stores/action"
 	"github.com/fallguyconsulting/rimsky/stores/stub/server"
 	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
 )

@@ -21,6 +21,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
 	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
 	"github.com/fallguyconsulting/rimsky/runtime/peer"
 )
 
@@ -42,7 +43,7 @@ import (
 // targeting the same (producer, claim-scope) pair.
 func acquireClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	spec locks.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
+	spec claimproducer.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
 	// Latency timer for `rimsky_claim_acquisition_latency_seconds`. Start
@@ -105,7 +106,7 @@ func acquireClaim(
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Insert: %w", err)
 	}
 
-	claimID := locks.ClaimID(rowID.String())
+	claimID := claimproducer.ClaimID(rowID.String())
 	// Stamp the producer name so a host-agent-proxy fronting the
 	// claim-producer protocol can route this Open by service name.
 	openCtx := peer.WithServiceName(ctx, spec.ProducerName)
@@ -192,7 +193,7 @@ func acquireClaim(
 // uses the holder's recorded RealizedWriteSemantics for both sides.
 func evaluateClaimScopeConflict(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec locks.ClaimSpec, cand persistence.Candidate,
+	spec claimproducer.ClaimSpec, cand persistence.Candidate,
 ) (bool, error) {
 	holders, err := args.ClaimHandles.ListByProducerClaimScope(ctx, spec.ProducerName, tx)
 	if err != nil {
@@ -223,11 +224,11 @@ func evaluateClaimScopeConflict(
 		if !locks.ClaimScopesByteEqual(candidateScope, h.ClaimScopeData) {
 			continue
 		}
-		var holderIntent locks.Intent
+		var holderIntent claimproducer.Intent
 		if h.Intent != nil {
-			holderIntent = locks.Intent(*h.Intent)
+			holderIntent = claimproducer.Intent(*h.Intent)
 		}
-		holderRWS := locks.WriteSemantics(h.RealizedWriteSemantics)
+		holderRWS := claimproducer.WriteSemantics(h.RealizedWriteSemantics)
 		// By the uniformity invariant the candidate's realized semantics
 		// (post-Open) MUST match the holder's; we use the holder's
 		// recorded value for both sides of the matrix.

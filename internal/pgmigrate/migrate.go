@@ -10,7 +10,7 @@
 //
 // Stays rimsky-internal because it imports foundation/persistence to
 // apply migrations. Service authors building publishers / executors /
-// store-services use pkg:sdk/go/testpg instead, which spins up a vanilla
+// store-services use pkg:testpg instead, which spins up a vanilla
 // Postgres without rimsky's schema.
 package pgmigrate
 
@@ -23,7 +23,7 @@ import (
 	"github.com/fallguyconsulting/rimsky/foundation/persistence"
 	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
 	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/sdk/go/testpg"
+	"github.com/fallguyconsulting/rimsky/testpg"
 )
 
 // StartPostgres spins up a throwaway Postgres 14 container, applies all
@@ -182,9 +182,9 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 // @source: foundation/internal/pgtest/pgtest.go::OpenDriver
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above. Note that
-// internal/pgmigrate's OpenDriver delegates to sdk/go/testpg for the
+// internal/pgmigrate's OpenDriver delegates to testpg for the
 // container startup; foundation/internal/pgtest cannot do that delegation
-// (foundation can't import sdk/go), so its OpenDriver calls its own
+// (foundation can't import the testpg module), so its OpenDriver calls its own
 // in-package StartFreshPostgresDSN.
 func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Helper()

@@ -136,7 +136,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 //	Once OpenDriver returns the latency to assertion is sub-second.
 //
 //	Root cause located: testcontainer cold-start latency in
-//	sdk/go/testpg/testpg.go::StartFreshPostgresDSN. That helper
+//	testpg/testpg.go::StartFreshPostgresDSN. That helper
 //	already documents the 300s container-startup ceiling and the
 //	"~1-6s per Docker poll under saturated parallel load;
 //	occasional 15-20s spikes" envelope; under -parallel=N the
