@@ -20,8 +20,8 @@
 package runtime
 
 import (
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // signalForTerminal returns the signal.Signal envelope that describes

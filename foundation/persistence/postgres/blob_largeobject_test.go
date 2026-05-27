@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/internal/pgtest"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	"github.com/rimsky-ai/rimsky-core/foundation/internal/pgtest"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	pgpersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
 )
 
 // TestPgLargeObjectBackend covers the round-trip path against a

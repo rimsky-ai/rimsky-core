@@ -4,12 +4,12 @@
 
 // imports.go — verify the Apache → AGPL import-direction rule.
 //
-// Rule: every Apache-classified Go file's imports of `github.com/fallguyconsulting/rimsky/...`
+// Rule: every Apache-classified Go file's imports of `github.com/rimsky-ai/rimsky-core/...`
 // must resolve to other Apache-classified packages. AGPL packages are
 // unrestricted (they can import either layer freely).
 //
 // Implementation note: the import path
-//   github.com/fallguyconsulting/rimsky/foundation/locks
+//   github.com/rimsky-ai/rimsky-core/foundation/locks
 // resolves to a directory in this repo. We map module-paths back to repo
 // paths by stripping the module-path prefix per the go.mod file we sit in.
 
@@ -28,9 +28,9 @@ var modulePathPrefixes = []struct {
 	module string // import-path prefix (with no trailing slash)
 	dir    string // repo-relative dir of the module's go.mod (with no trailing slash; "" = repo root)
 }{
-	{"github.com/fallguyconsulting/rimsky/foundation", "foundation"},
-	{"github.com/fallguyconsulting/rimsky/protocols", "protocols"},
-	{"github.com/fallguyconsulting/rimsky", ""}, // root module — must come last; longest-prefix-first sort below.
+	{"github.com/rimsky-ai/rimsky-core/foundation", "foundation"},
+	{"github.com/rimsky-ai/rimsky-core/protocols", "protocols"},
+	{"github.com/rimsky-ai/rimsky-core", ""}, // root module — must come last; longest-prefix-first sort below.
 }
 
 func init() {
@@ -73,7 +73,7 @@ func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 		}
 		for _, imp := range af.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
-			if !strings.HasPrefix(path, "github.com/fallguyconsulting/rimsky") {
+			if !strings.HasPrefix(path, "github.com/rimsky-ai/rimsky-core") {
 				continue
 			}
 			repoPath, ok := importToRepoPath(path)
@@ -92,7 +92,7 @@ func verifyImports(files []fileEntry, cfg *licensingConfig) []violation {
 	return out
 }
 
-// importToRepoPath maps an import path under github.com/fallguyconsulting/rimsky/
+// importToRepoPath maps an import path under github.com/rimsky-ai/rimsky-core/
 // to the repo-relative directory that import resolves to.
 func importToRepoPath(importPath string) (string, bool) {
 	for _, mp := range modulePathPrefixes {

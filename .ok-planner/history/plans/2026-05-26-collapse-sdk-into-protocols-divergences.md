@@ -106,7 +106,7 @@ surrounding explanatory comments," keeping genuinely-local declarations.
 
 **What was implemented:** The aliases and their doc comments are gone. The
 rewritten file-level doc comment and the surviving `NamedLockSpec` block still
-name code paths — e.g. `github.com/fallguyconsulting/rimsky/protocols/claimproducer`
+name code paths — e.g. `github.com/rimsky-ai/rimsky-core/protocols/claimproducer`
 in the package doc (`foundation/locks/types.go`).
 
 **Inferred reason:** Not a divergence — this is source code, where path

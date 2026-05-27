@@ -30,7 +30,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // Server is the in-memory DataProcessing server. Stateless from the

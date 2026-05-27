@@ -40,9 +40,9 @@ apache:
   - stores/  # rimsky-internal test-infra carve-outs: stub + per-driver testfixture
   - executors/stub/  # rimsky-internal test-infra carve-out
   # sensors/, subscribers/, executors/{claude-agent,http-node,verifier-*}/
-  # moved to pkg:github.com/fallguyconsulting/rimsky-services per P3 of
+  # moved to pkg:github.com/rimsky-ai/rimsky-services per P3 of
   # spec:2026-05-24-repo-reorganization-design.
-  # examples/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/examples
+  # examples/ moved to pkg:github.com/rimsky-ai/rimsky-docs/examples
   # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cmd/rimsky/
   - cmd/rimsky-host-agent/  # standalone dev-machine daemon; same client-side carve-out as runtime/hostagent + cmd/rimsky
@@ -54,15 +54,15 @@ apache:
   - cmd/rimsky-validation-conformance/
   - cmd/rimsky-license-check/
   # cmd/rimsky-docs-{glossary,llms-full,lint} moved to
-  # pkg:github.com/fallguyconsulting/rimsky-docs/cmd per P4 of
+  # pkg:github.com/rimsky-ai/rimsky-docs/cmd per P4 of
   # spec:2026-05-24-repo-reorganization-design.
-  # dashboards/ moved to github.com/fallguyconsulting/rimsky-dashboard per P6
+  # dashboards/ moved to github.com/rimsky-ai/rimsky-dashboard per P6
   # of spec:2026-05-24-repo-reorganization-design.
-  - deploy/
-  # docs/ moved to pkg:github.com/fallguyconsulting/rimsky-docs/docs
+  # deploy/ moved to pkg:github.com/rimsky-ai/rimsky-docs per P4 of
+  # spec:2026-05-24-repo-reorganization-design.
+  # docs/ moved to pkg:github.com/rimsky-ai/rimsky-docs/docs
   # per P4 of spec:2026-05-24-repo-reorganization-design.
   - cold-read/
-  - scripts/  # build/release tooling (e.g. release.sh), same tier as Makefile/deploy/
   # Top-level files and dotfiles default to Apache (build config, README,
   # CHANGELOG, Makefile, .golangci.yml, etc.). Non-source files (LICENSE.*,
   # COPYRIGHT, NOTICE, TRADEMARKS.md, CLA.md, CONTRIBUTING.md, licensing.yml,
@@ -117,7 +117,7 @@ exempt:
   # cmd/rimsky-docs-lint/testdata/ moved with the binary to rimsky-docs.
   # executors/claude-agent/{node_modules,dist,build,.cache}/ entries
   # dropped after P3 — claude-agent moved to
-  # pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent
+  # pkg:github.com/rimsky-ai/rimsky-services/executors/claude-agent
   # along with the rest of the consumption-side service impls.
   - .elves/
   # Binary blobs are skipped by the walker (see cmd/rimsky-license-check/).

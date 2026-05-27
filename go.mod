@@ -1,16 +1,16 @@
-module github.com/fallguyconsulting/rimsky
+module github.com/rimsky-ai/rimsky-core
 
 go 1.25.0
 
 require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
-	github.com/fallguyconsulting/rimsky/foundation v0.0.0
-	github.com/fallguyconsulting/rimsky/protocols v0.0.0
-	github.com/fallguyconsulting/rimsky/testpg v0.0.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/prometheus/client_golang v1.23.2
+	github.com/rimsky-ai/rimsky-core/foundation v0.0.0
+	github.com/rimsky-ai/rimsky-core/protocols v0.0.0
+	github.com/rimsky-ai/rimsky-core/testpg v0.0.0
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/term v0.40.0
@@ -99,7 +99,7 @@ require (
 )
 
 replace (
-	github.com/fallguyconsulting/rimsky/foundation => ./foundation
-	github.com/fallguyconsulting/rimsky/protocols => ./protocols
-	github.com/fallguyconsulting/rimsky/testpg => ./testpg
+	github.com/rimsky-ai/rimsky-core/foundation => ./foundation
+	github.com/rimsky-ai/rimsky-core/protocols => ./protocols
+	github.com/rimsky-ai/rimsky-core/testpg => ./testpg
 )

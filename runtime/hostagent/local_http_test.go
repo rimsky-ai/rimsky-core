@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // freeTestPort returns an OS-assigned free port for the agent's local listener

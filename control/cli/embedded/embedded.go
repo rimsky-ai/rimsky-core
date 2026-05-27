@@ -7,8 +7,9 @@
 // The CLI binary embeds the rimsky module's reference deploy files
 // (`deploy/docker-compose.yml`, `deploy/store-filesystem.yml`,
 // `deploy/supervisor-config.yml`) plus a minimal example graph and
-// the `rimsky-compose.yml` template scaffold. Refresh the embedded
-// copies via `make cli-sync-embedded`.
+// the `rimsky-compose.yml` template scaffold. These embedded files are
+// the canonical copies — maintained in place under this package's
+// `deploy/` directory.
 package embedded
 
 import "embed"

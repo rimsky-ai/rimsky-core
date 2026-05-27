@@ -15,15 +15,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/control/config"
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/graph/scenario"
-	"github.com/fallguyconsulting/rimsky/protocols/action"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/control/config"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/protocols/action"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
 )
 
 // TestAcquireUnavailablePass starts a stub claim-producer with an empty

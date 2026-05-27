@@ -12,8 +12,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
-	"github.com/fallguyconsulting/rimsky/control/cli/compose"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
+	"github.com/rimsky-ai/rimsky-core/control/cli/compose"
 )
 
 func main() {

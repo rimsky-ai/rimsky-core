@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 func testQueueRebindRunFrameInTx(t *testing.T, d persistence.Database) {

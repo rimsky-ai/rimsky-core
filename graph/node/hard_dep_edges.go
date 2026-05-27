@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // HardDepEdgeMap is keyed by receiver node-type. The value is the

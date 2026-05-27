@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 // TestBlobRoundtripBackends covers the cross-backend round-trip

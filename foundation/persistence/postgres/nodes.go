@@ -23,10 +23,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // nodeCols is the canonical projection of a NodeRow. State /

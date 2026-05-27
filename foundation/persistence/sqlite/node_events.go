@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 // NodeEvents returns the sqlite NodeEventTable impl.

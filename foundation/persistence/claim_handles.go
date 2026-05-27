@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // LockKind enumerates the two flavours of rimsky_claim_handles row.

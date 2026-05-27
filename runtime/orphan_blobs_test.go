@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 // fakeBlobOrphanTable is a tiny in-memory BlobOrphanTable used by the

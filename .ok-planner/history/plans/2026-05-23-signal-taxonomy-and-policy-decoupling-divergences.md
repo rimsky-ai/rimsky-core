@@ -15,7 +15,7 @@ Audited working tree against `plan:2026-05-23-signal-taxonomy-and-policy-decoupl
 ### D2. `EmitSignal` moved to subpackage `foundation/signal/audit/`
 
 - **Plan said:** Task 6 — "Create `foundation/signal/audit.go` … `package signal`."
-- **Implemented:** `code:foundation/signal/audit/audit.go` lives in subpackage `audit`. Callers import as `signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"` and invoke `signalaudit.EmitSignal(...)`.
+- **Implemented:** `code:foundation/signal/audit/audit.go` lives in subpackage `audit`. Callers import as `signalaudit "github.com/rimsky-ai/rimsky-core/foundation/signal/audit"` and invoke `signalaudit.EmitSignal(...)`.
 - **Inferred reason:** Forced choice — once `foundation/spec/policy.go` started importing `foundation/signal` for `spec.Resolution.Signal` (Pass 3 Task 33), the original `foundation/signal/audit.go` importing `foundation/persistence` created a cycle (`persistence` depends on `spec`). Header comment at `code:foundation/signal/audit/audit.go` explicitly cites this rationale and points at Pass 3.
 
 ### D3. Bare-attribute substitution refs auto-subscribe to `attribute/*`, not `attribute/*/changed`

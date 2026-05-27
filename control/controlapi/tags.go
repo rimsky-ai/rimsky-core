@@ -15,8 +15,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // tagPattern is the canonical tag identifier shape per spec §1.1.

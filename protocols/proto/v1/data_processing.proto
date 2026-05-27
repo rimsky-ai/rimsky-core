@@ -18,7 +18,7 @@ package rimsky.v1;
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1";
 
 service DataProcessing {
   rpc Capabilities(google.protobuf.Empty) returns (DataProcessingCapabilities);

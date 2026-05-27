@@ -10,13 +10,14 @@
 package genv1
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -1109,7 +1110,7 @@ const file_claim_producer_observability_proto_rawDesc = "" +
 	"\vStreamClaim\x12\x1d.rimsky.v1.StreamClaimRequest\x1a\x15.rimsky.v1.ClaimEvent0\x01\x12@\n" +
 	"\n" +
 	"ListClaims\x12\x1c.rimsky.v1.ListClaimsRequest\x1a\x14.rimsky.v1.ClaimList\x12D\n" +
-	"\fGetAdminView\x12\x1e.rimsky.v1.GetAdminViewRequest\x1a\x14.rimsky.v1.AdminViewBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\fGetAdminView\x12\x1e.rimsky.v1.GetAdminViewRequest\x1a\x14.rimsky.v1.AdminViewB?Z=github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_claim_producer_observability_proto_rawDescOnce sync.Once

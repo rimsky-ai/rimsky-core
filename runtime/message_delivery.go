@@ -43,11 +43,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	signalaudit "github.com/rimsky-ai/rimsky-core/foundation/signal/audit"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // EnqueueMessage inserts a message envelope into rimsky_messages with

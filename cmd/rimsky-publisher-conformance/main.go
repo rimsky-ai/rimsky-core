@@ -40,8 +40,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguyconsulting/rimsky/protocols/conformance/publisher"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/protocols/conformance/publisher"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 func main() {

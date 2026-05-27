@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // stdErrorsAs is a file-scope alias for errors.As; kept as a thin

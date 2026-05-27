@@ -40,11 +40,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	rimskyattrs "github.com/fallguyconsulting/rimsky/graph/attribute"
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	rimskyattrs "github.com/rimsky-ai/rimsky-core/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // callbackAckBody is the structured response the supervisor writes for

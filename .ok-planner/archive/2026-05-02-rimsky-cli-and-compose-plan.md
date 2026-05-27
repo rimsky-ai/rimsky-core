@@ -20,7 +20,7 @@ Read these before starting:
 - Project rules: `.claude/rules/rules.md` and `.claude/rules/cold-read-cheatsheet.md`. Cold-read conventions apply to all new code.
 - Build & test commands per `CLAUDE.md`: `go build ./... && go test ./... && make lint`.
 
-The existing module is rooted at the repo root (`go.mod`); all new packages live under that module. The Go module path is `github.com/fallguyconsulting/rimsky`.
+The existing module is rooted at the repo root (`go.mod`); all new packages live under that module. The Go module path is `github.com/rimsky-ai/rimsky-core`.
 
 ---
 
@@ -428,7 +428,7 @@ The `core/cli/embedded/deploy/*` files are copies of the live `deploy/*` files. 
 2. Wire it up in `core/cmd/rimsky-cli/main.go`. Replace the placeholder `default:` with a switch table that imports and dispatches to the `cli` package:
 
    ```go
-   import "github.com/fallguyconsulting/rimsky/core/cli"
+   import "github.com/rimsky-ai/rimsky-core/core/cli"
 
    ...
    case "health":

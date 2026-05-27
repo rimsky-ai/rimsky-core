@@ -24,13 +24,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks/storetest"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 type harness struct {

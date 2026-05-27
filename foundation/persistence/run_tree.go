@@ -26,9 +26,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // RunTreeRow is the run-tree projection of one `rimsky_node_runs` row.

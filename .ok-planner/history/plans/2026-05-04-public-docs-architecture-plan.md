@@ -4,7 +4,7 @@
 
 **Architecture:** The public surface lives at `docs/{concepts,protocols,agents,humans}/` plus generated `docs/glossary.md`, hand-curated `docs/vocabulary.md`, and repo-root `llms.txt` / `llms-full.txt` copies. Three new Go binaries under `cmd/` produce the generated artifacts and run six lint checks. The public surface is fully self-contained: it cites within itself and into `protocols/proto/v1/*.proto` (the public wire contract); never into `docs/internal/`, `docs/specs/`, `docs/plans/`, `docs/history/`, `docs/future-work/`, `docs/examples/`, or non-proto source code.
 
-**Tech Stack:** Go (root module `github.com/fallguyconsulting/rimsky`) for tooling — `gopkg.in/yaml.v3` for frontmatter parsing, stdlib only for everything else; markdown for content; existing Makefile for orchestration.
+**Tech Stack:** Go (root module `github.com/rimsky-ai/rimsky-core`) for tooling — `gopkg.in/yaml.v3` for frontmatter parsing, stdlib only for everything else; markdown for content; existing Makefile for orchestration.
 
 ---
 
@@ -21,7 +21,7 @@ The spec is the source of truth for *what to build*. This plan is the source of 
 7. **`deploy/rimsky.yml`** — lift source for `docs/agents/examples/minimal-rimsky-yml.md`.
 8. **`protocols/proto/v1/*.proto`** — the public wire contract; concept-file `proto_symbol` anchors must reference real symbols here.
 9. **`CLAUDE.md`** — the blessed-invariants list and gotchas section provide consumer-visible guarantees worth surfacing on relevant concept files. Do not reference invariant numbers in public docs (they're internal); rephrase the property in plain prose.
-10. **Existing `cmd/` binaries** — pattern-match on `cmd/rimsky-cli/main.go` for the file header (Apache 2.0), import shape, and main() structure. New binaries belong in the root module (`github.com/fallguyconsulting/rimsky`), so their imports look the same.
+10. **Existing `cmd/` binaries** — pattern-match on `cmd/rimsky-cli/main.go` for the file header (Apache 2.0), import shape, and main() structure. New binaries belong in the root module (`github.com/rimsky-ai/rimsky-core`), so their imports look the same.
 
 **Lift discipline:** when a fact is lifted from any of the above sources into the public surface, restructure it for the per-concept-file shape (§3 of the spec). After lift, the public-surface file is authoritative; the internal source is *not* updated to match. Do not edit `docs/internal/*` or `docs/specs/*` as part of this plan beyond the one concession in Task 17 (adding the unmaintained notice to `docs/internal/README.md`).
 
@@ -31,7 +31,7 @@ The spec is the source of truth for *what to build*. This plan is the source of 
 
 ## File map
 
-**Tooling — three new Go binaries under root module (`github.com/fallguyconsulting/rimsky`):**
+**Tooling — three new Go binaries under root module (`github.com/rimsky-ai/rimsky-core`):**
 - `cmd/rimsky-docs-glossary/main.go` — generates `docs/glossary.md` from `docs/concepts/*.md` frontmatter.
 - `cmd/rimsky-docs-llms-full/main.go` — generates `docs/agents/llms-full.txt` from `docs/concepts/*.md` and `docs/protocols/*.md` bodies.
 - `cmd/rimsky-docs-lint/main.go` — runs six lint subcommands.

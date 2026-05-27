@@ -11,9 +11,9 @@ Rimsky bundles three runtime processes (scheduler, supervisor, control-api), an 
 
 `go.work` ties three Go modules into one workspace:
 
-- **`foundation/`** — module `github.com/fallguyconsulting/rimsky/foundation`. Cascade engine + claim/lock primitives + integration runner + persistence drivers. Direct deps: `protocols`, `uuid`, `pgx`. Stdlib + minimal third-party.
-- **`protocols/`** — module `github.com/fallguyconsulting/rimsky/protocols`. The three service-protocol Go interfaces + protobuf bindings. Direct deps: `grpc`, `protobuf`, `uuid`. Tightest budget; stdlib + grpc only.
-- **Root** — module `github.com/fallguyconsulting/rimsky`. Modeling layer, cmd binaries, bundled stores, bundled executors. Pulls in heavier libraries (jsonschema, robfig/cron, jcs, testcontainers).
+- **`foundation/`** — module `github.com/rimsky-ai/rimsky-core/foundation`. Cascade engine + claim/lock primitives + integration runner + persistence drivers. Direct deps: `protocols`, `uuid`, `pgx`. Stdlib + minimal third-party.
+- **`protocols/`** — module `github.com/rimsky-ai/rimsky-core/protocols`. The three service-protocol Go interfaces + protobuf bindings. Direct deps: `grpc`, `protobuf`, `uuid`. Tightest budget; stdlib + grpc only.
+- **Root** — module `github.com/rimsky-ai/rimsky-core`. Modeling layer, cmd binaries, bundled stores, bundled executors. Pulls in heavier libraries (jsonschema, robfig/cron, jcs, testcontainers).
 
 The dependency budgets are visible at `foundation/go.mod`, `protocols/go.mod`, and `go.mod` respectively. An external author depending on `protocols/claimproducer` does not transitively pull jsonschema, robfig/cron, testcontainers — because those live at root.
 

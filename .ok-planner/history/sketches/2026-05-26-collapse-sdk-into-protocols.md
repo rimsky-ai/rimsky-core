@@ -197,7 +197,7 @@ new layout:
 - drop any data-quality check vocab borrowed from rimsky — that's the
   implementer's own concern (a generic SELECT-only check runner is not a
   rimsky contract).
-- fix any stale rimsky module path to `github.com/fallguyconsulting/rimsky`
+- fix any stale rimsky module path to `github.com/rimsky-ai/rimsky-core`
   throughout.
 - repoint the `go.mod` `replace` directives at the new layout; update the
   Dockerfile `COPY` + conformance script + build context.

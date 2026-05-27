@@ -65,11 +65,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/runtime/executor"
 )
 
 // Config is the supervisor's construction-time dependency bundle.

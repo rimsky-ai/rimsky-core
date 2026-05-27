@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // InstanceRow mirrors a row of rimsky_instances. An instance binds to a

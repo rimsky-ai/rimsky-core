@@ -24,7 +24,7 @@ Read these before starting:
   make lint
   go test ./test/scenarios/... ./core/storage/... -count=1   # testcontainers
   ```
-- **Module path.** `github.com/fallguyconsulting/rimsky`; `go.mod` is at the repo root.
+- **Module path.** `github.com/rimsky-ai/rimsky-core`; `go.mod` is at the repo root.
 
 The full spec sections most-cited by this plan: §2 (driver interface), §3 (pgx-decoupling refactor), §3.10 (invariant preservation), §4 (coordinator), §5 (migrations), §6 (SQLite specifics), §7 (unified image), §8 (config), §9 (tests).
 
@@ -542,7 +542,7 @@ docs/operator-guide.md              # new "Persistence drivers" section + unifie
        "sort"
        "strings"
 
-       "github.com/fallguyconsulting/rimsky/core/shared"
+       "github.com/rimsky-ai/rimsky-core/core/shared"
    )
 
    // Migrator runs *.sql files in filename-sorted order under the
@@ -664,7 +664,7 @@ docs/operator-guide.md              # new "Persistence drivers" section + unifie
 
        "github.com/jackc/pgx/v5/pgxpool"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    // driver is the persistence.Driver impl. Constructed via persistence.Open
@@ -760,7 +760,7 @@ docs/operator-guide.md              # new "Persistence drivers" section + unifie
        "github.com/jackc/pgx/v5"
        "github.com/jackc/pgx/v5/pgxpool"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    // Constants moved here from core/scheduler/scheduler.go and
@@ -884,7 +884,7 @@ docs/operator-guide.md              # new "Persistence drivers" section + unifie
        "github.com/jackc/pgx/v5/pgconn"
        "github.com/jackc/pgx/v5/pgxpool"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    // pgTx is the persistence.Tx carrier for this driver. Embeds
@@ -1144,8 +1144,8 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 
        "github.com/jackc/pgx/v5/pgxpool"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       "github.com/fallguyconsulting/rimsky/core/persistence/postgres/migrations"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence/postgres/migrations"
    )
 
    func newMigrator(pool *pgxpool.Pool) persistence.Migrator {
@@ -1205,9 +1205,9 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
        "context"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/core/internal/pgtest"
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       _ "github.com/fallguyconsulting/rimsky/core/persistence/postgres"
+       "github.com/rimsky-ai/rimsky-core/core/internal/pgtest"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       _ "github.com/rimsky-ai/rimsky-core/core/persistence/postgres"
    )
 
    func TestMigrateAgainstTestcontainers(t *testing.T) {
@@ -1270,9 +1270,9 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 
    ```go
    import (
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       _ "github.com/fallguyconsulting/rimsky/core/persistence/postgres"  // wire init()
-       // _ "github.com/fallguyconsulting/rimsky/core/persistence/sqlite"   // UNCOMMENT in Task 30
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       _ "github.com/rimsky-ai/rimsky-core/core/persistence/postgres"  // wire init()
+       // _ "github.com/rimsky-ai/rimsky-core/core/persistence/sqlite"   // UNCOMMENT in Task 30
        // ... existing imports
    )
 
@@ -1462,7 +1462,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 
    import (
        "github.com/jackc/pgx/v5/pgxpool"
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    // StoreFromPool wraps an existing *pgxpool.Pool as a persistence.Store
@@ -1497,7 +1497,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 1. For each `main.go`:
    - Replace `pgxpool.New(dsn)` with `persistence.Open(ctx, cfg.Persistence)`.
    - Drop `RIMSKY_DB_URL` env var read.
-   - Add `_ "github.com/fallguyconsulting/rimsky/core/persistence/postgres"` import to register the driver.
+   - Add `_ "github.com/rimsky-ai/rimsky-core/core/persistence/postgres"` import to register the driver.
    - The supervisor/scheduler/controlapi packages still hold pgx directly until Tasks 23–25; until then, extract the underlying pool from the driver and pass *both* `*pgxpool.Pool` and `persistence.Driver` (or its sub-interfaces) into the `core/config/Start*` entry points. Add a temporary accessor on `core/persistence/postgres`:
 
      ```go
@@ -1755,7 +1755,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 
        _ "modernc.org/sqlite"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    func init() {
@@ -1825,7 +1825,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
 5. **Uncomment the SQLite registration import in every cmd binary** (added but commented out in Task 14):
 
    ```go
-   _ "github.com/fallguyconsulting/rimsky/core/persistence/sqlite"
+   _ "github.com/rimsky-ai/rimsky-core/core/persistence/sqlite"
    ```
 
    Apply to all four binaries:
@@ -1856,7 +1856,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
        "database/sql"
        "sync"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    type coordinatorImpl struct {
@@ -1942,8 +1942,8 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
        "context"
        "database/sql"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       "github.com/fallguyconsulting/rimsky/core/persistence/sqlite/migrations"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence/sqlite/migrations"
    )
 
    func newMigrator(db *sql.DB) persistence.Migrator {
@@ -1994,8 +1994,8 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
        "context"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       _ "github.com/fallguyconsulting/rimsky/core/persistence/sqlite"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       _ "github.com/rimsky-ai/rimsky-core/core/persistence/sqlite"
    )
 
    func TestSQLiteMigrationApplies(t *testing.T) {
@@ -2045,7 +2045,7 @@ The duplication between `core/migrations/*.sql` and `core/persistence/postgres/m
        "errors"
        "fmt"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    type sqliteTx struct {
@@ -2270,7 +2270,7 @@ After all 12 files land, the `*storeImpl` satisfies `persistence.Store`.
        "context"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
    )
 
    // Suite runs every conformance check against the driver returned by
@@ -2306,11 +2306,11 @@ After all 12 files land, the `*storeImpl` satisfies `persistence.Store`.
        "context"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/core/persistence"
-       "github.com/fallguyconsulting/rimsky/core/internal/pgtest"
+       "github.com/rimsky-ai/rimsky-core/core/persistence"
+       "github.com/rimsky-ai/rimsky-core/core/internal/pgtest"
 
-       _ "github.com/fallguyconsulting/rimsky/core/persistence/postgres"
-       _ "github.com/fallguyconsulting/rimsky/core/persistence/sqlite"
+       _ "github.com/rimsky-ai/rimsky-core/core/persistence/postgres"
+       _ "github.com/rimsky-ai/rimsky-core/core/persistence/sqlite"
    )
 
    func TestConformancePostgres(t *testing.T) {

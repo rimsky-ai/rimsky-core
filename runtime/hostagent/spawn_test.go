@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // connectAgentToFakeProxy starts the agent against fp and returns once the

@@ -257,7 +257,7 @@ The license boundary is not enforceable by convention alone. PRs add new imports
 
 A new check that walks every Go file, classifies it by directory (against the §4 mapping), and verifies that:
 
-- Every Apache-classified Go file's imports of `github.com/fallguyconsulting/rimsky/...` resolve to other Apache-classified packages.
+- Every Apache-classified Go file's imports of `github.com/rimsky-ai/rimsky-core/...` resolve to other Apache-classified packages.
 - Every AGPL-classified Go file's header declares dual-licensing (catches drift where someone copies a file and forgets the header).
 - Every Apache-classified Go file's header declares Apache 2.0.
 - Every TypeScript file in `executors/claude-agent/` has the Apache header.

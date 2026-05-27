@@ -4,7 +4,7 @@
 
 **Architecture:** Per spec. New top-level packages: `core/store/` (interfaces + filesystem + claimstorepg + stub), `core/attributes/` (substitution + validation + callback). Schema rewritten in place; proto rewritten clean-break; `core/resource/` deleted. Scheduler grows lock-holder + claim-holder + visibility-timeout sweeps. Supervisor runner becomes the omnibus runner.
 
-**Tech Stack:** Go (root module `github.com/fallguyconsulting/rimsky`), `pgx/v5`, `chi/v5`, `robfig/cron/v3`, `log/slog`. JSON Schema via `github.com/santhosh-tekuri/jsonschema/v5` (new dep). TS (`executors/claude-agent/`). gRPC + HTTP+JSON via `proto/v1/`.
+**Tech Stack:** Go (root module `github.com/rimsky-ai/rimsky-core`), `pgx/v5`, `chi/v5`, `robfig/cron/v3`, `log/slog`. JSON Schema via `github.com/santhosh-tekuri/jsonschema/v5` (new dep). TS (`executors/claude-agent/`). gRPC + HTTP+JSON via `proto/v1/`.
 
 **Spec:** `docs/specs/2026-04-25-stores-redesign-design.md`. Section refs in this plan are to that spec; the plan is intentionally light on duplication — subagents read the spec for details.
 
@@ -475,7 +475,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 2. Rewrite the commit path to call `Store.Commit(tx, handle)` then `Store.ReleaseLock(tx, handle, ReleaseCommit)` then run the §5.6.4 algorithm via `core/store/claimstorepg/holders.go` for held claims, all in one tx as per §17.1 step 6c.
 3. Delete the `resource.CommitVersion` and `resource.RestoreVersion` call sites and their callers.
 
-**Verification:** `grep -rn '"github.com/fallguyconsulting/rimsky/core/resource' core/supervisor/commit.go` returns nothing.
+**Verification:** `grep -rn '"github.com/rimsky-ai/rimsky-core/core/resource' core/supervisor/commit.go` returns nothing.
 
 ---
 
@@ -1051,7 +1051,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 **Files:** any.
 
 **Steps:**
-1. `grep -rn '"github.com/fallguyconsulting/rimsky/core/resource' --include='*.go' .` returns nothing.
+1. `grep -rn '"github.com/rimsky-ai/rimsky-core/core/resource' --include='*.go' .` returns nothing.
 2. If anything remains, fix the importer (drop the import + any uses).
 
 **Verification:** the grep above returns no matches.
@@ -1084,7 +1084,7 @@ If a subagent needs to add a `// TODO: deleted in Task N` comment to keep an int
 7. `go test ./test/smoke/... -count=1 -timeout 10m` exits 0.
 8. `deploy/build-images.sh` exits 0.
 9. `docker compose -f deploy/docker-compose.yml up -d`, then `curl -fsS http://localhost:8080/health` returns 200, then `docker compose -f deploy/docker-compose.yml down -v`.
-10. `grep -rn '"github.com/fallguyconsulting/rimsky/core/resource' --include='*.go' .` returns nothing.
+10. `grep -rn '"github.com/rimsky-ai/rimsky-core/core/resource' --include='*.go' .` returns nothing.
 11. `grep -rn 'concurrency_tags\|ConcurrencyTags' --include='*.go' --include='*.sql' --include='*.proto' .` returns nothing outside `docs/`.
 
 **Verification:** all 11 checks pass.

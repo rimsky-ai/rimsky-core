@@ -23,7 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // runWithCommon is a small helper that initializes a flag set, registers

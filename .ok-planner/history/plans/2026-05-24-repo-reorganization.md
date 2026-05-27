@@ -42,7 +42,7 @@ All paths in the plan that begin `../rimsky-services/`, `../rimsky-docs/`, `../c
 - `stores/stub/store/store_test.go`
 
 **Steps:**
-1. In each file, change the import block: `corestore "github.com/fallguyconsulting/rimsky/foundation/locks"` → `claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"`.
+1. In each file, change the import block: `corestore "github.com/rimsky-ai/rimsky-core/foundation/locks"` → `claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"`.
 2. In each file, replace identifier references `corestore.X` → `claimproducer.X` for the six used symbols: `Capabilities`, `ClaimResult`, `OpenOutcome`, `WriteSemantics`, `WriteSemanticsSync`, `WriteSemanticsStagedAsync`. The four types are aliases at `foundation/locks/types.go:102,109,116,161`; the two constants at lines 129, 134 are re-declared because Go disallows const aliasing. All are semantic-preserving.
 3. Verify no other identifiers from `corestore` are used. (`grep -n 'corestore\.' stores/` against each file should return no remaining matches after Step 2.)
 4. Verify the package itself still owns its rimsky-internal types: `grep -n '^type\|^func\|^var\|^const' foundation/locks/*.go` should show `NamedLockSpec` and any other rimsky-internal types remain. Do not modify `foundation/locks/*.go`.
@@ -116,14 +116,14 @@ All paths in the plan that begin `../rimsky-services/`, `../rimsky-docs/`, `../c
           - "**/subscribers/**"
           - "**/executors/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/foundation"
+          - pkg: "github.com/rimsky-ai/rimsky-core/foundation"
             desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."
-          - pkg: "github.com/fallguyconsulting/rimsky/internal"
+          - pkg: "github.com/rimsky-ai/rimsky-core/internal"
             desc: "internal/ is private to rimsky."
-          - pkg: "github.com/fallguyconsulting/rimsky/graph"
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/graph"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
 ```
 
 3. Run `make lint`. Confirm no new violations. If the rule fires, the failure indicates a leak Tasks 1–3 didn't fully resolve; fix the leak and re-run.
@@ -152,15 +152,15 @@ All paths in the plan that begin `../rimsky-services/`, `../rimsky-docs/`, `../c
 1. Create directory `sdk/go/`.
 2. Create `sdk/go/go.mod`:
 ```
-module github.com/fallguyconsulting/rimsky/sdk/go
+module github.com/rimsky-ai/rimsky-core/sdk/go
 
 go 1.25.0
 
 require (
-	github.com/fallguyconsulting/rimsky/protocols v0.0.0
+	github.com/rimsky-ai/rimsky-core/protocols v0.0.0
 )
 
-replace github.com/fallguyconsulting/rimsky/protocols => ../../protocols
+replace github.com/rimsky-ai/rimsky-core/protocols => ../../protocols
 ```
 3. Create `sdk/go/doc.go` with package-level doc:
 ```go
@@ -206,17 +206,17 @@ use (
         files:
           - "**/sdk/go/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/foundation"
+          - pkg: "github.com/rimsky-ai/rimsky-core/foundation"
             desc: "sdk/go imports only protocols/ + stdlib + minimal third-party. foundation/ is rimsky-internal."
-          - pkg: "github.com/fallguyconsulting/rimsky/internal"
+          - pkg: "github.com/rimsky-ai/rimsky-core/internal"
             desc: "internal/ is private to rimsky."
-          - pkg: "github.com/fallguyconsulting/rimsky/graph"
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/graph"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
 ```
-2. Locate the `foundation-purity` rule in `.golangci.yml` (it currently denies graph/, runtime/, control/, cmd/, stores/, executors/, dashboards/). Add `pkg: "github.com/fallguyconsulting/rimsky/sdk/go"` with desc `"foundation/ may not import sdk/go (sdk is implementer-facing surface)"`.
-3. Locate the `graph-purity` rule. Add the same `pkg: "github.com/fallguyconsulting/rimsky/sdk/go"` deny entry with desc `"graph/ may not import sdk/go (sdk is implementer-facing surface)"`.
+2. Locate the `foundation-purity` rule in `.golangci.yml` (it currently denies graph/, runtime/, control/, cmd/, stores/, executors/, dashboards/). Add `pkg: "github.com/rimsky-ai/rimsky-core/sdk/go"` with desc `"foundation/ may not import sdk/go (sdk is implementer-facing surface)"`.
+3. Locate the `graph-purity` rule. Add the same `pkg: "github.com/rimsky-ai/rimsky-core/sdk/go"` deny entry with desc `"graph/ may not import sdk/go (sdk is implementer-facing surface)"`.
 4. Run `make lint`. Should pass (the SDK module has no content yet to violate the rules).
 
 **Verification:** `make lint` clean; `grep -n 'sdk-purity' .golangci.yml` returns a hit.
@@ -243,10 +243,10 @@ use (
 5. Move ONLY the plain-container surface to the SDK: `mv internal/pgtest/fresh.go sdk/go/testpg/testpg.go` (rename to match the destination package's convention). Also move the test cases that exercise plain-container functions: extract them from `internal/pgtest/pgtest_test.go` into `sdk/go/testpg/testpg_test.go`. Update both files' `package pgtest` → `package testpg`.
 6. The migrations-applying surface stays where it is — but its directory should be renamed for clarity. Rename `internal/pgtest/` → `internal/pgmigrate/` (or another name that signals "rimsky-internal, migrations-aware"). Update its `package pgtest` → `package pgmigrate` (or matching). Update callers (rimsky-internal scenario harnesses, etc.) — `grep -rln 'fallguyconsulting/rimsky/internal/pgtest'` enumerates them.
 7. Update `sdk/go/go.mod` to declare the third-party deps testpg needs (`testcontainers-go`, `pgx/v5`).
-8. Find all SDK-side callers expected to use the plain-container surface. The three sensor tests from Task 3 (`sensors/sensor-{http,webhook,object-store}/state_db_test.go`) call `StartFreshPostgresDSN`; update their import from `github.com/fallguyconsulting/rimsky/internal/pgtest` → `github.com/fallguyconsulting/rimsky/sdk/go/testpg`. Adjust the call site (`pgtest.StartFreshPostgresDSN` → `testpg.StartFreshPostgresDSN`).
+8. Find all SDK-side callers expected to use the plain-container surface. The three sensor tests from Task 3 (`sensors/sensor-{http,webhook,object-store}/state_db_test.go`) call `StartFreshPostgresDSN`; update their import from `github.com/rimsky-ai/rimsky-core/internal/pgtest` → `github.com/rimsky-ai/rimsky-core/sdk/go/testpg`. Adjust the call site (`pgtest.StartFreshPostgresDSN` → `testpg.StartFreshPostgresDSN`).
 9. Any rimsky-internal callers using the migrations-applying surface update their import to the new internal location (`internal/pgmigrate` or chosen name).
 
-**Verification:** `go build ./...` succeeds; `go test ./sdk/go/testpg/...` passes; `grep -rn '"github.com/fallguyconsulting/rimsky/internal/pgtest"' --include="*.go"` returns no matches anywhere (the old path no longer exists); `grep -rn '"github.com/fallguyconsulting/rimsky/sdk/go/testpg"' --include="*.go"` returns matches in the three sensor test files; rimsky-internal callers of the migrations-applying surface resolve to the new internal location and `go build ./... && go test ./...` clean.
+**Verification:** `go build ./...` succeeds; `go test ./sdk/go/testpg/...` passes; `grep -rn '"github.com/rimsky-ai/rimsky-core/internal/pgtest"' --include="*.go"` returns no matches anywhere (the old path no longer exists); `grep -rn '"github.com/rimsky-ai/rimsky-core/sdk/go/testpg"' --include="*.go"` returns matches in the three sensor test files; rimsky-internal callers of the migrations-applying surface resolve to the new internal location and `go build ./... && go test ./...` clean.
 
 ### Task 9: Extract Publisher — move `sensors/internal/post` to `sdk/go/publisher`
 
@@ -261,7 +261,7 @@ use (
 1. Create directory `sdk/go/publisher/`.
 2. Move both files; update package declaration from `post` → `publisher`.
 3. Verify the file has no rimsky-internal imports (the file's package comment at `sensors/internal/post/post.go` says "Single ~30-line helper... `sensors/internal/post` is invisible to non-sensor code by Go's internal-package visibility rules" — should be stdlib-only). Confirm via `grep -E '"github\.com/fallguyconsulting/rimsky/' sdk/go/publisher/publisher.go` returning no matches.
-4. Find callers: `grep -rln 'fallguyconsulting/rimsky/sensors/internal/post' --include="*.go"`. Update each import to `github.com/fallguyconsulting/rimsky/sdk/go/publisher` and rename references `post.X` → `publisher.X`.
+4. Find callers: `grep -rln 'fallguyconsulting/rimsky/sensors/internal/post' --include="*.go"`. Update each import to `github.com/rimsky-ai/rimsky-core/sdk/go/publisher` and rename references `post.X` → `publisher.X`.
 5. Delete the now-empty `sensors/internal/post/` directory: `rmdir sensors/internal/post && rmdir sensors/internal` (if `sensors/internal` is then empty).
 6. Search for source-code comments referencing `sensors/internal/post` and update to `sdk/go/publisher` — earlier audit found references in sensor source files via `pkg:sensors/internal/post`. Update those.
 
@@ -282,7 +282,7 @@ use (
 1. Read `stores/internal/bridge/bridge.go` end-to-end. Note the public functions, types, and what protocol they bridge (probably ClaimProducer). This is the most-developed bridge package and shapes the API for the rest.
 2. Create `sdk/go/server/` directory. Move the three `stores/internal/bridge/` files. Update package declaration to `package server`.
 3. For each of `sensors/sensor-{cron,http,object-store,webhook}/sensor.go`, `subscribers/openlineage/subscriber.go`, `executors/{claude-agent,http-node,verifier-http,verifier-shape-checks,stub}/*.go`, read the file and identify the gRPC server bring-up + connection-handling code that has the same shape as `stores/internal/bridge`. Extract these into appropriately-named files under `sdk/go/server/` (e.g. `sdk/go/server/publisher.go` for the publisher protocol, `sdk/go/server/executor.go` for the executor protocol, etc.). Each extracted helper takes the per-impl handler as a parameter and returns or runs the server.
-4. Update each impl's `*.go` file to import `github.com/fallguyconsulting/rimsky/sdk/go/server` and call the extracted helper instead of its own inlined code.
+4. Update each impl's `*.go` file to import `github.com/rimsky-ai/rimsky-core/sdk/go/server` and call the extracted helper instead of its own inlined code.
 5. Update `sdk/go/go.mod` to declare the third-party deps the server surface needs (`google.golang.org/grpc`, `go-chi/chi/v5`, plus anything else surfaced by the extraction).
 6. Verify no remaining `internal/bridge/` references: `grep -rn 'stores/internal/bridge' --include="*.go"` returns no matches.
 7. Delete `stores/internal/bridge/` and `stores/internal/` if empty: `rmdir stores/internal/bridge && rmdir stores/internal 2>/dev/null || true`.
@@ -364,7 +364,7 @@ use (
 **Steps:**
 1. Move the directory: `git mv runtime/remote runtime/peer`. (`git mv` is fine here — same repo.)
 2. Update package declaration in each file in the renamed directory: `package remote` → `package peer`. Files include `client.go`, `data_processing_client.go`, `dial.go`, `doc.go`, `lifecycle_client.go`, `publisher_client.go`, `validation_client.go`.
-3. Find all callers: `grep -rln 'fallguyconsulting/rimsky/runtime/remote' --include="*.go"`. Update each import to `github.com/fallguyconsulting/rimsky/runtime/peer` and rename `remote.X` references → `peer.X`.
+3. Find all callers: `grep -rln 'fallguyconsulting/rimsky/runtime/remote' --include="*.go"`. Update each import to `github.com/rimsky-ai/rimsky-core/runtime/peer` and rename `remote.X` references → `peer.X`.
 4. Update any references in non-Go files (depguard rules, documentation, comments) — `grep -rln 'runtime/remote'` will surface them. Notable: the `pgx-isolation` rule's allow-list (if it references runtime/remote, update to runtime/peer; check during execution).
 
 **Verification:** `make lint && make build-all && make test-all` clean; `grep -rn 'runtime/remote' --include="*.go"` returns no matches; `grep -rn 'runtime/remote' .golangci.yml Makefile` returns no matches.
@@ -430,7 +430,7 @@ aliases:
 
 ## What it is
 
-`pkg:github.com/fallguyconsulting/rimsky/sdk/go` is the canonical Go-side implementer-facing surface for building services that rimsky talks to. A peer Go module within the rimsky repo, alongside `pkg:protocols/` and `pkg:foundation/`. Houses:
+`pkg:github.com/rimsky-ai/rimsky-core/sdk/go` is the canonical Go-side implementer-facing surface for building services that rimsky talks to. A peer Go module within the rimsky repo, alongside `pkg:protocols/` and `pkg:foundation/`. Houses:
 
 - Server scaffolding for claim-producer / executor / lifecycle-subscriber / blob-backend / publisher protocols
 - Publisher-side helpers (message-emit retry+backoff, idempotency-key header, callback POST handling)
@@ -474,7 +474,7 @@ Owns: the implementer-facing surface listed above. Does NOT own: the calling-sid
 
 **Steps:**
 1. Read the current `concept:module-layout` at `.ok-planner/design/concepts/module-layout.md` end-to-end.
-2. **"What it is" section:** Replace the current paragraph (which describes "Three Go modules into one workspace plus the MCP-server module" and a four-way split inside root) with text describing the new four-Go-module workspace: `pkg:protocols`, `pkg:foundation`, `pkg:sdk/go` (NEW), and the root module containing `graph/`, `runtime/`, `control/`, `cmd/`. Clarify that the operator MCP shim at `pkg:control/controlapi/mcp` is in-tree as part of the root module (NOT a separate module — corrects the pre-existing concept-doc error; `file:go.work` lists only three modules pre-reorg, four post-reorg). Describe `pkg:sdk/go`'s dependency budget (protocols + stdlib + minimal third-party) and its purpose (canonical implementer-facing surface — link to `concept:sdk`). Remove references to `stores/`, `executors/`, `sensors/`, `subscribers/`, `dashboards/`, `examples/`, `apps/` — those directories live in `pkg:github.com/fallguyconsulting/rimsky-services` and sibling repos post-reorg (test-infrastructure carve-outs `stores/stub`, `executors/stub`, `stores/{filesystem,postgres}/testfixture` remain in rimsky).
+2. **"What it is" section:** Replace the current paragraph (which describes "Three Go modules into one workspace plus the MCP-server module" and a four-way split inside root) with text describing the new four-Go-module workspace: `pkg:protocols`, `pkg:foundation`, `pkg:sdk/go` (NEW), and the root module containing `graph/`, `runtime/`, `control/`, `cmd/`. Clarify that the operator MCP shim at `pkg:control/controlapi/mcp` is in-tree as part of the root module (NOT a separate module — corrects the pre-existing concept-doc error; `file:go.work` lists only three modules pre-reorg, four post-reorg). Describe `pkg:sdk/go`'s dependency budget (protocols + stdlib + minimal third-party) and its purpose (canonical implementer-facing surface — link to `concept:sdk`). Remove references to `stores/`, `executors/`, `sensors/`, `subscribers/`, `dashboards/`, `examples/`, `apps/` — those directories live in `pkg:github.com/rimsky-ai/rimsky-services` and sibling repos post-reorg (test-infrastructure carve-outs `stores/stub`, `executors/stub`, `stores/{filesystem,postgres}/testfixture` remain in rimsky).
 3. **"Boundaries" section:** Add a sentence: `pkg:sdk/go` owns the implementer-facing surface; does NOT own the calling-side wire code (rimsky-internal, stays at `pkg:runtime/peer`).
 4. **"Invariants" section:**
    - Add `sdk-purity` depguard rule entry.
@@ -635,16 +635,16 @@ Notes-section appends will be added in their full form during the P3 portion of 
 1. Verify `../rimsky-services` exists and is empty or contains only initial scaffolding (the user pre-created it).
 2. Create `../rimsky-services/go.mod`:
 ```
-module github.com/fallguyconsulting/rimsky-services
+module github.com/rimsky-ai/rimsky-services
 
 go 1.25.0
 
 require (
-	github.com/fallguyconsulting/rimsky/sdk/go v0.0.0
+	github.com/rimsky-ai/rimsky-core/sdk/go v0.0.0
 )
 ```
    The version `v0.0.0` is a placeholder; for local dev, the per-developer `go.work` resolves it locally; for CI, the user pins a tagged version. The plan does not commit a specific version.
-3. Create `../rimsky-services/README.md` with a one-paragraph description: this repo houses the production-side bundled implementations of rimsky's protocols — stores, sensors, subscribers, executors. Built against `pkg:github.com/fallguyconsulting/rimsky/sdk/go`. Link back to rimsky.
+3. Create `../rimsky-services/README.md` with a one-paragraph description: this repo houses the production-side bundled implementations of rimsky's protocols — stores, sensors, subscribers, executors. Built against `pkg:github.com/rimsky-ai/rimsky-core/sdk/go`. Link back to rimsky.
 4. Create `../rimsky-services/CHANGELOG.md` with an initial `## Unreleased` section noting the repo's creation per the reorganization spec.
 5. Create `../rimsky-services/CLAUDE.md` (terse — point at concept catalog in rimsky via `RIMSKY_REPO` if useful for agents).
 6. Create `../rimsky-services/.gitignore` matching rimsky's pattern (binary outputs, .DS_Store, vendor, etc.).
@@ -665,7 +665,7 @@ require (
 2. For each sub-directory `cmd`, `server`, `store`, `lifecycle`:
    - `mv stores/filesystem/<subdir> ../rimsky-services/stores/filesystem/<subdir>`.
 3. `mv stores/filesystem/Dockerfile.filesystem ../rimsky-services/stores/filesystem/Dockerfile.filesystem`.
-4. Update import paths in every moved `.go` file: replace `github.com/fallguyconsulting/rimsky/stores/filesystem` with `github.com/fallguyconsulting/rimsky-services/stores/filesystem`. Sites include sibling-package imports (e.g., `stores/filesystem/store` importing `stores/filesystem/lifecycle`).
+4. Update import paths in every moved `.go` file: replace `github.com/rimsky-ai/rimsky-core/stores/filesystem` with `github.com/rimsky-ai/rimsky-services/stores/filesystem`. Sites include sibling-package imports (e.g., `stores/filesystem/store` importing `stores/filesystem/lifecycle`).
 5. Update import paths to common/shared packages: if moved code imports `stores/common/action` or `stores/shared/sql-checks`, those packages must also move (decision: move them with the first store that needs them — likely to be `../rimsky-services/stores/common/action` and `../rimsky-services/stores/shared/sql-checks`; do the move in this task if first needed, or in Task 27).
 6. Verify the moved code builds in its new location: `cd ../rimsky-services && go build ./stores/filesystem/...`.
 7. Verify rimsky still builds (testfixture's call sites should resolve since testfixture was refactored in Task 24): `cd /Users/patrick/Documents/projects/research/zonebase/submodules/rimsky && go build ./...`.
@@ -682,7 +682,7 @@ require (
 **Steps:**
 1. Mirror Task 26's steps for the postgres store. Same shape, different store.
 2. If Task 26 didn't already move `stores/common/` or `stores/shared/`, do it here. Confirm via `grep -rln 'fallguyconsulting/rimsky/stores/common\|fallguyconsulting/rimsky/stores/shared' --include="*.go" ../rimsky-services/` returning hits.
-3. Update import paths in moved files: `github.com/fallguyconsulting/rimsky/stores/postgres` → `github.com/fallguyconsulting/rimsky-services/stores/postgres`; same for any common/shared imports.
+3. Update import paths in moved files: `github.com/rimsky-ai/rimsky-core/stores/postgres` → `github.com/rimsky-ai/rimsky-services/stores/postgres`; same for any common/shared imports.
 4. Move `stores/common/` and `stores/shared/` to `../rimsky-services/stores/common/` and `../rimsky-services/stores/shared/` if not already done. Update imports of those packages everywhere.
 
 **Verification:** `cd ../rimsky-services && go build ./stores/...` and rimsky's `go build ./...` both clean.
@@ -700,8 +700,8 @@ require (
 4. `mv subscribers/openlineage ../rimsky-services/subscribers/openlineage`. The `subscribers/openlineage/docker-compose.test.yml` from Task 2 moves with it.
 5. `rmdir subscribers` (rimsky has no other subscribers).
 6. For each production-side executor: `mv executors/<name> ../rimsky-services/executors/<name>` (where name is claude-agent, http-node, verifier-http, verifier-shape-checks). DO NOT move `executors/stub/` — it stays in rimsky.
-7. Update all moved Go files' imports: `github.com/fallguyconsulting/rimsky/{sensors,subscribers,executors}/...` → `github.com/fallguyconsulting/rimsky-services/{sensors,subscribers,executors}/...`.
-8. Update SDK consumer paths if any moved code imported the SDK with internal paths instead of `github.com/fallguyconsulting/rimsky/sdk/go`.
+7. Update all moved Go files' imports: `github.com/rimsky-ai/rimsky-core/{sensors,subscribers,executors}/...` → `github.com/rimsky-ai/rimsky-services/{sensors,subscribers,executors}/...`.
+8. Update SDK consumer paths if any moved code imported the SDK with internal paths instead of `github.com/rimsky-ai/rimsky-core/sdk/go`.
 9. For `executors/claude-agent` — verify the TS workspace moves cleanly with the directory (npm package.json, node_modules ignored via .gitignore). The TS toolchain inside `executors/claude-agent` is self-contained.
 10. Verify each moved tree builds: `cd ../rimsky-services && go build ./sensors/... ./subscribers/... ./executors/...`.
 
@@ -759,9 +759,9 @@ require (
 1. In `../rimsky-services/CHANGELOG.md` under `## Unreleased`, note:
    - Repo bootstrapped from rimsky's bundled-services trees per reorganization spec `2026-05-24-repo-reorganization-design`.
    - Contains production-side stores (filesystem, postgres), sensors (cron, http, object-store, webhook), subscribers (openlineage), and executors (claude-agent, http-node, verifier-http, verifier-shape-checks).
-   - Depends on `github.com/fallguyconsulting/rimsky/sdk/go` for the implementer-facing surface.
+   - Depends on `github.com/rimsky-ai/rimsky-core/sdk/go` for the implementer-facing surface.
 2. In rimsky's `CHANGELOG.md` under `## Unreleased`, append the P3 entry:
-   - Bundled production-side reference impls (stores/filesystem, stores/postgres, all sensors, subscribers/openlineage, executors/{claude-agent,http-node,verifier-http,verifier-shape-checks}) moved to `github.com/fallguyconsulting/rimsky-services`.
+   - Bundled production-side reference impls (stores/filesystem, stores/postgres, all sensors, subscribers/openlineage, executors/{claude-agent,http-node,verifier-http,verifier-shape-checks}) moved to `github.com/rimsky-ai/rimsky-services`.
    - Test-infrastructure carve-outs (`stores/stub`, `executors/stub`, `stores/{filesystem,postgres}/testfixture`) remain in rimsky.
    - Operators upgrading past this point must pull bundled services as separate images from rimsky-services.
 
@@ -785,7 +785,7 @@ require (
 - Any other `deploy/*.yml` referencing bundled services
 
 **Steps:**
-1. Read each YAML file in `deploy/`. For every `image: rimsky-...` or `build: ...` entry pointing at a bundled service (stores/filesystem, stores/postgres, sensors, subscribers/openlineage, executors), update to point at a published rimsky-services image. The image-name convention is `ghcr.io/fallguyconsulting/rimsky-services/<service>:<tag>` per spec P3.6 — placeholder tag `latest` for the plan; the user pins to a specific tag during deployment.
+1. Read each YAML file in `deploy/`. For every `image: rimsky-...` or `build: ...` entry pointing at a bundled service (stores/filesystem, stores/postgres, sensors, subscribers/openlineage, executors), update to point at a published rimsky-services image. The image-name convention is `ghcr.io/rimsky-ai/rimsky-services/<service>:<tag>` per spec P3.6 — placeholder tag `latest` for the plan; the user pins to a specific tag during deployment.
 2. Verify the reference deployment still composes cleanly (`docker compose config -f deploy/docker-compose.yml` exits 0).
 3. The reference deployment may still reference the in-tree `stores/stub` binary as a no-op fallback per `quickstart/store-stub.yml`. Leave those references unchanged.
 
@@ -809,11 +809,11 @@ require (
 - `.ok-planner/design/concepts/claim-producer.md`
 
 **Steps:**
-1. **"Boundaries" section:** Replace `The bundled SQL-based store stores/postgres/ additionally registers proto:executor.proto::Executor to support verification of its own staged content` with `The bundled SQL-based store pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres additionally registers proto:executor.proto::Executor to support verification of its own staged content`.
-2. **"Aliases and historical names" section:** Replace `the directory name (stores/)` with `the directory name (stores/ in pkg:github.com/fallguyconsulting/rimsky-services for production-side reference impls; pkg:stores/stub stays in rimsky as test infrastructure)`.
-3. **Sweep for other in-tree store path references:** Scan the rest of `claim-producer.md` for `stores/filesystem/`, `stores/postgres/` references. Update each to `pkg:github.com/fallguyconsulting/rimsky-services/stores/filesystem/` and `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres/` respectively (notably the reference-implementation enumeration around line 50). Leave `stores/stub/` references rimsky-local.
+1. **"Boundaries" section:** Replace `The bundled SQL-based store stores/postgres/ additionally registers proto:executor.proto::Executor to support verification of its own staged content` with `The bundled SQL-based store pkg:github.com/rimsky-ai/rimsky-services/stores/postgres additionally registers proto:executor.proto::Executor to support verification of its own staged content`.
+2. **"Aliases and historical names" section:** Replace `the directory name (stores/)` with `the directory name (stores/ in pkg:github.com/rimsky-ai/rimsky-services for production-side reference impls; pkg:stores/stub stays in rimsky as test infrastructure)`.
+3. **Sweep for other in-tree store path references:** Scan the rest of `claim-producer.md` for `stores/filesystem/`, `stores/postgres/` references. Update each to `pkg:github.com/rimsky-ai/rimsky-services/stores/filesystem/` and `pkg:github.com/rimsky-ai/rimsky-services/stores/postgres/` respectively (notably the reference-implementation enumeration around line 50). Leave `stores/stub/` references rimsky-local.
 4. **"Notes" section:** Append entry verbatim from spec line 524:
-   `2026-05-24: production-side bundled claim-producer reference impls (stores/{filesystem,postgres}) moved out of rimsky to pkg:github.com/fallguyconsulting/rimsky-services. Test-infrastructure carve-outs (stores/stub for test-double + quickstart, stores/{filesystem,postgres}/testfixture as test-fixture packages) stay in rimsky. Boundary statement updated to reflect new home. Also: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename. See spec 2026-05-24-repo-reorganization-design phases P2 and P3.`
+   `2026-05-24: production-side bundled claim-producer reference impls (stores/{filesystem,postgres}) moved out of rimsky to pkg:github.com/rimsky-ai/rimsky-services. Test-infrastructure carve-outs (stores/stub for test-double + quickstart, stores/{filesystem,postgres}/testfixture as test-fixture packages) stay in rimsky. Boundary statement updated to reflect new home. Also: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename. See spec 2026-05-24-repo-reorganization-design phases P2 and P3.`
 
 **Verification:** `grep -n 'rimsky-services/stores/postgres' .ok-planner/design/concepts/claim-producer.md` returns ≥1 hit; `grep -n 'stores/postgres/' .ok-planner/design/concepts/claim-producer.md` returns no hits without the `rimsky-services/` prefix (except possibly in historical Notes entries — those stay as written).
 
@@ -828,28 +828,28 @@ require (
 **Steps:**
 
 For `publisher.md` (P3 portion):
-1. **Update bundled-sensor path reference at line 51:** Replace `pkg:sensors/sensor-*/` with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`. Sweep for any other in-tree sensor-bundled-impl references.
-2. **"Notes" section:** Append verbatim from spec line 532: `2026-05-24: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename; bundled-sensor path references retargeted to pkg:github.com/fallguyconsulting/rimsky-services/sensors/* per P3 move. See spec 2026-05-24-repo-reorganization-design.`
+1. **Update bundled-sensor path reference at line 51:** Replace `pkg:sensors/sensor-*/` with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`. Sweep for any other in-tree sensor-bundled-impl references.
+2. **"Notes" section:** Append verbatim from spec line 532: `2026-05-24: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename; bundled-sensor path references retargeted to pkg:github.com/rimsky-ai/rimsky-services/sensors/* per P3 move. See spec 2026-05-24-repo-reorganization-design.`
 
 For `sensor.md`:
-3. Replace `pkg:sensors/sensor-*/` (line 17 of current sensor.md) with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`. Sweep the file for any other `sensors/` path references and update to the new location.
-4. **"Notes" section:** Append verbatim from spec line 539: `2026-05-24: bundled sensor reference impls moved to pkg:github.com/fallguyconsulting/rimsky-services. Path references updated. See spec 2026-05-24-repo-reorganization-design phase P3.`
+3. Replace `pkg:sensors/sensor-*/` (line 17 of current sensor.md) with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`. Sweep the file for any other `sensors/` path references and update to the new location.
+4. **"Notes" section:** Append verbatim from spec line 539: `2026-05-24: bundled sensor reference impls moved to pkg:github.com/rimsky-ai/rimsky-services. Path references updated. See spec 2026-05-24-repo-reorganization-design phase P3.`
 
 For `executor.md`:
 5. Read lines 17 and 27. Line 17 references `executors/claude-agent`; line 27 references `stores/postgres/`.
-6. Replace `executors/claude-agent` (line 17) with `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent`.
-7. Replace `stores/postgres/` (line 27) references with `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres`.
-8. If the doc references `pkg:executors/http-node`, `pkg:executors/verifier-http`, or `pkg:executors/verifier-shape-checks`, update to their `pkg:github.com/fallguyconsulting/rimsky-services/executors/...` locations.
+6. Replace `executors/claude-agent` (line 17) with `pkg:github.com/rimsky-ai/rimsky-services/executors/claude-agent`.
+7. Replace `stores/postgres/` (line 27) references with `pkg:github.com/rimsky-ai/rimsky-services/stores/postgres`.
+8. If the doc references `pkg:executors/http-node`, `pkg:executors/verifier-http`, or `pkg:executors/verifier-shape-checks`, update to their `pkg:github.com/rimsky-ai/rimsky-services/executors/...` locations.
 9. **Preserve test-infrastructure references unchanged:** `pkg:executors/stub` stays in rimsky; references to its role (test double, conformance target, stubtest in-process wrapper) keep their current paths.
-10. **"Notes" section:** Append verbatim from spec line 547: `2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/fallguyconsulting/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.`
+10. **"Notes" section:** Append verbatim from spec line 547: `2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/rimsky-ai/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.`
 
 For `replica.md`:
 11. Read lines 31, 32, 33. Each references in-tree paths (sensors, executors, stores).
 12. **Update path references** (production-side only; `pkg:stores/stub` and `pkg:executors/stub` references, if present, stay rimsky-local):
-    - Replace `pkg:sensors/sensor-*/` with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`.
-    - Replace `pkg:executors/*` (production-side: claude-agent, http-node, verifier-http, verifier-shape-checks) with `pkg:github.com/fallguyconsulting/rimsky-services/executors/*`.
-    - Replace `pkg:stores/*` (production-side: filesystem, postgres) with `pkg:github.com/fallguyconsulting/rimsky-services/stores/*`.
-13. **"Notes" section:** Append verbatim from spec line 562: `2026-05-24: path references retargeted from in-tree bundled-impl locations to pkg:github.com/fallguyconsulting/rimsky-services. See spec 2026-05-24-repo-reorganization-design phase P3.`
+    - Replace `pkg:sensors/sensor-*/` with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`.
+    - Replace `pkg:executors/*` (production-side: claude-agent, http-node, verifier-http, verifier-shape-checks) with `pkg:github.com/rimsky-ai/rimsky-services/executors/*`.
+    - Replace `pkg:stores/*` (production-side: filesystem, postgres) with `pkg:github.com/rimsky-ai/rimsky-services/stores/*`.
+13. **"Notes" section:** Append verbatim from spec line 562: `2026-05-24: path references retargeted from in-tree bundled-impl locations to pkg:github.com/rimsky-ai/rimsky-services. See spec 2026-05-24-repo-reorganization-design phase P3.`
 
 **Verification:** For each of the four concept docs, `grep -n '2026-05-24' <file>` returns a hit at the appended Notes entry; `grep -n 'rimsky-services' <file>` returns the expected number of post-mutation references.
 
@@ -898,8 +898,8 @@ For `replica.md`:
 **Steps:**
 1. `mkdir -p ../rimsky-docs/cmd`.
 2. `mv cmd/rimsky-docs-lint ../rimsky-docs/cmd/`. Same for the other two.
-3. Create `../rimsky-docs/cmd/go.mod` declaring `module github.com/fallguyconsulting/rimsky-docs/cmd` (Go module path TBD by the operator; this is a placeholder). Dependencies: stdlib + yaml package (probably `gopkg.in/yaml.v3`).
-4. Update import paths in the moved binaries: any rimsky-internal imports (e.g., `github.com/fallguyconsulting/rimsky/docs`) need handling. The docs-lint tools read rimsky source from `env:RIMSKY_REPO` at runtime, not via compile-time imports. Verify by reading each binary's main.go; if any compile-time imports remain, replace with runtime file reads anchored at `env:RIMSKY_REPO`.
+3. Create `../rimsky-docs/cmd/go.mod` declaring `module github.com/rimsky-ai/rimsky-docs/cmd` (Go module path TBD by the operator; this is a placeholder). Dependencies: stdlib + yaml package (probably `gopkg.in/yaml.v3`).
+4. Update import paths in the moved binaries: any rimsky-internal imports (e.g., `github.com/rimsky-ai/rimsky-core/docs`) need handling. The docs-lint tools read rimsky source from `env:RIMSKY_REPO` at runtime, not via compile-time imports. Verify by reading each binary's main.go; if any compile-time imports remain, replace with runtime file reads anchored at `env:RIMSKY_REPO`.
 5. Verify the binaries build in their new location: `cd ../rimsky-docs/cmd && go build ./...`.
 
 **Verification:** `cd ../rimsky-docs/cmd && go build ./...` clean.
@@ -919,10 +919,10 @@ For `replica.md`:
    - `mv test/scenarios/atomic_staging/commit_on_all_success_test.go ../rimsky-docs/examples/atomic-staging-fs-producer/scenarios/commit_on_all_success_test.go`
    - `mv test/scenarios/atomic_staging/concurrent_staging_test.go ../rimsky-docs/examples/atomic-staging-fs-producer/scenarios/concurrent_staging_test.go`
    - `mv test/scenarios/atomic_staging/sub_stage_verifier_failure_test.go ../rimsky-docs/examples/atomic-staging-fs-producer/scenarios/sub_stage_verifier_failure_test.go`
-4. Create `../rimsky-docs/examples/go.mod` declaring `module github.com/fallguyconsulting/rimsky-docs/examples` with `require github.com/fallguyconsulting/rimsky/sdk/go vX.Y.Z`.
+4. Create `../rimsky-docs/examples/go.mod` declaring `module github.com/rimsky-ai/rimsky-docs/examples` with `require github.com/rimsky-ai/rimsky-core/sdk/go vX.Y.Z`.
 5. Update import paths in moved files:
-   - `github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/...` → `github.com/fallguyconsulting/rimsky-docs/examples/atomic-staging-fs-producer/...`.
-   - Imports of `github.com/fallguyconsulting/rimsky/protocols/...` and `github.com/fallguyconsulting/rimsky/sdk/go/...` stay unchanged (cross-repo deps via go.mod).
+   - `github.com/rimsky-ai/rimsky-core/examples/atomic-staging-fs-producer/...` → `github.com/rimsky-ai/rimsky-docs/examples/atomic-staging-fs-producer/...`.
+   - Imports of `github.com/rimsky-ai/rimsky-core/protocols/...` and `github.com/rimsky-ai/rimsky-core/sdk/go/...` stay unchanged (cross-repo deps via go.mod).
    - The four scenario tests previously used `graph/scenario.Start` — rewrite them to drive rimsky from a published image (same pattern as Task 2 and Task 29) if they need to be runnable in the new repo; OR if they can be unit tests of the example's logic without needing rimsky's harness, rewrite as unit tests.
 6. Verify the example builds: `cd ../rimsky-docs/examples && go build ./... && go test ./...`.
 7. Clean up empty rimsky directories: `rmdir test/scenarios/atomic_staging 2>/dev/null || true` (it should be empty now — pg_verifier_* moved to rimsky-services in Task 29, atomic-staging examples moved here); `rmdir examples 2>/dev/null || true`.
@@ -979,7 +979,7 @@ For `replica.md`:
    - Contains 49 markdown docs, three lint binaries (docs-lint, docs-llms-full, docs-glossary), and the atomic-staging-fs-producer example with four scenario tests.
    - `env:RIMSKY_REPO` convention documented in README.
 2. In rimsky's `CHANGELOG.md` under `## Unreleased`, append the P4 entry:
-   - `docs/` moved to `github.com/fallguyconsulting/rimsky-docs`.
+   - `docs/` moved to `github.com/rimsky-ai/rimsky-docs`.
    - `examples/atomic-staging-fs-producer/` moved to `rimsky-docs/examples/` with its four scenario tests.
    - `cmd/rimsky-docs-{lint,llms-full,glossary}` moved to rimsky-docs.
    - Pre-release reconciliation gate added to rimsky's release script.
@@ -1018,7 +1018,7 @@ For `replica.md`:
 
 **Steps:**
 1. Read `../crimefinder/deploy/docker-compose.fragment.yml`. Confirm it references `image: crimefinder/producer:latest` (or similar — the image must be published from crimefinder's CI; pin to a tag if the operator has set one).
-2. Read `../crimefinder/deploy/rimsky.yml.fragment`. Confirm any rimsky references use image tags (e.g., `image: ghcr.io/fallguyconsulting/rimsky:vX.Y.Z`) rather than relative paths into rimsky's source tree.
+2. Read `../crimefinder/deploy/rimsky.yml.fragment`. Confirm any rimsky references use image tags (e.g., `image: ghcr.io/rimsky-ai/rimsky:vX.Y.Z`) rather than relative paths into rimsky's source tree.
 3. If any references need adjustment to match the post-split image conventions, update them.
 
 **Verification:** `grep -n 'image:' ../crimefinder/deploy/*.yml` returns image references; no `build: ../rimsky/...` or similar source-tree references.
@@ -1033,7 +1033,7 @@ For `replica.md`:
 1. In `../crimefinder/CHANGELOG.md`, the project's CHANGELOG already exists; append to `## Unreleased`:
    - Repo bootstrapped from rimsky's `apps/crimefinder/` per reorganization spec.
 2. In rimsky's `CHANGELOG.md` under `## Unreleased`, append:
-   - `apps/crimefinder/` moved to `github.com/fallguyconsulting/crimefinder`.
+   - `apps/crimefinder/` moved to `github.com/rimsky-ai/crimefinder`.
    - The `apps/` directory in rimsky is removed.
    - Drift signal previously provided by crimefinder's e2e tests is replaced by in-tree canary scenarios at `test/scenarios/canary/` (added in Pass 3).
 
@@ -1070,7 +1070,7 @@ For `replica.md`:
 
 **Steps:**
 1. Find references to the in-tree dashboard build: `grep -rn 'rimsky-dashboard\|dashboards/' deploy/`.
-2. Replace `build: ./dashboards/rimsky-dashboard` (or similar) with `image: ghcr.io/fallguyconsulting/rimsky-dashboard:<tag>` (or matching the post-split image convention; placeholder tag `latest`).
+2. Replace `build: ./dashboards/rimsky-dashboard` (or similar) with `image: ghcr.io/rimsky-ai/rimsky-dashboard:<tag>` (or matching the post-split image convention; placeholder tag `latest`).
 
 **Verification:** `grep -n 'dashboards/' deploy/*.yml` returns no matches (or only references to the published image).
 
@@ -1084,9 +1084,9 @@ For `replica.md`:
 1. In `../rimsky-dashboard/CHANGELOG.md` under `## Unreleased`, note:
    - Repo bootstrapped from rimsky's `dashboards/rimsky-dashboard/` per reorganization spec.
 2. In rimsky's `CHANGELOG.md` under `## Unreleased`, append:
-   - `dashboards/rimsky-dashboard/` moved to `github.com/fallguyconsulting/rimsky-dashboard`.
+   - `dashboards/rimsky-dashboard/` moved to `github.com/rimsky-ai/rimsky-dashboard`.
    - The `dashboards/` directory in rimsky is removed.
-   - Reference deployment now pulls the dashboard from `ghcr.io/fallguyconsulting/rimsky-dashboard:<tag>`.
+   - Reference deployment now pulls the dashboard from `ghcr.io/rimsky-ai/rimsky-dashboard:<tag>`.
 
 **Verification:** Both CHANGELOG files updated; `grep -n 'rimsky-dashboard' CHANGELOG.md ../rimsky-dashboard/CHANGELOG.md` returns hits in both.
 
@@ -1096,7 +1096,7 @@ For `replica.md`:
 
 These items cannot be automated and require human verification after the plan finishes:
 
-- **Image publishing & tagging:** confirm that the four downstream repos' CI workflows correctly publish Docker images to the chosen registries (`ghcr.io/fallguyconsulting/rimsky-services/<service>`, `ghcr.io/fallguyconsulting/crimefinder/producer`, `ghcr.io/fallguyconsulting/rimsky-dashboard`). The plan creates the workflow shapes but does not publish first images.
+- **Image publishing & tagging:** confirm that the four downstream repos' CI workflows correctly publish Docker images to the chosen registries (`ghcr.io/rimsky-ai/rimsky-services/<service>`, `ghcr.io/rimsky-ai/crimefinder/producer`, `ghcr.io/rimsky-ai/rimsky-dashboard`). The plan creates the workflow shapes but does not publish first images.
 - **Reference deployment smoke test:** after the user pulls rimsky-services / rimsky-dashboard images, run `docker compose -f deploy/docker-compose.yml up -d --wait` and visually confirm `/health` endpoints respond and the dashboard renders.
 - **Crimefinder end-to-end pass:** run a code-review pass via crimefinder against a real repo and verify it completes successfully against the rimsky image.
 - **Docs-lint reconciliation:** after the docs move, run the docs-lint binaries against rimsky and confirm any reported drift is real (and reconcile via PR to rimsky-docs).

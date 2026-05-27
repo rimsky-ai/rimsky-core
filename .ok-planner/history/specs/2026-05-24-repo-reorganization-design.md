@@ -23,7 +23,7 @@ Audit performed during brainstorm established that bundled services are nearly s
 Five repos post-reorg:
 
 ```
-github.com/fallguyconsulting/
+github.com/rimsky-ai/
 ├── rimsky/                              # core platform
 │   ├── protocols/                       # go.mod — wire types (unchanged)
 │   ├── foundation/                      # go.mod — primitives (unchanged)
@@ -63,7 +63,7 @@ Three Go modules total inside rimsky pre-reorg (`pkg:protocols`, `pkg:foundation
 
 ### Cross-repo Go requires
 
-- `rimsky-services` → `pkg:github.com/fallguyconsulting/rimsky/sdk/go` only. Nothing else from rimsky.
+- `rimsky-services` → `pkg:github.com/rimsky-ai/rimsky-core/sdk/go` only. Nothing else from rimsky.
 - `rimsky-docs` Go modules — docs-lint binaries have no rimsky imports at compile time (read rimsky source files via `env:RIMSKY_REPO` at runtime); examples module imports `pkg:protocols/claimproducer` and `pkg:sdk/go` (server scaffolding).
 - `crimefinder`, `rimsky-dashboard` — TS only, no Go deps; consume rimsky via Docker images + HTTP.
 
@@ -78,7 +78,7 @@ Six phases. P1 → P2 → P3 strictly sequential (constraints below). P4, P5, P6
 ### Load-bearing sequencing constraints
 
 1. **P1 audit fixes must precede P2 SDK creation.** Building the SDK on top of the cosmetic Go swap, the white-box openlineage rewrite, and the pgtest swap means the SDK can credibly claim to be the canonical implementer-facing surface. Reverse order builds the SDK around lint-passing-but-coupled code.
-2. **P2 SDK creation must precede P3 services move.** Services in `../rimsky-services` import `pkg:github.com/fallguyconsulting/rimsky/sdk/go`; the module must exist with content first.
+2. **P2 SDK creation must precede P3 services move.** Services in `../rimsky-services` import `pkg:github.com/rimsky-ai/rimsky-core/sdk/go`; the module must exist with content first.
 3. **P5 (crimefinder) depends on P2.** P5's drift-canary handoff requires the scenario tests added in §P2 to be in place before crimefinder moves out (otherwise there is a silent breakage window for control-api shape + YAML grammar).
 4. **P4 (docs) depends on P2.** P4's pre-release reconciliation gate depends on rimsky's release script existing in its post-P2 form.
 
@@ -90,7 +90,7 @@ Five units of work, all in rimsky, all landing before `pkg:sdk/go` is created.
 
 #### P1.1 Cosmetic import swap — 11 files in `stores/`
 
-Files (all currently import `corestore "github.com/fallguyconsulting/rimsky/foundation/locks"`):
+Files (all currently import `corestore "github.com/rimsky-ai/rimsky-core/foundation/locks"`):
 
 ```
 stores/filesystem/store/store.go
@@ -106,7 +106,7 @@ stores/stub/store/store.go
 stores/stub/store/store_test.go
 ```
 
-Swap import alias `corestore "github.com/fallguyconsulting/rimsky/foundation/locks"` → `claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"`. Of the six used symbols, four (`Capabilities`, `ClaimResult`, `OpenOutcome`, `WriteSemantics`) are `type X = claimproducer.X` aliases at `code:foundation/locks/types.go:102,109,116,161`; two (`WriteSemanticsSync`, `WriteSemanticsStagedAsync`) are constants at `code:foundation/locks/types.go:129,134` that equal their `claimproducer` counterparts by value (Go disallows const aliasing). Semantic-preserving rename either way; no behavior change.
+Swap import alias `corestore "github.com/rimsky-ai/rimsky-core/foundation/locks"` → `claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"`. Of the six used symbols, four (`Capabilities`, `ClaimResult`, `OpenOutcome`, `WriteSemantics`) are `type X = claimproducer.X` aliases at `code:foundation/locks/types.go:102,109,116,161`; two (`WriteSemanticsSync`, `WriteSemanticsStagedAsync`) are constants at `code:foundation/locks/types.go:129,134` that equal their `claimproducer` counterparts by value (Go disallows const aliasing). Semantic-preserving rename either way; no behavior change.
 
 The `pkg:foundation/locks` package retains `NamedLockSpec` and other rimsky-internal types it owns; only the import-side aliasing changes.
 
@@ -150,14 +150,14 @@ consumption-side-isolation:
     - "**/subscribers/**"
     - "**/executors/**"
   deny:
-    - pkg: "github.com/fallguyconsulting/rimsky/foundation"
+    - pkg: "github.com/rimsky-ai/rimsky-core/foundation"
       desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."
-    - pkg: "github.com/fallguyconsulting/rimsky/internal"
+    - pkg: "github.com/rimsky-ai/rimsky-core/internal"
       desc: "internal/ is private to rimsky."
-    - pkg: "github.com/fallguyconsulting/rimsky/graph"
-    - pkg: "github.com/fallguyconsulting/rimsky/runtime"
-    - pkg: "github.com/fallguyconsulting/rimsky/control"
-    - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+    - pkg: "github.com/rimsky-ai/rimsky-core/graph"
+    - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
+    - pkg: "github.com/rimsky-ai/rimsky-core/control"
+    - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
 ```
 
 After P1.1–P1.3 land, this rule passes. Post-P3 the `files` targets no longer have local matches; the rule stays as a defensive guard against re-bundling.
@@ -171,7 +171,7 @@ After P1.1–P1.3 land, this rule passes. Post-P3 the `files` targets no longer 
 
 #### P2.1 Module scaffolding
 
-- Create `file:sdk/go/go.mod` declaring module `pkg:github.com/fallguyconsulting/rimsky/sdk/go`.
+- Create `file:sdk/go/go.mod` declaring module `pkg:github.com/rimsky-ai/rimsky-core/sdk/go`.
 - Add `pkg:sdk/go` to `file:go.work`.
 - Third-party dependency budget: stdlib `log/slog`, `go-chi/chi`, `pgx/v5`, `testcontainers-go`, plus `pkg:protocols/`. Nothing heavier.
 - Add `sdk-purity` rule to `file:.golangci.yml`: `pkg:sdk/go` imports only `pkg:protocols/` + stdlib + minimal third-party. No imports from `foundation/`, `graph/`, `runtime/`, `control/`, or `cmd/`.
@@ -285,7 +285,7 @@ rimsky-services/
 
 #### P3.3 Cross-repo Go dependency
 
-- `file:rimsky-services/go.mod` declares `require github.com/fallguyconsulting/rimsky/sdk/go vX.Y.Z` against a tagged rimsky release.
+- `file:rimsky-services/go.mod` declares `require github.com/rimsky-ai/rimsky-core/sdk/go vX.Y.Z` against a tagged rimsky release.
 - For local dev across both repos: a per-developer `file:go.work` (not committed; lives outside either repo or is `.gitignore`d) lists both module paths so changes in `pkg:sdk/go` reflect immediately without retagging.
 - CI in rimsky-services resolves the tagged dependency from the module proxy; no local-path resolution.
 
@@ -313,7 +313,7 @@ After P2, conformance is a library in `pkg:sdk/go/conformance`. rimsky-services 
 
 #### P3.6 Deployment story
 
-- rimsky-services publishes per-service Docker images via its CI (presumably to `ghcr.io/fallguyconsulting/rimsky-services/<service>`). Tagging convention is operator's choice.
+- rimsky-services publishes per-service Docker images via its CI (presumably to `ghcr.io/rimsky-ai/rimsky-services/<service>`). Tagging convention is operator's choice.
 - Rimsky's `file:deploy/` continues to host the reference docker-compose stack. References to bundled services (`store-postgres.yml`, `store-filesystem.yml`, sensor fragments) update to point at published rimsky-services images, pinned to a rimsky-services tag.
 - `file:deploy/build-images.sh` in rimsky no longer builds bundled services; it builds only rimsky-core images. rimsky-services has its own equivalent build script.
 - `file:CHANGELOG.md` callout: operators upgrading past this point pull bundled services as separate images.
@@ -466,7 +466,7 @@ aliases:
 
 ## What it is
 
-`pkg:github.com/fallguyconsulting/rimsky/sdk/go` is the canonical Go-side implementer-facing surface for building services that rimsky talks to. A peer Go module within the rimsky repo, alongside `pkg:protocols/` and `pkg:foundation/`. Houses:
+`pkg:github.com/rimsky-ai/rimsky-core/sdk/go` is the canonical Go-side implementer-facing surface for building services that rimsky talks to. A peer Go module within the rimsky repo, alongside `pkg:protocols/` and `pkg:foundation/`. Houses:
 
 - Server scaffolding for claim-producer / executor / lifecycle-subscriber / blob-backend / publisher protocols
 - Publisher-side helpers (message-emit retry+backoff, idempotency-key header, callback POST handling)
@@ -501,7 +501,7 @@ Owns: the implementer-facing surface listed above. Does NOT own: the calling-sid
 
 Applied in P2.
 
-- **"What it is" section:** Replace the current paragraph with text describing a four-Go-module workspace: `pkg:protocols`, `pkg:foundation`, `pkg:sdk/go` (NEW), and the root module (containing `graph/`, `runtime/`, `control/`, `cmd/`). The operator MCP shim at `pkg:control/controlapi/mcp` is in-tree as part of the root module, NOT a separate Go module (corrects pre-existing concept-doc error: the doc currently claims a separate "MCP-server module" at `mcp-servers/control-api/` which does not exist — verify against `file:go.work`, which lists only three modules pre-reorg). Describe `pkg:sdk/go`'s dependency budget (protocols + stdlib + minimal third-party) and its purpose (canonical implementer-facing surface — links to `concept:sdk`). Remove references to bundled-deliverables directories (`stores/`, `executors/`, `sensors/`, `subscribers/`, `dashboards/`, `examples/`, `apps/`) — they live in `pkg:github.com/fallguyconsulting/rimsky-services` and sibling repos post-reorg.
+- **"What it is" section:** Replace the current paragraph with text describing a four-Go-module workspace: `pkg:protocols`, `pkg:foundation`, `pkg:sdk/go` (NEW), and the root module (containing `graph/`, `runtime/`, `control/`, `cmd/`). The operator MCP shim at `pkg:control/controlapi/mcp` is in-tree as part of the root module, NOT a separate Go module (corrects pre-existing concept-doc error: the doc currently claims a separate "MCP-server module" at `mcp-servers/control-api/` which does not exist — verify against `file:go.work`, which lists only three modules pre-reorg). Describe `pkg:sdk/go`'s dependency budget (protocols + stdlib + minimal third-party) and its purpose (canonical implementer-facing surface — links to `concept:sdk`). Remove references to bundled-deliverables directories (`stores/`, `executors/`, `sensors/`, `subscribers/`, `dashboards/`, `examples/`, `apps/`) — they live in `pkg:github.com/rimsky-ai/rimsky-services` and sibling repos post-reorg.
 - **"Boundaries" section:** Add a sentence: `pkg:sdk/go` owns the implementer-facing surface; does NOT own the calling-side wire code (rimsky-internal, stays at `pkg:runtime/peer`).
 - **"Invariants" section:**
   - Add `sdk-purity` depguard rule entry.
@@ -518,33 +518,33 @@ Applied in P2.
 Applied in P2 (for the `runtime/remote` → `runtime/peer` path update at line 19) and P3 (for the rest).
 
 - **P2 — Update calling-side path reference at line 19:** Replace `runtime/remote/` with `runtime/peer/`.
-- **P3 — "Boundaries" section:** Replace `The bundled SQL-based store stores/postgres/ additionally registers proto:executor.proto::Executor to support verification of its own staged content` with `The bundled SQL-based store pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres additionally registers proto:executor.proto::Executor to support verification of its own staged content`.
-- **P3 — "Aliases and historical names" section:** Replace `the directory name (stores/)` with `the directory name (stores/ in pkg:github.com/fallguyconsulting/rimsky-services for production-side reference impls; pkg:stores/stub stays in rimsky as test infrastructure)`.
-- **P3 — Sweep for other in-tree store path references:** Update `stores/filesystem/`, `stores/postgres/` references throughout the doc to `pkg:github.com/fallguyconsulting/rimsky-services/stores/filesystem/` and `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres/` respectively (notably the reference-implementation enumeration at line 50). Leave `stores/stub/` references rimsky-local.
-- **"Notes" section:** Append entry: `2026-05-24: production-side bundled claim-producer reference impls (stores/{filesystem,postgres}) moved out of rimsky to pkg:github.com/fallguyconsulting/rimsky-services. Test-infrastructure carve-outs (stores/stub for test-double + quickstart, stores/{filesystem,postgres}/testfixture as test-fixture packages) stay in rimsky. Boundary statement updated to reflect new home. Also: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename. See spec 2026-05-24-repo-reorganization-design phases P2 and P3.`
+- **P3 — "Boundaries" section:** Replace `The bundled SQL-based store stores/postgres/ additionally registers proto:executor.proto::Executor to support verification of its own staged content` with `The bundled SQL-based store pkg:github.com/rimsky-ai/rimsky-services/stores/postgres additionally registers proto:executor.proto::Executor to support verification of its own staged content`.
+- **P3 — "Aliases and historical names" section:** Replace `the directory name (stores/)` with `the directory name (stores/ in pkg:github.com/rimsky-ai/rimsky-services for production-side reference impls; pkg:stores/stub stays in rimsky as test infrastructure)`.
+- **P3 — Sweep for other in-tree store path references:** Update `stores/filesystem/`, `stores/postgres/` references throughout the doc to `pkg:github.com/rimsky-ai/rimsky-services/stores/filesystem/` and `pkg:github.com/rimsky-ai/rimsky-services/stores/postgres/` respectively (notably the reference-implementation enumeration at line 50). Leave `stores/stub/` references rimsky-local.
+- **"Notes" section:** Append entry: `2026-05-24: production-side bundled claim-producer reference impls (stores/{filesystem,postgres}) moved out of rimsky to pkg:github.com/rimsky-ai/rimsky-services. Test-infrastructure carve-outs (stores/stub for test-double + quickstart, stores/{filesystem,postgres}/testfixture as test-fixture packages) stay in rimsky. Boundary statement updated to reflect new home. Also: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename. See spec 2026-05-24-repo-reorganization-design phases P2 and P3.`
 
 ### Concept: mutate `file:.ok-planner/design/concepts/publisher.md` in place
 
 Applied in P2 (calling-side rename) and P3 (sensor-path retargeting).
 
 - **P2 — Update calling-side path references** (two occurrences, currently at lines 23 and 42): Replace `code:runtime/remote/publisher_client.go` with `code:runtime/peer/publisher_client.go`. Sweep the file for any other `runtime/remote/` references and update accordingly.
-- **P3 — Update bundled-sensor path reference at line 51:** Replace `pkg:sensors/sensor-*/` with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`. Sweep for any other in-tree sensor-bundled-impl references.
-- **"Notes" section:** Append entry: `2026-05-24: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename; bundled-sensor path references retargeted to pkg:github.com/fallguyconsulting/rimsky-services/sensors/* per P3 move. See spec 2026-05-24-repo-reorganization-design.`
+- **P3 — Update bundled-sensor path reference at line 51:** Replace `pkg:sensors/sensor-*/` with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`. Sweep for any other in-tree sensor-bundled-impl references.
+- **"Notes" section:** Append entry: `2026-05-24: calling-side gRPC client path updated runtime/remote/ → runtime/peer/ per P2 rename; bundled-sensor path references retargeted to pkg:github.com/rimsky-ai/rimsky-services/sensors/* per P3 move. See spec 2026-05-24-repo-reorganization-design.`
 
 ### Concept: mutate `file:.ok-planner/design/concepts/sensor.md` in place
 
 Applied in P3.
 
-- **Update path references:** Replace `pkg:sensors/sensor-*/` (line 17 of current sensor.md) with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`. Sweep the file for any other `sensors/` path references and update to the new location.
-- **"Notes" section:** Append entry: `2026-05-24: bundled sensor reference impls moved to pkg:github.com/fallguyconsulting/rimsky-services. Path references updated. See spec 2026-05-24-repo-reorganization-design phase P3.`
+- **Update path references:** Replace `pkg:sensors/sensor-*/` (line 17 of current sensor.md) with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`. Sweep the file for any other `sensors/` path references and update to the new location.
+- **"Notes" section:** Append entry: `2026-05-24: bundled sensor reference impls moved to pkg:github.com/rimsky-ai/rimsky-services. Path references updated. See spec 2026-05-24-repo-reorganization-design phase P3.`
 
 ### Concept: mutate `file:.ok-planner/design/concepts/executor.md` in place
 
 Applied in P3. The concept doc references `executors/claude-agent` (line 17) and `stores/postgres/` (line 27) by path; both must update. Sweep also for any other in-tree bundled-impl path references.
 
-- **Update production-side path references:** Replace `executors/claude-agent` with `pkg:github.com/fallguyconsulting/rimsky-services/executors/claude-agent`. Replace `stores/postgres/` references with `pkg:github.com/fallguyconsulting/rimsky-services/stores/postgres`. If the doc references `pkg:executors/http-node`, `pkg:executors/verifier-http`, or `pkg:executors/verifier-shape-checks`, update those to their `pkg:github.com/fallguyconsulting/rimsky-services/executors/...` locations.
+- **Update production-side path references:** Replace `executors/claude-agent` with `pkg:github.com/rimsky-ai/rimsky-services/executors/claude-agent`. Replace `stores/postgres/` references with `pkg:github.com/rimsky-ai/rimsky-services/stores/postgres`. If the doc references `pkg:executors/http-node`, `pkg:executors/verifier-http`, or `pkg:executors/verifier-shape-checks`, update those to their `pkg:github.com/rimsky-ai/rimsky-services/executors/...` locations.
 - **Preserve test-infrastructure references unchanged:** `pkg:executors/stub` stays in rimsky and any references in the doc to its role (test double, conformance target, stubtest in-process wrapper) keep their current paths.
-- **"Notes" section:** Append entry: `2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/fallguyconsulting/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.`
+- **"Notes" section:** Append entry: `2026-05-24: production-side bundled executor reference impls (claude-agent, http-node, verifier-http, verifier-shape-checks) moved to pkg:github.com/rimsky-ai/rimsky-services/executors/. executors/stub stays in rimsky as test infrastructure. Cross-reference to stores/postgres also retargeted. See spec 2026-05-24-repo-reorganization-design phase P3.`
 
 ### Concept: mutate `file:.ok-planner/design/concepts/conformance.md` in place
 
@@ -558,5 +558,5 @@ Applied in P2.
 
 Applied in P3. The concept doc references `pkg:sensors/sensor-*/` (line 31), `pkg:executors/*` (line 32), and `pkg:stores/*` (line 33) by path; all must update.
 
-- **Update path references** (production-side only; `pkg:stores/stub` and `pkg:executors/stub` references, if present, stay rimsky-local): Replace `pkg:sensors/sensor-*/` with `pkg:github.com/fallguyconsulting/rimsky-services/sensors/sensor-*/`. Replace `pkg:executors/*` (production-side: `claude-agent`, `http-node`, `verifier-http`, `verifier-shape-checks`) with `pkg:github.com/fallguyconsulting/rimsky-services/executors/*`. Replace `pkg:stores/*` (production-side: `filesystem`, `postgres`) with `pkg:github.com/fallguyconsulting/rimsky-services/stores/*`.
-- **"Notes" section:** Append entry: `2026-05-24: path references retargeted from in-tree bundled-impl locations to pkg:github.com/fallguyconsulting/rimsky-services. See spec 2026-05-24-repo-reorganization-design phase P3.`
+- **Update path references** (production-side only; `pkg:stores/stub` and `pkg:executors/stub` references, if present, stay rimsky-local): Replace `pkg:sensors/sensor-*/` with `pkg:github.com/rimsky-ai/rimsky-services/sensors/sensor-*/`. Replace `pkg:executors/*` (production-side: `claude-agent`, `http-node`, `verifier-http`, `verifier-shape-checks`) with `pkg:github.com/rimsky-ai/rimsky-services/executors/*`. Replace `pkg:stores/*` (production-side: `filesystem`, `postgres`) with `pkg:github.com/rimsky-ai/rimsky-services/stores/*`.
+- **"Notes" section:** Append entry: `2026-05-24: path references retargeted from in-tree bundled-impl locations to pkg:github.com/rimsky-ai/rimsky-services. See spec 2026-05-24-repo-reorganization-design phase P3.`

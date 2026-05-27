@@ -21,7 +21,7 @@ package locks
 import (
 	"bytes"
 
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 // ModeCoexists reports whether two claims with given intents on stores

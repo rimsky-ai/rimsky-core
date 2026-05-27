@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	sqlitedrv "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // TestSQLiteParkResumeRoundTrip exercises the SQLite park / load-resume /

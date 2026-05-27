@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	attributes "github.com/rimsky-ai/rimsky-core/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // TestSubstituteAttributesSchema_StaticDefaults — properties without

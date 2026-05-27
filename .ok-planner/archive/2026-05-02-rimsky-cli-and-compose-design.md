@@ -582,7 +582,7 @@ Exit codes are consistent across verbs; e.g., `template register` against an unr
 - **Install script.** A POSIX `sh` script published at `https://rimsky.io/install.sh` that detects OS/arch, downloads the corresponding GitHub Release artifact, verifies SHA-256, and installs to `/usr/local/bin/rimsky-cli`.
 - **Homebrew tap.** `fallguy/rimsky/rimsky` formula. `brew install fallguy/rimsky/rimsky`. Tap repo separate from the rimsky repo (homebrew convention).
 - **Container image.** `rimsky/cli:<version>` and `rimsky/cli:latest`, built from a minimal Dockerfile that copies the linux/amd64 binary into a `gcr.io/distroless/static` base. For CI use.
-- **Go install.** `go install github.com/fallguyconsulting/rimsky/core/cmd/rimsky-cli@latest` works because the CLI is in the same module.
+- **Go install.** `go install github.com/rimsky-ai/rimsky-core/core/cmd/rimsky-cli@latest` works because the CLI is in the same module.
 
 ### 6.2 Versioning
 

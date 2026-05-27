@@ -26,11 +26,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // RunTreeNode is the in-memory projection of one rimsky_node_runs row that

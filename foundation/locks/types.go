@@ -11,7 +11,7 @@
 //     Selector and decides what it means (scoped access vs. configured
 //     pick policy). The claim-producer contract value types (ClaimSpec,
 //     ClaimResult, OpenOutcome, WriteSemantics, Intent, Capabilities, …)
-//     live in their canonical Go home, github.com/fallguyconsulting/rimsky/
+//     live in their canonical Go home, github.com/rimsky-ai/rimsky-core/
 //     protocols/claimproducer; rimsky-internal code imports them directly
 //     from there.
 //

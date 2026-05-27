@@ -20,11 +20,12 @@
 package genv1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -668,7 +669,7 @@ const file_validation_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path2Q\n" +
 	"\n" +
 	"Validation\x12C\n" +
-	"\bValidate\x12\x1a.rimsky.v1.ValidateRequest\x1a\x1b.rimsky.v1.ValidateResponseBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\bValidate\x12\x1a.rimsky.v1.ValidateRequest\x1a\x1b.rimsky.v1.ValidateResponseB?Z=github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_validation_proto_rawDescOnce sync.Once

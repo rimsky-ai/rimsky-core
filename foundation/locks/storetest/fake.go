@@ -11,8 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 // fakeSequenceCounter is a process-global monotonic counter assigned

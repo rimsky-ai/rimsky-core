@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // helperServer stands up a one-shot httptest server that asserts the

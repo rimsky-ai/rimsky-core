@@ -25,9 +25,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguyconsulting/rimsky/executors/stub"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/protocols/serverkit"
+	"github.com/rimsky-ai/rimsky-core/executors/stub"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/protocols/serverkit"
 )
 
 func main() {

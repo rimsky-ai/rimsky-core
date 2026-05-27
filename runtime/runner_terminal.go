@@ -35,14 +35,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
-	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
-	"github.com/fallguyconsulting/rimsky/graph/frame"
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	signalaudit "github.com/rimsky-ai/rimsky-core/foundation/signal/audit"
+	attributes "github.com/rimsky-ai/rimsky-core/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/graph/frame"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // postCommitFn is the deferred-side-effect closure returned by every

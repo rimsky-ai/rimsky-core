@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/runtime/clientiface"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/runtime/clientiface"
 )
 
 // PublisherClient is a remote-gRPC implementation of the rimsky-side

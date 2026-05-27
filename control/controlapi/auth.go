@@ -14,7 +14,7 @@ package controlapi
 import (
 	"context"
 
-	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/foundation/auth"
 )
 
 // ctxKeyIdentity is the context key for the resolved Identity.

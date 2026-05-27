@@ -303,7 +303,7 @@ All tests must pass.
 **Steps:**
 
 1. Open `stores/filesystem/store/store.go`. Locate `type PickPolicy struct` (around line 32).
-2. Add an import for the shared package: `"github.com/fallguyconsulting/rimsky/stores/common/action"`.
+2. Add an import for the shared package: `"github.com/rimsky-ai/rimsky-core/stores/common/action"`.
 3. Replace the struct definition. Old:
    ```go
    type PickPolicy struct {
@@ -814,7 +814,7 @@ go build ./stores/filesystem/...
    }
    ```
 
-2. Add the import for `"github.com/fallguyconsulting/rimsky/stores/common/action"`.
+2. Add the import for `"github.com/rimsky-ai/rimsky-core/stores/common/action"`.
 
 3. Update the conversion to `fsstore.PickPolicy` (line ~100):
 
@@ -884,7 +884,7 @@ go build ./stores/filesystem/...
    - `OnCommitDefault: "delete"` → `OnCommit: action.Action{Kind: action.PopAndDelete}`
    - `OnGiveUpDefault: "delete"` → `OnGiveUp: action.Action{Kind: action.PopAndDelete}`
    - `OnCommitDefault: "release_to_head"` → (no longer supported; pick `Recycle` as the closest analog and add a comment, or update the test's intent)
-2. Add the import for the shared package: `"github.com/fallguyconsulting/rimsky/stores/common/action"`.
+2. Add the import for the shared package: `"github.com/rimsky-ai/rimsky-core/stores/common/action"`.
 3. The helper functions (`newRingStore`) likely take `onCommit, onGiveUp string` parameters; update them to take `action.Action` instead, or build the Actions inside.
 4. Confirm tests build and pass.
 
@@ -991,7 +991,7 @@ go test ./stores/filesystem/store/ -run TestPattern_ -count=1 -race
 
 **Steps:**
 
-1. Add import: `"github.com/fallguyconsulting/rimsky/stores/common/action"`.
+1. Add import: `"github.com/rimsky-ai/rimsky-core/stores/common/action"`.
 2. Locate `type PickPolicy struct` (line ~74). Replace fields:
    ```go
    type PickPolicy struct {
@@ -1192,7 +1192,7 @@ go build ./stores/postgres/store/...
    }
    ```
 
-2. Add the import: `"github.com/fallguyconsulting/rimsky/stores/common/action"`.
+2. Add the import: `"github.com/rimsky-ai/rimsky-core/stores/common/action"`.
 
 3. Update the conversion to `pgstore.PickPolicy` (line ~111):
    ```go

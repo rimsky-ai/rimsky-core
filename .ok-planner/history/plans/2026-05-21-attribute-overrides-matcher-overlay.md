@@ -627,7 +627,7 @@ Existing tests still build. The fields default to empty strings; existing call s
 
    Add the import if not already present:
    ```go
-   import spec "github.com/fallguyconsulting/rimsky/foundation/spec"
+   import spec "github.com/rimsky-ai/rimsky-core/foundation/spec"
    ```
 
 3. The third production `acquisition{}` site is `code:runtime/callback.go:380` (`&acquisition{...}` inside the callback path, reconstructing an acquisition for resume-callback `applyTerminal`). This path does NOT call `applyAttributeOverrides` — it goes straight to `applyTerminal` with already-resolved attributes (`ac.ResolvedAttributes`). `AsyncContext` (`code:runtime/runner.go:292`) carries neither `GraphName` nor `ChildKey`, and extending it is out of scope for this plan. Populate the new fields with empty-string literals and a comment noting they're inert at this site:
@@ -1148,7 +1148,7 @@ The whole runtime package builds and tests pass.
    ) error
    ```
 
-   Add the import: `spec "github.com/fallguyconsulting/rimsky/foundation/spec"`.
+   Add the import: `spec "github.com/rimsky-ai/rimsky-core/foundation/spec"`.
 
 2. In the top-level-keys check (lines 56-60), add `"by_match"` to the allowed set:
 

@@ -7,7 +7,7 @@ package node
 import (
 	"math"
 
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 type BackoffConfig struct {

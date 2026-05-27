@@ -16,8 +16,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
-	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/control/controlapi/mcp"
+	"github.com/rimsky-ai/rimsky-core/foundation/auth"
 )
 
 // Wire the cross-package hooks the mcp package consumes so it doesn't

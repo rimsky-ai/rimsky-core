@@ -19,11 +19,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/internal/pgtest"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/internal/pgtest"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	pgpersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // seedBreakpointFixture creates a template + a main run scope + an

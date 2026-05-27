@@ -35,7 +35,7 @@ an agentic workflow problem. It frames what rimsky is, what it was
 built for, what makes it different from the things you might be
 pattern-matching against, and where to go next if the answer is yes.
 Builders point their coding agent at `llms.txt` in the sibling
-`pkg:github.com/fallguyconsulting/rimsky-docs` repo and let it walk
+`pkg:github.com/rimsky-ai/rimsky-docs` repo and let it walk
 them through depth.
 
 ## 2. What rimsky was built for
@@ -317,7 +317,7 @@ service or an adjacent system, not to grow the primitive.
 ## 6. Where to learn more
 
 For agents: the canonical agent-oriented manifest at `llms.txt` in the
-sibling `pkg:github.com/fallguyconsulting/rimsky-docs` repo points at
+sibling `pkg:github.com/rimsky-ai/rimsky-docs` repo points at
 every public surface. Point your coding agent at it and the agent walks
 you through depth.
 
@@ -331,8 +331,8 @@ point at enforcement sites.
 For protocols, copy-pasteable starter templates, and the roadmap
 (claim producer, executor, lifecycle subscriber, publisher,
 agent examples, `roadmap.md`): see
-`pkg:github.com/fallguyconsulting/rimsky-docs/docs/protocols/`,
-`pkg:github.com/fallguyconsulting/rimsky-docs/docs/agents/examples/`,
-`pkg:github.com/fallguyconsulting/rimsky-docs/docs/roadmap.md`.
+`pkg:github.com/rimsky-ai/rimsky-docs/docs/protocols/`,
+`pkg:github.com/rimsky-ai/rimsky-docs/docs/agents/examples/`,
+`pkg:github.com/rimsky-ai/rimsky-docs/docs/roadmap.md`.
 
 Point your coding agent at this repo and ask.

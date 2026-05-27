@@ -30,9 +30,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/scenario"
 )
 
 func TestMultiBreakpointMatch(t *testing.T) {

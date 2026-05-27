@@ -16,13 +16,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	pgpersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 // seedClaimHandleForSweep inserts a claim_handle row, optionally

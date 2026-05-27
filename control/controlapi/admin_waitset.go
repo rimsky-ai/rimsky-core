@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 // WaitSetEntry is one wait-set row surfaced via /admin/diagnostics/wait-sets.

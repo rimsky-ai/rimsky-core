@@ -84,8 +84,8 @@ Atomic single change-set. Resolves `abandon-on-pass-duplicated-path` (and folds 
    import (
    	"context"
 
-   	"github.com/fallguyconsulting/rimsky/foundation/locks"
-   	"github.com/fallguyconsulting/rimsky/modeling/shared"
+   	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+   	"github.com/rimsky-ai/rimsky-core/modeling/shared"
    )
 
    // abandonOpenedClaim fires Producer.Abandon on a claim whose Open
@@ -181,7 +181,7 @@ Atomic single change-set. Resolves `abandon-on-pass-duplicated-path` (and folds 
    	"errors"
    	"testing"
 
-   	"github.com/fallguyconsulting/rimsky/foundation/locks"
+   	"github.com/rimsky-ai/rimsky-core/foundation/locks"
    	"github.com/google/uuid"
    )
 

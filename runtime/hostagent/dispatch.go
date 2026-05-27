@@ -23,7 +23,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // Protocol names the proxy stamps on a DispatchFrame at dispatch start.

@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {

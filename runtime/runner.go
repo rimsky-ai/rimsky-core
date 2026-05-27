@@ -65,13 +65,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	attributes "github.com/rimsky-ai/rimsky-core/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/runtime/executor"
 )
 
 // RunnerResult is the outcome of a single RunNode invocation.

@@ -39,10 +39,10 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	peer "github.com/rimsky-ai/rimsky-core/runtime/peer"
 )
 
 // capabilitiesHandshakeTimeout bounds the per-producer Capabilities() RPC

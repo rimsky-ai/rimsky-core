@@ -17,16 +17,16 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
-	attributes "github.com/fallguyconsulting/rimsky/graph/attribute"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/runtime/executor"
-	"github.com/fallguyconsulting/rimsky/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	signalaudit "github.com/rimsky-ai/rimsky-core/foundation/signal/audit"
+	attributes "github.com/rimsky-ai/rimsky-core/graph/attribute"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/runtime/peer"
 )
 
 // attributeValidationError wraps non-resolution attribute failures

@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // HTTP+JSON bridge wire format (§7.1):

@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/graph/scenario"
 )
 
 func TestHandlerInvalidateOrthogonalToChanged(t *testing.T) {

@@ -18,9 +18,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	sqlitepersist "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	sqlitepersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // expectedSqliteTables is the post-consolidation table set on SQLite.

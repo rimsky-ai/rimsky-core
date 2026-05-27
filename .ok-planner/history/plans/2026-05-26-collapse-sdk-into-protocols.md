@@ -22,17 +22,17 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 | `sdk/go/server` (package `server`) | `protocols/serverkit` (package `serverkit`) | **package identifier renamed** `server` → `serverkit` |
 | `sdk/go/publisher` (package `publisher`) | `protocols/publisherkit` (package `publisherkit`) | **package identifier renamed**; zero in-repo importers |
 | `sdk/go/ops` (package `ops`) | `internal/ops` (package `ops`) | core-internal; headers flip Apache → AGPL |
-| `sdk/go/testpg` (package `testpg`) | new module `./testpg/`, import path `github.com/fallguyconsulting/rimsky/testpg` | carries testcontainers + pgx; imports no rimsky package |
+| `sdk/go/testpg` (package `testpg`) | new module `./testpg/`, import path `github.com/rimsky-ai/rimsky-core/testpg` | carries testcontainers + pgx; imports no rimsky package |
 | `sdk/go/doc.go` | deleted | carries `// @concept: sdk` |
 
 **Import-path rewrites** (apply with care; some files take more than one):
 
-- `github.com/fallguyconsulting/rimsky/sdk/go/stores/action` → `github.com/fallguyconsulting/rimsky/protocols/action`
-- `github.com/fallguyconsulting/rimsky/sdk/go/conformance/<x>` → `github.com/fallguyconsulting/rimsky/protocols/conformance/<x>`
-- `github.com/fallguyconsulting/rimsky/sdk/go/server` → `github.com/fallguyconsulting/rimsky/protocols/serverkit` (and `server.` → `serverkit.` unless the import is aliased)
-- `github.com/fallguyconsulting/rimsky/sdk/go/publisher` → `github.com/fallguyconsulting/rimsky/protocols/publisherkit`
-- `github.com/fallguyconsulting/rimsky/sdk/go/testpg` → `github.com/fallguyconsulting/rimsky/testpg`
-- `github.com/fallguyconsulting/rimsky/sdk/go/ops` → `github.com/fallguyconsulting/rimsky/internal/ops`
+- `github.com/rimsky-ai/rimsky-core/sdk/go/stores/action` → `github.com/rimsky-ai/rimsky-core/protocols/action`
+- `github.com/rimsky-ai/rimsky-core/sdk/go/conformance/<x>` → `github.com/rimsky-ai/rimsky-core/protocols/conformance/<x>`
+- `github.com/rimsky-ai/rimsky-core/sdk/go/server` → `github.com/rimsky-ai/rimsky-core/protocols/serverkit` (and `server.` → `serverkit.` unless the import is aliased)
+- `github.com/rimsky-ai/rimsky-core/sdk/go/publisher` → `github.com/rimsky-ai/rimsky-core/protocols/publisherkit`
+- `github.com/rimsky-ai/rimsky-core/sdk/go/testpg` → `github.com/rimsky-ai/rimsky-core/testpg`
+- `github.com/rimsky-ai/rimsky-core/sdk/go/ops` → `github.com/rimsky-ai/rimsky-core/internal/ops`
 
 **Verified importer sites** (counts are exact as of authoring; re-derive with `grep -rl` before editing — do not trust stale counts):
 
@@ -79,7 +79,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 
 **Steps:**
 1. Re-derive the importer list: `grep -rl 'rimsky/sdk/go/stores/action' --include='*.go' .` (exclude the now-moved `protocols/action` files themselves).
-2. In each importer, rewrite the import path `github.com/fallguyconsulting/rimsky/sdk/go/stores/action` → `github.com/fallguyconsulting/rimsky/protocols/action`. The package identifier used in code stays `action` (unchanged), so only the import line changes.
+2. In each importer, rewrite the import path `github.com/rimsky-ai/rimsky-core/sdk/go/stores/action` → `github.com/rimsky-ai/rimsky-core/protocols/action`. The package identifier used in code stays `action` (unchanged), so only the import line changes.
 3. Run `cd protocols && go mod tidy`. This adds `gopkg.in/yaml.v3` (required by `protocols/action/yaml.go`) to `protocols/go.mod`. Confirm with `grep yaml.v3 protocols/go.mod`.
 
 **Verification:** `grep -rn 'rimsky/sdk/go/stores/action' --include='*.go' .` returns nothing.
@@ -189,7 +189,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 **Steps:**
 1. `git mv sdk/go/testpg testpg` (moves `testpg.go` + `testpg_test.go` to the repo-root `testpg/` directory).
 2. Confirm the package declaration stays `package testpg`.
-3. Create `testpg/go.mod` with module path `github.com/fallguyconsulting/rimsky/testpg`, `go 1.25.0`, and the three required deps the helper imports: `github.com/testcontainers/testcontainers-go`, `github.com/testcontainers/testcontainers-go/modules/postgres`, `github.com/jackc/pgx/v5`. No `replace` directive (testpg imports no rimsky package).
+3. Create `testpg/go.mod` with module path `github.com/rimsky-ai/rimsky-core/testpg`, `go 1.25.0`, and the three required deps the helper imports: `github.com/testcontainers/testcontainers-go`, `github.com/testcontainers/testcontainers-go/modules/postgres`, `github.com/jackc/pgx/v5`. No `replace` directive (testpg imports no rimsky package).
 4. Run `cd testpg && go mod tidy` to populate indirect requires + `go.sum`.
 
 **Verification:** `cd testpg && go build ./... && go test ./...` exits 0 (Docker must be running for the test).
@@ -200,7 +200,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 
 **Steps:**
 1. In `go.work`, change the `use` block from `. ./foundation ./protocols ./sdk/go` to `. ./foundation ./protocols ./testpg`.
-2. In root `go.mod`: remove the `require` line `github.com/fallguyconsulting/rimsky/sdk/go v0.0.0` and the `replace` line `github.com/fallguyconsulting/rimsky/sdk/go => ./sdk/go`. Add a `require` `github.com/fallguyconsulting/rimsky/testpg v0.0.0` and a `replace` `github.com/fallguyconsulting/rimsky/testpg => ./testpg` (root's `internal/pgmigrate` will import it in Task 12).
+2. In root `go.mod`: remove the `require` line `github.com/rimsky-ai/rimsky-core/sdk/go v0.0.0` and the `replace` line `github.com/rimsky-ai/rimsky-core/sdk/go => ./sdk/go`. Add a `require` `github.com/rimsky-ai/rimsky-core/testpg v0.0.0` and a `replace` `github.com/rimsky-ai/rimsky-core/testpg => ./testpg` (root's `internal/pgmigrate` will import it in Task 12).
 
 **Verification:** `grep -c 'sdk/go' go.work go.mod` returns 0 for both.
 
@@ -209,7 +209,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 **Files:** `internal/pgmigrate/migrate.go`, `foundation/internal/pgtest/pgtest.go`, `go.mod`
 
 **Steps:**
-1. In `internal/pgmigrate/migrate.go`, rewrite the import `github.com/fallguyconsulting/rimsky/sdk/go/testpg` → `github.com/fallguyconsulting/rimsky/testpg`. The package identifier `testpg` is unchanged. Update the prose doc-comment references that say `pkg:sdk/go/testpg` / `sdk/go/testpg` to `testpg` (near the package doc and the `OpenDriver` comment).
+1. In `internal/pgmigrate/migrate.go`, rewrite the import `github.com/rimsky-ai/rimsky-core/sdk/go/testpg` → `github.com/rimsky-ai/rimsky-core/testpg`. The package identifier `testpg` is unchanged. Update the prose doc-comment references that say `pkg:sdk/go/testpg` / `sdk/go/testpg` to `testpg` (near the package doc and the `OpenDriver` comment).
 2. In `foundation/internal/pgtest/pgtest.go`, repoint **both** `@source:` annotations (the spec mandates this): `@source: sdk/go/testpg/testpg.go::StartFreshPostgresDSN` (around line 65) → `@source: testpg/testpg.go::StartFreshPostgresDSN`, and `@source: sdk/go/testpg/testpg.go::resolveConnectionString` (around line 128) → `@source: testpg/testpg.go::resolveConnectionString`. This keeps the tracked-duplication pointer valid (the duplication is intentionally retained — `foundation/` does not import the `testpg` module). Find them with `grep -n 'sdk/go/testpg' foundation/internal/pgtest/pgtest.go`.
 3. Run `go mod tidy` at the repo root (now that `internal/pgmigrate` imports the `testpg` module and no longer reaches `sdk/go`, this keeps the new `testpg` require and drops the orphaned `sdk/go`-era indirect requires, e.g. the testcontainers/moby tree formerly pulled transitively via `sdk/go`).
 
@@ -271,8 +271,8 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 **Steps:**
 1. **`sdk-purity` → `protocols-purity`:** rename the rule key; change its `files:` from `- "**/sdk/go/**"` to `- "**/protocols/**"`; keep the deny list (foundation, internal, graph, runtime, control, cmd) and update each `desc` to say "protocols module" instead of "sdk/go". Add one deny entry for `github.com/testcontainers/testcontainers-go` with desc "the protocols module is the public contract surface; no test infrastructure" (compiler-checks "no test infra in the contract module"). Update the rule's leading comment to describe the protocols module's budget: stdlib + grpc + protobuf + uuid + yaml.v3.
 2. **`pgx-isolation`:** in the `files:` exclusion list, replace `- "!**/sdk/go/**"` with `- "!**/testpg/**"`; update the `desc` strings that enumerate allowed locations to name `testpg/` instead of `sdk/go/`. (`protocols/` must NOT be excluded — the contract module stays pgx-free.)
-3. **`foundation-purity`:** delete the deny entry whose `pkg:` is `github.com/fallguyconsulting/rimsky/sdk/go`.
-4. **`graph-purity`:** delete the deny entry whose `pkg:` is `github.com/fallguyconsulting/rimsky/sdk/go`.
+3. **`foundation-purity`:** delete the deny entry whose `pkg:` is `github.com/rimsky-ai/rimsky-core/sdk/go`.
+4. **`graph-purity`:** delete the deny entry whose `pkg:` is `github.com/rimsky-ai/rimsky-core/sdk/go`.
 5. **`consumption-side-isolation`:** update the rule's leading comment to drop the "(post-P2) sdk/go" reference (consumption-side binaries implement against `protocols/` only). Then add a `files:` exclusion so the rule no longer matches the in-repo test-infra stub: under the rule's `files:` list (currently `stores/**`, `sensors/**`, `subscribers/**`, `executors/**`), add `- "!stores/stub/**"` and `- "!executors/stub/**"`. Rationale: the rule guards *production* consumption-side binaries (the ones the 2026-05-24 reorganization moved to the sibling repo, so they must implement against `protocols/` only). The `stub` store and stub executor deliberately stayed in rimsky as test infrastructure (Apache-classified rimsky-internal carve-outs per `licensing.yml`), so the `stores/stub/cmd` → `internal/ops` import introduced in Task 13 is legitimate; the bare `stores/**` glob over-matches the stub. This is planning-discovered fallout beyond the spec's enumerated lint edits — record it in the CHANGELOG (Task 26) and the `module-layout` invariant (Task 23). Update the rule's leading comment to note the test-infra-stub exemption.
 
 **Verification:** `grep -n 'sdk/go\|sdk-purity' .golangci.yml` returns nothing; `grep -n 'protocols-purity' .golangci.yml` shows the renamed rule; `grep -n '!stores/stub' .golangci.yml` shows the exemption.
@@ -303,7 +303,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 
 **Steps:**
 1. Re-derive the consumer list: `grep -rlE 'locks\.(ClaimID|Intent|ClaimSpec|ClaimResult|OpenOutcome|WriteSemantics|Capabilities|SplitClaimScopeRequest|SplitClaimScopeResponse|SubClaimScopeDescriptor|IntentRead|IntentReadWrite|WriteSemanticsUnknown|WriteSemanticsSync|WriteSemanticsStagedAsync|WriteSemanticsBlockingAsync|WriteSemanticsReadOnly|ParseWriteSemantics)' --include='*.go' . | grep -v '/foundation/locks/'`.
-2. In each file, for every reference of the form `locks.<Symbol>` where `<Symbol>` is one of the 17 (or `ParseWriteSemantics`), rewrite it to `claimproducer.<Symbol>`. Add the import `claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"` if not already present, using whatever alias the file already uses for that package if it imports it. If a file used `locks` *only* for these symbols, remove the now-unused `foundation/locks` import; if it uses `locks` for other things too (e.g. `locks.Registry`), keep the `locks` import.
+2. In each file, for every reference of the form `locks.<Symbol>` where `<Symbol>` is one of the 17 (or `ParseWriteSemantics`), rewrite it to `claimproducer.<Symbol>`. Add the import `claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"` if not already present, using whatever alias the file already uses for that package if it imports it. If a file used `locks` *only* for these symbols, remove the now-unused `foundation/locks` import; if it uses `locks` for other things too (e.g. `locks.Registry`), keep the `locks` import.
 3. Work in batches by directory (`runtime/`, `control/`, `graph/attribute/`, `cmd/`, `test/scenarios/`) and run `go build ./...` after each batch to catch mistakes early.
 
 **Verification:** `grep -rnE 'locks\.(ClaimID|Intent|ClaimSpec|ClaimResult|OpenOutcome|WriteSemantics|Capabilities|SplitClaimScopeRequest|SplitClaimScopeResponse|SubClaimScopeDescriptor|ParseWriteSemantics)' --include='*.go' . | grep -v '/foundation/locks/'` returns nothing (the `Intent`/`WriteSemantics` alternatives also match the const symbols `IntentRead`/`WriteSemanticsSync`/etc. by substring).
@@ -313,7 +313,7 @@ You are executing a module-topology refactor. No prior context is assumed. Key f
 **Files:** `foundation/locks/types.go` and the ~5–7 other files in `foundation/locks/` that use the bare aliased names
 
 **Steps:**
-1. In the non-`types.go` files under `foundation/locks/` that use the bare names (`ClaimResult`, `WriteSemantics`, `OpenOutcome`, `Capabilities`, etc.), add/confirm an import of `claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"` and rewrite the bare references to `claimproducer.<Symbol>`. Find them: `grep -rlnE '\b(ClaimID|Intent|ClaimSpec|ClaimResult|OpenOutcome|WriteSemantics|Capabilities|SplitClaimScopeRequest|SplitClaimScopeResponse|SubClaimScopeDescriptor)\b' foundation/locks/ | grep -v types.go`.
+1. In the non-`types.go` files under `foundation/locks/` that use the bare names (`ClaimResult`, `WriteSemantics`, `OpenOutcome`, `Capabilities`, etc.), add/confirm an import of `claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"` and rewrite the bare references to `claimproducer.<Symbol>`. Find them: `grep -rlnE '\b(ClaimID|Intent|ClaimSpec|ClaimResult|OpenOutcome|WriteSemantics|Capabilities|SplitClaimScopeRequest|SplitClaimScopeResponse|SubClaimScopeDescriptor)\b' foundation/locks/ | grep -v types.go`.
 2. In `foundation/locks/types.go`, delete every `= claimproducer.<X>` alias and const line plus the surrounding explanatory comments. The 17 re-exports are interleaved with local declarations and doc comments across the file (not one contiguous block) — use `grep -n '= claimproducer\.' foundation/locks/types.go` to locate all of them, and remove the doc comment immediately above each removed declaration. Keep the genuinely-local declarations (e.g. `NamedLockSpec`, `Registry`-related types). Keep the `claimproducer` import only if other code in `types.go` still uses it; otherwise remove it.
 3. Run `cd foundation && go build ./... && go vet ./...`.
 

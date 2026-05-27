@@ -23,8 +23,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	conformance "github.com/fallguyconsulting/rimsky/protocols/conformance/executor"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	conformance "github.com/rimsky-ai/rimsky-core/protocols/conformance/executor"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 func main() {

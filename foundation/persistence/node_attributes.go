@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // NodeAttributesRow mirrors a row of rimsky_node_attributes (post-2026-05-20

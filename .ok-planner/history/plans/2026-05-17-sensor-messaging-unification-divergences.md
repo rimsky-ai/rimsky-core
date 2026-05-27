@@ -36,7 +36,7 @@ empty/null = in-memory, set = persistent). The task is skipped.
 
 **What the plan said:** Task 51 — "The existing pgtest helper lives at
 `foundation/internal/pgtest/pgtest.go`, but `foundation-internal-isolation`
-depguard rule blocks `github.com/fallguyconsulting/rimsky/foundation/internal`
+depguard rule blocks `github.com/rimsky-ai/rimsky-core/foundation/internal`
 from external packages. Either extend the depguard's allow-list to
 include the sensor packages (preferred — small allow-list edit
 alongside the `pgx-isolation` work in Task 52), OR write a minimal
@@ -56,7 +56,7 @@ existing config covers the new imports. Concretely:
 - `sensors/sensor-http/state_db_test.go`,
   `sensors/sensor-object-store/state_db_test.go`,
   `sensors/sensor-webhook/state_db_test.go` all import
-  `github.com/fallguyconsulting/rimsky/internal/pgtest` (root module), not
+  `github.com/rimsky-ai/rimsky-core/internal/pgtest` (root module), not
   `foundation/internal/pgtest`.
 - `.golangci.yml` was not touched for this plan's changes.
 

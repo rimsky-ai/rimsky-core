@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 func TestCreateBackfill_EnqueuesInvalidateMessage(t *testing.T) {

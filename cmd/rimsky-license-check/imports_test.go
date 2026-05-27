@@ -36,7 +36,7 @@ func TestVerifyImportsApacheImportingAGPLFails(t *testing.T) {
 	src := `package x
 
 import (
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
 )
 
 var _ = cascade.Sentinel
@@ -53,7 +53,7 @@ func TestVerifyImportsAGPLImportingApacheOK(t *testing.T) {
 	dir := t.TempDir()
 	src := `package x
 
-import "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+import "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 
 var _ = gen.Sentinel
 `
@@ -68,7 +68,7 @@ func TestVerifyImportsApacheImportingApacheOK(t *testing.T) {
 	dir := t.TempDir()
 	src := `package x
 
-import "github.com/fallguyconsulting/rimsky/foundation/locks"
+import "github.com/rimsky-ai/rimsky-core/foundation/locks"
 
 var _ = locks.Sentinel
 `
@@ -87,8 +87,8 @@ import (
 	"context"
 
 	// some comment
-	"github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	"github.com/fallguyconsulting/rimsky/foundation/cascade" // trailing comment
+	"github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade" // trailing comment
 )
 
 var _ = context.Background
@@ -108,11 +108,11 @@ func TestImportToRepoPath(t *testing.T) {
 		in, want string
 		ok       bool
 	}{
-		{"github.com/fallguyconsulting/rimsky/foundation", "foundation", true},
-		{"github.com/fallguyconsulting/rimsky/foundation/cascade", "foundation/cascade", true},
-		{"github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen", "protocols/proto/v1/gen", true},
-		{"github.com/fallguyconsulting/rimsky/cmd/rimsky", "cmd/rimsky", true},
-		{"github.com/fallguyconsulting/rimsky", "", true},
+		{"github.com/rimsky-ai/rimsky-core/foundation", "foundation", true},
+		{"github.com/rimsky-ai/rimsky-core/foundation/cascade", "foundation/cascade", true},
+		{"github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen", "protocols/proto/v1/gen", true},
+		{"github.com/rimsky-ai/rimsky-core/cmd/rimsky", "cmd/rimsky", true},
+		{"github.com/rimsky-ai/rimsky-core", "", true},
 		{"github.com/other/proj", "", false},
 	}
 	for _, tc := range cases {

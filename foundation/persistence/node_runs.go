@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // ErrRunRowMissing is returned by Queue mutators that key on a

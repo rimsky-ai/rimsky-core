@@ -4,7 +4,7 @@
 
 **Architecture:** New `core/frame/` package owns the producer helper (`EnqueueOrCoalesce`) and the scheduler-tick frame-engine logic (frame-end detection, queued→running advancement, stuck-frame reaper). Schema migration 002 adds the `rimsky_frames` table and `frame_id` columns on `rimsky_dispatch`, `rimsky_nodes`, `rimsky_lock_holders`, `rimsky_claim_holders`, while dropping `rimsky_nodes.kill_requested`. Producers (schedule_ticker, controlapi nodes/invalidate route, admin force-fire indirectly) call `frame.EnqueueOrCoalesce`; the supervisor propagates `frame_id` through claims, terminal commits, and cascade message-passes. Five new blessed invariants (15-19) are added.
 
-**Tech Stack:** Go 1.22+ (single root module `github.com/fallguyconsulting/rimsky`), Postgres 15 (testcontainers-go), pgx/v5, log/slog, chi, robfig/cron/v3, go-yaml. TS executor unchanged.
+**Tech Stack:** Go 1.22+ (single root module `github.com/rimsky-ai/rimsky-core`), Postgres 15 (testcontainers-go), pgx/v5, log/slog, chi, robfig/cron/v3, go-yaml. TS executor unchanged.
 
 **Foundation:** `docs/specs/2026-04-25-stores-redesign-design.md` is the active foundation spec. References to §X.Y in this plan are to the frame-resolution spec at `docs/specs/2026-04-26-frame-resolution-design.md` unless prefixed `stores-redesign §X.Y`.
 

@@ -46,10 +46,10 @@ package runtime
 import (
 	"context"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/runtime/peer"
 )
 
 // abandonOpenedClaim fires Producer.Abandon on a claim whose Open

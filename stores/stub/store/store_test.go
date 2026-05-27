@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/protocols/action"
-	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/protocols/action"
+	claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 func newStubWithPolicy(t *testing.T, selector string, items []json.RawMessage, onCommit, onGiveUp action.Action) *Store {

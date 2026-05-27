@@ -323,7 +323,7 @@ test -f foundation/persistence/sqlite/migrations/009-claim-scope-rename.sql
        "context"
        "time"
 
-       "github.com/fallguyconsulting/rimsky/foundation/shared"
+       "github.com/rimsky-ai/rimsky-core/foundation/shared"
    )
 
    // RunScopeRow projects one rimsky_run_scopes row. ParentRunScopeID
@@ -443,8 +443,8 @@ The build will fail because the postgres + sqlite Store impls don't satisfy the 
 
        "github.com/jackc/pgx/v5"
 
-       persistence "github.com/fallguyconsulting/rimsky/foundation/persistence"
-       foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
+       persistence "github.com/rimsky-ai/rimsky-core/foundation/persistence"
+       foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
    )
 
    const runScopeCols = `id, parent_run_scope_id, parent_run_id, graph_name, partition_key, instance_id, created_at, closed_at`

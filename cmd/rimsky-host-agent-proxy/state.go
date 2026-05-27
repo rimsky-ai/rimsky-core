@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // proxyState holds all mutable proxy state behind a single RWMutex.

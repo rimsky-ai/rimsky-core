@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // CheckResult is one row of conformance output. Err nil on pass.

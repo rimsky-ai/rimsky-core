@@ -7,8 +7,9 @@ package node
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/graph/shared"
 	"github.com/stretchr/testify/require"
+
+	"github.com/rimsky-ai/rimsky-core/graph/shared"
 )
 
 func initialState() EvaluatorState {

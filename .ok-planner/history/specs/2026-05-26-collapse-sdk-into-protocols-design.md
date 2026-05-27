@@ -222,7 +222,7 @@ the two copies is an explicit non-goal (noted under "Follow-ups").
   instead of `sdk/go/`. `protocols` stays *out* of the allow-list — the
   contract module must not import pgx (verified: nothing moving in does).
 - **`foundation-purity`.** Remove the `deny` entry for
-  `github.com/fallguyconsulting/rimsky/sdk/go` (the module no longer
+  `github.com/rimsky-ai/rimsky-core/sdk/go` (the module no longer
   exists). The existing foundation→graph/runtime/control/cmd/stores/
   executors denials are unaffected.
 - **`graph-purity`.** Remove the `deny` entry for `…/sdk/go`.

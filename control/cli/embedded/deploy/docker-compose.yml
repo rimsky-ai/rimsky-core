@@ -103,7 +103,7 @@ services:
       - "${HTTP_NODE_HTTP_HOST_PORT:-9092}:9092"
 
   rimsky-dashboard:
-    image: ghcr.io/fallguyconsulting/rimsky-dashboard:latest
+    image: ghcr.io/rimsky-ai/rimsky-dashboard:latest
     depends_on:
       - control-api
     environment:

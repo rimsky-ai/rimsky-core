@@ -11,16 +11,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/internal/pgtest"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	sqlitepersist "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/internal/pgtest"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	sqlitepersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 
 	// Driver registration for postgres. Pulled in so the suite test
 	// file can drive both drivers from one place; pgtest itself
 	// already imports the postgres driver but the blank import here
 	// keeps the conformance_test.go file's intent explicit.
-	_ "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
+	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
 )
 
 func TestConformancePostgres(t *testing.T) {

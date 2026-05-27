@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/runtime/hostagent"
 )
 
 // RunAgent dispatches `rimsky agent <subcommand> ...`.

@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package scenarios registers the built-in rimsky conformance scenarios.
-// Import for side effects: `_ "github.com/fallguyconsulting/rimsky/protocols/conformance/executor/scenarios"`.
+// Import for side effects: `_ "github.com/rimsky-ai/rimsky-core/protocols/conformance/executor/scenarios"`.
 package scenarios
 
 import (
@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	conformance "github.com/fallguyconsulting/rimsky/protocols/conformance/executor"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	conformance "github.com/rimsky-ai/rimsky-core/protocols/conformance/executor"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 func init() {

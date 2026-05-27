@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")

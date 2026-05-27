@@ -156,7 +156,7 @@ package:
   publisher: fallguy.com
   license: MIT
 
-image: ghcr.io/fallguyconsulting/claude-agent:2.5.1@sha256:abc...
+image: ghcr.io/rimsky-ai/claude-agent:2.5.1@sha256:abc...
 
 provides:
   type: llm-agent
@@ -184,7 +184,7 @@ Key points:
 
 Operators consume an executor package by:
 
-1. Pulling the image (`docker pull ghcr.io/fallguyconsulting/claude-agent:2.5.1`).
+1. Pulling the image (`docker pull ghcr.io/rimsky-ai/claude-agent:2.5.1`).
 2. Deploying it with their IaC, supplying values for `registration.schema`.
 3. Running `rimsky-cli register-executor --package claude-agent@2.5.1 --instance-name claude-prod --endpoint <gRPC URL>` to bind the running container to Rimsky.
 
@@ -202,7 +202,7 @@ package:
   publisher: fallguy.com
   license: Apache-2.0
 
-image: ghcr.io/fallguyconsulting/store-postgres:1.0.0@sha256:def...
+image: ghcr.io/rimsky-ai/store-postgres:1.0.0@sha256:def...
 
 provides:
   kind: postgres
@@ -455,7 +455,7 @@ Operator deploys the images using their IaC, supplying values for each package's
 
 ```hcl
 resource "kubernetes_deployment" "claude_agent" {
-  # ... pulls ghcr.io/fallguyconsulting/claude-agent:2.5.1
+  # ... pulls ghcr.io/rimsky-ai/claude-agent:2.5.1
   env {
     name = "ANTHROPIC_API_KEY"
     value_from = { secret_key_ref { name = "anthropic", key = "api_key" } }

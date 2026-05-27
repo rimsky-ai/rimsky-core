@@ -22,7 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
 )
 
 // MaterializeRimskyConfig writes m.RimskyConfig.Inline to

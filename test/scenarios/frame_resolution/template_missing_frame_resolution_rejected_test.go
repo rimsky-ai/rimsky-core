@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/graph/scenario"
 )
 
 func TestTemplateMissingFrameResolutionRejected(t *testing.T) {

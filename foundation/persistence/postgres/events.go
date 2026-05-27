@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // Append inserts an event row. If Payload is nil we insert {} so the column's

@@ -169,7 +169,7 @@ The work is broken into 10 phases; phases 1–3 (Tasks 1–15) are landed. Picki
 
 ### Task 22 — postgres driver imports cleaned up
 
-**Deviation:** Each cmd binary now imports `pgpersist "github.com/fallguyconsulting/rimsky/core/persistence/postgres"` directly (replacing the previous bare-`_` driver-registration import). `pgpersist.PoolFromDriver(driver)` extracts the pool for the supervisor / scheduler / controlapi pre-Task-26 pool requirement.
+**Deviation:** Each cmd binary now imports `pgpersist "github.com/rimsky-ai/rimsky-core/core/persistence/postgres"` directly (replacing the previous bare-`_` driver-registration import). `pgpersist.PoolFromDriver(driver)` extracts the pool for the supervisor / scheduler / controlapi pre-Task-26 pool requirement.
 **Reason:** Avoids the duplicate-import pattern (`_` for side-effect + `pgpersist` for `PoolFromDriver`).
 **Surfaced for:** None. Both bindings load the same package init and register the postgres driver.
 

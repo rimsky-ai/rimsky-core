@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
 )
 
 // ApplyOpts controls how ApplyPlan runs. Confirmation is gated upstream

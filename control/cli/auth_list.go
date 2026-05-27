@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/foundation/auth"
 )
 
 // RunAuthList implements `rimsky auth list`.

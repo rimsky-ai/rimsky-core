@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	sqlitedrv "github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"
 )
 
 // TestNodeAttributesSpillRoundtrip exercises D6/D7 wiring against the

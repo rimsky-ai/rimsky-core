@@ -19,7 +19,7 @@ syntax = "proto3";
 
 package rimsky.v1;
 
-option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1";
 
 service LifecycleSubscriber {
   rpc OnTemplateRegistered(OnTemplateRegisteredRequest) returns (LifecycleAck);

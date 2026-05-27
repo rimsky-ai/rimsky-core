@@ -34,8 +34,8 @@ import (
 	"strings"
 	"time"
 
-	conformance "github.com/fallguyconsulting/rimsky/protocols/conformance/executor"
-	_ "github.com/fallguyconsulting/rimsky/protocols/conformance/executor/scenarios" // init() registration
+	conformance "github.com/rimsky-ai/rimsky-core/protocols/conformance/executor"
+	_ "github.com/rimsky-ai/rimsky-core/protocols/conformance/executor/scenarios" // init() registration
 )
 
 func main() {

@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"time"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // lifecycleHandler implements genv1.LifecycleSubscriberServer.

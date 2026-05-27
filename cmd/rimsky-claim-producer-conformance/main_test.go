@@ -10,11 +10,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks/storetest"
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks/storetest"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	peer "github.com/rimsky-ai/rimsky-core/runtime/peer"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
 )
 
 // TestClaimProducerConformance_StubStore confirms the ClaimProducer

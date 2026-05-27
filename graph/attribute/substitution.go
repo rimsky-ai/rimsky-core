@@ -47,7 +47,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 // ResolveContext carries the three substitution source kinds plus the

@@ -28,10 +28,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/matcher"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/foundation/matcher"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
 )
 
 // breakpointQueueCap is the per-breakpoint unresumed-hit queue limit

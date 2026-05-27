@@ -54,7 +54,7 @@ Go binary at `/Users/patrick/.local/go/bin/go` (go1.26.2 darwin/arm64); not on d
 
 ## Renamed `core/store/claimstorepg` → `core/store/postgres`
 
-**Deviation:** all importers updated to alias `pgstore "github.com/fallguyconsulting/rimsky/core/store/postgres"`. `git mv` preserved file history.
+**Deviation:** all importers updated to alias `pgstore "github.com/rimsky-ai/rimsky-core/core/store/postgres"`. `git mv` preserved file history.
 **Reason:** spec §J1 / §11.1: there is no "claim store" kind; one uniform `postgres` kind that may declare pick policies.
 **Surfaced for:** `deploy/stores.yml` (operator config) needs updating to use `kind: postgres` instead of `kind: claim_store`. Helm chart in `deploy/kubernetes/rimsky-chart/` is already known stale per CLAUDE.md and should be revisited.
 

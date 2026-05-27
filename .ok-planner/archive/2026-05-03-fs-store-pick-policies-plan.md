@@ -299,7 +299,7 @@ To confirm test-file compile: after Task 2 lands, run `go test -count=1 -run NON
 
    And replace the `server.Run` call to pass `Config{...}`, `grpcLis`, `httpLis`, `adminLis`. The signature change to `server.Run` happens in Task 8; until that lands the build will fail here — that's expected.
 
-4. Add the new imports (`regexp`, `time`, `fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"`) to `main.go`'s import block.
+4. Add the new imports (`regexp`, `time`, `fsstore "github.com/rimsky-ai/rimsky-core/stores/filesystem/store"`) to `main.go`'s import block.
 
 **Verification:**
 
@@ -690,7 +690,7 @@ Expect: PASS.
    }
    ```
 
-   Add `sort`, `time`, `encoding/json`, plus `corestore "github.com/fallguyconsulting/rimsky/core/store"` to `pick_policy.go` imports.
+   Add `sort`, `time`, `encoding/json`, plus `corestore "github.com/rimsky-ai/rimsky-core/core/store"` to `pick_policy.go` imports.
 
 2. In `stores/filesystem/store/store.go`, modify `Open` to dispatch:
 
@@ -712,7 +712,7 @@ Expect: PASS.
 
    Rename the existing body of `Open` (the regional path) to `openRegional(claimID, selector)`. The signature changes to drop the `ctx` parameter (since the existing body never used it; `Open` keeps `ctx` for the interface).
 
-   The existing `Open` returns `(store.OpenOutcome, error)` referencing the local-package alias `store`; rename to `corestore` consistently across the file (the package was previously imported as `"github.com/fallguyconsulting/rimsky/core/store"` aliased as `store`; rename the alias to `corestore` to match `pick_policy.go`).
+   The existing `Open` returns `(store.OpenOutcome, error)` referencing the local-package alias `store`; rename to `corestore` consistently across the file (the package was previously imported as `"github.com/rimsky-ai/rimsky-core/core/store"` aliased as `store`; rename the alias to `corestore` to match `pick_policy.go`).
 
 3. Append unit tests in `pick_policy_test.go`:
 
@@ -1578,8 +1578,8 @@ Expect: PASS.
        "net"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/stores/filesystem/server"
-       fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
+       "github.com/rimsky-ai/rimsky-core/stores/filesystem/server"
+       fsstore "github.com/rimsky-ai/rimsky-core/stores/filesystem/store"
    )
 
    // Config configures the loopback store-service. Only Root is required;
@@ -1683,9 +1683,9 @@ Expect: clean build.
        "google.golang.org/grpc"
        "google.golang.org/grpc/credentials/insecure"
 
-       genv1 "github.com/fallguyconsulting/rimsky/proto/v1/gen"
-       fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
-       fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
+       genv1 "github.com/rimsky-ai/rimsky-core/proto/v1/gen"
+       fsstore "github.com/rimsky-ai/rimsky-core/stores/filesystem/store"
+       fsfixture "github.com/rimsky-ai/rimsky-core/stores/filesystem/testfixture"
    )
 
    // Verifies a full ring cycle through the gRPC wire surface:
@@ -1790,13 +1790,13 @@ Expect: PASS. Note this scenario tests rely on `core/internal/pgtest` indirectly
 
        "github.com/stretchr/testify/require"
 
-       "github.com/fallguyconsulting/rimsky/core/config"
-       "github.com/fallguyconsulting/rimsky/core/node"
-       "github.com/fallguyconsulting/rimsky/core/scenario"
-       "github.com/fallguyconsulting/rimsky/core/shared"
-       "github.com/fallguyconsulting/rimsky/core/store"
-       fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
-       fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
+       "github.com/rimsky-ai/rimsky-core/core/config"
+       "github.com/rimsky-ai/rimsky-core/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/scenario"
+       "github.com/rimsky-ai/rimsky-core/core/shared"
+       "github.com/rimsky-ai/rimsky-core/core/store"
+       fsstore "github.com/rimsky-ai/rimsky-core/stores/filesystem/store"
+       fsfixture "github.com/rimsky-ai/rimsky-core/stores/filesystem/testfixture"
    )
 
    func TestFsCrossQueueConcurrency(t *testing.T) {
@@ -1898,13 +1898,13 @@ Expect: PASS. (5m is generous; testcontainers boot dominates.)
 
        "github.com/stretchr/testify/require"
 
-       "github.com/fallguyconsulting/rimsky/core/config"
-       "github.com/fallguyconsulting/rimsky/core/node"
-       "github.com/fallguyconsulting/rimsky/core/scenario"
-       "github.com/fallguyconsulting/rimsky/core/shared"
-       "github.com/fallguyconsulting/rimsky/core/store"
-       fsstore "github.com/fallguyconsulting/rimsky/stores/filesystem/store"
-       fsfixture "github.com/fallguyconsulting/rimsky/stores/filesystem/testfixture"
+       "github.com/rimsky-ai/rimsky-core/core/config"
+       "github.com/rimsky-ai/rimsky-core/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/scenario"
+       "github.com/rimsky-ai/rimsky-core/core/shared"
+       "github.com/rimsky-ai/rimsky-core/core/store"
+       fsstore "github.com/rimsky-ai/rimsky-core/stores/filesystem/store"
+       fsfixture "github.com/rimsky-ai/rimsky-core/stores/filesystem/testfixture"
    )
 
    func TestFsPickVsRegionalConcurrency(t *testing.T) {

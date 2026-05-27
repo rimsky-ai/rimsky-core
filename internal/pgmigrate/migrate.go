@@ -20,10 +20,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	pgpersist "github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/testpg"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	pgpersist "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/testpg"
 )
 
 // StartPostgres spins up a throwaway Postgres 14 container, applies all

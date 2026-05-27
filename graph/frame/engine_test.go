@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/graph/frame"
-	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/graph/frame"
+	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
 )
 
 func runTickAgainstDriver(ctx context.Context, d persistence.Database, log frame.Logger) error {

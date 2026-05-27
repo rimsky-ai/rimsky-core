@@ -23,7 +23,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // ErrInvalid is the package-local sentinel returned by Validate for any

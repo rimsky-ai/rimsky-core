@@ -13,7 +13,7 @@ package runtime
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 // TestTerminalOutcomeKey_CommitAlwaysCommitted pins that Commit

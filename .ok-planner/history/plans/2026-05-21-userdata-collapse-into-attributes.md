@@ -1555,7 +1555,7 @@ import (
     "encoding/json"
     "testing"
 
-    "github.com/fallguyconsulting/rimsky/graph/attribute"
+    "github.com/rimsky-ai/rimsky-core/graph/attribute"
 )
 
 // TestSubstituteAttributesSchema_StaticDefaults — properties without

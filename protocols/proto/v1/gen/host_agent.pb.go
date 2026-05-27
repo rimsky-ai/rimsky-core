@@ -10,11 +10,12 @@
 package genv1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -1406,7 +1407,7 @@ const file_host_agent_proto_rawDesc = "" +
 	"\x05class\x18\x01 \x01(\tR\x05class\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage2J\n" +
 	"\tHostAgent\x12=\n" +
-	"\aConnect\x12\x16.rimsky.v1.ClientFrame\x1a\x16.rimsky.v1.ServerFrame(\x010\x01BBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\aConnect\x12\x16.rimsky.v1.ClientFrame\x1a\x16.rimsky.v1.ServerFrame(\x010\x01B?Z=github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_host_agent_proto_rawDescOnce sync.Once

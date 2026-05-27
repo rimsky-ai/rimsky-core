@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // EventRow mirrors a row of rimsky_events.

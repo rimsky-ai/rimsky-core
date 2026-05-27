@@ -29,11 +29,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 // seedBreakpointEvalFixture is a stripped-down variant of

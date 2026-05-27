@@ -22,8 +22,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // sqliteMaxOpenConns is the connection-pool size for the SQLite driver.

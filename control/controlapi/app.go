@@ -17,11 +17,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/foundation/matcher"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/foundation/matcher"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 type AppDeps struct {

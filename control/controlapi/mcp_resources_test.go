@@ -29,10 +29,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/control/controlapi/mcp"
-	"github.com/fallguyconsulting/rimsky/foundation/auth"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	foundationshared "github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/control/controlapi/mcp"
+	"github.com/rimsky-ai/rimsky-core/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // withIdentity returns a request whose Context carries the given

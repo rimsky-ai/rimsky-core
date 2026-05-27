@@ -8,7 +8,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md

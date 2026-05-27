@@ -53,7 +53,7 @@ syntax = "proto3";
 
 package rimsky.v1;
 
-option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
+option go_package = "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1";
 
 // HostAgent is the protocol that rimsky-host-agent-proxy uses to communicate
 // with connected rimsky-host-agent daemons running on user dev machines.
@@ -534,7 +534,7 @@ ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
 CreatedByAPIKeyID *shared.UUID `json:"created_by_api_key_id,omitempty"`
 ```
 
-(Position the fields together near other per-deployment knobs like `Params`. Verify imports include `encoding/json` and `github.com/fallguyconsulting/rimsky/foundation/shared`.)
+(Position the fields together near other per-deployment knobs like `Params`. Verify imports include `encoding/json` and `github.com/rimsky-ai/rimsky-core/foundation/shared`.)
 
 3. Build: `cd foundation && go build ./... && cd ..`.
 
@@ -1667,10 +1667,10 @@ import (
     "context"
     "fmt"
 
-    "github.com/fallguyconsulting/rimsky/foundation/locks"
-    "github.com/fallguyconsulting/rimsky/foundation/persistence"
-    "github.com/fallguyconsulting/rimsky/foundation/shared"
-    "github.com/fallguyconsulting/rimsky/graph/node"
+    "github.com/rimsky-ai/rimsky-core/foundation/locks"
+    "github.com/rimsky-ai/rimsky-core/foundation/persistence"
+    "github.com/rimsky-ai/rimsky-core/foundation/shared"
+    "github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // FanOutRunScopeEvent fires OnRunScopeTerminal to subscribers matching
@@ -1943,7 +1943,7 @@ import (
     "syscall"
 
     "google.golang.org/grpc"
-    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 func main() {
@@ -2212,7 +2212,7 @@ import (
     "net/http"
     // ... gRPC imports
 
-    genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+    genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // Run is the host-agent's main loop. Used by both cmd/rimsky-host-agent/main.go
@@ -2245,7 +2245,7 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/fallguyconsulting/rimsky/runtime/hostagent"
+    "github.com/rimsky-ai/rimsky-core/runtime/hostagent"
 )
 
 func main() {
@@ -2341,7 +2341,7 @@ import (
     "os/exec"
     "syscall"
 
-    "github.com/fallguyconsulting/rimsky/runtime/hostagent"
+    "github.com/rimsky-ai/rimsky-core/runtime/hostagent"
 )
 
 func RunAgent(args []string) int {

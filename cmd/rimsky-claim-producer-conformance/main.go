@@ -29,9 +29,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	"github.com/fallguyconsulting/rimsky/protocols/conformance/claimproducer"
-	peer "github.com/fallguyconsulting/rimsky/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/protocols/conformance/claimproducer"
+	peer "github.com/rimsky-ai/rimsky-core/runtime/peer"
 )
 
 func main() {

@@ -167,7 +167,7 @@ Handled by Pass 7 (Task 39), not Pass 4. Listed here so the move-set
 is in one place.
 
 The four atomic-staging example tests all import
-`pkg:github.com/fallguyconsulting/rimsky/examples/atomic-staging-fs-producer/store`:
+`pkg:github.com/rimsky-ai/rimsky-core/examples/atomic-staging-fs-producer/store`:
 
 - `test/scenarios/atomic_staging/abandon_on_any_failure_test.go`
 - `test/scenarios/atomic_staging/commit_on_all_success_test.go`
@@ -212,8 +212,8 @@ For each MOVE-TO-RIMSKY-SERVICES file, Pass 5 should:
 
 1. Remove the `//go:build rimskyservices` line and its accompanying
    "parked" comment block.
-2. Update the file's `github.com/fallguyconsulting/rimsky/...`
-   imports to `github.com/fallguyconsulting/rimsky-services/...`
+2. Update the file's `github.com/rimsky-ai/rimsky-core/...`
+   imports to `github.com/rimsky-ai/rimsky-services/...`
    where the imported package moves with the production stores.
 3. Move the file to the corresponding path under
    `../rimsky-services/test/...`.

@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/graph/template/canonical"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/graph/template/canonical"
 )
 
 // InMemoryState backs the fake control-api. Methods are concurrency-safe.

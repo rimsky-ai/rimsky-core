@@ -7,7 +7,7 @@
 // surface over the wire.
 //
 // Post-2026-05-24 reorganization: the production postgres-store
-// implementation lives in `pkg:github.com/fallguyconsulting/rimsky-services`.
+// implementation lives in `pkg:github.com/rimsky-ai/rimsky-services`.
 // To preserve the in-rimsky test-fixture surface without dragging in
 // the production code, this testfixture now wraps `pkg:stores/stub`
 // (deterministic in-memory) while exposing the same `Start`
@@ -25,10 +25,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/protocols/action"
-	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	stubserver "github.com/fallguyconsulting/rimsky/stores/stub/server"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	"github.com/rimsky-ai/rimsky-core/protocols/action"
+	claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	stubserver "github.com/rimsky-ai/rimsky-core/stores/stub/server"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
 )
 
 // PickPolicy mirrors the configuration shape that the production

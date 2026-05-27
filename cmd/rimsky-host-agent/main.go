@@ -29,7 +29,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/fallguyconsulting/rimsky/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/runtime/hostagent"
 )
 
 func main() {

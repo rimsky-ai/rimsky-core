@@ -325,7 +325,7 @@ cd foundation && go build ./... && go test ./foundation/persistence/sqlite/...
        "fmt"
        "time"
 
-       "github.com/fallguyconsulting/rimsky/foundation/persistence"
+       "github.com/rimsky-ai/rimsky-core/foundation/persistence"
    )
 
    // SweepMessageIdempotencies deletes idempotency rows older than cutoff.
@@ -439,7 +439,7 @@ The following tasks land together as one architectural unification. The proto re
 
    package rimsky.protocols.v1;
 
-   option go_package = "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1";
+   option go_package = "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1";
 
    // Publisher is a peer service that publishes messages into rimsky.
    // Sensors are one kind of publisher; other kinds may exist.
@@ -1341,7 +1341,7 @@ go build ./sensors/sensor-cron
 
 **Steps:**
 
-1. For each sensor, write a test using testcontainers Postgres. The existing pgtest helper lives at `foundation/internal/pgtest/pgtest.go`, but `foundation-internal-isolation` depguard rule (`.golangci.yml:39-46`) blocks `github.com/fallguyconsulting/rimsky/foundation/internal` from external packages. Either extend the depguard's allow-list to include the sensor packages (preferred — small allow-list edit alongside the `pgx-isolation` work in Task 52), OR write a minimal local testcontainers helper in each sensor package (~40 lines). Recommend extending depguard. Mirror the fixture-pattern shape from `foundation/internal/pgtest/pgtest.go`:
+1. For each sensor, write a test using testcontainers Postgres. The existing pgtest helper lives at `foundation/internal/pgtest/pgtest.go`, but `foundation-internal-isolation` depguard rule (`.golangci.yml:39-46`) blocks `github.com/rimsky-ai/rimsky-core/foundation/internal` from external packages. Either extend the depguard's allow-list to include the sensor packages (preferred — small allow-list edit alongside the `pgx-isolation` work in Task 52), OR write a minimal local testcontainers helper in each sensor package (~40 lines). Recommend extending depguard. Mirror the fixture-pattern shape from `foundation/internal/pgtest/pgtest.go`:
    - Open the state DB.
    - Insert a subscription.
    - Simulate a process restart by closing + reopening the DB.
@@ -1364,9 +1364,9 @@ go test ./sensors/sensor-webhook -run TestStateDB -count=1
 **Steps:**
 
 1. Find the `pgx-isolation` depguard rule. Extend its allow-list to include:
-   - `github.com/fallguyconsulting/rimsky/sensors/sensor-http`
-   - `github.com/fallguyconsulting/rimsky/sensors/sensor-object-store`
-   - `github.com/fallguyconsulting/rimsky/sensors/sensor-webhook`
+   - `github.com/rimsky-ai/rimsky-core/sensors/sensor-http`
+   - `github.com/rimsky-ai/rimsky-core/sensors/sensor-object-store`
+   - `github.com/rimsky-ai/rimsky-core/sensors/sensor-webhook`
    - (And `sensor-cron` if you wired it.)
 2. Find the `foundation-internal-isolation` depguard rule (lines ~39-46 of `.golangci.yml`). Extend its allow-list to include the same sensor packages so they can import `foundation/internal/pgtest` from their `_test.go` files for testcontainers fixtures.
 

@@ -18,7 +18,7 @@
 // declares both protocols in rimsky.yml.
 //
 // Per the layer-crystallization design (2026-05-04), the canonical Go
-// interface lives in github.com/fallguyconsulting/rimsky/protocols/claimproducer;
+// interface lives in github.com/rimsky-ai/rimsky-core/protocols/claimproducer;
 // foundation/locks.ClaimProducer is a Go type alias of that interface so
 // rimsky-internal callers and external implementers share one nominal
 // type. External authors should import protocols/claimproducer; rimsky-
@@ -27,7 +27,7 @@
 package locks
 
 import (
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 // ClaimProducer is the universal interface every claim-producer

@@ -24,7 +24,7 @@ Read these before starting. The plan is self-contained but the design rationale,
   - `go build ./...`
   - `go test ./...` (testcontainers spins up `postgres:15`; Docker must be running)
   - `make lint`
-- Module path is `github.com/fallguyconsulting/rimsky`; `go.mod` is at the repo root.
+- Module path is `github.com/rimsky-ai/rimsky-core`; `go.mod` is at the repo root.
 
 The `hashRewrite` map in `apply.go::ApplyPlan` was added during the rimsky-cli plan execution explicitly to absorb the JSON-tag asymmetry that this change fixes (see the comment block at `core/cli/compose/apply.go:34-44` referencing this design doc). Once the asymmetry is gone, the rewrite is dead — both ends compute the same hash. Delete the map and the per-iteration rewrite logic.
 
@@ -252,9 +252,9 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
        "strings"
        "testing"
 
-       "github.com/fallguyconsulting/rimsky/core/node"
-       "github.com/fallguyconsulting/rimsky/core/qualityrule"
-       "github.com/fallguyconsulting/rimsky/core/shared"
+       "github.com/rimsky-ai/rimsky-core/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/qualityrule"
+       "github.com/rimsky-ai/rimsky-core/core/shared"
    )
 
    func TestTagHandCheck(t *testing.T) {
@@ -465,7 +465,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
 
 1. Open `core/cli/client.go`.
 
-2. Update the import block (currently at lines 11–22) to add `"github.com/fallguyconsulting/rimsky/core/node"`:
+2. Update the import block (currently at lines 11–22) to add `"github.com/rimsky-ai/rimsky-core/core/node"`:
 
    ```go
    import (
@@ -480,7 +480,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
        "strings"
        "time"
 
-       "github.com/fallguyconsulting/rimsky/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/node"
    )
    ```
 
@@ -549,7 +549,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
    }
    ```
 
-   And add `"github.com/fallguyconsulting/rimsky/core/node"` to the import block at the top of `server_test.go`.
+   And add `"github.com/rimsky-ai/rimsky-core/core/node"` to the import block at the top of `server_test.go`.
 
 3. In `core/cli/internal/clitest/server_test.go`, replace every `cli.RegisterTemplateRequest{Spec: minimalSpec(), …}` site with `cli.RegisterTemplateRequest{Spec: minimalSpecTyped(), …}`. Affected lines:
    - line 26–27 (the only `RegisterTemplateRequest` literal that spans two lines)
@@ -577,7 +577,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
    })
    ```
 
-   Add `"github.com/fallguyconsulting/rimsky/core/node"` to the import block at the top of `client_test.go` if it isn't already there.
+   Add `"github.com/rimsky-ai/rimsky-core/core/node"` to the import block at the top of `client_test.go` if it isn't already there.
 
 5. Run a string sweep to catch any remaining map-typed RegisterTemplateRequest:
 
@@ -626,7 +626,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
 
 3. Delete `toJSONShape` (currently at lines 87–127) entirely — no callers remain after this task.
 
-4. Update the import block to add `"github.com/fallguyconsulting/rimsky/core/node"`:
+4. Update the import block to add `"github.com/rimsky-ai/rimsky-core/core/node"`:
 
    ```go
    import (
@@ -641,7 +641,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
 
        "gopkg.in/yaml.v3"
 
-       "github.com/fallguyconsulting/rimsky/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/node"
    )
    ```
 
@@ -717,8 +717,8 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
 
        "gopkg.in/yaml.v3"
 
-       "github.com/fallguyconsulting/rimsky/core/canonical"
-       "github.com/fallguyconsulting/rimsky/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/canonical"
+       "github.com/rimsky-ai/rimsky-core/core/node"
    )
 
    // ResolveTemplate reads a template spec file from disk, runs
@@ -778,7 +778,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
 3. Add the `node` import to the import block at the top of the file. Find the existing import block and add:
 
    ```go
-       "github.com/fallguyconsulting/rimsky/core/node"
+       "github.com/rimsky-ai/rimsky-core/core/node"
    ```
 
 4. Update the `specBodies` map type and the resolver loop (currently at lines 156–165) to:
@@ -996,7 +996,7 @@ docs/history/2026-05-02-template-spec-json-tags-design.md
    }
    ```
 
-   Add `"encoding/json"` and `"github.com/fallguyconsulting/rimsky/core/node"` to the import block of `plan_test.go` if not already present.
+   Add `"encoding/json"` and `"github.com/rimsky-ai/rimsky-core/core/node"` to the import block of `plan_test.go` if not already present.
 
 3. Update each of the four affected sites. Replace `gotHash, _ := srv.State.RegisterTemplate(body, "compose:p:a@1.0", "")` (lines 175, 254, 300, 377) with `gotHash, _ := srv.State.RegisterTemplate(specToMap(t, body), "compose:p:a@1.0", "")`. The `t` argument requires the surrounding test function's `t *testing.T` to be in scope — it always is at these sites (they live inside `func TestX(t *testing.T)` bodies).
 

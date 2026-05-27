@@ -29,13 +29,14 @@
 package genv1
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -557,7 +558,7 @@ const file_publisher_proto_rawDesc = "" +
 	"\fCapabilities\x12\x16.google.protobuf.Empty\x1a .rimsky.v1.PublisherCapabilities\x12F\n" +
 	"\tSubscribe\x12\x1b.rimsky.v1.SubscribeRequest\x1a\x1c.rimsky.v1.SubscribeResponse\x12L\n" +
 	"\vUnsubscribe\x12\x1d.rimsky.v1.UnsubscribeRequest\x1a\x1e.rimsky.v1.UnsubscribeResponse\x12Q\n" +
-	"\x11ListSubscriptions\x12\x16.google.protobuf.Empty\x1a$.rimsky.v1.ListSubscriptionsResponseBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x11ListSubscriptions\x12\x16.google.protobuf.Empty\x1a$.rimsky.v1.ListSubscriptionsResponseB?Z=github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_publisher_proto_rawDescOnce sync.Once

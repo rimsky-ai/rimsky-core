@@ -111,14 +111,14 @@ Counts: 48 tasks in the plan, ~17 meaningful divergences below.
 
 ### 11. Pass 5 / Pass 7, Cross-repo go.mod — Committed `replace` directives in sibling repos, not per-developer `go.work`
 
-**What the plan said:** Plan Task 25 step 2 said `go.mod` should declare `require github.com/fallguyconsulting/rimsky/sdk/go v0.0.0` as a placeholder. Spec §P3.3 explicitly said: "For local dev across both repos: a per-developer `go.work` (not committed; lives outside either repo or is `.gitignore`d) lists both module paths so changes in `pkg:sdk/go` reflect immediately without retagging. CI in rimsky-services resolves the tagged dependency from the module proxy; no local-path resolution."
+**What the plan said:** Plan Task 25 step 2 said `go.mod` should declare `require github.com/rimsky-ai/rimsky-core/sdk/go v0.0.0` as a placeholder. Spec §P3.3 explicitly said: "For local dev across both repos: a per-developer `go.work` (not committed; lives outside either repo or is `.gitignore`d) lists both module paths so changes in `pkg:sdk/go` reflect immediately without retagging. CI in rimsky-services resolves the tagged dependency from the module proxy; no local-path resolution."
 
 **What was implemented:** Both `../rimsky-services/go.mod` and (per CHANGELOG Pass-7 entry) `../rimsky-docs/examples/go.mod` carry committed `replace` directives pointing at sibling paths:
 
 ```
 replace (
-    github.com/fallguyconsulting/rimsky/protocols => ../rimsky/protocols
-    github.com/fallguyconsulting/rimsky/sdk/go => ../rimsky/sdk/go
+    github.com/rimsky-ai/rimsky-core/protocols => ../rimsky/protocols
+    github.com/rimsky-ai/rimsky-core/sdk/go => ../rimsky/sdk/go
 )
 ```
 
@@ -175,7 +175,7 @@ A trailing comment notes: "Local-dev replace directives so sibling rimsky checko
 **What was implemented:**
 
 - `licensing.yml`: Renamed `runtime/remote/` → `runtime/peer/` (two locations); removed orphan apache-list entries for `examples/`, `cmd/rimsky-docs-{glossary,llms-full,lint}/`, `dashboards/`, `docs/` (with breadcrumb comments pointing at the new homes).
-- `deploy/kubernetes/rimsky-chart/values.yaml`: New `bundledServicesImage:` block (10 lines) added with `repository: ghcr.io/fallguyconsulting/rimsky-services`. Six chart `templates/deployment-*.yaml` files updated for the new image references.
+- `deploy/kubernetes/rimsky-chart/values.yaml`: New `bundledServicesImage:` block (10 lines) added with `repository: ghcr.io/rimsky-ai/rimsky-services`. Six chart `templates/deployment-*.yaml` files updated for the new image references.
 - `feature-index.md`: Major rewrite of the "Bundled service reference impls" section (sibling-repo pointer comment) and the `cmd/` table; `runtime/remote` row renamed `runtime/peer` with expanded purpose description.
 - `Makefile`: Five docs-related targets removed wholesale (`docs-glossary`, `docs-llms-full`, `docs-lint`, `docs-roots`, `docs-build`), and `lint` / `test-all` / `build-all` / `lint-docker` targets extended to include `sdk/go`.
 

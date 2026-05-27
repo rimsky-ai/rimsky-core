@@ -679,7 +679,7 @@ the cleanup:
 ```proto
 syntax = "proto3";
 package rimsky.v1;
-option go_package = "github.com/fallguyconsulting/rimsky/proto/v1/gen;genv1";
+option go_package = "github.com/rimsky-ai/rimsky-core/proto/v1/gen;genv1";
 
 service StoreService {
   rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);

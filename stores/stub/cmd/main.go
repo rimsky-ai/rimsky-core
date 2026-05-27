@@ -21,11 +21,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/fallguyconsulting/rimsky/internal/ops"
-	"github.com/fallguyconsulting/rimsky/protocols/action"
-	claimproducer "github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	"github.com/fallguyconsulting/rimsky/stores/stub/server"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	"github.com/rimsky-ai/rimsky-core/internal/ops"
+	"github.com/rimsky-ai/rimsky-core/protocols/action"
+	claimproducer "github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/stores/stub/server"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
 )
 
 const defaultConfigEnv = "STORE_STUB_CONFIG"

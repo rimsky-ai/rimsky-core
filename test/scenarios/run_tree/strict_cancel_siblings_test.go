@@ -12,10 +12,10 @@ package runtree
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 func TestStrictCancelSiblings_ActionFiresOnFailure(t *testing.T) {

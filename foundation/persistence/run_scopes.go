@@ -14,7 +14,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // RunScopeRow projects one rimsky_run_scopes row. ParentRunScopeID

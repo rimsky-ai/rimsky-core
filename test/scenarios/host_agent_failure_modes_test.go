@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
 )
 
 // TestHostAgentNotConnected: an instance with bindings but no agent dialed

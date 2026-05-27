@@ -33,9 +33,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence/postgres"
-	"github.com/fallguyconsulting/rimsky/protocols/conformance/blobbackend"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres"
+	"github.com/rimsky-ai/rimsky-core/protocols/conformance/blobbackend"
 )
 
 func main() {

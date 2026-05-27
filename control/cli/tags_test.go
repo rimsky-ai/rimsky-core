@@ -8,7 +8,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
 )
 
 func TestRunTagCreate_OK(t *testing.T) {

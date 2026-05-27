@@ -22,9 +22,9 @@ package subgraph
 import (
 	"testing"
 
-	tmplspec "github.com/fallguyconsulting/rimsky/foundation/spec"
-	"github.com/fallguyconsulting/rimsky/graph/node"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {

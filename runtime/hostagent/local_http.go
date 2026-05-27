@@ -20,7 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // localForwardTimeout bounds how long the handler waits for a

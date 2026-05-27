@@ -17,12 +17,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	nodepkg "github.com/fallguyconsulting/rimsky/graph/node"
-	pgtest "github.com/fallguyconsulting/rimsky/internal/pgmigrate"
-	"github.com/fallguyconsulting/rimsky/runtime"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	nodepkg "github.com/rimsky-ai/rimsky-core/graph/node"
+	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/runtime"
 )
 
 // --- In-memory fake persistence.Queue ----------------------------------

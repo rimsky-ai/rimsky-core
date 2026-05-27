@@ -265,7 +265,7 @@ After v1:
 
 ## 10. Implementation status
 
-The code in `github.com/fallguyconsulting/rimsky/foundation` matches this contract. Cross-references from foundation packages to specific files are not maintained in this contract; see `@blessed-invariant N` annotations in source for current code locations.
+The code in `github.com/rimsky-ai/rimsky-core/foundation` matches this contract. Cross-references from foundation packages to specific files are not maintained in this contract; see `@blessed-invariant N` annotations in source for current code locations.
 
 ## 11. Open questions
 

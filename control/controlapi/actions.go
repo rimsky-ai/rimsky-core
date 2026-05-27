@@ -22,7 +22,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/fallguyconsulting/rimsky/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/foundation/auth"
 )
 
 // ActionEntry is one row in the canonical action registry.

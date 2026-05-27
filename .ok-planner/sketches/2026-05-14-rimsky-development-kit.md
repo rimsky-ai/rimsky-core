@@ -983,7 +983,7 @@ RDK ships, `claude-agent` may share machinery with `typescript-runtime`.
 
 Compile-and-ship variant:
 
-- `github.com/fallguyconsulting/rimsky-rdk-go` Go module.
+- `github.com/rimsky-ai/rimsky-rdk-go` Go module.
 - No bundled "runtime" image needed — Go binaries are static. The RDK
   compiles a binary with user-supplied handlers linked in; ships in a
   thin image.

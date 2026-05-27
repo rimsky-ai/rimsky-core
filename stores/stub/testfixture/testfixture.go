@@ -11,8 +11,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/stores/stub/server"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
+	"github.com/rimsky-ai/rimsky-core/stores/stub/server"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
 )
 
 // Start spawns server.RunWithStore on a goroutine bound to ephemeral

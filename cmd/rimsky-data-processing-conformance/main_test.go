@@ -15,10 +15,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
-	stubstore "github.com/fallguyconsulting/rimsky/stores/stub/store"
-	stubfixture "github.com/fallguyconsulting/rimsky/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
 )
 
 // TestDataProcessingConformance_StubStore confirms the

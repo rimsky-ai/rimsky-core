@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/control/cli"
+	"github.com/rimsky-ai/rimsky-core/control/cli"
 )
 
 func TestRunRun_Keep(t *testing.T) {

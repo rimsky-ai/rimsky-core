@@ -1440,7 +1440,7 @@ The TS executor lives at `executors/claude-agent/`. All work in this section is 
 **Steps:**
 
 1. Create the new directory.
-2. Initialize: `cd mcp-servers/control-api && go mod init github.com/fallguyconsulting/rimsky/mcp-servers/control-api`.
+2. Initialize: `cd mcp-servers/control-api && go mod init github.com/rimsky-ai/rimsky-core/mcp-servers/control-api`.
 3. Add to root `go.work`:
    ```
    use ./mcp-servers/control-api

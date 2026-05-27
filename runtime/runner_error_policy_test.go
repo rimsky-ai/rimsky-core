@@ -7,7 +7,7 @@ package runtime
 import (
 	"testing"
 
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
 )
 
 // TestErrorPolicySignal_RetryShape covers the per-action emission

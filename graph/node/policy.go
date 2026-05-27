@@ -7,7 +7,7 @@ package node
 import (
 	"math/rand"
 
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // Row-type aliases — canonical definitions live in foundation/spec.

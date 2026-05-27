@@ -24,11 +24,12 @@
 package genv1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -525,7 +526,7 @@ const file_lifecycle_proto_rawDesc = "" +
 	"\x16OnTemplateDeregistered\x12(.rimsky.v1.OnTemplateDeregisteredRequest\x1a\x17.rimsky.v1.LifecycleAck\x12Q\n" +
 	"\x11OnInstanceCreated\x12#.rimsky.v1.OnInstanceCreatedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12W\n" +
 	"\x14OnInstanceTerminated\x12&.rimsky.v1.OnInstanceTerminatedRequest\x1a\x17.rimsky.v1.LifecycleAck\x12S\n" +
-	"\x12OnRunScopeTerminal\x12$.rimsky.v1.OnRunScopeTerminalRequest\x1a\x17.rimsky.v1.LifecycleAckBBZ@github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x12OnRunScopeTerminal\x12$.rimsky.v1.OnRunScopeTerminalRequest\x1a\x17.rimsky.v1.LifecycleAckB?Z=github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_lifecycle_proto_rawDescOnce sync.Once

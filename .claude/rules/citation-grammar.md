@@ -37,7 +37,7 @@ Bare nouns like `Open`, `claimed_by`, or `rimsky_node_events` could be Go method
 | `code:` with line | `` `code:foundation/integration/runner_acquire.go::handleOrphanedClaim#793` `` |
 | `file:` | `` `file:deploy/docker-compose.yml` `` |
 | `file:` with line range | `` `file:CHANGELOG.md#1-50` `` |
-| `pkg:` | `` `pkg:github.com/fallguyconsulting/rimsky/foundation` `` |
+| `pkg:` | `` `pkg:github.com/rimsky-ai/rimsky-core/foundation` `` |
 | `table:` | `` `table:rimsky_claim_handle` `` |
 | `col:` | `` `col:rimsky_claim_handle.scope_data` `` |
 | `proto:` message | `` `proto:claim_producer.proto::OpenRequest` `` |

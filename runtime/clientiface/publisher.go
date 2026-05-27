@@ -12,7 +12,7 @@ package clientiface
 import (
 	"context"
 
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
 )
 
 // PublisherClient is the rimsky-side surface every publisher-service

@@ -20,8 +20,8 @@ package asset
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 func TestDurableLifetimePersistence_TaxonomyConstants(t *testing.T) {

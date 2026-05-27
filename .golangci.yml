@@ -43,7 +43,7 @@ linters-settings:
           - "$all"
           - "!**/foundation/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/foundation/internal"
+          - pkg: "github.com/rimsky-ai/rimsky-core/foundation/internal"
             desc: "foundation/internal/ is private to the foundation module. Use the public foundation packages."
       # protocols-purity: the protocols module is the implementer-facing
       # public contract surface. Its dependency budget is stdlib + grpc +
@@ -54,17 +54,17 @@ linters-settings:
         files:
           - "**/protocols/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/foundation"
+          - pkg: "github.com/rimsky-ai/rimsky-core/foundation"
             desc: "the protocols module imports only stdlib + grpc + protobuf + uuid + yaml.v3. foundation/ is rimsky-internal."
-          - pkg: "github.com/fallguyconsulting/rimsky/internal"
+          - pkg: "github.com/rimsky-ai/rimsky-core/internal"
             desc: "internal/ is private to rimsky."
-          - pkg: "github.com/fallguyconsulting/rimsky/graph"
+          - pkg: "github.com/rimsky-ai/rimsky-core/graph"
             desc: "the protocols module must not import graph/ (rimsky-internal layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
             desc: "the protocols module must not import runtime/ (rimsky-internal layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
             desc: "the protocols module must not import control/ (rimsky-internal layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "the protocols module must not import cmd/ (cmd is the topmost binary layer)."
           - pkg: "github.com/testcontainers/testcontainers-go"
             desc: "the protocols module is the public contract surface; no test infrastructure."
@@ -77,17 +77,17 @@ linters-settings:
         files:
           - "**/foundation/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/graph"
+          - pkg: "github.com/rimsky-ai/rimsky-core/graph"
             desc: "foundation/ may not import graph/ (four-layer ordering: foundation < graph < runtime < control). Persistable row-type primitives live in foundation/spec/."
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
             desc: "foundation/ may not import runtime/ (four-layer ordering)."
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
             desc: "foundation/ may not import control/ (four-layer ordering)."
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "foundation/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/stores"
+          - pkg: "github.com/rimsky-ai/rimsky-core/stores"
             desc: "foundation/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguyconsulting/rimsky/executors"
+          - pkg: "github.com/rimsky-ai/rimsky-core/executors"
             desc: "foundation/ may not import executors/ (executors are consumption-side binaries)."
       # graph-purity: graph/ depends only on foundation/ + protocols/ + stdlib + third-party.
       # Documented residual: graph/scheduler imports runtime for ConductorArgs + sweep fns +
@@ -103,15 +103,15 @@ linters-settings:
           - "!**/graph/scheduler/scheduler.go"
           - "!**/graph/scheduler/pure_cascade.go"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
             desc: "graph/ may not import runtime/ (four-layer ordering: foundation < graph < runtime < control). Exception: graph/scheduler/{scheduler.go,pure_cascade.go} imports runtime for sweep entry points — documented residual flagged for separate follow-up. graph/scenario/ is exempt because it boots the full stack for scenario tests."
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
             desc: "graph/ may not import control/ (four-layer ordering)."
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "graph/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/stores"
+          - pkg: "github.com/rimsky-ai/rimsky-core/stores"
             desc: "graph/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguyconsulting/rimsky/executors"
+          - pkg: "github.com/rimsky-ai/rimsky-core/executors"
             desc: "graph/ may not import executors/ (executors are consumption-side binaries). Exception: graph/scenario/ boots reference executors for scenario tests."
       # runtime-purity: runtime/ depends only on foundation/ + graph/ + protocols/ + stdlib + third-party.
       # runtime is the bridge layer; it freely consumes foundation primitives and graph types.
@@ -120,21 +120,20 @@ linters-settings:
         files:
           - "**/runtime/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
             desc: "runtime/ may not import control/ (four-layer ordering: foundation < graph < runtime < control)."
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"
             desc: "runtime/ may not import cmd/ (cmd is the topmost binary layer)."
-          - pkg: "github.com/fallguyconsulting/rimsky/stores"
+          - pkg: "github.com/rimsky-ai/rimsky-core/stores"
             desc: "runtime/ may not import stores/ (stores are consumption-side binaries)."
-          - pkg: "github.com/fallguyconsulting/rimsky/executors"
+          - pkg: "github.com/rimsky-ai/rimsky-core/executors"
             desc: "runtime/ may not import executors/ (executors are consumption-side binaries)."
       # consumption-side-isolation: stores/, sensors/, subscribers/, executors/
       # are bundled reference impls that the 2026-05-24 reorganization
-      # moves to a sibling repo (../rimsky-services). They must implement
-      # against protocols/ only; importing rimsky-internal packages would
-      # prevent the move. After P3 lands, the `files:` targets no longer
-      # have local matches in rimsky; the rule stays as a defensive guard
-      # against re-bundling.
+      # moved out of this repo. They must implement against protocols/ only;
+      # importing rimsky-internal packages would prevent that separation.
+      # The `files:` targets no longer have local matches in rimsky; the
+      # rule stays as a defensive guard against re-bundling.
       #
       # The in-repo stub claim-producer (stores/stub/**) and stub executor
       # (executors/stub/**) deliberately stayed in rimsky as test
@@ -160,11 +159,11 @@ linters-settings:
           - "executors/**"
           - "!executors/stub/**"
         deny:
-          - pkg: "github.com/fallguyconsulting/rimsky/foundation"
+          - pkg: "github.com/rimsky-ai/rimsky-core/foundation"
             desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."
-          - pkg: "github.com/fallguyconsulting/rimsky/internal"
+          - pkg: "github.com/rimsky-ai/rimsky-core/internal"
             desc: "internal/ is private to rimsky."
-          - pkg: "github.com/fallguyconsulting/rimsky/graph"
-          - pkg: "github.com/fallguyconsulting/rimsky/runtime"
-          - pkg: "github.com/fallguyconsulting/rimsky/control"
-          - pkg: "github.com/fallguyconsulting/rimsky/cmd"
+          - pkg: "github.com/rimsky-ai/rimsky-core/graph"
+          - pkg: "github.com/rimsky-ai/rimsky-core/runtime"
+          - pkg: "github.com/rimsky-ai/rimsky-core/control"
+          - pkg: "github.com/rimsky-ai/rimsky-core/cmd"

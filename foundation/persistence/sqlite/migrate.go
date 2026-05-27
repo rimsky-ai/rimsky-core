@@ -9,8 +9,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence/sqlite/migrations"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite/migrations"
 )
 
 // newMigrator returns the persistence.Migrator wired with SQLite

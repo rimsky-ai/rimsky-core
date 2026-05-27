@@ -7,9 +7,9 @@ package runtime
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	signalpkg "github.com/fallguyconsulting/rimsky/foundation/signal"
-	"github.com/fallguyconsulting/rimsky/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
+	"github.com/rimsky-ai/rimsky-core/foundation/spec"
 )
 
 // success constructs a child that settled terminal/success with the

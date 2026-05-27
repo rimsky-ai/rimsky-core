@@ -12,7 +12,7 @@ package conformance
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
 )
 
 // RawQueryRow is the read-side companion to the per-driver rawExec

@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
 )
 
 func TestHostAgentLateBindExecutorHappyPath(t *testing.T) {

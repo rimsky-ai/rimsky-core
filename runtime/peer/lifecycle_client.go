@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/fallguyconsulting/rimsky/foundation/locks"
-	genv1 "github.com/fallguyconsulting/rimsky/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/foundation/locks"
+	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
 )
 
 // LifecycleClient is a remote-gRPC implementation of the rimsky-side

@@ -7,7 +7,7 @@ package locks
 import (
 	"testing"
 
-	"github.com/fallguyconsulting/rimsky/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
 )
 
 // TestClaimScopesByteEqual covers the rimsky-side byte-equal claim-scope

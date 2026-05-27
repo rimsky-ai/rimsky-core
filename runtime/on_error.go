@@ -38,11 +38,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fallguyconsulting/rimsky/foundation/cascade"
-	"github.com/fallguyconsulting/rimsky/foundation/persistence"
-	"github.com/fallguyconsulting/rimsky/foundation/shared"
-	signalaudit "github.com/fallguyconsulting/rimsky/foundation/signal/audit"
-	"github.com/fallguyconsulting/rimsky/graph/node"
+	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	signalaudit "github.com/rimsky-ai/rimsky-core/foundation/signal/audit"
+	"github.com/rimsky-ai/rimsky-core/graph/node"
 )
 
 // OnErrorArgs is the payload for OnError.
