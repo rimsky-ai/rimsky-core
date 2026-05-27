@@ -43,6 +43,7 @@ exempt:
   # Non-source files at the repo root that carry no per-file header.
   - LICENSE.apache
   - LICENSE.agpl
+  - COPYING.md
   - COPYRIGHT
   - NOTICE
   - TRADEMARKS.md

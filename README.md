@@ -328,3 +328,14 @@ For protocols: the wire definitions live in this repo under
 `protocols/proto/v1/`.
 
 Point your coding agent at this repo and ask.
+
+## 7. License
+
+Rimsky is multi-licensed. The `protocols/` module — the wire contract a
+consumer implements or links against — is Apache 2.0. Everything else Rimsky
+ships, the orchestrator binaries and the reference services, is
+AGPL-3.0-or-later or, by agreement, a Fall Guy Consulting commercial license.
+
+See [`COPYING.md`](COPYING.md) for the full explanation, the rationale behind
+the split, and how to comply. The binding texts are `LICENSE.apache`,
+`LICENSE.agpl`, and `COPYRIGHT`.
