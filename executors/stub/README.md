@@ -11,29 +11,16 @@ analog of a fake/mock in unit testing — not a skeleton template, not an
 "implement this later" placeholder, not a copy-paste starting point.
 
 If you are writing a real Executor for a real workload, **do not start
-from `stub`**. Look at the reference implementations:
-
-- **`executors/http-node/`** (Go) — invokes user-provided HTTP endpoints
-  per node type.
-- **`executors/claude-agent/`** (TypeScript) — runs Claude Code CLI as the
-  executor, with full async-handoff and writeback support.
-
-Those two demonstrate the wire shape, the heartbeat cadence, the async
+from `stub`** — it deliberately omits the heartbeat cadence, the async
 callback bridge, observability emissions, and the realistic terminal
-flow. `stub` deliberately omits most of that machinery because tests
-don't need it.
+flow that a real executor needs, because tests don't need them.
+Implement the Executor gRPC service directly against the protocol
+(`protocols/proto/v1/executor.proto`); `stub` is a test double, not a
+starting point.
 
-## Three primary uses
+## Two primary uses
 
-1. **`executors/stub/cmd/`** — a standalone gRPC binary
-   (`rimsky-executor-stub`) used by the quickstart and smoke-deployment
-   compose stacks as a no-op executor. Combined with
-   `RIMSKY_EXECUTOR_STUB_MODE=1`, it returns immediate-success outcomes
-   keyed by `node_type` via `StubAttributesFor` — useful for end-to-end
-   stack tests that exercise the supervisor + control-api + persistence
-   path without actually doing executor-side work.
-
-2. **`executors/stub/stubtest/`** — the in-process wrapper used by
+1. **`executors/stub/stubtest/`** — the in-process wrapper used by
    scenario tests under `test/scenarios/`. Tests script per-node-type
    behavior on the shared `Stub` instance:
 
@@ -52,7 +39,7 @@ don't need it.
    tests can assert on what the supervisor wired through (attributes,
    store handles, callback URL).
 
-3. **`rimsky-executor-conformance`** — when invoked with
+2. **`rimsky-executor-conformance`** — when invoked with
    `--require-stub-mode`, the conformance probe runs against a stub-mode
    target as a known-good baseline for protocol-shape checks. The stub
    is the protocol's reference implementation in the same sense that

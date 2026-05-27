@@ -1,16 +1,13 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package stub is a test-double Executor implementation in the
-// Meszaros sense — scripted canned outcomes for tests, conformance,
-// and no-op demos. NOT a skeleton template for writing your own
-// executor; see executors/http-node and executors/claude-agent for
-// reference implementations.
+// Meszaros sense — scripted canned outcomes for tests and conformance.
+// NOT a skeleton template for writing your own executor; implement the
+// Executor gRPC service against protocols/proto/v1/executor.proto.
 //
-// Three primary uses:
-//   - executors/stub/cmd — standalone gRPC binary used by the
-//     quickstart and smoke deployments as a no-op executor.
+// Two primary uses:
 //   - executors/stub/stubtest — wrapper for in-process scenario tests
 //     in test/scenarios/. Tests script per-node-type behavior via
 //     Stub.WhenType("…").Success/Error/Park/… and assert on the
@@ -20,7 +17,7 @@
 //
 // EnableStubMode shortcuts scripted behavior with immediate-success
 // outcomes plus StubAttributesFor(node_type)-shaped attributes_delta;
-// the quickstart and conformance harness use this mode.
+// the conformance harness uses this mode.
 package stub
 
 import (

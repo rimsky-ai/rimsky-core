@@ -37,8 +37,7 @@ func init() {
 // (`_invalid`, `_missing_url`, …) for intentional malformed-shape
 // markers. The `_` prefix is reserved across executors so plain field
 // names (which a real template author might use legitimately) cannot
-// silently trip the rejection heuristic. Keep this list aligned with
-// `executors/claude-agent/src/agent-run.ts::malformedAttributesReason`.
+// silently trip the rejection heuristic.
 func runMalformedAttributes(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{
 		"_invalid":     map[string]any{"nested_null": nil},

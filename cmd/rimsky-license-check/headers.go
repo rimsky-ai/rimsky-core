@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // headers.go — header text constants, header detection, and the
 // stamp/verify implementations.
@@ -145,22 +145,27 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 	return hasHeader, isApache, isAGPL, nil
 }
 
-// stampHeaders writes the appropriate header to any file that lacks one.
-// Idempotent: files that already have a header are left untouched.
+// stampHeaders reconciles each file's header with its classification: it
+// adds a header to files that lack one and REPLACES a header of the wrong
+// kind (e.g. an Apache header on a now-AGPL file after a relicense). Files
+// already carrying the correct header are left untouched, so repeated runs
+// are idempotent.
 func stampHeaders(files []fileEntry) (int, error) {
 	stamped := 0
 	for _, f := range files {
 		if f.classification == classUnknown {
 			return stamped, fmt.Errorf("%s: unclassified source file", f.relPath)
 		}
-		hasHeader, _, _, err := detectHeader(f.absPath)
+		hasHeader, isApache, isAGPL, err := detectHeader(f.absPath)
 		if err != nil {
 			return stamped, fmt.Errorf("%s: %w", f.relPath, err)
 		}
-		if hasHeader {
+		correct := (f.classification == classApache && isApache) ||
+			(f.classification == classAGPL && isAGPL)
+		if hasHeader && correct {
 			continue
 		}
-		if err := stampOne(f); err != nil {
+		if err := stampOne(f, hasHeader); err != nil {
 			return stamped, fmt.Errorf("%s: %w", f.relPath, err)
 		}
 		stamped++
@@ -168,14 +173,91 @@ func stampHeaders(files []fileEntry) (int, error) {
 	return stamped, nil
 }
 
-func stampOne(f fileEntry) error {
+// stampOne writes the classification-appropriate header to f. When
+// replaceExisting is set, any current license header is stripped first so a
+// wrong-kind header is replaced rather than stacked on top.
+func stampOne(f fileEntry, replaceExisting bool) error {
 	body, err := os.ReadFile(f.absPath)
 	if err != nil {
 		return err
 	}
+	if replaceExisting {
+		body = stripLeadingHeader(body, f.kind)
+	}
 	header := headerFor(f)
 	newContents := splice(body, header, f.kind)
 	return os.WriteFile(f.absPath, newContents, 0o644)
+}
+
+// licenseHeaderMarkers identify a leading comment line as license-header
+// boilerplate (for stripping during a header replacement). A leading comment
+// line containing any of these is treated as part of the header; the first
+// comment line without one — the package doc, say — ends the header block.
+var licenseHeaderMarkers = []string{
+	"Copyright ©",
+	"Licensed under",
+	"Dual-licensed under",
+	"LICENSE",
+	"apache.org/licenses",
+	"repo root",
+}
+
+func commentPrefixFor(kind sourceKind) string {
+	switch kind {
+	case kindSQL:
+		return "--"
+	case kindShell:
+		return "#"
+	default: // go, ts, proto
+		return "//"
+	}
+}
+
+// stripLeadingHeader removes an existing license-header block (plus the
+// single blank line separating it from the body) so stampOne can splice a
+// replacement. A leading "// Code generated" (Go) or shebang line is
+// preserved. If no header boilerplate is found, body is returned unchanged.
+func stripLeadingHeader(body []byte, kind sourceKind) []byte {
+	prefix := commentPrefixFor(kind)
+	lines := strings.SplitAfter(string(body), "\n")
+	i := 0
+	if i < len(lines) {
+		first := strings.TrimSpace(lines[i])
+		if (kind == kindGo && strings.HasPrefix(first, "// Code generated")) ||
+			strings.HasPrefix(first, "#!") {
+			i++
+		}
+	}
+	preambleEnd := i
+	for i < len(lines) && isHeaderLine(lines[i], prefix) {
+		i++
+	}
+	if i == preambleEnd {
+		return body // no header boilerplate after the preamble
+	}
+	if i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++ // drop the header/body separator blank line
+	}
+	var b strings.Builder
+	for j := 0; j < preambleEnd; j++ {
+		b.WriteString(lines[j])
+	}
+	for j := i; j < len(lines); j++ {
+		b.WriteString(lines[j])
+	}
+	return []byte(b.String())
+}
+
+func isHeaderLine(line, commentPrefix string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(line), commentPrefix) {
+		return false
+	}
+	for _, m := range licenseHeaderMarkers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func headerFor(f fileEntry) string {

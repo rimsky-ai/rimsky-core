@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // main.go — rimsky entry point. Dispatches subcommands to handlers
 // in control/cli/. Hand-rolled subcommand routing on os.Args[1].
@@ -13,7 +13,6 @@ import (
 	"os"
 
 	"github.com/rimsky-ai/rimsky-core/control/cli"
-	"github.com/rimsky-ai/rimsky-core/control/cli/compose"
 )
 
 func main() {
@@ -70,12 +69,6 @@ func main() {
 		os.Exit(cli.RunLs(context.Background(), os.Args[2:]))
 	case "logs":
 		os.Exit(cli.RunLogs(context.Background(), os.Args[2:]))
-	case "init":
-		os.Exit(cli.RunInit(context.Background(), os.Args[2:]))
-	case "compose":
-		os.Exit(compose.Dispatch(context.Background(), os.Args[2:]))
-	case "dev":
-		os.Exit(compose.DispatchDev(context.Background(), os.Args[2:]))
 	case "auth":
 		os.Exit(cli.RunAuth(os.Args[2:]))
 	default:
@@ -356,11 +349,6 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  ls [templates|instances|tags]")
 	fmt.Fprintln(w, "  logs <id-or-key>      Stream events (poll-based)")
 	fmt.Fprintln(w, "  health")
-	fmt.Fprintln(w, "  init [<dir>]          Scaffold a starter project")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Compose:")
-	fmt.Fprintln(w, "  compose up | down | plan | status")
-	fmt.Fprintln(w, "  dev up | down | status")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Literal API:")
 	fmt.Fprintln(w, "  template register | list | get | deploy | undeploy | rm")

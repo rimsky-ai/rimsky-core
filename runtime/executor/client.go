@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 package executor
 
@@ -22,8 +22,7 @@ import (
 // supervisor so connections are reused across dispatches.
 //
 // @concept: executor (the in-repo Go-side surface of the Executor.Execute
-// wire protocol; reference executor impls are carved out to the
-// rimsky-services sibling repo)
+// wire protocol; reference executor impls are not part of this repo)
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error)
 	Close() error

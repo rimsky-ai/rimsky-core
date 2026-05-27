@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // rimsky-license-check verifies the per-file license headers and the
 // import-graph boundary defined by licensing.yml at the repo root.
@@ -10,10 +10,12 @@
 //	rimsky-license-check                  # verify; exit 1 on violations
 //	rimsky-license-check --stamp          # add missing headers in place
 //
-// The boundary rule (per docs/history/2026-05-02-licensing-design.md):
-// Apache-classified Go files cannot import AGPL-classified packages. AGPL
-// files may import Apache freely. Header text on every source file must
-// match the file's classification.
+// The boundary rule: Apache-classified Go files cannot import
+// AGPL-classified packages. AGPL files may import Apache freely. Header
+// text on every source file must match the file's classification. Every
+// apache/agpl entry in licensing.yml must point at a path that exists, and
+// every source file must be classified — the two checks keep licensing.yml
+// in exact correspondence with the tree.
 package main
 
 import (
@@ -51,6 +53,7 @@ func main() {
 
 	violations := verifyHeaders(files)
 	violations = append(violations, verifyImports(files, cfg)...)
+	violations = append(violations, verifyEntriesExist(cfg, *root)...)
 
 	apacheCount, agplCount := 0, 0
 	for _, f := range files {

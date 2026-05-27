@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1.7
 #
-# Multi-stage build of rimsky/all — the unified development image. Bundles
-# all four runtime binaries plus rimsky-entrypoint under a single PID-1
-# entrypoint. Defaults to driver: sqlite with state at
-# /var/lib/rimsky/state.db. Per spec §7.
+# Multi-stage build of the `rimsky` image. Bundles all four role binaries
+# (scheduler, supervisor, control-api, migrate) plus rimsky-entrypoint under
+# a single PID-1 entrypoint. Run with no command for the all-in-one stack, or
+# override the command to run a single role (e.g. `rimsky-control-api`). The
+# persistence backend (postgres|sqlite) is selected by config; defaults to
+# sqlite with state at /var/lib/rimsky/state.db (development only — use the
+# postgres driver for deployed instances).
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
@@ -38,8 +41,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
 RUN mkdir -p /staging/var/lib/rimsky && chown -R 65532:65532 /staging/var/lib/rimsky
 
 FROM gcr.io/distroless/static-debian12:nonroot
-LABEL org.opencontainers.image.title="rimsky/all"
-LABEL org.opencontainers.image.description="Unified rimsky orchestrator (development convenience image; defaults to SQLite — not for production)"
+LABEL org.opencontainers.image.title="rimsky"
+LABEL org.opencontainers.image.description="rimsky orchestrator — all role binaries under one image; role by command, backend (postgres|sqlite) by config. Defaults to SQLite (development only)."
 
 COPY --from=build /out/rimsky-scheduler   /usr/local/bin/rimsky-scheduler
 COPY --from=build /out/rimsky-supervisor  /usr/local/bin/rimsky-supervisor
@@ -48,9 +51,8 @@ COPY --from=build /out/rimsky-migrate     /usr/local/bin/rimsky-migrate
 COPY --from=build /out/rimsky-entrypoint  /usr/local/bin/rimsky-entrypoint
 COPY --from=build /out/rimsky             /usr/local/bin/rimsky
 # Config (rimsky.yml + supervisor-config.yml) is mounted at runtime, not
-# baked in: those files live in the rimsky-docs repo (its deploy/ and
-# quickstart/ trees), not in this build context. The compose files there
-# mount them at the RIMSKY_CONFIG / RIMSKY_SUPERVISOR_CONFIG paths set below.
+# baked into the image. Deploy tooling mounts them at the RIMSKY_CONFIG /
+# RIMSKY_SUPERVISOR_CONFIG paths set below.
 COPY --from=build --chown=nonroot:nonroot /staging/var/lib/rimsky /var/lib/rimsky
 
 USER nonroot:nonroot

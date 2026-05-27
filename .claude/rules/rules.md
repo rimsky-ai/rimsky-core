@@ -24,9 +24,8 @@ Run **every** check that could be affected by the change. This is mandatory, not
 
 ### Update documentation
 1. **Cold-read annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
-2. **`CHANGELOG.md`** — append a bullet under `## Unreleased` describing the change and its rationale.
-3. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
-4. **Dead code** — remove anything the change has rendered unreachable.
+2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
+3. **Dead code** — remove anything the change has rendered unreachable.
 
 ## Fix Every Bug You Find
 If you discover a bug, broken behavior, or incorrect code while working — even if it's unrelated to your current task — fix it. Do not log it for later. Do not defer it. Do not work around it. Do not describe it in a report and move on. Fix it, verify the fix, and document what you changed.
@@ -47,7 +46,7 @@ The Go-specific lint set is enforced by `.golangci.yml` (`make lint`): gofmt, go
 Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
 
 ## Writing & Analysis
-- Save project-specific notes to project-local paths (`./CLAUDE.md`, `./docs/`, `./CHANGELOG.md`), not external memory.
+- Save project-specific notes to project-local paths (e.g. `./CLAUDE.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
 - Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (e.g. `docs/2026-04-25-stores-redesign.md`).
-- When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, CHANGELOG entries, or commit messages.
+- When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, or commit messages.

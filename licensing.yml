@@ -1,96 +1,42 @@
 # Rimsky licensing boundary map.
 # Single source of truth for the per-file license headers and the
-# import-graph lint enforced by `cmd/rimsky-license-check/`. See
-# docs/history/2026-05-02-licensing-design.md for rationale.
+# import-graph lint enforced by `cmd/rimsky-license-check/`. See COPYRIGHT
+# for the per-layer breakdown.
 #
-# Update procedure: edit this file, run `make license-lint` to verify
-# import direction, then run `make license-stamp` to update per-file
-# headers.
+# Update procedure: edit this file, run `make license-lint` to verify import
+# direction + entry existence, then `make license-stamp` to reconcile
+# per-file headers (it adds missing headers and replaces wrong-kind ones).
 #
-# Path classification rule: longest-prefix-match wins. Subdirectories of
-# AGPL paths can be reclassified Apache by being listed under the apache:
-# block (e.g. runtime/peer/ is Apache despite living under runtime/
-# AGPL — the gRPC client to ClaimProducer impls is interface-shaped so
-# that out-of-tree adopters can dial producer impls without crossing
-# the boundary).
+# Boundary rule (one bright line): the `protocols/` module is the
+# implementer-facing wire contract — everything a consumer implements or
+# links against to speak to rimsky — and is Apache 2.0. Everything else is a
+# runnable artifact rimsky ships (the orchestrator AND its services) and is
+# AGPL-3.0-or-later, or a Fall Guy Consulting commercial license. To
+# integrate without AGPL, implement the protocols from your own process.
 #
-# Post-2026-05-13 four-layer restructure note: the old `foundation/integration/`
-# directory was renamed to `runtime/` (root module bridge layer) and
-# `graph/executor/` was renamed to `runtime/executor/`. The boundary
-# rules carry over: `runtime/` is AGPL (orchestrator-internal bridge)
-# with `runtime/peer/` and `runtime/executor/` carved out as Apache
-# (interface-shaped client surfaces).
+# Enforcement: Apache files may import only stdlib + permissive third-party +
+# other Apache packages; AGPL imports anything. Because `protocols/` imports
+# nothing internal (the protocols-purity depguard), there is exactly one
+# Apache island and no Apache→AGPL path can exist.
+#
+# Path classification rule: longest-prefix-match wins (so a more specific
+# subdirectory can override its parent's bucket).
 
 apache:
-  - protocols/
-  - foundation/auth/
-  - foundation/locks/
-  - foundation/shared/
-  - foundation/spec/
-  - foundation/signal/  # event/audit taxonomy + CEL matching; imported by Apache spec/node, imports only foundation/shared (signal/audit/ is carved out AGPL below)
-  - runtime/peer/
-  - runtime/executor/
-  - runtime/clientiface/
-  - runtime/hostagent/  # dev-machine daemon (the agent end of HostAgent.Connect), client-side; bundled into the rimsky CLI
-  - control/cli/
-  - graph/node/
-  - graph/shared/
-  - graph/template/canonical/
-  - testpg/  # opt-in adopter-facing Postgres test helper (testcontainers); deps-isolated standalone module, imports no rimsky package
-  - stores/  # rimsky-internal test-infra carve-outs: stub + per-driver testfixture
-  - executors/stub/  # rimsky-internal test-infra carve-out
-  # sensors/, subscribers/, executors/{claude-agent,http-node,verifier-*}/
-  # moved to pkg:github.com/rimsky-ai/rimsky-services per P3 of
-  # spec:2026-05-24-repo-reorganization-design.
-  # examples/ moved to pkg:github.com/rimsky-ai/rimsky-docs/examples
-  # per P4 of spec:2026-05-24-repo-reorganization-design.
-  - cmd/rimsky/
-  - cmd/rimsky-host-agent/  # standalone dev-machine daemon; same client-side carve-out as runtime/hostagent + cmd/rimsky
-  - cmd/rimsky-executor-conformance/
-  - cmd/rimsky-claim-producer-conformance/
-  - cmd/rimsky-conformance-probe/
-  - cmd/rimsky-data-processing-conformance/
-  - cmd/rimsky-publisher-conformance/
-  - cmd/rimsky-validation-conformance/
-  - cmd/rimsky-license-check/
-  # cmd/rimsky-docs-{glossary,llms-full,lint} moved to
-  # pkg:github.com/rimsky-ai/rimsky-docs/cmd per P4 of
-  # spec:2026-05-24-repo-reorganization-design.
-  # dashboards/ moved to github.com/rimsky-ai/rimsky-dashboard per P6
-  # of spec:2026-05-24-repo-reorganization-design.
-  # deploy/ moved to pkg:github.com/rimsky-ai/rimsky-docs per P4 of
-  # spec:2026-05-24-repo-reorganization-design.
-  # docs/ moved to pkg:github.com/rimsky-ai/rimsky-docs/docs
-  # per P4 of spec:2026-05-24-repo-reorganization-design.
-  - cold-read/
-  # Top-level files and dotfiles default to Apache (build config, README,
-  # CHANGELOG, Makefile, .golangci.yml, etc.). Non-source files (LICENSE.*,
-  # COPYRIGHT, NOTICE, TRADEMARKS.md, CLA.md, CONTRIBUTING.md, licensing.yml,
-  # this file itself) carry no header and are exempt from the lint.
+  - protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
+  # Edge carve-outs — not the wire contract, but deliberately permissive:
+  - testpg/      # standalone Postgres-testcontainers helper; imports no rimsky package; carries no rimsky IP
+  - cold-read/   # documentation (style guide); docs ship Apache
 
 agpl:
-  - foundation/cascade/
-  - foundation/persistence/
-  - foundation/internal/
-  - foundation/matcher/  # internal matching machinery
-  - foundation/signal/audit/  # audit-log writer; imports persistence (AGPL). Root foundation/signal/ is Apache (above)
-  - graph/attribute/
-  - control/config/
-  - control/controlapi/
-  - graph/frame/
+  - foundation/
+  - graph/
+  - control/
+  - runtime/
   - internal/
-  - stores/stub/cmd/  # rimsky-internal stub entrypoint: wires in internal/ops (AGPL); the stub store/server/testfixture packages stay Apache (adopter-referenceable)
-  - control/observability/
-  - graph/scenario/
-  - graph/scheduler/
-  - runtime/  # excludes runtime/peer/ and runtime/executor/ (overrides above)
-  - cmd/rimsky-scheduler/
-  - cmd/rimsky-supervisor/
-  - cmd/rimsky-control-api/
-  - cmd/rimsky-migrate/
-  - cmd/rimsky-entrypoint/
-  - cmd/rimsky-blob-backend-conformance/
-  - cmd/rimsky-host-agent-proxy/  # rimsky-stack service binary (multi-protocol proxy), platform side
+  - stores/
+  - executors/
+  - cmd/
   - test/
 
 exempt:
@@ -114,10 +60,4 @@ exempt:
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
   - bin/
   - protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
-  # cmd/rimsky-docs-lint/testdata/ moved with the binary to rimsky-docs.
-  # executors/claude-agent/{node_modules,dist,build,.cache}/ entries
-  # dropped after P3 — claude-agent moved to
-  # pkg:github.com/rimsky-ai/rimsky-services/executors/claude-agent
-  # along with the rest of the consumption-side service impls.
   - .elves/
-  # Binary blobs are skipped by the walker (see cmd/rimsky-license-check/).

@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release cli-image core-images smoke-cli test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images smoke-all test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -38,10 +38,8 @@ tidy:
 
 # ── Documentation tooling ──
 #
-# Docs sources and the docs-lint binaries are not part of this repo. They
-# live in the separate rimsky-docs project, which runs its own docs-lint
-# against this tree. This repo carries no docs targets and no cross-repo
-# docs gate — docs reconciliation is owned by rimsky-docs.
+# Docs sources and the docs-lint binaries are not part of this repo. This
+# repo carries no docs targets and no docs gate.
 
 # Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols + testpg).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
@@ -74,24 +72,24 @@ cli-release:
 	done; \
 	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_windows_amd64.exe ./cmd/rimsky/
 
-cli-image:
-	docker build -f Dockerfile.cli --build-arg VERSION=$(VERSION) -t rimsky/cli:latest .
-
-# Core runtime + test-double images, built from this tree. The Dockerfiles
-# (Dockerfile.go-base, Dockerfile.all, the stub Dockerfiles) and the Go source
-# both live here. External deploy tooling builds these images by invoking this
-# target. Each image is tagged $(VERSION) + latest.
+# Distributed images, built from this tree. Three images:
+#   rimsky                  — all role binaries + rimsky-entrypoint under one
+#                             image; role chosen by container command, backend
+#                             (postgres|sqlite) by config (Dockerfile.rimsky).
+#   rimsky-host-agent-proxy — the late-bound host-agent proxy service
+#                             (Dockerfile.go-base, single binary).
+#   rimsky-conformance      — bundled protocol conformance runners; pick one
+#                             by container command (Dockerfile.conformance).
+# Each image is tagged $(VERSION) + latest. The CLI ships as a binary
+# (`make cli` / `make cli-release`), not an image.
 core-images:
-	@for bin in scheduler supervisor control-api migrate; do \
-	  docker build -f Dockerfile.go-base --build-arg BINARY=rimsky-$$bin \
-	    -t rimsky/$$bin:$(VERSION) -t rimsky/$$bin:latest . || exit 1; \
-	done
-	docker build -f Dockerfile.all -t rimsky/all:$(VERSION) -t rimsky/all:latest .
-	docker build -f executors/stub/Dockerfile.stub -t rimsky/executor-stub:$(VERSION) -t rimsky/executor-stub:latest .
-	docker build -f stores/stub/Dockerfile.stub -t rimsky/store-stub:$(VERSION) -t rimsky/store-stub:latest .
+	docker build -f Dockerfile.rimsky -t rimsky:$(VERSION) -t rimsky:latest .
+	docker build -f Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
+	  -t rimsky-host-agent-proxy:$(VERSION) -t rimsky-host-agent-proxy:latest .
+	docker build -f Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
 
-smoke-cli: cli
-	go test -tags smoke -count=1 -timeout 5m ./test/smoke/cli/...
+smoke-all:
+	go test -tags smoke -count=1 -timeout 5m ./test/smoke/all/...
 
 # ── Docker-wrapped variants for contributors without a host Go toolchain ──
 #

@@ -5,16 +5,13 @@
 // Canary scenario — template-registration + run-a-pass against the
 // public control-API surface.
 //
-// Replaces the drift signal previously carried by `apps/crimefinder/`
-// (a TS orchestrator that registered + instantiated a non-trivial
-// template against rimsky and asserted control-api stayed up). The
-// repo-reorganization spec (`2026-05-24-repo-reorganization-design`
-// §P2.5) moves crimefinder to its own sibling repo and adds this
-// in-tree canary in its place. Breakage now lands in the PR that
-// caused it, instead of being noticed only when crimefinder next
-// bumps its rimsky pin.
+// An in-tree drift signal: it registers + instantiates a non-trivial
+// template against rimsky and asserts the control-API surface stays up,
+// so a break in the public path lands in the PR that caused it rather
+// than surfacing only when an external consumer next bumps its rimsky
+// pin.
 //
-// Scope (audited against `apps/crimefinder/test/integration/full-pass.test.ts`):
+// Scope:
 //
 //   - rimsky's template parser accepts a non-trivial multi-node
 //     template via `POST /templates`.
@@ -57,7 +54,7 @@ import (
 )
 
 // TestCanary_TemplateRegistrationAndRunAPass exercises the full
-// public-API path that crimefinder previously canaried: POST template,
+// public-API path an external consumer depends on: POST template,
 // POST deploy, POST instance, observe nodes walk to terminal.
 //
 // The template carries two nodes (one root + one downstream with a
@@ -107,9 +104,9 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 		},
 	}
 
-	// Register + deploy via the harness shortcut. This mirrors the
-	// crimefinder integration test's `registerTemplate` + `deployTemplate`
-	// calls, except invoked in-process.
+	// Register + deploy via the harness shortcut — the in-process
+	// analog of an external consumer's `registerTemplate` +
+	// `deployTemplate` calls.
 	templateHash := h.DeployTemplate(tmpl)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
 

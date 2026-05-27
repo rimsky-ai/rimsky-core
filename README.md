@@ -34,9 +34,8 @@ This README is for evaluators deciding whether to engage with rimsky for
 an agentic workflow problem. It frames what rimsky is, what it was
 built for, what makes it different from the things you might be
 pattern-matching against, and where to go next if the answer is yes.
-Builders point their coding agent at `llms.txt` in the sibling
-`pkg:github.com/rimsky-ai/rimsky-docs` repo and let it walk
-them through depth.
+Builders point their coding agent at this repo and let it walk them
+through depth.
 
 ## 2. What rimsky was built for
 
@@ -130,11 +129,9 @@ bug surface and security surface that belongs to the consumer. Three
 blessed invariants lock this in source — userdata opaque, claim content
 inert, blob content inert — and removing them would unwind the design.
 
-No domain helpers ship. The reference services in-tree
-(`http-node`, `claude-agent`, `filesystem`, `postgres`, the four
-sensors) are illustrative — they cover the protocol's shape and the
-deployment story. They are not a curated catalog of production-ready
-domain pieces. A platform that ships domain helpers becomes a platform
+No domain helpers ship. Reference service implementations are
+illustrative — they cover the protocol's shape and the deployment
+story, not a curated catalog of production-ready domain pieces. A platform that ships domain helpers becomes a platform
 whose users file requests for more domain helpers; rimsky does not grow
 features to solve the consumer's problem, it provides primitives that
 the consumer composes against their own services.
@@ -316,10 +313,9 @@ service or an adjacent system, not to grow the primitive.
 
 ## 6. Where to learn more
 
-For agents: the canonical agent-oriented manifest at `llms.txt` in the
-sibling `pkg:github.com/rimsky-ai/rimsky-docs` repo points at
-every public surface. Point your coding agent at it and the agent walks
-you through depth.
+For agents: point your coding agent at this repo and ask. The source,
+the protocol definitions under `protocols/proto/v1/`, and the concept
+catalog below are the canonical surfaces.
 
 For the concept catalog: `.ok-planner/design/concepts.md` is an
 auto-generated TOC over the per-concept files under
@@ -328,11 +324,7 @@ purpose, boundaries, and invariants, plus a notes section recording how
 the concept evolved. Inline `@concept:` annotations in the source code
 point at enforcement sites.
 
-For protocols, copy-pasteable starter templates, and the roadmap
-(claim producer, executor, lifecycle subscriber, publisher,
-agent examples, `roadmap.md`): see
-`pkg:github.com/rimsky-ai/rimsky-docs/docs/protocols/`,
-`pkg:github.com/rimsky-ai/rimsky-docs/docs/agents/examples/`,
-`pkg:github.com/rimsky-ai/rimsky-docs/docs/roadmap.md`.
+For protocols: the wire definitions live in this repo under
+`protocols/proto/v1/`.
 
 Point your coding agent at this repo and ask.

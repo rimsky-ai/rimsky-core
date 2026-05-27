@@ -4,7 +4,7 @@
 
 //go:build smoke
 
-// Package all is the unified-image smoke test. Builds Dockerfile.all,
+// Package all is the unified-image smoke test. Builds Dockerfile.rimsky,
 // runs the container, polls /health, asserts the SQLite startup banner
 // appears in the container logs, and verifies clean shutdown. Per
 // spec §9.6.
@@ -36,8 +36,8 @@ func TestUnifiedImage(t *testing.T) {
 
 	// Build.
 	buildCmd := exec.Command("docker", "build",
-		"-f", filepath.Join(repoRoot, "deploy", "Dockerfile.all"),
-		"-t", "rimsky-all:smoke", repoRoot)
+		"-f", filepath.Join(repoRoot, "Dockerfile.rimsky"),
+		"-t", "rimsky:smoke", repoRoot)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("docker build: %v\n%s", err, out)
 	}

@@ -12,7 +12,7 @@ When an agent is writing prose to a human in an interactive session — status u
 **Where this does NOT apply:**
 - Source code, docstrings, code comments.
 - Concept docs, tensions, specs, plans, sketches under `.ok-planner/`.
-- `CHANGELOG.md`, `CLAUDE.md`, `README.md`, anything else in the repo.
+- `CLAUDE.md`, `README.md`, anything else in the repo.
 - Commit messages, PR descriptions.
 - Test output, build output, stack traces, tool diagnostics — those keep their existing shape.
 
@@ -36,7 +36,7 @@ Bare nouns like `Open`, `claimed_by`, or `rimsky_node_events` could be Go method
 | `code:` | `` `code:foundation/locks/interface.go::ClaimProducer` `` |
 | `code:` with line | `` `code:foundation/integration/runner_acquire.go::handleOrphanedClaim#793` `` |
 | `file:` | `` `file:deploy/docker-compose.yml` `` |
-| `file:` with line range | `` `file:CHANGELOG.md#1-50` `` |
+| `file:` with line range | `` `file:README.md#1-50` `` |
 | `pkg:` | `` `pkg:github.com/rimsky-ai/rimsky-core/foundation` `` |
 | `table:` | `` `table:rimsky_claim_handle` `` |
 | `col:` | `` `col:rimsky_claim_handle.scope_data` `` |

@@ -1,6 +1,6 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Httptest-driven unit tests for the `rimsky auth` subcommands.
 //
@@ -8,9 +8,7 @@
 // exit code, request shape, and (where applicable) error-path
 // behavior. The tests here pair a stub httptest.Server with the
 // real subcommand entry points (RunAuthCreateKey / RunAuthList /
-// RunAuthShow / RunAuthRevoke / RunAuthRotate / RunAuthStatus); the
-// smoke test in `test/smoke/cli/...` exercises the happy-path
-// lifecycle against a real control-api binary.
+// RunAuthShow / RunAuthRevoke / RunAuthRotate / RunAuthStatus).
 //
 // Exit-code expectations follow the (subcommand → exit) table in the
 // spec section "CLI subcommands":

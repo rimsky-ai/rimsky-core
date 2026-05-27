@@ -1,11 +1,11 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // admin.go — `admin invalidate/reset`. The `admin force-fire`
 // subcommand retired with the 2026-05-15 data-platform-extensions plan
 // B10 / D7 / E16 schedule-retirement cascade; cron firing is owned by
-// the bundled `sensors/sensor-cron/` service.
+// a cron sensor, which is not part of this repo.
 package cli
 
 import (

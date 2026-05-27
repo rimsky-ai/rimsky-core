@@ -1,22 +1,18 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package testfixture stands up an in-process loopback claim-producer
 // store-service for tests that want to drive the filesystem-store
 // surface over the wire.
 //
-// Post-2026-05-24 reorganization: the production filesystem-store
-// implementation lives in `pkg:github.com/rimsky-ai/rimsky-services`.
-// To preserve the in-rimsky test-fixture surface without dragging in
-// the production code, this testfixture now wraps `pkg:stores/stub`
+// The production filesystem-store implementation is not part of this
+// repo. To preserve the in-rimsky test-fixture surface without dragging
+// in production code, this testfixture wraps `pkg:stores/stub`
 // (deterministic in-memory) while exposing the same `Start` signature
-// callers had against the filesystem-backed fixture. For tests that
-// want filesystem-specific behaviour (pick-policy folder semantics,
-// queue-vs-ring on-disk dynamics, sync-strategy timing) the
-// rimsky-services repo's own fixture wraps the published store image.
-//
-// Per spec `2026-05-24-repo-reorganization-design` §P3.1.
+// callers had against the filesystem-backed fixture. Filesystem-specific
+// behaviour (pick-policy folder semantics, queue-vs-ring on-disk
+// dynamics, sync-strategy timing) is out of scope for this fixture.
 package testfixture
 
 import (
@@ -40,8 +36,8 @@ import (
 // production-side store package. Only `Root`, `OnCommit`, and
 // `OnGiveUp` are honoured by the stub-backed translation; the timing
 // and sync-strategy fields are accepted for source compatibility and
-// ignored. Filesystem-specific tests that rely on these timings live
-// in rimsky-services.
+// ignored. Filesystem-specific tests that rely on these timings are
+// out of scope for this fixture.
 type PickPolicy struct {
 	Root              string
 	OnCommit          action.Action
@@ -56,7 +52,7 @@ type PickPolicy struct {
 // translation walks the directory once at Start and seeds the
 // resulting items into the stub-store's queue. Tests asserting
 // dynamic filesystem behaviour (mid-run folder additions,
-// sync-strategy timing) belong in rimsky-services.
+// sync-strategy timing) are out of scope for this fixture.
 type Config struct {
 	Root          string
 	PickPolicies  map[string]*PickPolicy

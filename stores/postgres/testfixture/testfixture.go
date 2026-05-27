@@ -1,22 +1,18 @@
 // Copyright © 2026 Fall Guy Consulting.
-// Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
-// repo root, or http://www.apache.org/licenses/LICENSE-2.0.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package testfixture stands up an in-process loopback claim-producer
 // store-service for tests that want to drive the postgres-store
 // surface over the wire.
 //
-// Post-2026-05-24 reorganization: the production postgres-store
-// implementation lives in `pkg:github.com/rimsky-ai/rimsky-services`.
-// To preserve the in-rimsky test-fixture surface without dragging in
-// the production code, this testfixture now wraps `pkg:stores/stub`
-// (deterministic in-memory) while exposing the same `Start`
-// signature callers had against the postgres-backed fixture. For
-// tests that want postgres-specific behaviour (atomic-staging schema
-// swap, fused verifier-role Execute, items-table pick semantics) the
-// rimsky-services repo's own fixture wraps the published store image.
-//
-// Per spec `2026-05-24-repo-reorganization-design` §P3.1.
+// The production postgres-store implementation is not part of this
+// repo. To preserve the in-rimsky test-fixture surface without dragging
+// in production code, this testfixture wraps `pkg:stores/stub`
+// (deterministic in-memory) while exposing the same `Start` signature
+// callers had against the postgres-backed fixture. Postgres-specific
+// behaviour (atomic-staging schema swap, fused verifier-role Execute,
+// items-table pick semantics) is out of scope for this fixture.
 package testfixture
 
 import (
@@ -38,7 +34,7 @@ import (
 // the stub-backed translation; `ItemsTable` and `VisibilityTimeout`
 // are accepted for source compatibility and ignored. Postgres-
 // specific tests that rely on the items-table semantics or
-// visibility-timeout dynamics live in rimsky-services.
+// visibility-timeout dynamics are out of scope for this fixture.
 type PickPolicy struct {
 	ItemsTable        string
 	OnCommit          action.Action
@@ -51,8 +47,8 @@ type PickPolicy struct {
 // `EnableExecutor` are accepted for source compatibility with the
 // pre-reorg postgres-backed fixture and ignored by the stub-backed
 // translation — the stub-store substrate has no executor role and
-// no admin surface. Tests that need those behaviours belong in
-// rimsky-services.
+// no admin surface. Tests that need those behaviours are out of scope
+// for this fixture.
 type Config struct {
 	Connection     string
 	WriteSemantics claimproducer.WriteSemantics
