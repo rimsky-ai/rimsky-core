@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images smoke-all test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -58,7 +58,10 @@ build-all:
 
 # ── rimsky CLI targets ──
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Match only repo-level release tags (v1.2.3), never the path-prefixed
+# Go-module tag (protocols/v0.1.0) — a slash is invalid in a Docker image tag.
+# Falls back to a short commit SHA when no release tag is reachable.
+VERSION ?= $(shell git describe --tags --match='v[0-9]*' --always --dirty 2>/dev/null || echo dev)
 
 cli:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/rimsky ./cmd/rimsky/
@@ -87,6 +90,38 @@ core-images:
 	docker build -f Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
 	  -t rimsky-host-agent-proxy:$(VERSION) -t rimsky-host-agent-proxy:latest .
 	docker build -f Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
+
+# Retag the three core images under $(REGISTRY) and push $(VERSION) + latest.
+# Requires `make core-images` first (pushes what is already built locally) and
+# a prior `docker login` to the registry. The Hub repo name mirrors the local
+# tag, so this is a pure namespace prefix — docker.io/rimsky-ai/rimsky,
+# docker.io/rimsky-ai/rimsky-host-agent-proxy, docker.io/rimsky-ai/rimsky-conformance.
+REGISTRY ?= docker.io/rimsky-ai
+push-images: check-clean
+	@for img in rimsky rimsky-host-agent-proxy rimsky-conformance; do \
+	  for tag in $(VERSION) latest; do \
+	    docker tag $$img:$$tag $(REGISTRY)/$$img:$$tag; \
+	    docker push $(REGISTRY)/$$img:$$tag; \
+	  done; \
+	done
+
+# Publish the @rimsky-ai/protocols npm package (the Apache wire-contract
+# bundle). Needs a prior `npm login` to the @rimsky-ai scope. The package
+# version comes from protocols/package.json (kept in lockstep with the
+# protocols/vX.Y.Z Go-module tag), not $(VERSION) — but the clean-tree guard
+# still applies so we never publish from an uncommitted tree.
+publish-protocols: check-clean
+	cd protocols && npm publish
+
+# Publish guard shared by push-images / publish-protocols. Refuses to publish
+# from a dirty tree: $(VERSION) would carry the -dirty suffix and the artifact
+# would not be reproducible from any committed state. Commit (or stash) first.
+check-clean:
+	@case "$(VERSION)" in \
+	  *-dirty) echo "refusing to publish: VERSION=$(VERSION) — commit or stash first"; exit 1 ;; \
+	  dev)     echo "refusing to publish: no release version derivable (VERSION=dev)"; exit 1 ;; \
+	esac
+	@echo "publish guard ok: clean tree, VERSION=$(VERSION)"
 
 smoke-all:
 	go test -tags smoke -count=1 -timeout 5m ./test/smoke/all/...
