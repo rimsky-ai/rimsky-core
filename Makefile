@@ -94,9 +94,14 @@ core-images:
 # Retag the three core images under $(REGISTRY) and push $(VERSION) + latest.
 # Requires `make core-images` first (pushes what is already built locally) and
 # a prior `docker login` to the registry. The Hub repo name mirrors the local
-# tag, so this is a pure namespace prefix — docker.io/rimsky-ai/rimsky,
-# docker.io/rimsky-ai/rimsky-host-agent-proxy, docker.io/rimsky-ai/rimsky-conformance.
-REGISTRY ?= docker.io/rimsky-ai
+# tag, so this is a pure namespace prefix — docker.io/rimskyai/rimsky,
+# docker.io/rimskyai/rimsky-host-agent-proxy, docker.io/rimskyai/rimsky-conformance.
+#
+# NOTE: the Docker Hub org is `rimskyai`, NOT `rimsky-ai`. Docker Hub namespaces
+# disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
+# the hyphens survive only in the repo names (rimsky-host-agent-proxy). Do not
+# "correct" this to rimsky-ai to match the other namespaces — it does not exist.
+REGISTRY ?= docker.io/rimskyai
 push-images: check-clean
 	@for img in rimsky rimsky-host-agent-proxy rimsky-conformance; do \
 	  for tag in $(VERSION) latest; do \
