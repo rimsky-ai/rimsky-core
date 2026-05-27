@@ -75,10 +75,15 @@ cli-release:
 	done; \
 	GOOS=windows GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/release/rimsky_windows_amd64.exe ./cmd/rimsky/
 
-# Distributed images, built from this tree. Three images:
+# Distributed images, built from this tree (Dockerfiles live in dockerfiles/).
+# Four images:
 #   rimsky                  — all role binaries + rimsky-entrypoint under one
 #                             image; role chosen by container command, backend
 #                             (postgres|sqlite) by config (Dockerfile.rimsky).
+#   rimsky-all-in-one       — the `rimsky` image plus baked zero-config SQLite
+#                             defaults; runs out of the box for local dev, not
+#                             for production (Dockerfile.all-in-one). Built FROM
+#                             the rimsky:$(VERSION) image, so it follows it here.
 #   rimsky-host-agent-proxy — the late-bound host-agent proxy service
 #                             (Dockerfile.go-base, single binary).
 #   rimsky-conformance      — bundled protocol conformance runners; pick one
@@ -86,16 +91,19 @@ cli-release:
 # Each image is tagged $(VERSION) + latest. The CLI ships as a binary
 # (`make cli` / `make cli-release`), not an image.
 core-images:
-	docker build -f Dockerfile.rimsky -t rimsky:$(VERSION) -t rimsky:latest .
-	docker build -f Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
+	docker build -f dockerfiles/Dockerfile.rimsky -t rimsky:$(VERSION) -t rimsky:latest .
+	docker build -f dockerfiles/Dockerfile.all-in-one --build-arg RIMSKY_BASE=rimsky:$(VERSION) \
+	  -t rimsky-all-in-one:$(VERSION) -t rimsky-all-in-one:latest .
+	docker build -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
 	  -t rimsky-host-agent-proxy:$(VERSION) -t rimsky-host-agent-proxy:latest .
-	docker build -f Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
+	docker build -f dockerfiles/Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
 
-# Retag the three core images under $(REGISTRY) and push $(VERSION) + latest.
+# Retag the four core images under $(REGISTRY) and push $(VERSION) + latest.
 # Requires `make core-images` first (pushes what is already built locally) and
 # a prior `docker login` to the registry. The Hub repo name mirrors the local
 # tag, so this is a pure namespace prefix — docker.io/rimskyai/rimsky,
-# docker.io/rimskyai/rimsky-host-agent-proxy, docker.io/rimskyai/rimsky-conformance.
+# docker.io/rimskyai/rimsky-all-in-one, docker.io/rimskyai/rimsky-host-agent-proxy,
+# docker.io/rimskyai/rimsky-conformance.
 #
 # NOTE: the Docker Hub org is `rimskyai`, NOT `rimsky-ai`. Docker Hub namespaces
 # disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
@@ -103,7 +111,7 @@ core-images:
 # "correct" this to rimsky-ai to match the other namespaces — it does not exist.
 REGISTRY ?= docker.io/rimskyai
 push-images: check-clean
-	@for img in rimsky rimsky-host-agent-proxy rimsky-conformance; do \
+	@for img in rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance; do \
 	  for tag in $(VERSION) latest; do \
 	    docker tag $$img:$$tag $(REGISTRY)/$$img:$$tag; \
 	    docker push $(REGISTRY)/$$img:$$tag; \

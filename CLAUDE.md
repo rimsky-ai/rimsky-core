@@ -18,7 +18,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Public docs** — not part of this repo. This tree carries no docs sources, no docs-lint tooling, and no docs gate.
 
-**Image builds** — `make core-images` builds the three distributed images: `rimsky` (all role binaries + `rimsky-entrypoint` under one image — role by container command, backend by config — `Dockerfile.rimsky`), `rimsky-host-agent-proxy` (`Dockerfile.go-base`), and `rimsky-conformance` (the bundled protocol conformance runners — `Dockerfile.conformance`). The CLI ships as a binary (`make cli`), not an image.
+**Image builds** — Dockerfiles live in `dockerfiles/`. `make core-images` builds the four distributed images: `rimsky` (all role binaries + `rimsky-entrypoint` under one image — role by container command, backend by config — `dockerfiles/Dockerfile.rimsky`), `rimsky-all-in-one` (the `rimsky` image plus baked zero-config SQLite defaults so it runs out of the box for local dev — built `FROM rimsky:$(VERSION)`, so it must follow the `rimsky` build — `dockerfiles/Dockerfile.all-in-one`, baking `dockerfiles/all-in-one.{rimsky,supervisor-config}.yml`), `rimsky-host-agent-proxy` (`dockerfiles/Dockerfile.go-base`), and `rimsky-conformance` (the bundled protocol conformance runners — `dockerfiles/Dockerfile.conformance`). The CLI ships as a binary (`make cli`), not an image.
 
 **Recent changes** — `git log`. This repo keeps no CHANGELOG; design rationale lives in the concept catalog (above) and `.ok-planner/` history.
 

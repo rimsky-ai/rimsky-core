@@ -1,0 +1,21 @@
+# Default rimsky.yml baked into the rimsky-all-in-one image and copied to
+# /etc/rimsky/rimsky.yml at build time. This is the zero-config development
+# default: SQLite at /var/lib/rimsky/state.db, with no external
+# claim-producers, executors, or publishers wired in.
+#
+# The all-in-one image targets local development and runs out of the box
+# (`docker run rimskyai/rimsky-all-in-one`). It is NOT for production — for
+# deployed instances use the `rimsky` image with the postgres driver and an
+# explicit claim_producers/executors block, mounted at /etc/rimsky/rimsky.yml.
+#
+# Override by mounting your own file:
+#   docker run -v ./my-rimsky.yml:/etc/rimsky/rimsky.yml:ro rimskyai/rimsky-all-in-one
+
+persistence:
+  driver: sqlite
+  sqlite:
+    path: /var/lib/rimsky/state.db
+
+claim_producers: {}
+named_locks: {}
+executors: {}

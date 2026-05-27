@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+#
+# rimsky-all-in-one — the zero-config development image. It is the `rimsky`
+# image (Dockerfile.rimsky: all role binaries + rimsky-entrypoint under one
+# PID-1) with default SQLite config baked in, so it runs out of the box:
+#
+#   docker run -p 8080:8080 rimskyai/rimsky-all-in-one
+#
+# rimsky-entrypoint runs migrate, then spawns scheduler + supervisor +
+# control-api against the baked /etc/rimsky config. Development only — for
+# deployed instances use the `rimsky` image with the postgres driver and an
+# explicit config mounted at runtime.
+#
+# RIMSKY_BASE pins the base to the `rimsky` image built in the same
+# `make core-images` run (defaults to the floating :latest tag for ad-hoc
+# `docker build`, which requires `rimsky:latest` to exist locally first).
+ARG RIMSKY_BASE=rimsky:latest
+FROM ${RIMSKY_BASE}
+
+LABEL org.opencontainers.image.title="rimsky-all-in-one"
+LABEL org.opencontainers.image.description="Zero-config rimsky orchestrator (development convenience image; SQLite default, all processes under one PID-1 — not for production)."
+
+# Bake the zero-config defaults, renaming each source file to the canonical
+# path the binaries read (RIMSKY_CONFIG / RIMSKY_SUPERVISOR_CONFIG, both set
+# in the base image). Root-owned 0644 is fine — the nonroot binaries only
+# read these.
+COPY dockerfiles/all-in-one.rimsky.yml            /etc/rimsky/rimsky.yml
+COPY dockerfiles/all-in-one.supervisor-config.yml /etc/rimsky/supervisor-config.yml
+
+# Bind the control-api to all interfaces so a published port reaches it out of
+# the box (`docker run -p 8080:8080 ...`). The base `rimsky` image leaves the
+# host at its 127.0.0.1 default for operators to set per deployment; the
+# all-in-one image is the zero-config dev convenience, so it binds 0.0.0.0
+# here. Combined with anonymous mode (no API keys) this exposes an unauthed
+# admin API on all interfaces — acceptable for the local-dev-only image, never
+# for production.
+ENV RIMSKY_CONTROL_API_HOST=0.0.0.0
+
+# USER, EXPOSE, VOLUME, the RIMSKY_CONFIG/RIMSKY_SUPERVISOR_CONFIG env, and
+# ENTRYPOINT are inherited from the base `rimsky` image. ENTRYPOINT is restated
+# here so a cold read of this file shows the all-in-one PID-1 without chasing
+# the base.
+ENTRYPOINT ["/usr/local/bin/rimsky-entrypoint"]
