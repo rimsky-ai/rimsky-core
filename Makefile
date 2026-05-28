@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp scan release buildx-builder
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -127,35 +127,104 @@ service-images:
 	docker build -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks -t rimsky-executor-verifier-shape-checks:$(VERSION) -t rimsky-executor-verifier-shape-checks:latest .
 	docker build -f lib/services/executors/claude-agent/Dockerfile -t rimsky-executor-claude-agent:$(VERSION) -t rimsky-executor-claude-agent:latest .
 
-# Retag every locally-built rimsky image under $(REGISTRY) and push
-# $(VERSION) + latest. Covers both the four core images and the eleven
-# bundled-service images in one pass — a release ships them together.
-# Requires `make core-images && make service-images` first (this target pushes
-# what's already built locally; it does not build) and a prior `docker login`
-# to the registry. The Hub repo name mirrors the local tag, so this is a pure
-# namespace prefix — docker.io/rimskyai/rimsky, .../rimsky-all-in-one,
-# .../rimsky-store-filesystem, .../rimsky-executor-claude-agent, etc.
+# The 15-image set published by this repo. Single source of truth for `scan`
+# and (in symbolic form) push-images. Order matters for push-images:
+# `rimsky` is the base for `rimsky-all-in-one`, so it must be pushed first.
+IMAGES := \
+    rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance \
+    rimsky-store-filesystem rimsky-store-postgres \
+    rimsky-sensor-cron rimsky-sensor-http rimsky-sensor-object-store rimsky-sensor-webhook \
+    rimsky-subscriber-openlineage \
+    rimsky-executor-http-node rimsky-executor-verifier-http rimsky-executor-verifier-shape-checks rimsky-executor-claude-agent
+
+# Scan every locally-built image for critical or high CVEs via Docker Scout.
+# Used as a pre-push gate by the `release` target. Exits non-zero on the first
+# image that fails so a bad release can't proceed; comment out the `--exit-code`
+# to make the gate advisory instead. Requires the `docker scout` CLI plugin
+# (bundled with Docker Desktop; installed manually elsewhere). Works against
+# the local docker daemon, no Hub enrollment required.
+scan:
+	@command -v docker >/dev/null || { echo "docker not on PATH"; exit 1; }
+	@docker scout --help >/dev/null 2>&1 || { echo "docker scout plugin not installed — install Docker Desktop or 'docker scout' plugin"; exit 1; }
+	@for img in $(IMAGES); do \
+	  echo "=== docker scout cves $$img:$(VERSION) ==="; \
+	  docker scout cves --only-severity critical,high --exit-code $$img:$(VERSION) || exit $$?; \
+	done
+
+# Push every rimsky image to $(REGISTRY) with SBOM + provenance attestations
+# attached. Covers the four core images and the eleven bundled-service images
+# in one pass — a release ships them together. Uses `docker buildx build --push`
+# rather than `docker tag && docker push` because plain push does not carry
+# build attestations; Docker Scout reports "Missing supply chain attestation(s)"
+# in the Hub UI without them.
 #
-# A future release-management skill will likely split this into per-set
-# targets; for now, keep it as one script.
+# Requires:
+#   - a prior `docker login` to the registry
+#   - buildx (bundled with Docker Desktop)
+# This target builds (with cache) and pushes; it does NOT rely on
+# `make core-images` / `make service-images` having run first — the buildx
+# layer cache is shared with the local docker daemon so most layers hit cache
+# from prior builds, but a clean push works standalone.
+#
+# A future release-management skill may split this into per-set targets; for
+# now, keep it as one script.
 #
 # NOTE: the Docker Hub org is `rimskyai`, NOT `rimsky-ai`. Docker Hub namespaces
 # disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
 # the hyphens survive only in the repo names (rimsky-host-agent-proxy). Do not
 # "correct" this to rimsky-ai to match the other namespaces — it does not exist.
 REGISTRY ?= docker.io/rimskyai
-push-images: check-clean
-	@for img in \
-	    rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance \
-	    rimsky-store-filesystem rimsky-store-postgres \
-	    rimsky-sensor-cron rimsky-sensor-http rimsky-sensor-object-store rimsky-sensor-webhook \
-	    rimsky-subscriber-openlineage \
-	    rimsky-executor-http-node rimsky-executor-verifier-http rimsky-executor-verifier-shape-checks rimsky-executor-claude-agent; do \
-	  for tag in $(VERSION) latest; do \
-	    docker tag $$img:$$tag $(REGISTRY)/$$img:$$tag; \
-	    docker push $(REGISTRY)/$$img:$$tag; \
-	  done; \
-	done
+
+# Buildx instance used by push-images. Created on first use; idempotent.
+# A dedicated docker-container builder gives consistent attestation support
+# across Docker Desktop, OrbStack, and headless CI runners.
+buildx-builder:
+	@docker buildx inspect rimsky-builder >/dev/null 2>&1 \
+	  || docker buildx create --name rimsky-builder --driver docker-container
+
+# Shared flags for every buildx --push invocation below.
+BUILDX_PUSH = docker buildx build --builder rimsky-builder --push \
+              --provenance=mode=max --sbom=true
+
+push-images: check-clean buildx-builder
+	# Core images. `rimsky` first; `rimsky-all-in-one` FROMs it via the registry.
+	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.rimsky \
+	  -t $(REGISTRY)/rimsky:$(VERSION) -t $(REGISTRY)/rimsky:latest .
+	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.all-in-one \
+	  --build-arg RIMSKY_BASE=$(REGISTRY)/rimsky:$(VERSION) \
+	  -t $(REGISTRY)/rimsky-all-in-one:$(VERSION) -t $(REGISTRY)/rimsky-all-in-one:latest .
+	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
+	  -t $(REGISTRY)/rimsky-host-agent-proxy:$(VERSION) -t $(REGISTRY)/rimsky-host-agent-proxy:latest .
+	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.conformance \
+	  -t $(REGISTRY)/rimsky-conformance:$(VERSION) -t $(REGISTRY)/rimsky-conformance:latest .
+	# Bundled-service images.
+	$(BUILDX_PUSH) -f lib/services/stores/filesystem/Dockerfile.filesystem \
+	  -t $(REGISTRY)/rimsky-store-filesystem:$(VERSION) -t $(REGISTRY)/rimsky-store-filesystem:latest .
+	$(BUILDX_PUSH) -f lib/services/stores/postgres/Dockerfile.postgres \
+	  -t $(REGISTRY)/rimsky-store-postgres:$(VERSION) -t $(REGISTRY)/rimsky-store-postgres:latest .
+	$(BUILDX_PUSH) -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron \
+	  -t $(REGISTRY)/rimsky-sensor-cron:$(VERSION) -t $(REGISTRY)/rimsky-sensor-cron:latest .
+	$(BUILDX_PUSH) -f lib/services/sensors/sensor-http/Dockerfile.sensor-http \
+	  -t $(REGISTRY)/rimsky-sensor-http:$(VERSION) -t $(REGISTRY)/rimsky-sensor-http:latest .
+	$(BUILDX_PUSH) -f lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store \
+	  -t $(REGISTRY)/rimsky-sensor-object-store:$(VERSION) -t $(REGISTRY)/rimsky-sensor-object-store:latest .
+	$(BUILDX_PUSH) -f lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook \
+	  -t $(REGISTRY)/rimsky-sensor-webhook:$(VERSION) -t $(REGISTRY)/rimsky-sensor-webhook:latest .
+	$(BUILDX_PUSH) -f lib/services/subscribers/openlineage/Dockerfile.openlineage \
+	  -t $(REGISTRY)/rimsky-subscriber-openlineage:$(VERSION) -t $(REGISTRY)/rimsky-subscriber-openlineage:latest .
+	$(BUILDX_PUSH) -f lib/services/executors/http-node/Dockerfile.http-node \
+	  -t $(REGISTRY)/rimsky-executor-http-node:$(VERSION) -t $(REGISTRY)/rimsky-executor-http-node:latest .
+	$(BUILDX_PUSH) -f lib/services/executors/verifier-http/Dockerfile.verifier-http \
+	  -t $(REGISTRY)/rimsky-executor-verifier-http:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-http:latest .
+	$(BUILDX_PUSH) -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks \
+	  -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:latest .
+	$(BUILDX_PUSH) -f lib/services/executors/claude-agent/Dockerfile \
+	  -t $(REGISTRY)/rimsky-executor-claude-agent:$(VERSION) -t $(REGISTRY)/rimsky-executor-claude-agent:latest .
+
+# Full release chain. Builds locally (so the harness can use the resulting
+# tags), scans for critical/high CVEs, then pushes with attestations. If scan
+# finds vulnerabilities, the chain stops before push.
+release: core-images service-images scan push-images
 
 # Publish the @rimsky-ai/protocols npm package (the Apache wire-contract
 # bundle). Needs a prior `npm login` to the @rimsky-ai scope. The package
