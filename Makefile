@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp scan release buildx-builder
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -173,7 +173,15 @@ scan:
 # disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
 # the hyphens survive only in the repo names (rimsky-host-agent-proxy). Do not
 # "correct" this to rimsky-ai to match the other namespaces — it does not exist.
+#
+# The floating second tag is `$(LATEST_TAG)`, defaulting to `latest`;
+# `make dev-release` overrides it to `dev`.
 REGISTRY ?= docker.io/rimskyai
+
+# Floating tag pushed alongside :$(VERSION) on every image. Defaults to
+# `latest` for formal releases; `make dev-release` overrides to `dev` so
+# the dev channel never moves :latest.
+LATEST_TAG ?= latest
 
 # Buildx instance used by push-images. Created on first use; idempotent.
 # A dedicated docker-container builder gives consistent attestation support
@@ -189,42 +197,71 @@ BUILDX_PUSH = docker buildx build --builder rimsky-builder --push \
 push-images: check-clean buildx-builder
 	# Core images. `rimsky` first; `rimsky-all-in-one` FROMs it via the registry.
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.rimsky \
-	  -t $(REGISTRY)/rimsky:$(VERSION) -t $(REGISTRY)/rimsky:latest .
+	  -t $(REGISTRY)/rimsky:$(VERSION) -t $(REGISTRY)/rimsky:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.all-in-one \
 	  --build-arg RIMSKY_BASE=$(REGISTRY)/rimsky:$(VERSION) \
-	  -t $(REGISTRY)/rimsky-all-in-one:$(VERSION) -t $(REGISTRY)/rimsky-all-in-one:latest .
+	  -t $(REGISTRY)/rimsky-all-in-one:$(VERSION) -t $(REGISTRY)/rimsky-all-in-one:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.go-base --build-arg BINARY=rimsky-host-agent-proxy \
-	  -t $(REGISTRY)/rimsky-host-agent-proxy:$(VERSION) -t $(REGISTRY)/rimsky-host-agent-proxy:latest .
+	  -t $(REGISTRY)/rimsky-host-agent-proxy:$(VERSION) -t $(REGISTRY)/rimsky-host-agent-proxy:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f dockerfiles/Dockerfile.conformance \
-	  -t $(REGISTRY)/rimsky-conformance:$(VERSION) -t $(REGISTRY)/rimsky-conformance:latest .
+	  -t $(REGISTRY)/rimsky-conformance:$(VERSION) -t $(REGISTRY)/rimsky-conformance:$(LATEST_TAG) .
 	# Bundled-service images.
 	$(BUILDX_PUSH) -f lib/services/stores/filesystem/Dockerfile.filesystem \
-	  -t $(REGISTRY)/rimsky-store-filesystem:$(VERSION) -t $(REGISTRY)/rimsky-store-filesystem:latest .
+	  -t $(REGISTRY)/rimsky-store-filesystem:$(VERSION) -t $(REGISTRY)/rimsky-store-filesystem:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/stores/postgres/Dockerfile.postgres \
-	  -t $(REGISTRY)/rimsky-store-postgres:$(VERSION) -t $(REGISTRY)/rimsky-store-postgres:latest .
+	  -t $(REGISTRY)/rimsky-store-postgres:$(VERSION) -t $(REGISTRY)/rimsky-store-postgres:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron \
-	  -t $(REGISTRY)/rimsky-sensor-cron:$(VERSION) -t $(REGISTRY)/rimsky-sensor-cron:latest .
+	  -t $(REGISTRY)/rimsky-sensor-cron:$(VERSION) -t $(REGISTRY)/rimsky-sensor-cron:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-http/Dockerfile.sensor-http \
-	  -t $(REGISTRY)/rimsky-sensor-http:$(VERSION) -t $(REGISTRY)/rimsky-sensor-http:latest .
+	  -t $(REGISTRY)/rimsky-sensor-http:$(VERSION) -t $(REGISTRY)/rimsky-sensor-http:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store \
-	  -t $(REGISTRY)/rimsky-sensor-object-store:$(VERSION) -t $(REGISTRY)/rimsky-sensor-object-store:latest .
+	  -t $(REGISTRY)/rimsky-sensor-object-store:$(VERSION) -t $(REGISTRY)/rimsky-sensor-object-store:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook \
-	  -t $(REGISTRY)/rimsky-sensor-webhook:$(VERSION) -t $(REGISTRY)/rimsky-sensor-webhook:latest .
+	  -t $(REGISTRY)/rimsky-sensor-webhook:$(VERSION) -t $(REGISTRY)/rimsky-sensor-webhook:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/subscribers/openlineage/Dockerfile.openlineage \
-	  -t $(REGISTRY)/rimsky-subscriber-openlineage:$(VERSION) -t $(REGISTRY)/rimsky-subscriber-openlineage:latest .
+	  -t $(REGISTRY)/rimsky-subscriber-openlineage:$(VERSION) -t $(REGISTRY)/rimsky-subscriber-openlineage:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/executors/http-node/Dockerfile.http-node \
-	  -t $(REGISTRY)/rimsky-executor-http-node:$(VERSION) -t $(REGISTRY)/rimsky-executor-http-node:latest .
+	  -t $(REGISTRY)/rimsky-executor-http-node:$(VERSION) -t $(REGISTRY)/rimsky-executor-http-node:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/executors/verifier-http/Dockerfile.verifier-http \
-	  -t $(REGISTRY)/rimsky-executor-verifier-http:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-http:latest .
+	  -t $(REGISTRY)/rimsky-executor-verifier-http:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-http:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks \
-	  -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:latest .
+	  -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:$(VERSION) -t $(REGISTRY)/rimsky-executor-verifier-shape-checks:$(LATEST_TAG) .
 	$(BUILDX_PUSH) -f lib/services/executors/claude-agent/Dockerfile \
-	  -t $(REGISTRY)/rimsky-executor-claude-agent:$(VERSION) -t $(REGISTRY)/rimsky-executor-claude-agent:latest .
+	  -t $(REGISTRY)/rimsky-executor-claude-agent:$(VERSION) -t $(REGISTRY)/rimsky-executor-claude-agent:$(LATEST_TAG) .
 
-# Full release chain. Builds locally (so the harness can use the resulting
-# tags), scans for critical/high CVEs, then pushes with attestations. If scan
-# finds vulnerabilities, the chain stops before push.
-release: core-images service-images scan push-images
+# Full release chain — pre-push gates, build, scan, push.
+#
+# Order:
+#   lint           — golangci-lint across all four modules (cheap, host-side)
+#   license-lint   — go run ./tools/license-check (cheap, host-side)
+#   test-all       — full Go test suite, including testcontainer scenarios
+#                    (requires Docker daemon for the testcontainer tests)
+#   core-images    — build the 4 core images locally
+#   service-images — build the 11 bundled-service images locally
+#   scan           — docker scout cves against every locally-built image
+#   push-images    — buildx build + push with SBOM + provenance attestations
+#
+# Both `/release` (the skill, formal releases) and `make dev-release`
+# (mechanical dev channel) invoke this chain; dev-release overrides
+# LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
+# instead of :latest. If scan finds vulnerabilities, the chain stops before
+# push.
+release: lint license-lint test-all core-images service-images scan push-images
+
+# Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
+# version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable
+# tag, then drives the same `make release` chain with LATEST_TAG=dev so the
+# floating tag pushed alongside :$(VERSION) is :dev, not :latest. Bumps
+# lib/protocols/package.json transiently for the npm publish.
+#
+# Implementation lives in tools/dev-release.sh (shell-heavy work that doesn't
+# belong inline in the Makefile). The target is the entry point operators
+# invoke (manually, via CI, via cron, etc.).
+#
+# The /release skill (formal releases) does NOT invoke this target — formal
+# releases run the same chain but with their own SemVer/notes/review logic.
+dev-release: check-clean
+	@./tools/dev-release.sh
 
 # Publish the @rimsky-ai/protocols npm package (the Apache wire-contract
 # bundle). Needs a prior `npm login` to the @rimsky-ai scope. The package
@@ -233,6 +270,14 @@ release: core-images service-images scan push-images
 # still applies so we never publish from an uncommitted tree.
 publish-protocols: check-clean
 	cd lib/protocols && npm publish
+
+# Dev-channel sibling of publish-protocols. Lands the version under the
+# `dev` npm dist-tag instead of `latest`. Same clean-tree guard.
+# Invoked by `make dev-release` (which passes VERSION=$(DEV_VERSION) so
+# the *-dirty arm of check-clean does not trip on the uncommitted
+# package.json bump in the dev flow).
+publish-protocols-dev: check-clean
+	cd lib/protocols && npm publish --tag dev
 
 # Publish guard shared by push-images / publish-protocols. Refuses to publish
 # from a dirty tree: $(VERSION) would carry the -dirty suffix and the artifact

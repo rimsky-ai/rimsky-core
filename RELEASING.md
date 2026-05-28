@@ -6,38 +6,98 @@ targets in `Makefile`.
 
 ## Release flow
 
-A normal release is a tag → build → scan → push sequence. Every step is
-make-driven.
+Rimsky cuts releases via one of two paths.
+
+### Formal releases (`/release` skill)
+
+For human-cut releases that carry SemVer judgment and notes, invoke
+`/release` from a Claude Code session in the repo root. The skill
+walks:
+
+1. Preflight (verify clean tree, branch on `main`, docker/npm/gh
+   logins active, tooling available).
+2. Diff inspection — reads the diff since the last stable tag,
+   classifies against high-signal surfaces (proto files, persistence
+   migrations, exported Go symbols, CLI flags, env vars), proposes
+   a SemVer bump.
+3. Bumps `lib/protocols/package.json` in the working tree.
+4. Drafts `releases/vX.Y.Z.md` against the template (below).
+5. Notes review loop — reviewer subagent + skill self-review against
+   a rubric (every entry maps to a diff hunk, every breaking surface
+   appears in the Breaking changes section, bump matches content).
+6. Single user gate — presents bump rationale, full notes, action
+   manifest, and any flagged judgment questions. Operator replies
+   `go` / `revise <what>` / `abort`.
+7. On `go`: stages the release commit (`package.json` +
+   `releases/vX.Y.Z.md`), creates both git tags, invokes `make
+   release` (which runs the extended `lint → license-lint →
+   test-all → core-images → service-images → scan → push-images`
+   chain), pushes git tags, runs `make publish-protocols`, creates
+   the GitHub Release via `gh release create`.
+
+If scan finds CVEs, the skill attempts mechanical patch-level base-
+image remediation (per `docker scout recommendations`); anything
+bigger bails to the operator.
+
+See `.claude/skills/release/SKILL.md` for the full skill prose.
+
+### Dev / nightly releases (`make dev-release`)
+
+For pre-release / community-testing builds, run `make dev-release`.
+The target derives a SemVer-2.0 pre-release version of the form
+`v<next-minor>.0-dev.<YYYYMMDD>.g<sha>` from the latest stable tag,
+then runs the same `make release` chain with `LATEST_TAG=dev`. Result:
+
+- Hub images get `:vX.Y.Z-dev.YYYYMMDD.gSHA` plus the floating `:dev`
+  tag. `:latest` is never moved.
+- Both git tags (`vX.Y.Z-dev.YYYYMMDD.gSHA` and
+  `lib/protocols/vX.Y.Z-dev.YYYYMMDD.gSHA`) are pushed.
+- `@rimsky-ai/protocols` is published under the `dev` npm dist-tag.
+- GitHub creates a prerelease (with auto-generated notes).
+
+No release-notes file is written; dev consumers track the `:dev` Hub
+tag, the `@rimsky-ai/protocols@dev` npm dist-tag, or pin to a specific
+version.
+
+Consumers opt in:
+
+- Docker: `docker pull docker.io/rimskyai/rimsky-all-in-one:dev`
+- npm: `npm install @rimsky-ai/protocols@dev`
+- Go: `go get github.com/rimsky-ai/rimsky-core/lib/protocols@v0.X.0-dev.YYYYMMDD.gSHA`
+
+The SHA is dot-joined into the SemVer pre-release segment rather than
+carried as `+gSHA` SemVer build metadata. `+` is invalid in Docker tag
+grammar, is silently stripped by `npm version`, and is rejected by
+`go get`; folding the SHA into the pre-release segment keeps all three
+toolchains happy while preserving SemVer-2.0 precedence (a pre-release
+identifier still sorts below the corresponding stable).
+
+The dev path is mechanical — no SemVer judgment, no notes, no review.
+Trigger it manually, from cron, from a CI hook on push to `main`, or
+anywhere a clean tree is available.
+
+### Shared chain
+
+Both paths invoke `make release`, which runs:
 
 ```
-git tag v0.X.Y
-make release          # core-images + service-images + scan + push-images
-git push origin v0.X.Y
+lint → license-lint → test-all → core-images → service-images → scan → push-images
 ```
 
-`make release` is the canonical entry point. Its sub-targets are also
-usable individually:
+- `lint` and `license-lint` are cheap host-side gates.
+- `test-all` runs the full Go test suite across all four modules,
+  including testcontainer-using tests (requires Docker daemon).
+- `core-images` and `service-images` build the 4 + 11 images locally.
+- `scan` runs `docker scout cves --only-severity critical,high
+  --exit-code` against every locally-built image. Blocks on
+  unaddressed critical or high CVEs.
+- `push-images` uses `docker buildx build --push
+  --provenance=mode=max --sbom=true` so SBOM + provenance
+  attestations attach to each manifest. Pushes `:$(VERSION)` plus
+  `:$(LATEST_TAG)` — the latter defaults to `latest`, overridden to
+  `dev` for dev releases.
 
-- `make core-images` — builds the four core images locally
-  (`rimsky`, `rimsky-all-in-one`, `rimsky-host-agent-proxy`,
-  `rimsky-conformance`). Tags each with `$(VERSION)` and `latest`.
-- `make service-images` — builds the eleven bundled-service images
-  locally (`rimsky-store-filesystem`, the four sensors, the openlineage
-  subscriber, the four executors). Same tagging convention.
-- `make scan` — runs `docker scout cves` against every locally-built
-  image at `$(VERSION)`, with `--only-severity critical,high --exit-code`.
-  The chain stops here if any image carries unaddressed critical or
-  high CVEs.
-- `make push-images` — pushes every image to `$(REGISTRY)` (default
-  `docker.io/rimskyai`) with SBOM and provenance attestations attached
-  via `docker buildx build --push --provenance=mode=max --sbom=true`.
-  Requires a prior `docker login` to the registry. Refuses to push from
-  a dirty tree (see `check-clean`).
-
-`$(VERSION)` is derived by `git describe --tags --match='v[0-9]*' --always --dirty`.
-A clean checkout on a tagged commit gives the tag as VERSION; a clean
-checkout past a tag gives `vX.Y.Z-N-g<sha>`; a dirty tree gives a
-`-dirty` suffix that `check-clean` refuses to publish.
+Refuses to run from a dirty tree (via `check-clean`).
 
 ## Image set
 
@@ -67,6 +127,56 @@ Hub namespace is `rimskyai` (no hyphen). The hyphenless form is a Docker
 Hub constraint — namespaces disallow hyphens — and is intentional. The
 GitHub org (`rimsky-ai`) and the npm scope (`@rimsky-ai`) keep the hyphen;
 the image registry does not. Do not "correct" `rimskyai` to `rimsky-ai`.
+
+## Release-notes template
+
+The `/release` skill writes one Markdown file per formal release to
+`releases/vX.Y.Z.md`, filled in from the diff analysis. Skeleton:
+
+````markdown
+# rimsky vX.Y.Z
+
+<one-paragraph release summary>
+
+## Breaking changes
+
+- <surface-by-surface enumeration; omit section if empty>
+
+## What's new
+
+- <user-facing features, additions, new behaviors>
+
+## Fixes
+
+- <bug fixes worth surfacing to consumers>
+
+## Internal
+
+- <refactors, build changes, test additions; brief>
+
+## Image set
+
+`docker.io/rimskyai/rimsky:vX.Y.Z` and 14 sibling images, all at
+`:vX.Y.Z` and `:latest`. See [`RELEASING.md`](../RELEASING.md) for
+the full list.
+
+## Go module
+
+```
+go get github.com/rimsky-ai/rimsky-core@vX.Y.Z
+go get github.com/rimsky-ai/rimsky-core/lib/protocols@vX.Y.Z
+```
+
+## npm
+
+```
+npm install @rimsky-ai/protocols@X.Y.Z
+```
+````
+
+Section rules: empty sections are omitted; every entry references a
+real diff hunk. The skill's review loop catches fabrications and
+omissions before the operator sees the draft.
 
 ## Docker Scout integration
 
